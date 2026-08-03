@@ -1,0 +1,51 @@
+# Linux/Landlock environment for task 1.1 — the half of the phase-1 spike
+# that cannot run on a macOS host.
+#
+# Matches the workspace rust-version of both devcroft and nono (1.95); cargo
+# is here to build devcroft itself, not nono.
+FROM rust:1.95-bookworm
+
+# nono's Homebrew formula marks pkgconf and rust as `=> :build`, but the
+# Linux dbus dependency carries no such marker — it is needed at runtime, so
+# the prebuilt binary needs the library even though we never compile nono.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        libdbus-1-3 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Official installer (https://nono.sh/install.sh): fetches the prebuilt
+# release for this arch and verifies it against the SHA256SUMS.txt published
+# with the release. NONO_VERSION pins the tag — without it the script follows
+# the 'latest' redirect, which would make the image drift between rebuilds and
+# break the one thing task 1.3 needs: a known, tested nono version.
+#
+# Pinned to the same version used for the Seatbelt spike (task 1.2), so the
+# two platform results are comparable.
+ARG NONO_VERSION=v0.71.0
+RUN NONO_VERSION="${NONO_VERSION}" NONO_INSTALL_DIR=/usr/local/bin \
+        sh -c 'curl -fsSL https://nono.sh/install.sh | sh' \
+    && nono --version
+
+COPY landlock-abi.c /tmp/landlock-abi.c
+RUN cc -O2 -o /usr/local/bin/landlock-abi /tmp/landlock-abi.c && rm /tmp/landlock-abi.c
+
+COPY doctor.sh /usr/local/bin/spike-doctor
+RUN chmod +x /usr/local/bin/spike-doctor
+
+ENV NONO_NO_UPDATE_CHECK=1
+
+# Drop root. Not only lint hygiene: devcroft runs as an unprivileged user, so
+# a confinement spike executed as root would be measuring a process that does
+# not resemble the one being designed for. The official rust image already
+# chmods CARGO_HOME and RUSTUP_HOME a+w, so the toolchain stays usable here.
+ARG USERNAME=vscode
+ARG USER_UID=1000
+ARG USER_GID=$USER_UID
+RUN groupadd --gid "$USER_GID" "$USERNAME" \
+    && useradd --uid "$USER_UID" --gid "$USER_GID" --create-home --shell /bin/bash "$USERNAME" \
+    # Pre-create the Claude config dir owned by the user. A named volume
+    # mounted over an existing path inherits that path's contents and
+    # ownership on first use, so this avoids needing sudo + chown at runtime
+    # just to make the mount writable.
+    && mkdir -p "/home/$USERNAME/.claude" \
+    && chown -R "$USER_UID:$USER_GID" "/home/$USERNAME"
+USER $USERNAME

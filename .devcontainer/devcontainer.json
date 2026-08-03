@@ -1,0 +1,41 @@
+{
+  "name": "devcroft — Linux/Landlock",
+  "build": { "dockerfile": "Dockerfile" },
+
+  // No security-opt relaxations on purpose. Creating a Landlock ruleset is an
+  // unprivileged operation, and it was verified to work here under the default
+  // seccomp profile (ABI 8). If a host's runtime does block the landlock_*
+  // syscalls, spike-doctor reports EPERM and names the flag to add — better
+  // than shipping a permanently weakened container for a problem this host
+  // does not have.
+
+  // Fails loudly if Landlock is not reachable, instead of letting the spike
+  // report a confinement result that the kernel never enforced.
+  "postCreateCommand": "spike-doctor",
+
+  "remoteUser": "vscode",
+
+  // The claude-code feature can bootstrap Node itself, but only best-effort
+  // and at 18.x; its own NOTES.md recommends declaring Node explicitly, which
+  // also keeps the version a decision rather than a fallback. Both are pinned
+  // for the same reason nono is: an image that drifts between rebuilds cannot
+  // support a spike whose whole output is "this worked at these versions".
+  "features": {
+    "ghcr.io/devcontainers/features/node:1": { "version": "lts" },
+    "ghcr.io/anthropics/devcontainer-features/claude-code:1.0.5": {}
+  },
+
+  // Keeps the login and session history across rebuilds. A named volume
+  // rather than a bind mount of the host's ~/.claude: the container gets its
+  // own credentials instead of read access to the host's.
+  "mounts": [
+    "source=devcroft-claude-home,target=/home/vscode/.claude,type=volume"
+  ],
+
+  "customizations": {
+    "vscode": {
+      "extensions": ["rust-lang.rust-analyzer"],
+      "settings": { "rust-analyzer.check.command": "clippy" }
+    }
+  }
+}
