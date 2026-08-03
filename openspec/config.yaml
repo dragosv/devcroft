@@ -1,0 +1,126 @@
+schema: spec-driven
+
+# Project context. Shown to AI when creating artifacts.
+context: |
+  ## Purpose
+
+  devcroft provides isolated, reproducible development environments built on
+  OS-level sandboxing (kernel primitives) instead of containers or VMs. It is
+  designed so that many environments — including fleets of coding agents — can
+  run in parallel on one host at near-zero marginal cost, sharing a single
+  content-addressed Nix store while each remains behind its own kernel-enforced
+  boundary. Every environment is reachable over SSH, so existing editors and
+  tools (VS Code Remote-SSH, Cursor, Zed, JetBrains Gateway, rsync) work
+  unchanged.
+
+  devcroft implements no isolation itself. It is a policy compiler, a
+  supervisor, and an SSH endpoint over existing sandbox backends.
+
+  ## Non-Goals
+
+  Rationale for every rejection below, plus the provider qualification test
+  and the honest list of gaps vs containers, lives in `docs/decisions.md`.
+
+  - Not a security boundary at the default `process` tier. Process-level
+    sandboxing protects against accidents and simple exfiltration. A real
+    boundary is available at the planned `hardened` tier (gVisor +
+    Landlock); claims are always tier-qualified, never blanket.
+  - Not a container or VM manager. If the user wants images, they should use
+    Dev Containers or Docker Sandboxes.
+  - No non-reproducible escape hatch. Every sandbox is backed by a
+    declarative environment; there is no host-passthrough provider. If the
+    project has no environment yet, the answer is `flox init`, not a
+    degraded mode.
+  - Not an agent orchestrator (no task queues, no agent lifecycle beyond the
+    sandbox process tree). Scheduling UX may come later; it is out of MVP scope.
+
+  ## Tech Stack
+
+  - Language: Rust (stable, edition 2024)
+  - Sandbox backend (MVP): nono (Landlock on Linux, Seatbelt on macOS)
+  - Env provider (MVP): flox — mandatory; reproducibility is a defining
+    property, so no host-passthrough provider exists
+  - Embedded SSH server: russh
+  - Config format: TOML (`devcroft.toml` at project root)
+  - State dir: `~/.local/state/devcroft/<name>/` (sockets, logs, pid)
+  - Data dir: `~/.local/share/devcroft/` (client keypair, host keys)
+
+  ## Project Conventions
+
+  - Binary name: `devcroft`. Crate may be published as `devcroft`.
+  - All subcommands accept an optional sandbox name; default is the sandbox
+    whose config root contains the current working directory.
+  - Errors name the failing layer explicitly (config | provider | backend |
+    keeper | ssh) so users can tell whose fault a denial is.
+  - Two-phase execution model, fixed and non-negotiable: provider
+    provisioning (package materialization, environment capture) runs
+    host-side at `up`, BEFORE sandbox restrictions, using the host's own
+    network — trusted because it executes pinned tooling from a lockfile,
+    not project code. Everything after restriction — sessions and hooks —
+    runs inside the boundary. The manifest's `[network]` and `[filesystem]`
+    sections govern runtime only, never provisioning.
+  - Degraded capabilities are surfaced, never silent: if a config aspect cannot
+    be enforced on the current host (e.g. domain-level network allowlists on
+    macOS), the CLI states it once at `up`.
+
+  ## Deferred (post-MVP, tracked but not specced here)
+
+  - Additional backends: MXC, microsandbox (msb), raw bwrap profiles.
+    gVisor and LiteBox are the candidate vehicles for the `hardened`
+    isolation tier (see `add-hardened-tier`).
+  - Provider roadmap, in order:
+    1. nix flakes (closure tier) — cheapest to implement: `nix develop` env
+       capture via `nix print-dev-env`, `flake.lock` staleness; large
+       audience of flake-only projects without flox on top
+    2. devbox (closure tier) — near-free trait validation: same store, same
+       pipeline as flox, different activation command and hashed files
+    3. mise (artifact tier) — see `add-mise-provider`: mandatory
+       `mise.lock`, devcroft-owned append-only data dir, tier surfaced in
+       `status`/`up`
+  - Qualified but unscheduled providers (meet the criteria — declarative
+    manifest, real lockfile, immutable-capable shared store, env-diff
+    capturable activation — but no committed order):
+    - devenv (closure tier; open question: its built-in services overlap
+      with devcroft hooks, ownership must be decided first)
+    - pixi (artifact tier; content-addressed package cache shareable
+      read-only, env lives under the project root; conda-heavy dependency
+      bundling makes it the closest artifact provider to closure behavior)
+    - hermit (artifact tier; repo-committed checksums, shared cache; small
+      niche that matches devcroft's profile exactly)
+  - Rejected providers and the six-criterion qualification test they fail:
+    see `docs/decisions.md` §1
+  - Isolation tiers: `process` (Landlock/Seatbelt — default, lowest
+    overhead, accident protection) vs `hardened` (gVisor or LiteBox, plus
+    Landlock; Linux only — real security boundary, syscall-overhead cost). Derived from the
+    backend, always user-visible, and every security claim is qualified by
+    it. See `add-hardened-tier`.
+  - Guarantee tiers: `closure` (Nix-based: identical behavior, transitive)
+    vs `artifact` (lockfile-based: identical downloaded artifacts, host-linked
+    runtime). Every provider maps to exactly one tier and the tier is always
+    user-visible.
+  - Linux namespace hardening for fleets (PID/mount/net namespaces over Landlock)
+  - Snapshot / rollback passthrough where the backend supports it
+  - Editor convenience commands (`devcroft code|cursor|zed`)
+  - Port forwarding management beyond SSH's own `-L`
+  - From the devcontainer feature triage:
+    - Service sidecars (postgres, redis) via provider service support
+      (flox `[services]`, devenv) supervised by the keeper
+    - Resource limits (cpu/mem) via cgroup v2 scope units on Linux — a real
+      class gap vs containers, stated honestly in the README until then
+    - Secret injection delegated to the backend's credential proxy (nono
+      phantom tokens), never via mounted files or plain env vars
+    - `init` templates; optional keeper idle auto-stop
+    - Docs note: `remote.SSH.defaultExtensions` covers VS Code extension
+      auto-install for all devcroft hosts
+  - Explicit non-equivalents and known gaps vs containers: see
+    `docs/decisions.md` §2 and §4
+
+# Per-artifact rules (optional)
+# Add custom rules for specific artifacts.
+# Example:
+#   rules:
+#     proposal:
+#       - Keep proposals under 500 words
+#       - Always include a "Non-goals" section
+#     tasks:
+#       - Break tasks into chunks of max 2 hours
