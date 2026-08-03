@@ -4,10 +4,10 @@ Ordered so the load-bearing risk (fd passing across sandbox application) is
 retired first, and every phase ends in something runnable.
 
 ## 1. Spike: prove the keeper trick (de-risk before building anything)
-- [ ] 1.1 Minimal Rust binary: create unix listener, exec under `nono run`
+- [x] 1.1 Minimal Rust binary: create unix listener, exec under `nono run`
       with fd inheritance, accept a connection post-restriction, fork a
       child, verify the child is inside the boundary (Linux/Landlock)
-- [ ] 1.2 Same spike on macOS/Seatbelt
+- [x] 1.2 Same spike on macOS/Seatbelt
 - [ ] 1.3 Decision record: fd passing vs socket-activation fallback; pin the
       tested nono version range
 
