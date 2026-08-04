@@ -12,7 +12,7 @@ retired first, and every phase ends in something runnable.
       tested nono version range
 
 ## 2. Config & policy
-- [ ] 2.1 Manifest schema (serde), discovery walk, validation with typo
+- [x] 2.1 Manifest schema (serde), discovery walk, validation with typo
       suggestions and name slug rules
 - [ ] 2.2 Policy compiler: manifest + baseline denials -> nono profile JSON,
       deterministic output, origin annotations
