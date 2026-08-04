@@ -139,6 +139,7 @@ pub enum ConfigError {
     UselessDeny {
         path: String,
     },
+    InvalidProvider(crate::provider::ProviderError),
 }
 
 impl fmt::Display for ConfigError {
@@ -169,6 +170,7 @@ impl fmt::Display for ConfigError {
                 f,
                 "`filesystem.deny` entry `{path}` is never granted by `allow` or `read`"
             ),
+            ConfigError::InvalidProvider(e) => write!(f, "{e}"),
         }
     }
 }
@@ -225,6 +227,8 @@ pub fn parse(text: &str) -> Result<(Manifest, Vec<Warning>), ConfigError> {
             name,
         });
     }
+
+    crate::provider::validate_provider(&raw.env.provider).map_err(ConfigError::InvalidProvider)?;
 
     validate::check_filesystem(&raw.filesystem)?;
 
@@ -315,7 +319,10 @@ mod tests {
             "#,
         )
         .unwrap();
-        assert_eq!(m.env.vars.get("ANYTHING_GOES").map(String::as_str), Some("1"));
+        assert_eq!(
+            m.env.vars.get("ANYTHING_GOES").map(String::as_str),
+            Some("1")
+        );
     }
 
     #[test]
@@ -388,7 +395,10 @@ mod tests {
             "#,
         )
         .unwrap();
-        assert_eq!(m.env.vars.get("TOKEN").map(String::as_str), Some("$HOST_TOKEN"));
+        assert_eq!(
+            m.env.vars.get("TOKEN").map(String::as_str),
+            Some("$HOST_TOKEN")
+        );
         assert!(warnings.contains(&Warning::NoInterpolation));
     }
 
@@ -406,5 +416,26 @@ mod tests {
         .unwrap();
         assert_eq!(m.network.default, NetworkDefault::Allow);
         assert_eq!(m.network.allow, vec!["github.com"]);
+    }
+
+    #[test]
+    fn host_provider_is_rejected_as_config_error() {
+        let err = parse("[sandbox]\nname = \"myproj\"\n[env]\nprovider = \"host\"\n").unwrap_err();
+        match err {
+            ConfigError::InvalidProvider(crate::provider::ProviderError::OutOfScope {
+                name,
+                ..
+            }) => assert_eq!(name, "host"),
+            other => panic!("expected InvalidProvider(OutOfScope), got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn mise_provider_is_rejected_as_not_yet_supported() {
+        let err = parse("[sandbox]\nname = \"myproj\"\n[env]\nprovider = \"mise\"\n").unwrap_err();
+        assert!(matches!(
+            err,
+            ConfigError::InvalidProvider(crate::provider::ProviderError::NotYetSupported { .. })
+        ));
     }
 }

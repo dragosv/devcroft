@@ -20,7 +20,7 @@ retired first, and every phase ends in something runnable.
 - [x] 2.4 Degraded-capability detection per host (network domain filtering)
 
 ## 3. Provider layer
-- [ ] 3.1 Provider trait; provider validation (reject `host`/`none`/version
+- [x] 3.1 Provider trait; provider validation (reject `host`/`none`/version
       managers with the reproducibility message)
 - [ ] 3.2 `flox` provider: activation env-diff capture, store-path grant
       injection, staleness detection (hash of manifest.toml + lockfile)
