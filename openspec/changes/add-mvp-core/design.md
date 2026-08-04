@@ -81,11 +81,33 @@ This is documented as a known limitation. The state-dir layout, socket
 naming, and keeper design are chosen so namespace hardening can be added
 later without breaking the CLI contract.
 
+## Decision 6: fd passing over socket-activation fallback (spike outcome)
+
+Tasks 1.1/1.2 built the minimal spike described in Decision 1 and ran it on
+both backends: a listener bound host-side, `FD_CLOEXEC` cleared, handed
+across `nono wrap`'s exec into the keeper, with a child forked post-restriction
+to confirm inheritance. All three required properties held on both
+platforms — the socket accepted a connection from an unconfined host-side
+client after restriction (P1/P2), and both the keeper and its child could
+read the granted path and were denied the ungranted one (P3).
+
+Direct fd inheritance across exec is therefore confirmed sufficient. The
+considered fallback — systemd socket activation (`LISTEN_FDS`/`LISTEN_PID`,
+handed off instead of passing a raw fd number via argv) — is rejected: it is
+systemd/Linux-only and would give the keeper a different startup protocol
+per platform, where argv-based fd passing already works identically on both.
+No fallback path is needed.
+
+Tested backend: `nono` 0.71.0 (`nono setup --check-only` confirms Landlock
+V6 on Linux; the same binary applies Seatbelt on macOS). Per the pre-1.0
+risk below, the pinned range for `doctor` and install docs is
+`>=0.71.0, <0.72.0` until re-verified against a newer minor.
+
 ## Risks
 
 - nono CLI/profile schema is pre-1.0 and moving; pin a tested version range,
-  fail `doctor` outside it.
+  fail `doctor` outside it. Pinned range: `>=0.71.0, <0.72.0` (Decision 6).
 - macOS Seatbelt cannot enforce domain-level network allowlists without a
   cooperative proxy; MVP surfaces this as a degraded capability at `up`.
-- fd passing across `nono run` re-exec must be verified on both platforms
-  early; it is the load-bearing trick of the whole design.
+- ~~fd passing across `nono run` re-exec must be verified on both platforms
+  early~~ — verified, see Decision 6.

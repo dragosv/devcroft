@@ -8,7 +8,7 @@ retired first, and every phase ends in something runnable.
       with fd inheritance, accept a connection post-restriction, fork a
       child, verify the child is inside the boundary (Linux/Landlock)
 - [x] 1.2 Same spike on macOS/Seatbelt
-- [ ] 1.3 Decision record: fd passing vs socket-activation fallback; pin the
+- [x] 1.3 Decision record: fd passing vs socket-activation fallback; pin the
       tested nono version range
 
 ## 2. Config & policy
