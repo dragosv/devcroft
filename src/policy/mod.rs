@@ -2,9 +2,11 @@
 //! into a nono profile: deterministic, and with every rule traceable back
 //! to the manifest key, provider, or baseline default that produced it.
 
+mod degraded;
 mod render;
 mod why;
 
+pub use degraded::{DegradedCapability, detect as detect_degraded};
 pub use render::render;
 pub use why::{Explanation, Op, WhyError, why_host, why_path};
 

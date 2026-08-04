@@ -17,7 +17,7 @@ retired first, and every phase ends in something runnable.
 - [x] 2.2 Policy compiler: manifest + baseline denials -> nono profile JSON,
       deterministic output, origin annotations
 - [x] 2.3 `policy --render`, `why` (delegating to `nono why`)
-- [ ] 2.4 Degraded-capability detection per host (network domain filtering)
+- [x] 2.4 Degraded-capability detection per host (network domain filtering)
 
 ## 3. Provider layer
 - [ ] 3.1 Provider trait; provider validation (reject `host`/`none`/version
