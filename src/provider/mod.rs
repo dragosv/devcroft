@@ -5,8 +5,10 @@
 //! `env.provider` against every other name devcroft is ever going to
 //! support, rejecting the rest up front with a message naming why.
 
+mod flox;
 mod validate;
 
+pub use flox::{FloxProvider, is_stale, manifest_fingerprint};
 pub use validate::validate_provider;
 
 use std::collections::BTreeMap;
@@ -43,8 +45,13 @@ pub enum ProviderError {
     NotYetSupported { name: String, reason: &'static str },
     /// `env.provider` names something devcroft has no record of at all.
     Unknown { name: String },
-    /// The provider's own resolution failed (missing binary, missing
-    /// environment, activation error).
+    /// The provider binary (e.g. `flox`) is not on `PATH`.
+    MissingBinary,
+    /// The project has no provider environment to activate (e.g. no
+    /// `.flox/`) — a missing environment, not a missing feature.
+    NoEnvironment,
+    /// The provider's own resolution failed (activation error, unreadable
+    /// manifest, etc).
     ResolutionFailed(String),
 }
 
@@ -66,6 +73,14 @@ impl fmt::Display for ProviderError {
                     "unknown provider `{name}`; devcroft supports `flox` in this release"
                 )
             }
+            ProviderError::MissingBinary => write!(
+                f,
+                "`flox` is not installed or not on PATH; run `devcroft doctor`"
+            ),
+            ProviderError::NoEnvironment => write!(
+                f,
+                "no flox environment found in this project; run `flox init`"
+            ),
             ProviderError::ResolutionFailed(msg) => write!(f, "provider resolution failed: {msg}"),
         }
     }

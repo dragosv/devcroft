@@ -22,7 +22,7 @@ retired first, and every phase ends in something runnable.
 ## 3. Provider layer
 - [x] 3.1 Provider trait; provider validation (reject `host`/`none`/version
       managers with the reproducibility message)
-- [ ] 3.2 `flox` provider: activation env-diff capture, store-path grant
+- [x] 3.2 `flox` provider: activation env-diff capture, store-path grant
       injection, staleness detection (hash of manifest.toml + lockfile)
 
 ## 4. Keeper & lifecycle

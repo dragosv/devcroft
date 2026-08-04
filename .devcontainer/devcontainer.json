@@ -13,6 +13,12 @@
   // report a confinement result that the kernel never enforced.
   "postCreateCommand": "spike-doctor",
 
+  // flox (task 3.2) needs nix-daemon running; there is no systemd here to
+  // supervise it, and it does not persist across container restarts, so
+  // start it explicitly on every boot. The `status` check keeps repeated
+  // starts quiet instead of erroring on an already-running daemon.
+  "postStartCommand": "sudo service nix-daemon status >/dev/null 2>&1 || sudo service nix-daemon start",
+
   "remoteUser": "vscode",
 
   // The claude-code feature can bootstrap Node itself, but only best-effort
