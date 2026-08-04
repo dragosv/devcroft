@@ -31,7 +31,9 @@ fn components(path: &str) -> (Root, Vec<&str>) {
     };
     (
         root,
-        rest.split('/').filter(|c| !c.is_empty() && *c != ".").collect(),
+        rest.split('/')
+            .filter(|c| !c.is_empty() && *c != ".")
+            .collect(),
     )
 }
 

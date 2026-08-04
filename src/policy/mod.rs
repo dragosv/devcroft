@@ -2,6 +2,12 @@
 //! into a nono profile: deterministic, and with every rule traceable back
 //! to the manifest key, provider, or baseline default that produced it.
 
+mod render;
+mod why;
+
+pub use render::render;
+pub use why::{Explanation, Op, WhyError, why_host, why_path};
+
 use crate::config::{Manifest, NetworkDefault};
 use crate::paths::{SENSITIVE_PATHS, is_within};
 use serde::Serialize;
@@ -133,9 +139,21 @@ impl CompiledPolicy {
                 name: self.sandbox_name.clone(),
             },
             filesystem: NonoFilesystem {
-                allow: self.filesystem_allow.iter().map(|a| a.value.clone()).collect(),
-                read: self.filesystem_read.iter().map(|a| a.value.clone()).collect(),
-                deny: self.filesystem_deny.iter().map(|a| a.value.clone()).collect(),
+                allow: self
+                    .filesystem_allow
+                    .iter()
+                    .map(|a| a.value.clone())
+                    .collect(),
+                read: self
+                    .filesystem_read
+                    .iter()
+                    .map(|a| a.value.clone())
+                    .collect(),
+                deny: self
+                    .filesystem_deny
+                    .iter()
+                    .map(|a| a.value.clone())
+                    .collect(),
             },
             network: NonoNetwork {
                 block: self.network_block,
@@ -197,10 +215,11 @@ mod tests {
         let (manifest, _) = parse("[sandbox]\nname = \"myproj\"\n").unwrap();
         let compiled = compile(&manifest);
 
-        assert!(compiled.filesystem_deny.contains(&AnnotatedValue::new(
-            DEVCROFT_DATA_DIR,
-            Origin::Baseline
-        )));
+        assert!(
+            compiled
+                .filesystem_deny
+                .contains(&AnnotatedValue::new(DEVCROFT_DATA_DIR, Origin::Baseline))
+        );
         for sensitive in SENSITIVE_PATHS {
             assert!(
                 compiled
@@ -231,10 +250,11 @@ mod tests {
                 .any(|d| d.value == "~/.ssh" && d.origin == Origin::Baseline)
         );
         // Data dir denial is unconditional regardless of what's granted.
-        assert!(compiled.filesystem_deny.contains(&AnnotatedValue::new(
-            DEVCROFT_DATA_DIR,
-            Origin::Baseline
-        )));
+        assert!(
+            compiled
+                .filesystem_deny
+                .contains(&AnnotatedValue::new(DEVCROFT_DATA_DIR, Origin::Baseline))
+        );
     }
 
     #[test]

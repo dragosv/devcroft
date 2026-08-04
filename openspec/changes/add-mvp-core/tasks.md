@@ -16,7 +16,7 @@ retired first, and every phase ends in something runnable.
       suggestions and name slug rules
 - [x] 2.2 Policy compiler: manifest + baseline denials -> nono profile JSON,
       deterministic output, origin annotations
-- [ ] 2.3 `policy --render`, `why` (delegating to `nono why`)
+- [x] 2.3 `policy --render`, `why` (delegating to `nono why`)
 - [ ] 2.4 Degraded-capability detection per host (network domain filtering)
 
 ## 3. Provider layer

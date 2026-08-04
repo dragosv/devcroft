@@ -69,7 +69,10 @@ pub fn check_filesystem(fs: &Filesystem) -> Result<(), ConfigError> {
 
 pub fn collect_warnings(env: &Env, filesystem: &Filesystem, warnings: &mut Vec<Warning>) {
     for path in &filesystem.allow {
-        if SENSITIVE_PATHS.iter().any(|sensitive| is_within(sensitive, path)) {
+        if SENSITIVE_PATHS
+            .iter()
+            .any(|sensitive| is_within(sensitive, path))
+        {
             warnings.push(Warning::SensitivePath {
                 field: "allow",
                 path: path.clone(),
