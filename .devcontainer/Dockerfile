@@ -5,6 +5,11 @@
 # is here to build devcroft itself, not nono.
 FROM rust:1.95-bookworm
 
+# The official image installs the minimal profile (rustc/cargo only, no
+# clippy/rustfmt). devcontainer.json runs rust-analyzer with
+# check.command = "clippy", so without this it fails on every file save.
+RUN rustup component add clippy rustfmt
+
 # nono's Homebrew formula marks pkgconf and rust as `=> :build`, but the
 # Linux dbus dependency carries no such marker — it is needed at runtime, so
 # the prebuilt binary needs the library even though we never compile nono.
