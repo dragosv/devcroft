@@ -21,6 +21,18 @@ const DEVCROFT_DATA_DIR: &str = "~/.local/share/devcroft";
 
 const NONO_SCHEMA_URI: &str = "https://nono.sh/schemas/nono-profile.schema.json";
 
+/// Every compiled profile extends nono's own `default` profile, which is
+/// where standard system read access (dynamic linker paths, `/usr`,
+/// `/bin`, ...) and its dangerous-command blocklist live. Without it a
+/// profile fed to nono can't exec anything at all — confirmed against a
+/// live nono 0.71.0: a from-scratch manifest with no `extends` denies
+/// even `/usr/bin/cat` (EPERM), and this shape is only accepted via
+/// `nono wrap -p <path>` (the named-profile schema, which supports
+/// `extends`), not `-c/--config` (a stricter, unrelated "capability
+/// manifest" schema requiring its own `version` field). `up` (task 4.2)
+/// must invoke nono with `-p`, never `-c`.
+const NONO_BASELINE_PROFILE: &str = "default";
+
 /// Where a compiled rule came from, rendered as `manifest:<key>`,
 /// `provider:<name>`, or `baseline`.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -137,6 +149,7 @@ impl CompiledPolicy {
     pub fn to_nono_profile(&self) -> NonoProfile {
         NonoProfile {
             schema: NONO_SCHEMA_URI,
+            extends: NONO_BASELINE_PROFILE,
             meta: NonoMeta {
                 name: self.sandbox_name.clone(),
             },
@@ -176,6 +189,7 @@ impl CompiledPolicy {
 pub struct NonoProfile {
     #[serde(rename = "$schema")]
     pub schema: &'static str,
+    pub extends: &'static str,
     pub meta: NonoMeta,
     pub filesystem: NonoFilesystem,
     pub network: NonoNetwork,
@@ -310,7 +324,69 @@ mod tests {
         let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
 
         assert_eq!(parsed["meta"]["name"], "myproj");
+        assert_eq!(parsed["extends"], "default");
         assert_eq!(parsed["network"]["block"], true);
         assert!(parsed["filesystem"]["deny"].as_array().unwrap().len() >= 5);
+    }
+
+    /// Best-effort: only runs where `nono` is installed (the devcontainer
+    /// provides it). Exercises the exact integration gap that motivated
+    /// `extends` above — a profile nono's own validator accepts and that
+    /// can actually execute something, not just JSON that looks plausible.
+    #[test]
+    fn compiled_profile_validates_and_executes_under_real_nono() {
+        if std::process::Command::new("nono")
+            .arg("--version")
+            .output()
+            .is_err()
+        {
+            return;
+        }
+        let dir =
+            std::env::temp_dir().join(format!("devcroft-policy-nono-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("f.txt"), "hi\n").unwrap();
+
+        let (manifest, _) = parse(&format!(
+            "[sandbox]\nname = \"nonocheck\"\n[filesystem]\nallow = [{:?}]\n",
+            dir.to_str().unwrap()
+        ))
+        .unwrap();
+        let profile_path = dir.join("profile.json");
+        std::fs::write(
+            &profile_path,
+            compile(&manifest).to_nono_profile().to_json(),
+        )
+        .unwrap();
+
+        let validate = std::process::Command::new("nono")
+            .arg("profile")
+            .arg("validate")
+            .arg(&profile_path)
+            .output()
+            .unwrap();
+        assert!(
+            validate.status.success(),
+            "nono profile validate failed: {}",
+            String::from_utf8_lossy(&validate.stderr)
+        );
+
+        let run = std::process::Command::new("nono")
+            .arg("wrap")
+            .arg("--silent")
+            .arg("-p")
+            .arg(&profile_path)
+            .arg("--")
+            .arg("cat")
+            .arg(dir.join("f.txt"))
+            .output()
+            .unwrap();
+        assert!(
+            run.status.success(),
+            "nono wrap -p <profile> failed: {}",
+            String::from_utf8_lossy(&run.stderr)
+        );
+        assert_eq!(String::from_utf8_lossy(&run.stdout), "hi\n");
     }
 }

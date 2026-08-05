@@ -28,7 +28,7 @@ retired first, and every phase ends in something runnable.
 ## 4. Keeper & lifecycle
 - [x] 4.1 Keeper main loop: spawn protocol over control socket (spawn,
       signal, resize, reap), session registry
-- [ ] 4.2 Supervisor: `up` (idempotent, recovery, --recreate), `down`, `rm`,
+- [x] 4.2 Supervisor: `up` (idempotent, recovery, --recreate), `down`, `rm`,
       pid/state management, grace-period termination
 - [ ] 4.3 `status`, `logs`, `ps`
 
