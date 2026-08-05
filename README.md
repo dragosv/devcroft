@@ -13,18 +13,18 @@ supervisor, and an SSH endpoint over existing sandbox backends.
 
 ## Status
 
-**MVP implementation underway — 11/25 tasks.** The fd-passing keeper trick
+**MVP implementation underway — 12/25 tasks.** The fd-passing keeper trick
 (spike binary, task group 1) is proven on both Linux/Landlock and
 macOS/Seatbelt; the config/policy compiler, the environment provider layer
 (`flox` resolution, task group 3), the keeper's spawn protocol (control
-socket, session registry, pty allocation — task 4.1), and the supervisor
+socket, session registry, pty allocation — task 4.1), the supervisor
 (`up`/`down`/`rm`, idempotent with crash recovery and `--recreate` — task
-4.2) are implemented and tested end to end against real `nono` and `flox`.
+4.2), and read-only sandbox introspection (`status`/`logs`/`ps` — task 4.3)
+are implemented and tested end to end against real `nono` and `flox`.
 There is still no user-facing `devcroft` CLI (only the hidden `__keeper`
-re-exec entrypoint `up` needs) and no SSH endpoint — those are task 4.3
-onward, task group 5, and task group 6. User-facing documentation is
-written at release (task 7.4); until then the specs are the source of
-truth.
+re-exec entrypoint `up` needs) and no SSH endpoint — those are task group 5
+onward and task group 6. User-facing documentation is written at release
+(task 7.4); until then the specs are the source of truth.
 
 | | |
 |---|---|
