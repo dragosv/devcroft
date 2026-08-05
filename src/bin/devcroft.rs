@@ -21,6 +21,7 @@ fn main() {
                 .expect("__keeper requires a listener fd argument");
             keeper_main(fd);
         }
+        Some("exec") => std::process::exit(cli_exec(&args[2..])),
         other => {
             eprintln!(
                 "devcroft: {} is not yet implemented (task group 7 wires up the CLI surface)",
@@ -29,6 +30,86 @@ fn main() {
             std::process::exit(2);
         }
     }
+}
+
+/// `devcroft exec [name] -- <cmd> [args...]` (task 5.1). No auto-up yet
+/// (task 5.3): if the sandbox isn't up, this reports it and exits rather
+/// than starting one. Returns the process exit code directly, matching
+/// the exec spec's "returns the command's exit code as its own" — the
+/// child's exit status is passed through as-is and deliberately does not
+/// follow CLAUDE.md's 0-5 layered contract, which is for devcroft's own
+/// failures, not what it's asked to run.
+fn cli_exec(args: &[String]) -> i32 {
+    const USAGE: &str = "devcroft exec: usage: devcroft exec [name] -- <cmd> [args...]";
+
+    let Some(sep) = args.iter().position(|a| a == "--") else {
+        eprintln!("{USAGE}");
+        return 2;
+    };
+    let (name_args, rest) = args.split_at(sep);
+    let command_args = &rest[1..];
+    if name_args.len() > 1 {
+        eprintln!("{USAGE}");
+        return 2;
+    }
+    let Some((cmd, cmd_rest)) = command_args.split_first() else {
+        eprintln!("devcroft exec: no command given after `--`");
+        return 2;
+    };
+
+    let cwd = match std::env::current_dir() {
+        Ok(dir) => dir,
+        Err(e) => {
+            eprintln!("devcroft exec: cannot determine current directory: {e}");
+            return 1;
+        }
+    };
+
+    let sandbox_name = match name_args.first() {
+        Some(name) => name.clone(),
+        None => match resolve_sandbox_name(&cwd) {
+            Ok(name) => name,
+            Err(msg) => {
+                eprintln!("devcroft exec: {msg}");
+                return 2;
+            }
+        },
+    };
+
+    // No path remapping between host and sandbox (design.md decision 5:
+    // MVP is access-restricted, not namespace-isolated) — the real host
+    // cwd is already the right path inside the sandbox too, which is
+    // exactly the exec spec's "Working directory mapping" scenario.
+    let req = devcroft::exec::ExecRequest {
+        cmd: cmd.clone(),
+        args: cmd_rest.to_vec(),
+        cwd: cwd.to_string_lossy().into_owned(),
+    };
+
+    match devcroft::exec::exec(&sandbox_name, &req) {
+        Ok(code) => code,
+        Err(e) => {
+            eprintln!("devcroft exec: {e}");
+            5 // keeper/connection layer, per CLAUDE.md's error contract
+        }
+    }
+}
+
+/// Ancestor-walks from `start` for `devcroft.toml` (config::discover) and
+/// returns the sandbox name it declares. The `cli` spec's full name
+/// resolution (disambiguation, listing known sandboxes on failure) is
+/// task group 7; this is the minimum `exec` needs to work without an
+/// explicit name.
+fn resolve_sandbox_name(start: &std::path::Path) -> Result<String, String> {
+    let manifest_path = devcroft::config::discover(start).map_err(|_| {
+        "no devcroft.toml found in this directory or its ancestors; pass a sandbox name explicitly"
+            .to_string()
+    })?;
+    let text = std::fs::read_to_string(&manifest_path)
+        .map_err(|e| format!("reading {}: {e}", manifest_path.display()))?;
+    let (manifest, _warnings) =
+        devcroft::config::parse(&text).map_err(|e| format!("{}: {e}", manifest_path.display()))?;
+    Ok(manifest.sandbox.name)
 }
 
 /// Runs post-restriction, inside the boundary `nono wrap` just applied

@@ -29,6 +29,37 @@ pub fn spawn(req: &SpawnRequest) -> io::Result<SpawnedSession> {
     }
 }
 
+/// Resets SIGINT/SIGQUIT/SIGTERM/SIGHUP to `SIG_DFL` *and* unblocks them,
+/// the same thing every job-control shell does before exec'ing a
+/// foreground command. Without this, whatever the keeper itself
+/// inherited — e.g. `SIG_IGN` disposition, or the signals sitting in its
+/// *blocked* mask — would leak into every spawned session. Both are
+/// inherited across fork/exec independently, and either one alone is
+/// enough to silently swallow forwarded signals the client explicitly
+/// asked to send (connection.rs's `Frame::Signal` -> `kill(-pgid, sig)`):
+/// a process with the disposition ignored just has the kernel drop the
+/// signal before delivery, and a process with it blocked has the kernel
+/// mark it pending forever since ordinary programs like `sleep` never
+/// unblock signals themselves — either way the process runs to
+/// completion oblivious to it. A non-interactive ancestor shell (CI
+/// runner, editor task, container entrypoint) commonly leaves both in
+/// this state for exactly this signal set.
+///
+/// SAFETY: `signal(3)` and `pthread_sigmask(3)` are async-signal-safe and
+/// only touch this (freshly forked, single-threaded, about to exec)
+/// child's own disposition table and mask.
+unsafe fn reset_forwarded_signal_dispositions() {
+    unsafe {
+        let mut set: libc::sigset_t = std::mem::zeroed();
+        libc::sigemptyset(&mut set);
+        for sig in [libc::SIGINT, libc::SIGQUIT, libc::SIGTERM, libc::SIGHUP] {
+            libc::signal(sig, libc::SIG_DFL);
+            libc::sigaddset(&mut set, sig);
+        }
+        libc::pthread_sigmask(libc::SIG_UNBLOCK, &set, std::ptr::null_mut());
+    }
+}
+
 fn spawn_piped(req: &SpawnRequest) -> io::Result<SpawnedSession> {
     let mut cmd = Command::new(&req.cmd);
     cmd.args(&req.args)
@@ -37,13 +68,15 @@ fn spawn_piped(req: &SpawnRequest) -> io::Result<SpawnedSession> {
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
-    // SAFETY: setpgid(0, 0) is async-signal-safe and touches only the
-    // child's own (freshly forked, single-threaded) process state.
+    // SAFETY: setpgid(0, 0) and signal(2, SIG_DFL) are async-signal-safe
+    // and touch only the child's own (freshly forked, single-threaded)
+    // process state.
     unsafe {
         cmd.pre_exec(|| {
             if libc::setpgid(0, 0) != 0 {
                 return Err(io::Error::last_os_error());
             }
+            reset_forwarded_signal_dispositions();
             Ok(())
         });
     }
@@ -105,6 +138,7 @@ fn spawn_pty(req: &SpawnRequest, size: &PtySize) -> io::Result<SpawnedSession> {
             if slave_fd > 2 {
                 libc::close(slave_fd);
             }
+            reset_forwarded_signal_dispositions();
             Ok(())
         });
     }

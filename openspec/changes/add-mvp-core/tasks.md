@@ -33,7 +33,7 @@ retired first, and every phase ends in something runnable.
 - [x] 4.3 `status`, `logs`, `ps`
 
 ## 5. Sessions
-- [ ] 5.1 `exec` with exit-code and cwd mapping
+- [x] 5.1 `exec` with exit-code and cwd mapping
 - [ ] 5.2 `shell` with pty, resize, signal forwarding, orphan reaping
 - [ ] 5.3 Auto-up on cold sandbox
 
