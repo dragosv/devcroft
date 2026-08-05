@@ -35,7 +35,7 @@ retired first, and every phase ends in something runnable.
 ## 5. Sessions
 - [x] 5.1 `exec` with exit-code and cwd mapping
 - [x] 5.2 `shell` with pty, resize, signal forwarding, orphan reaping
-- [ ] 5.3 Auto-up on cold sandbox
+- [x] 5.3 Auto-up on cold sandbox
 
 ## 6. SSH endpoint
 - [ ] 6.1 russh server in keeper on unix socket; publickey auth against the

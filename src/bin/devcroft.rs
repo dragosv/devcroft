@@ -33,15 +33,14 @@ fn main() {
     }
 }
 
-/// `devcroft exec [name] -- <cmd> [args...]` (task 5.1). No auto-up yet
-/// (task 5.3): if the sandbox isn't up, this reports it and exits rather
-/// than starting one. Returns the process exit code directly, matching
-/// the exec spec's "returns the command's exit code as its own" — the
-/// child's exit status is passed through as-is and deliberately does not
-/// follow CLAUDE.md's 0-5 layered contract, which is for devcroft's own
-/// failures, not what it's asked to run.
+/// `devcroft exec [--no-up] [name] -- <cmd> [args...]` (task 5.1, plus
+/// auto-up from task 5.3). Returns the process exit code directly,
+/// matching the exec spec's "returns the command's exit code as its
+/// own" — the child's exit status is passed through as-is and
+/// deliberately does not follow CLAUDE.md's 0-5 layered contract, which
+/// is for devcroft's own failures, not what it's asked to run.
 fn cli_exec(args: &[String]) -> i32 {
-    const USAGE: &str = "devcroft exec: usage: devcroft exec [name] -- <cmd> [args...]";
+    const USAGE: &str = "devcroft exec: usage: devcroft exec [--no-up] [name] -- <cmd> [args...]";
 
     let Some(sep) = args.iter().position(|a| a == "--") else {
         eprintln!("{USAGE}");
@@ -49,6 +48,12 @@ fn cli_exec(args: &[String]) -> i32 {
     };
     let (name_args, rest) = args.split_at(sep);
     let command_args = &rest[1..];
+    // `--no-up` only counts ahead of `--`: the exec spec's own command
+    // could legitimately want to pass that literal string to whatever
+    // it's running (`exec -- mytool --no-up`), so only the devcroft-level
+    // arguments before the separator are ever inspected for it.
+    let no_up = name_args.iter().any(|a| a == "--no-up");
+    let name_args: Vec<&String> = name_args.iter().filter(|a| *a != "--no-up").collect();
     if name_args.len() > 1 {
         eprintln!("{USAGE}");
         return 2;
@@ -67,7 +72,7 @@ fn cli_exec(args: &[String]) -> i32 {
     };
 
     let sandbox_name = match name_args.first() {
-        Some(name) => name.clone(),
+        Some(name) => (*name).clone(),
         None => match resolve_sandbox_name(&cwd) {
             Ok(name) => name,
             Err(msg) => {
@@ -76,6 +81,11 @@ fn cli_exec(args: &[String]) -> i32 {
             }
         },
     };
+
+    if !no_up && let Err(msg) = maybe_auto_up(&sandbox_name, &cwd) {
+        eprintln!("devcroft exec: {msg}");
+        return 3; // environment/provider layer, per CLAUDE.md's error contract
+    }
 
     // No path remapping between host and sandbox (design.md decision 5:
     // MVP is access-restricted, not namespace-isolated) — the real host
@@ -96,11 +106,13 @@ fn cli_exec(args: &[String]) -> i32 {
     }
 }
 
-/// `devcroft shell [name]` (task 5.2). Same no-auto-up posture as
-/// `cli_exec` (task 5.3 adds it for both).
+/// `devcroft shell [--no-up] [name]` (task 5.2, plus auto-up from task
+/// 5.3).
 fn cli_shell(args: &[String]) -> i32 {
-    const USAGE: &str = "devcroft shell: usage: devcroft shell [name]";
-    if args.len() > 1 {
+    const USAGE: &str = "devcroft shell: usage: devcroft shell [--no-up] [name]";
+    let no_up = args.iter().any(|a| a == "--no-up");
+    let name_args: Vec<&String> = args.iter().filter(|a| *a != "--no-up").collect();
+    if name_args.len() > 1 {
         eprintln!("{USAGE}");
         return 2;
     }
@@ -113,8 +125,8 @@ fn cli_shell(args: &[String]) -> i32 {
         }
     };
 
-    let sandbox_name = match args.first() {
-        Some(name) => name.clone(),
+    let sandbox_name = match name_args.first() {
+        Some(name) => (*name).clone(),
         None => match resolve_sandbox_name(&cwd) {
             Ok(name) => name,
             Err(msg) => {
@@ -123,6 +135,11 @@ fn cli_shell(args: &[String]) -> i32 {
             }
         },
     };
+
+    if !no_up && let Err(msg) = maybe_auto_up(&sandbox_name, &cwd) {
+        eprintln!("devcroft shell: {msg}");
+        return 3; // environment/provider layer, per CLAUDE.md's error contract
+    }
 
     let req = devcroft::exec::ShellRequest {
         cwd: cwd.to_string_lossy().into_owned(),
@@ -140,8 +157,8 @@ fn cli_shell(args: &[String]) -> i32 {
 /// Ancestor-walks from `start` for `devcroft.toml` (config::discover) and
 /// returns the sandbox name it declares. The `cli` spec's full name
 /// resolution (disambiguation, listing known sandboxes on failure) is
-/// task group 7; this is the minimum `exec` needs to work without an
-/// explicit name.
+/// task group 7; this is the minimum `exec`/`shell` need to work without
+/// an explicit name.
 fn resolve_sandbox_name(start: &std::path::Path) -> Result<String, String> {
     let manifest_path = devcroft::config::discover(start).map_err(|_| {
         "no devcroft.toml found in this directory or its ancestors; pass a sandbox name explicitly"
@@ -152,6 +169,55 @@ fn resolve_sandbox_name(start: &std::path::Path) -> Result<String, String> {
     let (manifest, _warnings) =
         devcroft::config::parse(&text).map_err(|e| format!("{}: {e}", manifest_path.display()))?;
     Ok(manifest.sandbox.name)
+}
+
+/// Auto-up convenience (exec spec, task 5.3): if `sandbox_name` isn't
+/// healthy, brings it up before the caller proceeds, printing a line
+/// first so its output precedes whatever `exec`/`shell` streams next
+/// (spec scenario: "the `up` output preceding the prompt"). Silent, and
+/// `Ok`, when the sandbox is already healthy *or* no manifest matching
+/// `sandbox_name` can be discovered from `cwd` — the latter just leaves
+/// `exec`/`shell` to fail with their own "not running" error afterward,
+/// same as before this existed. Only an attempted-and-failed `up` is
+/// reported as an error here.
+fn maybe_auto_up(sandbox_name: &str, cwd: &std::path::Path) -> Result<(), String> {
+    let paths = devcroft::lifecycle::StatePaths::new(sandbox_name)
+        .map_err(|e| format!("resolving state paths for '{sandbox_name}': {e}"))?;
+    let healthy = matches!(
+        devcroft::lifecycle::health(&paths)
+            .map_err(|e| format!("checking '{sandbox_name}' health: {e}"))?,
+        devcroft::lifecycle::Health::Healthy(_)
+    );
+    if healthy {
+        return Ok(());
+    }
+
+    let Ok(manifest_path) = devcroft::config::discover(cwd) else {
+        return Ok(());
+    };
+    let Ok(text) = std::fs::read_to_string(&manifest_path) else {
+        return Ok(());
+    };
+    let Ok((manifest, _warnings)) = devcroft::config::parse(&text) else {
+        return Ok(());
+    };
+    // The manifest found by walking up from `cwd` might not even be the
+    // one for the sandbox the user actually named — don't `up` an
+    // unrelated project just because its devcroft.toml happened to be
+    // the nearest one.
+    if manifest.sandbox.name != sandbox_name {
+        return Ok(());
+    }
+    let project_root = manifest_path.parent().unwrap_or(cwd);
+
+    eprintln!("devcroft: sandbox '{sandbox_name}' is not up; starting it...");
+    devcroft::lifecycle::up(
+        &manifest,
+        project_root,
+        &devcroft::lifecycle::UpOptions::default(),
+    )
+    .map(|_| ())
+    .map_err(|e| format!("starting sandbox '{sandbox_name}': {e}"))
 }
 
 /// Runs post-restriction, inside the boundary `nono wrap` just applied
