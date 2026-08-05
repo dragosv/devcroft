@@ -30,7 +30,7 @@ retired first, and every phase ends in something runnable.
       signal, resize, reap), session registry
 - [x] 4.2 Supervisor: `up` (idempotent, recovery, --recreate), `down`, `rm`,
       pid/state management, grace-period termination
-- [ ] 4.3 `status`, `logs`, `ps`
+- [x] 4.3 `status`, `logs`, `ps`
 
 ## 5. Sessions
 - [ ] 5.1 `exec` with exit-code and cwd mapping

@@ -100,6 +100,20 @@ pub fn up(
         .resolve(project_root)
         .map_err(UpError::Provider)?;
 
+    // Recorded now so `status` (task 4.3) can later tell whether the
+    // environment has drifted since this `up`, without needing the
+    // manifest or project root passed back in — the keeper itself is
+    // never told its own state dir, so it can't answer this either.
+    let env_fingerprint =
+        crate::provider::manifest_fingerprint(project_root).map_err(UpError::Provider)?;
+    state::write_meta(
+        &paths.meta,
+        &state::Meta {
+            project_root: project_root.to_string_lossy().into_owned(),
+            env_fingerprint,
+        },
+    )?;
+
     let mut profile = policy::compile(manifest).to_nono_profile();
     for grant in &resolution.read_only_grants {
         profile.filesystem.read.push(grant.clone());

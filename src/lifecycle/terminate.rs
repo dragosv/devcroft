@@ -89,13 +89,7 @@ mod tests {
         ));
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(&root).unwrap();
-        StatePaths {
-            socket: root.join("control.sock"),
-            pidfile: root.join("keeper.pid"),
-            profile: root.join("profile.json"),
-            log: root.join("keeper.log"),
-            root,
-        }
+        StatePaths::in_dir(root)
     }
 
     #[test]

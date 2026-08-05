@@ -28,6 +28,8 @@ const TAG_STDERR: u8 = 7;
 const TAG_RESIZE: u8 = 8;
 const TAG_SIGNAL: u8 = 9;
 const TAG_EXIT: u8 = 10;
+const TAG_QUERY: u8 = 11;
+const TAG_QUERY_RESULT: u8 = 12;
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 pub struct PtySize {
@@ -102,6 +104,30 @@ pub enum Frame {
     Signal(SessionSignal),
     /// Keeper -> client, terminal: the session's process has exited.
     Exit(ExitStatus),
+    /// Client -> keeper, must be the first frame on a connection (like
+    /// `Spawn`, but read-only): asks for keeper uptime and the live
+    /// session list, for `status`/`ps` (task 4.3). Never registers a
+    /// session; the keeper answers with `QueryResult` and the connection
+    /// ends there.
+    Query,
+    /// Keeper -> client, terminal: the answer to `Query`.
+    QueryResult(QueryResult),
+}
+
+/// One live session as reported by `Query`, projected from
+/// `keeper::registry::SessionInfo` (wire-friendly: a unix timestamp
+/// instead of `SystemTime`).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SessionSummary {
+    pub id: u64,
+    pub command: String,
+    pub started_unix: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct QueryResult {
+    pub uptime_secs: u64,
+    pub sessions: Vec<SessionSummary>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -144,6 +170,8 @@ pub fn read_frame<R: Read>(r: &mut R) -> io::Result<Frame> {
         TAG_RESIZE => Ok(Frame::Resize(from_json(&payload)?)),
         TAG_SIGNAL => Ok(Frame::Signal(from_json(&payload)?)),
         TAG_EXIT => Ok(Frame::Exit(from_json(&payload)?)),
+        TAG_QUERY => Ok(Frame::Query),
+        TAG_QUERY_RESULT => Ok(Frame::QueryResult(from_json(&payload)?)),
         other => Err(io::Error::new(
             io::ErrorKind::InvalidData,
             format!("unknown frame tag {other}"),
@@ -175,6 +203,8 @@ pub fn write_frame<W: Write>(w: &mut W, frame: &Frame) -> io::Result<()> {
         Frame::Resize(size) => write_json(w, TAG_RESIZE, size),
         Frame::Signal(sig) => write_json(w, TAG_SIGNAL, sig),
         Frame::Exit(status) => write_json(w, TAG_EXIT, status),
+        Frame::Query => write_raw(w, TAG_QUERY, &[]),
+        Frame::QueryResult(result) => write_json(w, TAG_QUERY_RESULT, result),
     }
 }
 
@@ -277,6 +307,25 @@ mod tests {
             Frame::Exit(ExitStatus {
                 code: Some(0),
                 signal: None
+            })
+        );
+        assert_eq!(roundtrip(Frame::Query), Frame::Query);
+        assert_eq!(
+            roundtrip(Frame::QueryResult(QueryResult {
+                uptime_secs: 3600,
+                sessions: vec![SessionSummary {
+                    id: 1,
+                    command: "sleep 100".to_string(),
+                    started_unix: 1_700_000_000,
+                }],
+            })),
+            Frame::QueryResult(QueryResult {
+                uptime_secs: 3600,
+                sessions: vec![SessionSummary {
+                    id: 1,
+                    command: "sleep 100".to_string(),
+                    started_unix: 1_700_000_000,
+                }],
             })
         );
     }

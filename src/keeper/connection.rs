@@ -11,9 +11,9 @@ use std::os::unix::process::ExitStatusExt;
 use std::sync::Arc;
 use std::sync::mpsc;
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant, UNIX_EPOCH};
 
-use super::protocol::{self, ExitStatus, Frame};
+use super::protocol::{self, ExitStatus, Frame, QueryResult, SessionSummary};
 use super::registry::Registry;
 use super::session;
 
@@ -22,11 +22,16 @@ pub const DEFAULT_GRACE_PERIOD: Duration = Duration::from_secs(2);
 /// Handles one connection with [`DEFAULT_GRACE_PERIOD`]. See
 /// [`handle_with_grace`] for the parameterized version tests use to keep
 /// the disconnect-escalation path fast.
-pub fn handle(stream: UnixStream, registry: Arc<Registry>) {
-    handle_with_grace(stream, registry, DEFAULT_GRACE_PERIOD);
+pub fn handle(stream: UnixStream, registry: Arc<Registry>, started: Instant) {
+    handle_with_grace(stream, registry, started, DEFAULT_GRACE_PERIOD);
 }
 
-pub fn handle_with_grace(stream: UnixStream, registry: Arc<Registry>, grace_period: Duration) {
+pub fn handle_with_grace(
+    stream: UnixStream,
+    registry: Arc<Registry>,
+    started: Instant,
+    grace_period: Duration,
+) {
     let mut read_half = match stream.try_clone() {
         Ok(s) => s,
         Err(_) => return,
@@ -39,12 +44,36 @@ pub fn handle_with_grace(stream: UnixStream, registry: Arc<Registry>, grace_peri
 
     let spawn_req = match protocol::read_frame(&mut read_half) {
         Ok(Frame::Spawn(req)) => req,
+        Ok(Frame::Query) => {
+            let sessions = registry
+                .snapshot()
+                .into_iter()
+                .map(|(id, info)| SessionSummary {
+                    id,
+                    command: info.command,
+                    started_unix: info
+                        .started
+                        .duration_since(UNIX_EPOCH)
+                        .map(|d| d.as_secs())
+                        .unwrap_or(0),
+                })
+                .collect();
+            let mut w = write_half;
+            let _ = protocol::write_frame(
+                &mut w,
+                &Frame::QueryResult(QueryResult {
+                    uptime_secs: started.elapsed().as_secs(),
+                    sessions,
+                }),
+            );
+            return;
+        }
         Ok(_) => {
             let mut w = write_half;
             let _ = protocol::write_frame(
                 &mut w,
                 &Frame::SpawnErr {
-                    message: "expected Spawn as the first frame".to_string(),
+                    message: "expected Spawn or Query as the first frame".to_string(),
                 },
             );
             return;
@@ -67,7 +96,12 @@ pub fn handle_with_grace(stream: UnixStream, registry: Arc<Registry>, grace_peri
     };
 
     let command = describe(&spawn_req);
-    let session_id = registry.insert(spawned.pgid, command);
+    let session_id = registry.insert(spawned.pgid, command.clone());
+    eprintln!(
+        "{} spawn session={session_id} pgid={} command={command:?}",
+        log_timestamp(),
+        spawned.pgid
+    );
 
     // Every outbound frame — SpawnOk included — flows through this one
     // channel/thread so there is a single writer for the connection's
@@ -118,6 +152,12 @@ pub fn handle_with_grace(stream: UnixStream, registry: Arc<Registry>, grace_peri
             }
             let status = to_exit_status(child.wait());
             registry.remove(session_id);
+            eprintln!(
+                "{} exit session={session_id} code={:?} signal={:?}",
+                log_timestamp(),
+                status.code,
+                status.signal
+            );
             let _ = tx.send(Frame::Exit(status));
         })
     };
@@ -204,6 +244,27 @@ fn to_exit_status(result: std::io::Result<std::process::ExitStatus>) -> ExitStat
     }
 }
 
+/// UTC `YYYY-MM-DDTHH:MM:SSZ`, for the spawn/exit lines `logs` (task 4.3)
+/// reads back out of the keeper's own stdout/stderr (redirected to
+/// `paths.log` by `up`). No time-formatting crate is vendored in this
+/// workspace, and `libc::gmtime_r` is all a plain UTC stamp needs.
+fn log_timestamp() -> String {
+    let now = unsafe { libc::time(std::ptr::null_mut()) };
+    let mut tm: libc::tm = unsafe { std::mem::zeroed() };
+    unsafe {
+        libc::gmtime_r(&now, &mut tm);
+    }
+    format!(
+        "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}Z",
+        tm.tm_year + 1900,
+        tm.tm_mon + 1,
+        tm.tm_mday,
+        tm.tm_hour,
+        tm.tm_min,
+        tm.tm_sec
+    )
+}
+
 fn describe(req: &protocol::SpawnRequest) -> String {
     if req.args.is_empty() {
         req.cmd.clone()
@@ -254,7 +315,7 @@ mod tests {
         let registry = Arc::new(Registry::new());
         let conn_thread = {
             let registry = Arc::clone(&registry);
-            thread::spawn(move || handle(server, registry))
+            thread::spawn(move || handle(server, registry, Instant::now()))
         };
 
         protocol::write_frame(&mut client, &Frame::Spawn(spawn_request("cat", &[], None))).unwrap();
@@ -279,7 +340,7 @@ mod tests {
         let registry = Arc::new(Registry::new());
         let conn_thread = {
             let registry = Arc::clone(&registry);
-            thread::spawn(move || handle(server, registry))
+            thread::spawn(move || handle(server, registry, Instant::now()))
         };
 
         let req = spawn_request(
@@ -307,7 +368,7 @@ mod tests {
         let registry = Arc::new(Registry::new());
         let conn_thread = {
             let registry = Arc::clone(&registry);
-            thread::spawn(move || handle(server, registry))
+            thread::spawn(move || handle(server, registry, Instant::now()))
         };
 
         protocol::write_frame(
@@ -333,7 +394,9 @@ mod tests {
         let registry = Arc::new(Registry::new());
         let conn_thread = {
             let registry = Arc::clone(&registry);
-            thread::spawn(move || handle_with_grace(server, registry, Duration::from_millis(150)))
+            thread::spawn(move || {
+                handle_with_grace(server, registry, Instant::now(), Duration::from_millis(150))
+            })
         };
 
         protocol::write_frame(
@@ -354,5 +417,30 @@ mod tests {
             start.elapsed()
         );
         assert!(!registry.contains(session_id));
+    }
+
+    #[test]
+    fn query_reports_uptime_and_live_sessions_without_registering_one() {
+        let (mut client, server) = UnixStream::pair().unwrap();
+        let registry = Arc::new(Registry::new());
+        let started = Instant::now() - Duration::from_secs(5);
+        let conn_thread = {
+            let registry = Arc::clone(&registry);
+            thread::spawn(move || handle(server, registry, started))
+        };
+
+        protocol::write_frame(&mut client, &Frame::Query).unwrap();
+        match protocol::read_frame(&mut client).unwrap() {
+            Frame::QueryResult(result) => {
+                assert!(result.uptime_secs >= 5);
+                assert!(result.sessions.is_empty());
+            }
+            other => panic!("expected QueryResult, got {other:?}"),
+        }
+
+        drop(client);
+        conn_thread.join().unwrap();
+        // A Query must never register a session.
+        assert_eq!(registry.len(), 0);
     }
 }

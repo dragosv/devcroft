@@ -17,17 +17,21 @@ mod session;
 
 pub mod protocol;
 
-pub use protocol::{ExitStatus, Frame, PtySize, SessionSignal, SpawnRequest};
+pub use protocol::{
+    ExitStatus, Frame, PtySize, QueryResult, SessionSignal, SessionSummary, SpawnRequest,
+};
 pub use registry::{Registry, SessionInfo};
 
 use std::io;
 use std::os::unix::net::UnixListener;
 use std::sync::Arc;
 use std::thread;
+use std::time::Instant;
 
 pub struct Keeper {
     listener: UnixListener,
     registry: Arc<Registry>,
+    started: Instant,
 }
 
 impl Keeper {
@@ -35,6 +39,7 @@ impl Keeper {
         Self {
             listener,
             registry: Arc::new(Registry::new()),
+            started: Instant::now(),
         }
     }
 
@@ -44,14 +49,16 @@ impl Keeper {
         &self.registry
     }
 
-    /// Serves forever: one accepted connection is one session, start to
+    /// Serves forever: one accepted connection is either a `Query` (task
+    /// 4.3's `status`/`ps`, answered directly) or a session, start to
     /// reap, handled entirely on its own thread (connection.rs). Only
     /// returns if `accept` itself fails.
     pub fn serve(&self) -> io::Result<()> {
         loop {
             let (stream, _) = self.listener.accept()?;
             let registry = Arc::clone(&self.registry);
-            thread::spawn(move || connection::handle(stream, registry));
+            let started = self.started;
+            thread::spawn(move || connection::handle(stream, registry, started));
         }
     }
 }

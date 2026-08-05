@@ -2,6 +2,7 @@
 //! Everything here is pure filesystem/process bookkeeping — `up.rs` is
 //! where it gets composed into the actual supervisor sequence.
 
+use serde::{Deserialize, Serialize};
 use std::io;
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
@@ -15,25 +16,65 @@ pub struct StatePaths {
     pub pidfile: PathBuf,
     pub profile: PathBuf,
     pub log: PathBuf,
+    pub meta: PathBuf,
 }
 
 impl StatePaths {
     pub fn new(sandbox_name: &str) -> io::Result<Self> {
-        let root = data_dir()?.join(sandbox_name);
-        Ok(StatePaths {
+        Ok(Self::in_dir(data_dir()?.join(sandbox_name)))
+    }
+
+    /// Builds every path under a given root. `new` is the production
+    /// entrypoint (root derived from `$HOME`); tests use this directly to
+    /// point at a scratch dir without needing a struct literal repeated
+    /// per file or touching the real `HOME`-derived data dir.
+    pub fn in_dir(root: PathBuf) -> Self {
+        StatePaths {
             socket: root.join("control.sock"),
             pidfile: root.join("keeper.pid"),
             profile: root.join("profile.json"),
             log: root.join("keeper.log"),
+            meta: root.join("meta.json"),
             root,
-        })
+        }
     }
 }
 
-fn data_dir() -> io::Result<PathBuf> {
+/// The `~/.local/share/devcroft` root all sandboxes live under.
+/// `pub(super)` so `ps` (status.rs) can enumerate every sandbox directory
+/// — the one thing that needs the root itself rather than one sandbox's
+/// path under it.
+pub(super) fn data_dir() -> io::Result<PathBuf> {
     let home = std::env::var("HOME")
         .map_err(|_| io::Error::new(io::ErrorKind::NotFound, "HOME is not set"))?;
     Ok(PathBuf::from(home).join(".local/share/devcroft"))
+}
+
+/// Recorded at `up`, alongside the compiled profile: what `status`/`ps`
+/// (task 4.3) need but can't ask the keeper for — the project root (the
+/// keeper itself is never told its own state dir) and the environment
+/// fingerprint from that `up`, for `provider::is_stale` to compare
+/// against the environment's current fingerprint.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Meta {
+    pub project_root: String,
+    pub env_fingerprint: String,
+}
+
+pub fn write_meta(path: &Path, meta: &Meta) -> io::Result<()> {
+    let json = serde_json::to_string_pretty(meta)
+        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+    std::fs::write(path, json)
+}
+
+pub fn read_meta(path: &Path) -> io::Result<Option<Meta>> {
+    match std::fs::read_to_string(path) {
+        Ok(s) => serde_json::from_str(&s)
+            .map(Some)
+            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e)),
+        Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(e),
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -124,24 +165,23 @@ mod tests {
     use super::*;
     use std::os::unix::net::UnixListener;
 
-    fn tempdir(name: &str) -> PathBuf {
+    fn tempdir(name: &str) -> StatePaths {
         let dir = std::env::temp_dir().join(format!(
             "devcroft-lifecycle-state-test-{name}-{}",
             std::process::id()
         ));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
-        dir
+        StatePaths::in_dir(dir)
     }
 
     #[test]
     fn pidfile_roundtrips() {
-        let dir = tempdir("pidfile-roundtrip");
-        let path = dir.join("keeper.pid");
-        assert_eq!(read_pidfile(&path).unwrap(), None);
+        let paths = tempdir("pidfile-roundtrip");
+        assert_eq!(read_pidfile(&paths.pidfile).unwrap(), None);
 
-        write_pidfile(&path, 4242).unwrap();
-        assert_eq!(read_pidfile(&path).unwrap(), Some(4242));
+        write_pidfile(&paths.pidfile, 4242).unwrap();
+        assert_eq!(read_pidfile(&paths.pidfile).unwrap(), Some(4242));
     }
 
     #[test]
@@ -155,28 +195,27 @@ mod tests {
     }
 
     #[test]
-    fn health_is_none_without_a_pidfile() {
-        let dir = tempdir("health-none");
-        let paths = StatePaths {
-            socket: dir.join("control.sock"),
-            pidfile: dir.join("keeper.pid"),
-            profile: dir.join("profile.json"),
-            log: dir.join("keeper.log"),
-            root: dir,
+    fn meta_roundtrips() {
+        let paths = tempdir("meta-roundtrip");
+        assert_eq!(read_meta(&paths.meta).unwrap(), None);
+
+        let meta = Meta {
+            project_root: "/proj".to_string(),
+            env_fingerprint: "abc123".to_string(),
         };
+        write_meta(&paths.meta, &meta).unwrap();
+        assert_eq!(read_meta(&paths.meta).unwrap(), Some(meta));
+    }
+
+    #[test]
+    fn health_is_none_without_a_pidfile() {
+        let paths = tempdir("health-none");
         assert_eq!(health(&paths).unwrap(), Health::None);
     }
 
     #[test]
     fn health_is_stale_when_pid_is_dead() {
-        let dir = tempdir("health-stale-dead-pid");
-        let paths = StatePaths {
-            socket: dir.join("control.sock"),
-            pidfile: dir.join("keeper.pid"),
-            profile: dir.join("profile.json"),
-            log: dir.join("keeper.log"),
-            root: dir,
-        };
+        let paths = tempdir("health-stale-dead-pid");
         let mut child = std::process::Command::new("true").spawn().unwrap();
         let dead_pid = child.id() as libc::pid_t;
         child.wait().unwrap();
@@ -187,14 +226,7 @@ mod tests {
 
     #[test]
     fn health_is_stale_when_pid_alive_but_socket_unresponsive() {
-        let dir = tempdir("health-stale-orphan-socket");
-        let paths = StatePaths {
-            socket: dir.join("control.sock"), // nothing ever binds this
-            pidfile: dir.join("keeper.pid"),
-            profile: dir.join("profile.json"),
-            log: dir.join("keeper.log"),
-            root: dir,
-        };
+        let paths = tempdir("health-stale-orphan-socket"); // socket never bound
         write_pidfile(&paths.pidfile, std::process::id() as libc::pid_t).unwrap();
 
         assert_eq!(
@@ -205,14 +237,7 @@ mod tests {
 
     #[test]
     fn health_is_healthy_when_pid_alive_and_socket_accepts() {
-        let dir = tempdir("health-healthy");
-        let paths = StatePaths {
-            socket: dir.join("control.sock"),
-            pidfile: dir.join("keeper.pid"),
-            profile: dir.join("profile.json"),
-            log: dir.join("keeper.log"),
-            root: dir,
-        };
+        let paths = tempdir("health-healthy");
         let _listener = UnixListener::bind(&paths.socket).unwrap();
         write_pidfile(&paths.pidfile, std::process::id() as libc::pid_t).unwrap();
 
@@ -224,14 +249,7 @@ mod tests {
 
     #[test]
     fn clear_runtime_state_removes_pidfile_and_socket_but_keeps_profile() {
-        let dir = tempdir("clear-runtime-state");
-        let paths = StatePaths {
-            socket: dir.join("control.sock"),
-            pidfile: dir.join("keeper.pid"),
-            profile: dir.join("profile.json"),
-            log: dir.join("keeper.log"),
-            root: dir,
-        };
+        let paths = tempdir("clear-runtime-state");
         write_pidfile(&paths.pidfile, 1234).unwrap();
         let _listener = UnixListener::bind(&paths.socket).unwrap();
         std::fs::write(&paths.profile, "{}").unwrap();
