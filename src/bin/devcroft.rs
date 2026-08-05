@@ -22,6 +22,7 @@ fn main() {
             keeper_main(fd);
         }
         Some("exec") => std::process::exit(cli_exec(&args[2..])),
+        Some("shell") => std::process::exit(cli_shell(&args[2..])),
         other => {
             eprintln!(
                 "devcroft: {} is not yet implemented (task group 7 wires up the CLI surface)",
@@ -90,6 +91,47 @@ fn cli_exec(args: &[String]) -> i32 {
         Ok(code) => code,
         Err(e) => {
             eprintln!("devcroft exec: {e}");
+            5 // keeper/connection layer, per CLAUDE.md's error contract
+        }
+    }
+}
+
+/// `devcroft shell [name]` (task 5.2). Same no-auto-up posture as
+/// `cli_exec` (task 5.3 adds it for both).
+fn cli_shell(args: &[String]) -> i32 {
+    const USAGE: &str = "devcroft shell: usage: devcroft shell [name]";
+    if args.len() > 1 {
+        eprintln!("{USAGE}");
+        return 2;
+    }
+
+    let cwd = match std::env::current_dir() {
+        Ok(dir) => dir,
+        Err(e) => {
+            eprintln!("devcroft shell: cannot determine current directory: {e}");
+            return 1;
+        }
+    };
+
+    let sandbox_name = match args.first() {
+        Some(name) => name.clone(),
+        None => match resolve_sandbox_name(&cwd) {
+            Ok(name) => name,
+            Err(msg) => {
+                eprintln!("devcroft shell: {msg}");
+                return 2;
+            }
+        },
+    };
+
+    let req = devcroft::exec::ShellRequest {
+        cwd: cwd.to_string_lossy().into_owned(),
+    };
+
+    match devcroft::exec::shell(&sandbox_name, &req) {
+        Ok(code) => code,
+        Err(e) => {
+            eprintln!("devcroft shell: {e}");
             5 // keeper/connection layer, per CLAUDE.md's error contract
         }
     }

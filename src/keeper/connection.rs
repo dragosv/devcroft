@@ -362,6 +362,48 @@ mod tests {
         conn_thread.join().unwrap();
     }
 
+    /// exec spec's "resize propagation" scenario, at the wire-protocol
+    /// level: a `Resize` frame sent mid-session is applied (`pty::resize`,
+    /// directly unit-tested in `pty.rs`, does the actual `TIOCSWINSZ`) and
+    /// doesn't disrupt the session — output still streams and `Exit`
+    /// still arrives normally.
+    #[test]
+    fn resize_frame_mid_session_does_not_disrupt_the_session() {
+        let (mut client, server) = UnixStream::pair().unwrap();
+        let registry = Arc::new(Registry::new());
+        let conn_thread = {
+            let registry = Arc::clone(&registry);
+            thread::spawn(move || handle(server, registry, Instant::now()))
+        };
+
+        let req = spawn_request(
+            "sh",
+            &["-c", "sleep 1; echo resized-session-done"],
+            Some(PtySize { rows: 24, cols: 80 }),
+        );
+        protocol::write_frame(&mut client, &Frame::Spawn(req)).unwrap();
+        expect_spawn_ok(&mut client);
+
+        protocol::write_frame(
+            &mut client,
+            &Frame::Resize(PtySize {
+                rows: 40,
+                cols: 100,
+            }),
+        )
+        .unwrap();
+
+        let (out, status) = read_until_exit(&mut client);
+        assert!(
+            String::from_utf8_lossy(&out).contains("resized-session-done"),
+            "expected the session to keep running after a resize, got {out:?}"
+        );
+        assert_eq!(status.code, Some(0));
+
+        drop(client);
+        conn_thread.join().unwrap();
+    }
+
     #[test]
     fn signal_forwarding_terminates_child_with_signal() {
         let (mut client, server) = UnixStream::pair().unwrap();
