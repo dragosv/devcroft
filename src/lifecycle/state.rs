@@ -17,6 +17,18 @@ pub struct StatePaths {
     pub profile: PathBuf,
     pub log: PathBuf,
     pub meta: PathBuf,
+    /// The ssh spec's embedded server socket: mode 0600, inside this
+    /// (mode 0700 — see [`Self::new`]) state dir. Bound host-side and fd-
+    /// inherited by the keeper, same as `socket` above — never read back
+    /// off disk by the keeper itself.
+    pub ssh_socket: PathBuf,
+    /// The ssh spec's per-sandbox *ephemeral* host key: regenerated every
+    /// `up`, never reused across them. Written here for at-rest storage,
+    /// but — like every other file in this baseline-denied tree (see
+    /// `policy::DEVCROFT_DATA_DIR`) — the keeper cannot read it back
+    /// either; `up` passes the key material down directly instead (see
+    /// `ssh::keys` and `up.rs`).
+    pub ssh_host_key: PathBuf,
 }
 
 impl StatePaths {
@@ -35,9 +47,20 @@ impl StatePaths {
             profile: root.join("profile.json"),
             log: root.join("keeper.log"),
             meta: root.join("meta.json"),
+            ssh_socket: root.join("ssh.sock"),
+            ssh_host_key: root.join("ssh_host_ed25519_key"),
             root,
         }
     }
+}
+
+/// Where the client ed25519 keypair lives (ssh spec's "Key management"
+/// requirement): a sibling of every sandbox's own state dir, under the
+/// same data dir, rather than inside any one of them — the same keypair
+/// authenticates to every sandbox, so it isn't owned by one.
+pub fn client_key_paths() -> io::Result<(PathBuf, PathBuf)> {
+    let dir = data_dir()?;
+    Ok((dir.join("id_ed25519"), dir.join("id_ed25519.pub")))
 }
 
 /// The `~/.local/share/devcroft` root all sandboxes live under.

@@ -13,7 +13,7 @@ supervisor, and an SSH endpoint over existing sandbox backends.
 
 ## Status
 
-**MVP implementation underway — 15/25 tasks.** The fd-passing keeper trick
+**MVP implementation underway — 16/25 tasks.** The fd-passing keeper trick
 (spike binary, task group 1) is proven on both Linux/Landlock and
 macOS/Seatbelt; the config/policy compiler, the environment provider layer
 (`flox` resolution, task group 3), the keeper's spawn protocol (control
@@ -25,10 +25,17 @@ propagation, cwd mapping, and signal forwarding (5.1); interactive `shell`
 with a real pty, resize propagation, and a `$SHELL`-then-`/bin/sh` fallback
 (5.2); and auto-up (`exec`/`shell` bring a cold sandbox up themselves unless
 `--no-up`, 5.3) — are implemented and tested end to end against real `nono`
-and `flox`. There is still no SSH endpoint (task group 6) and no `up`/`down`
-CLI surface itself yet — auto-up calls the `lifecycle::up` library function
-directly, since dedicated CLI commands for it are task group 7. User-facing
-documentation is written at release (task 7.4); until then the specs are
+and `flox`. An SSH server (russh) is now embedded in the keeper too (task
+6.1): a second unix socket, mode 0600 in the state dir's mode 0700, bound
+host-side and fd-passed the same way the control socket is; publickey auth
+against the devcroft client keypair (generated on first use); a fresh
+ephemeral host key per `up`. No TCP is bound. There is no `proxy`/`ssh-config`
+CLI yet, and an authenticated connection can't open a channel yet either
+(exec/pty/sftp/forwarding — task 6.3) — that's the rest of task group 6.
+There is also still no `up`/`down` CLI surface itself — auto-up calls the
+`lifecycle::up` library function directly, since dedicated CLI commands for
+it are task group 7. User-facing documentation is written at release (task
+7.4); until then the specs are
 the source of truth.
 
 | | |

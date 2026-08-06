@@ -18,8 +18,12 @@ fn main() {
             let fd: RawFd = args
                 .get(2)
                 .and_then(|s| s.parse().ok())
-                .expect("__keeper requires a listener fd argument");
-            keeper_main(fd);
+                .expect("__keeper requires a control-socket fd argument");
+            let ssh_fd: RawFd = args
+                .get(3)
+                .and_then(|s| s.parse().ok())
+                .expect("__keeper requires an ssh-socket fd argument");
+            keeper_main(fd, ssh_fd);
         }
         Some("exec") => std::process::exit(cli_exec(&args[2..])),
         Some("shell") => std::process::exit(cli_shell(&args[2..])),
@@ -225,13 +229,32 @@ fn maybe_auto_up(sandbox_name: &str, cwd: &std::path::Path) -> Result<(), String
 /// by `up`, before restriction, and inherited across nono's exec — this
 /// is the load-bearing trick the task 1.1/1.2 spike proved out). Never
 /// returns under normal operation.
-fn keeper_main(fd: RawFd) -> ! {
-    // SAFETY: `up` created this listener before restriction, cleared its
-    // FD_CLOEXEC, and passed the fd number as this process's argv — it is
-    // ours alone to take ownership of.
+fn keeper_main(fd: RawFd, ssh_fd: RawFd) -> ! {
+    // SAFETY: `up` created both listeners before restriction, cleared
+    // their FD_CLOEXEC, and passed the fd numbers as this process's argv
+    // — they are ours alone to take ownership of.
     let listener = unsafe { UnixListener::from_raw_fd(fd) };
+    let ssh_listener = unsafe { UnixListener::from_raw_fd(ssh_fd) };
+
     let keeper = Keeper::new(listener);
+    // Must run before anything else spawns a thread — including the ssh
+    // server below, whose tokio runtime spawns its own worker-thread pool
+    // immediately. `install_shutdown_handler` blocks SIGTERM/SIGINT/
+    // SIGHUP on *this* thread specifically so every thread created after
+    // it inherits that block; a thread created before it would inherit
+    // the signals unblocked instead, and a `SIGTERM` sent to the process
+    // could then land on that thread and kill it via the kernel's default
+    // disposition before the graceful-shutdown logic below ever runs —
+    // exactly what broke `down`'s "terminate live sessions" guarantee the
+    // first time ssh startup was ordered ahead of this.
     install_shutdown_handler(Arc::clone(keeper.registry()));
+
+    // Best-effort (task 6.1): a broken ssh handoff logs to this process's
+    // own stderr (redirected by `up` to `<state>/<name>/keeper.log`) and
+    // leaves ssh unavailable for this sandbox rather than taking the
+    // whole keeper down — exec/shell must keep working regardless.
+    devcroft::ssh::start_from_env(ssh_listener);
+
     let _ = keeper.serve();
     std::process::exit(0);
 }

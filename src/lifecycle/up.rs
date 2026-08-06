@@ -7,6 +7,7 @@
 use std::fmt;
 use std::io;
 use std::os::fd::{AsRawFd, RawFd};
+use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
@@ -47,6 +48,12 @@ pub enum UpError {
     State(io::Error),
     Provider(ProviderError),
     Keeper(String),
+    /// CLAUDE.md's error contract names `ssh` as its own layer; key
+    /// generation/resolution failures (task 6.1) land here rather than
+    /// `Keeper`, even though both currently surface through the same
+    /// exit code (keeper/connection, 5) until task group 7 wires up a
+    /// dedicated CLI.
+    Ssh(String),
 }
 
 impl From<io::Error> for UpError {
@@ -61,6 +68,7 @@ impl fmt::Display for UpError {
             UpError::State(e) => write!(f, "state: {e}"),
             UpError::Provider(e) => write!(f, "provider: {e}"),
             UpError::Keeper(msg) => write!(f, "keeper: {msg}"),
+            UpError::Ssh(msg) => write!(f, "ssh: {msg}"),
         }
     }
 }
@@ -91,7 +99,14 @@ pub fn up(
         }
     };
 
-    std::fs::create_dir_all(&paths.root)?;
+    // ssh spec: "0700 state dir" — set on creation (mode only applies to
+    // dirs `create_dir_all`/`DirBuilder` actually create, so an
+    // already-existing root from before this existed is left alone, same
+    // as `create_dir_all`'s own idempotency).
+    std::fs::DirBuilder::new()
+        .recursive(true)
+        .mode(0o700)
+        .create(&paths.root)?;
 
     // Host-side, before any restriction applies (design.md decision 2):
     // the resolved environment and its store grants are captured now,
@@ -141,11 +156,51 @@ pub fn up(
     let listener = UnixListener::bind(&paths.socket)?;
     clear_cloexec(listener.as_raw_fd())?;
 
-    let keeper_pid = spawn_keeper(&exe, &listener, &paths, project_root, &resolution.env)
-        .map_err(|e| UpError::Keeper(e.to_string()))?;
-    // The fd must outlive this function for the child to inherit it
+    // The ssh server's socket (ssh spec, task 6.1): same listener-before-
+    // restriction reasoning as the control socket above, plus its own
+    // mode-0600 requirement (belt-and-suspenders alongside the 0700 root
+    // — either alone already blocks every other user).
+    let _ = std::fs::remove_file(&paths.ssh_socket);
+    let ssh_listener = UnixListener::bind(&paths.ssh_socket)?;
+    std::fs::set_permissions(&paths.ssh_socket, std::fs::Permissions::from_mode(0o600))?;
+    clear_cloexec(ssh_listener.as_raw_fd())?;
+
+    // Both key materials are generated/resolved host-side because the
+    // keeper cannot read either back off disk itself once sandboxed —
+    // everything under `policy::DEVCROFT_DATA_DIR` (this whole state
+    // dir included) is baseline-denied, even to the keeper's own
+    // process. `spawn_keeper` hands both down as env vars instead (see
+    // `ssh::start_from_env`).
+    let (client_private_path, client_public_path) = state::client_key_paths()?;
+    let client_key = crate::ssh::ensure_client_keypair(&client_private_path, &client_public_path)
+        .map_err(|e| UpError::Ssh(e.to_string()))?;
+    let host_key = crate::ssh::generate_host_key(&paths.ssh_host_key)
+        .map_err(|e| UpError::Ssh(e.to_string()))?;
+    let host_key_pem = host_key
+        .to_openssh(russh::keys::ssh_key::LineEnding::LF)
+        .map_err(|e| UpError::Ssh(e.to_string()))?;
+    let authorized_key_pem = client_key
+        .public_key()
+        .to_openssh()
+        .map_err(|e| UpError::Ssh(e.to_string()))?;
+
+    let keeper_pid = spawn_keeper(
+        &exe,
+        &listener,
+        &paths,
+        project_root,
+        &resolution.env,
+        SshHandoff {
+            listener: &ssh_listener,
+            host_key_pem: &host_key_pem,
+            authorized_key_pem: &authorized_key_pem,
+        },
+    )
+    .map_err(|e| UpError::Keeper(e.to_string()))?;
+    // Both fds must outlive this function for the child to inherit them
     // across exec; ownership passes to the keeper process from here.
     std::mem::forget(listener);
+    std::mem::forget(ssh_listener);
 
     state::write_pidfile(&paths.pidfile, keeper_pid)?;
 
@@ -162,12 +217,23 @@ pub fn up(
 /// requiring its own `version` field and providing no baseline system
 /// access at all — confirmed against a live nono 0.71.0; see
 /// `policy::NONO_BASELINE_PROFILE`).
+/// The ssh server's fd and key material `spawn_keeper` hands the keeper,
+/// bundled to keep that call under clippy's argument-count lint —  see
+/// its call site for why the key material can't just be a file the
+/// keeper reads back itself.
+struct SshHandoff<'a> {
+    listener: &'a UnixListener,
+    host_key_pem: &'a str,
+    authorized_key_pem: &'a str,
+}
+
 fn spawn_keeper(
     exe: &Path,
     listener: &UnixListener,
     paths: &StatePaths,
     project_root: &Path,
     env: &std::collections::BTreeMap<String, String>,
+    ssh: SshHandoff,
 ) -> io::Result<libc::pid_t> {
     let log = std::fs::File::create(&paths.log)?;
 
@@ -180,8 +246,15 @@ fn spawn_keeper(
         .arg(exe)
         .arg("__keeper")
         .arg(listener.as_raw_fd().to_string())
+        .arg(ssh.listener.as_raw_fd().to_string())
         .current_dir(project_root)
         .envs(env)
+        // ssh spec's key handoff (task 6.1): the keeper can't read either
+        // key back off disk itself (see the call site's comment), so both
+        // travel as env vars, same trust boundary the resolved provider
+        // environment above already crosses this way.
+        .env("DEVCROFT_SSH_HOST_KEY", ssh.host_key_pem)
+        .env("DEVCROFT_SSH_AUTHORIZED_KEY", ssh.authorized_key_pem)
         .stdin(Stdio::null())
         .stdout(log.try_clone()?)
         .stderr(log);

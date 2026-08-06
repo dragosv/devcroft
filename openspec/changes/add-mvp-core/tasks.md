@@ -38,7 +38,7 @@ retired first, and every phase ends in something runnable.
 - [x] 5.3 Auto-up on cold sandbox
 
 ## 6. SSH endpoint
-- [ ] 6.1 russh server in keeper on unix socket; publickey auth against the
+- [x] 6.1 russh server in keeper on unix socket; publickey auth against the
       devcroft client key; ephemeral host keys
 - [ ] 6.2 `proxy` subcommand; `ssh-config` emit + idempotent `--write`
 - [ ] 6.3 Channels: exec, pty/shell, window-change, env allowlist, exit
