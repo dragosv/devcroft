@@ -3,10 +3,14 @@
 //! CLAUDE.md's "SSH lives inside the boundary, on a unix socket only"
 //! invariant and design.md decision 3.
 
+mod config;
 mod keys;
+mod proxy;
 mod server;
 
+pub use config::{render as render_ssh_config, write_managed_section as write_ssh_config};
 pub use keys::{KeyError, ensure_client_keypair, generate_host_key};
+pub use proxy::{ProxyError, proxy, sandbox_name_from_host};
 
 use russh::keys::PrivateKey;
 use russh::keys::ssh_key::PublicKey;

@@ -40,7 +40,7 @@ retired first, and every phase ends in something runnable.
 ## 6. SSH endpoint
 - [x] 6.1 russh server in keeper on unix socket; publickey auth against the
       devcroft client key; ephemeral host keys
-- [ ] 6.2 `proxy` subcommand; `ssh-config` emit + idempotent `--write`
+- [x] 6.2 `proxy` subcommand; `ssh-config` emit + idempotent `--write`
 - [ ] 6.3 Channels: exec, pty/shell, window-change, env allowlist, exit
       status; SFTP subset for scp/rsync
 - [ ] 6.4 direct-tcpip (`-L`) gated by policy

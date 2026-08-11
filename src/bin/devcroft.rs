@@ -27,6 +27,8 @@ fn main() {
         }
         Some("exec") => std::process::exit(cli_exec(&args[2..])),
         Some("shell") => std::process::exit(cli_shell(&args[2..])),
+        Some("proxy") => std::process::exit(cli_proxy(&args[2..])),
+        Some("ssh-config") => std::process::exit(cli_ssh_config(&args[2..])),
         other => {
             eprintln!(
                 "devcroft: {} is not yet implemented (task group 7 wires up the CLI surface)",
@@ -156,6 +158,130 @@ fn cli_shell(args: &[String]) -> i32 {
             5 // keeper/connection layer, per CLAUDE.md's error contract
         }
     }
+}
+
+/// `devcroft proxy [--no-up] <name>.devcroft` (ssh spec's "ProxyCommand
+/// bridging" requirement, task 6.2): parses the sandbox name out of the
+/// host argument, auto-ups the same way `exec`/`shell` do (unless
+/// `--no-up`), then bridges this process's stdio to that sandbox's ssh
+/// socket. Invoked by a real ssh client via the `ssh-config` block's
+/// `ProxyCommand`, never directly by a user.
+fn cli_proxy(args: &[String]) -> i32 {
+    const USAGE: &str = "devcroft proxy: usage: devcroft proxy [--no-up] <name>.devcroft";
+    let no_up = args.iter().any(|a| a == "--no-up");
+    let host_args: Vec<&String> = args.iter().filter(|a| *a != "--no-up").collect();
+    let &[host] = host_args.as_slice() else {
+        eprintln!("{USAGE}");
+        return 2;
+    };
+
+    let sandbox_name = match devcroft::ssh::sandbox_name_from_host(host) {
+        Ok(name) => name.to_string(),
+        Err(msg) => {
+            eprintln!("devcroft proxy: {msg}");
+            return 2;
+        }
+    };
+
+    let cwd = match std::env::current_dir() {
+        Ok(dir) => dir,
+        Err(e) => {
+            eprintln!("devcroft proxy: cannot determine current directory: {e}");
+            return 1;
+        }
+    };
+
+    // ssh spec's key-management requirement: any ssh-related command
+    // ensures the client keypair exists before proceeding, so the real
+    // ssh client on the other end of stdio finds its `IdentityFile` in
+    // place by the time it gets to authentication.
+    if let Err(e) = ensure_client_keypair() {
+        eprintln!("devcroft proxy: {e}");
+        return 3;
+    }
+
+    if !no_up && let Err(msg) = maybe_auto_up(&sandbox_name, &cwd) {
+        eprintln!("devcroft proxy: {msg}");
+        return 3; // environment/provider layer, per CLAUDE.md's error contract
+    }
+
+    match devcroft::ssh::proxy(&sandbox_name) {
+        Ok(()) => 0,
+        Err(e) => {
+            eprintln!("devcroft proxy: {e}");
+            5 // keeper/connection layer, per CLAUDE.md's error contract
+        }
+    }
+}
+
+/// `devcroft ssh-config [--write]` (ssh spec's "ssh-config emission"
+/// requirement, task 6.2): prints design.md decision 3's wildcard `Host
+/// *.devcroft` block, or with `--write`, idempotently inserts/updates it
+/// as a marker-delimited managed section in `~/.ssh/config`.
+fn cli_ssh_config(args: &[String]) -> i32 {
+    const USAGE: &str = "devcroft ssh-config: usage: devcroft ssh-config [--write]";
+    let write = match args {
+        [] => false,
+        [flag] if flag == "--write" => true,
+        _ => {
+            eprintln!("{USAGE}");
+            return 2;
+        }
+    };
+
+    if let Err(e) = ensure_client_keypair() {
+        eprintln!("devcroft ssh-config: {e}");
+        return 3;
+    }
+    let (private_path, _) = match devcroft::lifecycle::client_key_paths() {
+        Ok(paths) => paths,
+        Err(e) => {
+            eprintln!("devcroft ssh-config: resolving client key path: {e}");
+            return 1;
+        }
+    };
+    let identity_file = private_path.to_string_lossy().into_owned();
+
+    if !write {
+        print!("{}", devcroft::ssh::render_ssh_config(&identity_file));
+        return 0;
+    }
+
+    let config_path = match ssh_config_path() {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("devcroft ssh-config: {e}");
+            return 1;
+        }
+    };
+    if let Err(e) = devcroft::ssh::write_ssh_config(&config_path, &identity_file) {
+        eprintln!(
+            "devcroft ssh-config: writing {}: {e}",
+            config_path.display()
+        );
+        return 1;
+    }
+    println!(
+        "devcroft: wrote the devcroft block to {}",
+        config_path.display()
+    );
+    0
+}
+
+fn ssh_config_path() -> Result<std::path::PathBuf, String> {
+    let home = std::env::var("HOME").map_err(|_| "HOME is not set".to_string())?;
+    Ok(std::path::PathBuf::from(home).join(".ssh/config"))
+}
+
+/// The ssh spec's "First run generates keys" scenario: any ssh-related
+/// command (`proxy`, `ssh-config`) ensures the client keypair exists
+/// before proceeding, rather than each having its own copy of this check.
+fn ensure_client_keypair() -> Result<(), String> {
+    let (private_path, public_path) = devcroft::lifecycle::client_key_paths()
+        .map_err(|e| format!("resolving client key path: {e}"))?;
+    devcroft::ssh::ensure_client_keypair(&private_path, &public_path)
+        .map_err(|e| format!("ensuring ssh client keypair: {e}"))?;
+    Ok(())
 }
 
 /// Ancestor-walks from `start` for `devcroft.toml` (config::discover) and
