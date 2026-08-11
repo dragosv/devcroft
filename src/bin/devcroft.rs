@@ -29,6 +29,8 @@ fn main() {
         Some("shell") => std::process::exit(cli_shell(&args[2..])),
         Some("proxy") => std::process::exit(cli_proxy(&args[2..])),
         Some("ssh-config") => std::process::exit(cli_ssh_config(&args[2..])),
+        Some("init") => std::process::exit(cli_init(&args[2..])),
+        Some("doctor") => std::process::exit(cli_doctor()),
         other => {
             eprintln!(
                 "devcroft: {} is not yet implemented (task group 7 wires up the CLI surface)",
@@ -282,6 +284,255 @@ fn ensure_client_keypair() -> Result<(), String> {
     devcroft::ssh::ensure_client_keypair(&private_path, &public_path)
         .map_err(|e| format!("ensuring ssh client keypair: {e}"))?;
     Ok(())
+}
+
+/// `devcroft init [--force]` (cli spec's "init" requirement, task 7.1):
+/// detects an existing flox environment or a single-ecosystem toolchain
+/// pin, generates a minimal `devcroft.toml`, and never overwrites an
+/// existing one without `--force`.
+fn cli_init(args: &[String]) -> i32 {
+    const USAGE: &str = "devcroft init: usage: devcroft init [--force]";
+    let force = match args {
+        [] => false,
+        [flag] if flag == "--force" => true,
+        _ => {
+            eprintln!("{USAGE}");
+            return 2;
+        }
+    };
+
+    let cwd = match std::env::current_dir() {
+        Ok(dir) => dir,
+        Err(e) => {
+            eprintln!("devcroft init: cannot determine current directory: {e}");
+            return 1;
+        }
+    };
+
+    let manifest_path = cwd.join(devcroft::config::MANIFEST_FILE_NAME);
+    if manifest_path.exists() && !force {
+        eprintln!(
+            "devcroft init: {} already exists; use --force to overwrite",
+            manifest_path.display()
+        );
+        return 2;
+    }
+
+    let dir_name = cwd
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "sandbox".to_string());
+    let name = devcroft::config::slugify(&dir_name);
+
+    // `provider = "flox"` is already `Env`'s own default (config/mod.rs)
+    // even if omitted, but the cli spec's init scenarios describe the
+    // generated manifest as *setting* it — written out explicitly so
+    // it's visible and editable rather than an invisible default.
+    let manifest_toml = format!(
+        "[sandbox]\nname = {name:?}\n\n[env]\nprovider = \"flox\"\n\n\
+         # Uncomment to grant more than the project root (already allowed\n\
+         # by default) or to change the network default:\n\
+         #\n\
+         # [filesystem]\n\
+         # allow = [\".\"]\n\
+         # read = [\"/path/to/a/read-only/dir\"]\n\
+         #\n\
+         # [network]\n\
+         # default = \"deny\"\n\
+         # allow = [\"api.example.com\"]\n"
+    );
+
+    if let Err(e) = std::fs::write(&manifest_path, &manifest_toml) {
+        eprintln!("devcroft init: writing {}: {e}", manifest_path.display());
+        return 1;
+    }
+    println!("devcroft: wrote {}", manifest_path.display());
+
+    // cli spec's init scenarios: flox wins if both it and a toolchain pin
+    // are present, since a real flox environment supersedes advice about
+    // a pin it would otherwise just be a fallback for.
+    if cwd.join(".flox").is_dir() {
+        println!("devcroft: found an existing flox environment (.flox/); ready for `devcroft up`.");
+    } else if cwd.join("rust-toolchain.toml").exists() {
+        println!("devcroft: found rust-toolchain.toml but no .flox/ environment.");
+        println!(
+            "devcroft: rustup alone can't provide a complete build environment (no C toolchain, \
+             no other language runtimes) — run `flox init`, then add the pinned Rust channel \
+             (via the fenix or rust-overlay flox package) before `devcroft up`."
+        );
+    } else if cwd.join(".nvmrc").exists() {
+        println!("devcroft: found .nvmrc but no .flox/ environment.");
+        println!(
+            "devcroft: nvm alone can't provide a complete build environment — run `flox init`, \
+             then pin the Node.js version from .nvmrc before `devcroft up`."
+        );
+    } else if cwd.join(".python-version").exists() {
+        println!("devcroft: found .python-version but no .flox/ environment.");
+        println!(
+            "devcroft: pyenv alone can't provide a complete build environment — run `flox init`, \
+             then pin the Python version from .python-version before `devcroft up`."
+        );
+    } else {
+        println!("devcroft: no .flox/ environment found; run `flox init` before `devcroft up`.");
+    }
+    0
+}
+
+/// `devcroft doctor` (cli spec's "doctor" requirement, task 7.1): reports
+/// backend presence/version, kernel sandboxing capability, the provider
+/// binary, ssh-config managed-section state, and — if a manifest is
+/// discoverable from cwd — which of its aspects would be degraded on this
+/// host. Every failure names its fix (the spec's "output SHALL be
+/// actionable"). `[WARN]` findings (missing ssh-config block, a degraded
+/// capability) don't fail the command — sandboxes still work without
+/// them; `[FAIL]` findings (missing/incompatible backend or provider)
+/// do, since nothing works without those.
+fn cli_doctor() -> i32 {
+    println!("devcroft doctor");
+    println!();
+
+    let mut ok = true;
+    ok &= doctor_backend();
+    ok &= doctor_provider();
+    doctor_ssh_config();
+    doctor_manifest_degradation();
+
+    println!();
+    if ok {
+        println!("devcroft: all checks passed.");
+        0
+    } else {
+        println!("devcroft: one or more checks failed; see the FAIL lines above for the fix.");
+        1
+    }
+}
+
+/// nono's presence, version-range compatibility (design.md decision 6:
+/// tested range `>=0.71.0, <0.72.0`), and kernel sandboxing capability —
+/// `nono setup --check-only` itself reports Landlock ABI level on Linux
+/// or Seatbelt availability on macOS, so this just surfaces its verdict
+/// rather than re-deriving it.
+fn doctor_backend() -> bool {
+    let version_line = match std::process::Command::new("nono").arg("--version").output() {
+        Ok(out) if out.status.success() => String::from_utf8_lossy(&out.stdout).trim().to_string(),
+        _ => {
+            println!("[FAIL] backend: nono not found on PATH — install it from https://nono.sh");
+            return false;
+        }
+    };
+    let version = version_line.rsplit(' ').next().unwrap_or(&version_line);
+    let parts: Vec<u32> = version.split('.').filter_map(|p| p.parse().ok()).collect();
+    let in_range = matches!(parts.as_slice(), [0, 71, ..]);
+    if in_range {
+        println!("[PASS] backend: nono {version} (expected >=0.71.0, <0.72.0)");
+    } else {
+        println!(
+            "[FAIL] backend: nono {version} is outside the tested range >=0.71.0, <0.72.0 — install a matching version from https://nono.sh"
+        );
+    }
+
+    let kernel_ok = match std::process::Command::new("nono")
+        .arg("setup")
+        .arg("--check-only")
+        .output()
+    {
+        Ok(out) => {
+            let stdout = String::from_utf8_lossy(&out.stdout);
+            let summary = stdout
+                .lines()
+                .map(str::trim)
+                .find(|l| l.contains("Landlock V") || l.to_lowercase().contains("seatbelt"))
+                .map(|l| l.trim_start_matches("* ").trim_start_matches("- "))
+                .unwrap_or("sandbox support detected");
+            if out.status.success() {
+                println!("[PASS] kernel: {summary}");
+                true
+            } else {
+                println!(
+                    "[FAIL] kernel: sandbox support check failed ({summary}) — run `nono setup --check-only` directly for details"
+                );
+                false
+            }
+        }
+        Err(e) => {
+            println!("[FAIL] kernel: could not run `nono setup --check-only`: {e}");
+            false
+        }
+    };
+
+    in_range && kernel_ok
+}
+
+fn doctor_provider() -> bool {
+    match std::process::Command::new("flox").arg("--version").output() {
+        Ok(out) if out.status.success() => {
+            println!(
+                "[PASS] provider: flox found ({})",
+                String::from_utf8_lossy(&out.stdout).trim()
+            );
+            true
+        }
+        _ => {
+            println!("[FAIL] provider: flox not found on PATH — install it from https://flox.dev");
+            false
+        }
+    }
+}
+
+fn doctor_ssh_config() {
+    match ssh_config_path() {
+        Ok(path) => {
+            if devcroft::ssh::ssh_config_is_installed(&path) {
+                println!(
+                    "[PASS] ssh-config: managed block present in {}",
+                    path.display()
+                );
+            } else {
+                println!(
+                    "[WARN] ssh-config: no devcroft managed block in {} — run `devcroft ssh-config --write`",
+                    path.display()
+                );
+            }
+        }
+        Err(e) => println!("[WARN] ssh-config: {e}"),
+    }
+}
+
+/// Informational only (never fails `doctor`): a manifest not being
+/// discoverable from `cwd` just means this check doesn't apply here, not
+/// that anything is wrong.
+fn doctor_manifest_degradation() {
+    let Ok(cwd) = std::env::current_dir() else {
+        return;
+    };
+    let Ok(manifest_path) = devcroft::config::discover(&cwd) else {
+        println!(
+            "[INFO] manifest: no devcroft.toml found from here; skipping the degraded-capability check"
+        );
+        return;
+    };
+    let Ok(text) = std::fs::read_to_string(&manifest_path) else {
+        return;
+    };
+    let Ok((manifest, _warnings)) = devcroft::config::parse(&text) else {
+        println!(
+            "[WARN] manifest: {} did not parse; run `devcroft up` to see the full error",
+            manifest_path.display()
+        );
+        return;
+    };
+    let compiled = devcroft::policy::compile(&manifest);
+    let degraded = devcroft::policy::detect_degraded(&compiled);
+    if degraded.is_empty() {
+        println!(
+            "[PASS] manifest: no degraded capabilities for {} on this host",
+            manifest_path.display()
+        );
+    } else {
+        for d in degraded {
+            println!("[WARN] manifest: {d}");
+        }
+    }
 }
 
 /// Ancestor-walks from `start` for `devcroft.toml` (config::discover) and

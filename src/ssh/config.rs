@@ -9,6 +9,14 @@ use std::path::Path;
 const BEGIN_MARKER: &str = "# >>> devcroft managed block — do not edit >>>";
 const END_MARKER: &str = "# <<< devcroft managed block — do not edit <<<";
 
+/// Whether `path` already has the managed section installed (`doctor`'s
+/// "ssh config managed-section state" check).
+pub fn is_installed(path: &Path) -> bool {
+    std::fs::read_to_string(path)
+        .map(|contents| contents.contains(BEGIN_MARKER))
+        .unwrap_or(false)
+}
+
 /// Renders the managed block on its own (no markers) — what `ssh-config`
 /// prints with no `--write`.
 pub fn render(identity_file: &str) -> String {

@@ -52,7 +52,7 @@ retired first, and every phase ends in something runnable.
       available in the environment this was worked in.
 
 ## 7. CLI polish & release
-- [ ] 7.1 `init` with flox detection; `doctor` with actionable checks
+- [x] 7.1 `init` with flox detection; `doctor` with actionable checks
 - [ ] 7.2 Error contract: layers, exit codes, non-interactive safety
 - [ ] 7.3 Two-sandbox concurrency test; suspend/resume test
 - [ ] 7.4 README with honest limitations section (no inter-sandbox process
