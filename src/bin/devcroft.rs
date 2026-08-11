@@ -31,10 +31,19 @@ fn main() {
         Some("ssh-config") => std::process::exit(cli_ssh_config(&args[2..])),
         Some("init") => std::process::exit(cli_init(&args[2..])),
         Some("doctor") => std::process::exit(cli_doctor()),
+        Some("up") => std::process::exit(cli_up(&args[2..])),
+        Some("down") => std::process::exit(cli_down(&args[2..])),
+        Some("rm") => std::process::exit(cli_rm(&args[2..])),
+        Some("status") => std::process::exit(cli_status(&args[2..])),
+        Some("logs") => std::process::exit(cli_logs(&args[2..])),
+        Some("ps") => std::process::exit(cli_ps()),
+        Some("ssh") => std::process::exit(cli_ssh(&args[2..])),
+        Some("policy") => std::process::exit(cli_policy(&args[2..])),
+        Some("why") => std::process::exit(cli_why(&args[2..])),
         other => {
             eprintln!(
-                "devcroft: {} is not yet implemented (task group 7 wires up the CLI surface)",
-                other.unwrap_or("(no command)")
+                "devcroft: unknown command {:?}; see the cli spec for the full command surface",
+                other.unwrap_or("(none given)")
             );
             std::process::exit(2);
         }
@@ -535,21 +544,620 @@ fn doctor_manifest_degradation() {
     }
 }
 
-/// Ancestor-walks from `start` for `devcroft.toml` (config::discover) and
-/// returns the sandbox name it declares. The `cli` spec's full name
-/// resolution (disambiguation, listing known sandboxes on failure) is
-/// task group 7; this is the minimum `exec`/`shell` need to work without
-/// an explicit name.
-fn resolve_sandbox_name(start: &std::path::Path) -> Result<String, String> {
+/// `devcroft up [name] [--recreate] [--yes]` (lifecycle spec's "Idempotent
+/// up" requirement, task 7.2): unlike auto-up, this is the explicit,
+/// first-class command — it requires an actual project root (a manifest
+/// discoverable from cwd, matching `name` if given), since there's no
+/// session it can fall back to failing later the way auto-up can.
+/// `--recreate` is destructive (tears down and re-resolves everything),
+/// so it follows the same non-interactive-safety rule as `rm`.
+fn cli_up(args: &[String]) -> i32 {
+    const USAGE: &str = "devcroft up: usage: devcroft up [name] [--recreate] [--yes]";
+    let recreate = args.iter().any(|a| a == "--recreate");
+    let yes = args.iter().any(|a| a == "--yes");
+    let name_args: Vec<&String> = args
+        .iter()
+        .filter(|a| *a != "--recreate" && *a != "--yes")
+        .collect();
+    if name_args.len() > 1 {
+        eprintln!("{USAGE}");
+        return 2;
+    }
+
+    let cwd = match std::env::current_dir() {
+        Ok(dir) => dir,
+        Err(e) => {
+            eprintln!("devcroft up: cannot determine current directory: {e}");
+            return 1;
+        }
+    };
+    let manifest = match resolve_manifest_strict(name_args.first().map(|s| s.as_str()), &cwd, "up")
+    {
+        Ok(m) => m,
+        Err(code) => return code,
+    };
+    let project_root = match devcroft::config::discover(&cwd) {
+        Ok(p) => p.parent().unwrap_or(&cwd).to_path_buf(),
+        Err(_) => cwd.clone(),
+    };
+
+    if recreate && !yes && !stdout_is_tty() {
+        eprintln!("devcroft up: --recreate is destructive; pass --yes to run non-interactively");
+        return 2;
+    }
+
+    println!(
+        "devcroft: bringing up sandbox '{}'...",
+        manifest.sandbox.name
+    );
+    match devcroft::lifecycle::up(
+        &manifest,
+        &project_root,
+        &devcroft::lifecycle::UpOptions { recreate },
+    ) {
+        Ok(outcome) => {
+            let msg = match outcome {
+                devcroft::lifecycle::UpOutcome::AlreadyUp => "already up",
+                devcroft::lifecycle::UpOutcome::Recovered => "recovered from stale state",
+                devcroft::lifecycle::UpOutcome::Started => "started",
+                devcroft::lifecycle::UpOutcome::Recreated => "recreated",
+            };
+            println!("devcroft: sandbox '{}' is {msg}.", manifest.sandbox.name);
+            0
+        }
+        Err(e) => {
+            eprintln!("devcroft up: {e}");
+            match e {
+                devcroft::lifecycle::UpError::State(_) => 1,
+                devcroft::lifecycle::UpError::Provider(_) => 3,
+                devcroft::lifecycle::UpError::Keeper(_) | devcroft::lifecycle::UpError::Ssh(_) => 5,
+            }
+        }
+    }
+}
+
+/// `devcroft down [name]` (lifecycle spec's "Teardown" requirement):
+/// stops the keeper, keeps state and the compiled policy.
+fn cli_down(args: &[String]) -> i32 {
+    const USAGE: &str = "devcroft down: usage: devcroft down [name]";
+    let name = match resolve_name_arg(args, USAGE, "down") {
+        Ok(name) => name,
+        Err(code) => return code,
+    };
+    match devcroft::lifecycle::down(&name) {
+        Ok(()) => {
+            println!("devcroft: sandbox '{name}' is down.");
+            0
+        }
+        Err(e) => {
+            eprintln!("devcroft down: {e}");
+            1
+        }
+    }
+}
+
+/// `devcroft rm [name] [--yes]` (lifecycle spec's "Teardown" requirement):
+/// stops the keeper and removes *all* state — the cli spec's "Non-
+/// interactive safety" requirement's own named example of a destructive
+/// operation that must refuse to run non-interactively without `--yes`.
+fn cli_rm(args: &[String]) -> i32 {
+    const USAGE: &str = "devcroft rm: usage: devcroft rm [name] [--yes]";
+    let yes = args.iter().any(|a| a == "--yes");
+    let name_args: Vec<String> = args.iter().filter(|a| *a != "--yes").cloned().collect();
+    let name = match resolve_name_arg(&name_args, USAGE, "rm") {
+        Ok(name) => name,
+        Err(code) => return code,
+    };
+
+    if !yes && !stdout_is_tty() {
+        eprintln!(
+            "devcroft rm: removing '{name}' is destructive; pass --yes to run non-interactively"
+        );
+        return 2;
+    }
+
+    match devcroft::lifecycle::rm(&name) {
+        Ok(()) => {
+            println!("devcroft: removed all state for '{name}'.");
+            0
+        }
+        Err(e) => {
+            eprintln!("devcroft rm: {e}");
+            1
+        }
+    }
+}
+
+/// `devcroft status [name]` (lifecycle spec's "Status and logs"
+/// requirement): keeper health, uptime, session count, environment
+/// staleness, and degraded capabilities. Needs the full manifest (for
+/// degraded-capability detection), so — like `up`/`policy`/`why` — it
+/// requires an actual discoverable project root, not just a name.
+fn cli_status(args: &[String]) -> i32 {
+    const USAGE: &str = "devcroft status: usage: devcroft status [name]";
+    if args.len() > 1 {
+        eprintln!("{USAGE}");
+        return 2;
+    }
+    let cwd = match std::env::current_dir() {
+        Ok(dir) => dir,
+        Err(e) => {
+            eprintln!("devcroft status: cannot determine current directory: {e}");
+            return 1;
+        }
+    };
+    let manifest = match resolve_manifest_strict(args.first().map(String::as_str), &cwd, "status") {
+        Ok(m) => m,
+        Err(code) => return code,
+    };
+
+    match devcroft::lifecycle::status(&manifest) {
+        Ok(s) => {
+            print_status(&s);
+            0
+        }
+        Err(e) => {
+            eprintln!("devcroft status: {e}");
+            match e {
+                devcroft::lifecycle::StatusError::State(_) => 1,
+                devcroft::lifecycle::StatusError::Keeper(_) => 5,
+            }
+        }
+    }
+}
+
+fn print_status(s: &devcroft::lifecycle::SandboxStatus) {
+    println!("sandbox: {}", s.name);
+    match &s.keeper {
+        devcroft::lifecycle::KeeperStatus::None => println!("keeper: not running"),
+        devcroft::lifecycle::KeeperStatus::Stale => {
+            println!(
+                "keeper: stale (dead pid or unresponsive socket) — run `devcroft up` to recover"
+            )
+        }
+        devcroft::lifecycle::KeeperStatus::Healthy {
+            uptime_secs,
+            session_count,
+        } => println!("keeper: healthy (uptime {uptime_secs}s, {session_count} session(s))"),
+    }
+    match s.env_stale {
+        Some(true) => println!(
+            "env: stale — the flox manifest changed since the last `up`; run `devcroft up --recreate`"
+        ),
+        Some(false) => println!("env: fresh"),
+        None => println!("env: unknown"),
+    }
+    if s.degraded.is_empty() {
+        println!("policy: no degraded capabilities on this host");
+    } else {
+        for d in &s.degraded {
+            println!("policy: {d}");
+        }
+    }
+}
+
+/// `devcroft logs [name] [--tail N]` (lifecycle spec's "Status and logs"
+/// requirement): the keeper log tail, including session spawn/exit
+/// records with timestamps (`keeper::connection` writes these to its own
+/// stdout/stderr, which `up` redirects to this file).
+fn cli_logs(args: &[String]) -> i32 {
+    const USAGE: &str = "devcroft logs: usage: devcroft logs [name] [--tail N]";
+    let mut name_arg: Option<String> = None;
+    let mut tail: Option<usize> = None;
+    let mut it = args.iter();
+    while let Some(a) = it.next() {
+        if a == "--tail" {
+            match it.next().and_then(|n| n.parse().ok()) {
+                Some(n) => tail = Some(n),
+                None => {
+                    eprintln!("{USAGE}");
+                    return 2;
+                }
+            }
+        } else if name_arg.is_none() {
+            name_arg = Some(a.clone());
+        } else {
+            eprintln!("{USAGE}");
+            return 2;
+        }
+    }
+
+    let name = match name_arg {
+        Some(n) => n,
+        None => {
+            let cwd = match std::env::current_dir() {
+                Ok(dir) => dir,
+                Err(e) => {
+                    eprintln!("devcroft logs: cannot determine current directory: {e}");
+                    return 1;
+                }
+            };
+            match resolve_sandbox_name(&cwd) {
+                Ok(n) => n,
+                Err(msg) => {
+                    eprintln!("devcroft logs: {msg}");
+                    return 2;
+                }
+            }
+        }
+    };
+
+    match devcroft::lifecycle::logs(&name, tail) {
+        Ok(text) => {
+            print!("{text}");
+            0
+        }
+        Err(e) => {
+            eprintln!("devcroft logs: state: {e}");
+            1
+        }
+    }
+}
+
+/// `devcroft ps` (cli spec's "ps lists all sandboxes" scenario): every
+/// sandbox with existing state, name/keeper-health/session-count/project-
+/// root, no name resolution needed since it lists everything.
+fn cli_ps() -> i32 {
+    match devcroft::lifecycle::ps() {
+        Ok(sandboxes) => {
+            if sandboxes.is_empty() {
+                println!("no sandboxes");
+                return 0;
+            }
+            for s in sandboxes {
+                let health = match s.keeper {
+                    devcroft::lifecycle::KeeperStatus::None => "not running".to_string(),
+                    devcroft::lifecycle::KeeperStatus::Stale => "stale".to_string(),
+                    devcroft::lifecycle::KeeperStatus::Healthy {
+                        uptime_secs,
+                        session_count,
+                    } => format!("healthy (uptime {uptime_secs}s, {session_count} session(s))"),
+                };
+                println!(
+                    "{}\t{}\t{}",
+                    s.name,
+                    health,
+                    s.project_root.as_deref().unwrap_or("-")
+                );
+            }
+            0
+        }
+        Err(e) => {
+            eprintln!("devcroft ps: state: {e}");
+            1
+        }
+    }
+}
+
+/// `devcroft ssh [--no-up] [name]`: not itself part of any capability
+/// spec beyond being named in the cli spec's command surface (no
+/// Requirement/Scenario describes its behavior anywhere in the specs).
+/// Interpreted here as the obvious convenience its neighbors (`proxy`,
+/// `ssh-config`) exist to support: auto-up, then exec (replace this
+/// process, `CommandExt::exec`) into a real system `ssh` with the exact
+/// options the `ssh-config` block installs, so a user gets full real-
+/// terminal fidelity without needing `ssh-config --write` run first or
+/// needing to remember the `<name>.devcroft` hostname convention.
+fn cli_ssh(args: &[String]) -> i32 {
+    use std::os::unix::process::CommandExt;
+
+    const USAGE: &str = "devcroft ssh: usage: devcroft ssh [--no-up] [name]";
+    let no_up = args.iter().any(|a| a == "--no-up");
+    let name_args: Vec<&String> = args.iter().filter(|a| *a != "--no-up").collect();
+    if name_args.len() > 1 {
+        eprintln!("{USAGE}");
+        return 2;
+    }
+
+    let cwd = match std::env::current_dir() {
+        Ok(dir) => dir,
+        Err(e) => {
+            eprintln!("devcroft ssh: cannot determine current directory: {e}");
+            return 1;
+        }
+    };
+    let sandbox_name = match name_args.first() {
+        Some(name) => (*name).clone(),
+        None => match resolve_sandbox_name(&cwd) {
+            Ok(name) => name,
+            Err(msg) => {
+                eprintln!("devcroft ssh: {msg}");
+                return 2;
+            }
+        },
+    };
+
+    if let Err(e) = ensure_client_keypair() {
+        eprintln!("devcroft ssh: {e}");
+        return 3;
+    }
+    if !no_up && let Err(msg) = maybe_auto_up(&sandbox_name, &cwd) {
+        eprintln!("devcroft ssh: {msg}");
+        return 3;
+    }
+    let (identity, _) = match devcroft::lifecycle::client_key_paths() {
+        Ok(paths) => paths,
+        Err(e) => {
+            eprintln!("devcroft ssh: resolving client key path: {e}");
+            return 1;
+        }
+    };
+    let devcroft_bin = std::env::current_exe().unwrap_or_else(|_| "devcroft".into());
+
+    // `--no-up` on the inner `proxy`: this command already brought the
+    // sandbox up (or confirmed it didn't need to be), so `proxy` doesn't
+    // need to repeat that check.
+    let err = std::process::Command::new("ssh")
+        .arg("-o")
+        .arg("StrictHostKeyChecking=no")
+        .arg("-o")
+        .arg("UserKnownHostsFile=/dev/null")
+        .arg("-o")
+        .arg("IdentitiesOnly=yes")
+        .arg("-o")
+        .arg(format!(
+            "ProxyCommand={} proxy --no-up %n",
+            devcroft_bin.display()
+        ))
+        .arg("-i")
+        .arg(&identity)
+        .arg(format!("{sandbox_name}.devcroft"))
+        .exec(); // replaces this process on success; only returns on failure
+    eprintln!("devcroft ssh: exec ssh: {err}");
+    1
+}
+
+/// `devcroft policy --render [--backend nono] [name]` (policy spec's
+/// "Inspectable policy" requirement).
+fn cli_policy(args: &[String]) -> i32 {
+    const USAGE: &str = "devcroft policy: usage: devcroft policy --render [--backend nono] [name]";
+    let mut render = false;
+    let mut name_arg: Option<String> = None;
+    let mut it = args.iter();
+    while let Some(a) = it.next() {
+        match a.as_str() {
+            "--render" => render = true,
+            "--backend" => match it.next().map(String::as_str) {
+                Some("nono") => {}
+                _ => {
+                    eprintln!("devcroft policy: --backend only supports 'nono' in MVP");
+                    return 2;
+                }
+            },
+            _ if name_arg.is_none() => name_arg = Some(a.clone()),
+            _ => {
+                eprintln!("{USAGE}");
+                return 2;
+            }
+        }
+    }
+    if !render {
+        eprintln!("{USAGE}");
+        return 2;
+    }
+
+    let cwd = match std::env::current_dir() {
+        Ok(dir) => dir,
+        Err(e) => {
+            eprintln!("devcroft policy: cannot determine current directory: {e}");
+            return 1;
+        }
+    };
+    let manifest = match resolve_manifest_strict(name_arg.as_deref(), &cwd, "policy") {
+        Ok(m) => m,
+        Err(code) => return code,
+    };
+    print!(
+        "{}",
+        devcroft::policy::render(&devcroft::policy::compile(&manifest))
+    );
+    0
+}
+
+/// `devcroft why --path <p> --op <read|write|readwrite> [name]` or
+/// `devcroft why --host <domain> [name]` (policy spec's "Explainable
+/// decisions" requirement).
+fn cli_why(args: &[String]) -> i32 {
+    const USAGE: &str = "devcroft why: usage: devcroft why --path <p> --op <read|write|readwrite> [name] | devcroft why --host <domain> [name]";
+    let mut path: Option<String> = None;
+    let mut op: Option<String> = None;
+    let mut host: Option<String> = None;
+    let mut name_arg: Option<String> = None;
+    let mut it = args.iter();
+    while let Some(a) = it.next() {
+        match a.as_str() {
+            "--path" => path = it.next().cloned(),
+            "--op" => op = it.next().cloned(),
+            "--host" => host = it.next().cloned(),
+            _ if name_arg.is_none() => name_arg = Some(a.clone()),
+            _ => {
+                eprintln!("{USAGE}");
+                return 2;
+            }
+        }
+    }
+
+    let cwd = match std::env::current_dir() {
+        Ok(dir) => dir,
+        Err(e) => {
+            eprintln!("devcroft why: cannot determine current directory: {e}");
+            return 1;
+        }
+    };
+    let manifest = match resolve_manifest_strict(name_arg.as_deref(), &cwd, "why") {
+        Ok(m) => m,
+        Err(code) => return code,
+    };
+    let compiled = devcroft::policy::compile(&manifest);
+
+    if let Some(host) = host {
+        print_explanation(&devcroft::policy::why_host(&compiled, &host));
+        return 0;
+    }
+
+    let (Some(path), Some(op)) = (path, op) else {
+        eprintln!("{USAGE}");
+        return 2;
+    };
+    let path = normalize_path_for_policy(&path);
+    let op = match op.as_str() {
+        "read" => devcroft::policy::Op::Read,
+        "write" => devcroft::policy::Op::Write,
+        "readwrite" => devcroft::policy::Op::ReadWrite,
+        _ => {
+            eprintln!("devcroft why: --op must be read, write, or readwrite");
+            return 2;
+        }
+    };
+    match devcroft::policy::why_path(&compiled, &path, op) {
+        Ok(explanation) => {
+            print_explanation(&explanation);
+            0
+        }
+        Err(e) => {
+            eprintln!("devcroft why: backend: {e}");
+            4
+        }
+    }
+}
+
+fn print_explanation(e: &devcroft::policy::Explanation) {
+    println!("{}", if e.allowed { "ALLOWED" } else { "DENIED" });
+    println!("{}", e.detail);
+}
+
+/// Rewrites an absolute path under `$HOME` back to devcroft's own `~/...`
+/// shorthand before it reaches `why_path`. Policy rules (baseline
+/// credential paths, `filesystem.*` grants) are stored and compared in
+/// that shorthand (`paths::is_within` treats `~/...` and `/...` as
+/// disjoint root namespaces on purpose, so unrelated absolute and
+/// home-relative grants can never accidentally alias) — but a real shell
+/// expands `~` in `--path ~/.aws/credentials` *before* devcroft ever sees
+/// the argument, so without this, every credential-path `why` query would
+/// report "no matching devcroft rule" instead of the real `baseline`
+/// origin, even though the underlying `nono why` verdict is still
+/// correct.
+fn normalize_path_for_policy(path: &str) -> String {
+    let Ok(home) = std::env::var("HOME") else {
+        return path.to_string();
+    };
+    if path == home {
+        return "~".to_string();
+    }
+    // The extra `/` check matters: `/home/vscode2` is not under
+    // `/home/vscode` just because it shares a string prefix with it.
+    match path
+        .strip_prefix(&home)
+        .and_then(|rest| rest.strip_prefix('/'))
+    {
+        Some(rest) => format!("~/{rest}"),
+        None => path.to_string(),
+    }
+}
+
+/// Shared by `down`/`rm`: an explicit name (first positional arg) or the
+/// one `resolve_sandbox_name` finds from cwd. `usage`/`cmd` are baked in
+/// by each caller so the usage/error text stays command-specific.
+fn resolve_name_arg(args: &[String], usage: &str, cmd: &str) -> Result<String, i32> {
+    if args.len() > 1 {
+        eprintln!("{usage}");
+        return Err(2);
+    }
+    match args.first() {
+        Some(name) => Ok(name.clone()),
+        None => {
+            let cwd = std::env::current_dir().map_err(|e| {
+                eprintln!("devcroft {cmd}: cannot determine current directory: {e}");
+                1
+            })?;
+            resolve_sandbox_name(&cwd).map_err(|msg| {
+                eprintln!("devcroft {cmd}: {msg}");
+                2
+            })
+        }
+    }
+}
+
+/// Ancestor-walks from `start` for `devcroft.toml` (config::discover),
+/// parses it, and returns it alongside its project root (the manifest's
+/// parent dir) — the cli spec's "Name resolution" requirement's second
+/// tier ("the sandbox whose project root contains the cwd") for every
+/// command that needs the full manifest (`up`, `status`, `policy`, `why`),
+/// not just the name (`exec`/`shell`/`down`/`rm`/`ps`, which only need
+/// `resolve_sandbox_name` below).
+fn discover_manifest(
+    start: &std::path::Path,
+) -> Result<(devcroft::config::Manifest, std::path::PathBuf), String> {
     let manifest_path = devcroft::config::discover(start).map_err(|_| {
-        "no devcroft.toml found in this directory or its ancestors; pass a sandbox name explicitly"
-            .to_string()
+        format!(
+            "no devcroft.toml found in this directory or its ancestors; pass a sandbox name explicitly.{}",
+            known_sandboxes_suffix()
+        )
     })?;
     let text = std::fs::read_to_string(&manifest_path)
         .map_err(|e| format!("reading {}: {e}", manifest_path.display()))?;
     let (manifest, _warnings) =
         devcroft::config::parse(&text).map_err(|e| format!("{}: {e}", manifest_path.display()))?;
-    Ok(manifest.sandbox.name)
+    let project_root = manifest_path.parent().unwrap_or(start).to_path_buf();
+    Ok((manifest, project_root))
+}
+
+/// The cli spec's "Name resolution": "otherwise fail with exit code 2
+/// listing known sandboxes" — appended to `discover_manifest`'s
+/// not-found error. Empty (no suffix at all) when `ps` itself fails or
+/// there's nothing to list, rather than compounding one error with
+/// another.
+fn known_sandboxes_suffix() -> String {
+    match devcroft::lifecycle::ps() {
+        Ok(sandboxes) if !sandboxes.is_empty() => {
+            let names: Vec<&str> = sandboxes.iter().map(|s| s.name.as_str()).collect();
+            format!(" Known sandboxes: {}.", names.join(", "))
+        }
+        _ => String::new(),
+    }
+}
+
+/// The minimum `exec`/`shell`/`down`/`rm`/`logs` need to resolve an
+/// implicit name: just the name `discover_manifest` finds, not the full
+/// manifest.
+fn resolve_sandbox_name(start: &std::path::Path) -> Result<String, String> {
+    discover_manifest(start).map(|(manifest, _)| manifest.sandbox.name)
+}
+
+/// For commands that need the *full* manifest (`up`, `status`, `policy`,
+/// `why`): resolves it from `cwd`, and — if an explicit `name` was also
+/// given — confirms the discovered manifest actually matches it, since a
+/// name that happens to resolve to some *other* project's devcroft.toml
+/// is a `discover_manifest` false friend, not a fresh lookup.
+fn resolve_manifest_strict(
+    name_arg: Option<&str>,
+    cwd: &std::path::Path,
+    cmd: &str,
+) -> Result<devcroft::config::Manifest, i32> {
+    match discover_manifest(cwd) {
+        Ok((manifest, _)) => {
+            if let Some(name) = name_arg
+                && manifest.sandbox.name != name
+            {
+                eprintln!(
+                    "devcroft {cmd}: the manifest discovered from this directory is for sandbox '{}', not '{name}'; run from within {name}'s own project directory",
+                    manifest.sandbox.name
+                );
+                return Err(2);
+            }
+            Ok(manifest)
+        }
+        Err(msg) => {
+            eprintln!("devcroft {cmd}: {msg}");
+            Err(2)
+        }
+    }
+}
+
+/// The cli spec's "Non-interactive safety": never prompt (or require an
+/// interactive prompt) when stdout isn't a tty.
+fn stdout_is_tty() -> bool {
+    unsafe { libc::isatty(libc::STDOUT_FILENO) != 0 }
 }
 
 /// Auto-up convenience (exec spec, task 5.3): if `sandbox_name` isn't
@@ -573,13 +1181,7 @@ fn maybe_auto_up(sandbox_name: &str, cwd: &std::path::Path) -> Result<(), String
         return Ok(());
     }
 
-    let Ok(manifest_path) = devcroft::config::discover(cwd) else {
-        return Ok(());
-    };
-    let Ok(text) = std::fs::read_to_string(&manifest_path) else {
-        return Ok(());
-    };
-    let Ok((manifest, _warnings)) = devcroft::config::parse(&text) else {
+    let Ok((manifest, project_root)) = discover_manifest(cwd) else {
         return Ok(());
     };
     // The manifest found by walking up from `cwd` might not even be the
@@ -589,12 +1191,11 @@ fn maybe_auto_up(sandbox_name: &str, cwd: &std::path::Path) -> Result<(), String
     if manifest.sandbox.name != sandbox_name {
         return Ok(());
     }
-    let project_root = manifest_path.parent().unwrap_or(cwd);
 
     eprintln!("devcroft: sandbox '{sandbox_name}' is not up; starting it...");
     devcroft::lifecycle::up(
         &manifest,
-        project_root,
+        &project_root,
         &devcroft::lifecycle::UpOptions::default(),
     )
     .map(|_| ())

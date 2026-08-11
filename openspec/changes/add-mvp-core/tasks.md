@@ -53,7 +53,13 @@ retired first, and every phase ends in something runnable.
 
 ## 7. CLI polish & release
 - [x] 7.1 `init` with flox detection; `doctor` with actionable checks
-- [ ] 7.2 Error contract: layers, exit codes, non-interactive safety
+- [x] 7.2 Error contract: layers, exit codes, non-interactive safety.
+      Wired up the rest of the command surface this required to be
+      meaningful: `up`, `down`, `rm`, `status`, `logs`, `ps`, `ssh`,
+      `policy`, `why`. Known gap found along the way, not covered by any
+      task number: the lifecycle spec's "Hooks run inside the boundary"
+      requirement (`hooks.post_create`/`hooks.post_start` execution) is
+      still unimplemented — `Manifest.hooks` parses but nothing runs it.
 - [ ] 7.3 Two-sandbox concurrency test; suspend/resume test
 - [ ] 7.4 README with honest limitations section (no inter-sandbox process
       hiding, cooperative network filtering, not a hard security boundary)

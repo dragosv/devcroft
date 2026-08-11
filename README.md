@@ -13,7 +13,7 @@ supervisor, and an SSH endpoint over existing sandbox backends.
 
 ## Status
 
-**MVP implementation underway — 20/25 tasks.** The fd-passing keeper trick
+**MVP implementation underway — 21/25 tasks.** The fd-passing keeper trick
 (spike binary, task group 1) is proven on both Linux/Landlock and
 macOS/Seatbelt; the config/policy compiler, the environment provider layer
 (`flox` resolution, task group 3), the keeper's spawn protocol (control
@@ -40,17 +40,24 @@ forwarding gated by nothing devcroft-specific — it just lets the sandbox's
 own network restriction accept or reject the target, same as every other
 syscall the keeper makes. All of it is tested against the real `ssh`/`scp`/
 `sftp` CLIs through a real `devcroft proxy` subprocess, not just a russh test
-client. Task group 7 (CLI polish & release) has started: `devcroft init`
-detects an existing flox environment or a bare single-ecosystem toolchain
-pin (`rust-toolchain.toml`/`.nvmrc`/`.python-version`) and generates a
-minimal manifest without ever overwriting one without `--force`; `devcroft
-doctor` reports backend presence/version-range, kernel sandboxing
-capability, the provider binary, `ssh-config` managed-section state, and
-(when a manifest is discoverable) which of its aspects would be degraded on
-this host, with every `FAIL` naming its fix (task 7.1). There is still no
-`up`/`down` CLI surface itself — auto-up calls the `lifecycle::up` library
-function directly, since dedicated CLI commands for it are the rest of task
-group 7. User-facing documentation is written at release (task 7.4); until
+client. Task group 7 (CLI polish & release) is well underway: `devcroft
+init` detects an existing flox environment or a bare single-ecosystem
+toolchain pin (`rust-toolchain.toml`/`.nvmrc`/`.python-version`) and
+generates a minimal manifest without ever overwriting one without
+`--force`; `devcroft doctor` reports backend presence/version-range, kernel
+sandboxing capability, the provider binary, `ssh-config` managed-section
+state, and (when a manifest is discoverable) which of its aspects would be
+degraded on this host, with every `FAIL` naming its fix (7.1). The rest of
+the command surface is wired up too, each with the stable 0–5 exit codes
+and layer-named errors the cli spec's error contract requires: `up`
+(idempotent, `--recreate`), `down`, `rm`, `status`, `logs`, `ps`, `policy
+--render`, `why --path`/`--host`, and `ssh` (execs a real system `ssh` with
+the right options pre-filled). Destructive operations (`rm`, `up
+--recreate`) refuse to run non-interactively without `--yes` (7.2). One gap
+surfaced along the way: the lifecycle spec's `hooks.post_create`/
+`hooks.post_start` execution isn't implemented — the manifest parses them,
+but nothing runs them yet. User-facing documentation is written at release
+(task 7.4); until
 then the specs are the source of truth.
 
 | | |
