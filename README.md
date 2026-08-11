@@ -26,7 +26,9 @@ with a real pty, resize propagation, and a `$SHELL`-then-`/bin/sh` fallback
 (5.2); and auto-up (`exec`/`shell` bring a cold sandbox up themselves unless
 `--no-up`, 5.3) — are implemented and tested end to end against real `nono`
 and `flox`. Task group 6 (SSH endpoint) is now complete except for its
-cross-editor validation matrix (6.5): an SSH server (russh) embedded in the
+cross-editor validation matrix (6.5, partially done — see
+[docs/ssh-validation.md](docs/ssh-validation.md)): an SSH server (russh)
+embedded in the
 keeper on a second unix socket, mode 0600 in the state dir's mode 0700, bound
 host-side and fd-passed the same way the control socket is, with publickey
 auth against the devcroft client keypair and a fresh ephemeral host key per
@@ -47,6 +49,7 @@ it are task group 7. User-facing documentation is written at release (task
 |---|---|
 | [openspec/changes/add-mvp-core/](openspec/changes/add-mvp-core/) | The MVP — proposal, design, tasks, 7 capability specs |
 | [docs/decisions.md](docs/decisions.md) | Every "why doesn't devcroft support X", answered falsifiably |
+| [docs/ssh-validation.md](docs/ssh-validation.md) | SSH client/editor validation matrix (task 6.5) — what's actually been tested and what still needs a real editor or `rsync` |
 | [CLAUDE.md](CLAUDE.md) | Architecture invariants and repo conventions |
 
 ```sh

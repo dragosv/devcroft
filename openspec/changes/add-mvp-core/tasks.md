@@ -45,7 +45,11 @@ retired first, and every phase ends in something runnable.
       status; SFTP subset for scp/rsync
 - [x] 6.4 direct-tcpip (`-L`) gated by policy
 - [ ] 6.5 Validation matrix: OpenSSH client, rsync, VS Code Remote-SSH,
-      Zed, Cursor — document what works per editor
+      Zed, Cursor — document what works per editor. Partially done: see
+      docs/ssh-validation.md — OpenSSH client (ssh/scp/sftp/-L) is
+      validated by real end-to-end tests; rsync and the three editors
+      still need a real rsync binary and real editor installs, neither
+      available in the environment this was worked in.
 
 ## 7. CLI polish & release
 - [ ] 7.1 `init` with flox detection; `doctor` with actionable checks
