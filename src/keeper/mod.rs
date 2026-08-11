@@ -10,10 +10,15 @@
 //! async runtime, and no async executor crate is vendored in this
 //! workspace to use one anyway.
 
-mod connection;
-mod pty;
+pub(crate) mod connection;
 mod registry;
-mod session;
+
+/// Visible beyond `keeper` (task 6.3): the ssh server's channel handling
+/// reuses the exact same pty allocation and spawn primitives the control
+/// socket's own `connection.rs` uses, so an `exec`/`shell` session behaves
+/// identically regardless of which transport it arrived over.
+pub(crate) mod pty;
+pub(crate) mod session;
 
 pub mod protocol;
 

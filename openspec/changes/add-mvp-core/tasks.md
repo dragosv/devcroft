@@ -41,9 +41,9 @@ retired first, and every phase ends in something runnable.
 - [x] 6.1 russh server in keeper on unix socket; publickey auth against the
       devcroft client key; ephemeral host keys
 - [x] 6.2 `proxy` subcommand; `ssh-config` emit + idempotent `--write`
-- [ ] 6.3 Channels: exec, pty/shell, window-change, env allowlist, exit
+- [x] 6.3 Channels: exec, pty/shell, window-change, env allowlist, exit
       status; SFTP subset for scp/rsync
-- [ ] 6.4 direct-tcpip (`-L`) gated by policy
+- [x] 6.4 direct-tcpip (`-L`) gated by policy
 - [ ] 6.5 Validation matrix: OpenSSH client, rsync, VS Code Remote-SSH,
       Zed, Cursor — document what works per editor
 

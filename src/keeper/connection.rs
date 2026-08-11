@@ -231,7 +231,10 @@ fn pump<R: Read>(mut reader: R, tx: mpsc::Sender<Frame>, wrap: fn(Vec<u8>) -> Fr
     }
 }
 
-fn to_exit_status(result: std::io::Result<std::process::ExitStatus>) -> ExitStatus {
+/// `pub(crate)` so the ssh server's own channel-exit handling (task 6.3)
+/// can convert a child's exit status the exact same way this control-
+/// socket protocol does, rather than duplicating the signal-vs-code logic.
+pub(crate) fn to_exit_status(result: std::io::Result<std::process::ExitStatus>) -> ExitStatus {
     match result {
         Ok(status) => ExitStatus {
             code: status.code(),

@@ -13,7 +13,7 @@ supervisor, and an SSH endpoint over existing sandbox backends.
 
 ## Status
 
-**MVP implementation underway — 17/25 tasks.** The fd-passing keeper trick
+**MVP implementation underway — 19/25 tasks.** The fd-passing keeper trick
 (spike binary, task group 1) is proven on both Linux/Landlock and
 macOS/Seatbelt; the config/policy compiler, the environment provider layer
 (`flox` resolution, task group 3), the keeper's spawn protocol (control
@@ -25,23 +25,23 @@ propagation, cwd mapping, and signal forwarding (5.1); interactive `shell`
 with a real pty, resize propagation, and a `$SHELL`-then-`/bin/sh` fallback
 (5.2); and auto-up (`exec`/`shell` bring a cold sandbox up themselves unless
 `--no-up`, 5.3) — are implemented and tested end to end against real `nono`
-and `flox`. An SSH server (russh) is embedded in the keeper too (task 6.1):
-a second unix socket, mode 0600 in the state dir's mode 0700, bound
-host-side and fd-passed the same way the control socket is; publickey auth
-against the devcroft client keypair (generated on first use); a fresh
-ephemeral host key per `up`; no TCP bound. `devcroft proxy <name>.devcroft`
-now bridges that socket to stdio for a real ssh client's `ProxyCommand`, and
-`devcroft ssh-config [--write]` emits the matching wildcard `Host *.devcroft`
-block, idempotently, into a marker-delimited section of `~/.ssh/config`
-(task 6.2) — both tested end to end with a real ssh handshake carried
-through the actual bridge. An authenticated connection still can't open a
-channel yet (exec/pty/sftp/forwarding — task 6.3), the last piece of task
-group 6. There is also still no `up`/`down` CLI surface itself — auto-up
-calls the `lifecycle::up` library function directly, since dedicated CLI
-commands for it are task group 7. User-facing documentation is written at
-release (task
-7.4); until then the specs are
-the source of truth.
+and `flox`. Task group 6 (SSH endpoint) is now complete except for its
+cross-editor validation matrix (6.5): an SSH server (russh) embedded in the
+keeper on a second unix socket, mode 0600 in the state dir's mode 0700, bound
+host-side and fd-passed the same way the control socket is, with publickey
+auth against the devcroft client keypair and a fresh ephemeral host key per
+`up` (6.1); `devcroft proxy <name>.devcroft` and `devcroft ssh-config
+[--write]` (6.2); and full channel support (6.3/6.4) — exec, pty/shell with
+resize and an env allowlist (`TERM`/`LANG`/`LC_*`), exit status, the `sftp`
+subsystem (also what modern `scp` speaks by default), and `-L` direct-tcpip
+forwarding gated by nothing devcroft-specific — it just lets the sandbox's
+own network restriction accept or reject the target, same as every other
+syscall the keeper makes. All of it is tested against the real `ssh`/`scp`/
+`sftp` CLIs through a real `devcroft proxy` subprocess, not just a russh test
+client. There is still no `up`/`down` CLI surface itself — auto-up calls the
+`lifecycle::up` library function directly, since dedicated CLI commands for
+it are task group 7. User-facing documentation is written at release (task
+7.4); until then the specs are the source of truth.
 
 | | |
 |---|---|

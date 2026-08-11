@@ -7,6 +7,7 @@ mod config;
 mod keys;
 mod proxy;
 mod server;
+mod sftp;
 
 pub use config::{render as render_ssh_config, write_managed_section as write_ssh_config};
 pub use keys::{KeyError, ensure_client_keypair, generate_host_key};
