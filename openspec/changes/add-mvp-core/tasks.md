@@ -63,4 +63,11 @@ retired first, and every phase ends in something runnable.
 - [x] 7.3 Two-sandbox concurrency test; suspend/resume test
 - [x] 7.4 README with honest limitations section (no inter-sandbox process
       hiding, cooperative network filtering, not a hard security boundary)
-- [ ] 7.5 Publish crate `devcroft`; reserve/point npm name
+- [ ] 7.5 Publish crate `devcroft`; reserve/point npm name. Deliberately
+      held back: 0.1.0 isn't mature enough relative to its own published
+      limitations (hooks unimplemented, the env-diff unset gap, SSH
+      validation matrix partial) to publish yet. Cargo.toml has the
+      publish-required metadata (description, license, repository)
+      ready; `cargo publish --dry-run` packages clean. The actual
+      publish and npm name reservation are the maintainer's own
+      accounts/call, not something to do preemptively.
