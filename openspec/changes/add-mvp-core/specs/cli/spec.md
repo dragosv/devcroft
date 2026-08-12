@@ -46,6 +46,27 @@ options, and never overwrites an existing manifest without `--force`.
   explaining in one line that rustup alone cannot provide a complete
   build environment
 
+#### Scenario: Init on a Node project with a pinned version
+- **WHEN** `.nvmrc` exists and no `.flox/` does
+- **THEN** the generated manifest sets `provider = "flox"`
+- **AND** init explains in one line that nvm alone cannot provide a
+  complete build environment, and to run `flox init` and pin the Node.js
+  version from `.nvmrc` before `up`
+
+#### Scenario: Init on a Python project with a pinned version
+- **WHEN** `.python-version` exists and no `.flox/` does
+- **THEN** the generated manifest sets `provider = "flox"`
+- **AND** init explains in one line that pyenv alone cannot provide a
+  complete build environment, and to run `flox init` and pin the Python
+  version from `.python-version` before `up`
+
+#### Scenario: An existing flox environment supersedes any toolchain pin
+- **WHEN** `.flox/` exists alongside one or more of `rust-toolchain.toml`,
+  `.nvmrc`, `.python-version`
+- **THEN** init reports the project as ready for `up` and does not print
+  toolchain-pin advice — a real flox environment supersedes advice about a
+  pin it would otherwise just be a fallback for
+
 #### Scenario: Init without an environment
 - **WHEN** no `.flox/` exists in the project root
 - **THEN** the manifest is still generated with `provider = "flox"`

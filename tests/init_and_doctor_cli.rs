@@ -130,6 +130,59 @@ fn init_advises_on_a_pinned_rust_toolchain_without_flox() {
 }
 
 #[test]
+fn init_advises_on_a_pinned_node_version_without_flox() {
+    let dir = scratch_project("nvmrc");
+    std::fs::write(dir.join(".nvmrc"), "20\n").unwrap();
+
+    let out = run(&dir, &["init"]);
+    assert!(out.status.success(), "{:?}", out);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains(".nvmrc"));
+    assert!(stdout.contains("nvm alone"));
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn init_advises_on_a_pinned_python_version_without_flox() {
+    let dir = scratch_project("pyversion");
+    std::fs::write(dir.join(".python-version"), "3.12\n").unwrap();
+
+    let out = run(&dir, &["init"]);
+    assert!(out.status.success(), "{:?}", out);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains(".python-version"));
+    assert!(stdout.contains("pyenv alone"));
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn init_prefers_an_existing_flox_environment_over_a_toolchain_pin() {
+    let dir = scratch_project("flox-over-pin");
+    std::fs::create_dir_all(dir.join(".flox")).unwrap();
+    std::fs::write(
+        dir.join("rust-toolchain.toml"),
+        "[toolchain]\nchannel = \"stable\"\n",
+    )
+    .unwrap();
+
+    let out = run(&dir, &["init"]);
+    assert!(out.status.success(), "{:?}", out);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("ready for `devcroft up`"),
+        "an existing .flox/ should win over a toolchain pin, got {stdout:?}"
+    );
+    assert!(
+        !stdout.contains("rustup alone"),
+        "pin advice should not print when .flox/ already exists, got {stdout:?}"
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn doctor_reports_backend_and_provider_when_installed() {
     if Command::new("nono").arg("--version").output().is_err()
         || Command::new("flox").arg("--version").output().is_err()
