@@ -67,6 +67,17 @@ options, and never overwrites an existing manifest without `--force`.
   toolchain-pin advice — a real flox environment supersedes advice about a
   pin it would otherwise just be a fallback for
 
+#### Scenario: Disambiguate a real name collision
+- **WHEN** the directory slug matches the default name of an already-known
+  sandbox (state exists for that name, recorded for a different project
+  root — e.g. two unrelated projects both named `api`)
+- **THEN** init appends a short suffix derived from the project's absolute
+  path to keep the two disjoint, rather than silently generating a name
+  that would collide with the other project's state dir and control
+  socket
+- **AND** re-running init in the *same* project (its own state, its own
+  project root) is not treated as a collision and keeps the plain slug
+
 #### Scenario: Init without an environment
 - **WHEN** no `.flox/` exists in the project root
 - **THEN** the manifest is still generated with `provider = "flox"`

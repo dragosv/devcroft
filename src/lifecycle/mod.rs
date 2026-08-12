@@ -10,7 +10,7 @@ mod status;
 mod terminate;
 mod up;
 
-pub use state::{Health, Meta, StatePaths, client_key_paths, health};
+pub use state::{Health, Meta, StatePaths, client_key_paths, health, read_meta};
 pub use status::{KeeperStatus, SandboxStatus, SandboxSummary, StatusError, logs, ps, status};
 pub use terminate::{GRACE_PERIOD, TerminateError, down, rm};
 pub use up::{UpError, UpOptions, UpOutcome, up};

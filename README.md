@@ -53,7 +53,11 @@ client. Task group 7 (CLI polish & release) is well underway: `devcroft
 init` detects an existing flox environment or a bare single-ecosystem
 toolchain pin (`rust-toolchain.toml`/`.nvmrc`/`.python-version`) and
 generates a minimal manifest without ever overwriting one without
-`--force`; `devcroft doctor` reports backend presence/version-range, kernel
+`--force`; its default sandbox name (the directory slug) is disambiguated
+with a short path-derived suffix only on a real collision against another
+project's already-existing state — e.g. two unrelated projects both named
+`api` — so the common case keeps the plain slug and only a genuine clash
+gets a suffix; `devcroft doctor` reports backend presence/version-range, kernel
 sandboxing capability, the provider binary, `ssh-config` managed-section
 state, and (when a manifest is discoverable) which of its aspects would be
 degraded on this host, with every `FAIL` naming its fix (7.1). The rest of

@@ -183,6 +183,83 @@ fn init_prefers_an_existing_flox_environment_over_a_toolchain_pin() {
 }
 
 #[test]
+fn init_disambiguates_a_real_name_collision_across_projects() {
+    if Command::new("nono").arg("--version").output().is_err()
+        || Command::new("flox").arg("--version").output().is_err()
+    {
+        eprintln!("skipping: nono and/or flox not on PATH");
+        return;
+    }
+    unsafe {
+        std::env::set_var("DEVCROFT_KEEPER_EXE", env!("CARGO_BIN_EXE_devcroft"));
+    }
+
+    // Two unrelated projects that happen to share a leaf directory name —
+    // ~/proiect-A/api and ~/proiect-B/api from the report this test is
+    // covering — so both would default to the same plain slug "api".
+    let parent = scratch_project("collision");
+    let project_a = parent.join("proiect-A").join("api");
+    let project_b = parent.join("proiect-B").join("api");
+    std::fs::create_dir_all(&project_a).unwrap();
+    std::fs::create_dir_all(&project_b).unwrap();
+    for p in [&project_a, &project_b] {
+        assert!(
+            Command::new("flox")
+                .arg("init")
+                .current_dir(p)
+                .output()
+                .unwrap()
+                .status
+                .success()
+        );
+    }
+
+    // First project: no prior state under "api" anywhere, so it gets the
+    // plain slug, and `up` actually starts it (real state, real meta).
+    assert!(run(&project_a, &["init"]).status.success());
+    let (manifest_a, _) =
+        devcroft::config::parse(&std::fs::read_to_string(project_a.join("devcroft.toml")).unwrap())
+            .unwrap();
+    assert_eq!(manifest_a.sandbox.name, "api");
+    let up_a = run(&project_a, &["up"]);
+    assert!(up_a.status.success(), "{up_a:?}");
+
+    // Second project: state for "api" now exists and belongs to project_a,
+    // not project_b — a real collision, so init must disambiguate.
+    let out_b = run(&project_b, &["init"]);
+    assert!(out_b.status.success(), "{out_b:?}");
+    let (manifest_b, _) =
+        devcroft::config::parse(&std::fs::read_to_string(project_b.join("devcroft.toml")).unwrap())
+            .unwrap();
+    assert_ne!(
+        manifest_b.sandbox.name, "api",
+        "a real collision must not silently reuse the colliding name"
+    );
+    assert!(
+        manifest_b.sandbox.name.starts_with("api-"),
+        "got {:?}",
+        manifest_b.sandbox.name
+    );
+    assert!(devcroft::config::is_valid_name(&manifest_b.sandbox.name));
+
+    // Re-running init in project_a itself (same project, not a collision)
+    // must still keep the plain slug.
+    assert!(run(&project_a, &["init", "--force"]).status.success());
+    let (manifest_a2, _) =
+        devcroft::config::parse(&std::fs::read_to_string(project_a.join("devcroft.toml")).unwrap())
+            .unwrap();
+    assert_eq!(manifest_a2.sandbox.name, "api");
+
+    let _ = run(&project_a, &["rm", "--yes"]);
+    let _ = std::fs::remove_dir_all(
+        devcroft::lifecycle::StatePaths::new(&manifest_a.sandbox.name)
+            .unwrap()
+            .root,
+    );
+    let _ = std::fs::remove_dir_all(&parent);
+}
+
+#[test]
 fn doctor_reports_backend_and_provider_when_installed() {
     if Command::new("nono").arg("--version").output().is_err()
         || Command::new("flox").arg("--version").output().is_err()

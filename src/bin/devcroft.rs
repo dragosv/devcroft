@@ -295,6 +295,41 @@ fn ensure_client_keypair() -> Result<(), String> {
     Ok(())
 }
 
+/// `init`'s default name is the directory slug alone, so two unrelated
+/// projects that happen to share a leaf directory name (`~/proiect-A/api`,
+/// `~/proiect-B/api`) would otherwise collide on the same state dir and
+/// control socket (`StatePaths::new` derives both from the name alone).
+/// Only disambiguates on a *real* collision — state already exists for
+/// `base` and belongs to a different project root — so the common case (one
+/// project, or re-running `init` in the same one) keeps the plain slug.
+/// A project that has never been `up` yet leaves no meta to check against;
+/// that residual race is intentionally left to the operator (pick an
+/// explicit `[sandbox].name`), not solved by scanning every sandbox's state
+/// on every `init`.
+fn disambiguate_name(base: &str, project_root: &std::path::Path) -> String {
+    let Ok(paths) = devcroft::lifecycle::StatePaths::new(base) else {
+        return base.to_string();
+    };
+    let Ok(Some(meta)) = devcroft::lifecycle::read_meta(&paths.meta) else {
+        return base.to_string();
+    };
+    if meta.project_root == project_root.to_string_lossy() {
+        return base.to_string();
+    }
+
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    project_root.hash(&mut hasher);
+    let suffix = format!("{:06x}", hasher.finish() & 0xffffff);
+
+    let mut trimmed = base;
+    while trimmed.len() > 32 - 1 - suffix.len() {
+        trimmed = &trimmed[..trimmed.len() - 1];
+    }
+    let trimmed = trimmed.trim_end_matches('-');
+    format!("{trimmed}-{suffix}")
+}
+
 /// `devcroft init [--force]` (cli spec's "init" requirement, task 7.1):
 /// detects an existing flox environment or a single-ecosystem toolchain
 /// pin, generates a minimal `devcroft.toml`, and never overwrites an
@@ -331,7 +366,8 @@ fn cli_init(args: &[String]) -> i32 {
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_else(|| "sandbox".to_string());
-    let name = devcroft::config::slugify(&dir_name);
+    let base_name = devcroft::config::slugify(&dir_name);
+    let name = disambiguate_name(&base_name, &cwd);
 
     // `provider = "flox"` is already `Env`'s own default (config/mod.rs)
     // even if omitted, but the cli spec's init scenarios describe the
