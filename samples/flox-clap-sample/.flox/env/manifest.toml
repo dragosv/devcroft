@@ -9,13 +9,13 @@ schema-version = "1.14.0"
 [install]
 gcc.pkg-path = "gcc"
 rustfmt.pkg-path = "rustfmt"
-rustfmt.version = "1.97.0"
+rustfmt.version = "1.95.0"
 rustc.pkg-path = "rustc"
-rustc.version = "1.97.0"
+rustc.version = "1.95.0"
 cargo.pkg-path = "cargo"
-cargo.version = "1.97.0"
+cargo.version = "1.95.0"
 clippy.pkg-path = "clippy"
-clippy.version = "1.97.0"
+clippy.version = "1.95.0"
 # gum.pkg-path = "gum"
 # gum.version = "^0.14.5"
 
@@ -119,17 +119,17 @@ on-activate = '''
 
 ## Other Environment Options -----------------------------------------
 [options]
-# rustc/cargo/clippy/rustfmt are pinned to an exact version (1.97.0) below,
-# and nixpkgs doesn't publish that build for x86_64-darwin (only
-# aarch64-darwin, aarch64-linux, x86_64-linux) — verified against this
-# devcontainer, which is aarch64-linux anyway. A project that needs
-# x86_64-darwin too would need a version both platforms actually ship, or
-# to accept the unpinned `latest`.
+# rustc/cargo/clippy/rustfmt are pinned to an exact version below. 1.96
+# and 1.97 aren't published for x86_64-darwin in nixpkgs (only
+# aarch64-darwin/aarch64-linux/x86_64-linux); 1.95.0 is the most recent
+# version that covers all four platforms devcroft supports, which is why
+# that's the pin here rather than a newer one — verified via
+# `flox show rustc`/`cargo`/`clippy`/`rustfmt` before picking it.
 systems = [
-#   "aarch64-darwin",
+  "aarch64-darwin",
   "aarch64-linux",
-#   "x86_64-darwin",
-#   "x86_64-linux",
+  "x86_64-darwin",
+  "x86_64-linux",
 ]
 # Uncomment to disable CUDA detection.
 # cuda-detection = false

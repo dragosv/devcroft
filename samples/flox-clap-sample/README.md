@@ -10,7 +10,7 @@ there's no reason to reach for it separately anymore.
 Unlike [samples/flox-rustup-sample](../flox-rustup-sample/) (worth reading
 too — this README assumes it and only covers what's different), this one
 has **no rustup at all**: `rustc`/`cargo`/`clippy`/`rustfmt` are installed
-directly from flox, each pinned to an exact version (`1.97.0`) in
+directly from flox, each pinned to an exact version in
 `.flox/env/manifest.toml`'s `[install]` section. flox's own lockfile
 (`.flox/env/manifest.lock`) already gives closure-level reproducibility for
 the compiler, so a second toolchain manager on top of it isn't buying
@@ -18,12 +18,13 @@ anything here — `rust-toolchain.toml` is a rustup-specific mechanism and
 doesn't exist in this sample at all. `devcroft.toml` still sandboxes
 sessions the same way.
 
-One consequence: `rustc@1.97.0` isn't published for `x86_64-darwin` in
-nixpkgs (only `aarch64-darwin`/`aarch64-linux`/`x86_64-linux`), so
-`.flox/env/manifest.toml`'s `[options] systems` is scoped to
-`aarch64-linux` — this devcontainer's actual platform — rather than left
-at flox's default of all four. A project needing `x86_64-darwin` too would
-need a version both platforms ship, or fall back to unpinned `latest`.
+The pin is `1.95.0`, not the latest available (`1.97.1`): `flox show
+rustc`/`cargo`/`clippy`/`rustfmt` all show `1.96.1` and `1.97.x` published
+only for `aarch64-darwin`/`aarch64-linux`/`x86_64-linux` — no
+`x86_64-darwin` build exists for those in nixpkgs. `1.95.0` is the most
+recent version that covers all four platforms devcroft supports, so
+`.flox/env/manifest.toml`'s `[options] systems` lists all four rather than
+being scoped down to just this devcontainer's platform.
 
 ## Commands
 
