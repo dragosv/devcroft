@@ -2,6 +2,12 @@
 name = "devcroft"
 version = "0.1.0"
 edition = "2024"
+description = "Isolated, reproducible development environments built on OS-level sandboxing (Landlock/Seatbelt), each reachable over SSH"
+license = "MIT"
+repository = "https://github.com/dragosv/devcroft"
+readme = "README.md"
+keywords = ["sandbox", "landlock", "devcontainer", "ssh", "reproducible"]
+categories = ["command-line-utilities", "development-tools"]
 
 [dependencies]
 libc = "0.2.189"
