@@ -84,6 +84,17 @@ useless (deny of a path never granted).
   `~/.config/gcloud`, `~/.kube`)
 - **THEN** validation succeeds but a warning is printed at `up`, once
 
+#### Scenario: Path traversal is rejected
+- **WHEN** any `filesystem.allow`/`read`/`deny` entry contains a `..`
+  path segment (e.g. `../../etc`, `~/../../etc`, `/etc/../root`)
+- **THEN** validation fails with `ConfigError::InvalidPath` naming the
+  field and value — a `..` segment is unresolved by the containment
+  model every other check in this requirement relies on (deny-wins-over-
+  allow, the sensitive-path warning, baseline-deny-unless-granted), and
+  left unrejected it lets a relative entry resolve outside the project
+  root once `nono` (invoked with the project root as its cwd) resolves
+  it, silently violating "relative to the project root"
+
 ### Requirement: Network policy model
 The system SHALL model network policy as `default = "deny" | "allow"` plus
 an `allow` list of domain names, and SHALL treat domain filtering as a

@@ -368,6 +368,70 @@ mod tests {
     }
 
     #[test]
+    fn traversal_in_allow_is_rejected() {
+        let err = parse(
+            r#"
+            [sandbox]
+            name = "myproj"
+            [filesystem]
+            allow = ["../../etc"]
+            "#,
+        )
+        .unwrap_err();
+        assert!(
+            matches!(err, ConfigError::InvalidPath { field, value } if field == "allow" && value == "../../etc")
+        );
+    }
+
+    #[test]
+    fn traversal_in_read_is_rejected() {
+        let err = parse(
+            r#"
+            [sandbox]
+            name = "myproj"
+            [filesystem]
+            read = ["src/../../secrets"]
+            "#,
+        )
+        .unwrap_err();
+        assert!(matches!(err, ConfigError::InvalidPath { field, .. } if field == "read"));
+    }
+
+    #[test]
+    fn traversal_under_home_or_absolute_is_also_rejected() {
+        // `..` breaks is_within's containment model (deny-wins-over-allow,
+        // sensitive-path warnings, baseline-deny-unless-granted) regardless
+        // of which root it's rooted under, not just the project root.
+        for value in ["~/../../etc", "/etc/../root"] {
+            let err = parse(&format!(
+                "[sandbox]\nname = \"myproj\"\n[filesystem]\nallow = [{value:?}]\n"
+            ))
+            .unwrap_err();
+            assert!(
+                matches!(err, ConfigError::InvalidPath { .. }),
+                "expected {value:?} to be rejected, got {err:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_literal_dotdot_looking_prefix_is_not_a_traversal() {
+        // Component-based, not substring-based: a directory that merely
+        // starts with ".." (e.g. "..bak") is a real, unambiguous name and
+        // must not be rejected.
+        let (manifest, _) = parse(
+            r#"
+            [sandbox]
+            name = "myproj"
+            [filesystem]
+            allow = ["..bak"]
+            "#,
+        )
+        .unwrap();
+        assert_eq!(manifest.filesystem.allow, vec!["..bak".to_string()]);
+    }
+
+    #[test]
     fn sensitive_allow_warns_but_succeeds() {
         let (_, warnings) = parse(
             r#"

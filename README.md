@@ -13,7 +13,16 @@ supervisor, and an SSH endpoint over existing sandbox backends.
 
 ## Status
 
-**MVP implementation underway — 22/25 tasks.** The fd-passing keeper trick
+**MVP implementation underway — 22/25 tasks.** A path-traversal gap in
+task 2.1's filesystem validation was found and closed along the way: a
+`..` segment in `filesystem.allow`/`read`/`deny` (e.g. `../../etc`) passed
+validation silently and, since devcroft hands manifest path strings to
+`nono` unresolved with the project root as its cwd, actually granted
+access outside the project root — confirmed against a real `nono` profile
+before the fix. Rejected now with `ConfigError::InvalidPath` regardless of
+which root (project-relative, `~`, absolute) it appears under, since `..`
+also breaks the containment model every other filesystem check in that
+requirement depends on. The fd-passing keeper trick
 (spike binary, task group 1) is proven on both Linux/Landlock and
 macOS/Seatbelt; the config/policy compiler, the environment provider layer
 (`flox` resolution, task group 3), the keeper's spawn protocol (control

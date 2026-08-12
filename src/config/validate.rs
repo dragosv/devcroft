@@ -1,5 +1,5 @@
 use super::{ConfigError, Env, Filesystem, Warning};
-use crate::paths::{SENSITIVE_PATHS, is_within};
+use crate::paths::{SENSITIVE_PATHS, has_traversal, is_within};
 
 /// Known sections and, for each, its known field names. `env.vars` is
 /// deliberately absent from `env`'s field list — it is a free-form table
@@ -48,7 +48,7 @@ pub fn check_unknown_keys(table: &toml::Table) -> Result<(), ConfigError> {
 pub fn check_filesystem(fs: &Filesystem) -> Result<(), ConfigError> {
     for (field, values) in [("allow", &fs.allow), ("read", &fs.read), ("deny", &fs.deny)] {
         for value in values {
-            if value.is_empty() || value.contains('\0') {
+            if value.is_empty() || value.contains('\0') || has_traversal(value) {
                 return Err(ConfigError::InvalidPath {
                     field,
                     value: value.clone(),

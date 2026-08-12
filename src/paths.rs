@@ -37,6 +37,23 @@ fn components(path: &str) -> (Root, Vec<&str>) {
     )
 }
 
+/// Whether `path` contains a `..` segment. `is_within`'s containment model
+/// (and everything built on it: deny-wins-over-allow, sensitive-path
+/// warnings, baseline-deny-unless-already-granted) assumes normalized
+/// paths — a `..` segment is a backreference `components()` does not
+/// resolve, so it silently breaks every one of those checks rather than
+/// erroring. It is also how a `filesystem.allow` entry could escape the
+/// project root despite the config spec's requirement that relative paths
+/// stay relative to it: devcroft passes manifest path strings to `nono`
+/// unresolved, `nono wrap` runs with the project root as its cwd, and `..`
+/// resolves exactly as a shell would resolve it — confirmed against a real
+/// nono profile granting `../../../secretdir`, which read a file outside
+/// the project root with no warning anywhere in devcroft's own validation.
+pub(crate) fn has_traversal(path: &str) -> bool {
+    let (_, components) = components(path);
+    components.contains(&"..")
+}
+
 /// Whether `candidate` falls within (or equals) the region `granted` covers.
 /// Paths rooted differently (`~foo` vs project-relative vs absolute) are
 /// never within one another.
