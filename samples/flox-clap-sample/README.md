@@ -7,10 +7,23 @@ help, and (via `clap_complete`, not wired up here) shell completions for
 free from the same struct that parses args. structopt merged into clap v3;
 there's no reason to reach for it separately anymore.
 
-Same toolchain split as [samples/flox-rustup-sample](../flox-rustup-sample/)
-(read that one first — this README only covers what's different): rustup
-(`rust-toolchain.toml`) pins Rust **1.97.0**, flox provides the C toolchain
-and rustup itself, devcroft.toml sandboxes sessions around both.
+Unlike [samples/flox-rustup-sample](../flox-rustup-sample/) (worth reading
+too — this README assumes it and only covers what's different), this one
+has **no rustup at all**: `rustc`/`cargo`/`clippy`/`rustfmt` are installed
+directly from flox, each pinned to an exact version (`1.97.0`) in
+`.flox/env/manifest.toml`'s `[install]` section. flox's own lockfile
+(`.flox/env/manifest.lock`) already gives closure-level reproducibility for
+the compiler, so a second toolchain manager on top of it isn't buying
+anything here — `rust-toolchain.toml` is a rustup-specific mechanism and
+doesn't exist in this sample at all. `devcroft.toml` still sandboxes
+sessions the same way.
+
+One consequence: `rustc@1.97.0` isn't published for `x86_64-darwin` in
+nixpkgs (only `aarch64-darwin`/`aarch64-linux`/`x86_64-linux`), so
+`.flox/env/manifest.toml`'s `[options] systems` is scoped to
+`aarch64-linux` — this devcontainer's actual platform — rather than left
+at flox's default of all four. A project needing `x86_64-darwin` too would
+need a version both platforms ship, or fall back to unpinned `latest`.
 
 ## Commands
 
@@ -32,21 +45,24 @@ devcroft ssh                              # works too — see below
 devcroft down
 ```
 
-## What's different from flox-rustup-sample: real crates.io dependencies
+## Real crates.io dependencies still need a host-side fetch
 
-flox-rustup-sample had zero dependencies, so its `[hook] on-activate` only
-needed to materialize the *toolchain* (`rustup show`) host-side before the
-sandbox restriction applies. This sample adds `clap`, `chrono`, and
-`chrono-tz` — real crates.io dependencies — so the first `devcroft exec --
-cargo build` attempt failed trying to reach `index.crates.io`, correctly
-denied by the sandbox's default `network.default = "deny"`.
+flox-rustup-sample had zero dependencies. This sample adds `clap`,
+`chrono`, and `chrono-tz` — real crates.io dependencies — so the first
+`devcroft exec -- cargo build` attempt failed trying to reach
+`index.crates.io`, correctly denied by the sandbox's default
+`network.default = "deny"`. Project code doesn't get host network access
+without an explicit `network.allow` entry, and a per-build dependency
+fetch is exactly that: session-time network use, not one-time
+provisioning.
 
-Fixed the same way as the toolchain itself: the hook also runs `cargo
-fetch` (after redirecting `CARGO_HOME` into the project, same as before),
-downloading every dependency into the project-local registry cache
-host-side, at `up`, before restriction — matching CLAUDE.md's two-phase
-execution model. `devcroft exec -- cargo build` then compiles fully
-offline.
+Fixed in `[hook] on-activate`: `cargo fetch` downloads every dependency
+into a project-local registry cache (`CARGO_HOME` redirected into the
+project via `$FLOX_ENV_PROJECT`, since cargo otherwise defaults it to
+somewhere outside the project too, e.g. `/usr/local/cargo` or `~/.cargo`)
+— host-side, at `up`, before the sandbox restriction, matching CLAUDE.md's
+two-phase execution model. `devcroft exec -- cargo build` then compiles
+fully offline.
 
 ## Why the city table is hardcoded, not looked up from a service
 

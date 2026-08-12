@@ -3,82 +3,91 @@
   "manifest": {
     "schema-version": "1.14.0",
     "install": {
+      "cargo": {
+        "pkg-path": "cargo",
+        "version": "1.97.0"
+      },
+      "clippy": {
+        "pkg-path": "clippy",
+        "version": "1.97.0"
+      },
       "gcc": {
         "pkg-path": "gcc"
       },
-      "rustup": {
-        "pkg-path": "rustup"
+      "rustc": {
+        "pkg-path": "rustc",
+        "version": "1.97.0"
+      },
+      "rustfmt": {
+        "pkg-path": "rustfmt",
+        "version": "1.97.0"
       }
     },
     "hook": {
-      "on-activate": "  export RUSTUP_HOME=\"$FLOX_ENV_PROJECT/.rustup\"\n  export CARGO_HOME=\"$FLOX_ENV_PROJECT/.cargo\"\n  export TMPDIR=\"$FLOX_ENV_PROJECT/.tmp\"\n  mkdir -p \"$RUSTUP_HOME\" \"$CARGO_HOME\" \"$TMPDIR\"\n  rustup show > /dev/null\n  cd \"$FLOX_ENV_PROJECT\" && cargo fetch\n"
+      "on-activate": "  export CARGO_HOME=\"$FLOX_ENV_PROJECT/.cargo\"\n  export TMPDIR=\"$FLOX_ENV_PROJECT/.tmp\"\n  mkdir -p \"$CARGO_HOME\" \"$TMPDIR\"\n  cd \"$FLOX_ENV_PROJECT\" && cargo fetch\n"
     },
     "profile": {},
-    "options": {}
+    "options": {
+      "systems": [
+        "aarch64-linux"
+      ]
+    }
   },
   "packages": [
     {
-      "attr_path": "gcc",
+      "attr_path": "cargo",
       "broken": false,
-      "derivation": "/nix/store/a8p7xpnqqs0za19izm935yq01v8pclj9-gcc-wrapper-15.2.0.drv",
-      "description": "GNU Compiler Collection, version 15.2.0 (wrapper script)",
-      "install_id": "gcc",
-      "license": "GPL-3.0-or-later",
-      "locked_url": "https://github.com/flox/nixpkgs?rev=d407951447dcd00442e97087bf374aad70c04cea",
-      "name": "gcc-wrapper-15.2.0",
-      "pname": "gcc",
-      "rev": "d407951447dcd00442e97087bf374aad70c04cea",
-      "rev_count": 1027867,
-      "rev_date": "2026-07-05T04:06:12Z",
-      "scrape_date": "2026-07-06T03:12:56.001176Z",
+      "derivation": "/nix/store/ijkjg6jmmn22vcbp88g9ava04ipps10c-cargo-1.97.0.drv",
+      "description": "Downloads your Rust project's dependencies and builds your project",
+      "install_id": "cargo",
+      "license": "[ MIT, Apache-2.0 ]",
+      "locked_url": "https://github.com/flox/nixpkgs?rev=1559d3daa3ecc813a650b79375ea61b6741b8746",
+      "name": "cargo-1.97.0",
+      "pname": "cargo",
+      "rev": "1559d3daa3ecc813a650b79375ea61b6741b8746",
+      "rev_count": 1044798,
+      "rev_date": "2026-07-30T23:37:10Z",
+      "scrape_date": "2026-08-01T05:23:39.732873Z",
       "stabilities": [
-        "staging",
         "unstable"
       ],
       "unfree": false,
-      "version": "15.2.0",
+      "version": "1.97.0",
       "outputs_to_install": [
-        "man",
         "out"
       ],
       "outputs": {
-        "info": "/nix/store/xvaia7fvdsppazilkxx34ldmka1dfz34-gcc-wrapper-15.2.0-info",
-        "man": "/nix/store/n9qxwk3ix9q621ld9bi37lzljq1g89hv-gcc-wrapper-15.2.0-man",
-        "out": "/nix/store/46q5yc4cxiyhbfhgff77hqwis7kky0yw-gcc-wrapper-15.2.0"
+        "out": "/nix/store/lp3dyvgayzmnc1zdml5sq6iazfysd0az-cargo-1.97.0"
       },
-      "system": "aarch64-darwin",
+      "system": "aarch64-linux",
       "group": "toplevel",
       "priority": 5
     },
     {
-      "attr_path": "gcc",
+      "attr_path": "clippy",
       "broken": false,
-      "derivation": "/nix/store/20anxjdl57s231l1qazlnmrx3m3vx5bk-gcc-wrapper-15.2.0.drv",
-      "description": "GNU Compiler Collection, version 15.2.0 (wrapper script)",
-      "install_id": "gcc",
-      "license": "GPL-3.0-or-later",
-      "locked_url": "https://github.com/flox/nixpkgs?rev=d407951447dcd00442e97087bf374aad70c04cea",
-      "name": "gcc-wrapper-15.2.0",
-      "pname": "gcc",
-      "rev": "d407951447dcd00442e97087bf374aad70c04cea",
-      "rev_count": 1027867,
-      "rev_date": "2026-07-05T04:06:12Z",
-      "scrape_date": "2026-07-06T03:41:23.021572Z",
+      "derivation": "/nix/store/8w0xsqs66p22xdq9qz47ysj0wxlxjklr-clippy-1.97.0.drv",
+      "description": "Bunch of lints to catch common mistakes and improve your Rust code",
+      "install_id": "clippy",
+      "license": "[ MIT, Apache-2.0 ]",
+      "locked_url": "https://github.com/flox/nixpkgs?rev=1559d3daa3ecc813a650b79375ea61b6741b8746",
+      "name": "clippy-1.97.0",
+      "pname": "clippy",
+      "rev": "1559d3daa3ecc813a650b79375ea61b6741b8746",
+      "rev_count": 1044798,
+      "rev_date": "2026-07-30T23:37:10Z",
+      "scrape_date": "2026-08-01T05:23:39.966531Z",
       "stabilities": [
-        "staging",
         "unstable"
       ],
       "unfree": false,
-      "version": "15.2.0",
+      "version": "1.97.0",
       "outputs_to_install": [
-        "man",
-        "out",
         "out"
       ],
       "outputs": {
-        "info": "/nix/store/rla3j1fb1yzgglxc8g6p7q34vkp1h5zb-gcc-wrapper-15.2.0-info",
-        "man": "/nix/store/07nfp0wv2yk9k6h7qg5h3nhgxkkr9hc3-gcc-wrapper-15.2.0-man",
-        "out": "/nix/store/lx4f4lvm5hrbxbils30ssjal1jz9yxgh-gcc-wrapper-15.2.0"
+        "debug": "/nix/store/wzy2b0mn26f8z5yyds4r094mr53dx4x8-clippy-1.97.0-debug",
+        "out": "/nix/store/sscvmgv3chk0h6rmipxa9pm7smp89lqh-clippy-1.97.0"
       },
       "system": "aarch64-linux",
       "group": "toplevel",
@@ -87,191 +96,94 @@
     {
       "attr_path": "gcc",
       "broken": false,
-      "derivation": "/nix/store/160s4m0c6rbs4apvbzb068q4ldw49618-gcc-wrapper-15.2.0.drv",
-      "description": "GNU Compiler Collection, version 15.2.0 (wrapper script)",
+      "derivation": "/nix/store/ic7pwp6djfyciiaqa2mqzhzii1y8hckc-gcc-wrapper-15.3.0.drv",
+      "description": "GNU Compiler Collection, version 15.3.0 (wrapper script)",
       "install_id": "gcc",
       "license": "GPL-3.0-or-later",
-      "locked_url": "https://github.com/flox/nixpkgs?rev=d407951447dcd00442e97087bf374aad70c04cea",
-      "name": "gcc-wrapper-15.2.0",
+      "locked_url": "https://github.com/flox/nixpkgs?rev=1559d3daa3ecc813a650b79375ea61b6741b8746",
+      "name": "gcc-wrapper-15.3.0",
       "pname": "gcc",
-      "rev": "d407951447dcd00442e97087bf374aad70c04cea",
-      "rev_count": 1027867,
-      "rev_date": "2026-07-05T04:06:12Z",
-      "scrape_date": "2026-07-06T04:09:01.501603Z",
+      "rev": "1559d3daa3ecc813a650b79375ea61b6741b8746",
+      "rev_count": 1044798,
+      "rev_date": "2026-07-30T23:37:10Z",
+      "scrape_date": "2026-08-01T05:23:41.134708Z",
       "stabilities": [
-        "staging",
         "unstable"
       ],
       "unfree": false,
-      "version": "15.2.0",
+      "version": "15.3.0",
       "outputs_to_install": [
         "man",
-        "out"
-      ],
-      "outputs": {
-        "info": "/nix/store/y0vblnaz09f5hws1pnx59fzvlpcrd1zn-gcc-wrapper-15.2.0-info",
-        "man": "/nix/store/zhrv9vafnz3agiwznkij8p36fpa17py7-gcc-wrapper-15.2.0-man",
-        "out": "/nix/store/a9dhskc2ladjh7aph2z1b7x0lsdl506l-gcc-wrapper-15.2.0"
-      },
-      "system": "x86_64-darwin",
-      "group": "toplevel",
-      "priority": 5
-    },
-    {
-      "attr_path": "gcc",
-      "broken": false,
-      "derivation": "/nix/store/bmwhgbaq6jk87imr4nsldixk9ccc1vl4-gcc-wrapper-15.2.0.drv",
-      "description": "GNU Compiler Collection, version 15.2.0 (wrapper script)",
-      "install_id": "gcc",
-      "license": "GPL-3.0-or-later",
-      "locked_url": "https://github.com/flox/nixpkgs?rev=d407951447dcd00442e97087bf374aad70c04cea",
-      "name": "gcc-wrapper-15.2.0",
-      "pname": "gcc",
-      "rev": "d407951447dcd00442e97087bf374aad70c04cea",
-      "rev_count": 1027867,
-      "rev_date": "2026-07-05T04:06:12Z",
-      "scrape_date": "2026-07-06T04:40:25.789231Z",
-      "stabilities": [
-        "staging",
-        "unstable"
-      ],
-      "unfree": false,
-      "version": "15.2.0",
-      "outputs_to_install": [
-        "man",
-        "man",
-        "man",
-        "out",
-        "out",
         "out",
         "out"
       ],
       "outputs": {
-        "info": "/nix/store/pcar1vqvmn2y42lplzca392yx605kk31-gcc-wrapper-15.2.0-info",
-        "man": "/nix/store/dxqah042znlglapf07vha4qannacibf2-gcc-wrapper-15.2.0-man",
-        "out": "/nix/store/xcnqqnhw9hb4j5rjgds2yjryi8qki5f3-gcc-wrapper-15.2.0"
-      },
-      "system": "x86_64-linux",
-      "group": "toplevel",
-      "priority": 5
-    },
-    {
-      "attr_path": "rustup",
-      "broken": false,
-      "derivation": "/nix/store/s3r3w0xyjhzx5br829m733l8br01jd5l-rustup-1.29.0.drv",
-      "description": "Rust toolchain installer",
-      "install_id": "rustup",
-      "license": "[ Apache-2.0, MIT ]",
-      "locked_url": "https://github.com/flox/nixpkgs?rev=d407951447dcd00442e97087bf374aad70c04cea",
-      "name": "rustup-1.29.0",
-      "pname": "rustup",
-      "rev": "d407951447dcd00442e97087bf374aad70c04cea",
-      "rev_count": 1027867,
-      "rev_date": "2026-07-05T04:06:12Z",
-      "scrape_date": "2026-07-06T03:14:34.180998Z",
-      "stabilities": [
-        "staging",
-        "unstable"
-      ],
-      "unfree": false,
-      "version": "1.29.0",
-      "outputs_to_install": [
-        "out"
-      ],
-      "outputs": {
-        "out": "/nix/store/v3r8r9l3qmxm9sb4gsnnrhz4xcz82fl2-rustup-1.29.0"
-      },
-      "system": "aarch64-darwin",
-      "group": "toplevel",
-      "priority": 5
-    },
-    {
-      "attr_path": "rustup",
-      "broken": false,
-      "derivation": "/nix/store/fgsslkac3206lc92lkf2mjg6wrx1yrif-rustup-1.29.0.drv",
-      "description": "Rust toolchain installer",
-      "install_id": "rustup",
-      "license": "[ Apache-2.0, MIT ]",
-      "locked_url": "https://github.com/flox/nixpkgs?rev=d407951447dcd00442e97087bf374aad70c04cea",
-      "name": "rustup-1.29.0",
-      "pname": "rustup",
-      "rev": "d407951447dcd00442e97087bf374aad70c04cea",
-      "rev_count": 1027867,
-      "rev_date": "2026-07-05T04:06:12Z",
-      "scrape_date": "2026-07-06T03:43:31.360172Z",
-      "stabilities": [
-        "staging",
-        "unstable"
-      ],
-      "unfree": false,
-      "version": "1.29.0",
-      "outputs_to_install": [
-        "out"
-      ],
-      "outputs": {
-        "out": "/nix/store/1ghz0g8a4p12amgzdsn0g7s47vzawxph-rustup-1.29.0"
+        "info": "/nix/store/792v5vads8y4gph8cwaj3ngzvfpymnn4-gcc-wrapper-15.3.0-info",
+        "man": "/nix/store/4jd02dggdaq9xwz08k7svhs5lfs7b6kw-gcc-wrapper-15.3.0-man",
+        "out": "/nix/store/hy2xqdbh7mw1w1yhqggfb3s1dmf89h10-gcc-wrapper-15.3.0"
       },
       "system": "aarch64-linux",
       "group": "toplevel",
       "priority": 5
     },
     {
-      "attr_path": "rustup",
+      "attr_path": "rustc",
       "broken": false,
-      "derivation": "/nix/store/4i8mjzybr1n5gy8a4bhjg0md4wy0r3yp-rustup-1.29.0.drv",
-      "description": "Rust toolchain installer",
-      "install_id": "rustup",
-      "license": "[ Apache-2.0, MIT ]",
-      "locked_url": "https://github.com/flox/nixpkgs?rev=d407951447dcd00442e97087bf374aad70c04cea",
-      "name": "rustup-1.29.0",
-      "pname": "rustup",
-      "rev": "d407951447dcd00442e97087bf374aad70c04cea",
-      "rev_count": 1027867,
-      "rev_date": "2026-07-05T04:06:12Z",
-      "scrape_date": "2026-07-06T04:11:03.694868Z",
+      "derivation": "/nix/store/fwdp6d6b3iwdkszn2zlskv6j9zf7b5kg-rustc-wrapper-1.97.0.drv",
+      "description": "Safe, concurrent, practical language (wrapper script)",
+      "install_id": "rustc",
+      "license": "[ MIT, Apache-2.0 ]",
+      "locked_url": "https://github.com/flox/nixpkgs?rev=1559d3daa3ecc813a650b79375ea61b6741b8746",
+      "name": "rustc-wrapper-1.97.0",
+      "pname": "rustc",
+      "rev": "1559d3daa3ecc813a650b79375ea61b6741b8746",
+      "rev_count": 1044798,
+      "rev_date": "2026-07-30T23:37:10Z",
+      "scrape_date": "2026-08-01T05:25:46.818303Z",
       "stabilities": [
-        "staging",
         "unstable"
       ],
       "unfree": false,
-      "version": "1.29.0",
+      "version": "1.97.0",
       "outputs_to_install": [
+        "man",
         "out"
       ],
       "outputs": {
-        "out": "/nix/store/lvm2155pfw1b3a9g8cij5g7vx2dk4v9f-rustup-1.29.0"
+        "doc": "/nix/store/sq2qc9vlxybv30nw13n29rlia1fz52lv-rustc-wrapper-1.97.0-doc",
+        "man": "/nix/store/cng3lybfqzr10wzpdxmsb236magpb4nk-rustc-wrapper-1.97.0-man",
+        "out": "/nix/store/zbjqiyva7jjqb2m8drxj17306zkn0lmc-rustc-wrapper-1.97.0"
       },
-      "system": "x86_64-darwin",
+      "system": "aarch64-linux",
       "group": "toplevel",
       "priority": 5
     },
     {
-      "attr_path": "rustup",
+      "attr_path": "rustfmt",
       "broken": false,
-      "derivation": "/nix/store/r84mgndg8lal1ww9b5zsxh2m99bl0xah-rustup-1.29.0.drv",
-      "description": "Rust toolchain installer",
-      "install_id": "rustup",
-      "license": "[ Apache-2.0, MIT ]",
-      "locked_url": "https://github.com/flox/nixpkgs?rev=d407951447dcd00442e97087bf374aad70c04cea",
-      "name": "rustup-1.29.0",
-      "pname": "rustup",
-      "rev": "d407951447dcd00442e97087bf374aad70c04cea",
-      "rev_count": 1027867,
-      "rev_date": "2026-07-05T04:06:12Z",
-      "scrape_date": "2026-07-06T04:42:43.587225Z",
+      "derivation": "/nix/store/fzdf94lqpvv88n6x9qh9g1qlg3n51dy9-rustfmt-1.97.0.drv",
+      "description": "Tool for formatting Rust code according to style guidelines",
+      "install_id": "rustfmt",
+      "license": "[ MIT, Apache-2.0 ]",
+      "locked_url": "https://github.com/flox/nixpkgs?rev=1559d3daa3ecc813a650b79375ea61b6741b8746",
+      "name": "rustfmt-1.97.0",
+      "pname": "rustfmt",
+      "rev": "1559d3daa3ecc813a650b79375ea61b6741b8746",
+      "rev_count": 1044798,
+      "rev_date": "2026-07-30T23:37:10Z",
+      "scrape_date": "2026-08-01T05:25:46.849283Z",
       "stabilities": [
-        "staging",
         "unstable"
       ],
       "unfree": false,
-      "version": "1.29.0",
+      "version": "1.97.0",
       "outputs_to_install": [
         "out"
       ],
       "outputs": {
-        "out": "/nix/store/cxx967kpb69s62f8xh97qq1r2lhj6i3s-rustup-1.29.0"
+        "out": "/nix/store/1294vmf2lv5f68y70r4zydis60g4z34x-rustfmt-1.97.0"
       },
-      "system": "x86_64-linux",
+      "system": "aarch64-linux",
       "group": "toplevel",
       "priority": 5
     }

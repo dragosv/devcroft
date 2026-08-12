@@ -8,7 +8,14 @@ schema-version = "1.14.0"
 ## -------------------------------------------------------------------
 [install]
 gcc.pkg-path = "gcc"
-rustup.pkg-path = "rustup"
+rustfmt.pkg-path = "rustfmt"
+rustfmt.version = "1.97.0"
+rustc.pkg-path = "rustc"
+rustc.version = "1.97.0"
+cargo.pkg-path = "cargo"
+cargo.version = "1.97.0"
+clippy.pkg-path = "clippy"
+clippy.version = "1.97.0"
 # gum.pkg-path = "gum"
 # gum.version = "^0.14.5"
 
@@ -25,27 +32,30 @@ rustup.pkg-path = "rustup"
 ##  ... run by _bash_ shell when you run 'flox activate'.
 ## -------------------------------------------------------------------
 [hook]
-# Same pattern as samples/flox-rustup-sample (see that sample's README for
-# the full reasoning): rustup/cargo/the linker default to the *host's*
-# RUSTUP_HOME/CARGO_HOME/TMPDIR, outside this project, so a devcroft-
-# sandboxed session correctly denies writing there. Redirected into the
-# project via $FLOX_ENV_PROJECT (flox's own absolute path to the project
-# root — must be absolute, nono rejects a relative TMPDIR outright).
+# No rustup here: rustc/cargo/clippy/rustfmt are installed directly above,
+# pinned to an exact version (1.97.0) by flox's own lockfile — the closure
+# guarantee already covers the compiler version, so a separate toolchain
+# manager isn't needed on top of it (unlike samples/flox-rustup-sample,
+# which pins the version via rust-toolchain.toml instead, for projects
+# that want rustup's per-project-pin workflow specifically).
 #
-# Two things get materialized here, host-side, before the sandbox
-# restriction applies, so `devcroft exec -- cargo build` never needs
-# network access at session time: `rustup show` installs the
-# rust-toolchain.toml pin (1.97.0), and `cargo fetch` (this crate has real
-# crates.io dependencies — clap, chrono, chrono-tz — unlike
-# flox-rustup-sample, which had none) downloads every dependency into
-# CARGO_HOME's registry cache. Without this second step, `cargo build`
-# inside the sandbox fails trying to reach index.crates.io.
+# cargo still defaults CARGO_HOME to the *host's* location (e.g.
+# /usr/local/cargo in devcroft's own devcontainer, or ~/.cargo — either
+# way outside this project), so a devcroft-sandboxed session correctly
+# denies writing there. Redirected into the project instead, using
+# $FLOX_ENV_PROJECT (flox's own absolute path to the project root — must
+# be absolute, nono rejects a relative TMPDIR outright, confirmed while
+# building flox-rustup-sample).
+#
+# `cargo fetch` then downloads this crate's real crates.io dependencies
+# (clap, chrono, chrono-tz) into that project-local registry cache,
+# host-side, at `up`, before the sandbox restriction — so
+# `devcroft exec -- cargo build` never needs network access at session
+# time.
 on-activate = '''
-  export RUSTUP_HOME="$FLOX_ENV_PROJECT/.rustup"
   export CARGO_HOME="$FLOX_ENV_PROJECT/.cargo"
   export TMPDIR="$FLOX_ENV_PROJECT/.tmp"
-  mkdir -p "$RUSTUP_HOME" "$CARGO_HOME" "$TMPDIR"
-  rustup show > /dev/null
+  mkdir -p "$CARGO_HOME" "$TMPDIR"
   cd "$FLOX_ENV_PROJECT" && cargo fetch
 '''
 # on-activate = '''
@@ -109,12 +119,17 @@ on-activate = '''
 
 ## Other Environment Options -----------------------------------------
 [options]
-# Systems that environment is compatible with
-# systems = [
+# rustc/cargo/clippy/rustfmt are pinned to an exact version (1.97.0) below,
+# and nixpkgs doesn't publish that build for x86_64-darwin (only
+# aarch64-darwin, aarch64-linux, x86_64-linux) — verified against this
+# devcontainer, which is aarch64-linux anyway. A project that needs
+# x86_64-darwin too would need a version both platforms actually ship, or
+# to accept the unpinned `latest`.
+systems = [
 #   "aarch64-darwin",
-#   "aarch64-linux",
+  "aarch64-linux",
 #   "x86_64-darwin",
 #   "x86_64-linux",
-# ]
+]
 # Uncomment to disable CUDA detection.
 # cuda-detection = false
