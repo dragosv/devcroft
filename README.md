@@ -13,7 +13,7 @@ supervisor, and an SSH endpoint over existing sandbox backends.
 
 ## Status
 
-**MVP implementation underway — 21/25 tasks.** The fd-passing keeper trick
+**MVP implementation underway — 22/25 tasks.** The fd-passing keeper trick
 (spike binary, task group 1) is proven on both Linux/Landlock and
 macOS/Seatbelt; the config/policy compiler, the environment provider layer
 (`flox` resolution, task group 3), the keeper's spawn protocol (control
@@ -56,9 +56,14 @@ the right options pre-filled). Destructive operations (`rm`, `up
 --recreate`) refuse to run non-interactively without `--yes` (7.2). One gap
 surfaced along the way: the lifecycle spec's `hooks.post_create`/
 `hooks.post_start` execution isn't implemented — the manifest parses them,
-but nothing runs them yet. User-facing documentation is written at release
-(task 7.4); until
-then the specs are the source of truth.
+but nothing runs them yet. Two sandboxes now have end-to-end coverage
+running side by side with disjoint state and independently-enforced
+policy, and a keeper survives a freeze/resume cycle (`SIGSTOP`/`SIGCONT`
+on the keeper pid, the realistic proxy for host suspend/resume available
+in this environment) with the next command transparently confirming
+health rather than assuming it (7.3). User-facing documentation is
+written at release (task 7.4); until then the specs are the source of
+truth.
 
 | | |
 |---|---|

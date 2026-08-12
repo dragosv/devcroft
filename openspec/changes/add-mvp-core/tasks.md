@@ -60,7 +60,7 @@ retired first, and every phase ends in something runnable.
       task number: the lifecycle spec's "Hooks run inside the boundary"
       requirement (`hooks.post_create`/`hooks.post_start` execution) is
       still unimplemented — `Manifest.hooks` parses but nothing runs it.
-- [ ] 7.3 Two-sandbox concurrency test; suspend/resume test
+- [x] 7.3 Two-sandbox concurrency test; suspend/resume test
 - [ ] 7.4 README with honest limitations section (no inter-sandbox process
       hiding, cooperative network filtering, not a hard security boundary)
 - [ ] 7.5 Publish crate `devcroft`; reserve/point npm name
