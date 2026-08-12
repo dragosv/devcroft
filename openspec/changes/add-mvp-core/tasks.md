@@ -61,6 +61,6 @@ retired first, and every phase ends in something runnable.
       requirement (`hooks.post_create`/`hooks.post_start` execution) is
       still unimplemented — `Manifest.hooks` parses but nothing runs it.
 - [x] 7.3 Two-sandbox concurrency test; suspend/resume test
-- [ ] 7.4 README with honest limitations section (no inter-sandbox process
+- [x] 7.4 README with honest limitations section (no inter-sandbox process
       hiding, cooperative network filtering, not a hard security boundary)
 - [ ] 7.5 Publish crate `devcroft`; reserve/point npm name

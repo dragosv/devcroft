@@ -13,16 +13,9 @@ supervisor, and an SSH endpoint over existing sandbox backends.
 
 ## Status
 
-**MVP implementation underway — 22/25 tasks.** A path-traversal gap in
-task 2.1's filesystem validation was found and closed along the way: a
-`..` segment in `filesystem.allow`/`read`/`deny` (e.g. `../../etc`) passed
-validation silently and, since devcroft hands manifest path strings to
-`nono` unresolved with the project root as its cwd, actually granted
-access outside the project root — confirmed against a real `nono` profile
-before the fix. Rejected now with `ConfigError::InvalidPath` regardless of
-which root (project-relative, `~`, absolute) it appears under, since `..`
-also breaks the containment model every other filesystem check in that
-requirement depends on. The fd-passing keeper trick
+**MVP implementation underway — 23/25 tasks.** A `..` path-traversal gap in
+task 2.1's `filesystem.allow`/`read`/`deny` validation was found and closed
+along the way — see the git history for the fix. The fd-passing keeper trick
 (spike binary, task group 1) is proven on both Linux/Landlock and
 macOS/Seatbelt; the config/policy compiler, the environment provider layer
 (`flox` resolution, task group 3), the keeper's spawn protocol (control
@@ -66,17 +59,56 @@ and layer-named errors the cli spec's error contract requires: `up`
 (idempotent, `--recreate`), `down`, `rm`, `status`, `logs`, `ps`, `policy
 --render`, `why --path`/`--host`, and `ssh` (execs a real system `ssh` with
 the right options pre-filled). Destructive operations (`rm`, `up
---recreate`) refuse to run non-interactively without `--yes` (7.2). One gap
-surfaced along the way: the lifecycle spec's `hooks.post_create`/
-`hooks.post_start` execution isn't implemented — the manifest parses them,
-but nothing runs them yet. Two sandboxes now have end-to-end coverage
+--recreate`) refuse to run non-interactively without `--yes` (7.2). Two
+sandboxes now have end-to-end coverage
 running side by side with disjoint state and independently-enforced
 policy, and a keeper survives a freeze/resume cycle (`SIGSTOP`/`SIGCONT`
 on the keeper pid, the realistic proxy for host suspend/resume available
 in this environment) with the next command transparently confirming
-health rather than assuming it (7.3). User-facing documentation is
-written at release (task 7.4); until then the specs are the source of
-truth.
+health rather than assuming it (7.3).
+
+## Limitations
+
+devcroft's default (and only implemented) tier, `process`, is Landlock or
+Seatbelt applied to a process tree. **This is accident protection, not a
+security boundary** — the full host kernel syscall surface stays reachable
+from inside, so a kernel bug is an escape. A real boundary is the planned
+`hardened` tier (gVisor or LiteBox, plus Landlock; see
+[openspec/changes/add-hardened-tier/](openspec/changes/add-hardened-tier/)),
+not yet implemented. Every isolation claim in this README and in `devcroft`'s
+own output is scoped to `process` unless said otherwise.
+
+Known gaps, published rather than hidden:
+
+- **No inter-sandbox process visibility separation.** MVP has no PID, mount,
+  or network namespace separation between sandboxes
+  ([design.md](openspec/changes/add-mvp-core/design.md) Decision 5):
+  two sandboxes on the same host can see each other's processes, and — since
+  they share the host's network namespace — two sandboxes each binding the
+  same port (e.g. both running a dev server on 3000) will conflict with
+  `EADDRINUSE`. There is no conflict detection; reach a sandbox's services
+  through SSH's `-L` forwarding rather than assuming host ports are
+  exclusive to it.
+- **Network filtering is cooperative and platform-dependent.** Domain-level
+  allowlisting needs a cooperative proxy; macOS Seatbelt cannot enforce it
+  at all without one. `doctor` and `up` name this degradation once, rather
+  than silently granting broader network access than the manifest asked for.
+- **No cgroup resource limits.** A runaway build in one sandbox can affect
+  the whole host — nothing today caps CPU or memory per sandbox. Planned:
+  cgroup v2 scope units per keeper on Linux; no macOS equivalent exists.
+- **`hooks.post_create`/`hooks.post_start` don't run yet.** The manifest
+  parses them; nothing executes them (surfaced during task 7.2, still
+  unscheduled).
+- **The environment diff can't represent an unset.** If a provider's
+  activation *removes* a variable present in the host's baseline
+  environment, the keeper still inherits the host's value for it — the diff
+  (`provider::flox::diff_env`) only detects keys that were added or changed,
+  since it iterates the activated environment, never the baseline (found
+  during review, still open).
+
+`docs/decisions.md` has the falsifiable "why not X" reasoning behind most of
+these; the ones above are gaps in what's actually built, not design
+decisions.
 
 | | |
 |---|---|
