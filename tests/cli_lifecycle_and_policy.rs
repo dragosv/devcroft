@@ -156,6 +156,26 @@ fn down_stops_the_keeper_and_up_starts_it_again() {
 }
 
 #[test]
+fn down_rejects_an_unrecognized_flag_instead_of_treating_it_as_a_name() {
+    // `down` has no `--yes` (only `rm`/`up --recreate` are destructive
+    // enough to need it); passing it anyway must not be silently treated
+    // as the positional sandbox name argument.
+    let Some(sandbox) = Sandbox::new("downflag") else {
+        return;
+    };
+    assert!(sandbox.run(&["up"]).status.success());
+
+    let out = sandbox.run(&["down", "--yes"]);
+    assert_eq!(out.status.code(), Some(2));
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains("usage"),
+        "{out:?}"
+    );
+    // Must not have torn anything down, since it never resolved a name.
+    assert!(String::from_utf8_lossy(&sandbox.run(&["status"]).stdout).contains("keeper: healthy"));
+}
+
+#[test]
 fn rm_requires_yes_when_noninteractive_and_removes_all_state() {
     let Some(sandbox) = Sandbox::new("rm") else {
         return;

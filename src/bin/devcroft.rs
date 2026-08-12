@@ -1100,6 +1100,16 @@ fn resolve_name_arg(args: &[String], usage: &str, cmd: &str) -> Result<String, i
         return Err(2);
     }
     match args.first() {
+        // A bare "--foo" is never a valid sandbox name (config::is_valid_name
+        // requires starting with [a-z0-9]); treated as one anyway, this
+        // silently swallowed unrecognized/misplaced flags as the positional
+        // name instead of rejecting them — e.g. `down --yes` (down has no
+        // such flag; only `rm`/`up --recreate` do) reported "sandbox
+        // '--yes' is down" rather than a usage error.
+        Some(name) if name.starts_with("--") => {
+            eprintln!("{usage}");
+            Err(2)
+        }
         Some(name) => Ok(name.clone()),
         None => {
             let cwd = std::env::current_dir().map_err(|e| {
