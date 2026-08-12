@@ -25,10 +25,12 @@ openspec status --change <change> --json       # artifact state, paths, what's n
 openspec instructions <artifact> --change <c> --json   # how to write an artifact
 ```
 
-`openspec validate --all` currently reports **1 passed, 2 failed**, and that
-is expected: `add-mise-provider` and `add-hardened-tier` are proposal-only
-post-MVP sketches, and the validator requires at least one delta spec per
-change. Only `add-mvp-core` is complete.
+`openspec validate --all` currently reports **3 passed, 0 failed**.
+`add-mise-provider` and `add-hardened-tier` are still proposal-only
+post-MVP sketches (not implemented, no tasks.md), but each now carries
+real delta specs consistent with its proposal.md, so the validator's
+"at least one delta spec per change" requirement is satisfied honestly
+rather than left failing. Only `add-mvp-core` is actually implemented.
 
 Skills `/opsx:propose`, `/opsx:update`, `/opsx:apply`, `/opsx:archive`,
 `/opsx:sync`, and `/opsx:explore` drive the workflow.
