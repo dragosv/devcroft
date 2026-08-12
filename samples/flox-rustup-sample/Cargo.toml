@@ -1,0 +1,12 @@
+[package]
+name = "flox-rustup-sample"
+version = "0.1.0"
+edition = "2024"
+
+# Stops cargo's workspace-root search at this crate. Without it, cargo
+# walks upward past this directory looking for a parent workspace and
+# reaches devcroft's own Cargo.toml — outside this sample's project
+# root, so a devcroft-sandboxed session correctly denies reading it.
+[workspace]
+
+[dependencies]

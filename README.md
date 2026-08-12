@@ -116,6 +116,7 @@ decisions.
 | [docs/decisions.md](docs/decisions.md) | Every "why doesn't devcroft support X", answered falsifiably |
 | [docs/ssh-validation.md](docs/ssh-validation.md) | SSH client/editor validation matrix (task 6.5) — what's actually been tested and what still needs a real editor or `rsync` |
 | [CLAUDE.md](CLAUDE.md) | Architecture invariants and repo conventions |
+| [samples/flox-rustup-sample/](samples/flox-rustup-sample/) | A real, verified flox + rustup + devcroft project — and the 4 real sandboxing/toolchain frictions found building it |
 
 ```sh
 openspec list             # active changes and task progress
