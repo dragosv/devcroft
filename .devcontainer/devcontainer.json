@@ -10,8 +10,11 @@
   // does not have.
 
   // Fails loudly if Landlock is not reachable, instead of letting the spike
-  // report a confinement result that the kernel never enforced.
-  "postCreateCommand": "spike-doctor",
+  // report a confinement result that the kernel never enforced. Also
+  // installs the OpenSpec CLI (openspec.dev workflow this repo is driven
+  // by, per CLAUDE.md) — it needs Node, which only exists once the node
+  // feature below has applied, so it can't live in the Dockerfile itself.
+  "postCreateCommand": "spike-doctor && npm install -g @fission-ai/openspec@latest",
 
   // flox (task 3.2) needs nix-daemon running; there is no systemd here to
   // supervise it, and it does not persist across container restarts, so
