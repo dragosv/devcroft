@@ -14,8 +14,11 @@ supervisor, and an SSH endpoint over existing sandbox backends.
 ## Status
 
 **MVP implementation underway — 23/25 tasks.** A `..` path-traversal gap in
-task 2.1's `filesystem.allow`/`read`/`deny` validation was found and closed
-along the way — see the git history for the fix. The fd-passing keeper trick
+task 2.1's `filesystem.allow`/`read`/`deny` validation, and a task 3.2
+reproducibility gap where flox activation inherited whoever's shell ran
+`up` (personal `PATH`, ad hoc env vars) instead of a fixed environment,
+were both found and closed along the way — see the git history for each
+fix. The fd-passing keeper trick
 (spike binary, task group 1) is proven on both Linux/Landlock and
 macOS/Seatbelt; the config/policy compiler, the environment provider layer
 (`flox` resolution, task group 3), the keeper's spawn protocol (control

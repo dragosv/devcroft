@@ -5,31 +5,92 @@
 
 use super::{Provider, ProviderError, Resolution};
 use std::collections::BTreeMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 /// Nix/flox's default store root. Overridden per-resolution when the
 /// activated `PATH` names a different one (see [`store_grants`]).
 const DEFAULT_STORE_ROOT: &str = "/nix/store";
 
+/// What `flox activate` runs with — see [`capture_activated_env`]. A
+/// conventional Linux default `PATH` (Debian's, notably): flox's own
+/// hook scripts (`mkdir`, `cd`, etc.) need *some* POSIX baseline to
+/// bootstrap from, same as any shell script assumes `/bin/sh` exists;
+/// this does not depend on it being exactly this list, just *a* sane one,
+/// fixed rather than inherited.
+const CANONICAL_PATH: &str = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
+
 pub struct FloxProvider;
 
 impl Provider for FloxProvider {
     /// Resolve a flox environment: verify `.flox/` exists, run `flox
     /// activate -- env -0` once to capture the post-activation environment,
-    /// diff it against this process's own environment, and derive the
-    /// read-only store grants the compiled policy must carry.
+    /// diff it against the same fixed base activation ran with, and derive
+    /// the read-only store grants the compiled policy must carry.
     fn resolve(&self, project_root: &Path) -> Result<Resolution, ProviderError> {
         ensure_environment_present(project_root)?;
 
-        let baseline: BTreeMap<String, String> = std::env::vars().collect();
-        let activated = capture_activated_env(project_root)?;
+        let baseline = canonical_base_env()?;
+        let activated = capture_activated_env(project_root, &baseline)?;
 
         Ok(Resolution {
             env: diff_env(&baseline, &activated),
             read_only_grants: store_grants(&activated),
         })
     }
+}
+
+/// The fixed environment `flox activate` runs with, and the baseline
+/// [`diff_env`] compares against — the same map for both, so the diff
+/// reflects exactly what activation changed and nothing else.
+///
+/// Found via review: this used to be `std::env::vars()` — literally
+/// whatever shell happened to run `up` — for both roles. A `PATH` full of
+/// a particular operator's own tools (nvm, rustup, cargo, ad hoc `~/bin`,
+/// ...) leaking into either side means the exact same manifest can
+/// resolve a different activation diff depending on who ran `up` and from
+/// which shell, which is exactly the kind of non-reproducibility
+/// CLAUDE.md's "no non-reproducible mode" framing rule rules out — the
+/// manifest and lockfile are supposed to be the entire input.
+///
+/// `HOME` stays real: flox's own state/cache/credentials legitimately
+/// live there and are user-specific by design, not something this
+/// determinism guarantee is about. Everything else is fixed.
+fn canonical_base_env() -> Result<BTreeMap<String, String>, ProviderError> {
+    let home = std::env::var("HOME").map_err(|_| {
+        ProviderError::ResolutionFailed("HOME is not set; flox needs it to activate".to_string())
+    })?;
+    Ok(BTreeMap::from([
+        ("HOME".to_string(), home),
+        ("PATH".to_string(), CANONICAL_PATH.to_string()),
+    ]))
+}
+
+/// Resolves `name` to an absolute path by searching *this process's own*
+/// `PATH` — i.e. wherever this host actually installed `flox`, which has
+/// no reason to be under [`CANONICAL_PATH`] (a devcontainer feature, a
+/// package manager, a user install — anywhere). Done before the
+/// activation subprocess's own environment is fixed in
+/// [`capture_activated_env`] and deliberately kept separate from it:
+/// `std::process::Command`'s own bare-name resolution searches whatever
+/// `PATH` is configured *on the command* at spawn time (confirmed: with
+/// `.env_clear()` + a fixed `PATH` already applied, `Command::new("flox")`
+/// fails to find a real `flox` binary living outside that fixed list) —
+/// not the parent process's ambient one. Resolving here, once, up front,
+/// keeps `flox` findable wherever this host put it while still letting
+/// the child's own environment be fully fixed.
+fn resolve_on_path(name: &str) -> Option<PathBuf> {
+    let path = std::env::var_os("PATH")?;
+    std::env::split_paths(&path).find_map(|dir| {
+        let candidate = dir.join(name);
+        is_executable_file(&candidate).then_some(candidate)
+    })
+}
+
+#[cfg(unix)]
+fn is_executable_file(path: &Path) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::metadata(path).is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
 }
 
 /// `up` fails at layer `provider` with the `flox init` hint (spec: "Missing
@@ -43,21 +104,22 @@ fn ensure_environment_present(project_root: &Path) -> Result<(), ProviderError> 
     }
 }
 
-fn capture_activated_env(project_root: &Path) -> Result<BTreeMap<String, String>, ProviderError> {
-    let output = Command::new("flox")
+fn capture_activated_env(
+    project_root: &Path,
+    base: &BTreeMap<String, String>,
+) -> Result<BTreeMap<String, String>, ProviderError> {
+    let flox_bin = resolve_on_path("flox").ok_or(ProviderError::MissingBinary)?;
+
+    let output = Command::new(flox_bin)
         .arg("activate")
         .arg("--")
         .arg("env")
         .arg("-0")
         .current_dir(project_root)
+        .env_clear()
+        .envs(base)
         .output()
-        .map_err(|e| {
-            if e.kind() == std::io::ErrorKind::NotFound {
-                ProviderError::MissingBinary
-            } else {
-                ProviderError::ResolutionFailed(format!("running `flox activate`: {e}"))
-            }
-        })?;
+        .map_err(|e| ProviderError::ResolutionFailed(format!("running `flox activate`: {e}")))?;
 
     if !output.status.success() {
         return Err(ProviderError::ResolutionFailed(format!(

@@ -25,7 +25,12 @@ with wider privileges than the supervisor itself.
 ### Requirement: flox provider resolution
 The system SHALL resolve a flox environment by running its activation once
 at `up`, capturing the resulting environment as a diff against the
-pre-activation environment, and injecting the diff into the keeper.
+pre-activation environment, and injecting the diff into the keeper. Both
+activation and the pre-activation baseline it is diffed against SHALL run
+in a fixed environment (a real `HOME`, and nothing else beyond a
+conventional `PATH`) rather than whatever environment invoked `up`, so the
+same manifest resolves the same diff regardless of the operator's own
+shell or locally-installed tools.
 
 #### Scenario: Store paths become readable
 - **WHEN** provider is `flox`
@@ -38,6 +43,13 @@ pre-activation environment, and injecting the diff into the keeper.
 - **THEN** every tool from the environment runs, because materialization
   happened at `up` on the host; no session-time network is required for
   the toolchain
+
+#### Scenario: Activation is independent of the invoking shell
+- **WHEN** the shell running `up` has extra directories on `PATH` (a
+  personal `~/bin`, `nvm`, `rustup`, ...) or arbitrary extra environment
+  variables set
+- **THEN** none of them appear in the captured activation diff — the
+  diff reflects only what the manifest's own activation changed
 
 #### Scenario: Missing flox binary
 - **WHEN** provider is `flox` and `flox` is not on PATH
