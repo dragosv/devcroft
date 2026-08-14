@@ -4,8 +4,9 @@
 //! boundary and never activates per session.
 
 use super::{Provider, ProviderError, Resolution};
+use crate::paths::resolve_on_path;
 use std::collections::BTreeMap;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::Command;
 
 /// Nix/flox's default store root. Overridden per-resolution when the
@@ -64,33 +65,6 @@ fn canonical_base_env() -> Result<BTreeMap<String, String>, ProviderError> {
         ("HOME".to_string(), home),
         ("PATH".to_string(), CANONICAL_PATH.to_string()),
     ]))
-}
-
-/// Resolves `name` to an absolute path by searching *this process's own*
-/// `PATH` — i.e. wherever this host actually installed `flox`, which has
-/// no reason to be under [`CANONICAL_PATH`] (a devcontainer feature, a
-/// package manager, a user install — anywhere). Done before the
-/// activation subprocess's own environment is fixed in
-/// [`capture_activated_env`] and deliberately kept separate from it:
-/// `std::process::Command`'s own bare-name resolution searches whatever
-/// `PATH` is configured *on the command* at spawn time (confirmed: with
-/// `.env_clear()` + a fixed `PATH` already applied, `Command::new("flox")`
-/// fails to find a real `flox` binary living outside that fixed list) —
-/// not the parent process's ambient one. Resolving here, once, up front,
-/// keeps `flox` findable wherever this host put it while still letting
-/// the child's own environment be fully fixed.
-fn resolve_on_path(name: &str) -> Option<PathBuf> {
-    let path = std::env::var_os("PATH")?;
-    std::env::split_paths(&path).find_map(|dir| {
-        let candidate = dir.join(name);
-        is_executable_file(&candidate).then_some(candidate)
-    })
-}
-
-#[cfg(unix)]
-fn is_executable_file(path: &Path) -> bool {
-    use std::os::unix::fs::PermissionsExt;
-    std::fs::metadata(path).is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
 }
 
 /// `up` fails at layer `provider` with the `flox init` hint (spec: "Missing

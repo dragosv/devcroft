@@ -31,7 +31,10 @@ with a real pty, resize propagation, and a `$SHELL`-then-`/bin/sh` fallback
 (5.2); and auto-up (`exec`/`shell` bring a cold sandbox up themselves unless
 `--no-up`, 5.3) — are implemented and tested end to end against real `nono`
 and `flox`. Task group 6 (SSH endpoint) is now complete except for its
-cross-editor validation matrix (6.5, partially done — see
+cross-editor validation matrix (6.5, nearly done — OpenSSH and rsync are
+validated by real end-to-end tests, VS Code Remote-SSH and Cursor are
+validated by real manual connections against a live sandbox, only Zed
+remains (no CLI to drive it here) — see
 [docs/ssh-validation.md](docs/ssh-validation.md)): an SSH server (russh)
 embedded in the
 keeper on a second unix socket, mode 0600 in the state dir's mode 0700, bound
@@ -117,7 +120,7 @@ decisions.
 |---|---|
 | [openspec/changes/add-mvp-core/](openspec/changes/add-mvp-core/) | The MVP — proposal, design, tasks, 7 capability specs |
 | [docs/decisions.md](docs/decisions.md) | Every "why doesn't devcroft support X", answered falsifiably |
-| [docs/ssh-validation.md](docs/ssh-validation.md) | SSH client/editor validation matrix (task 6.5) — what's actually been tested and what still needs a real editor or `rsync` |
+| [docs/ssh-validation.md](docs/ssh-validation.md) | SSH client/editor validation matrix (task 6.5) — OpenSSH, rsync, VS Code Remote-SSH, and Cursor are all validated against a live sandbox; only Zed remains |
 | [CLAUDE.md](CLAUDE.md) | Architecture invariants and repo conventions |
 | [samples/flox-rustup-sample/](samples/flox-rustup-sample/) | A real, verified flox + rustup + devcroft project — and the 4 real sandboxing/toolchain frictions found building it |
 | [samples/flox-clap-sample/](samples/flox-clap-sample/) | A clap-derive CLI sandboxed the same way — plus what changes once a sample has real crates.io dependencies |

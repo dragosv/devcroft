@@ -237,7 +237,19 @@ fn spawn_keeper(
 ) -> io::Result<libc::pid_t> {
     let log = std::fs::File::create(&paths.log)?;
 
-    let mut cmd = Command::new("nono");
+    // Resolved against *this* process's own ambient PATH, not the
+    // provider-resolved `env` handed to `.envs(env)` below: that env
+    // replaces PATH with the activated environment's value (flox's fixed
+    // canonical baseline plus its own store paths), which has no reason
+    // to contain wherever this host actually installed `nono` (e.g.
+    // Homebrew's `/opt/homebrew/bin` on Apple Silicon) — same resolve-
+    // before-replace reasoning as `provider::flox`'s own `flox` lookup;
+    // confirmed live on macOS: without this, `Command::new("nono")` below
+    // fails with ENOENT the moment `env` overrides PATH out from under it.
+    let nono_bin = crate::paths::resolve_on_path("nono")
+        .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "nono not found on PATH"))?;
+
+    let mut cmd = Command::new(nono_bin);
     cmd.arg("wrap")
         .arg("--silent")
         .arg("-p")

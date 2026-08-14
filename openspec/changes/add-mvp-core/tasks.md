@@ -45,11 +45,28 @@ retired first, and every phase ends in something runnable.
       status; SFTP subset for scp/rsync
 - [x] 6.4 direct-tcpip (`-L`) gated by policy
 - [ ] 6.5 Validation matrix: OpenSSH client, rsync, VS Code Remote-SSH,
-      Zed, Cursor — document what works per editor. Partially done: see
-      docs/ssh-validation.md — OpenSSH client (ssh/scp/sftp/-L) is
-      validated by real end-to-end tests; rsync and the three editors
-      still need a real rsync binary and real editor installs, neither
-      available in the environment this was worked in.
+      Zed, Cursor — document what works per editor. Nearly done: see
+      docs/ssh-validation.md — OpenSSH client (ssh/scp/sftp/-L) and rsync
+      are validated by real end-to-end tests (`tests/ssh_channels.rs`);
+      VS Code Remote-SSH and Cursor are validated by real manual runs
+      against a live sandbox (real connection, publickey auth, remote
+      server install/start, workbench window open for VS Code / both
+      servers reachable for Cursor) — the fix both needed was redirecting
+      `remote.SSH.serverInstallPath` inside the project root, since
+      devcroft's default policy correctly denies writing to `$HOME`. Only
+      Zed remains: it has no CLI to drive non-interactively and uses a
+      different remote-dev mechanism than the other two, so needs a real
+      display and manual GUI setup to close out. Getting rsync working
+      surfaced and fixed a real bug along the way, not covered by any task
+      number:
+      `lifecycle::up`'s keeper spawn looked up `nono` by bare name after
+      the child's environment had already been replaced with the
+      provider-resolved (flox-activated) one, so `up` failed outright
+      with ENOENT on any host where `nono` doesn't live under that fixed
+      PATH (e.g. Homebrew on Apple Silicon, `/opt/homebrew/bin`) — fixed
+      by resolving `nono` against the ambient PATH first, same as
+      `provider::flox` already does for `flox` itself
+      (`paths::resolve_on_path`, now shared by both).
 
 ## 7. CLI polish & release
 - [x] 7.1 `init` with flox detection; `doctor` with actionable checks

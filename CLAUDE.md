@@ -15,9 +15,10 @@ this crate's workspace) — see each sample's own `README.md` for what it
 demonstrates.
 
 Remaining work (see `openspec/changes/add-mvp-core/tasks.md`): task 6.5
-(cross-editor SSH validation matrix — OpenSSH client/rsync/VS Code
-Remote-SSH — partially done, see `docs/ssh-validation.md`) and task 7.5
-(publish the `devcroft` crate, reserve/point the npm name).
+(cross-editor SSH validation matrix — OpenSSH, rsync, VS Code Remote-SSH,
+and Cursor are all validated against a live sandbox; only Zed remains, no
+CLI to drive it non-interactively — see `docs/ssh-validation.md`) and task
+7.5 (publish the `devcroft` crate, reserve/point the npm name).
 
 For full status detail — what's implemented, what was fixed along the way,
 which gaps are known — see the README's Status section, which is kept

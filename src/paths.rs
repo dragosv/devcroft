@@ -1,6 +1,10 @@
 //! Path containment semantics shared by config validation (warn on a
 //! sensitive grant) and the policy compiler (baseline-deny a sensitive
-//! path unless the manifest already granted it).
+//! path unless the manifest already granted it) — plus ambient-`PATH`
+//! binary resolution shared by anything that spawns a bare command name
+//! into a `Command` whose own environment is about to be replaced.
+
+use std::path::{Path, PathBuf};
 
 /// Credential directories devcroft treats as sensitive: warned on when a
 /// manifest explicitly grants them, baseline-denied otherwise.
@@ -63,6 +67,33 @@ pub(crate) fn is_within(candidate: &str, granted: &str) -> bool {
     candidate_root == granted_root
         && candidate.len() >= granted.len()
         && candidate[..granted.len()] == granted[..]
+}
+
+/// Resolves `name` to an absolute path by searching *this process's own*
+/// ambient `PATH` — wherever this host actually installed it, which has no
+/// reason to fall under any fixed/canonical `PATH` list a subprocess's
+/// environment might be replaced with (a devcontainer feature, a package
+/// manager, a user install — anywhere). Callers that resolve a binary this
+/// way and then hand the `Command` an entirely different `PATH` (e.g. a
+/// fixed baseline for `flox activate`, or a provider's resolved env diff
+/// for the keeper) must do so *before* that replacement:
+/// `std::process::Command`'s own bare-name resolution searches whatever
+/// `PATH` is configured *on the command* at spawn time (confirmed: with
+/// `.env_clear()` + a fixed `PATH` already applied, `Command::new("flox")`
+/// fails to find a real `flox` binary living outside that fixed list) — not
+/// the parent process's ambient one.
+pub(crate) fn resolve_on_path(name: &str) -> Option<PathBuf> {
+    let path = std::env::var_os("PATH")?;
+    std::env::split_paths(&path).find_map(|dir| {
+        let candidate = dir.join(name);
+        is_executable_file(&candidate).then_some(candidate)
+    })
+}
+
+#[cfg(unix)]
+fn is_executable_file(path: &Path) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::metadata(path).is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
 }
 
 #[cfg(test)]

@@ -51,6 +51,11 @@ impl Sandbox {
         ));
         let _ = std::fs::remove_dir_all(&project_root);
         std::fs::create_dir_all(&project_root).unwrap();
+        // Canonicalized so the `pwd` comparison below matches what the OS
+        // actually reports: on macOS `std::env::temp_dir()` returns a
+        // `/var/...` path, but `/var` is itself a symlink to
+        // `/private/var`, which `pwd` inside the spawned session resolves.
+        let project_root = project_root.canonicalize().unwrap();
         let init = Command::new("flox")
             .arg("init")
             .current_dir(&project_root)

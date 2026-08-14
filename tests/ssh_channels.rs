@@ -1,10 +1,11 @@
 //! SSH channel handling (ssh spec's "SSH feature coverage for editors",
-//! task 6.3), end to end through the *real* `ssh`/`scp`/`sftp` CLI tools
-//! — not a russh test client — talking to a real `up`-started keeper via
-//! a real `devcroft proxy` subprocess as `ProxyCommand`. This is as close
-//! to "an editor connects" as a test gets: exec channel + exit status,
-//! pty/shell, the env allowlist, `sftp` (which is what modern OpenSSH
-//! `scp` speaks by default too), and `-L` direct-tcpip forwarding.
+//! task 6.3), end to end through the *real* `ssh`/`scp`/`sftp`/`rsync` CLI
+//! tools — not a russh test client — talking to a real `up`-started keeper
+//! via a real `devcroft proxy` subprocess as `ProxyCommand`. This is as
+//! close to "an editor connects" as a test gets: exec channel + exit
+//! status, pty/shell, the env allowlist, `sftp` (which is what modern
+//! OpenSSH `scp` speaks by default too), `-L` direct-tcpip forwarding, and
+//! (task 6.5's rsync row in `docs/ssh-validation.md`) `rsync -e ssh`.
 //!
 //! See `tests/lifecycle_up.rs` for why this needs `CARGO_BIN_EXE_devcroft`
 //! and why each such test lives in its own file/process.
@@ -120,6 +121,29 @@ fn skip_if_no_real_ssh_tools() -> bool {
             eprintln!("skipping: {bin} not on PATH");
             return true;
         }
+    }
+    false
+}
+
+/// Same options as [`ssh_opts`], but as the single shell-quoted string
+/// rsync's `-e` wants — rsync never sees a real shell (this passes the
+/// value straight through `Command::arg`, not `sh -c`), but its own `-e`
+/// parser still splits on whitespace, so the `ProxyCommand` value (which
+/// contains spaces) must be quoted to survive as one token.
+fn rsync_dash_e(identity: &std::path::Path) -> String {
+    let devcroft_bin = env!("CARGO_BIN_EXE_devcroft");
+    format!(
+        "ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+         -o IdentitiesOnly=yes -o ProxyCommand='{devcroft_bin} proxy --no-up %n' \
+         -i {}",
+        identity.to_string_lossy()
+    )
+}
+
+fn skip_if_no_real_rsync() -> bool {
+    if Command::new("rsync").arg("--version").output().is_err() {
+        eprintln!("skipping: rsync not on PATH");
+        return true;
     }
     false
 }
@@ -343,6 +367,81 @@ fn scp_moves_correct_data_even_though_its_own_exit_code_is_unreliable_here() {
         std::fs::read(&local_dst).unwrap(),
         b"devcroft scp round-trip payload\n",
         "the file scp downloaded must match what was uploaded, regardless of scp's own exit code"
+    );
+}
+
+/// Task 6.5's rsync row (docs/ssh-validation.md): `rsync -e ssh` runs
+/// `rsync --server ...` on the remote end over a plain SSH **exec
+/// channel** — the same path `exec_channel_runs_commands_and_propagates_exit_code`
+/// exercises — so this needs no rsync-specific server support, only a
+/// real `rsync` binary reachable on both ends. On this host that binary
+/// is the system one (`/usr/bin/rsync` on macOS, distro rsync on Linux):
+/// reachable inside the sandbox because the flox-activated `PATH` the
+/// keeper inherits still contains the canonical system bin dirs
+/// (`provider::flox`'s `CANONICAL_PATH`), not because any sample project
+/// installs rsync itself.
+#[test]
+fn rsync_transfers_a_file_through_devcroft_proxy_over_a_plain_exec_channel() {
+    if skip_if_no_real_ssh_tools() || skip_if_no_real_rsync() {
+        return;
+    }
+    let Some(sandbox) = Sandbox::up("rsync") else {
+        return;
+    };
+    let (identity, _) = client_key_paths().unwrap();
+    let rsh = rsync_dash_e(&identity);
+
+    let local_src = sandbox.project_root.join("local-src.txt");
+    std::fs::write(&local_src, b"devcroft rsync round-trip payload\n").unwrap();
+    let remote_path = sandbox.project_root.join("via-rsync.txt");
+
+    let upload = Command::new("rsync")
+        .arg("-e")
+        .arg(&rsh)
+        .arg(&local_src)
+        .arg(format!(
+            "{}:{}",
+            sandbox.host(),
+            remote_path.to_string_lossy()
+        ))
+        .output()
+        .unwrap();
+    assert!(
+        upload.status.success(),
+        "rsync upload failed (status {:?}): stdout={} stderr={}",
+        upload.status.code(),
+        String::from_utf8_lossy(&upload.stdout),
+        String::from_utf8_lossy(&upload.stderr)
+    );
+    assert_eq!(
+        std::fs::read(&remote_path).unwrap(),
+        std::fs::read(&local_src).unwrap(),
+        "the file rsync uploaded must match the source"
+    );
+
+    let local_dst = sandbox.project_root.join("local-dst.txt");
+    let download = Command::new("rsync")
+        .arg("-e")
+        .arg(&rsh)
+        .arg(format!(
+            "{}:{}",
+            sandbox.host(),
+            remote_path.to_string_lossy()
+        ))
+        .arg(&local_dst)
+        .output()
+        .unwrap();
+    assert!(
+        download.status.success(),
+        "rsync download failed (status {:?}): stdout={} stderr={}",
+        download.status.code(),
+        String::from_utf8_lossy(&download.stdout),
+        String::from_utf8_lossy(&download.stderr)
+    );
+    assert_eq!(
+        std::fs::read(&local_dst).unwrap(),
+        b"devcroft rsync round-trip payload\n",
+        "the file rsync downloaded must match what was uploaded"
     );
 }
 
