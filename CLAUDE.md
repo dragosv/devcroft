@@ -4,18 +4,35 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Repository state
 
-There is **no source code yet**. The repository contains specification and
-design artifacts only — no `Cargo.toml`, no `src/`, no tests. The MVP
-(`add-mvp-core`) is fully specified at 0/25 tasks.
+The MVP (`add-mvp-core`) is implemented and in its final stretch — **23/25
+tasks**. `src/` has real modules for `config`, `policy`, `provider`,
+`keeper`, `lifecycle`, `ssh`, plus the `devcroft` and `spike` binaries under
+`src/bin/`, backed by an integration `tests/` suite. Stack is Rust stable,
+edition 2024. `samples/` holds two standalone example projects
+(`flox-clap-sample`, `flox-rustup-sample`) with their own `Cargo.toml`s
+(each has an explicit `[workspace]` table so they don't get pulled into
+this crate's workspace) — see each sample's own `README.md` for what it
+demonstrates.
 
-Consequence: there are no build, lint, or test commands to run. Do not invent
-them. When implementation starts, task 1.1 in
-`openspec/changes/add-mvp-core/tasks.md` creates the first Rust binary; the
-stack is Rust stable, edition 2024.
+Remaining work (see `openspec/changes/add-mvp-core/tasks.md`): task 6.5
+(cross-editor SSH validation matrix — OpenSSH client/rsync/VS Code
+Remote-SSH — partially done, see `docs/ssh-validation.md`) and task 7.5
+(publish the `devcroft` crate, reserve/point the npm name).
+
+For full status detail — what's implemented, what was fixed along the way,
+which gaps are known — see the README's Status section, which is kept
+current; do not duplicate it here.
 
 ## Working commands
 
-This project is spec-driven via the [OpenSpec](https://github.com/Fission-AI/OpenSpec) CLI.
+```sh
+cargo build                 # build the devcroft binary + spike
+cargo test                  # integration tests; self-skip if flox/nono missing from PATH
+cargo clippy                # lint; currently clean
+cargo fmt                   # format
+```
+
+This project is also spec-driven via the [OpenSpec](https://github.com/Fission-AI/OpenSpec) CLI:
 
 ```sh
 openspec list                                  # active changes + task progress
