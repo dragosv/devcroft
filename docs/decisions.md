@@ -342,3 +342,18 @@ devcontainers compose with Docker Compose for databases and other services.
 Planned mitigation: provider-native service support (flox `[services]`,
 devenv) supervised by the keeper. Until then, run services on the host or
 in containers alongside, and grant network access explicitly.
+
+### Keeper is a single point of failure per sandbox
+
+The keeper is the one resident process a sandbox's control socket, SSH
+socket, and every live session route through (Decision 1). If it dies — an
+unhandled panic, `SIGKILL`, an OOM kill — every session inside that sandbox
+dies with it; there is no live failover to a standby process the way an
+orchestrator might reroute traffic to a replacement container. `up`'s
+health check (`lifecycle::state::health`) detects a dead keeper on the next
+command and recovers by starting a fresh one (`UpOutcome::Recovered`), but
+any process state the old keeper held — running builds, shells, servers —
+is gone, not migrated. This is the same trade a devcontainer restart makes,
+disclosed rather than silent: acceptable for a dev sandbox, not a model
+for a fleet that needs live failover across many keepers without losing
+in-flight work.

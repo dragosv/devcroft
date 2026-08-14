@@ -11,6 +11,25 @@ sandbox speaks SSH, existing editors work unchanged.
 devcroft implements no isolation itself. It is a policy compiler, a
 supervisor, and an SSH endpoint over existing sandbox backends.
 
+## How this compares
+
+devcroft isn't a cheaper Docker. It's a bet that most day-to-day
+development work doesn't need a full container boundary — it needs a
+reproducible environment, a boundary good enough to catch accidents, and
+SSH access that works with existing editors, at a marginal cost low enough
+to run many side by side on one host.
+
+|  | devcroft | Dev Containers / Docker | flox alone | mise/asdf + manual sandboxing |
+|---|---|---|---|---|
+| Isolation | Kernel primitives (Landlock/Seatbelt); `process` tier only in MVP — accident protection, not a security boundary (see Limitations) | A container boundary, today | None | Whatever you build yourself |
+| Editor/SSH access | Native — a real SSH server per sandbox | Native, through the container | No | No |
+| Reproducibility | Mandatory — no `host`/`none` fallback (see [docs/decisions.md](docs/decisions.md)) | Optional | Yes | Partial, depends what's pinned |
+| Marginal cost per environment | Low — a shared Nix/flox store, no separate rootfs or guest kernel | Higher — image layers, often a VM on macOS | None | None |
+
+That trade makes sense for fleets of coding agents, many parallel projects
+on one host, or local CI — not for running code you don't trust at all,
+where a real container or VM boundary is still the right call.
+
 ## Status
 
 **MVP implementation underway — 23/25 tasks.** A `..` path-traversal gap in
