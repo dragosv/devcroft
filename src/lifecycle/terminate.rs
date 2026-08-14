@@ -82,9 +82,18 @@ mod tests {
     use std::os::unix::net::UnixListener;
     use std::path::PathBuf;
 
+    /// Short and hash-based, not `name` verbatim — see the identical
+    /// comment on `state::tests::tempdir`, which this mirrors: a unix
+    /// socket path has a low, OS-enforced length ceiling (macOS's
+    /// `SUN_LEN` is 104 bytes) that a descriptive name plus a deep host
+    /// `TMPDIR` can overflow.
     fn tempdir(name: &str) -> StatePaths {
+        use std::hash::{Hash, Hasher};
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        name.hash(&mut hasher);
         let root = std::env::temp_dir().join(format!(
-            "devcroft-lifecycle-terminate-test-{name}-{}",
+            "dctm-{:08x}-{}",
+            hasher.finish() as u32,
             std::process::id()
         ));
         let _ = std::fs::remove_dir_all(&root);

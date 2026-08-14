@@ -188,9 +188,21 @@ mod tests {
     use super::*;
     use std::os::unix::net::UnixListener;
 
+    /// Short and hash-based rather than `name` verbatim: a unix socket
+    /// path has a low, OS-enforced length ceiling (macOS's `SUN_LEN` is
+    /// 104 bytes for the *whole* path) that a descriptive test name plus
+    /// a deep host `TMPDIR` can blow through — confirmed failing with
+    /// `InvalidInput: path must be shorter than SUN_LEN` on macOS under a
+    /// long `TMPDIR`. `name` still selects the hash, so distinct test
+    /// names still get distinct (collision-free in practice, for this
+    /// small fixed set) directories.
     fn tempdir(name: &str) -> StatePaths {
+        use std::hash::{Hash, Hasher};
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        name.hash(&mut hasher);
         let dir = std::env::temp_dir().join(format!(
-            "devcroft-lifecycle-state-test-{name}-{}",
+            "dcst-{:08x}-{}",
+            hasher.finish() as u32,
             std::process::id()
         ));
         let _ = std::fs::remove_dir_all(&dir);
