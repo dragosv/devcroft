@@ -393,8 +393,8 @@ fn scp_round_trips_correct_data_and_reports_success() {
 /// is the system one (`/usr/bin/rsync` on macOS, distro rsync on Linux):
 /// reachable inside the sandbox because the flox-activated `PATH` the
 /// keeper inherits still contains the canonical system bin dirs
-/// (`provider::flox`'s `CANONICAL_PATH`), not because any sample project
-/// installs rsync itself.
+/// (`provider::capture`'s `CANONICAL_PATH`), not because any sample
+/// project installs rsync itself.
 #[test]
 fn rsync_transfers_a_file_through_devcroft_proxy_over_a_plain_exec_channel() {
     if skip_if_no_real_ssh_tools() || skip_if_no_real_rsync() {

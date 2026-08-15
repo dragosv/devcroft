@@ -235,10 +235,16 @@ pub fn parse(text: &str) -> Result<(Manifest, Vec<Warning>), ConfigError> {
     let mut warnings = Vec::new();
     validate::collect_warnings(&raw.env, &raw.filesystem, &mut warnings);
 
+    // `flake`/`flakes` are accepted aliases for `nix` (validated above);
+    // normalized here so exactly one canonical name ever reaches provider
+    // dispatch, `status` output, and policy rule origins.
+    let mut env = raw.env;
+    env.provider = crate::provider::normalize_provider_name(&env.provider);
+
     Ok((
         Manifest {
             sandbox: Sandbox { name },
-            env: raw.env,
+            env,
             filesystem: raw.filesystem,
             network: raw.network,
             ssh: raw.ssh,
@@ -501,5 +507,22 @@ mod tests {
             err,
             ConfigError::InvalidProvider(crate::provider::ProviderError::NotYetSupported { .. })
         ));
+    }
+
+    #[test]
+    fn nix_provider_is_accepted() {
+        let (m, _) = parse("[sandbox]\nname = \"myproj\"\n[env]\nprovider = \"nix\"\n").unwrap();
+        assert_eq!(m.env.provider, "nix");
+    }
+
+    #[test]
+    fn nix_aliases_normalize_to_canonical_name() {
+        for alias in ["flake", "flakes"] {
+            let (m, _) = parse(&format!(
+                "[sandbox]\nname = \"myproj\"\n[env]\nprovider = \"{alias}\"\n"
+            ))
+            .unwrap();
+            assert_eq!(m.env.provider, "nix", "alias `{alias}` should normalize");
+        }
     }
 }

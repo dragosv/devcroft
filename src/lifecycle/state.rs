@@ -77,17 +77,38 @@ pub(super) fn data_dir() -> io::Result<PathBuf> {
 /// (task 4.3) need but can't ask the keeper for — the project root (the
 /// keeper itself is never told its own state dir) and the environment
 /// fingerprint from that `up`, for `provider::is_stale` to compare
-/// against the environment's current fingerprint.
+/// against the environment's current fingerprint. `read_only_grants` is
+/// what the provider resolved at that `up` (add-nix-provider task 3.4):
+/// `policy --render`/`why` are otherwise pure functions of the manifest
+/// alone and have no way to show a provider's store grants, since
+/// resolving a provider means running it (`flox activate`/`nix develop`),
+/// which those commands don't do. `#[serde(default)]` so `meta.json`
+/// written before this field existed still deserializes, simply reporting
+/// no grants until the next `up` records them.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Meta {
     pub project_root: String,
     pub env_fingerprint: String,
+    #[serde(default)]
+    pub read_only_grants: Vec<String>,
 }
 
+/// Writes via a same-directory temp file plus `rename`, not a direct
+/// `std::fs::write` — found via review while adding
+/// `read_only_grants` (add-nix-provider task 3.4): `ps` (status.rs)
+/// enumerates and reads *every* sandbox's `meta.json`, including ones
+/// belonging to an `up` that is concurrently running elsewhere, and a
+/// direct write is not atomic — a reader can observe a truncated or
+/// half-written file mid-write and fail to parse it. `rename` within the
+/// same directory is atomic on every platform devcroft targets, so a
+/// concurrent reader only ever sees the old complete file or the new
+/// complete file, never a partial one.
 pub fn write_meta(path: &Path, meta: &Meta) -> io::Result<()> {
     let json = serde_json::to_string_pretty(meta)
         .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
-    std::fs::write(path, json)
+    let tmp = path.with_extension("json.tmp");
+    std::fs::write(&tmp, json)?;
+    std::fs::rename(&tmp, path)
 }
 
 pub fn read_meta(path: &Path) -> io::Result<Option<Meta>> {
@@ -237,9 +258,42 @@ mod tests {
         let meta = Meta {
             project_root: "/proj".to_string(),
             env_fingerprint: "abc123".to_string(),
+            read_only_grants: vec!["/nix/store".to_string()],
         };
         write_meta(&paths.meta, &meta).unwrap();
         assert_eq!(read_meta(&paths.meta).unwrap(), Some(meta));
+    }
+
+    #[test]
+    fn write_meta_leaves_no_tmp_file_behind() {
+        // Proves the write actually goes through the rename path (not
+        // just a direct write that happens to succeed) — a leftover
+        // `.json.tmp` would mean the rename step was skipped or failed
+        // silently.
+        let paths = tempdir("meta-atomic");
+        let meta = Meta {
+            project_root: "/proj".to_string(),
+            env_fingerprint: "abc123".to_string(),
+            read_only_grants: Vec::new(),
+        };
+        write_meta(&paths.meta, &meta).unwrap();
+        assert!(!paths.meta.with_extension("json.tmp").exists());
+    }
+
+    #[test]
+    fn meta_deserializes_without_read_only_grants_field() {
+        // Backward compat for meta.json written before this field existed
+        // (`#[serde(default)]`) — a real file from before add-nix-provider,
+        // not a synthetic shape.
+        let paths = tempdir("meta-old-shape");
+        std::fs::write(
+            &paths.meta,
+            r#"{"project_root":"/proj","env_fingerprint":"abc123"}"#,
+        )
+        .unwrap();
+        let meta = read_meta(&paths.meta).unwrap().unwrap();
+        assert_eq!(meta.project_root, "/proj");
+        assert!(meta.read_only_grants.is_empty());
     }
 
     #[test]

@@ -16,7 +16,7 @@ use std::time::{Duration, Instant};
 
 use crate::config::Manifest;
 use crate::policy;
-use crate::provider::{FloxProvider, Provider, ProviderError};
+use crate::provider::{Provider, ProviderError, ProviderKind};
 
 use super::hooks;
 use super::state::{self, Health, StatePaths};
@@ -117,21 +117,25 @@ pub fn up(
     // Host-side, before any restriction applies (design.md decision 2):
     // the resolved environment and its store grants are captured now,
     // once, and folded into the profile the keeper will be confined to.
-    let resolution = FloxProvider
-        .resolve(project_root)
-        .map_err(UpError::Provider)?;
+    // `env.provider` is already validated and normalized by config::parse
+    // (the only place a Manifest is constructed), so `from_name` here
+    // only ever dispatches to a real implementation.
+    let provider = ProviderKind::from_name(&manifest.env.provider).map_err(UpError::Provider)?;
+    let resolution = provider.resolve(project_root).map_err(UpError::Provider)?;
 
     // Recorded now so `status` (task 4.3) can later tell whether the
     // environment has drifted since this `up`, without needing the
     // manifest or project root passed back in — the keeper itself is
     // never told its own state dir, so it can't answer this either.
     let env_fingerprint =
-        crate::provider::manifest_fingerprint(project_root).map_err(UpError::Provider)?;
+        crate::provider::manifest_fingerprint(&manifest.env.provider, project_root)
+            .map_err(UpError::Provider)?;
     state::write_meta(
         &paths.meta,
         &state::Meta {
             project_root: project_root.to_string_lossy().into_owned(),
             env_fingerprint,
+            read_only_grants: resolution.read_only_grants.clone(),
         },
     )?;
 

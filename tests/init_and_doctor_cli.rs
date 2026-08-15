@@ -183,6 +183,110 @@ fn init_prefers_an_existing_flox_environment_over_a_toolchain_pin() {
 }
 
 #[test]
+fn init_detects_an_existing_nix_flake() {
+    let dir = scratch_project("flake");
+    std::fs::write(
+        dir.join("flake.nix"),
+        "{ description = \"x\"; outputs = { self }: {}; }",
+    )
+    .unwrap();
+    std::fs::write(dir.join("flake.lock"), "{}").unwrap();
+
+    let out = run(&dir, &["init"]);
+    assert!(out.status.success(), "{:?}", out);
+    let (manifest, _) =
+        devcroft::config::parse(&std::fs::read_to_string(dir.join("devcroft.toml")).unwrap())
+            .unwrap();
+    assert_eq!(manifest.env.provider, "nix");
+
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("ready for `devcroft up`"),
+        "a flake with flake.lock should be ready, got {stdout:?}"
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn init_on_a_flake_without_lock_advises_locking_it() {
+    let dir = scratch_project("flake-nolock");
+    std::fs::write(
+        dir.join("flake.nix"),
+        "{ description = \"x\"; outputs = { self }: {}; }",
+    )
+    .unwrap();
+
+    let out = run(&dir, &["init"]);
+    assert!(out.status.success(), "{:?}", out);
+    let (manifest, _) =
+        devcroft::config::parse(&std::fs::read_to_string(dir.join("devcroft.toml")).unwrap())
+            .unwrap();
+    assert_eq!(manifest.env.provider, "nix");
+
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("nix flake lock"));
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn init_prefers_flox_over_a_flake_when_both_are_present() {
+    let dir = scratch_project("flox-and-flake");
+    std::fs::create_dir_all(dir.join(".flox")).unwrap();
+    std::fs::write(
+        dir.join("flake.nix"),
+        "{ description = \"x\"; outputs = { self }: {}; }",
+    )
+    .unwrap();
+
+    let out = run(&dir, &["init"]);
+    assert!(out.status.success(), "{:?}", out);
+    let (manifest, _) =
+        devcroft::config::parse(&std::fs::read_to_string(dir.join("devcroft.toml")).unwrap())
+            .unwrap();
+    assert_eq!(
+        manifest.env.provider, "flox",
+        "flox must win when both a flox environment and a flake are present"
+    );
+
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("ready for `devcroft up`"));
+    assert!(
+        stdout.contains("flake.nix") && stdout.contains("provider = \"nix\""),
+        "should note the flake was also found and is available, got {stdout:?}"
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn init_prefers_an_existing_flake_over_a_toolchain_pin() {
+    let dir = scratch_project("flake-over-pin");
+    std::fs::write(
+        dir.join("flake.nix"),
+        "{ description = \"x\"; outputs = { self }: {}; }",
+    )
+    .unwrap();
+    std::fs::write(dir.join("flake.lock"), "{}").unwrap();
+    std::fs::write(
+        dir.join("rust-toolchain.toml"),
+        "[toolchain]\nchannel = \"stable\"\n",
+    )
+    .unwrap();
+
+    let out = run(&dir, &["init"]);
+    assert!(out.status.success(), "{:?}", out);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        !stdout.contains("rustup alone"),
+        "pin advice should not print when flake.nix already exists, got {stdout:?}"
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn init_disambiguates_a_real_name_collision_across_projects() {
     if Command::new("nono").arg("--version").output().is_err()
         || Command::new("flox").arg("--version").output().is_err()
@@ -278,6 +382,35 @@ fn doctor_reports_backend_and_provider_when_installed() {
     assert!(
         stdout.contains("no devcroft.toml found from here"),
         "an empty scratch dir has no manifest to check degradation for"
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn doctor_reports_nix_when_installed_with_flakes_enabled() {
+    if Command::new("nono").arg("--version").output().is_err()
+        || Command::new("flox").arg("--version").output().is_err()
+    {
+        eprintln!("skipping: nono and/or flox not on PATH");
+        return;
+    }
+    let Ok(nix_out) = Command::new("nix").arg("flake").arg("--help").output() else {
+        eprintln!("skipping: nix not on PATH");
+        return;
+    };
+    if !nix_out.status.success() {
+        eprintln!("skipping: nix present but flakes not enabled on this host");
+        return;
+    }
+
+    let dir = scratch_project("doctor-nix");
+    let out = run(&dir, &["doctor"]);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(out.status.success(), "{stdout}");
+    assert!(
+        stdout.contains("[PASS] provider: nix") && stdout.contains("flakes enabled"),
+        "got {stdout:?}"
     );
 
     let _ = std::fs::remove_dir_all(&dir);

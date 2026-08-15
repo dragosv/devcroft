@@ -143,6 +143,28 @@ pub fn compile(manifest: &Manifest) -> CompiledPolicy {
 }
 
 impl CompiledPolicy {
+    /// Fold in the read-only store grants a provider resolved at the last
+    /// `up` (recorded in `lifecycle::state::Meta`), tagged with the given
+    /// provider name's origin. Deliberately not part of [`compile`]: that
+    /// function's own doc comment guarantees it is a pure, deterministic
+    /// function of the manifest alone, and a provider's grants can only be
+    /// known by actually running the provider (`flox activate`/`nix
+    /// develop`) — something `compile` never does and `policy --render`/
+    /// `why` still don't do live. This just merges in whatever was
+    /// recorded the last time something *did* run it, so those commands
+    /// can show grants that are otherwise invisible to them (found while
+    /// implementing add-nix-provider: `Origin::Provider` existed but had
+    /// no caller — `policy --render` never showed a provider's store
+    /// grants for any provider, flox included).
+    pub fn with_provider_grants(mut self, provider: &'static str, grants: &[String]) -> Self {
+        self.filesystem_read.extend(
+            grants
+                .iter()
+                .map(|g| AnnotatedValue::new(g.clone(), Origin::Provider(provider))),
+        );
+        self
+    }
+
     /// Project down to the plain nono profile JSON (no origin metadata —
     /// origins are devcroft-internal and surfaced only via
     /// `policy --render`).
@@ -315,6 +337,61 @@ mod tests {
         let a = compile(&manifest).to_nono_profile().to_json();
         let b = compile(&manifest).to_nono_profile().to_json();
         assert_eq!(a, b);
+    }
+
+    #[test]
+    fn with_provider_grants_tags_grants_with_provider_origin() {
+        let (manifest, _) = parse("[sandbox]\nname = \"myproj\"\n").unwrap();
+        let compiled = compile(&manifest).with_provider_grants("nix", &["/nix/store".to_string()]);
+
+        assert!(
+            compiled
+                .filesystem_read
+                .contains(&AnnotatedValue::new("/nix/store", Origin::Provider("nix")))
+        );
+    }
+
+    /// Spec: "Provider does not weaken the sandbox" — a provider's grants
+    /// can only ever land in `filesystem_read`, never `filesystem_allow`
+    /// (write). `Resolution` (provider/mod.rs) has no field through which
+    /// a provider implementation could even express a write grant, and
+    /// `with_provider_grants` only ever appends to `filesystem_read` — this
+    /// pins that structural guarantee down as a test, for both providers
+    /// sharing the same merge path (flox and nix alike).
+    #[test]
+    fn with_provider_grants_never_touches_filesystem_allow() {
+        let (manifest, _) = parse("[sandbox]\nname = \"myproj\"\n").unwrap();
+        let before = compile(&manifest);
+        let after = before.clone().with_provider_grants(
+            "nix",
+            &["/nix/store".to_string(), "/some/other".to_string()],
+        );
+
+        assert_eq!(before.filesystem_allow, after.filesystem_allow);
+    }
+
+    #[test]
+    fn with_provider_grants_leaves_manifest_rules_untouched() {
+        let (manifest, _) = parse(
+            r#"
+            [sandbox]
+            name = "myproj"
+            [filesystem]
+            read = ["docs"]
+            "#,
+        )
+        .unwrap();
+        let compiled = compile(&manifest).with_provider_grants("flox", &["/nix/store".to_string()]);
+
+        assert!(compiled.filesystem_read.contains(&AnnotatedValue::new(
+            "docs",
+            Origin::Manifest("filesystem.read")
+        )));
+        assert!(
+            compiled
+                .filesystem_read
+                .contains(&AnnotatedValue::new("/nix/store", Origin::Provider("flox")))
+        );
     }
 
     #[test]

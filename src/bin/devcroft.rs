@@ -369,12 +369,20 @@ fn cli_init(args: &[String]) -> i32 {
     let base_name = devcroft::config::slugify(&dir_name);
     let name = disambiguate_name(&base_name, &cwd);
 
-    // `provider = "flox"` is already `Env`'s own default (config/mod.rs)
-    // even if omitted, but the cli spec's init scenarios describe the
-    // generated manifest as *setting* it — written out explicitly so
-    // it's visible and editable rather than an invisible default.
+    // cli spec's init scenarios: flox wins if both a flox environment and
+    // a nix flake are present (the more specific, devcroft-native choice),
+    // and either one supersedes advice about a toolchain pin it would
+    // otherwise just be a fallback for.
+    let has_flox = cwd.join(".flox").is_dir();
+    let has_flake = cwd.join("flake.nix").is_file();
+    let provider = if has_flox || !has_flake {
+        "flox"
+    } else {
+        "nix"
+    };
+
     let manifest_toml = format!(
-        "[sandbox]\nname = {name:?}\n\n[env]\nprovider = \"flox\"\n\n\
+        "[sandbox]\nname = {name:?}\n\n[env]\nprovider = {provider:?}\n\n\
          # Uncomment to grant more than the project root (already allowed\n\
          # by default) or to change the network default:\n\
          #\n\
@@ -393,11 +401,24 @@ fn cli_init(args: &[String]) -> i32 {
     }
     println!("devcroft: wrote {}", manifest_path.display());
 
-    // cli spec's init scenarios: flox wins if both it and a toolchain pin
-    // are present, since a real flox environment supersedes advice about
-    // a pin it would otherwise just be a fallback for.
-    if cwd.join(".flox").is_dir() {
+    if has_flox {
         println!("devcroft: found an existing flox environment (.flox/); ready for `devcroft up`.");
+        if has_flake {
+            println!(
+                "devcroft: a nix flake (flake.nix) was also found; `provider = \"nix\"` is \
+                 available if you'd rather use that instead."
+            );
+        }
+    } else if has_flake {
+        if cwd.join("flake.lock").is_file() {
+            println!(
+                "devcroft: found an existing nix flake (flake.nix) with flake.lock; ready for \
+                 `devcroft up`."
+            );
+        } else {
+            println!("devcroft: found flake.nix but no flake.lock.");
+            println!("devcroft: run `nix flake lock` before `devcroft up`.");
+        }
     } else if cwd.join("rust-toolchain.toml").exists() {
         println!("devcroft: found rust-toolchain.toml but no .flox/ environment.");
         println!(
@@ -509,7 +530,7 @@ fn doctor_backend() -> bool {
 }
 
 fn doctor_provider() -> bool {
-    match std::process::Command::new("flox").arg("--version").output() {
+    let flox_ok = match std::process::Command::new("flox").arg("--version").output() {
         Ok(out) if out.status.success() => {
             println!(
                 "[PASS] provider: flox found ({})",
@@ -521,6 +542,47 @@ fn doctor_provider() -> bool {
             println!("[FAIL] provider: flox not found on PATH — install it from https://flox.dev");
             false
         }
+    };
+    flox_ok && doctor_nix_provider()
+}
+
+/// nix is an alternative to flox, not a hard requirement of every host
+/// devcroft runs on the way flox currently is — a host that only ever
+/// runs flox-backed sandboxes with no interest in nix shouldn't have
+/// `doctor` fail over it. So absence is `[WARN]`, not `[FAIL]`. But once
+/// `nix` *is* present, a project can declare `provider = "nix"` and
+/// depend on it working, so a broken installation (flakes not enabled,
+/// design.md decision 5) is a real `[FAIL]`, same severity flox's own
+/// absence gets.
+fn doctor_nix_provider() -> bool {
+    let Ok(out) = std::process::Command::new("nix").arg("--version").output() else {
+        println!(
+            "[WARN] provider: nix not found on PATH — only needed for projects with `provider = \"nix\"`"
+        );
+        return true;
+    };
+    if !out.status.success() {
+        println!(
+            "[WARN] provider: nix not found on PATH — only needed for projects with `provider = \"nix\"`"
+        );
+        return true;
+    }
+    let version = String::from_utf8_lossy(&out.stdout).trim().to_string();
+
+    let flakes_enabled = std::process::Command::new("nix")
+        .arg("flake")
+        .arg("--help")
+        .output()
+        .is_ok_and(|o| o.status.success());
+    if flakes_enabled {
+        println!("[PASS] provider: nix found ({version}), flakes enabled");
+        true
+    } else {
+        println!(
+            "[FAIL] provider: nix found ({version}) but flake commands are rejected — add \
+             `experimental-features = nix-command flakes` to nix.conf"
+        );
+        false
     }
 }
 
@@ -734,7 +796,7 @@ fn cli_status(args: &[String]) -> i32 {
 
     match devcroft::lifecycle::status(&manifest) {
         Ok(s) => {
-            print_status(&s);
+            print_status(&s, &manifest.env.provider);
             0
         }
         Err(e) => {
@@ -747,7 +809,7 @@ fn cli_status(args: &[String]) -> i32 {
     }
 }
 
-fn print_status(s: &devcroft::lifecycle::SandboxStatus) {
+fn print_status(s: &devcroft::lifecycle::SandboxStatus, provider: &str) {
     println!("sandbox: {}", s.name);
     match &s.keeper {
         devcroft::lifecycle::KeeperStatus::None => println!("keeper: not running"),
@@ -762,9 +824,16 @@ fn print_status(s: &devcroft::lifecycle::SandboxStatus) {
         } => println!("keeper: healthy (uptime {uptime_secs}s, {session_count} session(s))"),
     }
     match s.env_stale {
-        Some(true) => println!(
-            "env: stale — the flox manifest changed since the last `up`; run `devcroft up --recreate`"
-        ),
+        Some(true) => {
+            let what = if provider == "nix" {
+                "flake"
+            } else {
+                "flox manifest"
+            };
+            println!(
+                "env: stale — the {what} changed since the last `up`; run `devcroft up --recreate`"
+            )
+        }
         Some(false) => println!("env: fresh"),
         None => println!("env: unknown"),
     }
@@ -990,9 +1059,44 @@ fn cli_policy(args: &[String]) -> i32 {
     };
     print!(
         "{}",
-        devcroft::policy::render(&devcroft::policy::compile(&manifest))
+        devcroft::policy::render(&compile_with_provider_grants(&manifest))
     );
     0
+}
+
+/// `policy --render` and `why` are otherwise pure functions of the
+/// manifest (`policy::compile`'s own doc comment guarantees this), but a
+/// provider's store grants can only be known by actually running the
+/// provider — something neither command does. This folds in whatever
+/// grants the last successful `up` recorded (`lifecycle::state::Meta`,
+/// add-nix-provider task 3.4), so a project that has never been `up`
+/// simply shows no provider grants yet, exactly as if the provider had
+/// resolved to none.
+fn compile_with_provider_grants(
+    manifest: &devcroft::config::Manifest,
+) -> devcroft::policy::CompiledPolicy {
+    let compiled = devcroft::policy::compile(manifest);
+    let Ok(paths) = devcroft::lifecycle::StatePaths::new(&manifest.sandbox.name) else {
+        return compiled;
+    };
+    let Ok(Some(meta)) = devcroft::lifecycle::read_meta(&paths.meta) else {
+        return compiled;
+    };
+    compiled.with_provider_grants(
+        provider_static_name(&manifest.env.provider),
+        &meta.read_only_grants,
+    )
+}
+
+/// `Origin::Provider` takes `&'static str`; the manifest's provider name
+/// is a runtime `String` by the time it reaches here, so this maps the
+/// two canonical names `config::parse` ever produces back to statics.
+fn provider_static_name(name: &str) -> &'static str {
+    match name {
+        "flox" => "flox",
+        "nix" => "nix",
+        _ => "unknown",
+    }
 }
 
 /// `devcroft why --path <p> --op <read|write|readwrite> [name]` or
@@ -1029,7 +1133,7 @@ fn cli_why(args: &[String]) -> i32 {
         Ok(m) => m,
         Err(code) => return code,
     };
-    let compiled = devcroft::policy::compile(&manifest);
+    let compiled = compile_with_provider_grants(&manifest);
 
     if let Some(host) = host {
         print_explanation(&devcroft::policy::why_host(&compiled, &host));

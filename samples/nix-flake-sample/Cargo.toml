@@ -1,0 +1,16 @@
+[package]
+name = "citytime"
+version = "0.1.0"
+edition = "2024"
+
+# Stops cargo's workspace-root search at this crate. Without it, cargo
+# walks upward past this directory looking for a parent workspace and
+# reaches devcroft's own Cargo.toml — outside this sample's project
+# root, so a devcroft-sandboxed session correctly denies reading it
+# (same lesson as samples/flox-rustup-sample and samples/flox-clap-sample).
+[workspace]
+
+[dependencies]
+chrono = "0.4.45"
+chrono-tz = "0.10.4"
+clap = { version = "4.6.6", features = ["derive"] }

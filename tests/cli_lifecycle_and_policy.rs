@@ -246,6 +246,33 @@ fn policy_render_and_why_explain_decisions() {
 }
 
 #[test]
+fn policy_render_and_why_show_provider_grants_after_up() {
+    // Before this fix (add-nix-provider task 3.4), `policy --render` and
+    // `why` were pure functions of the manifest and never showed a
+    // provider's store grants at all — not even flox's, despite
+    // `Origin::Provider` existing since MVP. This proves the CLI now
+    // reads back what `up` recorded (`lifecycle::state::Meta`).
+    let Some(sandbox) = Sandbox::new("policygrants") else {
+        return;
+    };
+    assert!(sandbox.run(&["up"]).status.success());
+
+    let out = sandbox.run(&["policy", "--render"]);
+    assert!(out.status.success(), "{out:?}");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("/nix/store") && stdout.contains("provider:flox"),
+        "policy --render must show the flox store grant after `up`, got: {stdout}"
+    );
+
+    let out = sandbox.run(&["why", "--path", "/nix/store/anything", "--op", "read"]);
+    assert!(out.status.success(), "{out:?}");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("ALLOWED"));
+    assert!(stdout.contains("provider:flox"));
+}
+
+#[test]
 fn logs_show_session_spawn_and_exit_records() {
     let Some(sandbox) = Sandbox::new("logs") else {
         return;

@@ -92,6 +92,17 @@ on the keeper pid, the realistic proxy for host suspend/resume available
 in this environment) with the next command transparently confirming
 health rather than assuming it (7.3).
 
+**Post-MVP:** `add-nix-provider` is implemented — nix flakes as a second
+`env.provider` value alongside flox, same closure tier, same contract
+(`Provider` trait, host-side activation capture, store grants, staleness
+fingerprinting). `init` and `doctor` both learned about it; see
+[samples/nix-flake-sample](samples/nix-flake-sample/) for a working
+example and `openspec/changes/add-nix-provider/` for the full spec. This
+also closed a real, pre-existing gap that predated nix entirely: `policy
+--render`/`why` never showed *any* provider's store grants before this
+(`Origin::Provider` existed since MVP with no caller) — fixed for flox
+and nix alike.
+
 ## Limitations
 
 devcroft's default (and only implemented) tier, `process`, is Landlock or

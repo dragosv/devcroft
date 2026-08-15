@@ -79,7 +79,12 @@ pub fn status(manifest: &Manifest) -> Result<SandboxStatus, StatusError> {
     let keeper = keeper_status(&paths).map_err(|e| StatusError::Keeper(e.to_string()))?;
 
     let env_stale = state::read_meta(&paths.meta)?.and_then(|meta| {
-        provider::is_stale(Path::new(&meta.project_root), &meta.env_fingerprint).ok()
+        provider::is_stale(
+            &manifest.env.provider,
+            Path::new(&meta.project_root),
+            &meta.env_fingerprint,
+        )
+        .ok()
     });
 
     let degraded = policy::detect_degraded(&policy::compile(manifest));
@@ -239,6 +244,7 @@ mod tests {
                 &state::Meta {
                     project_root: format!("/proj/{name}"),
                     env_fingerprint: "fp".to_string(),
+                    read_only_grants: Vec::new(),
                 },
             )
             .unwrap();

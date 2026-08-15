@@ -1,15 +1,22 @@
 //! The `env-provider` capability: resolves the declarative environment
 //! (toolchain, PATH, env vars) a manifest names, host-side, before any
-//! sandbox restriction applies (design.md decision 2). MVP's only
-//! implemented provider is flox (task 3.2); this module also validates
-//! `env.provider` against every other name devcroft is ever going to
-//! support, rejecting the rest up front with a message naming why.
+//! sandbox restriction applies (design.md decision 2). Implemented
+//! providers: flox (task 3.2) and nix flakes (add-nix-provider). This
+//! module also validates `env.provider` against every other name devcroft
+//! is ever going to support, rejecting the rest up front with a message
+//! naming why, and dispatches the validated name to the right
+//! implementation — the one place both `resolve` and staleness
+//! fingerprinting are keyed off the provider name, so adding a third
+//! provider touches this file once rather than every call site.
 
+mod capture;
 mod flox;
+mod nix;
 mod validate;
 
-pub use flox::{FloxProvider, is_stale, manifest_fingerprint};
-pub use validate::validate_provider;
+pub use flox::FloxProvider;
+pub use nix::NixProvider;
+pub use validate::{normalize_provider_name, validate_provider};
 
 use std::collections::BTreeMap;
 use std::fmt;
@@ -55,11 +62,26 @@ pub enum ProviderError {
     NotYetSupported { name: String, reason: &'static str },
     /// `env.provider` names something devcroft has no record of at all.
     Unknown { name: String },
-    /// The provider binary (e.g. `flox`) is not on `PATH`.
-    MissingBinary,
+    /// The provider binary (e.g. `flox`, `nix`) is not on `PATH`.
+    MissingBinary {
+        provider: &'static str,
+        hint: &'static str,
+    },
     /// The project has no provider environment to activate (e.g. no
-    /// `.flox/`) — a missing environment, not a missing feature.
-    NoEnvironment,
+    /// `.flox/`, no `flake.nix`) — a missing environment, not a missing
+    /// feature.
+    NoEnvironment {
+        provider: &'static str,
+        hint: &'static str,
+    },
+    /// The provider has an environment definition but no lockfile pinning
+    /// it (e.g. `flake.nix` without `flake.lock`) — distinct from
+    /// [`ProviderError::NoEnvironment`] because the fix is "lock it", not
+    /// "create it".
+    MissingLock {
+        provider: &'static str,
+        hint: &'static str,
+    },
     /// The provider's own resolution failed (activation error, unreadable
     /// manifest, etc).
     ResolutionFailed(String),
@@ -80,16 +102,20 @@ impl fmt::Display for ProviderError {
             ProviderError::Unknown { name } => {
                 write!(
                     f,
-                    "unknown provider `{name}`; devcroft supports `flox` in this release"
+                    "unknown provider `{name}`; devcroft supports `flox` and `nix` in this release"
                 )
             }
-            ProviderError::MissingBinary => write!(
+            ProviderError::MissingBinary { provider, hint } => write!(
                 f,
-                "`flox` is not installed or not on PATH; run `devcroft doctor`"
+                "`{provider}` is not installed or not on PATH; run `{hint}`"
             ),
-            ProviderError::NoEnvironment => write!(
+            ProviderError::NoEnvironment { provider, hint } => write!(
                 f,
-                "no flox environment found in this project; run `flox init`"
+                "no {provider} environment found in this project; run `{hint}`"
+            ),
+            ProviderError::MissingLock { provider, hint } => write!(
+                f,
+                "no lockfile found for the {provider} environment; run `{hint}`"
             ),
             ProviderError::ResolutionFailed(msg) => write!(f, "provider resolution failed: {msg}"),
         }
@@ -97,3 +123,64 @@ impl fmt::Display for ProviderError {
 }
 
 impl std::error::Error for ProviderError {}
+
+/// The validated, canonical provider names devcroft can actually resolve.
+/// Everything downstream that needs to run *a* provider (as opposed to
+/// merely validating the manifest's `env.provider` string) goes through
+/// this — `up`'s activation capture and `status`'s staleness check both
+/// dispatch off the same enum, so a third provider is added here once
+/// rather than at every call site.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProviderKind {
+    Flox,
+    Nix,
+}
+
+impl ProviderKind {
+    /// `name` must already be validated and normalized (see
+    /// [`validate_provider`], [`normalize_provider_name`]) — this only
+    /// ever sees `"flox"` or `"nix"` in practice, since `config::parse` is
+    /// the sole place a `Manifest` is constructed. Returns
+    /// [`ProviderError::Unknown`] rather than panicking so a manifest
+    /// built by a test or another caller that skipped validation still
+    /// fails through the normal error contract instead of crashing.
+    pub fn from_name(name: &str) -> Result<Self, ProviderError> {
+        match name {
+            "flox" => Ok(ProviderKind::Flox),
+            "nix" => Ok(ProviderKind::Nix),
+            other => Err(ProviderError::Unknown {
+                name: other.to_string(),
+            }),
+        }
+    }
+}
+
+impl Provider for ProviderKind {
+    fn resolve(&self, project_root: &Path) -> Result<Resolution, ProviderError> {
+        match self {
+            ProviderKind::Flox => FloxProvider.resolve(project_root),
+            ProviderKind::Nix => NixProvider.resolve(project_root),
+        }
+    }
+}
+
+/// Content fingerprint of the environment definition `provider` names, for
+/// staleness detection — dispatches to the matching provider's own
+/// fingerprint (flox: `manifest.toml` + lockfile; nix: `flake.nix` +
+/// `flake.lock`).
+pub fn manifest_fingerprint(provider: &str, project_root: &Path) -> Result<String, ProviderError> {
+    match ProviderKind::from_name(provider)? {
+        ProviderKind::Flox => flox::manifest_fingerprint(project_root),
+        ProviderKind::Nix => nix::flake_fingerprint(project_root),
+    }
+}
+
+/// Whether `provider`'s environment has changed since `recorded` was
+/// captured (spec: "Stale environment after manifest/flake change").
+pub fn is_stale(
+    provider: &str,
+    project_root: &Path,
+    recorded: &str,
+) -> Result<bool, ProviderError> {
+    Ok(manifest_fingerprint(provider, project_root)? != recorded)
+}

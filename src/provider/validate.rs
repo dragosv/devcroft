@@ -18,19 +18,13 @@ const VERSION_MANAGERS: &[&str] = &[
     "rustup", "nvm", "pyenv", "rbenv", "sdkman", "ghcup", "asdf", "proto",
 ];
 
+/// Provider names devcroft actually resolves. `flake`/`flakes` are
+/// accepted aliases for `nix` — normalized by [`normalize_provider_name`]
+/// so exactly one canonical name ever reaches provider dispatch, `status`,
+/// and policy rule origins.
+const SUPPORTED: &[&str] = &["flox", "nix", "flake", "flakes"];
+
 const NOT_YET_SUPPORTED: &[(&str, &str)] = &[
-    (
-        "nix",
-        "nix flakes support is planned (closure tier) but not yet implemented",
-    ),
-    (
-        "flake",
-        "nix flakes support is planned (closure tier) but not yet implemented",
-    ),
-    (
-        "flakes",
-        "nix flakes support is planned (closure tier) but not yet implemented",
-    ),
     (
         "devbox",
         "devbox support is planned (closure tier) but not yet implemented",
@@ -53,10 +47,10 @@ const NOT_YET_SUPPORTED: &[(&str, &str)] = &[
     ),
 ];
 
-/// Validate an `env.provider` value. `Ok(())` only for `"flox"`, MVP's
-/// sole supported provider.
+/// Validate an `env.provider` value. `Ok(())` for `"flox"`, `"nix"`, and
+/// nix's `"flake"`/`"flakes"` aliases.
 pub fn validate_provider(name: &str) -> Result<(), ProviderError> {
-    if name == "flox" {
+    if SUPPORTED.contains(&name) {
         return Ok(());
     }
     if OUT_OF_SCOPE.contains(&name) {
@@ -82,6 +76,17 @@ pub fn validate_provider(name: &str) -> Result<(), ProviderError> {
     })
 }
 
+/// Normalize an already-`validate_provider`-accepted name to the single
+/// canonical form provider dispatch, `status`, and policy rule origins
+/// use. Only `nix`'s aliases fold today; every other accepted name is
+/// already canonical.
+pub fn normalize_provider_name(name: &str) -> String {
+    match name {
+        "flake" | "flakes" => "nix".to_string(),
+        other => other.to_string(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -89,6 +94,25 @@ mod tests {
     #[test]
     fn flox_is_accepted() {
         assert!(validate_provider("flox").is_ok());
+    }
+
+    #[test]
+    fn nix_and_its_aliases_are_accepted() {
+        for name in ["nix", "flake", "flakes"] {
+            assert!(validate_provider(name).is_ok(), "{name} should validate");
+        }
+    }
+
+    #[test]
+    fn nix_aliases_normalize_to_nix() {
+        assert_eq!(normalize_provider_name("nix"), "nix");
+        assert_eq!(normalize_provider_name("flake"), "nix");
+        assert_eq!(normalize_provider_name("flakes"), "nix");
+    }
+
+    #[test]
+    fn flox_name_is_unaffected_by_normalization() {
+        assert_eq!(normalize_provider_name("flox"), "flox");
     }
 
     #[test]
@@ -120,18 +144,6 @@ mod tests {
                 assert!(reason.contains("not yet implemented"));
             }
             other => panic!("expected NotYetSupported, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn nix_flakes_reports_planned_closure_tier() {
-        for name in ["nix", "flake", "flakes"] {
-            match validate_provider(name) {
-                Err(ProviderError::NotYetSupported { reason, .. }) => {
-                    assert!(reason.contains("closure tier"));
-                }
-                other => panic!("expected NotYetSupported for {name}, got {other:?}"),
-            }
         }
     }
 
