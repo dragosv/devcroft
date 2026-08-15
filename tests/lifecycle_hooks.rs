@@ -113,7 +113,12 @@ fn post_create_does_not_rerun_on_recovery_but_post_start_does() {
         up(&manifest, &sandbox.project_root, &UpOptions::default()).unwrap(),
         UpOutcome::Started
     );
-    assert_eq!(sandbox.log().matches("pc-marker").count(), 1);
+    let log = sandbox.log();
+    assert_eq!(
+        log.matches("pc-marker").count(),
+        1,
+        "post_create must have run exactly once, log was: {log}"
+    );
     assert_eq!(sandbox.log().matches("ps-marker").count(), 1);
 
     // Simulate a crashed keeper (design.md's "Recovery after host reboot"
@@ -169,7 +174,12 @@ fn up_recreate_reruns_post_create() {
         up(&manifest, &sandbox.project_root, &UpOptions::default()).unwrap(),
         UpOutcome::Started
     );
-    assert_eq!(sandbox.log().matches("pc-marker").count(), 1);
+    let log = sandbox.log();
+    assert_eq!(
+        log.matches("pc-marker").count(),
+        1,
+        "post_create must have run exactly once, log was: {log}"
+    );
 
     // `--recreate` tears down the old keeper internally
     // (`state::terminate_and_wait`, SIGTERM then SIGKILL after a grace
@@ -205,7 +215,12 @@ fn up_recreate_reruns_post_create() {
     // (`spawn_keeper` opens it via `File::create`) — this is the fresh
     // respawn's log, not cumulative with the first `up`'s, so a single
     // occurrence here means `post_create` genuinely reran.
-    assert_eq!(sandbox.log().matches("pc-marker").count(), 1);
+    let log = sandbox.log();
+    assert_eq!(
+        log.matches("pc-marker").count(),
+        1,
+        "post_create must have run exactly once, log was: {log}"
+    );
 }
 
 #[test]

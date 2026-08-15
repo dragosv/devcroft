@@ -110,10 +110,23 @@ Known gaps, published rather than hidden:
   ([design.md](openspec/changes/add-mvp-core/design.md) Decision 5):
   two sandboxes on the same host can see each other's processes, and — since
   they share the host's network namespace — two sandboxes each binding the
-  same port (e.g. both running a dev server on 3000) will conflict with
+  same port (e.g. both running a dev server on 3000) would conflict with
   `EADDRINUSE`. There is no conflict detection; reach a sandbox's services
   through SSH's `-L` forwarding rather than assuming host ports are
-  exclusive to it.
+  exclusive to it. **Note this is currently moot under the default
+  policy** — see the listening-socket gap below, where neither sandbox can
+  bind in the first place.
+- **`network` blocking also blocks *listening* sockets, including
+  loopback.** The default policy denies `bind`+`listen` outright, so a dev
+  server inside a sandbox cannot come up at all — `python3 -c "…bind(('127.0.0.1', 0))…"`
+  fails with `Operation not permitted`. The `[network]` section reads as
+  outbound egress control, and nothing says it revokes the ability to
+  serve; the port-conflict note above is written as though binding works.
+  Setting `network.default = "allow"` restores it, but that also drops
+  egress filtering, so there is currently no way to express "no outbound
+  access, but I can still run my dev server". This is what stops VS Code
+  Remote-SSH (its server needs a loopback listener) — see
+  [docs/ssh-validation.md](docs/ssh-validation.md).
 - **Network filtering is cooperative and platform-dependent.** Domain-level
   allowlisting needs a cooperative proxy; macOS Seatbelt cannot enforce it
   at all without one. `doctor` and `up` name this degradation once, rather

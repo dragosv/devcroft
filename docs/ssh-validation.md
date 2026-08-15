@@ -23,8 +23,8 @@ not a substitute for the first and should not be read as one.
 | SFTP relative-path base | **Known divergence** from OpenSSH: project root, not `$HOME` | see "Zed" finding 2 |
 | `ProxyCommand`/`ssh-config` plumbing | **Validated** | `tests/proxy_up.rs`, `tests/ssh_up.rs`, `tests/ssh_config_cli.rs` |
 | rsync | **Validated** (2026-08-14, macOS/aarch64-darwin, system `openrsync`) | `tests/ssh_channels.rs::rsync_transfers_a_file_through_devcroft_proxy_over_a_plain_exec_channel` |
-| VS Code Remote-SSH | **Validated manually** (2026-08-14, macOS/aarch64-darwin, VS Code 1.130.0, remote-ssh 0.124.0) | real connection, publickey auth, remote server install, extension host launch against a live `up` sandbox — see below |
-| Cursor (remote-ssh) | **Validated manually** (2026-08-14, macOS/aarch64-darwin, Cursor 3.15.19, anysphere.remote-ssh 1.1.14) | real connection, server download/install/start, multiplex + code server both listening — see below |
+| VS Code Remote-SSH | **Regressed to partial on retest** (2026-08-15, same host, same VS Code 1.130.0) | does **not** work under the default policy: needs `serverInstallPath` *and* `network.default = "allow"`, and even then its agent host supervisor never comes up. The 2026-08-14 "Validated" claim did not record the network precondition — see below |
+| Cursor (remote-ssh) | **Validated manually 2026-08-14; not retested, treat as suspect** (Cursor 3.15.19, anysphere.remote-ssh 1.1.14) | its servers listen on ports, so the listening-socket blocker found for VS Code on 2026-08-15 very likely applies — see below |
 | Zed | **Partial — connects, transfers, does not start** (2026-08-15, macOS/aarch64-darwin, Zed 1.4.4) | auth, upload, decompress and chmod of the 31 MB server all succeed; its forked server daemon then exits silently. Needs 5 `$HOME` grants. See below |
 
 All "Validated" rows go through the real `ssh`/`scp`/`sftp` CLI binaries
@@ -119,7 +119,80 @@ the host and inside a project's flox environment, `rsync -e "ssh -F
 <config>" <src> <name>.devcroft:<dst>` using the `ssh-config` block
 `devcroft ssh-config --write` installs.
 
-## VS Code Remote-SSH and Cursor: real, manually-run connections
+## VS Code Remote-SSH: retested 2026-08-15, and it does not work
+
+Retested on the same host and the **same VS Code build** (1.130.0,
+commit `1b6a188`) that the 2026-08-14 section below calls validated. It
+fails under devcroft's default policy, for two independent reasons. The
+first is the one already documented; the second is not, and it is the
+reason the earlier claim should not be trusted as written.
+
+**Blocker 1 — the install directory (known).** With no
+`remote.SSH.serverInstallPath` set, VS Code reports `CreateInstallDirFailed`,
+because it defaults the directory to `$HOME` and devcroft correctly denies
+writing there. Redirecting it into the project root fixes this, exactly as
+described below. Worth noting the setting was *not* present in this host's
+`settings.json` at retest time, so whatever was configured for the original
+pass did not persist — which is itself a reason the original result was not
+reproducible.
+
+**Blocker 2 — listening sockets (new, and the important one).** Past the
+install directory, the server dies immediately:
+
+```
+info  No agent host supervisor running; starting one in the background
+error error listening on port: Operation not permitted (os error 1)
+```
+
+devcroft's default `network.block` denies `bind`+`listen`, loopback
+included. Confirmed independently of VS Code, straight through an exec
+channel:
+
+| Policy | `bind(("127.0.0.1", 0)); listen()` |
+|---|---|
+| default (`network.block: true`) | `[Errno 1] Operation not permitted` |
+| `network.default = "allow"` | `LISTEN OK ('127.0.0.1', 52053)` |
+
+This is not really an editor finding at all — **no dev server can bind a
+port inside a sandbox under the default policy.** The README's own
+port-conflict note is written as though two sandboxes race for port 3000
+and one gets `EADDRINUSE`; under the default policy neither binds and both
+get `EPERM`. The `[network]` section reads as outbound egress control and
+says nothing about revoking the ability to serve, so this is a policy
+*granularity* gap as much as a documentation one: there is currently no
+way to express "no outbound access, but my dev server can still listen",
+which is the single most common shape of local development.
+
+**Where it gets to with both worked around.** With the install path
+redirected and `network.default = "allow"`, VS Code authenticates,
+downloads and extracts the full server (543 MB on disk), and reaches
+`Starting server...`. It then loops:
+
+```
+warn Agent host supervisor unavailable; renderer will not see agentHostProxy:
+     could not start server on the given host/port:
+     agent host supervisor signalled ready but lockfile is missing
+info Starting server...
+```
+
+The server processes stay alive but the supervisor never comes up, the
+keeper reports no sessions, and no working remote window was obtained. Not
+diagnosed further; unlike blocker 2 it is not attributed to devcroft.
+
+**On the section below.** It is left intact rather than rewritten, because
+it records what was observed at the time and the discrepancy is more
+useful than a tidy overwrite. But its "Validated" claim omits a
+precondition that is load-bearing — the sandbox must permit listening
+sockets — and that omission is exactly the kind of thing this document's
+own preamble warns about: a manual result, unlike a test, does not re-run
+itself and cannot tell you when it has stopped being true.
+
+## VS Code Remote-SSH and Cursor: the original 2026-08-14 pass
+
+(Superseded for VS Code by the retest above; kept as the record of what
+was observed then. Cursor has not been retested and its row still stands
+as written — though note it shares VS Code's need for a listening socket,
+so the same blocker 2 very likely applies to it too.)
 
 Both validated 2026-08-14 on macOS/aarch64-darwin against a live `up`
 sandbox, `devcroft ssh-config --write`'s real `~/.ssh/config` block, and
@@ -340,6 +413,16 @@ which.
    as live but silently dropped by the backend) — that one is a correctness
    bug in the policy surface independent of any editor, and it is the
    remaining finding that contradicts a stated invariant.
+5. **Decide whether `network` blocking should keep denying listening
+   sockets.** This is the highest-impact item on the list and is not an
+   editor concern: today no dev server can bind a port under the default
+   policy, which contradicts the README's own port-conflict example and
+   makes the default unusable for ordinary local development. Options are
+   a separate knob, or treating loopback binds as distinct from egress.
+   Whatever is chosen, `up` should say so rather than leaving `EPERM` from
+   a `bind` call as the only signal.
+6. Retest Cursor. Its 2026-08-14 row is probably wrong for the same
+   listening-socket reason and no longer reflects a default-policy sandbox.
 4. Consider whether the remote-server-directory-under-`$HOME` pattern
    deserves a first-class answer in devcroft's own docs rather than a
    per-editor workaround, since all three editors tested hit some version

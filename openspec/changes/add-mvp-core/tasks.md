@@ -48,12 +48,19 @@ retired first, and every phase ends in something runnable.
       Zed, Cursor — document what works per editor. Nearly done: see
       docs/ssh-validation.md — OpenSSH client (ssh/scp/sftp/-L) and rsync
       are validated by real end-to-end tests (`tests/ssh_channels.rs`);
-      VS Code Remote-SSH and Cursor are validated by real manual runs
-      against a live sandbox (real connection, publickey auth, remote
-      server install/start, workbench window open for VS Code / both
-      servers reachable for Cursor) — the fix both needed was redirecting
-      `remote.SSH.serverInstallPath` inside the project root, since
-      devcroft's default policy correctly denies writing to `$HOME`.
+      VS Code Remote-SSH and Cursor were manually validated on 2026-08-14
+      after redirecting `remote.SSH.serverInstallPath` into the project
+      root (devcroft's default policy correctly denies writing to `$HOME`)
+      — but **VS Code was retested on 2026-08-15, on the same host and the
+      same build, and does not work**: devcroft's default `network.block`
+      denies `bind`+`listen` including on loopback, so VS Code's server
+      dies with `error listening on port: Operation not permitted`. That
+      generalizes well past editors — under the default policy no dev
+      server can bind a port at all, which contradicts the README's own
+      port-conflict example, and there is no way to ask for "no egress but
+      I can still listen". Cursor's row is untested since and suspect for
+      the same reason. Recorded in docs/ssh-validation.md as the largest
+      open item on this task.
       Zed was attempted for real on 2026-08-15 (its CLI *is* installable —
       `zed ssh://<name>.devcroft/<path>`) and now **connects, authenticates
       and transfers, but its server does not come up**: the forked daemon
