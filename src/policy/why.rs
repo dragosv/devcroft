@@ -129,19 +129,53 @@ fn matching<'a>(rules: &'a [AnnotatedValue], path: &str) -> Option<&'a Annotated
     rules.iter().find(|r| is_within(path, &r.value))
 }
 
+/// `~/…` → `$HOME/…`, for values crossing into `nono why`'s *command-line
+/// flags* only. nono expands `~` inside a profile file but not in
+/// `--allow`/`--read` arguments, where it reads the literal `~` as a
+/// relative path, finds nothing there, and drops the grant — silently as
+/// far as the verdict goes, and noisily on **stdout**
+/// (`'~/x' does not exist and will be ignored.`), which lands in the middle
+/// of the JSON this function parses. Found via task 6.5: without this,
+/// `why` on any manifest carrying a `~`-form grant failed outright with
+/// `parsing 'nono why' output: expected value at line 1 column 1`, and
+/// would have returned a wrong DENIED verdict even if it had parsed.
+/// The profile written for `up` is deliberately left alone — nono does
+/// expand `~` there, so the compiled policy stays in its own `~`-relative
+/// form everywhere it is rendered or stored.
+fn expand_home(value: &str) -> String {
+    let Ok(home) = std::env::var("HOME") else {
+        return value.to_string();
+    };
+    match value {
+        "~" => home,
+        v => match v.strip_prefix("~/") {
+            Some(rest) => format!("{}/{rest}", home.trim_end_matches('/')),
+            None => v.to_string(),
+        },
+    }
+}
+
 fn nono_why_path(compiled: &CompiledPolicy, path: &str, op: Op) -> Result<bool, WhyError> {
     let mut cmd = std::process::Command::new("nono");
     cmd.arg("why")
         .arg("--json")
+        // Expanded for the same reason the grants below are, and it matters
+        // just as much here: the query path is `~`-rooted in the cli spec's
+        // own example (`why --path ~/.aws/credentials`), and nono would read
+        // that literal `~` as a directory relative to the cwd, matching no
+        // rule and answering DENIED for a path devcroft's own rules grant.
+        // `origin_for_path` keeps the caller's unexpanded form on purpose —
+        // `paths::is_within` compares `~`-rooted rules against `~`-rooted
+        // paths and treats home and absolute as separate namespaces.
         .arg("--path")
-        .arg(path)
+        .arg(expand_home(path))
         .arg("--op")
         .arg(op.nono_flag());
     for allow in &compiled.filesystem_allow {
-        cmd.arg("--allow").arg(&allow.value);
+        cmd.arg("--allow").arg(expand_home(&allow.value));
     }
     for read in &compiled.filesystem_read {
-        cmd.arg("--read").arg(&read.value);
+        cmd.arg("--read").arg(expand_home(&read.value));
     }
     if compiled.network_block {
         cmd.arg("--block-net");
@@ -174,6 +208,18 @@ mod tests {
     use super::super::compile;
     use super::*;
     use crate::config::parse;
+
+    #[test]
+    fn expand_home_rewrites_only_tilde_rooted_values() {
+        let home = std::env::var("HOME").expect("HOME set in the test environment");
+        assert_eq!(expand_home("~"), home);
+        assert_eq!(expand_home("~/.zed_server"), format!("{home}/.zed_server"));
+        // Project-relative and absolute values are namespaces nono resolves
+        // itself; a bare `~foo` is not a home reference at all.
+        assert_eq!(expand_home("."), ".");
+        assert_eq!(expand_home("/nix/store"), "/nix/store");
+        assert_eq!(expand_home("~foo"), "~foo");
+    }
 
     fn manifest_with_src_allow() -> crate::config::Manifest {
         parse(

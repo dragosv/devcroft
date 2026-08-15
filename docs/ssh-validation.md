@@ -20,11 +20,12 @@ not a substitute for the first and should not be read as one.
 | OpenSSH `scp` (SFTP-based, 9.0+) | **Validated** (data correctness only — see note) | `tests/ssh_channels.rs::scp_moves_correct_data_even_though_its_own_exit_code_is_unreliable_here` |
 | OpenSSH `scp -O` (legacy) | **Spot-checked manually**, not in the automated suite | needs a real `scp` binary *inside* the sandbox, which depends on the project's own environment, not devcroft |
 | `-L` local forwarding | **Validated** | `tests/ssh_channels.rs::direct_tcpip_forwarding_relays_a_real_connection` |
+| SFTP relative-path base | **Known divergence** from OpenSSH: project root, not `$HOME` | see "Zed" finding 2 |
 | `ProxyCommand`/`ssh-config` plumbing | **Validated** | `tests/proxy_up.rs`, `tests/ssh_up.rs`, `tests/ssh_config_cli.rs` |
 | rsync | **Validated** (2026-08-14, macOS/aarch64-darwin, system `openrsync`) | `tests/ssh_channels.rs::rsync_transfers_a_file_through_devcroft_proxy_over_a_plain_exec_channel` |
 | VS Code Remote-SSH | **Validated manually** (2026-08-14, macOS/aarch64-darwin, VS Code 1.130.0, remote-ssh 0.124.0) | real connection, publickey auth, remote server install, extension host launch against a live `up` sandbox — see below |
 | Cursor (remote-ssh) | **Validated manually** (2026-08-14, macOS/aarch64-darwin, Cursor 3.15.19, anysphere.remote-ssh 1.1.14) | real connection, server download/install/start, multiplex + code server both listening — see below |
-| Zed | **Not validated** | installed but has no CLI on `PATH` in this environment to drive it non-interactively; not attempted |
+| Zed | **Attempted, blocked** (2026-08-15, macOS/aarch64-darwin, Zed 1.4.4) | real connection, publickey auth, remote server uploaded byte-correct — then blocked by devcroft's `scp` exit-status race; see below |
 
 All "Validated" rows go through the real `ssh`/`scp`/`sftp` CLI binaries
 talking to a real, `up`-started keeper via a real `devcroft proxy`
@@ -52,6 +53,11 @@ doesn't have this problem, which is exactly what the "Evidence" column
 above shows: the `sftp` row transfers *and* reports success; the `scp` row
 transfers correctly but isn't asserted on its own exit code for that
 reason.
+
+**Severity note, added 2026-08-15:** this was written off as cosmetic
+because no test cared about the exit code. The Zed pass below shows it is
+not — a real client that gates on `scp`'s exit code cannot connect, even
+though every byte arrives. See "Zed" for the evidence.
 
 ## rsync
 
@@ -161,34 +167,132 @@ real `ssh` CLI both already went through — but "no reason to expect
 otherwise" is reasoning, not a re-run, so it's called out here rather than
 folded silently into "Validated".
 
-## Zed
+## Zed: attempted against a live sandbox, blocked by devcroft
 
-Not attempted: `Zed.app` is installed on the host used for this pass, but
-Zed has no CLI on `PATH` to drive a remote connection non-interactively
-(unlike `code`/`cursor`, which both install a shell command). Zed's remote
-development is also a materially different mechanism from the other two —
-not a bundled VS Code-style remote-ssh extension, but Zed's own protocol
-running a headless `zed` binary on the remote end — so the VS Code/Cursor
-results above are not strong evidence either way for Zed specifically.
+Attempted 2026-08-15 on macOS/aarch64-darwin, Zed 1.4.4, driven
+non-interactively as `zed ssh://<name>.devcroft/<project path>` (Zed's CLI
+*is* on `PATH` on this host — `/usr/local/bin/zed` — contrary to the earlier
+note here, which is why this pass got further than "not attempted").
 
-**To validate manually:** `devcroft ssh-config --write`, then add
-`<name>.devcroft` as a remote project in Zed's own remote-development UI
-for a sandbox that's already `up`. Expect the same `serverInstallPath`-style
-friction if Zed's remote server also defaults to installing under `$HOME`;
-redirect it inside the project root the same way. Record: did the remote
-server install/start; do file open/save/browse work; does the integrated
-terminal work including resize; does port forwarding for a locally-previewed
-dev server work.
+Zed's remote development is its own protocol running a headless
+`zed-remote-server` binary on the remote end, not a VS Code-style remote-ssh
+extension, and it has **no `serverInstallPath` equivalent**: the server
+directory is hard-coded as `.zed_server` relative to `cd` with no argument,
+i.e. `$HOME/.zed_server`. The VS Code/Cursor fix therefore does not
+transfer — there is no setting to redirect it.
+
+**How far it got, in order:** SSH handshake and publickey auth succeeded;
+remote platform correctly discovered (`RemotePlatform { os: MacOs, arch:
+Aarch64 }`); `curl` of the server tarball correctly **denied** by the
+sandbox's `network.block` (working as designed), so Zed fell back to
+downloading locally and uploading; the full 31,618,399-byte server binary
+**was uploaded byte-correct into the sandbox**; and then the connection
+failed anyway.
+
+Three devcroft findings came out of this, in the order they blocked the
+connection. The first two have workarounds; the third does not.
+
+### 1. A grant for a path that does not exist yet is silently dropped
+
+`mkdir -p .zed_server` failed with `Operation not permitted` even with
+`filesystem.allow = [".", "~/.zed_server"]` in the manifest and
+`policy --render` showing the grant with origin `manifest:filesystem.allow`.
+The backend ignores it: nono drops `filesystem.allow` entries whose path
+does not exist when the profile is applied, and says so only on stdout
+(`'~/.zed_server' does not exist and will be ignored.`). Verified directly
+against `nono why` with the same profile — granting an existing directory
+is `ALLOWED`, granting a nonexistent one is `DENIED` with
+`Reason: path_not_granted`, and a *child* of an existing granted directory
+is `ALLOWED`. So the grant target itself must exist at `up` time; paths
+underneath it need not.
+
+This is the one finding here that contradicts a stated invariant rather
+than merely being awkward: `policy --render` shows a rule that the backend
+is not enforcing, so the rendered policy is not what is in force. That
+crosses both "policy is deterministic and inspectable" and "degraded
+capabilities are surfaced, never silent". **Workaround:** create the
+directory on the host before `up`. **Real fix:** devcroft should detect a
+grant whose path is missing and either fail, warn, or create it — not
+render it as if it were live.
+
+### 2. SFTP resolves relative paths against the project root, not `$HOME`
+
+Zed creates the server directory over an **exec** channel (`cd; mkdir -p
+.zed_server` → `$HOME/.zed_server`) and then uploads into it over **SFTP**
+with a *relative* destination (`.zed_server/<binary>.gz`). Those two land in
+different places:
+
+| Channel | Base directory |
+|---|---|
+| exec, bare `cd` | `/Users/dragos` (`$HOME`) |
+| SFTP, relative path | `…/samples/flox-clap-sample` (project root) |
+
+`ssh::sftp::FsHandler` passes paths straight to `std::fs`, so relative
+paths resolve against the keeper's own cwd, which `lifecycle::up::spawn_keeper`
+sets to the project root. A real OpenSSH server starts *both* at the user's
+home directory, so any client that creates a directory over exec and then
+writes into it over SFTP by relative path breaks here. Zed is such a client;
+`scp`/`sftp`/rsync as driven by the automated tests all use absolute or
+explicitly-rooted paths and so never noticed.
+
+Whether devcroft *should* match OpenSSH here is a real design question, not
+an obvious bug — the project root is the granted directory and is the more
+useful default for a human running `sftp <name>.devcroft`, whereas `$HOME`
+is denied by the default policy, so matching OpenSSH would drop users into
+a directory they cannot read. Left as-is and documented rather than changed
+unilaterally.
+
+**Workaround, and it is a good one:** point `$HOME/.zed_server` at a
+directory inside the project root
+(`ln -s <project root>/.zed_server ~/.zed_server`). Both channels then
+converge on the same real directory, and the server binary lands inside
+already-granted space instead of requiring a `$HOME` write grant. The
+manifest still needs `~/.zed_server` in `filesystem.allow` — verified
+by removing it, after which `mkdir` fails again: the sandbox must be able to
+traverse the symlink itself, which lives in `$HOME`. With both in place,
+`mkdir -p .zed_server`, `touch`, and a real `scp` upload of a 3 MB file all
+succeed and land in the project root.
+
+### 3. `scp`'s exit status is not delivered — and this one actually blocks
+
+With 1 and 2 worked around, Zed uploaded the entire server binary correctly
+and *still* failed:
+
+```
+Failed to open project: uploading server binary: failed to upload file via STFP/SCP
+  …/1.4.4.gz -> .zed_server/zed-remote-server-…-download-9455.gz:
+```
+
+— note the empty message after the final colon. Zed gates its next step on
+the `scp` process's exit code, and gets a non-zero one with no stderr.
+Confirmed directly, uploading a 3,000,000-byte random file over the same
+path: **exit code 1, empty stderr, and identical SHA-256 on both ends.**
+
+This is the exact race already documented above under "The `scp` exit-code
+note" — but that section judges it cosmetic ("data correctness only"), and
+that judgement is now wrong. It is not cosmetic: it is the single thing
+standing between Zed and a working connection, because a real client treats
+`scp`'s exit code as the success signal. The severity should be read as
+"blocks at least one real editor", not "an exit code you can ignore".
+Closing this out means making `ssh::server::subsystem_request` deliver the
+channel exit-status before the client stops listening — the same fix the
+`scp` note describes as hard, now with a concrete reason to do it.
 
 ## What would close this out
 
-1. Open Zed against a real `up` sandbox using the `ssh-config --write`
-   block, following the same install-path pattern VS Code/Cursor needed,
-   and record pass/fail per the checklist above.
-2. Fold the result into the table at the top of this document, replacing
-   "Not validated" with the actual result and a date.
-3. Consider whether `serverInstallPath`-under-`$HOME`-by-default is common
-   enough across remote-dev tooling that devcroft's own docs (not just this
-   validation matrix) should call it out as a setup step for editor users —
-   it will recur for any tool that defaults its remote install/cache
-   directory to `$HOME` instead of the project root.
+1. Fix finding 3 (SFTP/`scp` exit-status delivery). Zed is otherwise fully
+   functional up to that point — auth, policy enforcement, and a
+   byte-correct 31 MB transfer all work — so this is plausibly the only
+   thing between here and a Zed row that says "Validated".
+2. Re-run `zed ssh://<name>.devcroft/<path>` with the symlink workaround in
+   place and record: does the remote server start; do file open/save/browse
+   work; does the integrated terminal work including resize; does port
+   forwarding work.
+3. Decide what devcroft does about finding 1 (missing-path grants rendered
+   as live but silently dropped by the backend) — that one is a correctness
+   bug in the policy surface independent of any editor.
+4. Consider whether the remote-server-directory-under-`$HOME` pattern
+   deserves a first-class answer in devcroft's own docs rather than a
+   per-editor workaround, since all three editors tested hit some version
+   of it — VS Code and Cursor via a redirectable setting, Zed via a
+   hard-coded path that needs a symlink.

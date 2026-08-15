@@ -53,10 +53,27 @@ retired first, and every phase ends in something runnable.
       server install/start, workbench window open for VS Code / both
       servers reachable for Cursor) — the fix both needed was redirecting
       `remote.SSH.serverInstallPath` inside the project root, since
-      devcroft's default policy correctly denies writing to `$HOME`. Only
-      Zed remains: it has no CLI to drive non-interactively and uses a
-      different remote-dev mechanism than the other two, so needs a real
-      display and manual GUI setup to close out. Getting rsync working
+      devcroft's default policy correctly denies writing to `$HOME`.
+      Zed was attempted for real on 2026-08-15 (its CLI *is* installable —
+      `zed ssh://<name>.devcroft/<path>`) and is **blocked, with the cause
+      pinned**: auth, policy enforcement and a byte-correct 31 MB server
+      upload all work, but Zed gates on `scp`'s exit code and devcroft
+      returns a non-zero one with empty stderr and identical checksums on
+      both ends. That is the same exit-status race already documented for
+      `scp` — previously judged cosmetic, which this pass disproves. Two
+      further findings came out of it (both in docs/ssh-validation.md): the
+      backend silently drops `filesystem.allow` grants whose path does not
+      exist yet while `policy --render` still shows them as live (an
+      inspectability-invariant break, still open), and SFTP resolves
+      relative paths against the project root while the exec channel's bare
+      `cd` goes to `$HOME`, unlike OpenSSH which uses home for both
+      (documented, deliberately not changed). A third, fixed here: `why`
+      passed `~`-rooted paths and grants to `nono why` as literal CLI
+      flags, which nono reads as relative, so `why` died with
+      `parsing 'nono why' output: expected value at line 1 column 1` on any
+      manifest carrying a `~` grant — and would have answered DENIED for a
+      granted path even had it parsed (`policy::why::expand_home`).
+      Getting rsync working
       surfaced and fixed a real bug along the way, not covered by any task
       number:
       `lifecycle::up`'s keeper spawn looked up `nono` by bare name after
