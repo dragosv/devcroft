@@ -23,7 +23,7 @@ not a substitute for the first and should not be read as one.
 | SFTP relative-path base | **Known divergence** from OpenSSH: project root, not `$HOME` | see "Zed" finding 2 |
 | `ProxyCommand`/`ssh-config` plumbing | **Validated** | `tests/proxy_up.rs`, `tests/ssh_up.rs`, `tests/ssh_config_cli.rs` |
 | rsync | **Validated** (2026-08-14, macOS/aarch64-darwin, system `openrsync`) | `tests/ssh_channels.rs::rsync_transfers_a_file_through_devcroft_proxy_over_a_plain_exec_channel` |
-| VS Code Remote-SSH | **Regressed to partial on retest** (2026-08-15, same host, same VS Code 1.130.0) | does **not** work under the default policy: needs `serverInstallPath` *and* `network.default = "allow"`, and even then its agent host supervisor never comes up. The 2026-08-14 "Validated" claim did not record the network precondition — see below |
+| VS Code Remote-SSH | **Validated under three named preconditions** (2026-08-15 second retest, macOS/aarch64-darwin, VS Code 1.130.0) | live remote window, extension host connected. Does **not** work under the default policy: needs `serverInstallPath`, `network.default = "allow"`, and a `$TMPDIR` short enough for a unix socket path — see below |
 | Cursor (remote-ssh) | **Validated manually 2026-08-14; not retested, treat as suspect** (Cursor 3.15.19, anysphere.remote-ssh 1.1.14) | its servers listen on ports, so the listening-socket blocker found for VS Code on 2026-08-15 very likely applies — see below |
 | Zed | **Partial — connects, transfers, does not start** (2026-08-15, macOS/aarch64-darwin, Zed 1.4.4) | auth, upload, decompress and chmod of the 31 MB server all succeed; its forked server daemon then exits silently. Needs 5 `$HOME` grants. See below |
 
@@ -119,13 +119,21 @@ the host and inside a project's flox environment, `rsync -e "ssh -F
 <config>" <src> <name>.devcroft:<dst>` using the `ssh-config` block
 `devcroft ssh-config --write` installs.
 
-## VS Code Remote-SSH: retested 2026-08-15, and it does not work
+## VS Code Remote-SSH: three blockers, all now identified
 
-Retested on the same host and the **same VS Code build** (1.130.0,
-commit `1b6a188`) that the 2026-08-14 section below calls validated. It
-fails under devcroft's default policy, for two independent reasons. The
-first is the one already documented; the second is not, and it is the
-reason the earlier claim should not be trusted as written.
+Retested twice on 2026-08-15, on the same host and the **same VS Code
+build** (1.130.0, commit `1b6a188`) that the 2026-08-14 section below
+calls validated. The first retest found two blockers and left a third
+misdiagnosed as an unexplained VS Code-side hang; the second retest found
+what that third one actually was. With all three worked around, VS Code
+Remote-SSH **works**: a live remote window (`Welcome — flox-clap-sample
+[SSH: flox-clap-sample.devcroft]`), extension host agent listening,
+management and extension-host connections established, and no errors left
+in the connection log.
+
+None of the three is visible under the default policy, and only one of
+them was previously written down, which is why the 2026-08-14 "Validated"
+claim should not be trusted as written.
 
 **Blocker 1 — the install directory (known).** With no
 `remote.SSH.serverInstallPath` set, VS Code reports `CreateInstallDirFailed`,
@@ -163,29 +171,95 @@ says nothing about revoking the ability to serve, so this is a policy
 way to express "no outbound access, but my dev server can still listen",
 which is the single most common shape of local development.
 
-**Where it gets to with both worked around.** With the install path
-redirected and `network.default = "allow"`, VS Code authenticates,
-downloads and extracts the full server (543 MB on disk), and reaches
-`Starting server...`. It then loops:
+**Blocker 3 — a unix socket path over macOS's 104-byte limit (new).**
+Past both of those, VS Code authenticates, downloads and extracts the full
+server (543 MB on disk), reaches `Starting server...`, and then dies every
+time on:
 
 ```
-warn Agent host supervisor unavailable; renderer will not see agentHostProxy:
-     could not start server on the given host/port:
-     agent host supervisor signalled ready but lockfile is missing
-info Starting server...
+[server] Error occurred in server
+[server] Error: listen EINVAL: invalid argument
+         /Users/dragos/Development/devcroft/samples/flox-clap-sample/.tmp/code-ab7bbd8c-724a-4cc8-8168-f9f6f2b1a866
 ```
 
-The server processes stay alive but the supervisor never comes up, the
-keeper reports no sessions, and no working remote window was obtained. Not
-diagnosed further; unlike blocker 2 it is not attributed to devcroft.
+`EINVAL`, not `EPERM` — so this is not a policy denial at all. `code-server
+--socket-path=$TMPDIR/code-<uuid>` binds a unix domain socket, and macOS
+caps `sun_path` at 104 bytes including the NUL. That path is 106. The
+budget is unforgiving and entirely mechanical: `code-` plus a 36-character
+UUID plus a separator is 42 bytes, so **`$TMPDIR` must be ≤ 61 characters**
+or VS Code's remote server cannot start.
 
-**On the section below.** It is left intact rather than rewritten, because
-it records what was observed at the time and the discrepancy is more
-useful than a tidy overwrite. But its "Validated" claim omits a
-precondition that is load-bearing — the sandbox must permit listening
-sockets — and that omission is exactly the kind of thing this document's
-own preamble warns about: a manual result, unlike a test, does not re-run
-itself and cannot tell you when it has stopped being true.
+Confirmed straight through an exec channel, independently of VS Code:
+
+| Socket path length | `bind()` in `$TMPDIR` |
+|---|---|
+| 106 chars (`code-<uuid>`) | `AF_UNIX path too long` |
+| 88 chars | binds and listens |
+
+**Where the long `$TMPDIR` came from, and it was ours.** This sample's own
+flox `on-activate` exported `TMPDIR="$FLOX_ENV_PROJECT/.tmp"` — 64
+characters, 3 over budget on its own. The comment justifying it reasoned
+by analogy from `CARGO_HOME`: the host location is outside the project, so
+the sandbox must deny it. That analogy is false, and probing the running
+sandbox settles it:
+
+| Path | Writable inside the sandbox |
+|---|---|
+| `/tmp` | yes |
+| host `$TMPDIR` (`/var/folders/…/T`) | yes |
+| `~/.cargo` | denied |
+| `$HOME` | denied |
+
+So the `CARGO_HOME` redirect is necessary and the `TMPDIR` redirect never
+was — it bought nothing and cost 64 bytes of a 104-byte budget. Removed
+from the sample's manifest; `devcroft exec -- cargo build` still works
+without it, and with the host `$TMPDIR` restored the socket path drops to
+91 bytes and VS Code connects.
+
+**The lesson is the same shape as the `scp` one above.** The first retest
+reported the symptom as "its agent host supervisor never comes up" and
+declined to attribute it to devcroft. That was wrong in both directions:
+the supervisor message was incidental (`agentHostProxy` is *expected* to
+be unavailable — `no --agent-host-bridge-port set`), and the real cause
+*was* ours, in a sample manifest, three lines from a comment explaining
+why it was there. Reading the error text one line further down — `EINVAL`
+rather than `EPERM` — was the whole diagnosis.
+
+**Generalise it, because it is not a VS Code quirk.** Every devcroft
+project is tempted to redirect `$TMPDIR` into the project root, and every
+deep project root then breaks any tool that puts a socket in `$TMPDIR`.
+devcroft already knows about this limit for its own sockets
+(`lifecycle/state.rs` hashes state paths precisely to stay under it) but
+says nothing about it to users. A `doctor` check — "`$TMPDIR` is N
+characters; unix sockets created in it will fail above 103" — would have
+turned two retests into one glance.
+
+**On the 2026-08-14 section below.** It is left intact rather than
+rewritten, because it records what was observed at the time and the
+discrepancy is more useful than a tidy overwrite. But its "Validated"
+claim omits preconditions that are load-bearing, and that omission is
+exactly the kind of thing this document's own preamble warns about: a
+manual result, unlike a test, does not re-run itself and cannot tell you
+when it has stopped being true.
+
+### Reproducing the working configuration
+
+1. `"remote.SSH.serverInstallPath": {"<name>.devcroft": "<project
+   root>/.vscode-server"}` in VS Code's own `settings.json`.
+2. `network.default = "allow"` in `devcroft.toml` (blocker 2 — nothing
+   less will do today, since there is no way to permit a loopback bind
+   without permitting egress).
+3. A `$TMPDIR` of ≤ 61 characters that the sandbox can write — the host
+   default qualifies; a project-rooted one usually does not.
+
+Then `code --remote ssh-remote+<name>.devcroft <project root>`.
+
+**One lifecycle observation, noted but not chased.** The failed runs left
+about ten `code-server` and `agent host` processes alive, and they
+survived a full `devcroft down` + `up --recreate` — VS Code daemonises
+them off the exec channel, so they outlive the keeper that spawned them.
+Whether devcroft should reap a detached grandchild at teardown is a real
+question and is not answered here.
 
 ## VS Code Remote-SSH and Cursor: the original 2026-08-14 pass
 
@@ -404,26 +478,37 @@ which.
 1. ~~Fix finding 3 (SFTP/`scp` exit-status delivery).~~ **Done** — and it
    was worth doing on its own merits, independent of Zed: every `scp` user
    was getting a false failure on a successful transfer.
-2. Find out why Zed's forked server daemon exits without logging
-   (finding 4). This needs someone willing to read Zed's remote-server
-   startup path, or a build of it with earlier logging; it is the only
-   thing left between here and a Zed row that says "Validated", and it is
-   not yet known whether devcroft is even implicated.
-3. Decide what devcroft does about finding 1 (missing-path grants rendered
-   as live but silently dropped by the backend) — that one is a correctness
-   bug in the policy surface independent of any editor, and it is the
-   remaining finding that contradicts a stated invariant.
-5. **Decide whether `network` blocking should keep denying listening
-   sockets.** This is the highest-impact item on the list and is not an
-   editor concern: today no dev server can bind a port under the default
-   policy, which contradicts the README's own port-conflict example and
-   makes the default unusable for ordinary local development. Options are
-   a separate knob, or treating loopback binds as distinct from egress.
-   Whatever is chosen, `up` should say so rather than leaving `EPERM` from
-   a `bind` call as the only signal.
+2. ~~Find out what actually blocks VS Code past the install path.~~
+   **Done** — a `$TMPDIR` over macOS's 104-byte unix socket limit, caused
+   by this repo's own sample manifest. Fixed there.
+3. **Decide whether `network` blocking should keep denying listening
+   sockets.** Still the highest-impact item on the list, and not an editor
+   concern: today no dev server can bind a port under the default policy,
+   which contradicts the README's own port-conflict example and makes the
+   default unusable for ordinary local development. Confirmed still true
+   on 2026-08-15 — with the other two blockers removed, VS Code under the
+   default policy fails on its very first step with `error listening on
+   port: Operation not permitted`. Options are a separate knob, or
+   treating loopback binds as distinct from egress. Whatever is chosen,
+   `up` should say so rather than leaving `EPERM` from a `bind` call as
+   the only signal.
+4. **Warn about a `$TMPDIR` that is too long for a unix socket.** devcroft
+   already respects this limit for its own state paths but tells users
+   nothing, and the project-local `$TMPDIR` that trips it is a pattern
+   devcroft's own sample was recommending. A `doctor` check is the natural
+   home.
+5. **Retest Zed — its finding 4 is now a live hypothesis, not a mystery.**
+   Zed's server "exits without writing a single byte to its log" is the
+   same shape of symptom VS Code showed, and Zed was run against the same
+   sample with the same 64-character project-local `$TMPDIR`. Cheap to
+   test now, and worth doing before anyone reads Zed's startup path.
 6. Retest Cursor. Its 2026-08-14 row is probably wrong for the same
    listening-socket reason and no longer reflects a default-policy sandbox.
-4. Consider whether the remote-server-directory-under-`$HOME` pattern
+7. Decide what devcroft does about Zed finding 1 (missing-path grants
+   rendered as live but silently dropped by the backend) — that one is a
+   correctness bug in the policy surface independent of any editor, and it
+   remains the finding that contradicts a stated invariant.
+8. Consider whether the remote-server-directory-under-`$HOME` pattern
    deserves a first-class answer in devcroft's own docs rather than a
    per-editor workaround, since all three editors tested hit some version
    of it — VS Code and Cursor via a redirectable setting, Zed via a

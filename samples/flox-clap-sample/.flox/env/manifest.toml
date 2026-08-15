@@ -44,8 +44,17 @@ clippy.version = "1.95.0"
 # way outside this project), so a devcroft-sandboxed session correctly
 # denies writing there. Redirected into the project instead, using
 # $FLOX_ENV_PROJECT (flox's own absolute path to the project root — must
-# be absolute, nono rejects a relative TMPDIR outright, confirmed while
+# be absolute, nono rejects a relative path here outright, confirmed while
 # building flox-rustup-sample).
+#
+# TMPDIR is deliberately *not* redirected the same way. It used to be
+# (`export TMPDIR="$FLOX_ENV_PROJECT/.tmp"`), which was both unnecessary
+# and actively harmful: unnecessary because the host temp dir is writable
+# inside the sandbox (unlike ~/.cargo, which is denied), and harmful
+# because a project-rooted TMPDIR is long, and macOS caps a unix socket
+# path at 104 bytes. Any tool that puts a socket in $TMPDIR then fails
+# with EINVAL — VS Code's remote server did exactly that, at
+# `$TMPDIR/code-<uuid>` (106 bytes). See docs/ssh-validation.md.
 #
 # `cargo fetch` then downloads this crate's real crates.io dependencies
 # (clap, chrono, chrono-tz) into that project-local registry cache,
@@ -54,8 +63,7 @@ clippy.version = "1.95.0"
 # time.
 on-activate = '''
   export CARGO_HOME="$FLOX_ENV_PROJECT/.cargo"
-  export TMPDIR="$FLOX_ENV_PROJECT/.tmp"
-  mkdir -p "$CARGO_HOME" "$TMPDIR"
+  mkdir -p "$CARGO_HOME"
   cd "$FLOX_ENV_PROJECT" && cargo fetch
 '''
 # on-activate = '''
