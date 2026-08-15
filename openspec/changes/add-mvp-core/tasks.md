@@ -55,13 +55,19 @@ retired first, and every phase ends in something runnable.
       `remote.SSH.serverInstallPath` inside the project root, since
       devcroft's default policy correctly denies writing to `$HOME`.
       Zed was attempted for real on 2026-08-15 (its CLI *is* installable —
-      `zed ssh://<name>.devcroft/<path>`) and is **blocked, with the cause
-      pinned**: auth, policy enforcement and a byte-correct 31 MB server
-      upload all work, but Zed gates on `scp`'s exit code and devcroft
-      returns a non-zero one with empty stderr and identical checksums on
-      both ends. That is the same exit-status race already documented for
-      `scp` — previously judged cosmetic, which this pass disproves. Two
-      further findings came out of it (both in docs/ssh-validation.md): the
+      `zed ssh://<name>.devcroft/<path>`) and now **connects, authenticates
+      and transfers, but its server does not come up**: the forked daemon
+      exits without writing to its own log, which is not attributed to
+      devcroft. Getting that far fixed a real devcroft bug worth more than
+      the Zed row itself — `scp` reported failure on every successful
+      transfer, because the exit-status was sent from a spawned task racing
+      the channel drop's `close`, and a client never accepts an
+      exit-status after `close`. `ssh::server::NotifyOnEof` now withholds
+      EOF until the exit-status resolves, so ordering is structural rather
+      than a race; `scp -vvv` goes from `Exit status -1` to `Exit status 0`
+      and the test asserts it in both directions. Zed also needs five
+      separate `$HOME` grants, one being the local editor's own data dir.
+      Two further findings came out of it (both in docs/ssh-validation.md): the
       backend silently drops `filesystem.allow` grants whose path does not
       exist yet while `policy --render` still shows them as live (an
       inspectability-invariant break, still open), and SFTP resolves

@@ -22,6 +22,7 @@
 
 use std::collections::HashMap;
 use std::fs::File;
+use std::future::Future;
 use std::io::{Read, Write};
 use std::path::PathBuf;
 use std::pin::Pin;
@@ -231,18 +232,38 @@ fn pump<E>(reader: &mut dyn Read, mut send: impl FnMut(Vec<u8>) -> Result<(), E>
     }
 }
 
-/// Wraps a channel stream so that observing a read-side EOF fires a
-/// one-shot notification — the `sftp` subsystem's missing completion
-/// signal (see `subsystem_request`'s doc comment for why this exists).
-/// The notification fires exactly when the wrapped stream's *last* real
-/// read returns EOF, which is always strictly after every prior write has
-/// already been flushed through it (`russh_sftp`'s own request loop reads
-/// the next request only after fully writing+flushing the previous
-/// response), so nothing is ever lost by treating this as "done".
+/// Wraps a channel stream so that a read-side EOF sends the channel's
+/// exit-status *before* that EOF is allowed to propagate — the `sftp`
+/// subsystem's missing completion signal (see `subsystem_request`'s doc
+/// comment for why this exists). EOF is the right trigger: it arrives
+/// strictly after every prior write has been flushed, because
+/// `russh_sftp`'s own request loop reads the next request only once the
+/// previous response is fully written.
+///
+/// The withholding is the load-bearing part, and it is why this is a
+/// state machine rather than a `tokio::spawn`. Spawning loses a race it
+/// cannot win: `russh_sftp::server::run`'s loop ends the moment it sees
+/// EOF, dropping the stream and with it the channel, and a dropped russh
+/// channel sends `close`. A client that already received `close` will
+/// never accept a later `exit-status`. Observed directly against a real
+/// `scp` before this changed — `debug2: channel 0: rcvd close` with no
+/// exit-status ahead of it, and `debug1: Exit status -1` at the end, so
+/// `scp` exited non-zero despite a byte-perfect transfer. Holding the EOF
+/// back until the send resolves keeps the stream (and channel) alive
+/// across it, which puts `exit-status` ahead of the drop's `close` by
+/// construction instead of by timing.
 struct NotifyOnEof<S> {
     inner: S,
-    notified: bool,
-    on_eof: Option<(ChannelId, server::Handle)>,
+    on_eof: EofState,
+}
+
+/// `Sending` owns the in-flight `exit-status` request. It is polled from
+/// `poll_read` rather than awaited elsewhere so the future stays inside
+/// the borrow that keeps the channel open.
+enum EofState {
+    Pending(ChannelId, server::Handle),
+    Sending(Pin<Box<dyn Future<Output = ()> + Send>>),
+    Done,
 }
 
 impl<S: AsyncRead + Unpin> AsyncRead for NotifyOnEof<S> {
@@ -251,25 +272,41 @@ impl<S: AsyncRead + Unpin> AsyncRead for NotifyOnEof<S> {
         cx: &mut Context<'_>,
         buf: &mut ReadBuf<'_>,
     ) -> Poll<io::Result<()>> {
-        let before = buf.filled().len();
         let this = self.get_mut();
+
+        // Resume a send begun by an earlier poll that returned Pending;
+        // the real read below must not run again once EOF was observed.
+        if let EofState::Sending(fut) = &mut this.on_eof {
+            return match fut.as_mut().poll(cx) {
+                Poll::Pending => Poll::Pending,
+                Poll::Ready(()) => {
+                    this.on_eof = EofState::Done;
+                    Poll::Ready(Ok(()))
+                }
+            };
+        }
+
+        let before = buf.filled().len();
         let poll = Pin::new(&mut this.inner).poll_read(cx, buf);
         if let Poll::Ready(Ok(())) = &poll
             && buf.filled().len() == before
-            && !this.notified
+            && let EofState::Pending(channel, handle) =
+                std::mem::replace(&mut this.on_eof, EofState::Done)
         {
-            this.notified = true;
-            if let Some((channel, handle)) = this.on_eof.take() {
-                // Spawned from directly inside the poll that detected
-                // EOF, not handed off through an extra oneshot-and-await
-                // hop: `subsystem_request`'s doc comment explains why
-                // this needs to reach the client as fast as possible.
-                tokio::spawn(async move {
-                    let _ = handle.exit_status_request(channel, 0).await;
-                    let _ = handle.eof(channel).await;
-                    let _ = handle.close(channel).await;
-                });
-            }
+            // `eof` too, but never `close`: letting the stream's own drop
+            // close the channel keeps a single owner of that decision, and
+            // it necessarily runs after this future has resolved.
+            let mut fut: Pin<Box<dyn Future<Output = ()> + Send>> = Box::pin(async move {
+                let _ = handle.exit_status_request(channel, 0).await;
+                let _ = handle.eof(channel).await;
+            });
+            return match fut.as_mut().poll(cx) {
+                Poll::Pending => {
+                    this.on_eof = EofState::Sending(fut);
+                    Poll::Pending
+                }
+                Poll::Ready(()) => Poll::Ready(Ok(())),
+            };
         }
         poll
     }
@@ -491,20 +528,13 @@ impl Handler for SshServer {
             // signal instead: it fires when the wrapped stream's read
             // side hits EOF, which is exactly when `russh_sftp`'s own
             // request loop is about to end — and by construction, after
-            // every prior response was already flushed.
-            //
-            // Even with correct timing, a real `scp` (unlike `sftp`)
-            // still doesn't reliably observe this exit-status before it
-            // stops listening on the channel — see
-            // `tests/ssh_channels.rs`'s
-            // `scp_moves_correct_data_even_though_its_own_exit_code_is_unreliable_here`
-            // for why that's a `scp`-specific quirk (no real subprocess
-            // here to win the race the way `/usr/lib/openssh/sftp-server`
-            // does) rather than a sign the SFTP exchange itself is wrong.
+            // every prior response was already flushed. It also withholds
+            // that EOF until the exit-status has been sent, which is what
+            // makes a real `scp` (unlike `sftp`, which never needed it)
+            // report success; see `NotifyOnEof`'s own doc comment.
             let stream = NotifyOnEof {
                 inner: raw_channel.into_stream(),
-                notified: false,
-                on_eof: Some((channel, session.handle())),
+                on_eof: EofState::Pending(channel, session.handle()),
             };
             tokio::spawn(async move {
                 russh_sftp::server::run(stream, super::sftp::FsHandler::default()).await;

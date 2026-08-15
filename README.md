@@ -129,12 +129,10 @@ Known gaps, published rather than hidden:
   ("deterministic and inspectable", "degraded capabilities are surfaced,
   never silent") rather than just missing a feature. Create the directory
   before `up` as a workaround. Found during task 6.5.
-- **`scp`'s exit status is unreliable, and it is not merely cosmetic.**
-  Data always transfers byte-correct (verified by checksum), but the
-  channel exit-status can arrive as a non-zero code with empty stderr. Any
-  client that gates on `scp`'s exit code rather than the bytes will treat a
-  complete transfer as a failure — this is currently what stops Zed's
-  remote server from starting. See
+- **Zed's remote server connects and transfers but does not start.** Its
+  forked daemon exits without logging; not yet attributed to devcroft.
+  Zed also needs five separate `$HOME` grants, one of which is the local
+  editor's own data directory. VS Code and Cursor are unaffected. See
   [docs/ssh-validation.md](docs/ssh-validation.md).
 `docs/decisions.md` has the falsifiable "why not X" reasoning behind most of
 these; the ones above are gaps in what's actually built, not design
@@ -144,7 +142,7 @@ decisions.
 |---|---|
 | [openspec/changes/add-mvp-core/](openspec/changes/add-mvp-core/) | The MVP — proposal, design, tasks, 7 capability specs |
 | [docs/decisions.md](docs/decisions.md) | Every "why doesn't devcroft support X", answered falsifiably |
-| [docs/ssh-validation.md](docs/ssh-validation.md) | SSH client/editor validation matrix (task 6.5) — OpenSSH, rsync, VS Code Remote-SSH and Cursor validated against a live sandbox; Zed attempted and blocked, with the cause pinned to `scp`'s exit status |
+| [docs/ssh-validation.md](docs/ssh-validation.md) | SSH client/editor validation matrix (task 6.5) — OpenSSH, rsync, VS Code Remote-SSH and Cursor validated against a live sandbox; Zed connects and transfers but its server does not start |
 | [CLAUDE.md](CLAUDE.md) | Architecture invariants and repo conventions |
 | [samples/flox-rustup-sample/](samples/flox-rustup-sample/) | A real, verified flox + rustup + devcroft project — and the 4 real sandboxing/toolchain frictions found building it |
 | [samples/flox-clap-sample/](samples/flox-clap-sample/) | A clap-derive CLI sandboxed the same way — plus what changes once a sample has real crates.io dependencies |

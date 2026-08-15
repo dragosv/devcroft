@@ -17,7 +17,7 @@ not a substitute for the first and should not be read as one.
 | OpenSSH `ssh -tt` (pty/shell) | **Validated** | `tests/ssh_channels.rs::shell_channel_allocates_a_pty_and_runs_commands` |
 | OpenSSH env forwarding (`SetEnv`) | **Validated** | `tests/ssh_channels.rs::env_allowlist_passes_term_and_lang_but_not_arbitrary_vars` |
 | OpenSSH `sftp` | **Validated** | `tests/ssh_channels.rs::sftp_round_trips_a_file_and_lists_a_directory` |
-| OpenSSH `scp` (SFTP-based, 9.0+) | **Validated** (data correctness only — see note) | `tests/ssh_channels.rs::scp_moves_correct_data_even_though_its_own_exit_code_is_unreliable_here` |
+| OpenSSH `scp` (SFTP-based, 9.0+) | **Validated** (data *and* exit code, both directions) | `tests/ssh_channels.rs::scp_round_trips_correct_data_and_reports_success` |
 | OpenSSH `scp -O` (legacy) | **Spot-checked manually**, not in the automated suite | needs a real `scp` binary *inside* the sandbox, which depends on the project's own environment, not devcroft |
 | `-L` local forwarding | **Validated** | `tests/ssh_channels.rs::direct_tcpip_forwarding_relays_a_real_connection` |
 | SFTP relative-path base | **Known divergence** from OpenSSH: project root, not `$HOME` | see "Zed" finding 2 |
@@ -25,7 +25,7 @@ not a substitute for the first and should not be read as one.
 | rsync | **Validated** (2026-08-14, macOS/aarch64-darwin, system `openrsync`) | `tests/ssh_channels.rs::rsync_transfers_a_file_through_devcroft_proxy_over_a_plain_exec_channel` |
 | VS Code Remote-SSH | **Validated manually** (2026-08-14, macOS/aarch64-darwin, VS Code 1.130.0, remote-ssh 0.124.0) | real connection, publickey auth, remote server install, extension host launch against a live `up` sandbox — see below |
 | Cursor (remote-ssh) | **Validated manually** (2026-08-14, macOS/aarch64-darwin, Cursor 3.15.19, anysphere.remote-ssh 1.1.14) | real connection, server download/install/start, multiplex + code server both listening — see below |
-| Zed | **Attempted, blocked** (2026-08-15, macOS/aarch64-darwin, Zed 1.4.4) | real connection, publickey auth, remote server uploaded byte-correct — then blocked by devcroft's `scp` exit-status race; see below |
+| Zed | **Partial — connects, transfers, does not start** (2026-08-15, macOS/aarch64-darwin, Zed 1.4.4) | auth, upload, decompress and chmod of the 31 MB server all succeed; its forked server daemon then exits silently. Needs 5 `$HOME` grants. See below |
 
 All "Validated" rows go through the real `ssh`/`scp`/`sftp` CLI binaries
 talking to a real, `up`-started keeper via a real `devcroft proxy`
@@ -33,31 +33,45 @@ subprocess as `ProxyCommand` — not a russh test client standing in for a
 real one. See `tests/ssh_channels.rs`'s module doc for why that distinction
 matters.
 
-## The `scp` exit-code note
+## The `scp` exit-code note — resolved 2026-08-15
 
-`scp_moves_correct_data_even_though_its_own_exit_code_is_unreliable_here`
-is named that way on purpose. Modern (non-`-O`) OpenSSH `scp` speaks SFTP
-under the hood, through the same channel and the same `ssh::sftp::FsHandler`
-every other SFTP client uses — and the file content transferred is always
-byte-correct, checked directly by that test. What's specifically unreliable
-is `scp`'s own process exit code: it depends on `scp`'s internal `ssh -s
-sftp` child process receiving the channel-level exit-status request before
-it stops listening, and a real `/usr/lib/openssh/sftp-server` subprocess
-tends to win that race because it exits synchronously as the kernel reaps
-it. `ssh::server::FsHandler` has no such subprocess to synchronize
-against — `russh_sftp::server::run()` returns as soon as it *starts* the
-session, not when it ends (see `ssh::server::subsystem_request`'s doc
-comment) — so devcroft can detect completion correctly (via a stream-EOF
-signal) but still can't reliably win that specific race. `sftp` itself
-doesn't have this problem, which is exactly what the "Evidence" column
-above shows: the `sftp` row transfers *and* reports success; the `scp` row
-transfers correctly but isn't asserted on its own exit code for that
-reason.
+**This section used to describe an unfixable race. It was fixed instead.**
+`scp` now reports success, and
+`tests/ssh_channels.rs::scp_round_trips_correct_data_and_reports_success`
+asserts the exit code in both directions.
 
-**Severity note, added 2026-08-15:** this was written off as cosmetic
-because no test cared about the exit code. The Zed pass below shows it is
-not — a real client that gates on `scp`'s exit code cannot connect, even
-though every byte arrives. See "Zed" for the evidence.
+The original diagnosis was wrong in an instructive way, so it is kept here
+rather than deleted. It held that `scp` derives its exit code from its
+internal `ssh -s sftp` child, which must receive the channel-level
+exit-status before it stops listening; that a real
+`/usr/lib/openssh/sftp-server` wins that race by exiting synchronously as
+the kernel reaps it; and that `FsHandler`, having no such subprocess, could
+not reliably win it. Every step of that is about **timing**, and the
+conclusion followed from treating timing as the only variable.
+
+The actual mechanism was **ordering**, which the server controls
+completely. `russh_sftp`'s request loop ends the moment it sees EOF and
+drops the channel; dropping a russh channel sends `close`; and no client
+will accept an `exit-status` that arrives after `close`. The exit-status
+was being sent from a `tokio::spawn`, so it was racing that drop — and
+losing. Captured directly from `scp -vvv` before the fix:
+
+```
+debug2: channel 0: rcvd close     <- no exit-status ahead of it
+debug1: Exit status -1            <- so scp reports failure
+```
+
+`ssh::server::NotifyOnEof` now withholds the EOF from `russh_sftp` until
+the exit-status future has resolved, which keeps the stream — and so the
+channel — alive across the send. `close` then cannot overtake
+`exit-status`, by construction rather than by timing. The same capture
+after the fix ends `debug1: Exit status 0`, and a 3 MB upload, a download,
+and an `sftp` put all report success with matching SHA-256 on both ends.
+
+The lesson worth keeping: "a real subprocess wins this race" was a
+plausible story that explained the symptom and pointed away from the fix.
+It went unchallenged because no test asserted the exit code — the
+assertion was omitted *because* of the belief it could not pass.
 
 ## rsync
 
@@ -167,7 +181,7 @@ real `ssh` CLI both already went through — but "no reason to expect
 otherwise" is reasoning, not a re-run, so it's called out here rather than
 folded silently into "Validated".
 
-## Zed: attempted against a live sandbox, blocked by devcroft
+## Zed: connects and transfers; its server does not come up
 
 Attempted 2026-08-15 on macOS/aarch64-darwin, Zed 1.4.4, driven
 non-interactively as `zed ssh://<name>.devcroft/<project path>` (Zed's CLI
@@ -186,11 +200,15 @@ remote platform correctly discovered (`RemotePlatform { os: MacOs, arch:
 Aarch64 }`); `curl` of the server tarball correctly **denied** by the
 sandbox's `network.block` (working as designed), so Zed fell back to
 downloading locally and uploading; the full 31,618,399-byte server binary
-**was uploaded byte-correct into the sandbox**; and then the connection
-failed anyway.
+**was uploaded byte-correct into the sandbox**, decompressed and made
+executable; and then its forked server daemon exited without ever coming
+up.
 
-Three devcroft findings came out of this, in the order they blocked the
-connection. The first two have workarounds; the third does not.
+Four findings came out of this, in the order they blocked the connection.
+One was a real devcroft bug and is **fixed** (finding 3, the `scp`
+exit-status ordering — the single most valuable thing this pass produced).
+Two have workarounds and are still open. The fourth is where it stands
+today and is not attributed to devcroft.
 
 ### 1. A grant for a path that does not exist yet is silently dropped
 
@@ -253,44 +271,75 @@ traverse the symlink itself, which lives in `$HOME`. With both in place,
 `mkdir -p .zed_server`, `touch`, and a real `scp` upload of a 3 MB file all
 succeed and land in the project root.
 
-### 3. `scp`'s exit status is not delivered — and this one actually blocks
+### 3. `scp`'s exit status was not delivered — fixed
 
 With 1 and 2 worked around, Zed uploaded the entire server binary correctly
-and *still* failed:
+and *still* failed, because it gates its next step on `scp`'s exit code and
+got a non-zero one with empty stderr (verified independently: exit 1, no
+stderr, identical SHA-256 on a 3 MB file).
 
-```
-Failed to open project: uploading server binary: failed to upload file via STFP/SCP
-  …/1.4.4.gz -> .zed_server/zed-remote-server-…-download-9455.gz:
-```
+**This is now fixed** — see "The `scp` exit-code note" above for the
+mechanism and the `scp -vvv` captures either side of it. After the fix Zed
+logs `uploaded remote development server in 107.449ms`, and the binary
+arrives decompressed (91,726,320 bytes from the 31 MB `.gz`) and
+executable, which it never did before.
 
-— note the empty message after the final colon. Zed gates its next step on
-the `scp` process's exit code, and gets a non-zero one with no stderr.
-Confirmed directly, uploading a 3,000,000-byte random file over the same
-path: **exit code 1, empty stderr, and identical SHA-256 on both ends.**
+### 4. Where it actually stops now
 
-This is the exact race already documented above under "The `scp` exit-code
-note" — but that section judges it cosmetic ("data correctness only"), and
-that judgement is now wrong. It is not cosmetic: it is the single thing
-standing between Zed and a working connection, because a real client treats
-`scp`'s exit code as the success signal. The severity should be read as
-"blocks at least one real editor", not "an exit code you can ignore".
-Closing this out means making `ssh::server::subsystem_request` deliver the
-channel exit-status before the client stops listening — the same fix the
-`scp` note describes as hard, now with a concrete reason to do it.
+Past the upload, Zed's remote server needs **five** separate `$HOME`
+locations, each hard-coded with no redirect setting, discovered one at a
+time because each failure only names the next path:
+
+| Path | Why it is needed |
+|---|---|
+| `~/.zed_server` | the server binary itself |
+| `~/Library/Application Support/Zed` | `server_state/<id>`, `extensions`, and more |
+| `~/Library/Logs/Zed` | the server's log file |
+| `~/Library/Caches/Zed` | cache dir |
+| `~/.config/zed` | config dir |
+
+Two of these are worth calling out beyond the inconvenience:
+
+- **Granting them is a real widening.** `~/Library/Application Support/Zed`
+  is the *local* Zed's entire data directory — settings, extensions,
+  database. A sandbox granted it can write to the editor that is connecting
+  to it. That is a materially different posture from VS Code/Cursor, which
+  only needed a redirectable server install path.
+- **Denying *read* makes existence checks lie.** Three of those paths exist
+  already, and the failure was `create_dir` returning `EEXIST` — because
+  with the path unreadable, Zed's `exists()` check returns false, so it
+  takes the "create it" branch and the kernel rejects the create. The error
+  text ("File exists") points at the opposite of the actual cause. Any
+  sandbox that denies read will produce this class of confusing failure, so
+  it is worth recognising on sight.
+
+With all five granted, the server binary starts, initialises its
+directories, and writes its `server.pid` — and then the daemon that
+`proxy` forks exits without writing a single byte to the log file it just
+created, so `proxy` times out with `failed to spawn server` and Zed reports
+`Client exited with exit_code 1`. Nothing in devcroft's logs shows a denial
+at that point. Diagnosing further needs Zed-side knowledge of what that
+forked daemon does before its first log write; it was not pursued here.
+
+So Zed is **not** blocked on the `scp` bug any more — that one is fixed and
+was real. What remains is unattributed: it may be a further sandbox
+interaction or may be Zed-specific, and this document should not guess
+which.
 
 ## What would close this out
 
-1. Fix finding 3 (SFTP/`scp` exit-status delivery). Zed is otherwise fully
-   functional up to that point — auth, policy enforcement, and a
-   byte-correct 31 MB transfer all work — so this is plausibly the only
-   thing between here and a Zed row that says "Validated".
-2. Re-run `zed ssh://<name>.devcroft/<path>` with the symlink workaround in
-   place and record: does the remote server start; do file open/save/browse
-   work; does the integrated terminal work including resize; does port
-   forwarding work.
+1. ~~Fix finding 3 (SFTP/`scp` exit-status delivery).~~ **Done** — and it
+   was worth doing on its own merits, independent of Zed: every `scp` user
+   was getting a false failure on a successful transfer.
+2. Find out why Zed's forked server daemon exits without logging
+   (finding 4). This needs someone willing to read Zed's remote-server
+   startup path, or a build of it with earlier logging; it is the only
+   thing left between here and a Zed row that says "Validated", and it is
+   not yet known whether devcroft is even implicated.
 3. Decide what devcroft does about finding 1 (missing-path grants rendered
    as live but silently dropped by the backend) — that one is a correctness
-   bug in the policy surface independent of any editor.
+   bug in the policy surface independent of any editor, and it is the
+   remaining finding that contradicts a stated invariant.
 4. Consider whether the remote-server-directory-under-`$HOME` pattern
    deserves a first-class answer in devcroft's own docs rather than a
    per-editor workaround, since all three editors tested hit some version

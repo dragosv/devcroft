@@ -311,23 +311,26 @@ fn sftp_round_trips_a_file_and_lists_a_directory() {
 }
 
 /// Modern OpenSSH `scp` (9.0+) speaks SFTP under the hood by default —
-/// same subsystem, same `FsHandler` — so this only checks what's actually
-/// specific to `scp`: the data it moves is correct. It deliberately does
-/// *not* assert on `scp`'s own process exit code. Real `scp` computes
-/// that from its internal `ssh -s sftp` child process's exit status,
-/// which in turn depends on receiving the channel-level exit-status
-/// request before it stops listening on the channel — a real subprocess
-/// (`/usr/lib/openssh/sftp-server`) tends to win that race because it
-/// exits synchronously as part of the kernel reaping it; `FsHandler` has
-/// no such subprocess to synchronize against (`russh_sftp::server::run`
-/// itself returns as soon as it *starts* the session, not when it ends —
-/// see `ssh::server::subsystem_request`'s doc comment), so this can't be
-/// won reliably despite the SFTP exchange itself completing correctly
-/// every time (confirmed by the file content assertions above and below).
-/// `sftp_round_trips_a_file_and_lists_a_directory` is the test that
-/// actually exercises exit-code-sensitive success/failure.
+/// same subsystem, same `FsHandler` — so what's specific to `scp` is the
+/// data it moves *and* the exit code it reports, both asserted here in
+/// both directions.
+///
+/// The exit code is the part worth explaining. `scp` derives it from its
+/// internal `ssh -s sftp` child, which needs the channel-level
+/// exit-status request to arrive before it stops listening. This test
+/// used to skip that assertion, on the reasoning that a real
+/// `/usr/lib/openssh/sftp-server` subprocess wins the race by exiting
+/// synchronously while `FsHandler` has no subprocess to synchronize
+/// against. That framing was wrong: the problem was never timing but
+/// **ordering**, and the server controls ordering. `russh_sftp`'s loop
+/// ended at EOF and dropped the channel — which sends `close` — before a
+/// separately-spawned exit-status send could land, and no client accepts
+/// an exit-status after `close`. `ssh::server::NotifyOnEof` now withholds
+/// the EOF until the exit-status has been sent, so `close` cannot
+/// overtake it. Task 6.5 found this via Zed, which gates its remote
+/// server startup on exactly this exit code.
 #[test]
-fn scp_moves_correct_data_even_though_its_own_exit_code_is_unreliable_here() {
+fn scp_round_trips_correct_data_and_reports_success() {
     if skip_if_no_real_ssh_tools() {
         return;
     }
@@ -347,11 +350,17 @@ fn scp_moves_correct_data_even_though_its_own_exit_code_is_unreliable_here() {
         sandbox.host(),
         remote_path.to_string_lossy()
     ));
-    let _ = Command::new("scp").args(&scp_args).output().unwrap();
+    let up = Command::new("scp").args(&scp_args).output().unwrap();
+    assert!(
+        up.status.success(),
+        "scp upload must report success, got {:?}: {}",
+        up.status,
+        String::from_utf8_lossy(&up.stderr)
+    );
     assert_eq!(
         std::fs::read(&remote_path).unwrap(),
         std::fs::read(&local_src).unwrap(),
-        "the file scp uploaded must match the source, regardless of scp's own exit code"
+        "the file scp uploaded must match the source"
     );
 
     let local_dst = sandbox.project_root.join("local-dst.txt");
@@ -362,11 +371,17 @@ fn scp_moves_correct_data_even_though_its_own_exit_code_is_unreliable_here() {
         remote_path.to_string_lossy()
     ));
     scp_back_args.push(local_dst.to_string_lossy().into_owned());
-    let _ = Command::new("scp").args(&scp_back_args).output().unwrap();
+    let down = Command::new("scp").args(&scp_back_args).output().unwrap();
+    assert!(
+        down.status.success(),
+        "scp download must report success, got {:?}: {}",
+        down.status,
+        String::from_utf8_lossy(&down.stderr)
+    );
     assert_eq!(
         std::fs::read(&local_dst).unwrap(),
         b"devcroft scp round-trip payload\n",
-        "the file scp downloaded must match what was uploaded, regardless of scp's own exit code"
+        "the file scp downloaded must match what was uploaded"
     );
 }
 
