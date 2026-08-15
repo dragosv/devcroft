@@ -43,15 +43,17 @@ openspec status --change <change> --json       # artifact state, paths, what's n
 openspec instructions <artifact> --change <c> --json   # how to write an artifact
 ```
 
-`openspec validate --all` currently reports **4 passed, 0 failed**.
-`add-mise-provider` and `add-hardened-tier` are still proposal-only
-post-MVP sketches (not implemented, no tasks.md), but each now carries
-real delta specs consistent with its proposal.md, so the validator's
-"at least one delta spec per change" requirement is satisfied honestly
-rather than left failing. `add-nix-provider` (nix flakes as a second
-closure-tier environment provider, alongside flox) is fully implemented,
-tasks.md and all — see the README's Status section. `add-mvp-core` and
-`add-nix-provider` are the only changes actually implemented.
+`openspec validate --all` currently reports **5 passed, 0 failed**.
+`add-mise-provider`, `add-hardened-tier`, and `add-gvisor-backend` (the
+gVisor concretization of the hardened tier — Linux-only, so no tasks.md
+until a Linux host/CI exists) are proposal-only post-MVP sketches (not
+implemented, no tasks.md), but each carries real delta specs consistent
+with its proposal.md, so the validator's "at least one delta spec per
+change" requirement is satisfied honestly rather than left failing.
+`add-nix-provider` (nix flakes as a second closure-tier environment
+provider, alongside flox) is fully implemented, tasks.md and all — see
+the README's Status section. `add-mvp-core` and `add-nix-provider` are
+the only changes actually implemented.
 
 Skills `/opsx:propose`, `/opsx:update`, `/opsx:apply`, `/opsx:archive`,
 `/opsx:sync`, and `/opsx:explore` drive the workflow.

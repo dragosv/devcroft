@@ -41,6 +41,12 @@ Mature, GKE-proven, well-understood failure modes. Sentry implements
 syscalls in user space; Landlock on the Sentry process is additive defense
 in depth. `runsc exec` provides an exec-into primitive.
 
+Concretized in its own change, `add-gvisor-backend`, which answers this
+proposal's rootfs/store-sharing/exec open questions for gVisor
+specifically (and corrects the platform list below: systrap has been
+runsc's default since mid-2023; ptrace is deprecated and not targeted).
+This proposal stays backend-generic on purpose.
+
 Cost: syscall overhead of roughly 2-10x, which lands on exactly the wrong
 workload — builds are syscall-heavy. directfs mitigates the filesystem
 path; the trap mechanism is the floor and cannot be optimized away.
