@@ -25,11 +25,21 @@ pub trait Provider {
 }
 
 /// What a provider's activation produced: the environment diff to inject
-/// into the keeper, and the read-only paths the compiled policy must
-/// grant for the resolved toolchain to run.
+/// into the keeper, the read-only paths the compiled policy must grant for
+/// the resolved toolchain to run, and any baseline variable activation
+/// explicitly removed rather than changed.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct Resolution {
     pub env: BTreeMap<String, String>,
+    /// Baseline keys activation's output no longer has at all — distinct
+    /// from `env`, whose map type can only represent "set to this value",
+    /// never "unset". The keeper's process otherwise inherits `up`'s own
+    /// ambient environment (see `lifecycle::up::spawn_keeper`), so without
+    /// this, a variable activation removes would still leak through from
+    /// whoever's shell happened to run `up` — the exact non-reproducibility
+    /// `canonical_base_env` was already introduced to close for changed
+    /// keys (found during review, previously undetected for removed ones).
+    pub unset: Vec<String>,
     pub read_only_grants: Vec<String>,
 }
 

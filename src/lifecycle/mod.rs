@@ -5,11 +5,13 @@
 //! back down with the grace-period termination the lifecycle spec
 //! requires. `status`/`logs`/`ps` are read-only views over the same state.
 
+mod hooks;
 mod state;
 mod status;
 mod terminate;
 mod up;
 
+pub use hooks::HookError;
 pub use state::{Health, Meta, StatePaths, client_key_paths, health, read_meta};
 pub use status::{KeeperStatus, SandboxStatus, SandboxSummary, StatusError, logs, ps, status};
 pub use terminate::{GRACE_PERIOD, TerminateError, down, rm};

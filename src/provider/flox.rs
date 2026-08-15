@@ -35,15 +35,16 @@ impl Provider for FloxProvider {
         let activated = capture_activated_env(project_root, &baseline)?;
 
         Ok(Resolution {
-            env: diff_env(&baseline, &activated),
+            env: changed_env(&baseline, &activated),
+            unset: unset_env(&baseline, &activated),
             read_only_grants: store_grants(&activated),
         })
     }
 }
 
 /// The fixed environment `flox activate` runs with, and the baseline
-/// [`diff_env`] compares against — the same map for both, so the diff
-/// reflects exactly what activation changed and nothing else.
+/// [`changed_env`]/[`unset_env`] compare against — the same map for both,
+/// so the diff reflects exactly what activation changed and nothing else.
 ///
 /// Found via review: this used to be `std::env::vars()` — literally
 /// whatever shell happened to run `up` — for both roles. A `PATH` full of
@@ -116,10 +117,12 @@ fn parse_env_dump(raw: &[u8]) -> BTreeMap<String, String> {
         .collect()
 }
 
-/// Entries added or changed by activation. Removed entries are not carried
-/// forward — the keeper's own baseline environment is authoritative for
-/// anything flox did not touch.
-fn diff_env(
+/// Entries added or changed by activation — see [`unset_env`] for entries
+/// activation removed instead, which this deliberately excludes: a
+/// `BTreeMap<String, String>` has no way to represent "unset", only "set
+/// to this value", so folding a removal into this map would either drop it
+/// silently (the bug [`unset_env`] closes) or require a sentinel value.
+fn changed_env(
     baseline: &BTreeMap<String, String>,
     activated: &BTreeMap<String, String>,
 ) -> BTreeMap<String, String> {
@@ -127,6 +130,23 @@ fn diff_env(
         .iter()
         .filter(|(k, v)| baseline.get(*k) != Some(*v))
         .map(|(k, v)| (k.clone(), v.clone()))
+        .collect()
+}
+
+/// Baseline keys activation's output no longer has at all — as opposed to
+/// changed (a key both sides have, with a different value, which
+/// [`changed_env`] already covers). The caller (`up`) must explicitly
+/// remove these from the keeper's own process environment rather than
+/// merely not setting them, since the keeper process otherwise inherits
+/// whatever `up`'s own ambient environment happened to hold for that key.
+fn unset_env(
+    baseline: &BTreeMap<String, String>,
+    activated: &BTreeMap<String, String>,
+) -> Vec<String> {
+    baseline
+        .keys()
+        .filter(|k| !activated.contains_key(*k))
+        .cloned()
         .collect()
 }
 
@@ -218,7 +238,7 @@ mod tests {
     }
 
     #[test]
-    fn diff_env_keeps_only_added_or_changed_keys() {
+    fn changed_env_keeps_only_added_or_changed_keys() {
         let baseline = BTreeMap::from([
             ("PATH".to_string(), "/usr/bin".to_string()),
             ("UNCHANGED".to_string(), "same".to_string()),
@@ -232,7 +252,7 @@ mod tests {
             ("FLOX_ENV".to_string(), "/nix/store/xyz-flox".to_string()),
         ]);
 
-        let diff = diff_env(&baseline, &activated);
+        let diff = changed_env(&baseline, &activated);
 
         assert_eq!(diff.len(), 2);
         assert_eq!(
@@ -244,6 +264,46 @@ mod tests {
             Some(&"/nix/store/xyz-flox".to_string())
         );
         assert!(!diff.contains_key("UNCHANGED"));
+    }
+
+    #[test]
+    fn changed_env_excludes_keys_activation_removed() {
+        // A key present in baseline but absent from activated is neither
+        // "changed" (changed_env's job) nor should it silently vanish —
+        // unset_env below is what's responsible for it.
+        let baseline = BTreeMap::from([
+            ("PATH".to_string(), "/usr/bin".to_string()),
+            ("REMOVED".to_string(), "gone".to_string()),
+        ]);
+        let activated = BTreeMap::from([("PATH".to_string(), "/usr/bin".to_string())]);
+
+        let diff = changed_env(&baseline, &activated);
+        assert!(!diff.contains_key("REMOVED"));
+    }
+
+    #[test]
+    fn unset_env_reports_baseline_keys_activation_dropped() {
+        let baseline = BTreeMap::from([
+            ("PATH".to_string(), "/usr/bin".to_string()),
+            ("REMOVED".to_string(), "gone".to_string()),
+        ]);
+        let activated = BTreeMap::from([("PATH".to_string(), "/usr/bin".to_string())]);
+
+        assert_eq!(
+            unset_env(&baseline, &activated),
+            vec!["REMOVED".to_string()]
+        );
+    }
+
+    #[test]
+    fn unset_env_is_empty_when_nothing_was_removed() {
+        let baseline = BTreeMap::from([("PATH".to_string(), "/usr/bin".to_string())]);
+        let activated = BTreeMap::from([
+            ("PATH".to_string(), "/usr/bin".to_string()),
+            ("FLOX_ENV".to_string(), "/nix/store/xyz-flox".to_string()),
+        ]);
+
+        assert!(unset_env(&baseline, &activated).is_empty());
     }
 
     #[test]

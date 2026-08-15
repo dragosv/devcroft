@@ -121,16 +121,6 @@ Known gaps, published rather than hidden:
 - **No cgroup resource limits.** A runaway build in one sandbox can affect
   the whole host — nothing today caps CPU or memory per sandbox. Planned:
   cgroup v2 scope units per keeper on Linux; no macOS equivalent exists.
-- **`hooks.post_create`/`hooks.post_start` don't run yet.** The manifest
-  parses them; nothing executes them (surfaced during task 7.2, still
-  unscheduled).
-- **The environment diff can't represent an unset.** If a provider's
-  activation *removes* a variable present in the host's baseline
-  environment, the keeper still inherits the host's value for it — the diff
-  (`provider::flox::diff_env`) only detects keys that were added or changed,
-  since it iterates the activated environment, never the baseline (found
-  during review, still open).
-
 `docs/decisions.md` has the falsifiable "why not X" reasoning behind most of
 these; the ones above are gaps in what's actually built, not design
 decisions.

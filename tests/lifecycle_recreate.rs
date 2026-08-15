@@ -56,8 +56,15 @@ fn recreate_replaces_a_running_keeper_with_a_fresh_one() {
         other => panic!("expected Healthy after up, got {other:?}"),
     };
 
-    let recreate_outcome = up(&manifest, &project_root, &UpOptions { recreate: true })
-        .unwrap_or_else(|e| panic!("up --recreate failed: {e}"));
+    let recreate_outcome = up(
+        &manifest,
+        &project_root,
+        &UpOptions {
+            recreate: true,
+            ..Default::default()
+        },
+    )
+    .unwrap_or_else(|e| panic!("up --recreate failed: {e}"));
     assert_eq!(recreate_outcome, UpOutcome::Recreated);
 
     let second_pid = match health(&paths).unwrap() {

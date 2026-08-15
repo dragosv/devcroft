@@ -18,6 +18,7 @@ use crate::config::Manifest;
 use crate::policy;
 use crate::provider::{FloxProvider, Provider, ProviderError};
 
+use super::hooks;
 use super::state::{self, Health, StatePaths};
 use super::terminate::GRACE_PERIOD as TERMINATE_GRACE_PERIOD;
 
@@ -41,6 +42,11 @@ pub enum UpOutcome {
 #[derive(Debug, Default, Clone, Copy)]
 pub struct UpOptions {
     pub recreate: bool,
+    /// Lifecycle spec's "Hooks run inside the boundary" requirement: a
+    /// failing hook fails `up` unless this is set, in which case hooks
+    /// (both `post_create` and `post_start`) are not run at all rather
+    /// than run-and-ignored.
+    pub skip_hooks: bool,
 }
 
 #[derive(Debug)]
@@ -190,6 +196,7 @@ pub fn up(
         &paths,
         project_root,
         &resolution.env,
+        &resolution.unset,
         SshHandoff {
             listener: &ssh_listener,
             host_key_pem: &host_key_pem,
@@ -206,6 +213,18 @@ pub fn up(
 
     wait_until_responsive(&paths, KEEPER_START_TIMEOUT)
         .map_err(|e| UpError::Keeper(format!("keeper did not become responsive: {e}")))?;
+
+    // Lifecycle spec: `post_create` runs once, as the first session after
+    // the *first* successful `up` or after `--recreate` — exactly the
+    // outcomes below, since `Recovered` means state already existed (so
+    // `post_create` already ran back when it was `Started`) and `AlreadyUp`
+    // already returned above without spawning anything. `post_start` runs
+    // on every keeper start regardless, so it always runs here too.
+    if !opts.skip_hooks {
+        let run_post_create = matches!(outcome, UpOutcome::Started | UpOutcome::Recreated);
+        hooks::run(&paths, project_root, &manifest.hooks, run_post_create)
+            .map_err(|e| UpError::Keeper(e.to_string()))?;
+    }
 
     Ok(outcome)
 }
@@ -233,6 +252,7 @@ fn spawn_keeper(
     paths: &StatePaths,
     project_root: &Path,
     env: &std::collections::BTreeMap<String, String>,
+    unset: &[String],
     ssh: SshHandoff,
 ) -> io::Result<libc::pid_t> {
     let log = std::fs::File::create(&paths.log)?;
@@ -260,7 +280,16 @@ fn spawn_keeper(
         .arg(listener.as_raw_fd().to_string())
         .arg(ssh.listener.as_raw_fd().to_string())
         .current_dir(project_root)
-        .envs(env)
+        .envs(env);
+    for key in unset {
+        // provider::Resolution's "unset" gap: without this, a key
+        // activation explicitly removed would still leak into the keeper
+        // from *this* process's own ambient environment (whoever's shell
+        // ran `up`) — `.envs(env)` above can only add/override, never
+        // remove, so a plain map has no way to represent "unset" at all.
+        cmd.env_remove(key);
+    }
+    cmd
         // ssh spec's key handoff (task 6.1): the keeper can't read either
         // key back off disk itself (see the call site's comment), so both
         // travel as env vars, same trust boundary the resolved provider

@@ -73,18 +73,24 @@ retired first, and every phase ends in something runnable.
 - [x] 7.2 Error contract: layers, exit codes, non-interactive safety.
       Wired up the rest of the command surface this required to be
       meaningful: `up`, `down`, `rm`, `status`, `logs`, `ps`, `ssh`,
-      `policy`, `why`. Known gap found along the way, not covered by any
-      task number: the lifecycle spec's "Hooks run inside the boundary"
-      requirement (`hooks.post_create`/`hooks.post_start` execution) is
-      still unimplemented — `Manifest.hooks` parses but nothing runs it.
+      `policy`, `why`. Two gaps found along the way, not covered by any
+      task number, both now closed (see `lifecycle::hooks` and
+      `provider::Resolution::unset`): the lifecycle spec's "Hooks run
+      inside the boundary" requirement (`hooks.post_create`/
+      `hooks.post_start` execution — `Manifest.hooks` parsed but nothing
+      ran it) and the env-provider spec's activation-diff gap (a variable
+      activation *removed* leaked through from whoever's shell ran `up`,
+      since a plain `BTreeMap<String, String>` diff has no way to
+      represent "unset").
 - [x] 7.3 Two-sandbox concurrency test; suspend/resume test
 - [x] 7.4 README with honest limitations section (no inter-sandbox process
       hiding, cooperative network filtering, not a hard security boundary)
 - [ ] 7.5 Publish crate `devcroft`; reserve/point npm name. Deliberately
-      held back: 0.1.0 isn't mature enough relative to its own published
-      limitations (hooks unimplemented, the env-diff unset gap, SSH
-      validation matrix partial) to publish yet. Cargo.toml has the
-      publish-required metadata (description, license, repository)
-      ready; `cargo publish --dry-run` packages clean. The actual
-      publish and npm name reservation are the maintainer's own
-      accounts/call, not something to do preemptively.
+      held back: two of the three gaps 0.1.0's maturity was judged against
+      (hooks unimplemented, the env-diff unset gap) are now closed; the
+      SSH validation matrix is down to just Zed (see
+      docs/ssh-validation.md). Cargo.toml has the publish-required
+      metadata (description, license, repository) ready; `cargo publish
+      --dry-run` packages clean. The actual publish and npm name
+      reservation are the maintainer's own accounts/call, not something
+      to do preemptively.

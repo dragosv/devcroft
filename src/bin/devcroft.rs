@@ -588,12 +588,14 @@ fn doctor_manifest_degradation() {
 /// `--recreate` is destructive (tears down and re-resolves everything),
 /// so it follows the same non-interactive-safety rule as `rm`.
 fn cli_up(args: &[String]) -> i32 {
-    const USAGE: &str = "devcroft up: usage: devcroft up [name] [--recreate] [--yes]";
+    const USAGE: &str =
+        "devcroft up: usage: devcroft up [name] [--recreate] [--yes] [--skip-hooks]";
     let recreate = args.iter().any(|a| a == "--recreate");
     let yes = args.iter().any(|a| a == "--yes");
+    let skip_hooks = args.iter().any(|a| a == "--skip-hooks");
     let name_args: Vec<&String> = args
         .iter()
-        .filter(|a| *a != "--recreate" && *a != "--yes")
+        .filter(|a| *a != "--recreate" && *a != "--yes" && *a != "--skip-hooks")
         .collect();
     if name_args.len() > 1 {
         eprintln!("{USAGE}");
@@ -629,7 +631,10 @@ fn cli_up(args: &[String]) -> i32 {
     match devcroft::lifecycle::up(
         &manifest,
         &project_root,
-        &devcroft::lifecycle::UpOptions { recreate },
+        &devcroft::lifecycle::UpOptions {
+            recreate,
+            skip_hooks,
+        },
     ) {
         Ok(outcome) => {
             let msg = match outcome {
