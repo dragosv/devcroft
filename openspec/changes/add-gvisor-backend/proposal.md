@@ -1,11 +1,11 @@
 # Change: add-gvisor-backend
 
-Status: proposed (post-MVP sketch — proposal + delta specs, no tasks.md,
-same convention as `add-mise-provider` and `add-hardened-tier`; tasks
-come when there is a Linux host/CI to implement and validate against,
-since gVisor is Linux-only and this repo currently develops on macOS).
+Status: in progress (a Linux host is now available via this repo's own
+devcontainer; implemented directly against `runsc`, with `dragosv/mxc`'s
+`gvizor` branch — a sibling project with a shipped gVisor backend — used
+as an implementation *reference* for patterns, not as a dependency).
 Depends on: `add-hardened-tier` (the tier abstraction this backend
-plugs into), `add-mvp-core` complete.
+plugs into, implemented alongside this change), `add-mvp-core` complete.
 
 ## Why
 
@@ -22,18 +22,25 @@ structure that already worked for providers: `env-provider` defines the
 contract, `add-nix-provider` delivered a concrete implementation against
 it, and neither blocked the other.
 
-One consequence deserves top billing because it fixes a tracked gap
-rather than adding a feature: **gVisor gives every sandbox its own
-user-space network stack (netstack)**. Inside the sandbox, binding
-loopback touches nothing on the host — so "my dev server can listen,
-but has no egress", the single most common shape of local development
-and currently impossible to express (docs/ssh-validation.md's
-highest-priority finding: under the default policy *no* dev server can
-bind a port, which broke VS Code Remote-SSH and the Gin sample alike),
-falls out of the architecture for free at this tier. Two sandboxes both
-binding :3000 stop being a port conflict at all — each has its own
-netstack — which finally makes the README's port-conflict story true
-instead of optimistic.
+**Corrected before implementation, from mxc's own real-world experience
+building the same backend.** An earlier draft of this proposal led with
+gVisor's per-sandbox netstack (`--network=sandbox`) closing the tracked
+listen-socket gap for free — loopback binds under `deny`, two sandboxes
+both binding `:3000` without conflict. That does not survive contact
+with real `runsc`: `--network=sandbox` is rejected outright when
+combined with `--rootless` ("sandbox network isn't supported with
+--rootless"), and devcroft's whole design runs unprivileged by
+construction (Landlock needs no privilege, nono drops root before
+exec) — rootless is not a mode devcroft would trade away just for this.
+So the delivered guarantee at this tier is the one that *does* hold
+under rootless: Sentry services syscalls in user space, so an escape
+needs a Sentry bug rather than a host kernel bug, and Landlock applied
+to the Sentry process itself (defense in depth, see below) bounds a
+compromised Sentry's filesystem reach by the same compiled policy. The
+listen-socket / port-conflict gap tracked in docs/ssh-validation.md and
+the README stays open at this tier too — published as a known
+limitation, not silently dropped, matching this repo's own framing
+rules. See the network policy bullet below for what *is* delivered.
 
 ## What Changes
 
@@ -64,18 +71,31 @@ instead of optimistic.
   Sentry process itself as defense in depth, exactly as
   `add-hardened-tier` sketches. `policy --render` output is identical
   across tiers.
-- Network policy: netstack makes the `[network]` section *more*
-  enforceable, not less — loopback binds inside the sandbox are local
-  to it (allowed even under `default = "deny"`, closing the tracked
-  listen-socket gap at this tier), egress is mediated and blockable
-  per-sandbox, and reaching an inside listener from the host goes
-  through explicit port forwarding rather than shared host ports.
-- Sessions: `runsc exec` is the native exec-into primitive
+- Network policy: no netstack (see above — incompatible with rootless).
+  Default `--network=none` (no connectivity at all), matching
+  `network.default = "deny"` with no allowlist. When the manifest's
+  `[network]` section grants egress, the sandbox runs `--network=host`
+  (gVisor's hostinet passthrough — a real network mode rootless mode
+  accepts) with the same enforcement mechanism the process tier already
+  uses: Landlock's TCP bind/connect restrictions, applied to the Sentry
+  process, honoring the same `[network]` origins and answered through
+  `why --host` with identical vocabulary. This reuses the existing
+  `[network]` semantics rather than inventing netstack-derived ones; it
+  does not close the listen-socket/port-conflict gap, since `--network=
+  host` shares the host's network namespace exactly as the process tier
+  does today.
+- Sessions and SSH: `runsc exec` is the native exec-into primitive
   `add-hardened-tier`'s lifecycle delta anticipates — the
   listener-before-restriction fd-passing trick is unnecessary at this
-  tier because a real exec-into-sandbox API exists. Session semantics
-  (exec, shell, pty, signals, exit codes) remain identical to the
-  process tier.
+  tier because a real exec-into-sandbox API exists, so no keeper runs
+  inside the sandbox. Instead the SSH/control server runs host-side and
+  dispatches every session (`exec`, `shell`, SSH-spawned) through
+  `runsc exec <container> -- <argv>`. The boundary argument still holds:
+  the unix socket's filesystem permissions (0600 socket, 0700 state
+  dir, never TCP) were always the real access control, not the
+  process's physical location — only where the *listener* runs changes.
+  Session semantics (exec, shell, pty, signals, exit codes) remain
+  identical to the process tier from the user's perspective.
 - `doctor`: gVisor-specific probes — `runsc` presence and version
   range, platform availability (systrap kernel support, `/dev/kvm`
   accessibility for KVM), with each failure naming its fix and macOS
@@ -87,7 +107,8 @@ instead of optimistic.
 
 - `gvisor-backend`: the runsc adapter — platform selection, rootfs
   synthesis from the provider closure, store sharing, policy
-  projection, netstack semantics, session execution. Kept as its own
+  projection, network policy enforcement, session execution via
+  host-side `runsc exec` dispatch. Kept as its own
   capability so `add-hardened-tier`'s backend-generic deltas (tier
   selection in `config`, tier-conditional keeper in `lifecycle`,
   policy-target in `policy`) stay untouched and the two changes never
@@ -107,22 +128,31 @@ instead of optimistic.
 - Affected code (when implemented): a new backend module alongside the
   nono path; `up`'s backend dispatch; `doctor`; no manifest schema
   changes beyond what `add-hardened-tier` already adds.
-- docs: the ssh-validation.md listen-socket gap gets a
-  tier-qualified answer; README's port-conflict story becomes accurate
-  for the hardened tier.
+- docs: the ssh-validation.md listen-socket gap and the README's
+  port-conflict story stay open at this tier too, not just the process
+  tier — the gap gets an honest tier-qualified answer ("not solved
+  here either, and here's why"), not a false all-clear.
 
 ## Success Criteria
 
 - On a supported Linux host, `isolation = "hardened"` resolves to
   gVisor, `up` succeeds, and the same manifest/sessions/SSH workflow
-  from the process tier works unchanged.
-- A dev server binds loopback inside the sandbox under
-  `network.default = "deny"` and is reachable from the host via the
-  forwarded port — the exact scenario that fails at the process tier
-  today.
+  from the process tier works unchanged, dispatched through `runsc
+  exec` instead of the keeper's local spawn.
+- Filesystem access is deny-by-default via the OCI mount model: a path
+  neither granted by the manifest nor part of the provider's store
+  grants nor the baseline skeleton is absent inside the sandbox, not
+  present-but-denied.
+- The Sentry process itself runs under a Landlock profile compiled from
+  the same policy, so a compromised Sentry's filesystem reach stays
+  bounded by the same grants the sandbox has.
 - `policy --render` on the same manifest is byte-identical across
-  tiers; `why` answers identically.
-- Two sandboxes bind the same port simultaneously without conflict.
+  tiers; `why` answers identically, including for `[network]` origins.
+- Egress is denied under `network.default = "deny"` and permitted per
+  the manifest's allowlist when granted — matching the process tier's
+  behavior and vocabulary. (The listen-socket/port-conflict gap is
+  explicitly *not* closed at this tier; see the network policy bullet
+  above.)
 - Published benchmarks (per `add-hardened-tier`'s criterion): a
   mid-size `cargo build` and an `npm ci` across process tier, gVisor
   systrap, and gVisor KVM, with directfs on and off — real numbers for
@@ -130,24 +160,18 @@ instead of optimistic.
 
 ## Open Questions
 
-- **Where the SSH server lives.** The keeper currently *is* the SSH
-  endpoint, and the ssh capability's invariant ("SSH lives inside the
-  boundary") assumed the process tier's architecture. With `runsc exec`
-  available, the server could run host-side using exec-into as its
-  session backend (the boundary story holds — sessions still run
-  inside; the unix socket's filesystem permissions were always the real
-  access control), or the keeper could simply keep running inside the
-  sandbox for SSH alone, forfeiting the keeper-less simplification.
-  Behaviorally both must look identical through `devcroft proxy`; which
-  to build is an implementation decision this sketch leaves open.
 - **runsc version policy.** gVisor ships continuously, not semver;
   decide what "tested range" means for `doctor` (pin a release tag
   range? a minimum release date?).
-- **Port forwarding UX.** Netstack means an inside listener needs
-  explicit forwarding to be reachable from the host. Decide the
-  manifest/CLI surface for it (a `[network] forward` list? a
-  `devcroft forward` command? automatic for `-L`-style SSH forwarding,
-  which already works through the existing channel support?).
+- **Non-rootless netstack, as a future extension.** A hardened backend
+  running non-rootless (e.g. via a scoped, NOPASSWD-limited privilege
+  grant, mirroring how this repo already gives flox's nix-daemon a
+  narrowly scoped sudo rule rather than a blanket one) could use
+  `--network=sandbox` and deliver the original netstack story: loopback
+  binds under `deny`, no port conflicts between sandboxes. Worth
+  recording as a real, considered option for a later change — not
+  chosen now, since it trades away the unprivileged posture every other
+  tier holds to, for a single tier's network story.
 - **Provisioning stays host-side.** Provider resolution (`nix develop`,
   `flox activate`) runs before restriction, on the host, unchanged —
   but the captured env diff now describes paths that must all be

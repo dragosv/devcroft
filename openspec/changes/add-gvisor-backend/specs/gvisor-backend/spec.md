@@ -4,8 +4,8 @@
 
 The runsc adapter behind `isolation = "hardened"`: platform selection,
 rootfs synthesis from the provider closure, store sharing, policy
-projection onto the OCI mount model, netstack semantics, and session
-execution. This capability is deliberately separate from
+projection onto the OCI mount model, network policy enforcement, and
+session execution. This capability is deliberately separate from
 `add-hardened-tier`'s backend-generic deltas (tier selection, keeper
 conditionality, policy targeting) so the two changes compose without
 colliding: that change defines what any hardened backend must provide;
@@ -68,38 +68,65 @@ same manifest regardless of tier.
   from the same policy, so a compromised Sentry's filesystem reach stays
   bounded by the same grants the sandbox has
 
-### Requirement: Netstack network semantics
-Each hardened sandbox SHALL have its own network stack. Under
-`network.default = "deny"`, the system SHALL still permit binding and
-listening on loopback inside the sandbox — the listener is local to the
-sandbox's own netstack and reaches nothing on the host — while denying
-egress. Reaching an inside listener from the host SHALL require explicit
-forwarding.
+### Requirement: Network policy enforcement
+The system SHALL NOT use gVisor's per-sandbox netstack (`--network=
+sandbox`): upstream `runsc` rejects that mode combined with `--rootless`,
+and devcroft runs unprivileged by construction, so the two are mutually
+exclusive here. Instead, when `network.default = "deny"` and no
+allowlist grants egress, the system SHALL run the sandbox with
+`--network=none` (no connectivity of any kind). When the manifest's
+`[network]` section grants egress, the system SHALL run with `--network=
+host` (gVisor's hostinet passthrough, a mode rootless mode accepts) and
+enforce the same `[network]` policy via Landlock's TCP bind/connect
+restrictions applied to the Sentry process, with the same rule origins
+and `why --host` vocabulary the process tier already uses. This tier
+does NOT close the listen-socket/port-conflict gap tracked for the
+process tier: `--network=host` shares the host's network namespace, so
+a bind inside the sandbox is a real bind on the host, exactly as it is
+at the process tier today. That gap staying open here is a published
+limitation, not a silent regression from what this capability's earlier
+draft claimed.
 
-#### Scenario: Dev server binds under deny-all
-- **WHEN** `network.default = "deny"` and a process inside the sandbox
-  binds `127.0.0.1:8080` and listens
-- **THEN** the bind succeeds — unlike the process tier today, where the
-  same call fails with `EPERM` (the tracked listen-socket gap)
+#### Scenario: Default network posture
+- **WHEN** `network.default = "deny"` and no `[network]` allowlist grants
+  egress
+- **THEN** the sandbox runs with `--network=none` and has no network
+  connectivity of any kind, inbound or outbound
 
-#### Scenario: Same port, two sandboxes
-- **WHEN** two hardened sandboxes each bind `:3000`
-- **THEN** both succeed, because each bind lands in its own netstack;
-  there is no shared host port to conflict over
+#### Scenario: Egress granted by the manifest
+- **WHEN** the manifest's `[network]` section grants egress to specific
+  hosts
+- **THEN** the sandbox runs with `--network=host`, and Landlock applied
+  to the Sentry process permits connections only to the granted hosts,
+  denying everything else
 
 #### Scenario: Egress still denied
 - **WHEN** `network.default = "deny"` and a process inside the sandbox
-  connects outward to a host or external address
+  connects outward to a host or external address not in the allowlist
 - **THEN** the connection is denied, and `why --host` explains it with
   the same origin vocabulary as the process tier
 
-### Requirement: Sessions via native exec
+#### Scenario: Listen-socket gap persists at this tier
+- **WHEN** `network.default = "deny"` and no `[network]` allowlist grants
+  egress, and a process inside the sandbox binds `127.0.0.1:8080` and
+  listens
+- **THEN** the bind fails — because `--network=none` provides no network
+  stack at all, not because of a targeted policy denial — so the
+  outcome matches the process tier's tracked listen-socket gap (a dev
+  server still cannot bind under deny-all) even though the underlying
+  mechanism differs; this tier does not solve that gap
+
+### Requirement: Sessions via native exec, dispatched host-side
 The system SHALL run sessions (exec, shell, SSH-spawned) through the
 backend's native exec-into primitive (`runsc exec`), with pty
 allocation, signal forwarding, exit-code propagation, and the resolved
-environment injection behaving identically to the process tier. The
-listener-before-restriction fd-passing sequence is not used at this
-tier.
+environment injection behaving identically to the process tier. No
+keeper process runs inside the sandbox at this tier — the
+listener-before-restriction fd-passing sequence is not used because
+there is nothing to self-restrict; the SSH/control server instead runs
+host-side, listening on the same 0600-socket-in-0700-dir pattern the
+process tier uses (never TCP), and dispatches each session through
+`runsc exec <container> -- <argv>` instead of a local fork/exec.
 
 #### Scenario: Semantics match the process tier
 - **WHEN** the same `devcroft exec`/`shell`/`ssh` workflows run against
@@ -107,6 +134,11 @@ tier.
 - **THEN** observable behavior (cwd mapping, env, signals, exit codes,
   pty resize) matches the process tier exactly; only `status`'s tier
   line and performance differ
+
+#### Scenario: No keeper inside the sandbox
+- **WHEN** a hardened sandbox is running
+- **THEN** no keeper process exists inside it; the control server runs
+  on the host and every session is a discrete `runsc exec` invocation
 
 ### Requirement: Provider grants map onto mounts or fail loudly
 The system SHALL verify at `up` that every read-only grant the provider

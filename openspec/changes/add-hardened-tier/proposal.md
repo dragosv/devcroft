@@ -1,7 +1,10 @@
 # Change: add-hardened-tier
 
-Status: proposed (post-MVP). Depends on: add-mvp-core complete; an MXC
-backend adapter (or direct `runsc` integration) available.
+Status: in progress (post-MVP). Depends on: add-mvp-core complete;
+implemented alongside `add-gvisor-backend`, which concretizes this
+tier's first backend via direct `runsc` integration — `dragosv/mxc`'s
+`gvizor` branch was consulted as an implementation reference, not taken
+as a dependency.
 
 ## Why
 
@@ -82,8 +85,8 @@ semantics may depend on which one is in use.
   `isolation = "process" | "hardened"`, resolved to a concrete backend per
   host. `hardened` on a host that cannot provide it is a hard failure at
   layer `backend`, never a silent downgrade to `process`.
-- `doctor` reports hardened-tier availability (runsc present, KVM or
-  ptrace platform, kernel support) with the actionable fix per failure.
+- `doctor` reports hardened-tier availability (runsc present, systrap or
+  KVM platform, kernel support) with the actionable fix per failure.
 - Policy compilation targets the hardened backend's policy model; the
   manifest schema does not change.
 - Keeper simplification: where the backend provides an exec-into
