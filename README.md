@@ -30,6 +30,99 @@ That trade makes sense for fleets of coding agents, many parallel projects
 on one host, or local CI — not for running code you don't trust at all,
 where a real container or VM boundary is still the right call.
 
+### How coding-agent products provision environments today
+
+Three patterns dominate, plus one that isn't provisioning at all. All four
+exist to solve the same problem: the environment gets built once at fleet
+scale, not once per agent — nobody can afford N × `npm install`/`cargo
+build` from a cold start.
+
+**Snapshot / golden disk** (Cursor cloud agents, Devin). Set the
+environment up once — by hand, or by letting an agent do it interactively
+— then save the resulting disk state. Cursor runs the install script from
+`.cursor/environment.json` once per [Build](https://cursor.com/docs/cloud-agent/builds),
+in the background rather than on every agent start; a successful Build
+becomes the disk state every new agent starts from, with config resolved
+in order (repo `.cursor/environment.json` → personal env → team env). The
+known failure mode is drift: a staleness threshold (24h by default) makes
+an agent pull the latest default-branch commit past that age, otherwise it
+reuses whatever commit the Build was made from — and the snapshot itself
+stays opaque; nothing says what's actually in it three months on.
+
+**Polyglot base image + cached setup script** ([OpenAI Codex
+cloud](https://developers.openai.com/codex/cloud/environments)). Every
+container starts from `codex-universal`, one Ubuntu image with runtimes
+preinstalled for eight languages (Python, Node, Rust, Go, Ruby, PHP, Java,
+Swift), pullable locally to test the setup script before it runs in the
+cloud. Flow: clone the default branch → run the setup script → cache the
+resulting container state for up to 12 hours; a new task checks out the
+requested branch against that cache and can run an optional maintenance
+script, useful when the cache predates the branch. The catch that trips
+people up: the setup script runs in a Bash session separate from the
+agent's own, so a plain `export` doesn't persist past it.
+
+**CI as the environment** ([GitHub Copilot coding
+agent](https://docs.github.com/en/copilot/how-tos/copilot-on-github/customize-copilot/customize-cloud-agent/customize-the-agent-environment)).
+The agent gets an ephemeral environment provisioned by GitHub Actions
+itself, customized through a `copilot-setup-steps.yml` job with a fixed
+name, where only `steps`/`permissions`/`runs-on`/`container`/`services`/
+`snapshot`/`timeout-minutes` are honored. The upside: existing CI
+definitions get reused instead of a second build system getting invented.
+GitHub's own stated reasoning for why this exists rather than leaving the
+agent to figure it out: it can discover dependencies itself by trial and
+error, but that's slow and unreliable given how non-deterministic LLMs
+are, and for private packages it can be outright impossible.
+
+**Local fan-out: worktrees** (Claude Code). No provisioning at all — the
+environment is the laptop, shared. `--worktree`, plus `isolation:
+"worktree"` on subagents, gives each agent its own directory and branch
+without manual git plumbing. In practice 4–5 worktrees is the ceiling on
+one laptop; past that, agents move to a remote machine and branches get
+pulled back. Isolation here is filesystem-view only, not environment: port
+collisions, a shared local database, a shared `target/`, and a `.env` that
+doesn't get copied into the new worktree are all still there.
+
+**What none of the four actually solve:**
+
+- **Stateful services.** Postgres/Redis either go into the image as a
+  `services:` block, or every agent gets its own port/schema by hand —
+  nobody has this elegantly solved.
+- **Secrets.** Injected at runtime, deliberately *not* baked into the
+  snapshot (Cursor's own docs point at its Secrets tab over a
+  `.env.local` captured into a snapshot).
+- **Network.** Deny-by-default once setup finishes, or the agent has an
+  exfiltration channel open the whole time it runs. Copilot and Codex
+  both expose a configurable firewall specifically for the agent phase.
+- **Verification.** The rule that shows up everywhere in practice: setup
+  ends with a command that *proves* the repo is ready (`cargo test
+  --no-run`, `bun run validate`), with an explicit "stop and report on
+  failure" instruction — otherwise the agent spends an hour debugging
+  perfectly fine code in a broken environment.
+
+### Where devcroft differs
+
+All four patterns above treat the environment as an **imperative
+artifact** — a script plus a snapshot — which is opaque, vendor-specific,
+and drifts. The declarative alternative this project bets on — a
+flox/nix manifest plus its lock — makes the snapshot redundant: the
+manifest *is* the snapshot. It's bit-reproducible, it's already the thing
+checked into the repo, and instantiating eight identical environments
+costs one cached build, not eight image builds.
+
+That's the actual differentiator from "yet another Docker wrapper" — not
+isolation (Landlock/Seatbelt are commodity at this point; [this list of
+sandboxing tools](https://gist.github.com/wincent/2752d8d97727577050c043e4ff9e386e)
+alone has 20+ entries), but **reproducibility plus the marginal cost of
+instantiation**. The local-worktree pattern above is both the most-used
+fanout mechanism and the worst-served: it gets git plumbing for free and
+nothing for the environment underneath it. A `devcroft.toml` manifest
+with a lock is exactly what that workflow is missing — giving every
+worktree an identical, isolated, auto-provisioned environment off the
+same lock, with ports allocated instead of collided and services isolated
+instead of shared, is a natural next layer on this model. It isn't in
+MVP's closed command surface today (see Status) — worth naming as
+direction, not claiming as delivered.
+
 ## Status
 
 **MVP implementation underway — 23/25 tasks.** A `..` path-traversal gap in
