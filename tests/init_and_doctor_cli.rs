@@ -25,6 +25,29 @@ fn run(cwd: &std::path::Path, args: &[&str]) -> std::process::Output {
         .unwrap()
 }
 
+/// These tests are about the backend/provider/manifest lines specifically,
+/// not about every independent check `doctor` runs. `gvisor-backend` is
+/// legitimately, per the `cli` delta spec's own "runsc present but
+/// platform unusable" scenario, `[FAIL]` rather than `[WARN]` on a host
+/// where `runsc` is installed but its platform doesn't actually work —
+/// true of this repo's own devcontainer once task group 8 installed
+/// `runsc` into it (rootless gVisor needs a user-namespace creation this
+/// container's default seccomp profile denies; see
+/// `.devcontainer/devcontainer.json`'s own comment on that). Asserting
+/// blanket `doctor` success would make these tests depend on a platform
+/// capability they have nothing to do with, so this only fails on a
+/// `[FAIL]` line the test doesn't already expect.
+fn assert_no_unexpected_doctor_failures(stdout: &str) {
+    let unexpected: Vec<&str> = stdout
+        .lines()
+        .filter(|l| l.starts_with("[FAIL]") && !l.starts_with("[FAIL] gvisor-backend"))
+        .collect();
+    assert!(
+        unexpected.is_empty(),
+        "unexpected doctor failures: {unexpected:?}\nfull output: {stdout}"
+    );
+}
+
 #[test]
 fn init_generates_a_manifest_that_parses_with_no_warnings() {
     let dir = scratch_project("basic");
@@ -375,7 +398,7 @@ fn doctor_reports_backend_and_provider_when_installed() {
     let dir = scratch_project("doctor");
     let out = run(&dir, &["doctor"]);
     let stdout = String::from_utf8_lossy(&out.stdout);
-    assert!(out.status.success(), "{stdout}");
+    assert_no_unexpected_doctor_failures(&stdout);
     assert!(stdout.contains("[PASS] backend: nono"));
     assert!(stdout.contains("[PASS] kernel:"));
     assert!(stdout.contains("[PASS] provider: flox"));
@@ -407,7 +430,7 @@ fn doctor_reports_nix_when_installed_with_flakes_enabled() {
     let dir = scratch_project("doctor-nix");
     let out = run(&dir, &["doctor"]);
     let stdout = String::from_utf8_lossy(&out.stdout);
-    assert!(out.status.success(), "{stdout}");
+    assert_no_unexpected_doctor_failures(&stdout);
     assert!(
         stdout.contains("[PASS] provider: nix") && stdout.contains("flakes enabled"),
         "got {stdout:?}"
@@ -430,7 +453,7 @@ fn doctor_reports_manifest_degradation_when_one_is_discoverable() {
 
     let out = run(&dir, &["doctor"]);
     let stdout = String::from_utf8_lossy(&out.stdout);
-    assert!(out.status.success(), "{stdout}");
+    assert_no_unexpected_doctor_failures(&stdout);
     assert!(
         stdout.contains("[PASS] manifest:") || stdout.contains("[WARN] manifest:"),
         "a discoverable manifest should produce a manifest-degradation line, got {stdout:?}"

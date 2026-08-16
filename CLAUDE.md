@@ -6,13 +6,16 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 The MVP (`add-mvp-core`) is implemented and in its final stretch — **23/25
 tasks**. `src/` has real modules for `config`, `policy`, `provider`,
-`keeper`, `lifecycle`, `ssh`, plus the `devcroft` and `spike` binaries under
-`src/bin/`, backed by an integration `tests/` suite. Stack is Rust stable,
-edition 2024. `samples/` holds two standalone example projects
-(`flox-clap-sample`, `flox-rustup-sample`) with their own `Cargo.toml`s
-(each has an explicit `[workspace]` table so they don't get pulled into
-this crate's workspace) — see each sample's own `README.md` for what it
-demonstrates.
+`keeper`, `lifecycle`, `ssh`, `gvisor`, plus the `devcroft` and `spike`
+binaries under `src/bin/`, backed by an integration `tests/` suite. Stack
+is Rust stable, edition 2024. `samples/` holds standalone example projects
+covering both closure-tier providers and the hardened tier —
+`flox-clap-sample`, `flox-rustup-sample`, and `nix-flake-sample` are Rust
+projects with their own `Cargo.toml` (each has an explicit `[workspace]`
+table so they don't get pulled into this crate's workspace); `nix-go-sample`
+(Go) and `gvisor-kotlin-sample` (Kotlin/Gradle) are non-Rust, so no
+workspace exclusion applies to them — see each sample's own `README.md`
+for what it demonstrates.
 
 Remaining work (see `openspec/changes/add-mvp-core/tasks.md`): task 6.5
 (cross-editor SSH validation matrix — OpenSSH, rsync, VS Code Remote-SSH,
@@ -44,16 +47,19 @@ openspec instructions <artifact> --change <c> --json   # how to write an artifac
 ```
 
 `openspec validate --all` currently reports **5 passed, 0 failed**.
-`add-mise-provider`, `add-hardened-tier`, and `add-gvisor-backend` (the
-gVisor concretization of the hardened tier — Linux-only, so no tasks.md
-until a Linux host/CI exists) are proposal-only post-MVP sketches (not
-implemented, no tasks.md), but each carries real delta specs consistent
-with its proposal.md, so the validator's "at least one delta spec per
-change" requirement is satisfied honestly rather than left failing.
+`add-mise-provider` is still a proposal-only post-MVP sketch (not
+implemented, no tasks.md), but carries real delta specs consistent with
+its proposal.md, so the validator's "at least one delta spec per change"
+requirement is satisfied honestly rather than left failing.
 `add-nix-provider` (nix flakes as a second closure-tier environment
-provider, alongside flox) is fully implemented, tasks.md and all — see
-the README's Status section. `add-mvp-core` and `add-nix-provider` are
-the only changes actually implemented.
+provider, alongside flox), `add-hardened-tier` (the backend-generic
+`SessionBackend` seam and tier dispatch), and `add-gvisor-backend` (the
+gVisor concretization of the hardened tier — Linux-only, developed and
+live-tested inside this repo's own devcontainer once task group 8
+installed `runsc` into it) are all fully implemented, tasks.md and all —
+see the README's Status section. `add-mvp-core`, `add-nix-provider`,
+`add-hardened-tier`, and `add-gvisor-backend` are the changes actually
+implemented; `add-mise-provider` is the only one still proposal-only.
 
 Skills `/opsx:propose`, `/opsx:update`, `/opsx:apply`, `/opsx:archive`,
 `/opsx:sync`, and `/opsx:explore` drive the workflow.

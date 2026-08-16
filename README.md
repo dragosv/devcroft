@@ -103,38 +103,51 @@ also closed a real, pre-existing gap that predated nix entirely: `policy
 (`Origin::Provider` existed since MVP with no caller) — fixed for flox
 and nix alike.
 
-**`add-hardened-tier`/`add-gvisor-backend` are in progress** (16/17 and
-23/28 tasks) — the `hardened` tier's first concrete backend, gVisor. The
+**`add-hardened-tier`/`add-gvisor-backend` are implemented** (17/17 and
+28/28 tasks) — the `hardened` tier's first concrete backend, gVisor. The
 manifest's `[sandbox].isolation` key, the `SessionBackend` trait
 `lifecycle::up` dispatches sessions through, and the `gvisor` module
 (OCI bundle synthesis from the same `CompiledPolicy` the process tier
 compiles, `runsc` command assembly, a Landlock profile applied to the
 Sentry process as defense in depth, `doctor` diagnostics, a pinned
-`runsc` install in the devcontainer) are all implemented and unit
-tested. One correction along the way, made before any code shipped
-against the wrong assumption: an earlier draft leaned on gVisor's
-per-sandbox netstack to close the listen-socket gap below for free, but
-`runsc` rejects that mode outright under `--rootless`, and devcroft runs
+`runsc` install in the devcontainer) are all implemented, unit tested,
+and covered by real-tooling integration tests
+(`tests/gvisor_hardened_e2e.rs`, `tests/hardened_tier_ssh_parity.rs`)
+that self-skip wherever `runsc` isn't functionally usable, the same
+convention every other real-tooling test in this suite already follows.
+One correction along the way, made before any code shipped against the
+wrong assumption: an earlier draft leaned on gVisor's per-sandbox
+netstack to close the listen-socket gap below for free, but `runsc`
+rejects that mode outright under `--rootless`, and devcroft runs
 unprivileged everywhere by design — so the hardened tier shares the
 host's network namespace exactly like `process` does, and does **not**
 close that gap either (see the note below).
 
-What isn't done: end-to-end verification against a live sandbox. This
-devcontainer has no working `runsc` on `PATH` and, more fundamentally,
-cannot create unprivileged user namespaces at all (`unshare --user`
-fails `EPERM`) — a rootless `runsc run` needs exactly that. This was
-confirmed directly, not assumed: a real `runsc` release binary was
-fetched out-of-band and driven through the actual code path by hand
-against a real nix-flake project. That caught and fixed four real bugs
-before any of them could ship — a Landlock ruleset that denied `runsc`
-its own `execve`, a missing grant for the `/proc/sys` tunables `runsc`'s
-own preflight reads, missing grants for the OCI bundle and `runsc`'s
+What isn't verified: an actual live session round-trip and SSH handshake
+against a *running* gVisor sandbox. This repo's own devcontainer now
+ships a real, pinned `runsc` (task group 8's install), but cannot create
+unprivileged user namespaces (`unshare --user` fails `EPERM`, and no
+`security-opt` relaxation is applied by default — see
+`.devcontainer/devcontainer.json`'s own comment on that tradeoff) — a
+rootless `runsc run` needs exactly that. `devcroft doctor` reports this
+live and correctly: `[FAIL] gvisor-backend: ... the systrap platform
+does not work on this host (... fork/exec /proc/self/exe: operation not
+permitted)`, and `tests/gvisor_hardened_e2e.rs` self-skips with the same
+finding rather than claiming coverage it doesn't have. Before `runsc`
+was installed here at all, a real release binary was fetched out-of-band
+and driven through the actual code path by hand against a real
+nix-flake project, which caught and fixed four real bugs before any of
+them could ship — a Landlock ruleset that denied `runsc` its own
+`execve`, a missing grant for the `/proc/sys` tunables `runsc`'s own
+preflight reads, missing grants for the OCI bundle and `runsc`'s
 `--root` state directory, and a `-d` flag that doesn't exist (`-detach`
-does) — and then reached exactly the userns wall already diagnosed, no
-further. The remaining tasks (a live session round-trip through `runsc
-exec`, and confirming the host-side SSH server behaves identically to
-the process tier's) need a devcontainer rebuild with that capability
-unlocked to actually run.
+does) — and reached exactly the userns wall diagnosed above, no further.
+Everything upstream of that wall (bundle synthesis, Landlock, `runsc
+run` argument assembly) is now real-world tested; the wall itself,
+`-detach` actually detaching, signal propagation into a sandboxed
+process, and the Landlock ruleset surviving into a started Sentry remain
+unconfirmed absent a host (or a deliberately relaxed container) that
+permits unprivileged userns creation.
 
 ## Limitations
 
@@ -145,9 +158,10 @@ surface stays reachable from inside, so a kernel bug is an escape. A real
 boundary is the `hardened` tier (gVisor via `add-gvisor-backend`, or
 LiteBox; see
 [openspec/changes/add-hardened-tier/](openspec/changes/add-hardened-tier/)),
-implementation in progress per the Status section above, not yet verified
-end to end. Every isolation claim in this README and in `devcroft`'s own
-output is scoped to `process` unless said otherwise.
+implemented but not yet verified end to end against a live sandbox — see
+the Status section above for exactly where that verification stops.
+Every isolation claim in this README and in `devcroft`'s own output is
+scoped to `process` unless said otherwise.
 
 Known gaps, published rather than hidden:
 

@@ -50,10 +50,15 @@
       host-side, reusing the existing keeper protocol/connection/pty
       code but backed by `RunscExecBackend` — no keeper process runs
       inside the sandbox at this tier
-- [ ] 4.3 Integration test, gated on `runsc` availability (self-skip
+- [x] 4.3 Integration test, gated on `runsc` availability (self-skip
       otherwise, matching this repo's existing real-tooling test
       convention): an exec/shell session round-trip against a live
       gVisor sandbox, and an SSH round-trip through `devcroft proxy`
+      (`tests/gvisor_hardened_e2e.rs`) — availability is a functional
+      probe (`runsc --rootless --platform <p> do true`), matching
+      `doctor`'s own check, not just binary presence; confirmed live to
+      self-skip correctly in this devcontainer, where `runsc` is present
+      but the platform doesn't actually work (see 10.3)
 
 ## 5. Landlock on Sentry (defense in depth)
 
@@ -125,5 +130,27 @@
 - [x] 10.1 `cargo build`, `cargo clippy`, `cargo fmt` clean
 - [x] 10.2 `openspec validate --all` passes with this change's
       `tasks.md` added (currently 5/5 passing)
-- [ ] 10.3 Report e2e-against-live-runsc status honestly as unverified
-      pending a devcontainer rebuild, rather than claiming it works
+- [x] 10.3 Report e2e-against-live-runsc status honestly: now verified
+      further than "compiles" (task 674d840 rebuilt the devcontainer with
+      `runsc` installed), but still not fully live. `devcroft doctor`
+      against the real, live-installed `runsc release-20260810.0`
+      correctly reports `[FAIL] gvisor-backend`: the systrap platform's
+      own re-exec into a fresh user namespace fails with
+      `fork/exec /proc/self/exe: operation not permitted` — the exact
+      `unshare --user` EPERM `.devcontainer/devcontainer.json`'s own
+      comment already named as this container's platform boundary (no
+      `security-opt` relaxation by default), not a new finding. `runner.rs`'s
+      module doc's account stands: everything upstream of the userns wall
+      (bundle synthesis, the Landlock ruleset, `runsc run` argument
+      assembly) was exercised for real during development; the userns
+      wall itself, `-detach` actually detaching, signal propagation into
+      a sandboxed process, and the Landlock ruleset surviving into a
+      started Sentry remain unconfirmed in *this* environment.
+      `tests/gvisor_hardened_e2e.rs` (task 4.3) encodes this precisely:
+      its availability probe matches `doctor`'s own functional check, and
+      running it here self-skips with the same reason `doctor` reports —
+      confirmed by actually running it, not just written to skip
+      generically. Someone with a host that permits unprivileged userns
+      creation (or this container's documented opt-in `security-opt`
+      override) would exercise the remaining path today, no further code
+      changes needed.

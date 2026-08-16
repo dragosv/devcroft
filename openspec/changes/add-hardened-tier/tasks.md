@@ -71,8 +71,17 @@
       still only a 0600 unix socket in a 0700 dir, still never binding
       TCP. The access boundary was always the socket's filesystem
       permissions, not the process's physical location.
-- [ ] 5.2 Cross-tier SSH parity test backing the `ssh` delta's "Client
+- [x] 5.2 Cross-tier SSH parity test backing the `ssh` delta's "Client
       cannot tell the difference" scenario — the same client workflow
       against both tiers, asserted identical
+      (`tests/hardened_tier_ssh_parity.rs`): an `exec` round trip plus an
+      SSH client-key handshake through `devcroft proxy`, run once against
+      a real `process`-tier sandbox and once against a real
+      `hardened`-tier sandbox, with the results (`stdout`, exit code, SSH
+      auth success) asserted `==`. Gated on both tiers' real tooling
+      (self-skips otherwise, same convention as `add-gvisor-backend`
+      task 4.3); confirmed live to self-skip in this devcontainer for the
+      same `runsc` userns reason task 4.3's own test does — see
+      `add-gvisor-backend` task 10.3
 - [x] 5.3 `openspec validate --all` passes with this change's `tasks.md`
       added (currently 5/5 passing)
