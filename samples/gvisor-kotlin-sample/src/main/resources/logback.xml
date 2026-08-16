@@ -1,0 +1,20 @@
+<!--
+  logback-classic ships no default config, and Ktor/Netty log heavily at
+  DEBUG (buffer allocator internals, resource-leak-detector chatter) —
+  found by actually running this sample: with no config at all, `gradle
+  run`'s output is almost entirely Netty internals, not the one
+  "Responding at http://0.0.0.0:8080" line that's actually useful. INFO
+  root level plus a plain one-line-per-event pattern keeps this sample's
+  output readable.
+-->
+<configuration>
+    <appender name="STDOUT" class="ch.qos.logback.core.ConsoleAppender">
+        <encoder>
+            <pattern>%d{HH:mm:ss.SSS} [%thread] %-5level %logger{20} - %msg%n</pattern>
+        </encoder>
+    </appender>
+
+    <root level="INFO">
+        <appender-ref ref="STDOUT" />
+    </root>
+</configuration>

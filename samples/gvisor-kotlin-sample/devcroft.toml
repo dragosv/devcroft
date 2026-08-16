@@ -1,0 +1,25 @@
+[sandbox]
+name = "gvisor-kotlin-sample"
+# The hardened tier (add-hardened-tier), resolved to gVisor
+# (add-gvisor-backend) — the only concrete backend today. `status` shows
+# `isolation: hardened (gvisor/systrap)` or `.../kvm` depending on host
+# platform; `up` fails at layer `backend` outright on macOS or a Linux
+# host without a working `runsc`, rather than silently falling back to
+# `process`. See this sample's README for what is and isn't verified
+# end to end.
+isolation = "hardened"
+
+[env]
+provider = "nix"
+
+# A web server needs to bind a listening socket. devcroft's default
+# network policy (network.default = "deny") denies bind()/listen()
+# outright — at *every* tier, hardened included: gVisor's per-sandbox
+# netstack (which would make this moot) turned out to be incompatible
+# with the unprivileged posture devcroft requires everywhere, so the
+# hardened tier shares the host's network namespace exactly like the
+# process tier does (see docs/decisions.md, "Rejected (for now):
+# non-rootless gVisor for netstack"). Same workaround as nix-go-sample
+# until a dedicated "permit listen, deny egress" knob exists.
+[network]
+default = "allow"
