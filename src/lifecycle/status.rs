@@ -38,6 +38,12 @@ pub struct SandboxStatus {
     /// fresh).
     pub env_stale: Option<bool>,
     pub degraded: Vec<DegradedCapability>,
+    /// The concrete backend the isolation tier resolved to at the last
+    /// `up` (`"process"`, `"gvisor/systrap"`, ...) — add-hardened-tier's
+    /// "status shows isolation: hardened (gvisor/systrap)" requirement.
+    /// `None` when no `up` has ever recorded meta for this sandbox yet;
+    /// distinct from an empty string, which never occurs.
+    pub isolation: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -78,7 +84,8 @@ pub fn status(manifest: &Manifest) -> Result<SandboxStatus, StatusError> {
 
     let keeper = keeper_status(&paths).map_err(|e| StatusError::Keeper(e.to_string()))?;
 
-    let env_stale = state::read_meta(&paths.meta)?.and_then(|meta| {
+    let meta = state::read_meta(&paths.meta)?;
+    let env_stale = meta.as_ref().and_then(|meta| {
         provider::is_stale(
             &manifest.env.provider,
             Path::new(&meta.project_root),
@@ -86,6 +93,7 @@ pub fn status(manifest: &Manifest) -> Result<SandboxStatus, StatusError> {
         )
         .ok()
     });
+    let isolation = meta.map(|meta| meta.resolved_backend);
 
     let degraded = policy::detect_degraded(&policy::compile(manifest));
 
@@ -94,6 +102,7 @@ pub fn status(manifest: &Manifest) -> Result<SandboxStatus, StatusError> {
         keeper,
         env_stale,
         degraded,
+        isolation,
     })
 }
 
@@ -245,6 +254,7 @@ mod tests {
                     project_root: format!("/proj/{name}"),
                     env_fingerprint: "fp".to_string(),
                     read_only_grants: Vec::new(),
+                    resolved_backend: "process".to_string(),
                 },
             )
             .unwrap();

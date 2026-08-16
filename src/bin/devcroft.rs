@@ -25,6 +25,29 @@ fn main() {
                 .expect("__keeper requires an ssh-socket fd argument");
             keeper_main(fd, ssh_fd);
         }
+        Some("__hardened_keeper") => {
+            let fd: RawFd = args
+                .get(2)
+                .and_then(|s| s.parse().ok())
+                .expect("__hardened_keeper requires a control-socket fd argument");
+            let ssh_fd: RawFd = args
+                .get(3)
+                .and_then(|s| s.parse().ok())
+                .expect("__hardened_keeper requires an ssh-socket fd argument");
+            let container_id = args
+                .get(4)
+                .cloned()
+                .expect("__hardened_keeper requires a container-id argument");
+            let runsc = args
+                .get(5)
+                .cloned()
+                .expect("__hardened_keeper requires a runsc-path argument");
+            let state_root = args
+                .get(6)
+                .cloned()
+                .expect("__hardened_keeper requires a runsc-state-root argument");
+            hardened_keeper_main(fd, ssh_fd, container_id, runsc, state_root);
+        }
         Some("exec") => std::process::exit(cli_exec(&args[2..])),
         Some("shell") => std::process::exit(cli_shell(&args[2..])),
         Some("proxy") => std::process::exit(cli_proxy(&args[2..])),
@@ -713,6 +736,7 @@ fn cli_up(args: &[String]) -> i32 {
             match e {
                 devcroft::lifecycle::UpError::State(_) => 1,
                 devcroft::lifecycle::UpError::Provider(_) => 3,
+                devcroft::lifecycle::UpError::Backend(_) => 4,
                 devcroft::lifecycle::UpError::Keeper(_) | devcroft::lifecycle::UpError::Ssh(_) => 5,
             }
         }
@@ -836,6 +860,15 @@ fn print_status(s: &devcroft::lifecycle::SandboxStatus, provider: &str) {
         }
         Some(false) => println!("env: fresh"),
         None => println!("env: unknown"),
+    }
+    // add-hardened-tier: `resolved_backend` is "process" for the process
+    // tier, or "<backend>/<platform>" (e.g. "gvisor/systrap") for the
+    // hardened tier — printed as `isolation: hardened (gvisor/systrap)`
+    // per that change's spec scenario, `isolation: process` otherwise.
+    match s.isolation.as_deref() {
+        Some("process") => println!("isolation: process"),
+        Some(backend) => println!("isolation: hardened ({backend})"),
+        None => println!("isolation: unknown (no successful `up` yet)"),
     }
     if s.degraded.is_empty() {
         println!("policy: no degraded capabilities on this host");
@@ -1442,6 +1475,130 @@ fn install_shutdown_handler(registry: Arc<Registry>) {
                 libc::kill(-info.pgid, libc::SIGKILL);
             }
         }
+        std::process::exit(0);
+    });
+}
+
+/// The hardened tier's host-side control server (add-gvisor-backend
+/// task 4.2): runs post-`up_hardened`, on the host, never restricted —
+/// there is nothing to self-restrict at this tier (the sandbox's own
+/// gVisor+Landlock confinement is the boundary). Dispatches every
+/// session through `runsc exec` (`RunscExecBackend`) instead of a local
+/// fork/exec, but is otherwise identical to `keeper_main`: same
+/// `Keeper`, same wire protocol, same embedded ssh server — only the
+/// session-spawn mechanism and the shutdown sequence's extra step
+/// (tearing down the `runsc` sandbox itself) differ.
+#[cfg(target_os = "linux")]
+fn hardened_keeper_main(
+    fd: RawFd,
+    ssh_fd: RawFd,
+    container_id: String,
+    runsc: String,
+    state_root: String,
+) -> ! {
+    // SAFETY: `up_hardened` created both listeners before spawning this
+    // process, cleared their FD_CLOEXEC, and passed the fd numbers as
+    // this process's argv — they are ours alone to take ownership of,
+    // the same contract `keeper_main` has for the process tier.
+    let listener = unsafe { UnixListener::from_raw_fd(fd) };
+    let ssh_listener = unsafe { UnixListener::from_raw_fd(ssh_fd) };
+
+    let runsc_path = std::path::PathBuf::from(&runsc);
+    let state_root_path = std::path::PathBuf::from(&state_root);
+    let backend: Arc<dyn devcroft::keeper::SessionBackend> =
+        Arc::new(devcroft::gvisor::session_backend::RunscExecBackend {
+            runsc: runsc_path.clone(),
+            container_id: container_id.clone(),
+            state_root: state_root_path.clone(),
+        });
+
+    let keeper = Keeper::new(listener, Arc::clone(&backend));
+    // Must run before `ssh::start_from_env` spawns its own tokio worker
+    // threads, for the identical reason `keeper_main` orders it first —
+    // see that function's own comment.
+    install_hardened_shutdown_handler(
+        Arc::clone(keeper.registry()),
+        runsc_path,
+        container_id,
+        state_root_path,
+    );
+
+    devcroft::ssh::start_from_env(ssh_listener, Arc::clone(&backend));
+
+    let _ = keeper.serve();
+    std::process::exit(0);
+}
+
+/// Unreachable in practice — `__hardened_keeper` is only ever spawned by
+/// `up_hardened`, which `lifecycle::up::resolve_backend` already confines
+/// to Linux hosts. This stub exists only so the crate still compiles on
+/// macOS, where `gvisor::runner`/`gvisor::session_backend` (this
+/// function's real dependencies) are not even built.
+#[cfg(not(target_os = "linux"))]
+fn hardened_keeper_main(
+    _fd: RawFd,
+    _ssh_fd: RawFd,
+    _container_id: String,
+    _runsc: String,
+    _state_root: String,
+) -> ! {
+    unreachable!("__hardened_keeper is only ever spawned by up_hardened, which is Linux-only")
+}
+
+/// `down`/`rm` for the hardened tier: drains sessions the same way
+/// `install_shutdown_handler` does (killing each local `runsc exec`
+/// client's process group — design.md decision 5 notes this is expected
+/// to propagate into the sandboxed process, unverified against a live
+/// `runsc`), then tears down the sandbox itself (`runsc kill` +
+/// `runsc delete`). That second step has no analogue at the process
+/// tier: there, the sandboxed process tree *is* the keeper's own
+/// restricted process tree, so killing the keeper's pid already stops
+/// everything. Here the sandbox is a separate, persistent `runsc run -d`
+/// container — draining sessions alone would leave it running.
+#[cfg(target_os = "linux")]
+fn install_hardened_shutdown_handler(
+    registry: Arc<Registry>,
+    runsc: std::path::PathBuf,
+    container_id: String,
+    state_root: std::path::PathBuf,
+) {
+    const SESSION_GRACE: std::time::Duration = std::time::Duration::from_secs(2);
+
+    let mut set: libc::sigset_t = unsafe { std::mem::zeroed() };
+    unsafe {
+        libc::sigemptyset(&mut set);
+        libc::sigaddset(&mut set, libc::SIGTERM);
+        libc::sigaddset(&mut set, libc::SIGINT);
+        libc::sigaddset(&mut set, libc::SIGHUP);
+        if libc::pthread_sigmask(libc::SIG_BLOCK, &set, std::ptr::null_mut()) != 0 {
+            panic!(
+                "blocking shutdown signals: {}",
+                std::io::Error::last_os_error()
+            );
+        }
+    }
+
+    std::thread::spawn(move || {
+        let mut received: libc::c_int = 0;
+        if unsafe { libc::sigwait(&set, &mut received) } != 0 {
+            return;
+        }
+        for (_, info) in registry.snapshot() {
+            unsafe {
+                libc::kill(-info.pgid, libc::SIGTERM);
+            }
+        }
+        std::thread::sleep(SESSION_GRACE);
+        for (_, info) in registry.snapshot() {
+            unsafe {
+                libc::kill(-info.pgid, libc::SIGKILL);
+            }
+        }
+        let container = devcroft::gvisor::runsc_command::Container {
+            id: &container_id,
+            state_root: &state_root,
+        };
+        let _ = devcroft::gvisor::runner::teardown(&runsc, &container);
         std::process::exit(0);
     });
 }

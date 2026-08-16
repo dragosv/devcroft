@@ -29,6 +29,17 @@ pub struct StatePaths {
     /// either; `up` passes the key material down directly instead (see
     /// `ssh::keys` and `up.rs`).
     pub ssh_host_key: PathBuf,
+    /// Hardened-tier only (add-gvisor-backend): the OCI bundle
+    /// (`config.json` + `rootfs/`) `runsc run` consumes. Unused paths
+    /// for the process tier, same posture `ssh_socket`/`ssh_host_key`
+    /// already have on backends that don't need them.
+    pub gvisor_bundle: PathBuf,
+    /// Hardened-tier only: `runsc`'s own `--root` state directory —
+    /// container metadata `runsc` itself manages, not the sandbox's
+    /// filesystem state. Kept under the same per-sandbox tree as
+    /// everything else so concurrent sandboxes never share it and
+    /// rootless mode needs no `/run` access.
+    pub gvisor_runsc_state: PathBuf,
 }
 
 impl StatePaths {
@@ -49,6 +60,8 @@ impl StatePaths {
             meta: root.join("meta.json"),
             ssh_socket: root.join("ssh.sock"),
             ssh_host_key: root.join("ssh_host_ed25519_key"),
+            gvisor_bundle: root.join("bundle"),
+            gvisor_runsc_state: root.join("runsc-state"),
             root,
         }
     }
@@ -91,6 +104,20 @@ pub struct Meta {
     pub env_fingerprint: String,
     #[serde(default)]
     pub read_only_grants: Vec<String>,
+    /// The concrete backend the isolation tier resolved to at this `up`
+    /// (`"process"`, `"gvisor/systrap"`, `"gvisor/kvm"`, ...) — recorded
+    /// here for the same reason `env_fingerprint` is: `status` needs it
+    /// and the keeper itself is never told its own state dir, so it
+    /// can't answer either. `#[serde(default = "default_resolved_backend")]`
+    /// so `meta.json` written before this field existed still
+    /// deserializes: every sandbox that predates the hardened tier was,
+    /// by definition, a `process`-tier one.
+    #[serde(default = "default_resolved_backend")]
+    pub resolved_backend: String,
+}
+
+fn default_resolved_backend() -> String {
+    "process".to_string()
 }
 
 /// Writes via a same-directory temp file plus `rename`, not a direct
@@ -259,6 +286,7 @@ mod tests {
             project_root: "/proj".to_string(),
             env_fingerprint: "abc123".to_string(),
             read_only_grants: vec!["/nix/store".to_string()],
+            resolved_backend: "process".to_string(),
         };
         write_meta(&paths.meta, &meta).unwrap();
         assert_eq!(read_meta(&paths.meta).unwrap(), Some(meta));
@@ -275,6 +303,7 @@ mod tests {
             project_root: "/proj".to_string(),
             env_fingerprint: "abc123".to_string(),
             read_only_grants: Vec::new(),
+            resolved_backend: "process".to_string(),
         };
         write_meta(&paths.meta, &meta).unwrap();
         assert!(!paths.meta.with_extension("json.tmp").exists());
@@ -294,6 +323,9 @@ mod tests {
         let meta = read_meta(&paths.meta).unwrap().unwrap();
         assert_eq!(meta.project_root, "/proj");
         assert!(meta.read_only_grants.is_empty());
+        // Every sandbox from before the hardened tier existed was, by
+        // definition, a process-tier one.
+        assert_eq!(meta.resolved_backend, "process");
     }
 
     #[test]
