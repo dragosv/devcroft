@@ -335,6 +335,49 @@ mod tests {
         );
     }
 
+    /// Backs a concrete claim `tests/gvisor_hardened_tier_pid_isolation.rs`
+    /// (and the process-tier exploit `tests/process_tier_pid_namespace_exploit.rs`
+    /// documents the *absence* of) depends on: every hardened-tier bundle,
+    /// regardless of policy shape, requests its own `pid`/`ipc`/`uts`/`mount`
+    /// namespaces — never omitted, never conditional on the manifest the
+    /// way the `network` namespace is. This is what makes a signal-based
+    /// attack across the sandbox boundary structurally impossible at this
+    /// tier rather than merely denied by a runtime check: inside a fresh
+    /// PID namespace, a host PID has no referent to `kill()` in the first
+    /// place. Pure JSON generation — no `runsc` required, unlike the live
+    /// exploit test this exists to substantiate.
+    #[test]
+    fn hardened_tier_bundle_always_requests_pid_ipc_uts_and_mount_namespaces() {
+        let (manifest, _) = parse(
+            r#"
+            [sandbox]
+            name = "myproj"
+            [network]
+            default = "deny"
+            allow = ["github.com"]
+            "#,
+        )
+        .unwrap();
+        let compiled = policy::compile(&manifest);
+        let project_root = Path::new("/proj");
+        let grants = Vec::new();
+        let env = BTreeMap::new();
+        let spec = build(&compiled, &inputs(project_root, &grants, &env));
+
+        let types: Vec<&str> = spec
+            .linux
+            .namespaces
+            .iter()
+            .map(|n| n.typ.as_str())
+            .collect();
+        for required in ["pid", "ipc", "uts", "mount"] {
+            assert!(
+                types.contains(&required),
+                "hardened-tier bundle must always request a {required} namespace, got {types:?}"
+            );
+        }
+    }
+
     #[test]
     fn read_only_grants_become_ro_bind_mounts() {
         let (manifest, _) = parse("[sandbox]\nname = \"myproj\"\n").unwrap();

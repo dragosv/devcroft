@@ -360,11 +360,25 @@ worth a dedicated change once the hardened tier itself ships.
 
 ### No inter-sandbox process isolation (MVP)
 
-Landlock does not hide processes. Two sandboxes on one host can see and
-signal each other's process trees. Planned mitigation: PID and mount
-namespaces layered over Landlock on Linux (still container-free, no images
-involved). macOS has no namespace equivalent, so fleet-grade separation
-there is Linux-only.
+Landlock does not hide processes: no PID or mount namespace separates
+sandboxes, so this remains structurally true. Planned mitigation: PID and
+mount namespaces layered over Landlock on Linux (still container-free, no
+images involved). macOS has no namespace equivalent, so fleet-grade
+separation there is Linux-only.
+
+**Corrected, verified live (`tests/process_tier_landlock_boundaries.rs`):**
+"can see and signal each other's process trees" turned out to overclaim
+what actually reaches through the shared namespace. On a Landlock **ABI
+V6** host, a sandboxed process can do neither: V6's signal-scoping LSM
+hook blocks `kill()` against a process outside the sandbox (`Operation not
+permitted`), and the pre-existing default-deny filesystem policy already
+covers `/proc/<pid>/*` like any other ungranted path (`Permission
+denied`) — closing both without any namespace doing the enforcing. This
+is kernel-version-dependent: ABI V6's signal scoping is new enough that
+older kernels this project still supports would plausibly reproduce the
+original claim. `doctor`'s `kernel: Landlock V6` line is how to tell
+which regime a given host is in — this decision entry was wrong to state
+the gap unconditionally rather than naming that dependency.
 
 ### Cooperative network filtering
 
@@ -373,6 +387,20 @@ sandboxed process cooperates with. A process that deliberately bypasses the
 proxy — raw sockets, direct IPs — is not stopped by this mechanism on all
 platforms. Where an aspect cannot be enforced on the current host, `up`
 says so once, and `doctor` lists it. Nothing is silently dropped.
+
+**Corrected, verified live (`tests/process_tier_landlock_boundaries.rs`):**
+"raw sockets, direct IPs — not stopped" doesn't hold on Linux as stated.
+Tested directly: with `network.default = "deny"` (allowlist or not),
+`policy --render` still shows `network.block: true`, and a raw socket
+connecting to an IP with no relation to any allowed domain gets a
+kernel-level `Permission denied` — nono's own Landlock network scoping,
+not a proxy hint a raw socket simply never talks to. macOS Seatbelt is a
+different backend and this correction doesn't extend to it — the original
+claim stands there. Left genuinely open, not claimed as safe: whether the
+*allowed* domain's own resolved-IP scope is wider than intended (a
+different service on the same allowed IP, or DNS-rebinding-shaped
+tricks) — untested, and a real candidate for the next thing to check
+before trusting this further.
 
 ### No service sidecars (yet)
 

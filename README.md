@@ -165,17 +165,28 @@ scoped to `process` unless said otherwise.
 
 Known gaps, published rather than hidden:
 
-- **No inter-sandbox process visibility separation.** MVP has no PID, mount,
-  or network namespace separation between sandboxes
-  ([design.md](openspec/changes/add-mvp-core/design.md) Decision 5):
-  two sandboxes on the same host can see each other's processes, and — since
-  they share the host's network namespace — two sandboxes each binding the
-  same port (e.g. both running a dev server on 3000) would conflict with
-  `EADDRINUSE`. There is no conflict detection; reach a sandbox's services
-  through SSH's `-L` forwarding rather than assuming host ports are
-  exclusive to it. **Note this is currently moot under the default
-  policy** — see the listening-socket gap below, where neither sandbox can
-  bind in the first place.
+- **No PID/mount/network namespace separation between sandboxes**
+  ([design.md](openspec/changes/add-mvp-core/design.md) Decision 5) — still
+  true structurally: Landlock hides nothing, so sandboxes share the host's
+  raw process and network namespaces. What this means in practice turned
+  out narrower than Decision 5 originally assumed, though: on a Landlock
+  **ABI V6** host (`doctor` reports the ABI level; this repo's own
+  devcontainer is V6), `tests/process_tier_landlock_boundaries.rs` proves
+  live that a sandboxed process can neither `kill()` nor read
+  `/proc/<pid>/*` for a process outside its own sandbox — V6's signal-
+  scoping LSM hook and the default-deny filesystem policy (which covers
+  `/proc` like any other ungranted path) close both, even with no PID
+  namespace to enforce it structurally. This is kernel-version-dependent,
+  not a blanket guarantee — older kernels without ABI V6 would plausibly
+  still allow it, and `doctor`'s ABI line is how to know which regime a
+  given host is in. What the missing namespace separation still means
+  regardless of ABI version: two sandboxes binding the same port (e.g.
+  both running a dev server on 3000) still race for it with `EADDRINUSE`,
+  since Landlock has no hook for that at all. There is no conflict
+  detection; reach a sandbox's services through SSH's `-L` forwarding
+  rather than assuming host ports are exclusive to it. **Note this is
+  currently moot under the default policy** — see the listening-socket
+  gap below, where neither sandbox can bind in the first place.
 - **`network` blocking also blocks *listening* sockets, including
   loopback.** The default policy denies `bind`+`listen` outright, so a dev
   server inside a sandbox cannot come up at all — `python3 -c "…bind(('127.0.0.1', 0))…"`
@@ -191,10 +202,22 @@ Known gaps, published rather than hidden:
   section above for why the netstack-based fix an earlier draft assumed
   turned out not to be available under the unprivileged posture devcroft
   requires everywhere.
-- **Network filtering is cooperative and platform-dependent.** Domain-level
-  allowlisting needs a cooperative proxy; macOS Seatbelt cannot enforce it
-  at all without one. `doctor` and `up` name this degradation once, rather
-  than silently granting broader network access than the manifest asked for.
+- **Network filtering is platform-dependent; on Linux it's less "purely
+  cooperative" than first assumed.** macOS Seatbelt genuinely cannot
+  enforce domain-level allowlisting without a cooperative proxy —
+  `doctor` and `up` name that degradation once, rather than silently
+  granting broader network access than the manifest asked for. On Linux,
+  the original assumption here was that a process could always bypass a
+  domain allowlist with a raw socket straight to an unresolved IP.
+  `tests/process_tier_landlock_boundaries.rs` tested that directly and
+  found it doesn't hold on this host: `policy --render` shows
+  `network.block: true` even with an allowlist set, and a raw socket to
+  an IP with no relation to any allowed domain gets a kernel-level
+  `Permission denied` — nono's own Landlock network scoping, not an
+  unenforced proxy hint the socket simply never talks to. Left genuinely
+  open (untested, not claimed as safe): whether the *allowed* domain's
+  own resolved-IP scope is wider than intended — a different service on
+  the same allowed IP, or DNS-rebinding-shaped tricks.
 - **No cgroup resource limits.** A runaway build in one sandbox can affect
   the whole host — nothing today caps CPU or memory per sandbox. Planned:
   cgroup v2 scope units per keeper on Linux; no macOS equivalent exists.

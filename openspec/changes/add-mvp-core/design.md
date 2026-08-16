@@ -81,6 +81,22 @@ This is documented as a known limitation. The state-dir layout, socket
 naming, and keeper design are chosen so namespace hardening can be added
 later without breaking the CLI contract.
 
+**Correction (verified live post-MVP, `tests/process_tier_landlock_boundaries.rs`):**
+"can see each other's processes" was written under the same
+Landlock V6 host this decision's own Decision 6 confirms
+(`nono setup --check-only` reporting V6), but wasn't actually tested
+against it. It doesn't hold as stated: V6's signal-scoping LSM hook blocks
+`kill()` across the shared PID space, and the pre-existing default-deny
+filesystem policy already denies `/proc/<pid>/*` for any process outside
+the sandbox, the same as any other ungranted path. Both closed without any
+namespace doing the enforcing — narrower in practice than "Landlock does
+not hide them" suggests, though the namespaces genuinely still aren't
+separated (see the port-conflict consequence this still has, in
+README.md's known gaps). Kernel-version-dependent: this is specific to
+ABI V6's signal scoping; left as originally written for hosts without it.
+See `docs/decisions.md`'s "No inter-sandbox process isolation (MVP)" entry
+for the full correction.
+
 ## Decision 6: fd passing over socket-activation fallback (spike outcome)
 
 Tasks 1.1/1.2 built the minimal spike described in Decision 1 and ran it on
