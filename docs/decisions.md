@@ -311,6 +311,35 @@ Two rules follow, and they are not negotiable:
 Under-promising is cheaper than retracting a claim after someone
 demonstrates a bypass.
 
+### Rejected (for now): non-rootless gVisor for netstack
+
+gVisor's per-sandbox netstack (`--network=sandbox`) would let a loopback
+bind inside one sandbox stay invisible to every other sandbox and the
+host — closing the listen-socket/port-conflict gap the process tier
+already has (see `docs/ssh-validation.md`) at the `hardened` tier too.
+It requires giving up rootless mode: `runsc` rejects `--network=sandbox`
+combined with `--rootless` outright, and devcroft runs unprivileged
+everywhere by design (Landlock itself needs no privilege; nono drops
+root before exec). The property that fails: an unprivileged host process
+cannot get gVisor's own network isolation, full stop — this is not a
+devcroft configuration gap to work around, it is `runsc`'s own
+documented behavior, confirmed by an earlier draft of `add-gvisor-backend`
+having assumed otherwise and having to be corrected before any code
+shipped against it.
+
+`add-gvisor-backend`'s hardened tier therefore shares the host's network
+namespace (`--network=host` when the manifest grants egress, `--network=
+none` otherwise) — the tier's real, delivered guarantee is Sentry's
+user-space syscall boundary plus Landlock defense-in-depth on Sentry
+itself, not a network story stronger than the process tier's.
+
+**Revisit if:** a future backend change is willing to trade rootless for
+netstack behind an explicit, narrowly scoped privilege grant — the same
+shape as the NOPASSWD sudo rule this repo already gives flox's
+nix-daemon for the one root action it actually needs, rather than a
+blanket privileged container. Recorded as a real option in
+`add-gvisor-backend`'s own Open Questions, not chosen there either.
+
 ### No resource limits (yet)
 
 Landlock and Seatbelt constrain access, not consumption. A session can
@@ -319,6 +348,15 @@ runaway build can take down the host. Containers get cgroups for free.
 
 Planned mitigation: cgroup v2 scope units per keeper on Linux. macOS has no
 comparable mechanism, so the gap there is likely permanent.
+
+**Revisit at the hardened tier:** `runsc` integrates with cgroups
+directly (gVisor's Sentry already accounts resource use per sandbox for
+its own scheduling), which the process tier has no equivalent of. MVP
+explicitly punted on resource limits everywhere, and `add-gvisor-backend`
+does not add them either — building them only for the tier that happens
+to make it easy would be scope creep for a change that is not about
+resource limits. But the door this opens is real, not hypothetical, and
+worth a dedicated change once the hardened tier itself ships.
 
 ### No inter-sandbox process isolation (MVP)
 

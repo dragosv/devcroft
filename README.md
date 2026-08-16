@@ -103,16 +103,51 @@ also closed a real, pre-existing gap that predated nix entirely: `policy
 (`Origin::Provider` existed since MVP with no caller) — fixed for flox
 and nix alike.
 
+**`add-hardened-tier`/`add-gvisor-backend` are in progress** (16/17 and
+23/28 tasks) — the `hardened` tier's first concrete backend, gVisor. The
+manifest's `[sandbox].isolation` key, the `SessionBackend` trait
+`lifecycle::up` dispatches sessions through, and the `gvisor` module
+(OCI bundle synthesis from the same `CompiledPolicy` the process tier
+compiles, `runsc` command assembly, a Landlock profile applied to the
+Sentry process as defense in depth, `doctor` diagnostics, a pinned
+`runsc` install in the devcontainer) are all implemented and unit
+tested. One correction along the way, made before any code shipped
+against the wrong assumption: an earlier draft leaned on gVisor's
+per-sandbox netstack to close the listen-socket gap below for free, but
+`runsc` rejects that mode outright under `--rootless`, and devcroft runs
+unprivileged everywhere by design — so the hardened tier shares the
+host's network namespace exactly like `process` does, and does **not**
+close that gap either (see the note below).
+
+What isn't done: end-to-end verification against a live sandbox. This
+devcontainer has no working `runsc` on `PATH` and, more fundamentally,
+cannot create unprivileged user namespaces at all (`unshare --user`
+fails `EPERM`) — a rootless `runsc run` needs exactly that. This was
+confirmed directly, not assumed: a real `runsc` release binary was
+fetched out-of-band and driven through the actual code path by hand
+against a real nix-flake project. That caught and fixed four real bugs
+before any of them could ship — a Landlock ruleset that denied `runsc`
+its own `execve`, a missing grant for the `/proc/sys` tunables `runsc`'s
+own preflight reads, missing grants for the OCI bundle and `runsc`'s
+`--root` state directory, and a `-d` flag that doesn't exist (`-detach`
+does) — and then reached exactly the userns wall already diagnosed, no
+further. The remaining tasks (a live session round-trip through `runsc
+exec`, and confirming the host-side SSH server behaves identically to
+the process tier's) need a devcontainer rebuild with that capability
+unlocked to actually run.
+
 ## Limitations
 
-devcroft's default (and only implemented) tier, `process`, is Landlock or
-Seatbelt applied to a process tree. **This is accident protection, not a
-security boundary** — the full host kernel syscall surface stays reachable
-from inside, so a kernel bug is an escape. A real boundary is the planned
-`hardened` tier (gVisor or LiteBox, plus Landlock; see
+devcroft's default (and only fully implemented) tier, `process`, is
+Landlock or Seatbelt applied to a process tree. **This is accident
+protection, not a security boundary** — the full host kernel syscall
+surface stays reachable from inside, so a kernel bug is an escape. A real
+boundary is the `hardened` tier (gVisor via `add-gvisor-backend`, or
+LiteBox; see
 [openspec/changes/add-hardened-tier/](openspec/changes/add-hardened-tier/)),
-not yet implemented. Every isolation claim in this README and in `devcroft`'s
-own output is scoped to `process` unless said otherwise.
+implementation in progress per the Status section above, not yet verified
+end to end. Every isolation claim in this README and in `devcroft`'s own
+output is scoped to `process` unless said otherwise.
 
 Known gaps, published rather than hidden:
 
@@ -137,7 +172,11 @@ Known gaps, published rather than hidden:
   egress filtering, so there is currently no way to express "no outbound
   access, but I can still run my dev server". This is what stops VS Code
   Remote-SSH (its server needs a loopback listener) — see
-  [docs/ssh-validation.md](docs/ssh-validation.md).
+  [docs/ssh-validation.md](docs/ssh-validation.md). **Not process-tier-only:**
+  the planned `hardened` tier does not close this either — see the Status
+  section above for why the netstack-based fix an earlier draft assumed
+  turned out not to be available under the unprivileged posture devcroft
+  requires everywhere.
 - **Network filtering is cooperative and platform-dependent.** Domain-level
   allowlisting needs a cooperative proxy; macOS Seatbelt cannot enforce it
   at all without one. `doctor` and `up` name this degradation once, rather

@@ -107,14 +107,14 @@
 
 ## 9. Docs
 
-- [ ] 9.1 `docs/ssh-validation.md`: give its highest-priority
+- [x] 9.1 `docs/ssh-validation.md`: give its highest-priority
       listen-socket finding a tier-qualified answer — the hardened tier
       does *not* close it either, and why (design.md decision 1) —
       rather than leaving a reader to assume a new tier fixed it
-- [ ] 9.2 README: add the hardened tier to the isolation-tier story with
+- [x] 9.2 README: add the hardened tier to the isolation-tier story with
       its guarantee stated tier-qualified; correct the port-conflict
       story so it does not imply the hardened tier removes conflicts
-- [ ] 9.3 `docs/decisions.md`: record the rootless-vs-netstack tradeoff
+- [x] 9.3 `docs/decisions.md`: record the rootless-vs-netstack tradeoff
       as a falsifiable rejection naming the property that fails, per
       that file's own convention, with the scoped-privilege alternative
       noted as revisitable; add the "revisit at hardened tier" note to
