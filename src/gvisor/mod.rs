@@ -37,7 +37,7 @@ pub enum Platform {
 }
 
 impl Platform {
-    pub(crate) fn runsc_flag(self) -> &'static str {
+    pub fn runsc_flag(self) -> &'static str {
         match self {
             Platform::Systrap => "systrap",
             Platform::Kvm => "kvm",

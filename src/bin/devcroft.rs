@@ -483,6 +483,8 @@ fn cli_doctor() -> i32 {
     let mut ok = true;
     ok &= doctor_backend();
     ok &= doctor_provider();
+    doctor_hardened_tier();
+    ok &= doctor_gvisor_backend();
     doctor_ssh_config();
     doctor_manifest_degradation();
 
@@ -606,6 +608,96 @@ fn doctor_nix_provider() -> bool {
              `experimental-features = nix-command flakes` to nix.conf"
         );
         false
+    }
+}
+
+/// add-hardened-tier's backend-generic doctor line: whether the hardened
+/// tier is even conceivable on this platform at all, independent of
+/// which concrete backend — `doctor_gvisor_backend` below is where the
+/// real, backend-specific probe lives. The hardened tier is opt-in
+/// (`[sandbox].isolation` defaults to `process`), the same posture the
+/// `nix` provider's absence already has in this command, so absence
+/// here is always `[WARN]`, never `[FAIL]` — a host with no hardened
+/// backend at all is still fully usable for every `process`-tier
+/// project.
+fn doctor_hardened_tier() {
+    if cfg!(target_os = "linux") {
+        println!("[PASS] hardened-tier: Linux host — see the gvisor-backend check below");
+    } else {
+        println!(
+            "[WARN] hardened-tier: unavailable on this platform — the hardened tier is Linux \
+             only (a permanent limitation, not a missing install) and is only needed for \
+             `isolation = \"hardened\"` projects"
+        );
+    }
+}
+
+/// add-gvisor-backend's `doctor` diagnostics (task 7, cli delta spec):
+/// `runsc` presence and version, which platform would be selected and
+/// why, and a real smoke check of that platform — never inferred from
+/// binary presence alone. Silent on non-Linux: `doctor_hardened_tier`
+/// above already reported the platform limitation, and there is nothing
+/// gVisor-specific to add to that.
+///
+/// No version-range check: unlike nono/nix, this repo has not decided
+/// what "tested range" means for a project that ships continuously
+/// rather than by semver (add-gvisor-backend's own Open Questions section
+/// says so explicitly) — reporting a fabricated range here would
+/// misrepresent an undecided question as a settled one.
+fn doctor_gvisor_backend() -> bool {
+    if !cfg!(target_os = "linux") {
+        return true;
+    }
+
+    let Some(runsc) = devcroft::gvisor::runsc_command::resolve() else {
+        println!(
+            "[WARN] gvisor-backend: runsc not found on PATH — only needed for \
+             `isolation = \"hardened\"` projects; see https://gvisor.dev/docs/user_guide/install/"
+        );
+        return true;
+    };
+
+    let Some(version) = devcroft::gvisor::runsc_command::probe_version(&runsc) else {
+        println!(
+            "[FAIL] gvisor-backend: runsc found at {} but `runsc --version` failed — reinstall it",
+            runsc.display()
+        );
+        return false;
+    };
+
+    let platform = devcroft::gvisor::select_platform();
+    let platform_name = platform.runsc_flag();
+    let smoke = std::process::Command::new(&runsc)
+        .arg("--rootless")
+        .arg("--platform")
+        .arg(platform_name)
+        .arg("do")
+        .arg("true")
+        .output();
+    match smoke {
+        Ok(out) if out.status.success() => {
+            println!("[PASS] gvisor-backend: runsc {version}, platform: {platform_name}");
+            true
+        }
+        Ok(out) => {
+            let stderr = String::from_utf8_lossy(&out.stderr);
+            let reason = stderr.lines().next_back().unwrap_or("unknown error");
+            println!(
+                "[FAIL] gvisor-backend: runsc {version} found, but the {platform_name} platform \
+                 does not work on this host ({reason}) — {}",
+                if platform_name == "kvm" {
+                    "check /dev/kvm permissions, or the hardened tier will fall back to systrap \
+                     automatically on the next `up`"
+                } else {
+                    "check kernel support for gVisor's systrap platform"
+                }
+            );
+            false
+        }
+        Err(e) => {
+            println!("[FAIL] gvisor-backend: could not run `runsc do`: {e}");
+            false
+        }
     }
 }
 

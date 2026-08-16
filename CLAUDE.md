@@ -124,11 +124,18 @@ rule carries an origin: `manifest:<key>`, `provider:<name>`, or `baseline`.
 Nothing goes to the backend that cannot be shown via `policy --render`.
 Baseline denials always win, including devcroft's own data dir.
 
-**SSH lives inside the boundary, on a unix socket only.** The keeper embeds
-russh listening on a 0600 socket in a 0700 state dir; it MUST NOT bind TCP.
-The filesystem permissions are the real access boundary — SSH is there for
-editor protocol compatibility, not network security. Clients reach it via
-`ProxyCommand devcroft proxy %n`.
+**SSH is reachable only on a unix socket — never TCP — but where the server
+process runs is tier-dependent.** At the `process` tier the keeper embeds
+russh listening on a 0600 socket in a 0700 state dir, as originally
+specified. At the `hardened` tier (add-hardened-tier), no keeper runs inside
+the sandbox: the SSH/control server runs host-side and dispatches every
+session through the backend's native exec-into primitive (`runsc exec` for
+gVisor), on the identical 0600-socket-in-0700-dir. Both cases satisfy the
+same underlying invariant — the filesystem permissions are the real access
+boundary, not the process's physical location, and SSH exists for editor
+protocol compatibility, never network security. Clients reach either one via
+`ProxyCommand devcroft proxy %n`; behavior through that path is identical
+regardless of tier.
 
 **Degraded capabilities are surfaced, never silent.** If the host cannot
 enforce a requested aspect (e.g. domain allowlists on macOS Seatbelt), `up`
