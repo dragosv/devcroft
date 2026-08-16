@@ -153,7 +153,8 @@ fn run_one(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::keeper::Keeper;
+    use crate::keeper::{Keeper, LocalSessionBackend};
+    use std::sync::Arc;
     use std::thread;
 
     fn tempdir(tag: &str) -> StatePaths {
@@ -177,7 +178,7 @@ mod tests {
         std::fs::File::create(&paths.log).unwrap();
         let listener = std::os::unix::net::UnixListener::bind(&paths.socket).unwrap();
         thread::spawn(move || {
-            let _ = Keeper::new(listener).serve();
+            let _ = Keeper::new(listener, Arc::new(LocalSessionBackend)).serve();
         });
     }
 

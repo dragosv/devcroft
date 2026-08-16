@@ -26,6 +26,19 @@ pub struct Manifest {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Sandbox {
     pub name: String,
+    pub isolation: Isolation,
+}
+
+/// `[sandbox].isolation`: an intent, resolved to a concrete backend per
+/// host (`add-hardened-tier`). The manifest never names a backend
+/// directly — `process` resolves to nono, `hardened` resolves to
+/// whichever supported hardened backend (gVisor today) is available.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum Isolation {
+    #[default]
+    Process,
+    Hardened,
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]
@@ -116,6 +129,7 @@ struct RawManifest {
 #[serde(default)]
 struct RawSandbox {
     name: Option<String>,
+    isolation: Isolation,
 }
 
 #[derive(Debug)]
@@ -243,7 +257,10 @@ pub fn parse(text: &str) -> Result<(Manifest, Vec<Warning>), ConfigError> {
 
     Ok((
         Manifest {
-            sandbox: Sandbox { name },
+            sandbox: Sandbox {
+                name,
+                isolation: raw.sandbox.isolation,
+            },
             env,
             filesystem: raw.filesystem,
             network: raw.network,
@@ -513,6 +530,24 @@ mod tests {
     fn nix_provider_is_accepted() {
         let (m, _) = parse("[sandbox]\nname = \"myproj\"\n[env]\nprovider = \"nix\"\n").unwrap();
         assert_eq!(m.env.provider, "nix");
+    }
+
+    #[test]
+    fn isolation_defaults_to_process() {
+        let (m, _) = parse("[sandbox]\nname = \"myproj\"\n").unwrap();
+        assert_eq!(m.sandbox.isolation, Isolation::Process);
+    }
+
+    #[test]
+    fn isolation_hardened_parses() {
+        let (m, _) = parse("[sandbox]\nname = \"myproj\"\nisolation = \"hardened\"\n").unwrap();
+        assert_eq!(m.sandbox.isolation, Isolation::Hardened);
+    }
+
+    #[test]
+    fn isolation_invalid_value_is_a_parse_error() {
+        let err = parse("[sandbox]\nname = \"myproj\"\nisolation = \"vm\"\n").unwrap_err();
+        assert!(matches!(err, ConfigError::Parse(_)));
     }
 
     #[test]

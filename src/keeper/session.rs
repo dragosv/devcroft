@@ -22,6 +22,28 @@ pub struct SpawnedSession {
     pub resize_handle: Option<File>,
 }
 
+/// How a session actually comes into being. The `process` tier's keeper
+/// (and the ssh server, whichever tier it runs under) drive every session
+/// through this trait rather than calling [`spawn`] directly, so a
+/// hardened backend with a native exec-into primitive (e.g. `runsc exec`)
+/// can supply its own implementation — in its own module — without
+/// `connection.rs`/`pty.rs`/`protocol.rs`/`registry.rs` or the ssh
+/// channel handling ever needing to know which one is in play. Session
+/// semantics (exec, shell, pty, signals, exit codes) come along for free
+/// because none of that code touches the spawn mechanism directly.
+pub trait SessionBackend: Send + Sync {
+    fn spawn(&self, req: &SpawnRequest) -> io::Result<SpawnedSession>;
+}
+
+/// Local fork/exec — today's only backend, and the `process` tier's.
+pub struct LocalSessionBackend;
+
+impl SessionBackend for LocalSessionBackend {
+    fn spawn(&self, req: &SpawnRequest) -> io::Result<SpawnedSession> {
+        spawn(req)
+    }
+}
+
 pub fn spawn(req: &SpawnRequest) -> io::Result<SpawnedSession> {
     match &req.pty {
         Some(size) => spawn_pty(req, size),

@@ -9,7 +9,7 @@ use std::os::fd::{FromRawFd, RawFd};
 use std::os::unix::net::UnixListener;
 use std::sync::Arc;
 
-use devcroft::keeper::{Keeper, Registry};
+use devcroft::keeper::{Keeper, LocalSessionBackend, Registry};
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
@@ -1369,7 +1369,11 @@ fn keeper_main(fd: RawFd, ssh_fd: RawFd) -> ! {
     let listener = unsafe { UnixListener::from_raw_fd(fd) };
     let ssh_listener = unsafe { UnixListener::from_raw_fd(ssh_fd) };
 
-    let keeper = Keeper::new(listener);
+    // `keeper_main` only ever runs under the `process` tier today (the
+    // `hardened` tier's host-side control server, when implemented, does
+    // not go through this entrypoint at all — see add-hardened-tier task
+    // 3.3), so `LocalSessionBackend` is the only backend reachable here.
+    let keeper = Keeper::new(listener, Arc::new(LocalSessionBackend));
     // Must run before anything else spawns a thread — including the ssh
     // server below, whose tokio runtime spawns its own worker-thread pool
     // immediately. `install_shutdown_handler` blocks SIGTERM/SIGINT/
@@ -1386,7 +1390,7 @@ fn keeper_main(fd: RawFd, ssh_fd: RawFd) -> ! {
     // own stderr (redirected by `up` to `<state>/<name>/keeper.log`) and
     // leaves ssh unavailable for this sandbox rather than taking the
     // whole keeper down — exec/shell must keep working regardless.
-    devcroft::ssh::start_from_env(ssh_listener);
+    devcroft::ssh::start_from_env(ssh_listener, Arc::new(LocalSessionBackend));
 
     let _ = keeper.serve();
     std::process::exit(0);

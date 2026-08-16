@@ -18,6 +18,9 @@ pub use proxy::{ProxyError, proxy, sandbox_name_from_host};
 
 use russh::keys::PrivateKey;
 use russh::keys::ssh_key::PublicKey;
+use std::sync::Arc;
+
+use crate::keeper::session::SessionBackend;
 
 /// The keeper-side half of task 6.1's key handoff: `up` (host-side,
 /// unrestricted) generates the host key and resolves the client's
@@ -31,7 +34,10 @@ use russh::keys::ssh_key::PublicKey;
 /// rather than propagated, so a broken ssh handoff degrades to "no ssh
 /// for this sandbox" instead of taking the whole keeper down — exec/shell
 /// must keep working regardless.
-pub fn start_from_env(listener: std::os::unix::net::UnixListener) {
+pub fn start_from_env(
+    listener: std::os::unix::net::UnixListener,
+    backend: Arc<dyn SessionBackend>,
+) {
     let host_key_pem = match std::env::var("DEVCROFT_SSH_HOST_KEY") {
         Ok(v) => v,
         Err(_) => {
@@ -60,5 +66,5 @@ pub fn start_from_env(listener: std::os::unix::net::UnixListener) {
             return;
         }
     };
-    server::spawn(listener, host_key, authorized_key);
+    server::spawn(listener, host_key, authorized_key, backend);
 }

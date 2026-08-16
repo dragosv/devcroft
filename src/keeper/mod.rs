@@ -26,6 +26,7 @@ pub use protocol::{
     ExitStatus, Frame, PtySize, QueryResult, SessionSignal, SessionSummary, SpawnRequest,
 };
 pub use registry::{Registry, SessionInfo};
+pub use session::{LocalSessionBackend, SessionBackend};
 
 use std::io;
 use std::os::unix::net::UnixListener;
@@ -37,14 +38,20 @@ pub struct Keeper {
     listener: UnixListener,
     registry: Arc<Registry>,
     started: Instant,
+    backend: Arc<dyn SessionBackend>,
 }
 
 impl Keeper {
-    pub fn new(listener: UnixListener) -> Self {
+    /// `backend` decides how a session actually spawns: [`LocalSessionBackend`]
+    /// for the `process` tier (today's fork/exec), or a hardened backend's
+    /// own implementation (e.g. `runsc exec`) for the `hardened` tier —
+    /// everything else about the keeper is identical either way.
+    pub fn new(listener: UnixListener, backend: Arc<dyn SessionBackend>) -> Self {
         Self {
             listener,
             registry: Arc::new(Registry::new()),
             started: Instant::now(),
+            backend,
         }
     }
 
@@ -63,7 +70,8 @@ impl Keeper {
             let (stream, _) = self.listener.accept()?;
             let registry = Arc::clone(&self.registry);
             let started = self.started;
-            thread::spawn(move || connection::handle(stream, registry, started));
+            let backend = Arc::clone(&self.backend);
+            thread::spawn(move || connection::handle(stream, registry, started, backend));
         }
     }
 }

@@ -5,7 +5,7 @@ use crate::paths::{SENSITIVE_PATHS, has_traversal, is_within};
 /// deliberately absent from `env`'s field list — it is a free-form table
 /// of user-chosen names and is never schema-checked.
 const SECTIONS: &[(&str, &[&str])] = &[
-    ("sandbox", &["name"]),
+    ("sandbox", &["name", "isolation"]),
     ("env", &["provider", "vars"]),
     ("filesystem", &["allow", "read", "deny"]),
     ("network", &["default", "allow"]),

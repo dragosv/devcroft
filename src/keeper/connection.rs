@@ -15,21 +15,27 @@ use std::time::{Duration, Instant, UNIX_EPOCH};
 
 use super::protocol::{self, ExitStatus, Frame, QueryResult, SessionSummary};
 use super::registry::Registry;
-use super::session;
+use super::session::SessionBackend;
 
 pub const DEFAULT_GRACE_PERIOD: Duration = Duration::from_secs(2);
 
 /// Handles one connection with [`DEFAULT_GRACE_PERIOD`]. See
 /// [`handle_with_grace`] for the parameterized version tests use to keep
 /// the disconnect-escalation path fast.
-pub fn handle(stream: UnixStream, registry: Arc<Registry>, started: Instant) {
-    handle_with_grace(stream, registry, started, DEFAULT_GRACE_PERIOD);
+pub fn handle(
+    stream: UnixStream,
+    registry: Arc<Registry>,
+    started: Instant,
+    backend: Arc<dyn SessionBackend>,
+) {
+    handle_with_grace(stream, registry, started, backend, DEFAULT_GRACE_PERIOD);
 }
 
 pub fn handle_with_grace(
     stream: UnixStream,
     registry: Arc<Registry>,
     started: Instant,
+    backend: Arc<dyn SessionBackend>,
     grace_period: Duration,
 ) {
     let mut read_half = match stream.try_clone() {
@@ -81,7 +87,7 @@ pub fn handle_with_grace(
         Err(_) => return, // connection closed before a session ever started
     };
 
-    let mut spawned = match session::spawn(&spawn_req) {
+    let mut spawned = match backend.spawn(&spawn_req) {
         Ok(s) => s,
         Err(e) => {
             let mut w = write_half;
@@ -280,6 +286,7 @@ fn describe(req: &protocol::SpawnRequest) -> String {
 mod tests {
     use super::*;
     use crate::keeper::protocol::{PtySize, SessionSignal, SpawnRequest};
+    use crate::keeper::session::LocalSessionBackend;
     use std::collections::BTreeMap;
     use std::time::Instant;
 
@@ -318,7 +325,14 @@ mod tests {
         let registry = Arc::new(Registry::new());
         let conn_thread = {
             let registry = Arc::clone(&registry);
-            thread::spawn(move || handle(server, registry, Instant::now()))
+            thread::spawn(move || {
+                handle(
+                    server,
+                    registry,
+                    Instant::now(),
+                    Arc::new(LocalSessionBackend),
+                )
+            })
         };
 
         protocol::write_frame(&mut client, &Frame::Spawn(spawn_request("cat", &[], None))).unwrap();
@@ -343,7 +357,14 @@ mod tests {
         let registry = Arc::new(Registry::new());
         let conn_thread = {
             let registry = Arc::clone(&registry);
-            thread::spawn(move || handle(server, registry, Instant::now()))
+            thread::spawn(move || {
+                handle(
+                    server,
+                    registry,
+                    Instant::now(),
+                    Arc::new(LocalSessionBackend),
+                )
+            })
         };
 
         let req = spawn_request(
@@ -376,7 +397,14 @@ mod tests {
         let registry = Arc::new(Registry::new());
         let conn_thread = {
             let registry = Arc::clone(&registry);
-            thread::spawn(move || handle(server, registry, Instant::now()))
+            thread::spawn(move || {
+                handle(
+                    server,
+                    registry,
+                    Instant::now(),
+                    Arc::new(LocalSessionBackend),
+                )
+            })
         };
 
         let req = spawn_request(
@@ -413,7 +441,14 @@ mod tests {
         let registry = Arc::new(Registry::new());
         let conn_thread = {
             let registry = Arc::clone(&registry);
-            thread::spawn(move || handle(server, registry, Instant::now()))
+            thread::spawn(move || {
+                handle(
+                    server,
+                    registry,
+                    Instant::now(),
+                    Arc::new(LocalSessionBackend),
+                )
+            })
         };
 
         protocol::write_frame(
@@ -440,7 +475,13 @@ mod tests {
         let conn_thread = {
             let registry = Arc::clone(&registry);
             thread::spawn(move || {
-                handle_with_grace(server, registry, Instant::now(), Duration::from_millis(150))
+                handle_with_grace(
+                    server,
+                    registry,
+                    Instant::now(),
+                    Arc::new(LocalSessionBackend),
+                    Duration::from_millis(150),
+                )
             })
         };
 
@@ -471,7 +512,7 @@ mod tests {
         let started = Instant::now() - Duration::from_secs(5);
         let conn_thread = {
             let registry = Arc::clone(&registry);
-            thread::spawn(move || handle(server, registry, started))
+            thread::spawn(move || handle(server, registry, started, Arc::new(LocalSessionBackend)))
         };
 
         protocol::write_frame(&mut client, &Frame::Query).unwrap();

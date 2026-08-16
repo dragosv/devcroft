@@ -38,6 +38,7 @@ use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 
 use crate::keeper::connection::to_exit_status;
 use crate::keeper::protocol::{ExitStatus, PtySize, SpawnRequest};
+use crate::keeper::session::SessionBackend;
 use crate::keeper::{pty, session};
 
 /// The remote shell for `shell_request`/pty-less `exec_request` with no
@@ -75,6 +76,11 @@ struct ActiveSession {
 
 struct SshServer {
     authorized_key: Arc<PublicKey>,
+    /// How sessions this connection spawns actually come into being —
+    /// [`session::LocalSessionBackend`] for the `process` tier, or a
+    /// hardened backend's own implementation (e.g. `runsc exec`) for the
+    /// `hardened` tier. See [`session::SessionBackend`].
+    backend: Arc<dyn SessionBackend>,
     /// Only populated for channels that might still need the raw
     /// `Channel<Msg>` itself — currently just `sftp`'s `into_stream()`;
     /// exec/shell/direct-tcpip channels never need to be looked back up
@@ -89,9 +95,10 @@ struct SshServer {
 }
 
 impl SshServer {
-    fn new(authorized_key: PublicKey) -> Self {
+    fn new(authorized_key: PublicKey, backend: Arc<dyn SessionBackend>) -> Self {
         SshServer {
             authorized_key: Arc::new(authorized_key),
+            backend,
             channels: HashMap::new(),
             pending: HashMap::new(),
             active: HashMap::new(),
@@ -120,7 +127,7 @@ impl SshServer {
             pty: pending.pty,
         };
 
-        let mut spawned = match session::spawn(&req) {
+        let mut spawned = match self.backend.spawn(&req) {
             Ok(s) => s,
             Err(_) => {
                 session.channel_failure(channel_id)?;
@@ -334,6 +341,7 @@ impl server::Server for SshServer {
     fn new_client(&mut self, _peer_addr: Option<std::net::SocketAddr>) -> Self::Handler {
         SshServer {
             authorized_key: Arc::clone(&self.authorized_key),
+            backend: Arc::clone(&self.backend),
             channels: HashMap::new(),
             pending: HashMap::new(),
             active: HashMap::new(),
@@ -582,12 +590,13 @@ async fn serve(
     listener: tokio::net::UnixListener,
     host_key: PrivateKey,
     authorized_key: PublicKey,
+    backend: Arc<dyn SessionBackend>,
 ) -> io::Result<()> {
     let config = Arc::new(Config {
         keys: vec![host_key],
         ..Default::default()
     });
-    let mut server = SshServer::new(authorized_key);
+    let mut server = SshServer::new(authorized_key, backend);
 
     loop {
         let (stream, _addr) = listener.accept().await?;
@@ -616,6 +625,7 @@ pub fn spawn(
     std_listener: std::os::unix::net::UnixListener,
     host_key: PrivateKey,
     authorized_key: PublicKey,
+    backend: Arc<dyn SessionBackend>,
 ) {
     if let Err(e) = std_listener.set_nonblocking(true) {
         eprintln!("devcroft: ssh: set_nonblocking on the ssh socket: {e}");
@@ -637,7 +647,7 @@ pub fn spawn(
                     return;
                 }
             };
-            if let Err(e) = serve(listener, host_key, authorized_key).await {
+            if let Err(e) = serve(listener, host_key, authorized_key, backend).await {
                 eprintln!("devcroft: ssh: server exited: {e}");
             }
         });
@@ -679,7 +689,7 @@ mod tests {
             keys: vec![host_key],
             ..Default::default()
         });
-        let server_handler = SshServer::new(authorized_key);
+        let server_handler = SshServer::new(authorized_key, Arc::new(session::LocalSessionBackend));
         tokio::spawn(async move {
             if let Ok(session) =
                 server::run_stream(server_config, server_stream, server_handler).await

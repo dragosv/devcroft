@@ -359,7 +359,8 @@ impl Drop for RawModeGuard {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::keeper::Keeper;
+    use crate::keeper::{Keeper, LocalSessionBackend};
+    use std::sync::Arc;
 
     /// `exec()` insists on a `Healthy` pidfile+socket before it ever
     /// tries the actual session protocol — the test below exercises that
@@ -442,7 +443,7 @@ mod tests {
         let _ = std::fs::remove_file(&sock_path);
         let listener = std::os::unix::net::UnixListener::bind(&sock_path).unwrap();
         thread::spawn(move || {
-            let _ = Keeper::new(listener).serve();
+            let _ = Keeper::new(listener, Arc::new(LocalSessionBackend)).serve();
         });
 
         let mut client = UnixStream::connect(&sock_path).unwrap();
