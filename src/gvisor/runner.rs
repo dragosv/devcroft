@@ -5,16 +5,37 @@
 //! [`super::oci_spec`] and [`super::runsc_command`] stay pure precisely
 //! so only this file needs the `cfg`.
 //!
-//! **Unverified beyond compiling.** This devcontainer has no `runsc` on
-//! `PATH`, no `/dev/kvm`, and currently cannot even create an
-//! unprivileged user namespace (`unshare --user` fails `EPERM`) — see
-//! the crate's devcontainer task group for why. Every function here is
-//! written to the same standard as the rest of this codebase, but the
-//! actual subprocess behavior (does `-d` really detach cleanly, does a
-//! killed `runsc exec` client really propagate the signal, does the
-//! Landlock ruleset applied in `run`'s `pre_exec` really get inherited
-//! into the detached Sentry) needs confirming against a live sandbox
-//! before any of it is relied on in production.
+//! **Verified further than "compiles", not yet fully live.** This
+//! devcontainer ships with no `runsc` on `PATH` by design (task group 8
+//! installs it, but only into future rebuilds), so none of this was
+//! exercised against a real binary while it was first written. It was,
+//! however, verified directly during development by fetching a real
+//! `runsc` release binary out-of-band and driving `up_hardened`'s full
+//! path against it by hand: bundle synthesis, the Landlock ruleset in
+//! `run`'s `pre_exec`, and `runsc run` itself all executed for real and
+//! caught three live bugs before any of them shipped —
+//!
+//! - the Landlock ruleset denied `runsc` its own `execve` (no grant for
+//!   `runsc`'s own directory or the dynamic linker) — the unit test
+//!   below reproduces this against a real dynamically-linked binary;
+//! - `runsc`'s own preflight reads host `/proc/sys/vm/mmap_min_addr`
+//!   before it ever constructs the sandbox's virtualized `/proc`, which
+//!   the ruleset also denied — see [`PROC_PREFLIGHT_DIRS`];
+//! - neither the bundle directory (`config.json`) nor `runsc`'s own
+//!   `--root` state directory were granted at all, and `-d` is not a
+//!   valid `runsc run` flag (`-detach` is; Go's `flag` package has no
+//!   short-alias concept) — see `run`'s and `runsc_command::run_args`'s
+//!   doc comments.
+//!
+//! What that manual run did *not* reach: `runsc`'s own re-exec into a
+//! fresh user namespace fails with the exact `EPERM` `unshare --user`
+//! already reported for this container (task group 8 again) — genuinely
+//! the platform boundary this devcontainer has today, not a bug in this
+//! module. So `-detach` actually detaching cleanly, a killed `runsc
+//! exec` client propagating its signal into the sandboxed process, and
+//! whether the Landlock ruleset survives into the detached Sentry once
+//! one actually starts, remain unconfirmed — everything upstream of the
+//! userns wall is now real-world tested, not just reasoned about.
 
 use std::io;
 use std::os::unix::process::CommandExt;
@@ -54,7 +75,21 @@ pub fn materialize_bundle(bundle_dir: &Path, spec: &OciSpec) -> io::Result<()> {
 /// for why.
 const DYNAMIC_LINKER_DIRS: &[&str] = &["/lib", "/lib64", "/usr/lib"];
 
-/// Starts the sandbox detached (`runsc run -d`), with a Landlock profile
+/// `runsc`'s own preflight reads host kernel tunables under `/proc/sys`
+/// before it ever gets to constructing the sandbox's own virtualized
+/// `/proc` — found live, not reasoned about: an early version of `run`
+/// granted nothing under `/proc` at all, and `runsc run` panicked
+/// (`couldn't open /proc/sys/vm/mmap_min_addr: permission denied`)
+/// because the applied Landlock ruleset correctly denied it. Deliberately
+/// `/proc/sys` and not all of `/proc`: `/proc/sys` is host kernel
+/// tunables (non-sensitive), whereas `/proc/<pid>/*` holds other
+/// processes' `environ`/`maps`/etc. — granting all of `/proc` would trade
+/// away a real, avoidable amount of the "defense in depth" this Landlock
+/// profile exists for, in exchange for preflight checks that only ever
+/// touch `/proc/sys`.
+const PROC_PREFLIGHT_DIRS: &[&str] = &["/proc/sys"];
+
+/// Starts the sandbox detached (`runsc run -detach`), with a Landlock profile
 /// derived from `landlock` applied to this process — and, by Landlock's
 /// own inheritance-across-fork-and-exec semantics, to `runsc` and
 /// whatever it becomes/spawns as the Sentry — as defense in depth,
@@ -72,12 +107,12 @@ const DYNAMIC_LINKER_DIRS: &[&str] = &["/lib", "/lib64", "/usr/lib"];
 /// that applies the exact same ruleset and then tries to exec a real
 /// dynamically-linked binary — makes Landlock correctly deny the very
 /// `execve` this function is about to perform: it fails on the ELF
-/// interpreter and libc, not just the binary's own path. gVisor's
-/// release binaries are static Go builds with no CGO and likely need
-/// none of this, but granting the standard library search path anyway
-/// is cheap, read-only, and means this does not silently break if that
-/// ever changes — cheaper than re-deriving "is `runsc` actually static"
-/// as a hard dependency of this function's correctness.
+/// interpreter and libc, not just the binary's own path. Confirmed
+/// directly against a real release binary (`file runsc` reports
+/// "statically linked") that gVisor's own releases need none of
+/// `DYNAMIC_LINKER_DIRS` in practice — granted anyway, since it's cheap
+/// and read-only, so this does not silently break if a future release
+/// ever stops being static.
 ///
 /// # Soundness
 /// The `pre_exec` closure below runs in the forked child, after `fork`
@@ -101,13 +136,25 @@ pub fn run(
     std::fs::create_dir_all(container.state_root)?;
 
     let args = runsc_command::run_args(container, bundle_dir, platform, network);
-    let read_write: Vec<String> = landlock.read_write.to_vec();
+    // `bundle_dir` (config.json + rootfs/) is read-only from `runsc`'s
+    // side; `state_root` (`--root`) is where it writes its own container
+    // bookkeeping, so it needs read-write. Both found missing live, the
+    // same way `PROC_PREFLIGHT_DIRS` was: an earlier version granted
+    // neither, and `runsc run` failed with a permission-denied opening
+    // its own bundle spec — a Landlock ruleset the caller supplied for
+    // the *sandbox's* filesystem grants has no reason to already know
+    // about `runsc`'s own operational directories, so this function adds
+    // them itself rather than pushing that responsibility onto callers.
+    let mut read_write: Vec<String> = landlock.read_write.to_vec();
+    read_write.push(container.state_root.to_string_lossy().into_owned());
     let mut read_only: Vec<String> = landlock.read_only.to_vec();
+    read_only.push(bundle_dir.to_string_lossy().into_owned());
     let runsc_dir = runsc
         .parent()
         .ok_or_else(|| io::Error::other("runsc executable path has no parent directory"))?;
     read_only.push(runsc_dir.to_string_lossy().into_owned());
     read_only.extend(DYNAMIC_LINKER_DIRS.iter().map(|p| p.to_string()));
+    read_only.extend(PROC_PREFLIGHT_DIRS.iter().map(|p| p.to_string()));
 
     let mut cmd = Command::new(runsc);
     cmd.args(&args);

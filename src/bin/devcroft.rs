@@ -676,14 +676,14 @@ fn doctor_gvisor_backend() -> bool {
         .output();
     match smoke {
         Ok(out) if out.status.success() => {
-            println!("[PASS] gvisor-backend: runsc {version}, platform: {platform_name}");
+            println!("[PASS] gvisor-backend: {version}, platform: {platform_name}");
             true
         }
         Ok(out) => {
             let stderr = String::from_utf8_lossy(&out.stderr);
             let reason = stderr.lines().next_back().unwrap_or("unknown error");
             println!(
-                "[FAIL] gvisor-backend: runsc {version} found, but the {platform_name} platform \
+                "[FAIL] gvisor-backend: {version} found, but the {platform_name} platform \
                  does not work on this host ({reason}) — {}",
                 if platform_name == "kvm" {
                     "check /dev/kvm permissions, or the hardened tier will fall back to systrap \

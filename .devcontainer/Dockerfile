@@ -67,6 +67,39 @@ RUN set -eu; \
     && rm -rf /var/lib/apt/lists/* "/tmp/${DEB}" \
     && flox --version
 
+# gVisor backend (add-gvisor-backend). Installed via the official release
+# bucket, architecture-detected, and verified against the published
+# per-arch SHA512 — same posture as nono's and flox's pinned, checksummed
+# installs above. RUNSC_VERSION pins the release for the same reason
+# NONO_VERSION/FLOX_VERSION do: gVisor ships continuously as dated
+# releases, not semver (add-gvisor-backend's own Open Questions section
+# notes this explicitly, and is the reason `doctor`'s gvisor-backend check
+# reports the version found rather than claiming a "tested range" this
+# project hasn't decided on) — an unpinned `latest` would make the image
+# drift between rebuilds.
+#
+# UNVERIFIED beyond this build step, same posture as flox's install above:
+# this has not been exercised through an actual container rebuild (no
+# docker socket is reachable from inside a running devcontainer to test
+# one). Installing the binary here is necessary but not sufficient for the
+# hardened tier to actually work — see devcontainer.json's own comment for
+# the other half (rootless gVisor's unprivileged-userns requirement, which
+# this container cannot currently satisfy).
+ARG RUNSC_VERSION=20260810.0
+RUN set -eu; \
+    cd /tmp; \
+    case "$(dpkg --print-architecture)" in \
+        amd64) RUNSC_ARCH=x86_64 ;; \
+        arm64) RUNSC_ARCH=aarch64 ;; \
+        *) echo "unsupported architecture: $(dpkg --print-architecture)" >&2; exit 1 ;; \
+    esac; \
+    BASE="https://storage.googleapis.com/gvisor/releases/release/${RUNSC_VERSION}/${RUNSC_ARCH}"; \
+    curl -fsSLO "${BASE}/runsc"; \
+    curl -fsSL "${BASE}/runsc.sha512" | sha512sum -c -; \
+    chmod +x runsc \
+    && mv runsc /usr/local/bin/runsc \
+    && runsc --version
+
 # Drop root. Not only lint hygiene: devcroft runs as an unprivileged user, so
 # a confinement spike executed as root would be measuring a process that does
 # not resemble the one being designed for. The official rust image already

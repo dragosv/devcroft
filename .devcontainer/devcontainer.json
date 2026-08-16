@@ -8,6 +8,25 @@
   // syscalls, spike-doctor reports EPERM and names the flag to add — better
   // than shipping a permanently weakened container for a problem this host
   // does not have.
+  //
+  // Explicitly revisited for the hardened tier (add-gvisor-backend), not
+  // silently left stale: rootless gVisor needs unprivileged user namespace
+  // creation (`CLONE_NEWUSER`), and this container currently cannot do that
+  // — confirmed directly, `unshare --user` fails EPERM here, and no
+  // `/proc/sys/kernel/unprivileged_userns_clone` sysctl exists to explain
+  // it away as a known, named toggle. The same principle above still holds:
+  // most sandboxes in this repo only ever need the `process` tier
+  // (`isolation` defaults to it), so this file does not relax `security-opt`
+  // for every user just to unlock an opt-in feature on a change this
+  // session could not verify by actually rebuilding (no docker socket is
+  // reachable from inside a running devcontainer). `doctor`'s
+  // gvisor-backend check already names this precisely when it applies.
+  // Someone who wants to actually exercise the hardened tier locally can
+  // add `"runArgs": ["--security-opt", "seccomp=unconfined"]` (broad — the
+  // same tradeoff this comment already rejected once for Landlock, chosen
+  // here deliberately as an opt-in override, not a default) or a narrower
+  // custom seccomp profile allow-listing `clone`/`unshare`/`setns` with
+  // `CLONE_NEWUSER`, then confirm with `devcroft doctor` and a rebuild.
 
   // Fails loudly if Landlock is not reachable, instead of letting the spike
   // report a confinement result that the kernel never enforced. Also

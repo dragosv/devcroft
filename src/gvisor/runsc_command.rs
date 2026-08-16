@@ -17,15 +17,26 @@ pub fn resolve() -> Option<PathBuf> {
     crate::paths::resolve_on_path("runsc")
 }
 
-/// `runsc --version`'s stdout, or `None` if the binary can't be resolved
-/// or run. Used by `doctor` and by `up`'s own availability check before
-/// attempting a bundle it already knows can't run.
+/// `runsc --version`'s first line (`"runsc version release-YYYYMMDD.N"`),
+/// or `None` if the binary can't be resolved or run. Only the first line:
+/// confirmed live against a real binary that the full output is multiple
+/// lines (`runsc version ...` then a separate `spec: ...` line) — taking
+/// the whole trimmed blob, as an earlier version of this function did,
+/// produces a version string with an embedded newline that breaks
+/// `doctor`'s single-line `[FAIL]`/`[PASS]` message mid-sentence. Used by
+/// `doctor` and by `up`'s own availability check before attempting a
+/// bundle it already knows can't run.
 pub fn probe_version(runsc: &Path) -> Option<String> {
     let output = Command::new(runsc).arg("--version").output().ok()?;
     if !output.status.success() {
         return None;
     }
-    Some(String::from_utf8_lossy(&output.stdout).trim().to_string())
+    String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .next()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
 }
 
 /// One running sandbox's identity within `runsc`'s own bookkeeping: the
@@ -61,7 +72,12 @@ pub fn run_args(
 ) -> Vec<String> {
     let mut args = global_args(container, platform, network);
     args.push("run".to_string());
-    args.push("-d".to_string());
+    // `runsc`'s flags are Go stdlib `flag`, which has no short-alias
+    // concept — `-d` alone is not `-detach`, it is simply undefined and
+    // rejected outright. Found live, not from documentation: `runsc run`
+    // itself printed its own usage and refused to start over exactly
+    // this.
+    args.push("-detach".to_string());
     args.push("--bundle".to_string());
     args.push(bundle.to_string_lossy().into_owned());
     args.push(container.id.to_string());
@@ -156,7 +172,7 @@ mod tests {
         let platform_idx = args.iter().position(|a| a == "--platform").unwrap();
         assert_eq!(args[platform_idx + 1], "systrap");
         assert!(args.contains(&"run".to_string()));
-        assert!(args.contains(&"-d".to_string()));
+        assert!(args.contains(&"-detach".to_string()));
         assert_eq!(args.last(), Some(&"myproj".to_string()));
     }
 

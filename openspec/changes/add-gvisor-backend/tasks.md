@@ -90,15 +90,15 @@
 
 ## 8. Devcontainer
 
-- [ ] 8.1 `.devcontainer/Dockerfile`: pinned, checksum-verified `runsc`
+- [x] 8.1 `.devcontainer/Dockerfile`: pinned, checksum-verified `runsc`
       install, following the same convention as the existing
       `NONO_VERSION`/`FLOX_VERSION` pinned installs
-- [ ] 8.2 `.devcontainer/devcontainer.json`: explicitly revisit (not
+- [x] 8.2 `.devcontainer/devcontainer.json`: explicitly revisit (not
       silently drop) the "No security-opt relaxations on purpose"
       comment — add exactly what rootless gVisor's unprivileged-userns
       creation needs, documented with the same specificity as the
       existing comments
-- [ ] 8.3 Note in the Dockerfile/devcontainer.json comments, matching
+- [x] 8.3 Note in the Dockerfile/devcontainer.json comments, matching
       the existing "UNVERIFIED beyond this build step" flox pattern:
       verifying this against a live `runsc` requires rebuilding the
       devcontainer in VS Code — it cannot be verified from inside the
