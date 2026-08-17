@@ -280,21 +280,22 @@ Known gaps, published rather than hidden:
   rather than assuming host ports are exclusive to it. **Note this is
   currently moot under the default policy** — see the listening-socket
   gap below, where neither sandbox can bind in the first place.
-- **`network` blocking also blocks *listening* sockets, including
-  loopback.** The default policy denies `bind`+`listen` outright, so a dev
-  server inside a sandbox cannot come up at all — `python3 -c "…bind(('127.0.0.1', 0))…"`
-  fails with `Operation not permitted`. The `[network]` section reads as
-  outbound egress control, and nothing says it revokes the ability to
-  serve; the port-conflict note above is written as though binding works.
-  Setting `network.default = "allow"` restores it, but that also drops
-  egress filtering, so there is currently no way to express "no outbound
-  access, but I can still run my dev server". This is what stops VS Code
-  Remote-SSH (its server needs a loopback listener) — see
-  [docs/ssh-validation.md](docs/ssh-validation.md). **Not process-tier-only:**
-  the planned `hardened` tier does not close this either — see the Status
-  section above for why the netstack-based fix an earlier draft assumed
-  turned out not to be available under the unprivileged posture devcroft
-  requires everywhere.
+- **~~`network` blocking also blocks *listening* sockets~~ — FIXED, and
+  the original diagnosis was wrong.** A deny-default policy does still
+  deny `bind`/`listen` by itself, but this was published as a gap in the
+  policy model — "there is currently no way to express *no outbound
+  access, but I can still run my dev server*" — and that was false. nono's
+  profile schema has always carried an `open_port` field; devcroft simply
+  never emitted it. `[network].ports` now does: `default = "deny"` plus
+  `ports = [3000]` binds `127.0.0.1:3000` while egress stays filtered and
+  ungranted ports stay denied, verified end to end in
+  `tests/network_ports_listen.rs`. The `allow`-everything workaround is no
+  longer required, and the VS Code Remote-SSH blocker in
+  [docs/ssh-validation.md](docs/ssh-validation.md) should be re-tested
+  against this key rather than assumed. Worth recording how long a wrong
+  claim survived unchecked: it was repeated across the docs and treated as
+  an architectural constraint, and one `nono profile schema` invocation
+  refuted it.
 - **Network filtering is platform-dependent; on Linux it's less "purely
   cooperative" than first assumed.** macOS Seatbelt genuinely cannot
   enforce domain-level allowlisting without a cooperative proxy —

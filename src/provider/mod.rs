@@ -48,6 +48,46 @@ pub struct Resolution {
     /// keys (found during review, previously undetected for removed ones).
     pub unset: Vec<String>,
     pub read_only_grants: Vec<String>,
+    /// What this provider has to say about long-lived services. Captured
+    /// host-side with the rest of resolution — the declarations are read
+    /// from the provider's own manifest, never by running project code.
+    pub services: ServiceSupport,
+}
+
+/// A provider's service story. Deliberately three-valued rather than a
+/// bare `Vec`: "this provider has no service concept" and "this provider
+/// supports services and none are declared" are different facts, and
+/// collapsing them into an empty list is what would let a manifest
+/// asking for services under `nix` silently start nothing.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub enum ServiceSupport {
+    /// The provider has no service mechanism at all (nix flakes today).
+    #[default]
+    Unsupported,
+    /// The provider supports services; zero or more are declared.
+    Declared(Vec<ServiceDecl>),
+}
+
+impl ServiceSupport {
+    /// The declared services, or an empty slice when unsupported —
+    /// for callers that only need to iterate. Callers that must
+    /// *distinguish* unsupported from empty (the `up` precondition
+    /// check) match on the enum instead.
+    pub fn declared(&self) -> &[ServiceDecl] {
+        match self {
+            ServiceSupport::Unsupported => &[],
+            ServiceSupport::Declared(v) => v,
+        }
+    }
+}
+
+/// One service the provider's manifest declares. `command` is project
+/// code and is only ever executed inside the sandbox, after restriction
+/// — never during resolution.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ServiceDecl {
+    pub name: String,
+    pub command: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

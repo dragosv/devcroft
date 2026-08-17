@@ -8,7 +8,7 @@ const SECTIONS: &[(&str, &[&str])] = &[
     ("sandbox", &["name", "isolation"]),
     ("env", &["provider", "vars"]),
     ("filesystem", &["allow", "read", "deny"]),
-    ("network", &["default", "allow"]),
+    ("network", &["default", "allow", "ports"]),
     ("ssh", &["forward_agent"]),
     ("hooks", &["post_create", "post_start"]),
 ];

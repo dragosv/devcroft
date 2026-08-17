@@ -20,6 +20,19 @@ pub fn render(compiled: &CompiledPolicy) -> String {
         "network.allow_domain",
         &compiled.network_allow_domain,
     );
+    // Rendered even though it is a different value type, for the reason
+    // the whole command exists: nothing may reach the backend that
+    // `--render` cannot show. An `open_port` in `profile.json` that the
+    // rendered policy omitted would be exactly the invisible rule this
+    // invariant forbids.
+    writeln!(out, "network.ports:").unwrap();
+    if compiled.network_ports.is_empty() {
+        writeln!(out, "  (none)").unwrap();
+    } else {
+        for p in &compiled.network_ports {
+            writeln!(out, "  {:<40} {}", p.value, p.origin).unwrap();
+        }
+    }
     out
 }
 

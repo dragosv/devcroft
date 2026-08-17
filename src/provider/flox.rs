@@ -5,7 +5,7 @@
 //! capture/diff/fingerprint machinery lives in `provider::capture`.
 
 use super::capture;
-use super::{Provider, ProviderError, Resolution};
+use super::{Provider, ProviderError, Resolution, ServiceDecl, ServiceSupport};
 use crate::paths::resolve_on_path;
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -28,8 +28,78 @@ impl Provider for FloxProvider {
             env: capture::changed_env(&baseline, &activated),
             unset: capture::unset_env(&baseline, &activated),
             read_only_grants: capture::store_grants(&activated),
+            services: read_service_declarations(project_root)?,
         })
     }
+}
+
+/// Read `[services]` out of the flox manifest, host-side, during the
+/// trusted provisioning phase.
+///
+/// Deliberately *only* reads declarations here — the commands themselves
+/// are project code and are executed inside the sandbox after
+/// restriction, by the keeper. devcroft never runs `flox services
+/// start`: that would require the flox binary and its internals to be
+/// executable inside the compiled profile, which is exactly what the
+/// "environment resolves once, at `up`" invariant rejects for
+/// per-session activation, for the same reason (the profile would have
+/// to grant flox internals permanently). See add-flox-services'
+/// design.md decision 1.
+fn read_service_declarations(project_root: &Path) -> Result<ServiceSupport, ProviderError> {
+    let manifest_path = project_root.join(".flox/env/manifest.toml");
+    let text = match std::fs::read_to_string(&manifest_path) {
+        Ok(t) => t,
+        // No manifest to read is not "no services declared" — but
+        // `ensure_environment_present` already established `.flox/`
+        // exists, so this is an unreadable environment, not an absent one.
+        Err(e) => {
+            return Err(ProviderError::ResolutionFailed(format!(
+                "reading {}: {e}",
+                manifest_path.display()
+            )));
+        }
+    };
+
+    // `toml::Table`, not `toml::Value`: in toml 1.x parsing a whole
+    // document as `Value` rejects flox's real manifest outright
+    // ("unexpected content, expected nothing"), which is why
+    // `config::parse` already uses `Table` for devcroft.toml. Caught by
+    // the existing against-real-flox test, not by reasoning.
+    let parsed = text.parse::<toml::Table>().map_err(|e| {
+        ProviderError::ResolutionFailed(format!("parsing {}: {e}", manifest_path.display()))
+    })?;
+
+    let Some(table) = parsed.get("services") else {
+        // flox supports services; this environment declares none.
+        return Ok(ServiceSupport::Declared(Vec::new()));
+    };
+    let Some(table) = table.as_table() else {
+        return Err(ProviderError::ResolutionFailed(
+            "`[services]` in the flox manifest is not a table".to_string(),
+        ));
+    };
+
+    let mut declared = Vec::new();
+    for (name, value) in table {
+        // A shape flox no longer produces must fail loudly rather than
+        // yielding a silently empty list — the schema-drift risk
+        // design.md names.
+        let command = value
+            .get("command")
+            .and_then(toml::Value::as_str)
+            .ok_or_else(|| {
+                ProviderError::ResolutionFailed(format!(
+                    "service `{name}` in the flox manifest has no string `command`"
+                ))
+            })?;
+        declared.push(ServiceDecl {
+            name: name.clone(),
+            command: command.to_string(),
+        });
+    }
+    // BTreeMap iteration order from toml's table is already sorted by
+    // key, which keeps resolution deterministic.
+    Ok(ServiceSupport::Declared(declared))
 }
 
 /// `up` fails at layer `provider` with the `flox init` hint (spec: "Missing
@@ -188,5 +258,63 @@ mod tests {
         let resolution = FloxProvider.resolve(&root).unwrap();
         assert!(resolution.env.contains_key("PATH"));
         assert!(!resolution.read_only_grants.is_empty());
+        // A freshly initialized flox environment declares no services,
+        // but flox *supports* them — the two must stay distinguishable.
+        assert_eq!(resolution.services, ServiceSupport::Declared(Vec::new()));
+    }
+
+    #[test]
+    fn services_are_read_from_the_flox_manifest() {
+        let root = tempdir("services-decl");
+        flox_env(
+            &root,
+            r#"
+            version = 1
+            [services]
+            redis.command = "redis-server --port 6379"
+            db.command = "postgres -D ./pgdata"
+            "#,
+            None,
+        );
+
+        let ServiceSupport::Declared(services) = read_service_declarations(&root).unwrap() else {
+            panic!("flox must report itself as supporting services");
+        };
+        // Sorted by key, so resolution stays deterministic.
+        assert_eq!(services.len(), 2);
+        assert_eq!(services[0].name, "db");
+        assert_eq!(services[0].command, "postgres -D ./pgdata");
+        assert_eq!(services[1].name, "redis");
+    }
+
+    #[test]
+    fn no_services_section_is_supported_but_empty() {
+        let root = tempdir("services-none");
+        flox_env(&root, "version = 1\n", None);
+        assert_eq!(
+            read_service_declarations(&root).unwrap(),
+            ServiceSupport::Declared(Vec::new()),
+            "absent [services] means none declared, not unsupported"
+        );
+    }
+
+    #[test]
+    fn a_service_without_a_command_fails_loudly() {
+        // The schema-drift guard: a shape flox no longer produces must
+        // fail rather than silently resolving to an empty service list,
+        // which would look exactly like "no services declared".
+        let root = tempdir("services-drift");
+        flox_env(
+            &root,
+            "version = 1\n[services]\nweird = { port = 5432 }\n",
+            None,
+        );
+        let err = read_service_declarations(&root).unwrap_err();
+        match err {
+            ProviderError::ResolutionFailed(msg) => {
+                assert!(msg.contains("weird"), "error must name the service: {msg}");
+            }
+            other => panic!("expected ResolutionFailed, got {other:?}"),
+        }
     }
 }

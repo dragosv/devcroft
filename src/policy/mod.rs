@@ -69,6 +69,17 @@ impl AnnotatedValue {
     }
 }
 
+/// A compiled loopback port paired with the rule that produced it — the
+/// same role [`AnnotatedValue`] plays for paths and domains. A separate
+/// type rather than making that one generic: ports are the only
+/// non-string rule devcroft compiles, and a type parameter would ripple
+/// through every existing call site to buy nothing here.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AnnotatedPort {
+    pub value: u16,
+    pub origin: Origin,
+}
+
 /// The manifest compiled into policy rules, still carrying origin
 /// annotations. [`CompiledPolicy::to_nono_profile`] projects this down to
 /// the plain JSON nono consumes.
@@ -80,6 +91,11 @@ pub struct CompiledPolicy {
     pub filesystem_deny: Vec<AnnotatedValue>,
     pub network_block: bool,
     pub network_allow_domain: Vec<AnnotatedValue>,
+    /// Loopback TCP ports the sandbox may bind and connect on. Governed
+    /// by `network.ports`, independently of `network_block` — the two
+    /// answer different questions (outbound egress vs local listeners),
+    /// which is why a deny-all sandbox can still run a dev server.
+    pub network_ports: Vec<AnnotatedPort>,
 }
 
 /// Compile `manifest` plus baseline denials into a [`CompiledPolicy`].
@@ -132,6 +148,16 @@ pub fn compile(manifest: &Manifest) -> CompiledPolicy {
         .map(|d| AnnotatedValue::new(d.clone(), Origin::Manifest("network.allow")))
         .collect();
 
+    let network_ports: Vec<AnnotatedPort> = manifest
+        .network
+        .ports
+        .iter()
+        .map(|p| AnnotatedPort {
+            value: *p,
+            origin: Origin::Manifest("network.ports"),
+        })
+        .collect();
+
     CompiledPolicy {
         sandbox_name: manifest.sandbox.name.clone(),
         filesystem_allow,
@@ -139,6 +165,7 @@ pub fn compile(manifest: &Manifest) -> CompiledPolicy {
         filesystem_deny,
         network_block: manifest.network.default == NetworkDefault::Deny,
         network_allow_domain,
+        network_ports,
     }
 }
 
@@ -199,6 +226,7 @@ impl CompiledPolicy {
                     .iter()
                     .map(|a| a.value.clone())
                     .collect(),
+                open_port: self.network_ports.iter().map(|a| a.value).collect(),
             },
         }
     }
@@ -233,6 +261,18 @@ pub struct NonoFilesystem {
 pub struct NonoNetwork {
     pub block: bool,
     pub allow_domain: Vec<String>,
+    /// Loopback TCP ports the sandboxed process may bind and connect on
+    /// (`manifest:network.ports`). Omitted entirely when empty, so a
+    /// manifest that declares no ports produces byte-identical
+    /// `profile.json` to one written before this field existed.
+    ///
+    /// This is nono's own field name, and picking it over the adjacent
+    /// `listen_port` was determined empirically, not from the schema
+    /// descriptions: against nono 0.71.0 on Linux, `open_port` grants a
+    /// real `127.0.0.1` bind under `block: true`, while `listen_port`
+    /// granted neither a loopback nor a `0.0.0.0` bind.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub open_port: Vec<u16>,
 }
 
 impl NonoProfile {
@@ -426,6 +466,36 @@ mod tests {
         assert_eq!(parsed["extends"], "default");
         assert_eq!(parsed["network"]["block"], true);
         assert!(parsed["filesystem"]["deny"].as_array().unwrap().len() >= 5);
+        assert!(
+            parsed["network"].get("open_port").is_none(),
+            "a manifest declaring no ports must produce byte-identical \
+             profile.json to one written before the field existed"
+        );
+    }
+
+    #[test]
+    fn network_ports_compile_to_open_port_alongside_a_deny_default() {
+        let (manifest, _) =
+            parse("[sandbox]\nname = \"myproj\"\n[network]\ndefault = \"deny\"\nports = [5432]\n")
+                .unwrap();
+        let compiled = compile(&manifest);
+
+        assert!(compiled.network_block, "egress stays denied");
+        assert_eq!(compiled.network_ports.len(), 1);
+        assert_eq!(compiled.network_ports[0].value, 5432);
+        assert_eq!(
+            compiled.network_ports[0].origin,
+            Origin::Manifest("network.ports")
+        );
+
+        // `open_port`, not `listen_port`: determined empirically against
+        // nono 0.71.0 — see `NonoNetwork::open_port`'s doc comment. A
+        // rename here silently stops granting anything, since nono
+        // ignores unknown profile fields rather than rejecting them.
+        let parsed: serde_json::Value =
+            serde_json::from_str(&compiled.to_nono_profile().to_json()).unwrap();
+        assert_eq!(parsed["network"]["block"], true);
+        assert_eq!(parsed["network"]["open_port"][0], 5432);
     }
 
     /// Best-effort: only runs where `nono` is installed (the devcontainer

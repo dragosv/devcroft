@@ -1,42 +1,70 @@
-## 1. Blocking-dependency gate
+## 1. Blocking-dependency gate — RESOLVED
 
-- [ ] 1.1 **Do not start task group 2 until a sandbox can bind a
-      listening socket under a deny-default policy.** Verify directly,
-      not by reading a changelog: bring up a sandbox with
-      `network.default = "deny"` and run a real loopback bind
-      (`python3 -c "…bind(('127.0.0.1', 0))…"`). Today this fails with
-      `Operation not permitted` — see proposal.md's Blocking Dependency.
-      If it still fails, stop and report; every task below produces a
-      feature whose only working configuration disables the sandbox's
-      network policy.
-- [ ] 1.2 Record which policy shape the integration tests will use, and
-      whether it is the default one. If services can only be tested under
-      a non-default policy, that fact belongs in the test module doc, not
-      discovered later by a reader.
+- [x] 1.1 Gate ran and initially failed exactly as predicted (`bind`
+      denied under `network.default = "deny"`). Rather than stopping
+      there, checked the premise: nono's own profile schema carries an
+      `open_port` field, so "no egress, but I can listen" was always
+      expressible and devcroft simply never emitted it. The claim that
+      this was a policy-model limitation was **wrong** — see
+      proposal.md's amended Blocking Dependency section
+- [x] 1.2 Resolved by the `network.ports` manifest key rather than
+      documented around: `[network] default = "deny"`, `ports = [N]`
+      binds `127.0.0.1:N` with egress still filtered and ungranted ports
+      still denied. Compiles to nono's `open_port` (chosen empirically —
+      `listen_port` granted nothing on Linux/nono 0.71.0). Covered by
+      `tests/network_ports_listen.rs` plus unit tests in `config` and
+      `policy`; `policy --render` shows the ports with their origin, so
+      the "nothing reaches the backend that --render cannot show"
+      invariant holds. **Integration tests therefore use the default
+      deny policy, not a workaround** — which is what 1.2 asked to record
 
 ## 2. Provider contract: service declarations
 
-- [ ] 2.1 Extend the `Provider` trait with a service declaration
-      alongside the existing `Resolution` — an explicit "supports none"
-      variant, not an empty list, per the `env-provider` delta spec's
-      "declares services or explicitly declares none"
-- [ ] 2.2 `src/provider/flox.rs`: read declared services host-side during
-      resolution (trusted phase). Prefer a flox-provided machine-readable
-      listing if one exists; otherwise parse `[services]` from the flox
-      manifest. A schema shape flox no longer produces SHALL fail loudly
-      at `up`, never yield a silently empty list (design.md, schema-drift
-      risk)
-- [ ] 2.3 `src/provider/nix.rs`: declare no service support explicitly
+- [x] 2.1 `Resolution` gains `services: ServiceSupport`, a three-valued
+      enum (`Unsupported` vs `Declared(Vec<ServiceDecl>)`) so "has no
+      service concept" and "supports them, none declared" stay distinct
+- [x] 2.2 `src/provider/flox.rs`: `read_service_declarations` parses
+      `[services]` from the flox manifest host-side. Uses `toml::Table`,
+      not `toml::Value` — the latter rejects flox's real manifest
+      outright, caught by the existing against-real-flox test
+- [x] 2.3 `src/provider/nix.rs`: `ServiceSupport::Unsupported`, declared
+      explicitly with the reasoning inline
 - [ ] 2.4 `up` fails at layer `provider`, exit code 3, when services are
-      requested from a provider that supports none — naming the provider
-- [ ] 2.5 Unit tests: flox manifest with/without `[services]`; a nix
-      project asking for services fails with the right layer and code;
-      a malformed `[services]` fails loudly rather than resolving empty
-- [ ] 2.6 Regression test: `policy --render` is byte-identical for the
-      same manifest with and without services declared — the
-      `env-provider` delta's "do not widen the policy" requirement
+      requested from a provider that supports none — naming the provider.
+      **Currently unreachable through the CLI**: declarations come from
+      the provider's own manifest, so a `nix` project has no way to
+      declare services at all. The reachable variant worth building
+      instead is a project with `[services]` in a flox manifest whose
+      `devcroft.toml` says `provider = "nix"` — today those services are
+      silently ignored. Left open deliberately rather than shipping a
+      check that can never fire
+- [x] 2.5 Unit tests: `[services]` present/absent, ordering determinism,
+      and a service with no string `command` failing loudly (the
+      schema-drift guard) rather than resolving to an empty list
+- [ ] 2.6 Regression test: `policy --render` byte-identical with and
+      without services declared
 
 ## 3. Service supervision in the keeper
+
+> **Unresolved design conflict, found while implementing — read before
+> starting this group.** design.md decision 4 has `up` start services
+> after hooks, and decision 2 has them spawn through `SessionBackend`.
+> Both are individually right; together they do not work. Hooks are
+> spawned over the keeper's control socket by `up`, which then exits —
+> and a session whose client disconnects is escalated after
+> `connection::DEFAULT_GRACE_PERIOD` (2s). A service started the way a
+> hook is started would therefore be killed ~2 seconds after `up`
+> returns. Nothing holds the connection, because `up` is a short-lived
+> CLI process by design.
+>
+> So the keeper must own service lifetime, not `up`. That means either
+> (a) the keeper starts services at its own startup, which puts them
+> *before* hooks and contradicts decision 4's ordering, or (b) a new
+> protocol frame lets `up` tell the keeper to start services after hooks
+> complete, keeping the ordering but adding protocol surface. Decide
+> this before writing code; do not resolve it by holding a connection
+> open from `up`, which would make service lifetime depend on a process
+> whose whole contract is to exit.
 
 - [ ] 3.1 Service model and registry alongside the existing session
       registry: per-service state distinguishing not-started,

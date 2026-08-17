@@ -8,24 +8,32 @@ one hard blocker that is not yet a change** — the listening-socket gap
 roadmap in `openspec/config.yaml`, and the mitigation `docs/decisions.md`
 promises under "No service sidecars (yet)".
 
-## Blocking Dependency
+## Blocking Dependency — RESOLVED
 
-**This change cannot ship, or even be usefully tested, until a sandbox
-can bind a listening socket.** Under the default policy
-(`network.default = "deny"`) the backend denies `bind`/`listen` outright,
-including on loopback — verified live: `python3 -c "…bind(('127.0.0.1',
-0))…"` fails with `Operation not permitted`. A Postgres that cannot bind
-is not a degraded service, it is not a service at all.
+**This section was wrong, and is kept rather than deleted because the
+error is instructive.** It claimed that "no outbound access, but my dev
+server still runs" was inexpressible in the policy model, and that this
+change therefore could not be implemented until a separate, larger change
+landed.
 
-The current workaround (`network.default = "allow"`) restores binding but
-drops egress filtering entirely, which is precisely backwards for the
-target use case: a fleet of coding agents is the population that most
-needs "no outbound access, but my dev server still runs" — a state the
-policy model cannot express today. That gap is documented in the README's
-Limitations and is **not** solved here; it needs its own change, and this
-one should not be implemented before it lands. Implementing services on
-top of the current model would produce a feature whose only working
-configuration is the one that disables the sandbox's network policy.
+That premise was never checked against nono's own profile schema. It is
+false: the schema has always carried an `open_port` field ("Localhost TCP
+IPC (connect+bind)"). devcroft simply never emitted it — `NonoNetwork`
+projected only `block` and `allow_domain`. The gap was one unemitted
+field, not a limitation of the model.
+
+Resolved by the `network.ports` manifest key (implemented, tested end to
+end): a sandbox with `network.default = "deny"` and `ports = [5432]`
+binds `127.0.0.1:5432` while egress stays filtered and every ungranted
+port stays denied. `open_port` rather than the adjacent `listen_port` was
+settled empirically — against nono 0.71.0 on Linux, `listen_port` granted
+neither a loopback nor a `0.0.0.0` bind.
+
+The lesson worth keeping: this was asserted as a hard architectural
+blocker across a whole design discussion, and one command against
+`nono profile schema` refuted it. A rejection whose premise was never
+tested is not a rejection, and `docs/decisions.md`'s own rule — revisit
+when the stated reason stops holding — applies to blockers too.
 
 ## Why
 

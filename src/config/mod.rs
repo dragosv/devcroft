@@ -80,6 +80,26 @@ impl Default for Filesystem {
 pub struct Network {
     pub default: NetworkDefault,
     pub allow: Vec<String>,
+    /// Loopback TCP ports the sandbox may bind *and* connect on, granted
+    /// independently of `default`/`allow` — those two govern **outbound**
+    /// egress, this governs local listeners.
+    ///
+    /// Without this, `default = "deny"` denies `bind`/`listen` outright,
+    /// including on loopback, so a dev server or a database inside the
+    /// sandbox cannot come up at all; the only workaround was
+    /// `default = "allow"`, which restores binding by dropping egress
+    /// filtering entirely. That was documented as a gap in the policy
+    /// model itself — it is not: nono's profile schema has always had the
+    /// field, devcroft simply never emitted it (see
+    /// `policy::NonoNetwork::open_port`).
+    ///
+    /// Loopback only, and explicit ports only. Confirmed live against
+    /// nono 0.71.0 on Linux: a profile with `block: true` plus
+    /// `open_port` binds `127.0.0.1:<port>` successfully, while the
+    /// neighboring `listen_port` field grants neither a loopback nor a
+    /// `0.0.0.0` bind on this platform — so this maps to `open_port`, and
+    /// binding a non-loopback address stays denied.
+    pub ports: Vec<u16>,
 }
 
 impl Default for Network {
@@ -87,6 +107,7 @@ impl Default for Network {
         Network {
             default: NetworkDefault::Deny,
             allow: Vec::new(),
+            ports: Vec::new(),
         }
     }
 }
@@ -503,6 +524,39 @@ mod tests {
         .unwrap();
         assert_eq!(m.network.default, NetworkDefault::Allow);
         assert_eq!(m.network.allow, vec!["github.com"]);
+    }
+
+    #[test]
+    fn network_ports_parse_and_default_to_empty() {
+        let (bare, _) = parse("[sandbox]\nname = \"myproj\"\n").unwrap();
+        assert!(
+            bare.network.ports.is_empty(),
+            "omitting the key must grant no ports"
+        );
+
+        let (m, warnings) = parse(
+            r#"
+            [sandbox]
+            name = "myproj"
+            [network]
+            default = "deny"
+            ports = [5432, 6379]
+            "#,
+        )
+        .unwrap();
+        // The combination that matters: egress denied *and* local ports
+        // granted. These are independent axes, not a contradiction — the
+        // whole point of the key.
+        assert_eq!(m.network.default, NetworkDefault::Deny);
+        assert_eq!(m.network.ports, vec![5432, 6379]);
+        assert!(warnings.is_empty());
+    }
+
+    #[test]
+    fn out_of_range_port_is_a_config_error() {
+        // 65536 does not fit u16; this must fail as a config error rather
+        // than wrapping to 0 (which nono would read as "any port").
+        assert!(parse("[sandbox]\nname = \"m\"\n[network]\nports = [65536]\n").is_err());
     }
 
     #[test]

@@ -36,6 +36,13 @@ impl Provider for NixProvider {
             env: capture::changed_env(&baseline, &activated),
             unset: capture::unset_env(&baseline, &activated),
             read_only_grants: capture::store_grants(&activated),
+            // Nix flakes have no service concept. Declared explicitly
+            // rather than left as an empty list: `up` must be able to
+            // tell "this provider cannot do services" from "this
+            // provider can, and none are declared", so a project asking
+            // for services here fails loudly instead of silently
+            // starting nothing.
+            services: super::ServiceSupport::Unsupported,
         })
     }
 }
