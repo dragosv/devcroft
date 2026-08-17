@@ -13,9 +13,13 @@ covering both closure-tier providers and the hardened tier —
 `flox-clap-sample`, `flox-rustup-sample`, and `nix-flake-sample` are Rust
 projects with their own `Cargo.toml` (each has an explicit `[workspace]`
 table so they don't get pulled into this crate's workspace); `nix-go-sample`
-(Go) and `gvisor-kotlin-sample` (Kotlin/Gradle) are non-Rust, so no
-workspace exclusion applies to them — see each sample's own `README.md`
-for what it demonstrates.
+(Go), `gvisor-kotlin-sample` (Kotlin/Gradle), and `flox-services-sample`
+(no application code at all) are non-Rust, so no workspace exclusion
+applies to them — see each sample's own `README.md` for what it
+demonstrates. `flox-services-sample` is the one that documents an
+*unfinished* capability on purpose: it shows `network.ports` working and
+`[services]` being parsed, and demonstrates that devcroft does not yet
+supervise those services.
 
 Remaining work (see `openspec/changes/add-mvp-core/tasks.md`): task 6.5
 (cross-editor SSH validation matrix — OpenSSH, rsync, VS Code Remote-SSH,

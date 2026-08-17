@@ -1,0 +1,20 @@
+[sandbox]
+name = "flox-services-sample"
+
+[env]
+provider = "flox"
+
+# The service declared in .flox/env/manifest.toml listens on 8710.
+#
+# Granting a loopback port is independent of egress: `default = "deny"`
+# still blocks all outbound traffic, while `ports` permits bind() and
+# connect() on 127.0.0.1:8710 only. Before `network.ports` existed, the
+# only way to let anything listen was `default = "allow"`, which drops
+# egress filtering entirely — backwards for a sandbox meant to run
+# untrusted-ish project code.
+#
+# An ungranted port stays denied: try 8711 inside the sandbox and it
+# fails with EPERM.
+[network]
+default = "deny"
+ports = [8710]

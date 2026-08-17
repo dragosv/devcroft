@@ -38,9 +38,21 @@ fn run(cwd: &std::path::Path, args: &[&str]) -> std::process::Output {
 /// capability they have nothing to do with, so this only fails on a
 /// `[FAIL]` line the test doesn't already expect.
 fn assert_no_unexpected_doctor_failures(stdout: &str) {
+    // `provider: nix` joins `gvisor-backend` as a tolerated failure for
+    // the same reason: both are optional capabilities whose absence says
+    // nothing about the backend/provider/manifest lines these tests are
+    // actually about. nix earns its place here only now that `doctor`
+    // probes flakes with a real evaluation — it used to probe with `nix
+    // flake --help`, which succeeds even when the experimental feature
+    // is off, so this line could never fire and the tests passed on a
+    // host where `up` would have failed.
     let unexpected: Vec<&str> = stdout
         .lines()
-        .filter(|l| l.starts_with("[FAIL]") && !l.starts_with("[FAIL] gvisor-backend"))
+        .filter(|l| {
+            l.starts_with("[FAIL]")
+                && !l.starts_with("[FAIL] gvisor-backend")
+                && !l.starts_with("[FAIL] provider: nix")
+        })
         .collect();
     assert!(
         unexpected.is_empty(),
@@ -418,7 +430,17 @@ fn doctor_reports_nix_when_installed_with_flakes_enabled() {
         eprintln!("skipping: nono and/or flox not on PATH");
         return;
     }
-    let Ok(nix_out) = Command::new("nix").arg("flake").arg("--help").output() else {
+    // Must match `doctor`'s own probe exactly, or this test skips on a
+    // different condition than the one it asserts about. `nix flake
+    // --help` — what this used to use — succeeds even with the
+    // experimental feature disabled, so the test ran on hosts where
+    // flakes were off and then asserted `doctor` said they were on.
+    let Ok(nix_out) = Command::new("nix")
+        .arg("eval")
+        .arg("--expr")
+        .arg("1")
+        .output()
+    else {
         eprintln!("skipping: nix not on PATH");
         return;
     };

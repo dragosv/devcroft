@@ -4,13 +4,20 @@ name = "nix-go-sample"
 [env]
 provider = "nix"
 
-# A web server needs to bind a listening socket. devcroft's default
-# network policy (network.default = "deny") denies bind()/listen()
-# outright, loopback included — confirmed directly against this sample:
-# `bind: operation not permitted`. This is not a nix- or Go-specific
-# problem; it is docs/ssh-validation.md's own tracked, highest-priority
-# gap ("no dev server can bind a port under the default policy"), and
-# `network.default = "allow"` is the documented workaround until a
-# dedicated "permit listen, deny egress" knob exists.
+# A web server needs to bind a listening socket, and Gin binds :8080
+# (main.go). devcroft's default policy denies bind()/listen() outright,
+# loopback included.
+#
+# This file previously set `network.default = "allow"` and explained that
+# it was "the documented workaround until a dedicated permit-listen,
+# deny-egress knob exists". That knob now exists, and the premise behind
+# the workaround was wrong anyway: this was published as a gap in the
+# policy model, but nono's profile schema had carried an `open_port`
+# field all along — devcroft simply never emitted it.
+#
+# So the two axes are separate now. Egress stays denied; only 8080 is
+# bindable and connectable on loopback. An ungranted port still fails
+# with EPERM, so this grants strictly less than the old `allow` did.
 [network]
-default = "allow"
+default = "deny"
+ports = [8080]

@@ -594,9 +594,24 @@ fn doctor_nix_provider() -> bool {
     }
     let version = String::from_utf8_lossy(&out.stdout).trim().to_string();
 
+    // A real evaluation, not `nix flake --help`. Printing help does not
+    // touch the experimental feature at all, so the old probe returned
+    // success on a host where flakes were genuinely disabled — a false
+    // `[PASS]` in the one command whose entire job is to predict why
+    // `up` will fail. Caught by hitting exactly that: `doctor` reporting
+    // "flakes enabled" while provider resolution failed on the very next
+    // line with "experimental Nix feature 'nix-command' is disabled".
+    //
+    // `nix eval --expr` requires `nix-command`, which is what provider
+    // resolution actually failed on. It does not separately prove the
+    // `flakes` feature is on — but it is strictly better than a probe
+    // that proves nothing, and it is the same "probe the capability,
+    // never infer it from the binary being present" rule the
+    // gvisor-backend check already follows.
     let flakes_enabled = std::process::Command::new("nix")
-        .arg("flake")
-        .arg("--help")
+        .arg("eval")
+        .arg("--expr")
+        .arg("1")
         .output()
         .is_ok_and(|o| o.status.success());
     if flakes_enabled {
