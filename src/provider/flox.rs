@@ -43,8 +43,21 @@ impl Provider for FloxProvider {
 /// executable inside the compiled profile, which is exactly what the
 /// "environment resolves once, at `up`" invariant rejects for
 /// per-session activation, for the same reason (the profile would have
-/// to grant flox internals permanently). See add-flox-services'
-/// design.md decision 1.
+/// to grant flox internals permanently).
+///
+/// `manifest.toml`'s `[services]` is flox's **documented** schema, and
+/// that is why it is the dependency here rather than the
+/// `service-config.yaml` flox generates for its own internal
+/// process-compose invocation. That file was investigated and rejected:
+/// it appears in no published flox documentation, its contents are
+/// tailored to flox's own lifecycle (it carries a `flox_never_exit`
+/// keep-alive), and the process-compose binary it needs belongs to
+/// flox's closure rather than the environment's — zero of the
+/// environment's 29 requisites, with `flox-1.14.0` as the referrer. It is
+/// reachable from a sandbox today only because devcroft grants
+/// `/nix/store` broadly, so consuming it would work by accident and
+/// break the day those grants are tightened. See add-flox-services'
+/// design.md decision 1 for the full comparison.
 fn read_service_declarations(project_root: &Path) -> Result<ServiceSupport, ProviderError> {
     let manifest_path = project_root.join(".flox/env/manifest.toml");
     let text = match std::fs::read_to_string(&manifest_path) {
@@ -92,9 +105,70 @@ fn read_service_declarations(project_root: &Path) -> Result<ServiceSupport, Prov
                     "service `{name}` in the flox manifest has no string `command`"
                 ))
             })?;
+
+        // `vars` is not optional decoration: flox's own documented
+        // example passes a service's port through it
+        // (`command = "… -p \"$PGPORT\""` with `vars.PGPORT`), so a
+        // reader that drops it starts the service on the wrong port —
+        // silently, since the command string still looks right.
+        let mut vars = BTreeMap::new();
+        if let Some(table) = value.get("vars") {
+            let table = table.as_table().ok_or_else(|| {
+                ProviderError::ResolutionFailed(format!("service `{name}`: `vars` is not a table"))
+            })?;
+            for (k, v) in table {
+                // TOML allows non-strings here; process-compose
+                // environment entries are strings. Reject rather than
+                // stringify, so a manifest meaning `PORT = 5432` is not
+                // silently reinterpreted.
+                let v = v.as_str().ok_or_else(|| {
+                    ProviderError::ResolutionFailed(format!(
+                        "service `{name}`: var `{k}` must be a string"
+                    ))
+                })?;
+                vars.insert(k.clone(), v.to_string());
+            }
+        }
+
+        let is_daemon = match value.get("is-daemon") {
+            None => false,
+            Some(v) => v.as_bool().ok_or_else(|| {
+                ProviderError::ResolutionFailed(format!(
+                    "service `{name}`: `is-daemon` must be a boolean"
+                ))
+            })?,
+        };
+
+        // Nested as `shutdown.command` in the manifest.
+        let shutdown_command = value
+            .get("shutdown")
+            .and_then(|s| s.get("command"))
+            .map(|c| {
+                c.as_str().map(str::to_string).ok_or_else(|| {
+                    ProviderError::ResolutionFailed(format!(
+                        "service `{name}`: `shutdown.command` must be a string"
+                    ))
+                })
+            })
+            .transpose()?;
+
+        // A backgrounding service with no shutdown command cannot be
+        // stopped — killing the launcher that already exited does
+        // nothing. Caught here, at resolution, rather than discovered at
+        // `down` when the process survives teardown.
+        if is_daemon && shutdown_command.is_none() {
+            return Err(ProviderError::ResolutionFailed(format!(
+                "service `{name}` sets `is-daemon` but declares no \
+                 `shutdown.command`; it could not be stopped at teardown"
+            )));
+        }
+
         declared.push(ServiceDecl {
             name: name.clone(),
             command: command.to_string(),
+            vars,
+            is_daemon,
+            shutdown_command,
         });
     }
     // BTreeMap iteration order from toml's table is already sorted by
@@ -285,6 +359,76 @@ mod tests {
         assert_eq!(services[0].name, "db");
         assert_eq!(services[0].command, "postgres -D ./pgdata");
         assert_eq!(services[1].name, "redis");
+    }
+
+    #[test]
+    fn vars_is_daemon_and_shutdown_are_all_read() {
+        // The whole documented schema, not just `command`. Modeled on
+        // flox's own documented example, where the port arrives through
+        // `vars` — dropping it would start the service on the wrong port
+        // while the command string still looked correct.
+        let root = tempdir("services-full");
+        flox_env(
+            &root,
+            r#"
+            version = 1
+            [services.database]
+            command = "exec postgres -D \"$PGDATA\" -p \"$PGPORT\""
+            vars.PGPORT = "5433"
+            vars.PGDATA = "./pgdata"
+            is-daemon = true
+            shutdown.command = "pg_ctl stop -D ./pgdata"
+            "#,
+            None,
+        );
+
+        let ServiceSupport::Declared(services) = read_service_declarations(&root).unwrap() else {
+            panic!("expected declared services");
+        };
+        assert_eq!(services.len(), 1);
+        let db = &services[0];
+        assert_eq!(db.vars.get("PGPORT").map(String::as_str), Some("5433"));
+        assert_eq!(db.vars.get("PGDATA").map(String::as_str), Some("./pgdata"));
+        assert!(db.is_daemon);
+        assert_eq!(
+            db.shutdown_command.as_deref(),
+            Some("pg_ctl stop -D ./pgdata")
+        );
+    }
+
+    #[test]
+    fn a_daemon_without_a_shutdown_command_is_rejected() {
+        // Such a service is unstoppable: the launcher exits immediately
+        // by design, so killing it at teardown reaps nothing. Better to
+        // fail at resolution than to discover it when `down` leaves a
+        // database running.
+        let root = tempdir("services-daemon-nostop");
+        flox_env(
+            &root,
+            "version = 1\n[services.db]\ncommand = \"start-db\"\nis-daemon = true\n",
+            None,
+        );
+        let err = read_service_declarations(&root).unwrap_err();
+        match err {
+            ProviderError::ResolutionFailed(msg) => {
+                assert!(msg.contains("db") && msg.contains("shutdown"), "{msg}");
+            }
+            other => panic!("expected ResolutionFailed, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_non_string_var_is_rejected_rather_than_stringified() {
+        // `PGPORT = 5432` (an integer) must not be silently reinterpreted
+        // as the string "5432" — the manifest means something devcroft
+        // cannot faithfully represent, so it says so.
+        let root = tempdir("services-badvar");
+        flox_env(
+            &root,
+            "version = 1\n[services.db]\ncommand = \"x\"\nvars.PGPORT = 5432\n",
+            None,
+        );
+        assert!(read_service_declarations(&root).is_err());
     }
 
     #[test]

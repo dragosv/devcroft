@@ -84,10 +84,30 @@ impl ServiceSupport {
 /// One service the provider's manifest declares. `command` is project
 /// code and is only ever executed inside the sandbox, after restriction
 /// — never during resolution.
+///
+/// The fields mirror flox's documented `[services]` schema, which is the
+/// contract this depends on (deliberately, over flox's *undocumented*
+/// generated `service-config.yaml` — see design.md decision 1). Dropping
+/// any of them is a correctness bug, not a simplification: a service
+/// whose port comes from `vars` starts on the wrong port if `vars` is
+/// ignored, and a daemon reaped without its `shutdown` command is killed
+/// rather than stopped.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ServiceDecl {
     pub name: String,
     pub command: String,
+    /// Environment variables scoped to this service alone, layered over
+    /// the sandbox's captured environment.
+    pub vars: BTreeMap<String, String>,
+    /// flox's `is-daemon`: the command backgrounds itself instead of
+    /// staying in the foreground. Such a service cannot be supervised by
+    /// watching the spawned process — it exits immediately by design —
+    /// and must be stopped via [`Self::shutdown_command`].
+    pub is_daemon: bool,
+    /// flox's `shutdown.command`: how to stop a daemon service. Required
+    /// in practice whenever `is_daemon` is set, since killing the
+    /// (already-exited) launcher stops nothing.
+    pub shutdown_command: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

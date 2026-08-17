@@ -43,52 +43,96 @@
       schema-drift guard) rather than resolving to an empty list
 - [ ] 2.6 Regression test: `policy --render` byte-identical with and
       without services declared
+- [x] 2.7 Full documented schema, not just `command`: `vars`,
+      `is-daemon`, `shutdown.command`. Found by checking flox's docs
+      rather than assuming — `vars` carries the service's port in flox's
+      own documented example, so dropping it starts services on the wrong
+      port while the command string still looks right. Non-string vars are
+      rejected rather than stringified, and `is-daemon` without
+      `shutdown.command` is rejected at resolution (such a service is
+      unstoppable: the launcher exits by design, so killing it at
+      teardown reaps nothing)
+- [ ] 2.8 Reconsider `nix` returning a flat `Unsupported`. A plain
+      `devShell` genuinely has no services, so this is correct for the
+      interface devcroft consumes — but a flake using
+      [services-flake](https://github.com/juspay/services-flake) *does*
+      declare services, exposed as a separate flake app (`nix run
+      .#services`) rather than in the devShell. Such a project brought up
+      under devcroft gets silence. Service support is a property of the
+      project, not of the provider, so detecting that output is the
+      honest fix
 
 ## 3. Service supervision in the keeper
 
-> **Unresolved design conflict, found while implementing — read before
-> starting this group.** design.md decision 4 has `up` start services
-> after hooks, and decision 2 has them spawn through `SessionBackend`.
-> Both are individually right; together they do not work. Hooks are
-> spawned over the keeper's control socket by `up`, which then exits —
-> and a session whose client disconnects is escalated after
-> `connection::DEFAULT_GRACE_PERIOD` (2s). A service started the way a
-> hook is started would therefore be killed ~2 seconds after `up`
-> returns. Nothing holds the connection, because `up` is a short-lived
-> CLI process by design.
+> **Design conflict found while implementing — now RESOLVED, both
+> decisions recalibrated. Read design.md decisions 1 and 4 before
+> starting.**
 >
-> So the keeper must own service lifetime, not `up`. That means either
-> (a) the keeper starts services at its own startup, which puts them
-> *before* hooks and contradicts decision 4's ordering, or (b) a new
-> protocol frame lets `up` tell the keeper to start services after hooks
-> complete, keeping the ordering but adding protocol surface. Decide
-> this before writing code; do not resolve it by holding a connection
-> open from `up`, which would make service lifetime depend on a process
-> whose whole contract is to exit.
+> The conflict: `up` cannot own service lifetime. It is a short-lived CLI
+> process, and a session whose client disconnects is escalated after
+> `connection::DEFAULT_GRACE_PERIOD` (2s), so services started the way
+> hooks are started would die ~2 seconds after `up` returns. The keeper
+> must own them.
+>
+> **Resolution:** the keeper starts services at its own startup, which
+> puts them *before* hooks — and decision 4 was reversed to match,
+> because services-first turned out to be the correct ordering on its own
+> merits anyway (the canonical `post_start` hook is "run migrations",
+> which needs the database already up). The original hooks-first argument
+> reasoned from devcroft's failure semantics rather than from what
+> projects need. No protocol frame is required.
+>
+> **Also recalibrated (decision 1):** devcroft generates its *own*
+> process-compose config from the documented `[services]` declarations
+> and runs process-compose supervised, rather than reimplementing restart
+> policy / daemon handling / dependencies. Consuming flox's own generated
+> `service-config.yaml` was investigated and rejected — undocumented
+> artifact, and its process-compose binary is flox's closure member, not
+> the environment's. `process-compose` must be declared in the project's
+> environment so it is a real closure member rather than a scanned store
+> path.
 
 - [ ] 3.1 Service model and registry alongside the existing session
       registry: per-service state distinguishing not-started,
       failed-at-start, running, and exited-later (the `services` delta
       spec requires all four be distinguishable)
-- [ ] 3.2 Start each declared service's command through the existing
+- [ ] 3.2 Generate a process-compose config from the resolved
+      declarations (devcroft's own artifact, not flox's), and start
+      `process-compose up -f <config>` through the existing
       `SessionBackend` trait, without a pty and with no attached client
-      (design.md decision 2). **Do not** shell out to `flox services`,
-      and do not add a tier-specific path — going through the trait is
-      what makes this work identically at `process` and `hardened`
+      (design.md decisions 1 and 2). **Do not** shell out to `flox
+      services`, do not consume flox's `service-config.yaml`, and do not
+      add a tier-specific path — going through the trait is what makes
+      this work identically at `process` and `hardened`
+- [ ] 3.2a Require `process-compose` in the resolved environment and fail
+      at layer `provider` naming it when services are declared but the
+      binary is not a closure member. Never scan `/nix/store` for it:
+      that picks an arbitrary path with nothing tying it to this
+      environment's config schema
 - [ ] 3.3 Capture service output with per-service attribution for `logs`
-- [ ] 3.4 No automatic restart (design.md decision 3): an exited service
-      records its exit and stays dead. Explicitly assert this in a test
-      so a future "helpful" restart cannot land silently
-- [ ] 3.5 Teardown: stop all services before the keeper exits, SIGTERM
-      escalating to SIGKILL after the same grace period sessions use
+- [ ] 3.4 No automatic restart (design.md decision 3). Now a property of
+      the *generated* config rather than of devcroft's own supervision
+      loop: emit process-compose's no-restart policy explicitly rather
+      than relying on its defaults, since a default that restarts would
+      silently reverse this decision. Assert it in a test so a future
+      "helpful" restart cannot land unnoticed
+- [ ] 3.5 Teardown: stop services before the keeper exits, SIGTERM
+      escalating to SIGKILL after the same grace period sessions use.
+      Killing process-compose must reap its children — verify that rather
+      than assuming it — and a service declaring `shutdown.command` must
+      have it honored, since a daemon's launcher has already exited and
+      killing it reaps nothing
 - [ ] 3.6 Test at both tiers that a service ignoring SIGTERM is still
       gone after teardown — asserted by observing process absence, never
       by trusting a stop command's exit status
 
 ## 4. Lifecycle wiring
 
-- [ ] 4.1 `up`: start services after the keeper is responsive and after
-      `post_create`/`post_start` hooks (design.md decision 4)
+- [ ] 4.1 Services start at **keeper startup, before hooks** (design.md
+      decision 4, reversed — see the group 3 note). The keeper owns their
+      lifetime because `up` cannot: it exits, and a disconnected session
+      is escalated after 2s. Declarations reach the keeper the way the
+      resolved env already does, not over the control socket
 - [ ] 4.2 `up --skip-hooks` also skips services, preserving "nothing
       project-supplied runs"; services report as not-started, not failed
 - [ ] 4.3 A failed service does not fail `up` — `up` exits 0, prints the

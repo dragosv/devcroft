@@ -39,31 +39,66 @@ Three existing constraints shape everything below:
 
 ## Decisions
 
-### 1. Start each service's command directly; never run `flox services` inside the sandbox
+### 1. Read the documented declarations; generate our own process-compose config
 
-The obvious implementation — shell out to `flox services start` — is
-rejected, and not merely on taste. `flox services start` would have to
-run inside the boundary (services are project code), which requires the
-flox binary and its internals to be executable inside the compiled
-profile. That is the exact thing the "environment resolves once"
-invariant already rejects for per-session activation, for the same
-reason: the profile would have to grant flox internals permanently, for
-every sandbox, forever.
+Three implementations were considered, and the first two were both
+rejected after being investigated live rather than reasoned about.
 
-Instead: service **declarations** are read host-side during resolution
-(the trusted phase, alongside env capture), and each declared service's
-`command` is started as a supervised child **inside** the sandbox, with
-the already-captured environment. flox's own supervisor is never
-involved at runtime.
+**(a) Shell out to `flox services start`.** Rejected: it would have to
+run inside the boundary (services are project code), requiring the flox
+binary and its internals to be executable inside the compiled profile.
+That is what the "environment resolves once" invariant already rejects
+for per-session activation, for the same reason — the profile would grant
+flox internals permanently, for every sandbox.
 
-Secondary benefit: this avoids two supervisors fighting. flox restarts
-what it supervises; devcroft must be able to reap deterministically at
-`down`. Only one of them can own process lifetime, and it has to be the
-one that owns the sandbox.
+**(b) Consume flox's generated `service-config.yaml` directly.** This
+looked strictly better at first, and it is worth recording why it is not.
+Investigated live: flox does use process-compose internally, invoking
+`process-compose up -f $FLOX_ENV/service-config.yaml -u <sock>`, and that
+config is readable from inside a devcroft sandbox today. Two facts killed
+it:
 
-Cost, stated honestly: `flox services status` run by hand inside a
-project will not show these processes, because flox did not start them.
-The declaration is shared; the supervision is not.
+- `service-config.yaml` is an **undocumented generated artifact**. It
+  appears in none of flox's published documentation, unlike `[services]`
+  in `manifest.toml`, which is a documented user-facing schema. Consuming
+  it would trade a public contract for an implementation detail — and one
+  whose contents (`flox_never_exit` with `sleep infinity`, flox's own
+  keep-alive) are visibly tailored to flox's lifecycle rather than to
+  third-party consumption.
+- The process-compose binary it needs is **flox's own dependency, not the
+  environment's** — confirmed: zero of the environment closure's 29
+  requisites, with `flox-1.14.0` itself as the referrer. It is readable
+  from a sandbox only because devcroft grants `/nix/store` broadly rather
+  than granting the environment's actual closure. That makes the whole
+  approach work by accident, and it would break the day those grants are
+  tightened — which would be an improvement devcroft should be free to
+  make.
+
+**(c) Chosen: parse the documented `[services]` declarations host-side,
+generate a process-compose config devcroft owns, and run process-compose
+supervised by the keeper inside the sandbox.**
+
+This keeps the stable half of (b) — no reimplementation of restart
+policy, service dependencies, or daemon handling, all of which
+process-compose already does — while depending only on a published
+schema. The generated config is devcroft's own artifact, so nothing
+breaks when flox changes its internal one. Because every provider's
+declarations land in the same internal model, one config generator serves
+flox, devbox (which is process-compose-based too), and nix-with-
+services-flake — the whole provider roadmap, not just today's provider.
+
+`process-compose` must therefore be **declared in the project's
+environment**, so it is a real closure member rather than a scanned store
+path. Scanning is rejected: it picks an arbitrary path with nothing tying
+it to this environment's config schema, and it happens to work today only
+because exactly one copy exists on this machine.
+
+Cost, stated honestly: `flox services status` run by hand will not show
+these processes, because flox did not start them. The declarations are
+shared; the supervision is not. And requiring `process-compose` in the
+manifest leaks a devcroft implementation choice into the project's
+environment — accepted as the lesser evil against depending on a binary
+the environment never declared.
 
 ### 2. Services are `SessionBackend` spawns without a pty
 
@@ -100,13 +135,33 @@ bullet warns about.
 Revisitable: an explicit restart policy key is additive later. It should
 not be inferred by default.
 
-### 4. Ordering — services after hooks, and `--skip-hooks` skips both
+### 4. Ordering — services BEFORE hooks (reversed), and `--skip-hooks` skips both
 
-Both orderings have real use cases (a hook seeding fixtures a service
-needs; a service a hook wants to query). Hooks-first is chosen because
-hooks already have "fails `up`" semantics and services explicitly do
-not — running the failure-significant step first keeps `up`'s failure
-mode simple.
+**This decision originally said hooks first. That was wrong, and the
+reason it was wrong is worth keeping.** The original argument was that
+hooks have "fails `up`" semantics and services do not, so running the
+failure-significant step first keeps `up`'s failure mode simple. That is
+an argument about devcroft's internals, not about what projects actually
+need.
+
+The real-world dependency runs the other way: the canonical `post_start`
+hook for a project with a database is "run migrations", which requires
+the database to already be up. Services-then-hooks serves that; the
+reverse forecloses it.
+
+It is also what the implementation forces, which is how the error
+surfaced. `up` cannot own service lifetime — it is a short-lived CLI
+process, and a session whose client disconnects is escalated after
+`connection::DEFAULT_GRACE_PERIOD` (2s), so services started the way
+hooks are started would die ~2 seconds after `up` returns. The keeper
+must own them, and the keeper's natural moment is its own startup —
+before `up` gets far enough to run hooks. Constraint and correctness
+agree here; the original decision had them in conflict only because it
+was reasoned from the wrong end.
+
+The case this forecloses — a service that wants a hook-seeded fixture
+before it starts — is real but rarer, and is served by the service's own
+command waiting, not by reordering the whole phase.
 
 `--skip-hooks` also skipping services is not an obvious reading of the
 flag's name, but it preserves the property that actually matters: one
