@@ -43,6 +43,14 @@
       schema-drift guard) rather than resolving to an empty list
 - [ ] 2.6 Regression test: `policy --render` byte-identical with and
       without services declared
+
+> **Out of scope, moved to its own change:** `nix` returning a flat
+> `ServiceSupport::Unsupported` is correct for the interface devcroft
+> consumes — a plain `devShell` genuinely has no services. A flake using
+> services-flake *does* declare them, but as a separate flake app
+> (`nix run .#services`) rather than in the devShell, so serving it means
+> resolving a second flake output. That is a provider question, not a
+> flox-services one, and belongs in its own specification.
 - [x] 2.7 Full documented schema, not just `command`: `vars`,
       `is-daemon`, `shutdown.command`. Found by checking flox's docs
       rather than assuming — `vars` carries the service's port in flox's
@@ -52,15 +60,13 @@
       `shutdown.command` is rejected at resolution (such a service is
       unstoppable: the launcher exits by design, so killing it at
       teardown reaps nothing)
-- [ ] 2.8 Reconsider `nix` returning a flat `Unsupported`. A plain
-      `devShell` genuinely has no services, so this is correct for the
-      interface devcroft consumes — but a flake using
-      [services-flake](https://github.com/juspay/services-flake) *does*
-      declare services, exposed as a separate flake app (`nix run
-      .#services`) rather than in the devShell. Such a project brought up
-      under devcroft gets silence. Service support is a property of the
-      project, not of the provider, so detecting that output is the
-      honest fix
+> **Out of scope, moved to its own change:** `nix` returning a flat
+> `ServiceSupport::Unsupported` is correct for the interface devcroft
+> consumes — a plain `devShell` genuinely has no services. A flake using
+> services-flake *does* declare them, but as a separate flake app
+> (`nix run .#services`) rather than in the devShell, so serving it means
+> resolving a second flake output. That is a provider question, not a
+> flox-services one, and belongs in its own specification.
 
 ## 3. Service supervision in the keeper
 
