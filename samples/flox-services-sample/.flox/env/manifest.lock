@@ -3,6 +3,9 @@
   "manifest": {
     "schema-version": "1.14.0",
     "install": {
+      "process-compose": {
+        "pkg-path": "process-compose"
+      },
       "python3": {
         "pkg-path": "python3"
       }
@@ -20,6 +23,126 @@
     }
   },
   "packages": [
+    {
+      "attr_path": "process-compose",
+      "broken": false,
+      "derivation": "/nix/store/4inhhwj216nfy75irkgm43d9dpd80vm8-process-compose-1.116.0.drv",
+      "description": "Simple and flexible scheduler and orchestrator to manage non-containerized applications",
+      "install_id": "process-compose",
+      "license": "Apache-2.0",
+      "locked_url": "https://github.com/flox/nixpkgs?rev=d407951447dcd00442e97087bf374aad70c04cea",
+      "name": "process-compose-1.116.0",
+      "pname": "process-compose",
+      "rev": "d407951447dcd00442e97087bf374aad70c04cea",
+      "rev_count": 1027867,
+      "rev_date": "2026-07-05T04:06:12Z",
+      "scrape_date": "2026-07-06T03:13:36.435630Z",
+      "stabilities": [
+        "staging",
+        "unstable"
+      ],
+      "unfree": false,
+      "version": "1.116.0",
+      "outputs_to_install": [
+        "out"
+      ],
+      "outputs": {
+        "out": "/nix/store/xwh2w75ig3bf25sw41vwnf5b1cc9hp7p-process-compose-1.116.0"
+      },
+      "system": "aarch64-darwin",
+      "group": "toplevel",
+      "priority": 5
+    },
+    {
+      "attr_path": "process-compose",
+      "broken": false,
+      "derivation": "/nix/store/k781si303nfznhs3h1dfib9ijnlihczj-process-compose-1.116.0.drv",
+      "description": "Simple and flexible scheduler and orchestrator to manage non-containerized applications",
+      "install_id": "process-compose",
+      "license": "Apache-2.0",
+      "locked_url": "https://github.com/flox/nixpkgs?rev=d407951447dcd00442e97087bf374aad70c04cea",
+      "name": "process-compose-1.116.0",
+      "pname": "process-compose",
+      "rev": "d407951447dcd00442e97087bf374aad70c04cea",
+      "rev_count": 1027867,
+      "rev_date": "2026-07-05T04:06:12Z",
+      "scrape_date": "2026-07-06T03:42:21.881197Z",
+      "stabilities": [
+        "staging",
+        "unstable"
+      ],
+      "unfree": false,
+      "version": "1.116.0",
+      "outputs_to_install": [
+        "out"
+      ],
+      "outputs": {
+        "out": "/nix/store/2adglgmmv1klc7msv2nyx3j62xkikz9a-process-compose-1.116.0"
+      },
+      "system": "aarch64-linux",
+      "group": "toplevel",
+      "priority": 5
+    },
+    {
+      "attr_path": "process-compose",
+      "broken": false,
+      "derivation": "/nix/store/r276iaqcj261p6lbj2mswym9aqn5mbxm-process-compose-1.116.0.drv",
+      "description": "Simple and flexible scheduler and orchestrator to manage non-containerized applications",
+      "install_id": "process-compose",
+      "license": "Apache-2.0",
+      "locked_url": "https://github.com/flox/nixpkgs?rev=d407951447dcd00442e97087bf374aad70c04cea",
+      "name": "process-compose-1.116.0",
+      "pname": "process-compose",
+      "rev": "d407951447dcd00442e97087bf374aad70c04cea",
+      "rev_count": 1027867,
+      "rev_date": "2026-07-05T04:06:12Z",
+      "scrape_date": "2026-07-06T04:09:52.105242Z",
+      "stabilities": [
+        "staging",
+        "unstable"
+      ],
+      "unfree": false,
+      "version": "1.116.0",
+      "outputs_to_install": [
+        "out"
+      ],
+      "outputs": {
+        "out": "/nix/store/zlsj3gcnnm1f49gdwri5c4l3qsyxzx3y-process-compose-1.116.0"
+      },
+      "system": "x86_64-darwin",
+      "group": "toplevel",
+      "priority": 5
+    },
+    {
+      "attr_path": "process-compose",
+      "broken": false,
+      "derivation": "/nix/store/9janrk4c1i8g2a0cil9c4cyixx6wfcbp-process-compose-1.116.0.drv",
+      "description": "Simple and flexible scheduler and orchestrator to manage non-containerized applications",
+      "install_id": "process-compose",
+      "license": "Apache-2.0",
+      "locked_url": "https://github.com/flox/nixpkgs?rev=d407951447dcd00442e97087bf374aad70c04cea",
+      "name": "process-compose-1.116.0",
+      "pname": "process-compose",
+      "rev": "d407951447dcd00442e97087bf374aad70c04cea",
+      "rev_count": 1027867,
+      "rev_date": "2026-07-05T04:06:12Z",
+      "scrape_date": "2026-07-06T04:41:28.377357Z",
+      "stabilities": [
+        "staging",
+        "unstable"
+      ],
+      "unfree": false,
+      "version": "1.116.0",
+      "outputs_to_install": [
+        "out"
+      ],
+      "outputs": {
+        "out": "/nix/store/7w3p9gy8jqjzj0bzj5clc0csdwrp9qnn-process-compose-1.116.0"
+      },
+      "system": "x86_64-linux",
+      "group": "toplevel",
+      "priority": 5
+    },
     {
       "attr_path": "python3",
       "broken": false,

@@ -6,4 +6,5 @@ pub mod lifecycle;
 pub(crate) mod paths;
 pub mod policy;
 pub mod provider;
+pub mod services;
 pub mod ssh;

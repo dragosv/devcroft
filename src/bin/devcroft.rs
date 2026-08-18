@@ -9,7 +9,7 @@ use std::os::fd::{FromRawFd, RawFd};
 use std::os::unix::net::UnixListener;
 use std::sync::Arc;
 
-use devcroft::keeper::{Keeper, LocalSessionBackend, Registry};
+use devcroft::keeper::{Keeper, LocalSessionBackend, Registry, SessionBackend};
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
@@ -1526,6 +1526,18 @@ fn keeper_main(fd: RawFd, ssh_fd: RawFd) -> ! {
     // first time ssh startup was ordered ahead of this.
     install_shutdown_handler(Arc::clone(keeper.registry()));
 
+    // Services start here — at keeper startup, before hooks, which `up`
+    // runs only once this process is responsive. The keeper owns their
+    // lifetime because `up` cannot: it exits, and anything it started
+    // over the control socket would be escalated seconds later.
+    //
+    // Registered in the same registry sessions use, which is what makes
+    // teardown work without new machinery: `install_shutdown_handler`
+    // above already terminates every registered process group on
+    // SIGTERM, so `down` reaps process-compose (and, through it, the
+    // services) exactly the way it reaps a live shell.
+    start_services_if_requested(Arc::clone(keeper.registry()), Arc::new(LocalSessionBackend));
+
     // Best-effort (task 6.1): a broken ssh handoff logs to this process's
     // own stderr (redirected by `up` to `<state>/<name>/keeper.log`) and
     // leaves ssh unavailable for this sandbox rather than taking the
@@ -1534,6 +1546,68 @@ fn keeper_main(fd: RawFd, ssh_fd: RawFd) -> ! {
 
     let _ = keeper.serve();
     std::process::exit(0);
+}
+
+/// Starts the generated process-compose config as a supervised child,
+/// when `up` asked for it via `DEVCROFT_START_SERVICES`.
+///
+/// Runs the config `up` wrote host-side; this process never generates it,
+/// and never parses a provider manifest — that all happened in the
+/// trusted phase. Failure is deliberately non-fatal: the `services` delta
+/// spec requires a failed service not to take the sandbox down, so a
+/// problem here is logged (to the keeper log `up` redirects) and
+/// `exec`/`shell`/SSH keep working.
+fn start_services_if_requested(registry: Arc<Registry>, backend: Arc<dyn SessionBackend>) {
+    if std::env::var("DEVCROFT_START_SERVICES").as_deref() != Ok("1") {
+        return;
+    }
+    // The keeper's cwd is the project root (`spawn_keeper` sets it), and
+    // the config lives there because that is the only location the
+    // sandbox can both write and read — `/tmp` is write-only under the
+    // baseline profile and the state dir is baseline-denied outright.
+    let config = devcroft::services::ARTIFACT_DIR.to_string() + "/services.yaml";
+    let log = devcroft::services::ARTIFACT_DIR.to_string() + "/services.log";
+    let sock = devcroft::services::ARTIFACT_DIR.to_string() + "/services.sock";
+
+    let req = devcroft::keeper::protocol::SpawnRequest {
+        cmd: "process-compose".to_string(),
+        args: vec![
+            "up".to_string(),
+            "-f".to_string(),
+            config,
+            // No TUI: this has no terminal attached.
+            "-t=false".to_string(),
+            "-L".to_string(),
+            log,
+            // A unix socket for its own API, not the default TCP
+            // listener. Found the hard way: process-compose binds
+            // localhost:8080 by default and treats failure as fatal, so
+            // inside a sandbox that has not granted 8080 it exited
+            // immediately — killing services it had already started.
+            // `--no-server` would also avoid the bind, but a socket keeps
+            // the API reachable for `ps`/`status` to query later, and
+            // costs nothing: the project root is writable.
+            "-u".to_string(),
+            sock,
+        ],
+        cwd: ".".to_string(),
+        env: std::collections::BTreeMap::new(),
+        pty: None,
+    };
+
+    match backend.spawn(&req) {
+        Ok(spawned) => {
+            let id = registry.insert(spawned.pgid, "process-compose (services)".to_string());
+            eprintln!("services started session={id} pgid={}", spawned.pgid);
+            // The child is intentionally leaked rather than waited on:
+            // the registry now owns its pgid for teardown, and reaping it
+            // here would block the keeper's startup path forever.
+            std::mem::forget(spawned);
+        }
+        Err(e) => {
+            eprintln!("services failed to start: {e}");
+        }
+    }
 }
 
 /// `down`/`rm` (lifecycle::terminate) signal this process directly, then

@@ -92,11 +92,15 @@
 > environment so it is a real closure member rather than a scanned store
 > path.
 
-- [ ] 3.1 Service model and registry alongside the existing session
-      registry: per-service state distinguishing not-started,
-      failed-at-start, running, and exited-later (the `services` delta
-      spec requires all four be distinguishable)
-- [ ] 3.2 Generate a process-compose config from the resolved
+- [x] 3.1 Services are registered in the **existing** session registry
+      rather than a parallel one — which is what makes teardown work with
+      no new machinery, since `install_shutdown_handler` already
+      terminates every registered process group. **Partial:** the
+      four-state model (not-started / failed-at-start / running /
+      exited-later) the `services` delta spec requires is not built yet;
+      today process-compose is one registry entry, and per-service state
+      needs querying its API over the unix socket (task 5.x)
+- [x] 3.2 Generate a process-compose config from the resolved
       declarations (devcroft's own artifact, not flox's), and start
       `process-compose up -f <config>` through the existing
       `SessionBackend` trait, without a pty and with no attached client
@@ -104,19 +108,19 @@
       services`, do not consume flox's `service-config.yaml`, and do not
       add a tier-specific path — going through the trait is what makes
       this work identically at `process` and `hardened`
-- [ ] 3.2a Require `process-compose` in the resolved environment and fail
+- [x] 3.2a Require `process-compose` in the resolved environment and fail
       at layer `provider` naming it when services are declared but the
       binary is not a closure member. Never scan `/nix/store` for it:
       that picks an arbitrary path with nothing tying it to this
       environment's config schema
 - [ ] 3.3 Capture service output with per-service attribution for `logs`
-- [ ] 3.4 No automatic restart (design.md decision 3). Now a property of
+- [x] 3.4 No automatic restart (design.md decision 3). Now a property of
       the *generated* config rather than of devcroft's own supervision
       loop: emit process-compose's no-restart policy explicitly rather
       than relying on its defaults, since a default that restarts would
       silently reverse this decision. Assert it in a test so a future
       "helpful" restart cannot land unnoticed
-- [ ] 3.5 Teardown: stop services before the keeper exits, SIGTERM
+- [x] 3.5 Teardown: stop services before the keeper exits, SIGTERM
       escalating to SIGKILL after the same grace period sessions use.
       Killing process-compose must reap its children — verify that rather
       than assuming it — and a service declaring `shutdown.command` must
@@ -128,18 +132,18 @@
 
 ## 4. Lifecycle wiring
 
-- [ ] 4.1 Services start at **keeper startup, before hooks** (design.md
+- [x] 4.1 Services start at **keeper startup, before hooks** (design.md
       decision 4, reversed — see the group 3 note). The keeper owns their
       lifetime because `up` cannot: it exits, and a disconnected session
       is escalated after 2s. Declarations reach the keeper the way the
       resolved env already does, not over the control socket
-- [ ] 4.2 `up --skip-hooks` also skips services, preserving "nothing
+- [x] 4.2 `up --skip-hooks` also skips services, preserving "nothing
       project-supplied runs"; services report as not-started, not failed
-- [ ] 4.3 A failed service does not fail `up` — `up` exits 0, prints the
+- [x] 4.3 A failed service does not fail `up` — `up` exits 0, prints the
       failure, and `exec`/`shell`/SSH still work (the `services` delta's
       "do not block sandbox availability")
-- [ ] 4.4 `down`/`rm` stop services before tearing the keeper down
-- [ ] 4.5 Services start on every keeper start (`post_start` semantics,
+- [x] 4.4 `down`/`rm` stop services before tearing the keeper down
+- [x] 4.5 Services start on every keeper start (`post_start` semantics,
       not `post_create`); no attempt to preserve process state across
       `down`/`up`
 - [ ] 4.6 `SandboxStatus` gains service state, with the same

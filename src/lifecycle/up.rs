@@ -264,6 +264,35 @@ fn up_process(
         .to_openssh()
         .map_err(|e| UpError::Ssh(e.to_string()))?;
 
+    // Services: generated host-side, in the trusted phase, so nothing
+    // project-supplied runs to produce this. `--skip-hooks` suppresses it
+    // for the same reason it suppresses hooks — one flag that guarantees
+    // nothing project-supplied executes.
+    let services = resolution.services.declared();
+    let start_services = !opts.skip_hooks && !services.is_empty();
+    if start_services {
+        // `process-compose` must come from the project's own environment,
+        // never the host's PATH and never a scanned store path — see
+        // `services::resolve_in_env`. Failing here, at layer `provider`,
+        // beats starting a sandbox whose declared services silently never
+        // come up.
+        if crate::services::resolve_in_env(&resolution.env).is_none() {
+            return Err(UpError::Provider(
+                crate::provider::ProviderError::ResolutionFailed(format!(
+                    "{} service(s) are declared but `process-compose` is not in the \
+                     resolved environment; add it to the environment manifest \
+                     (e.g. `flox install process-compose`)",
+                    services.len()
+                )),
+            ));
+        }
+        let config_path = crate::services::config_path(project_root);
+        if let Some(dir) = config_path.parent() {
+            std::fs::create_dir_all(dir)?;
+        }
+        std::fs::write(&config_path, crate::services::render_config(services))?;
+    }
+
     let keeper_pid = spawn_keeper(
         &exe,
         &listener,
@@ -276,6 +305,7 @@ fn up_process(
             host_key_pem: &host_key_pem,
             authorized_key_pem: &authorized_key_pem,
         },
+        start_services,
     )
     .map_err(|e| UpError::Keeper(e.to_string()))?;
     // Both fds must outlive this function for the child to inherit them
@@ -532,6 +562,7 @@ fn spawn_keeper(
     env: &std::collections::BTreeMap<String, String>,
     unset: &[String],
     ssh: SshHandoff,
+    start_services: bool,
 ) -> io::Result<libc::pid_t> {
     let log = std::fs::File::create(&paths.log)?;
 
@@ -574,6 +605,17 @@ fn spawn_keeper(
         // environment above already crosses this way.
         .env("DEVCROFT_SSH_HOST_KEY", ssh.host_key_pem)
         .env("DEVCROFT_SSH_AUTHORIZED_KEY", ssh.authorized_key_pem)
+        // Services are started by the *keeper*, not by `up`: `up` exits,
+        // and a session whose client disconnects is escalated after
+        // `connection::DEFAULT_GRACE_PERIOD`, so anything `up` started
+        // over the control socket would die seconds later. The keeper
+        // owns their lifetime, and its own startup is the moment — which
+        // also puts services before hooks, the ordering add-flox-services'
+        // design.md decision 4 settled on independently.
+        .env(
+            "DEVCROFT_START_SERVICES",
+            if start_services { "1" } else { "0" },
+        )
         .stdin(Stdio::null())
         .stdout(log.try_clone()?)
         .stderr(log);

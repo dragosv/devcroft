@@ -8,6 +8,7 @@ schema-version = "1.14.0"
 ## -------------------------------------------------------------------
 [install]
 python3.pkg-path = "python3"
+process-compose.pkg-path = "process-compose"
 # gum.pkg-path = "gum"
 # gum.version = "^0.14.5"
 
