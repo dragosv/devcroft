@@ -217,16 +217,33 @@ host's network namespace exactly like `process` does, and does **not**
 close that gap either (see the note below).
 
 What isn't verified: an actual live session round-trip and SSH handshake
-against a *running* gVisor sandbox. This repo's own devcontainer now
-ships a real, pinned `runsc` (task group 8's install), but cannot create
-unprivileged user namespaces (`unshare --user` fails `EPERM`, and no
-`security-opt` relaxation is applied by default — see
-`.devcontainer/devcontainer.json`'s own comment on that tradeoff) — a
-rootless `runsc run` needs exactly that. `devcroft doctor` reports this
-live and correctly: `[FAIL] gvisor-backend: ... the systrap platform
-does not work on this host (... fork/exec /proc/self/exe: operation not
-permitted)`, and `tests/gvisor_hardened_e2e.rs` self-skips with the same
-finding rather than claiming coverage it doesn't have. Before `runsc`
+against a *running* gVisor sandbox. This repo's own devcontainer ships a
+real, pinned `runsc` (task group 8's install), but could not create
+unprivileged user namespaces (`unshare --user` failed `EPERM`) —
+diagnosed as the container runtime's default seccomp profile blocking
+`clone(CLONE_NEWUSER)` for a process without effective `CAP_SYS_ADMIN`,
+not the more commonly cited `kernel.unprivileged_userns_clone` sysctl
+(that path doesn't exist on this kernel at all). `devcroft doctor`
+reported this live and correctly: `[FAIL] gvisor-backend: ... the
+systrap platform does not work on this host (... fork/exec
+/proc/self/exe: operation not permitted)`, and
+`tests/gvisor_hardened_e2e.rs` self-skipped with the same finding rather
+than claiming coverage it didn't have. `.devcontainer/devcontainer.json`
+now sets `"runArgs": ["--security-opt", "seccomp=unconfined"]` to lift
+that block — a deliberate reversal of this file's earlier "no
+security-opt relaxations" stance for Landlock, recorded in that file's
+own comment along with why the narrower `--cap-add=SYS_ADMIN` doesn't
+work here (the devcontainer's `remoteUser` is non-root, and a non-root
+process's effective capabilities stay empty regardless of the
+container's granted set). **Unverified**: the diagnosis (seccomp
+blocking `clone(CLONE_NEWUSER)` absent effective `CAP_SYS_ADMIN`) is
+confirmed directly against the running container's own
+`/proc/self/status`, but the fix itself is not — no docker socket is
+reachable from inside a running devcontainer to drive a rebuild from
+this session, so whether `seccomp=unconfined` actually clears the EPERM
+is untested. The next rebuild is what `devcroft doctor`'s gvisor-backend
+check and `tests/gvisor_hardened_e2e.rs` will either confirm or correct.
+Before `runsc`
 was installed here at all, a real release binary was fetched out-of-band
 and driven through the actual code path by hand against a real
 nix-flake project, which caught and fixed four real bugs before any of
