@@ -1548,10 +1548,10 @@ fn keeper_main(fd: RawFd, ssh_fd: RawFd) -> ! {
     let listener = unsafe { UnixListener::from_raw_fd(fd) };
     let ssh_listener = unsafe { UnixListener::from_raw_fd(ssh_fd) };
 
-    // `keeper_main` only ever runs under the `process` tier today (the
-    // `hardened` tier's host-side control server, when implemented, does
-    // not go through this entrypoint at all — see add-hardened-tier task
-    // 3.3), so `LocalSessionBackend` is the only backend reachable here.
+    // `keeper_main` only ever runs under the `process` tier: the
+    // `hardened` tier's host-side control server (`hardened_keeper_main`)
+    // does not go through this entrypoint at all, so
+    // `LocalSessionBackend` is the only backend reachable here.
     let keeper = Keeper::new(listener, Arc::new(LocalSessionBackend));
     // Must run before anything else spawns a thread — including the ssh
     // server below, whose tokio runtime spawns its own worker-thread pool
@@ -1600,13 +1600,28 @@ fn start_services_if_requested(registry: Arc<Registry>, backend: Arc<dyn Session
     if std::env::var("DEVCROFT_START_SERVICES").as_deref() != Ok("1") {
         return;
     }
-    // The keeper's cwd is the project root (`spawn_keeper` sets it), and
-    // the config lives there because that is the only location the
-    // sandbox can both write and read — `/tmp` is write-only under the
-    // baseline profile and the state dir is baseline-denied outright.
-    let config = devcroft::services::ARTIFACT_DIR.to_string() + "/services.yaml";
-    let log = devcroft::services::ARTIFACT_DIR.to_string() + "/services.log";
-    let sock = devcroft::services::ARTIFACT_DIR.to_string() + "/services.sock";
+    // The config lives in the project root because that is the only
+    // location the sandbox can both write and read — `/tmp` is write-only
+    // under the baseline profile and the state dir is baseline-denied
+    // outright. Named absolutely, from the root `up` passed down: at the
+    // hardened tier this process runs on the *host* and the path is
+    // resolved by `runsc exec --cwd` inside the sandbox, where a relative
+    // path would be resolved against the wrong side of the boundary (and
+    // `--cwd` requires an absolute one regardless). The project root is a
+    // bind mount at the identical path inside the sandbox, so a single
+    // absolute string is correct at both tiers.
+    let root = std::path::PathBuf::from(
+        std::env::var("DEVCROFT_SERVICES_ROOT").unwrap_or_else(|_| ".".to_string()),
+    );
+    let config = devcroft::services::config_path(&root)
+        .to_string_lossy()
+        .into_owned();
+    let log = devcroft::services::log_path(&root)
+        .to_string_lossy()
+        .into_owned();
+    let sock = devcroft::services::socket_path(&root)
+        .to_string_lossy()
+        .into_owned();
 
     let req = devcroft::keeper::protocol::SpawnRequest {
         cmd: "process-compose".to_string(),
@@ -1641,7 +1656,7 @@ fn start_services_if_requested(registry: Arc<Registry>, backend: Arc<dyn Session
             // supported flag for it, so no sentinel is needed here.
             "--keep-project".to_string(),
         ],
-        cwd: ".".to_string(),
+        cwd: root.to_string_lossy().into_owned(),
         env: std::collections::BTreeMap::new(),
         pty: None,
     };
@@ -1754,6 +1769,16 @@ fn hardened_keeper_main(
         container_id,
         state_root_path,
     );
+
+    // Same call, same position in the sequence as `keeper_main` — before
+    // ssh, before hooks — with the *only* difference being which
+    // `SessionBackend` the request is dispatched through. That is the
+    // parity add-flox-services task 3.2 asks for ("do not add a
+    // tier-specific path"): process-compose runs inside the gVisor
+    // sandbox via `runsc exec`, registered in the same registry, so
+    // `install_hardened_shutdown_handler` reaps it exactly as it reaps a
+    // live shell.
+    start_services_if_requested(Arc::clone(keeper.registry()), Arc::clone(&backend));
 
     devcroft::ssh::start_from_env(ssh_listener, Arc::clone(&backend));
 

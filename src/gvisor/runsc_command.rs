@@ -69,8 +69,9 @@ pub fn run_args(
     bundle: &Path,
     platform: Platform,
     network: NetworkMode,
+    host_uds: bool,
 ) -> Vec<String> {
-    let mut args = global_args(container, platform, network);
+    let mut args = global_args(container, platform, network, host_uds);
     args.push("run".to_string());
     // `runsc`'s flags are Go stdlib `flag`, which has no short-alias
     // concept — `-d` alone is not `-detach`, it is simply undefined and
@@ -134,8 +135,13 @@ pub fn delete_args(container: &Container<'_>) -> Vec<String> {
     ]
 }
 
-fn global_args(container: &Container<'_>, platform: Platform, network: NetworkMode) -> Vec<String> {
-    vec![
+fn global_args(
+    container: &Container<'_>,
+    platform: Platform,
+    network: NetworkMode,
+    host_uds: bool,
+) -> Vec<String> {
+    let mut args = vec![
         "--rootless".to_string(),
         "--platform".to_string(),
         platform.runsc_flag().to_string(),
@@ -143,7 +149,22 @@ fn global_args(container: &Container<'_>, platform: Platform, network: NetworkMo
         network.runsc_flag().to_string(),
         "--root".to_string(),
         container.state_root.to_string_lossy().into_owned(),
-    ]
+    ];
+    if host_uds {
+        // `create`, never `open`/`all`: this permits the sandbox to
+        // *bind* a unix socket on a gofer-backed mount (which is how
+        // process-compose exposes its API, and the only way the host-side
+        // control process can read per-service state back out of the
+        // sandbox), while still refusing to let it *connect* to any host
+        // socket — the direction that would reach things like a docker
+        // socket. runsc's default is `none`, under which the bind is not
+        // visible on the host at all.
+        //
+        // Requested only when this sandbox actually declares services, so
+        // a sandbox without them keeps the stricter default.
+        args.push("--host-uds=create".to_string());
+    }
+    args
 }
 
 #[cfg(test)]
@@ -166,6 +187,7 @@ mod tests {
             &PathBuf::from("/state/myproj/bundle"),
             Platform::Systrap,
             NetworkMode::None,
+            false,
         );
 
         assert!(args.contains(&"--rootless".to_string()));
@@ -184,6 +206,7 @@ mod tests {
             &PathBuf::from("/state/myproj/bundle"),
             Platform::Kvm,
             NetworkMode::None,
+            false,
         );
         let platform_idx = args.iter().position(|a| a == "--platform").unwrap();
         assert_eq!(args[platform_idx + 1], "kvm");
@@ -198,9 +221,34 @@ mod tests {
                 &PathBuf::from("/state/myproj/bundle"),
                 Platform::Systrap,
                 mode,
+                false,
             );
             let network_idx = args.iter().position(|a| a == "--network").unwrap();
             assert_eq!(args[network_idx + 1], expected);
+        }
+    }
+
+    /// add-flox-services task 3.2: per-service state at the hardened tier
+    /// is read back over the unix socket process-compose binds *inside*
+    /// the sandbox, on a mount the host shares. Under runsc's default
+    /// `--host-uds=none` that bind is invisible to the host, so a sandbox
+    /// with services must ask for `create` — and only `create`, never a
+    /// value that also permits connecting outward to host sockets.
+    #[test]
+    fn host_uds_is_requested_only_for_services_and_only_to_create() {
+        let c = container("myproj", "/state/myproj/runsc-state");
+        let bundle = PathBuf::from("/state/myproj/bundle");
+
+        let without = run_args(&c, &bundle, Platform::Systrap, NetworkMode::None, false);
+        assert!(
+            !without.iter().any(|a| a.starts_with("--host-uds")),
+            "a sandbox with no services must keep runsc's stricter default"
+        );
+
+        let with = run_args(&c, &bundle, Platform::Systrap, NetworkMode::None, true);
+        assert!(with.contains(&"--host-uds=create".to_string()));
+        for forbidden in ["--host-uds=open", "--host-uds=all"] {
+            assert!(!with.contains(&forbidden.to_string()));
         }
     }
 
@@ -229,6 +277,7 @@ mod tests {
             &PathBuf::from("/state/myproj/bundle"),
             Platform::Systrap,
             NetworkMode::None,
+            false,
         );
         let kill = kill_args(&c, "SIGTERM");
         let delete = delete_args(&c);

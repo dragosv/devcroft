@@ -132,10 +132,11 @@ pub fn run(
     platform: Platform,
     network: NetworkMode,
     landlock: &LandlockGrants<'_>,
+    host_uds: bool,
 ) -> io::Result<()> {
     std::fs::create_dir_all(container.state_root)?;
 
-    let args = runsc_command::run_args(container, bundle_dir, platform, network);
+    let args = runsc_command::run_args(container, bundle_dir, platform, network, host_uds);
     // `bundle_dir` (config.json + rootfs/) is read-only from `runsc`'s
     // side; `state_root` (`--root`) is where it writes its own container
     // bookkeeping, so it needs read-write. Both found missing live, the

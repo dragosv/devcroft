@@ -264,34 +264,7 @@ fn up_process(
         .to_openssh()
         .map_err(|e| UpError::Ssh(e.to_string()))?;
 
-    // Services: generated host-side, in the trusted phase, so nothing
-    // project-supplied runs to produce this. `--skip-hooks` suppresses it
-    // for the same reason it suppresses hooks — one flag that guarantees
-    // nothing project-supplied executes.
-    let services = resolution.services.declared();
-    let start_services = !opts.skip_hooks && !services.is_empty();
-    if start_services {
-        // `process-compose` must come from the project's own environment,
-        // never the host's PATH and never a scanned store path — see
-        // `services::resolve_in_env`. Failing here, at layer `provider`,
-        // beats starting a sandbox whose declared services silently never
-        // come up.
-        if crate::services::resolve_in_env(&resolution.env).is_none() {
-            return Err(UpError::Provider(
-                crate::provider::ProviderError::ResolutionFailed(format!(
-                    "{} service(s) are declared but `process-compose` is not in the \
-                     resolved environment; add it to the environment manifest \
-                     (e.g. `flox install process-compose`)",
-                    services.len()
-                )),
-            ));
-        }
-        let config_path = crate::services::config_path(project_root);
-        if let Some(dir) = config_path.parent() {
-            std::fs::create_dir_all(dir)?;
-        }
-        std::fs::write(&config_path, crate::services::render_config(services))?;
-    }
+    let start_services = prepare_services(project_root, resolution, opts)?;
 
     let keeper_pid = spawn_keeper(
         &exe,
@@ -331,6 +304,47 @@ fn up_process(
     }
 
     Ok(outcome)
+}
+
+/// Host-side, trusted-phase preparation for declared services, shared by
+/// both tiers — the `services` change's task 3.2 requires exactly one
+/// path here ("do not add a tier-specific path"), and this is it.
+/// Returns whether the keeper should start services at all.
+///
+/// Runs before any restriction is applied, so nothing project-supplied
+/// executes to produce the config; `--skip-hooks` suppresses it for the
+/// same reason it suppresses hooks — one flag that guarantees nothing
+/// project-supplied runs.
+fn prepare_services(
+    project_root: &Path,
+    resolution: &Resolution,
+    opts: &UpOptions,
+) -> Result<bool, UpError> {
+    let services = resolution.services.declared();
+    if opts.skip_hooks || services.is_empty() {
+        return Ok(false);
+    }
+    // `process-compose` must come from the project's own environment,
+    // never the host's PATH and never a scanned store path — see
+    // `services::resolve_in_env`. Failing here, at layer `provider`,
+    // beats starting a sandbox whose declared services silently never
+    // come up.
+    if crate::services::resolve_in_env(&resolution.env).is_none() {
+        return Err(UpError::Provider(
+            crate::provider::ProviderError::ResolutionFailed(format!(
+                "{} service(s) are declared but `process-compose` is not in the \
+                 resolved environment; add it to the environment manifest \
+                 (e.g. `flox install process-compose`)",
+                services.len()
+            )),
+        ));
+    }
+    let config_path = crate::services::config_path(project_root);
+    if let Some(dir) = config_path.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
+    std::fs::write(&config_path, crate::services::render_config(services))?;
+    Ok(true)
 }
 
 /// The `hardened` tier's supervisor sequence (add-gvisor-backend): no
@@ -373,6 +387,15 @@ fn up_hardened(
         }
     }
 
+    // Before anything starts: the config is a host-side artifact written
+    // into the project root, and the project root is a rw bind mount at
+    // the *identical* path inside the sandbox (`oci_spec::build`), so the
+    // file named here is the file process-compose opens inside the
+    // boundary. Ordered ahead of `runsc run` for the same reason
+    // `up_process` puts it ahead of `spawn_keeper` — a missing
+    // `process-compose` must fail before a sandbox exists, not after.
+    let start_services = prepare_services(project_root, resolution, opts)?;
+
     let compiled = policy::compile(manifest);
     let network = crate::gvisor::oci_spec::NetworkMode::from_compiled_policy(&compiled);
     let spec = crate::gvisor::oci_spec::build(
@@ -411,6 +434,7 @@ fn up_hardened(
             read_write: &[project_root_str],
             read_only: &resolution.read_only_grants,
         },
+        start_services,
     )
     .map_err(|e| UpError::Backend(format!("runsc run: {e}")))?;
 
@@ -445,6 +469,7 @@ fn up_hardened(
         &exe,
         &listener,
         paths,
+        project_root,
         &runsc,
         &manifest.sandbox.name,
         SshHandoff {
@@ -452,6 +477,7 @@ fn up_hardened(
             host_key_pem: &host_key_pem,
             authorized_key_pem: &authorized_key_pem,
         },
+        start_services,
     )
     .map_err(|e| UpError::Keeper(e.to_string()))?;
     std::mem::forget(listener);
@@ -497,13 +523,16 @@ fn up_hardened(
 /// bundle's `process.env`; sessions get it from the sandbox, not from
 /// this process's own environment).
 #[cfg(target_os = "linux")]
+#[allow(clippy::too_many_arguments)]
 fn spawn_hardened_keeper(
     exe: &Path,
     listener: &UnixListener,
     paths: &StatePaths,
+    project_root: &Path,
     runsc: &Path,
     container_id: &str,
     ssh: SshHandoff,
+    start_services: bool,
 ) -> io::Result<libc::pid_t> {
     let log = std::fs::File::create(&paths.log)?;
 
@@ -514,8 +543,26 @@ fn spawn_hardened_keeper(
         .arg(container_id)
         .arg(runsc)
         .arg(&paths.gvisor_runsc_state)
+        // Same cwd contract `spawn_keeper` gives the process tier: the
+        // control server's own cwd is the project root, which is where
+        // `ssh::server` takes each session's starting directory from.
+        .current_dir(project_root)
         .env("DEVCROFT_SSH_HOST_KEY", ssh.host_key_pem)
         .env("DEVCROFT_SSH_AUTHORIZED_KEY", ssh.authorized_key_pem)
+        // Same handoff as the process tier (see `spawn_keeper`): the
+        // supervisor cannot own service lifetime, so the control server
+        // starts them at its own startup — here through `RunscExecBackend`
+        // rather than a local fork/exec, which is the whole point of
+        // routing service startup through the `SessionBackend` seam.
+        .env(
+            "DEVCROFT_START_SERVICES",
+            if start_services { "1" } else { "0" },
+        )
+        // The sandbox sees the project root at the identical path, so one
+        // absolute value is correct on both sides of the boundary — and
+        // `runsc exec --cwd` needs an absolute path, which the process
+        // tier's implicit "." would not give it.
+        .env("DEVCROFT_SERVICES_ROOT", project_root)
         .stdin(Stdio::null())
         .stdout(log.try_clone()?)
         .stderr(log);
@@ -616,6 +663,11 @@ fn spawn_keeper(
             "DEVCROFT_START_SERVICES",
             if start_services { "1" } else { "0" },
         )
+        // Absolute, not relative-to-cwd: the hardened tier's control
+        // server runs host-side and dispatches through `runsc exec
+        // --cwd`, which needs an absolute path. Same value here keeps
+        // one code path in `start_services_if_requested`.
+        .env("DEVCROFT_SERVICES_ROOT", project_root)
         .stdin(Stdio::null())
         .stdout(log.try_clone()?)
         .stderr(log);

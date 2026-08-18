@@ -113,7 +113,31 @@
       (design.md decisions 1 and 2). **Do not** shell out to `flox
       services`, do not consume flox's `service-config.yaml`, and do not
       add a tier-specific path — going through the trait is what makes
-      this work identically at `process` and `hardened`
+      this work identically at `process` and `hardened`.
+      **Was marked done while only half true, and is now actually wired:**
+      the trait was used, but nothing on the hardened branch ever called
+      it — `up_hardened` had no services block and `hardened_keeper_main`
+      never called `start_services_if_requested`, so a project declaring
+      services came up at `isolation = "hardened"` reporting a healthy
+      sandbox and zero service lines, indistinguishable from one that
+      declares none. Both tiers now share `up::prepare_services` for the
+      host-side half and the same `start_services_if_requested` for the
+      keeper-side half, differing only in which `SessionBackend` the
+      request is dispatched through. Three things the wiring forced out
+      into the open, all recorded rather than assumed:
+      (a) service paths are now absolute, from `DEVCROFT_SERVICES_ROOT`,
+      because `runsc exec --cwd` needs an absolute path and the host-side
+      control server's cwd is not the sandbox's;
+      (b) `spawn_hardened_keeper` now sets `current_dir(project_root)`,
+      matching `spawn_keeper` — without it `ssh::server`, which takes each
+      session's cwd from the control process's own, started hardened-tier
+      sessions in whatever directory `up` was invoked from;
+      (c) runsc's `--host-uds` defaults to `none`, under which a unix
+      socket bound *inside* the sandbox is not connectable from the host —
+      which is exactly how `status`/`ps` read per-service state back. The
+      run args now request `--host-uds=create` (never `open`/`all`, which
+      would also permit connecting *outward* to host sockets), and only
+      for sandboxes that actually declare services
 - [x] 3.2a Require `process-compose` in the resolved environment and fail
       at layer `provider` naming it when services are declared but the
       binary is not a closure member. Never scan `/nix/store` for it:
@@ -206,10 +230,25 @@
       as failed with a reachable log tail, and the sandbox stays usable
 - [ ] 6.4 Policy test: a service denied a port by `[network]` fails
       visibly with the same denial any in-sandbox process would get
-- [ ] 6.5 Cross-tier test: the same service declaration behaves
+- [~] 6.5 Cross-tier test: the same service declaration behaves
       identically at `process` and `hardened`, in the shape
       `tests/hardened_tier_ssh_parity.rs` already uses — self-skipping
-      when `runsc` is not functionally usable
+      when `runsc` is not functionally usable. **Half done, and the half
+      that is missing is named rather than papered over.**
+      `tests/hardened_services_wiring.rs` covers the part a machine
+      without a working `runsc` can still observe: hardened `up` enforces
+      the `process-compose` requirement at layer `provider`, and does so
+      *before* starting a sandbox. Verified to fail against the pre-fix
+      code (it reached `backend: runsc run` instead) and pass after, so it
+      is real regression cover for the absent-call bug, not a tautology.
+      Still **unverified against a live sandbox**: that process-compose
+      actually starts under `runsc exec`, that `--host-uds=create` makes
+      its socket reachable from the host, and that teardown reaps it.
+      This repo's devcontainer cannot run `runsc` at all — rootless
+      re-exec into a user namespace is `EPERM` here, the same condition
+      `tests/gvisor_hardened_e2e.rs` already self-skips on — so the
+      in-sandbox half needs a host with usable unprivileged user
+      namespaces before it can be claimed
 
 ## 7. Docs
 
