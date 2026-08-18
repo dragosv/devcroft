@@ -174,6 +174,47 @@ fn a_declared_service_runs_inside_the_sandbox_and_is_reaped_by_down() {
         "sanity: the service process should be visible on the host before teardown"
     );
 
+    // Observability: a running service is reported per-service, by name.
+    let status = devcroft::lifecycle::status(&dc_manifest).unwrap();
+    let services = status
+        .services
+        .as_ref()
+        .expect("a sandbox with a running service must report service state");
+    assert_eq!(services.len(), 1);
+    assert_eq!(services[0].name, "web");
+    assert_eq!(
+        services[0].health,
+        devcroft::services::ServiceHealth::Running
+    );
+
+    // ...and a *dead* one is reported as failed rather than vanishing.
+    // This is the case the `services` spec's "failure is visible, never
+    // silent" exists for, and the one decision 3's no-auto-restart
+    // rationale depends on. It only works because process-compose is run
+    // with `--keep-project`: without it, process-compose exits once its
+    // last service is gone, taking the API socket — and the only record
+    // of why — with it.
+    let pid = services[0].pid.expect("a running service reports its pid");
+    unsafe {
+        libc::kill(pid as libc::pid_t, libc::SIGKILL);
+    }
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let mut reported_failed = false;
+    while Instant::now() < deadline {
+        let st = devcroft::lifecycle::status(&dc_manifest).unwrap();
+        if let Some(svcs) = st.services.as_ref()
+            && svcs.iter().any(|s| s.health.is_failure())
+        {
+            reported_failed = true;
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(250));
+    }
+    assert!(
+        reported_failed,
+        "a killed service must surface as failed, not disappear from status"
+    );
+
     down(&sandbox_name).unwrap();
 
     // The real assertion. Poll briefly: teardown escalates SIGTERM to

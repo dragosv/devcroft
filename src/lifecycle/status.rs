@@ -44,6 +44,12 @@ pub struct SandboxStatus {
     /// `None` when no `up` has ever recorded meta for this sandbox yet;
     /// distinct from an empty string, which never occurs.
     pub isolation: Option<String>,
+    /// Live per-service state, queried from process-compose at call time
+    /// rather than recorded at `up` — unlike `isolation`, this changes
+    /// after `up` returns, so `meta.json` would only ever hold a stale
+    /// snapshot. `None` when the sandbox declares no services or none
+    /// ever started; an empty vec never occurs.
+    pub services: Option<Vec<crate::services::ServiceState>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -93,6 +99,18 @@ pub fn status(manifest: &Manifest) -> Result<SandboxStatus, StatusError> {
         )
         .ok()
     });
+    // Queried before `meta` is consumed below, since the socket lives
+    // under the project root `meta` records — the sandbox's own state
+    // dir is baseline-denied and holds nothing about services.
+    let services = meta
+        .as_ref()
+        .and_then(|meta| {
+            crate::services::query(&crate::services::socket_path(Path::new(&meta.project_root)))
+                .ok()
+                .flatten()
+        })
+        .filter(|s| !s.is_empty());
+
     let isolation = meta.map(|meta| meta.resolved_backend);
 
     let degraded = policy::detect_degraded(&policy::compile(manifest));
@@ -103,6 +121,7 @@ pub fn status(manifest: &Manifest) -> Result<SandboxStatus, StatusError> {
         env_stale,
         degraded,
         isolation,
+        services,
     })
 }
 
@@ -112,7 +131,25 @@ pub fn status(manifest: &Manifest) -> Result<SandboxStatus, StatusError> {
 /// `None` returns everything.
 pub fn logs(sandbox_name: &str, tail_lines: Option<usize>) -> io::Result<String> {
     let paths = StatePaths::new(sandbox_name)?;
-    let contents = std::fs::read_to_string(&paths.log)?;
+    let mut contents = std::fs::read_to_string(&paths.log)?;
+
+    // Service output lives in a second file, because process-compose
+    // writes it there (`-L`) rather than to the keeper's stdout. Appended
+    // rather than left for the user to find: the `cli` spec requires
+    // service output be reachable through `logs`, and a failed service
+    // whose reason sits in a file nobody mentions is the silent failure
+    // this is all meant to prevent. process-compose already prefixes each
+    // line with the emitting process's name, which satisfies the
+    // per-service attribution requirement without devcroft re-tagging.
+    if let Some(meta) = state::read_meta(&paths.meta)?
+        && let Ok(service_log) =
+            std::fs::read_to_string(crate::services::log_path(Path::new(&meta.project_root)))
+        && !service_log.trim().is_empty()
+    {
+        contents.push_str("\n--- services ---\n");
+        contents.push_str(&service_log);
+    }
+
     match tail_lines {
         None => Ok(contents),
         Some(n) => {

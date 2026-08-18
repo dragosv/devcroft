@@ -113,7 +113,7 @@
       binary is not a closure member. Never scan `/nix/store` for it:
       that picks an arbitrary path with nothing tying it to this
       environment's config schema
-- [ ] 3.3 Per-service state and output (design.md decision 7). Query
+- [x] 3.3 Per-service state and output (design.md decision 7). Query
       `process-compose process list -u <socket> -o json` — the socket is
       already open for this — and map its `status`/`exit_code`/
       `is_running` onto the four states the `services` spec requires.
@@ -154,7 +154,7 @@
 - [x] 4.5 Services start on every keeper start (`post_start` semantics,
       not `post_create`); no attempt to preserve process state across
       `down`/`up`
-- [ ] 4.6 `SandboxStatus` gains service state, with the same
+- [x] 4.6 `SandboxStatus` gains service state, with the same
       forward/backward-compatible posture the isolation-tier field used —
       sandboxes that predate this read as having no services. Note the
       state is *queried live*, not recorded at `up`: unlike
@@ -163,12 +163,18 @@
 
 ## 5. CLI surface
 
-- [ ] 5.1 `ps` lists each service individually, labelled so services and
+- [x] 5.1 `ps` lists each service individually, labelled so services and
       sessions are distinguishable. Today the whole group shows as one
       opaque `process-compose (services)` entry — the registry entry that
       makes teardown work is deliberately not the reporting unit
-- [ ] 5.2 `logs` includes service output attributed per service
-- [ ] 5.3 `status` shows service state, so a healthy keeper with a failed
+- [x] 5.2 `logs` appends the service log to the keeper log. Service output
+      goes to a separate file because process-compose writes it there
+      (`-L`), and it already prefixes each line with the emitting process
+      name — so per-service attribution needs no re-tagging by devcroft.
+      Appended rather than left to be found: a failed service whose reason
+      sits in an unmentioned file is the silent failure this exists to
+      prevent
+- [x] 5.3 `status` shows service state, so a healthy keeper with a failed
       service is not reported as simply healthy — the case that currently
       violates the `services` spec's "failure is visible, never silent"
       and that decision 3's no-auto-restart rationale depends on

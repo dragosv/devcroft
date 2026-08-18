@@ -977,6 +977,31 @@ fn print_status(s: &devcroft::lifecycle::SandboxStatus, provider: &str) {
         Some(backend) => println!("isolation: hardened ({backend})"),
         None => println!("isolation: unknown (no successful `up` yet)"),
     }
+    // A healthy keeper with a dead database must not read as simply
+    // healthy (the `services` spec's "failure is visible, never silent"),
+    // so failures are named per service rather than summarized.
+    match &s.services {
+        None => {}
+        Some(services) => {
+            for svc in services {
+                // The pid is only shown while running: process-compose
+                // keeps reporting the last pid after a service dies, and
+                // printing it next to "failed" reads as though something
+                // is still there to inspect.
+                match svc.pid {
+                    Some(pid) if svc.health == devcroft::services::ServiceHealth::Running => {
+                        println!("service {}: {} pid={pid}", svc.name, svc.health.label())
+                    }
+                    _ => println!("service {}: {}", svc.name, svc.health.label()),
+                }
+            }
+            let failed = services.iter().filter(|s| s.health.is_failure()).count();
+            if failed > 0 {
+                println!("services: {failed} failed — see `devcroft logs` for output");
+            }
+        }
+    }
+
     if s.degraded.is_empty() {
         println!("policy: no degraded capabilities on this host");
     } else {
@@ -1069,6 +1094,20 @@ fn cli_ps() -> i32 {
                     health,
                     s.project_root.as_deref().unwrap_or("-")
                 );
+                // Services listed individually, indented under their
+                // sandbox, and labelled — the `cli` spec requires services
+                // and sessions be distinguishable, and the single
+                // "process-compose (services)" registry entry that makes
+                // teardown work is deliberately not the reporting unit.
+                if let Some(root) = s.project_root.as_deref()
+                    && let Ok(Some(services)) = devcroft::services::query(
+                        &devcroft::services::socket_path(std::path::Path::new(root)),
+                    )
+                {
+                    for svc in services {
+                        println!("  service:{}\t{}", svc.name, svc.health.label());
+                    }
+                }
             }
             0
         }
@@ -1589,6 +1628,18 @@ fn start_services_if_requested(registry: Arc<Registry>, backend: Arc<dyn Session
             // costs nothing: the project root is writable.
             "-u".to_string(),
             sock,
+            // Without this, process-compose exits once every service has
+            // finished — taking its API socket, and therefore the only
+            // record of *why* a service died, with it. Found by killing a
+            // service and watching `status` go from reporting it to
+            // reporting nothing at all: the failure became invisible,
+            // which is the exact outcome the `services` spec forbids.
+            //
+            // This is also what flox's own generated config is doing with
+            // its `flox_never_exit` sleep-infinity entry — a sentinel
+            // process solving the same problem. `--keep-project` is the
+            // supported flag for it, so no sentinel is needed here.
+            "--keep-project".to_string(),
         ],
         cwd: ".".to_string(),
         env: std::collections::BTreeMap::new(),
