@@ -194,6 +194,51 @@ fingerprint would mean a sandbox whose declared services no longer match
 what is running, reported as fresh. Heavier than users may expect;
 correct.
 
+### 7. Per-service state comes from process-compose's API, not from devcroft's own bookkeeping
+
+Decision 2 makes process-compose a single registry entry, which is right
+for teardown and wrong for reporting: the `services` spec requires
+distinguishing not-started, failed-at-start, running and exited-later,
+and one entry for the whole group cannot express any of that. A sandbox
+whose database died at startup currently looks exactly like one whose
+database is serving traffic.
+
+That gap is not cosmetic, and it undermines decision 3 specifically.
+Auto-restart was rejected on the grounds that "an agent that sees
+'service failed, here is the log tail' can act" — an argument that
+assumes a visibility devcroft does not yet provide. Either this is built
+or decision 3 loses its justification.
+
+**Chosen: query process-compose over the unix socket it already
+listens on.** That socket exists for this reason — decision 2 chose
+`-u <socket>` over `--no-server` precisely to keep the API reachable —
+so nothing new has to be started or plumbed. Verified live from inside a
+sandbox that `process-compose process list -u <socket> -o json` returns
+per-service `status`, `exit_code`, `is_running`, `pid`, `restarts` and
+`age`, which covers every state the spec asks for.
+
+Alternatives considered:
+
+- **Parse `.devcroft/services.log`.** Rejected: it is a human-readable
+  log with no stability promise, and reconstructing state from log lines
+  reintroduces exactly the "depend on an undocumented internal" mistake
+  decision 1 already corrected once.
+- **Track state in devcroft by supervising each service directly.**
+  Rejected for the reason decision 1 gives: it means reimplementing
+  restart policy, dependencies and daemon handling, and it would put
+  devcroft's view and process-compose's view in permanent disagreement.
+
+Two implementation facts found while probing, worth carrying:
+
+- The CLI writes warn/debug lines to stdout ahead of the JSON (a failed
+  `getpwuid` for uid 1000, and a missing XDG config dir — both harmless
+  inside a sandbox). Output must be parsed from the first `[`, not
+  assumed to be clean JSON, or the first parse attempt fails on noise.
+- Not yet confirmed: the exact `status` strings for a service that fails
+  at startup versus one that exits later. The fields exist; the mapping
+  from them to devcroft's four states must be established against real
+  failures during implementation, not assumed from the running case.
+
 ## Risks / Trade-offs
 
 - **The listening-socket gap makes this untestable end to end** →

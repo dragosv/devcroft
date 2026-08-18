@@ -113,7 +113,15 @@
       binary is not a closure member. Never scan `/nix/store` for it:
       that picks an arbitrary path with nothing tying it to this
       environment's config schema
-- [ ] 3.3 Capture service output with per-service attribution for `logs`
+- [ ] 3.3 Per-service state and output (design.md decision 7). Query
+      `process-compose process list -u <socket> -o json` — the socket is
+      already open for this — and map its `status`/`exit_code`/
+      `is_running` onto the four states the `services` spec requires.
+      **Parse from the first `[`**: the CLI emits warn/debug lines to
+      stdout ahead of the JSON (failed `getpwuid`, missing XDG dir), so
+      assuming clean JSON fails on the first call. **Confirm against a
+      real failing service** what `status` reads for failed-at-start vs
+      exited-later; only the running case is verified so far
 - [x] 3.4 No automatic restart (design.md decision 3). Now a property of
       the *generated* config rather than of devcroft's own supervision
       loop: emit process-compose's no-restart policy explicitly rather
@@ -148,15 +156,22 @@
       `down`/`up`
 - [ ] 4.6 `SandboxStatus` gains service state, with the same
       forward/backward-compatible posture the isolation-tier field used —
-      sandboxes that predate this read as having no services
+      sandboxes that predate this read as having no services. Note the
+      state is *queried live*, not recorded at `up`: unlike
+      `resolved_backend`, service state changes after `up` returns, so
+      `meta.json` is the wrong home for it
 
 ## 5. CLI surface
 
-- [ ] 5.1 `ps` lists services alongside sessions, labelled so the two are
-      distinguishable
+- [ ] 5.1 `ps` lists each service individually, labelled so services and
+      sessions are distinguishable. Today the whole group shows as one
+      opaque `process-compose (services)` entry — the registry entry that
+      makes teardown work is deliberately not the reporting unit
 - [ ] 5.2 `logs` includes service output attributed per service
 - [ ] 5.3 `status` shows service state, so a healthy keeper with a failed
-      service is not reported as simply healthy
+      service is not reported as simply healthy — the case that currently
+      violates the `services` spec's "failure is visible, never silent"
+      and that decision 3's no-auto-restart rationale depends on
 - [ ] 5.4 `doctor`: report whether this host can bind a listening socket
       under a deny-default policy; when it cannot, name the consequence
       for services and the `network.default = "allow"` workaround along
