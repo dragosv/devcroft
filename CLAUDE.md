@@ -50,11 +50,12 @@ openspec status --change <change> --json       # artifact state, paths, what's n
 openspec instructions <artifact> --change <c> --json   # how to write an artifact
 ```
 
-`openspec validate --all` currently reports **5 passed, 0 failed**.
-`add-mise-provider` is still a proposal-only post-MVP sketch (not
-implemented, no tasks.md), but carries real delta specs consistent with
-its proposal.md, so the validator's "at least one delta spec per change"
-requirement is satisfied honestly rather than left failing.
+`openspec validate --all` currently reports **10 passed, 0 failed**.
+`add-mise-provider` and `use-nono-library` are proposal-only post-MVP
+sketches (not implemented, no tasks.md), but each carries real delta
+specs consistent with its proposal.md, so the validator's "at least one
+delta spec per change" requirement is satisfied honestly rather than
+left failing.
 `add-nix-provider` (nix flakes as a second closure-tier environment
 provider, alongside flox), `add-hardened-tier` (the backend-generic
 `SessionBackend` seam and tier dispatch), and `add-gvisor-backend` (the
@@ -63,7 +64,14 @@ live-tested inside this repo's own devcontainer once task group 8
 installed `runsc` into it) are all fully implemented, tasks.md and all —
 see the README's Status section. `add-mvp-core`, `add-nix-provider`,
 `add-hardened-tier`, and `add-gvisor-backend` are the changes actually
-implemented; `add-mise-provider` is the only one still proposal-only.
+implemented.
+
+`own-policy-baseline` and `use-nono-library` came out of measuring what
+`extends: "default"` actually contributes: 240 rules devcroft ships and
+cannot render, of which ~69 are redundant under its allowlist model and
+~49 are inert in the `wrap` mode it uses. The first change is a real
+plan; the second depends on it and is a sketch with one unresolved
+objection, recorded in its proposal.
 
 Skills `/opsx:propose`, `/opsx:update`, `/opsx:apply`, `/opsx:archive`,
 `/opsx:sync`, and `/opsx:explore` drive the workflow.
