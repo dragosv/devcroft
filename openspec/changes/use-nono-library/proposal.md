@@ -52,14 +52,29 @@ Inspected directly:
   including every built-in profile and the group catalog `default`
   resolves to.
 
-So the library provides the mechanism and none of the baseline. A
-devcroft that links `nono` while still emitting `extends: "default"`
-would be asking for a profile the library cannot resolve. That is not a
-sequencing preference; the change is incoherent in the other order.
+So the library provides the mechanism and none of the policy. That
+matters more than it first appears, and more than an earlier version of
+this section stated.
 
-Stated the other way round: once `own-policy-baseline` lands, the main
-objection to this change has already been paid for by a change worth
-making on its own merits.
+Measured with `nono profile show <file> --json`: the CLI injects its
+full 18-group set into *every* profile, including one that declares no
+groups and extends nothing. Eight of those groups are mandatory and
+refuse exclusion — `deny_credentials`, `deny_keychains_*`,
+`deny_browser_data_*`, `deny_shell_history`, `deny_shell_configs`,
+`deny_macos_private`. They are why `~/.ssh` is denied inside a devcroft
+sandbox today, and devcroft does not emit a single one of them.
+
+A devcroft that links `nono` therefore does not merely lose a
+convenience: it loses the credential, keychain, browser-data and
+shell-config denials outright, unless it carries them itself. That is
+the real content of the dependency on `own-policy-baseline` — not
+"emit a different profile field first", but "know what you are currently
+getting for free before you stop getting it".
+
+Stated the other way round: `own-policy-baseline` is what turns the
+question "what does devcroft's policy actually consist of" from
+unanswered into answered, and this change cannot be evaluated honestly
+until it is.
 
 ## What Changes
 

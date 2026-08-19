@@ -1,86 +1,99 @@
-## 1. Detect drift before changing anything
+## 1. Make the invariant mechanical before changing policy
 
-- [ ] 1.1 Test: devcroft's emitted profile validates against the
-      *installed* nono's own schema (`nono profile schema`, or
-      `nono profile validate` on the emitted file). Self-skips when nono
-      is absent, like every other real-tooling test in this suite
-- [ ] 1.2 Test: `policy --render` output and the emitted `profile.json`
-      describe the same rule set — currently failing, since the
-      keeper-executable grant is in the file and not in the render.
-      Land it failing, fix it in task 4, so the invariant has a guard
-      that demonstrably fires
-- [ ] 1.3 Record the measured baseline for the record: the 18 groups
-      `default` includes and their rule counts, with the commands that
-      produce them, so the numbers in design.md can be re-derived rather
-      than trusted
+- [ ] 1.1 Test: `policy --render` accounts for every rule in the profile
+      as the backend resolves it — compare against
+      `nono profile show <emitted> --json`, not against the file
+      devcroft wrote. Land it **failing**: it fails today for two
+      independent reasons, and a guard that has never fired is not a
+      guard
+- [ ] 1.2 Test: devcroft's emitted profile validates against the
+      installed backend's own schema (`nono profile validate`).
+      Self-skips when the backend is absent, like every other
+      real-tooling test here
+- [ ] 1.3 Regression guard for the undocumented behavior this change
+      depends on: assert that a profile declaring no groups still
+      resolves to the backend's injected set. If a future release makes
+      the profile guide's claim true instead, this fires and the change
+      is revisited rather than silently broken
 
-## 2. Enumerate the baseline
+## 2. The gate: can the system-read groups be excluded at all?
 
-- [ ] 2.1 Baseline path set for Linux (~61 entries: linker, system
-      binaries, `/etc` resolver and CA config, locale, terminfo, `/dev`
-      character devices, the four readable `/proc` files). Each carries
-      `Origin::Baseline`
-- [ ] 2.2 Baseline path set for macOS (~35 entries), selected the same
-      way and compiled under the same origin
-- [ ] 2.3 Both architectures' linker directories listed unconditionally
-      (`/lib/x86_64-linux-gnu` and `/lib/aarch64-linux-gnu`), matching
-      how nono handles it — a grant for a path that does not exist is
-      inert, a missing one is a build failure
-- [ ] 2.4 Unit test: the compiled baseline is byte-identical across
-      repeated compiles, same determinism guarantee the rest of the
-      policy already carries
+> Nothing after this group is worth building if the answer is no.
+> Decision 2 is an argument; this is the measurement that settles it.
 
-## 3. Emit a self-contained profile
+- [ ] 2.1 Compile a profile with `system_read_linux_core` excluded and
+      find, empirically, what stops working — for the keeper (a
+      host-linked binary) and for project code (closure-linked)
+      separately, since they have different needs
+- [ ] 2.2 Grant explicitly what the keeper needs, with
+      `Origin::Baseline`. The count is an output of 2.1, not an input —
+      the previous version of this file asserted "~61 entries" without
+      measuring and was wrong
+- [ ] 2.3 `samples/flox-clap-sample` builds Rust end to end with the
+      exclusion in place
+- [ ] 2.4 `samples/nix-go-sample` builds Go — a second toolchain, since
+      one closure may supply what another omits
+- [ ] 2.5 `samples/flox-services-sample` — hooks and services are
+      project code that may expect host `sh`; the closure supplying it
+      is the correct answer, but whether real projects' closures do is
+      the open question
+- [ ] 2.6 Decide: exclusion ships, or Decision 2 is dropped and the
+      change proceeds with groups 3–6. Record which, and why, in
+      design.md rather than in a commit message
 
-- [ ] 3.1 `to_nono_profile` stops emitting `extends`
-- [ ] 3.2 Live test: a profile with no `extends` execs, reads the
-      project root, and denies `~/.ssh` — the three probes design.md
-      Decision 1 records, run as a test rather than left as a paste
-- [ ] 3.3 Correct the `NONO_BASELINE_PROFILE` comment: the finding was
-      "an *empty* profile cannot exec", not "a profile without `extends`
-      cannot exec". Leave the corrected reasoning inline, as this repo
-      does for reversed findings elsewhere
-- [ ] 3.4 Do **not** emit `deny.commands`. Decision 3 — verified inert
-      under `wrap`, and adopting it is a policy stance of its own
+## 3. Exclude what is inert
 
-## 4. Close the render gap
+- [ ] 3.1 Exclude `dangerous_commands`, `dangerous_commands_linux`,
+      `dangerous_commands_macos` — verified inert under `wrap`
+      (design.md Decision 3)
+- [ ] 3.2 Test: excluding them changes no observable behavior, which is
+      the claim "inert" makes and therefore the claim to verify
+- [ ] 3.3 Do **not** reimplement the blocklist. If one is later wanted
+      it is a change of its own, stating the enforcement mode that makes
+      it real
 
-- [ ] 4.1 Compile the keeper-executable directory grant as a rule with
-      an origin instead of appending it to the profile after
-      compilation (`src/lifecycle/up.rs`)
-- [ ] 4.2 Task 1.2's test now passes — and passes because the gap
-      closed, not because the assertion was weakened
+## 4. Declare what was being inherited
 
-## 5. `why` must explain a baseline denial
+- [ ] 4.1 Set `signal_mode` explicitly in the compiled profile
+- [ ] 4.2 Test: the emitted profile carries it regardless of `extends`,
+      so a future change to inheritance cannot silently drop it
+- [ ] 4.3 `policy --render` shows it — it is policy, and policy is
+      rendered
 
-- [ ] 5.1 `why` attributes a denial caused by a baseline path to
-      `baseline`, naming the rule. Impossible before this change, since
-      the rules were nono's; mandatory after it, since they are
-      devcroft's and an incomplete baseline surfaces as an unexplained
-      exec failure
-- [ ] 5.2 Test: a path that is neither granted nor baseline is explained
-      as denied with no matching rule, distinct from one denied by an
-      explicit deny entry
+## 5. Render what devcroft does not own
 
-## 6. Widen the version range honestly
+- [ ] 5.1 `policy --render` reports the backend-enforced groups,
+      distinguished from devcroft's own rules. Sourced from the
+      backend's own attribution, not from a list devcroft maintains
+- [ ] 5.2 Settle the naming question `proposal.md` leaves open: a fourth
+      origin for backend-enforced rules, or an overload of an existing
+      one. Decide before implementing, since it appears in user-visible
+      output
+- [ ] 5.3 `why` attributes a denial caused by a backend-enforced group
+      to that group by name — the backend already reports it
+      (`Blocked by policy group 'deny_shell_configs'`), so this is
+      passing through rather than inferring
+- [ ] 5.4 `why` attributes a denial caused by devcroft's own baseline
+      grants to `baseline`, distinct from both of the above
+- [ ] 5.5 Task 1.1's test passes, and passes because the gap closed
 
-- [ ] 6.1 Run the suite against nono 0.74.0 and record what happens.
-      This is the task that decides the range — not a judgement call
-- [ ] 6.2 Widen `doctor`'s range to versions actually exercised, and
-      make the failure message name the compatibility surface (profile
-      schema plus `wrap` invocation), not just the numbers
-- [ ] 6.3 `doctor` passes against nono 0.74.0
+## 6. The two independent fixes
 
-## 7. Regression surface
+- [ ] 6.1 Compile the keeper-executable directory grant as a rule with
+      an origin rather than appending it after compilation
+      (`src/lifecycle/up.rs`)
+- [ ] 6.2 Run the suite against nono 0.74.0 and record what happens.
+      This decides the range; it is not a judgement call
+- [ ] 6.3 Widen `doctor`'s range to versions actually exercised, and
+      make the failure name the compatibility surface (profile schema,
+      group semantics, `wrap` invocation) rather than only the numbers
+- [ ] 6.4 `devcroft doctor` passes against nono 0.74.0
 
-- [ ] 7.1 `samples/flox-clap-sample` — builds Rust end to end at the
-      process tier, before and after, with the same result
-- [ ] 7.2 `samples/nix-go-sample` — a second toolchain, since a missing
-      linker path may show up for one and not the other
-- [ ] 7.3 `samples/gvisor-kotlin-sample` — the hardened tier, where the
-      mount set rather than the Landlock profile governs, confirming
-      this change does not reach into a tier it does not touch
-- [ ] 7.4 README and `docs/decisions.md`: the baseline is devcroft's
-      now, and the inherited command blocklist is gone. Both are
-      user-visible claims about what a sandbox does, so both are
-      published rather than left to the source
+## 7. Publish what changed
+
+- [ ] 7.1 README and `docs/decisions.md`: whichever of Decision 2 ships,
+      the answer to "can a sandbox exec a host binary" changes or is
+      confirmed. Both are user-visible claims about what a sandbox does
+- [ ] 7.2 If Decision 2 ships, `docs/decisions.md` gains the entry that
+      the closure-tier thesis now holds at the baseline too — the gap
+      this change found is exactly the kind that file exists to record

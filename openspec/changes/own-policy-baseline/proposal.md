@@ -1,133 +1,140 @@
 # Change: own-policy-baseline
 
-Status: proposed. Blocks: `use-nono-library` (which is only coherent
-once devcroft owns its baseline). Touches an invariant, not a feature.
+Status: proposed. Blocks: `use-nono-library`. Touches an invariant, not
+a feature.
+
+> **Rewritten after measuring.** The first version of this proposal
+> claimed the unrendered rules come from `extends: "default"` and that
+> dropping `extends` removes them. That is false, and the corrected
+> mechanism is in Why below. The wrong version is preserved in git
+> history rather than quietly replaced, because the error is instructive:
+> it was reasoned from a rule *count* without checking what the profile
+> field actually controls.
 
 ## Why
 
-Every profile devcroft compiles is emitted with `extends: "default"`
-(`src/policy/mod.rs`), so the rules that actually reach the backend are
-devcroft's own plus whatever nono's built-in `default` profile contains.
-Measured against a live nono 0.71.0: **240 rules across 18 policy
-groups**, none of which devcroft can enumerate, reason about, or show.
-
-That contradicts a stated invariant:
+Every profile devcroft compiles reaches the backend carrying **240 rules
+across 18 policy groups** that `policy --render` cannot show. A typical
+sandbox renders 8 rules and ships 248. That contradicts a stated
+invariant:
 
 > Policy is deterministic and inspectable. [...] Nothing goes to the
 > backend that cannot be shown via `policy --render`.
 
-Today a typical sandbox renders **8 rules** and ships **248**. The
-ratio is not a rounding error; it is the majority of the policy.
+**Where the rules actually come from.** Not from `extends: "default"`.
+nono injects the full 18-group set into *every* profile, including one
+that declares `extends: null` and no `groups` at all — confirmed with
+`nono profile show <file> --json`, which resolves such a profile to the
+identical 18 groups. `nono profile diff` between a profile with and
+without `extends: "default"` reports exactly one difference:
 
-Three consequences, all observed rather than predicted:
+```
+signal_mode:
+  + Isolated
+```
 
-**The inherited rules do not match devcroft's model.** nono's `default`
-is deny-list-first, designed for an agent running inside a real `$HOME`
-with broad grants — `deny_credentials`, `deny_keychains_*`,
-`deny_browser_data_*`, `deny_shell_history`, `deny_shell_configs`, 69
-rules across eight groups marked `required`. devcroft is allowlist-first
-and project-scoped. Verified by emptying devcroft's `deny` list
-entirely: `~/.ssh` and `~/.bashrc` remained `Permission denied`, because
-nothing outside the granted paths is reachable in the first place. Those
-69 rules are defense-in-depth for a threat model devcroft does not have.
+So `extends: "default"` contributes a single setting. Removing it would
+not remove one inherited rule — it would silently drop signal isolation,
+a protection devcroft relies on and has never declared.
 
-**49 of the inherited rules are inert.** `dangerous_commands` and its
-platform variants deny `rm`, `mv`, `cp`, `chmod`, `npm`, `pip`, `rsync`,
-`xargs`, `kill`, `sudo` and 16 more. `deny.commands` is enforced by
-nono's resident supervisor in `run`/`shell` mode; devcroft uses `wrap`,
-where nono applies the restriction and execs away. Verified live under
-`extends: "default"`: `rm` and `cp` both succeeded. So devcroft carries a
-blocklist that does nothing — while anyone reading the emitted
-`profile.json` would reasonably conclude those commands are blocked.
+**The lever that does work is `groups.exclude`.** Excluding
+`system_read_linux_core` makes `/usr/bin/env` resolve to `DENIED —
+path_not_granted`, verified through `nono why --path --op`. The eight
+`required` deny groups refuse exclusion (`Cannot exclude required
+groups: 'deny_credentials'`) and remain enforced regardless — which is
+the right outcome: those are the credential, keychain, browser-data and
+shell-config denials, and devcroft should not be able to turn them off.
 
-**The version pin is the symptom.** `doctor` requires
-`>=0.71.0, <0.72.0` (`src/bin/devcroft.rs`) and fails outside it. nono
-is at 0.74.0, so `devcroft doctor` currently rejects the current
-release. The window is that narrow precisely because the contents of
-`default` are an undocumented dependency: a minor release may change
-rules devcroft ships without devcroft knowing.
+**Why excluding the system-read group is right on the merits, not just
+tidy.** devcroft is closure-tier by design: `host` and `none` providers
+are out of scope, so a project's toolchain comes from the provider's
+store. A nix-provided `bash` resolves its interpreter and libc to
+`/nix/store/…-glibc-…/lib/`, touching none of the 61 host paths that
+group grants. Meanwhile that group grants read on `/usr/bin`, `/lib`,
+and `/usr/share` — host toolchain access that project code can exec.
+The six-criterion provider test in `docs/decisions.md` rejects a
+provider that "leaves the C toolchain to the host [as having] smuggled
+`host` passthrough back in under another name". The baseline is
+currently doing exactly that, underneath every provider.
+
+**Two smaller findings, independent of the above.** `doctor` pins
+`>=0.71.0, <0.72.0` and so rejects the published 0.74.0. And
+`profile.json` carries a `filesystem.read` grant for the directory
+holding the devcroft binary that `policy --render` never prints — the
+same invariant, violated by a route that has nothing to do with groups.
 
 ## What Changes
 
-- **devcroft emits a self-contained profile.** No `extends`. The
-  baseline it needs is enumerated in devcroft's own source, with each
-  entry carrying `Origin::Baseline` as the origin model already
-  provides.
-- **`policy --render` shows the whole compiled policy**, because there
-  is no longer an unrendered remainder. The invariant becomes true
-  rather than aspirational.
-- **The system-access set is stated, not inherited.** Proven sufficient
-  live: a profile with no `extends`, carrying the 61 paths of
-  `system_read_linux_core` inline, exec'd normally, read the project,
-  and denied `~/.ssh`. The existing source comment claiming a profile
-  without `extends` "can't exec anything at all" is true only of an
-  *empty* profile and is corrected here.
-- **The inherited command blocklist is dropped rather than
-  reimplemented.** It is inert in `wrap` mode, and adopting it would
-  mean devcroft asserting a policy stance — "a dev sandbox may not run
-  `npm`" — that it has never chosen and that its own audience
-  contradicts.
-- **The `doctor` version range widens and states what it is checking.**
-  Once devcroft does not depend on the contents of `default`, the
-  compatible surface is the profile schema and the `wrap` invocation,
-  not a specific ruleset — so the range reflects tested versions rather
-  than a single point release.
-- **The keeper-executable grant becomes renderable.** Found while
-  measuring: `profile.json` carries a `filesystem.read` entry for the
-  directory holding the devcroft binary that `policy --render` does not
-  print — the same invariant, violated independently of `extends`.
+- **devcroft excludes the groups it does not want** via `groups.exclude`
+  — the system-read groups it replaces with explicit closure-appropriate
+  grants, and the command blocklist it does not use.
+- **The system access devcroft actually needs is granted explicitly**,
+  with `Origin::Baseline`, and is expected to be far smaller than the
+  group it replaces. How much smaller is a question for measurement, not
+  for this proposal to assert — the first version asserted "~61 entries"
+  and was wrong to.
+- **`signal_mode` is declared explicitly** rather than inherited from
+  `extends: "default"`, so it appears in the compiled policy and cannot
+  be lost by a change to the profile's inheritance.
+- **The rules devcroft does not own are rendered anyway.** The eight
+  required deny groups stay, and `policy --render` shows them with an
+  origin identifying them as backend-enforced. nono attributes every
+  path to its source (`group:deny_shell_configs`, `group:…`, `profile`)
+  through `nono why`, so this is reporting available information rather
+  than reimplementing it.
+- **The `doctor` version range widens and states what it tests.**
+- **The keeper-executable grant becomes renderable.**
 
 ## Capabilities
 
 ### Modified Capabilities
 
-- `policy`: the compiled profile is self-contained; the baseline is
-  devcroft's own enumerated rule set with `Origin::Baseline`;
-  `policy --render` is complete by construction.
+- `policy`: the compiled profile states which backend groups it
+  excludes; devcroft's own system grants carry `Origin::Baseline`;
+  `policy --render` accounts for every rule that reaches the backend,
+  including those the backend enforces unconditionally.
 - `cli`: `doctor`'s backend check states the compatibility surface it
-  tests and accepts the range devcroft actually works against.
+  tests and accepts the range devcroft works against.
 
 ## Impact
 
 - Affected specs: modified `policy`, `cli`.
-- Affected code: `src/policy/mod.rs` (baseline rules, `to_nono_profile`,
-  `--render` completeness), `src/policy/why.rs` (`why` must be able to
-  attribute a denial to a baseline rule now that they are devcroft's),
-  `src/lifecycle/up.rs` (the keeper-exe grant, moved into the compiled
-  policy rather than appended after it), `src/bin/devcroft.rs`
-  (`doctor_backend`).
-- Platform-split: the baseline is per-OS. Linux needs ~61 path entries,
-  macOS ~35, drawn from the same two groups nono splits them into.
-- No behavior change intended for a working project: the point is that
-  the same sandbox comes up with the same effective access, described
-  fully instead of partially.
+- Affected code: `src/policy/mod.rs` (group exclusions, explicit
+  grants, `signal_mode`, render completeness), `src/policy/why.rs`
+  (attributing a denial to a backend-enforced group), `src/lifecycle/up.rs`
+  (the keeper-exe grant), `src/bin/devcroft.rs` (`doctor_backend`).
+- **Behavior does change**, unlike what the first version claimed:
+  excluding the system-read groups removes host toolchain access from
+  inside sandboxes. That is the point, and it is the main risk.
 
 ## Success Criteria
 
-- A compiled profile contains no `extends` key, and `policy --render`
-  output enumerates every rule present in `profile.json` — asserted by a
-  test that diffs the two rather than by inspection.
-- An existing sample project (`samples/flox-clap-sample`) comes up,
-  execs, builds, and tears down identically before and after the change.
-- `~/.ssh`, `~/.aws`, and the devcroft data dir remain denied, with the
-  deny list carrying only devcroft's own entries.
+- `policy --render` accounts for every rule reaching the backend,
+  including backend-enforced groups, verified by comparing the render
+  against `nono profile show` on the emitted profile rather than by
+  inspection.
+- The sample projects build end to end with the system-read groups
+  excluded — `flox-clap-sample` (Rust), `nix-go-sample` (Go),
+  `gvisor-kotlin-sample` (Kotlin/Gradle, hardened tier).
+- A sandbox cannot exec a host binary that the provider's closure does
+  not supply, and `why` explains the denial.
+- `~/.ssh` and cloud credentials stay denied, attributed to the
+  backend-enforced group that denies them.
+- `signal_mode` appears in the compiled policy and in `--render`.
 - `devcroft doctor` passes against nono 0.74.0.
-- `why` can attribute a denial caused by a baseline path to
-  `baseline`, naming the rule — impossible today for inherited rules.
 
 ## Open Questions
 
-- **Whether to keep the redundant deny rules.** They are provably
-  unnecessary under the allowlist model, but the invariant says
-  "baseline denials always win", and an explicit `deny` on `~/.ssh`
-  survives a future mistake that widens an allow. Cheap insurance
-  against a class of error, or dead weight of exactly the kind this
-  change removes elsewhere — not settled.
-- **How the per-distro path set is kept honest.** `/lib/x86_64-linux-gnu`
-  vs `/lib/aarch64-linux-gnu` is already handled by listing both, but a
-  musl or NixOS host has a different linker layout. Whether that is a
-  `doctor` check, a documented limitation, or a provider-supplied grant
-  is open.
-- **Whether the baseline should be data rather than code.** A checked-in
-  JSON the tests validate is more inspectable than a Rust constant, but
-  introduces a file that can drift from the code that consumes it.
+- **Whether excluding the system-read groups is survivable at all.** The
+  devcroft keeper is a host-linked binary; project code is closure-linked.
+  Those have different needs and the exclusion affects both. This is the
+  question that decides whether the change ships, and it is settled by
+  task group 2, not by argument.
+- **Whether `hooks` change the answer.** Hooks are project code but are
+  written by people who may reasonably expect `sh` and `coreutils` from
+  the host. A closure that supplies them is the correct answer; whether
+  every real project's closure does is unknown.
+- **What `--render` should call the backend-enforced rules.** They are
+  not `baseline` in devcroft's existing sense — devcroft neither chose
+  nor can remove them. A fourth origin may be more honest than
+  overloading an existing one.
