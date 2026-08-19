@@ -99,15 +99,40 @@ The mount model is deny-by-default: a path not mounted does not exist
 inside the sandbox, rather than existing-but-denied. This is *stronger*
 than the process tier's allow-then-deny, and the spec says so.
 
-### 4. Landlock on the Sentry process is new code, not reuse
+### 4. Landlock on the Sentry process — reversed after live testing
 
-Nothing in `src/` applies Landlock directly today — the process tier's
-enforcement lives entirely inside the external `nono` binary. Confining
-the Sentry (defense in depth: gVisor already seccomps it; Landlock
-bounds its filesystem reach by the same compiled policy) therefore needs
-a new `landlock` crate dependency and a from-scratch application step.
-Flagged explicitly because it is the one part of this change with no
-existing in-repo precedent to copy.
+**Superseded.** This decision originally added a `landlock` crate
+dependency and wrapped `runsc run` in a Landlock ruleset before exec,
+reasoning that it would bound the Sentry's filesystem reach as defense
+in depth additive to gVisor's own seccomp confinement (gVisor already
+seccomps it; nothing in `src/` applied Landlock directly before this —
+the process tier's enforcement lives entirely inside the external `nono`
+binary). That reasoning held right up until a real unprivileged user
+namespace was actually available to test against (add-flox-services task
+6.5, months after this change was marked complete): with the ruleset
+active, `runsc run`'s own `--rootless` bootstrap fails unconditionally,
+on every host this applies to, not just a quirk of one devcontainer.
+`runsc`'s chroot setup issues a `mount()` call to change mount
+propagation (`MS_SLAVE|MS_REC`), and that call returns `EPERM` under
+*any* active Landlock ruleset regardless of what it grants — confirmed
+by elimination, including a ruleset granting `/` full read-write.
+Landlock does not mediate `mount()` in any current ABI, so there was no
+narrower grant that could have fixed this; it was a structural
+incompatibility, not a missing rule.
+
+The ruleset and the `landlock` crate dependency it required have been
+removed from `src/gvisor/runner.rs` and `Cargo.toml`. The tier's actual
+delivered boundary was always Sentry's own seccomp/ptrace confinement —
+this layer never added working protection on top of it, since it was
+never live-tested until it already blocked the tier it was meant to
+defend. Verified live after removal: a full `up` at `isolation =
+"hardened"`, including one declaring `[services]`, completes end to end
+— `exec`, the SSH round trip, and a real `process-compose` running under
+`runsc exec` all confirmed working. See `src/gvisor/runner.rs`'s module
+doc and `openspec/changes/add-flox-services/tasks.md` task 6.5 for the
+full evidence trail, and `docs/decisions.md`'s netstack rejection entry
+for the corresponding correction to what this tier's guarantee actually
+is.
 
 ### 5. Sessions via `runsc exec`, dispatched from a host-side server
 

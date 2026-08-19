@@ -103,7 +103,11 @@ struct ClientWorkflowResult {
     ssh_auth_succeeded: bool,
 }
 
-async fn run_client_workflow(sandbox_name: &str, devcroft_bin: &str) -> ClientWorkflowResult {
+async fn run_client_workflow(
+    sandbox_name: &str,
+    devcroft_bin: &str,
+    project_root: &std::path::Path,
+) -> ClientWorkflowResult {
     let out = Command::new(devcroft_bin)
         .arg("exec")
         .arg(sandbox_name)
@@ -111,6 +115,14 @@ async fn run_client_workflow(sandbox_name: &str, devcroft_bin: &str) -> ClientWo
         .arg("sh")
         .arg("-c")
         .arg("echo hi; exit 7")
+        // The hardened tier only mounts the project root (plus
+        // `/nix/store`) inside the sandbox — unlike the process tier,
+        // where the exec'd command just inherits whatever directory
+        // happens to exist on the shared host filesystem, an unrelated
+        // cwd here fails outright ("no such file or directory") rather
+        // than silently running in the wrong place. See
+        // `tests/gvisor_hardened_e2e.rs`'s matching fix.
+        .current_dir(project_root)
         .output()
         .unwrap();
     let exec_stdout = String::from_utf8_lossy(&out.stdout).into_owned();
@@ -203,19 +215,51 @@ async fn client_workflow_is_identical_across_process_and_hardened_tiers() {
         up(&process_manifest, &process_root, &UpOptions::default()).unwrap(),
         UpOutcome::Started
     );
-    let process_result = run_client_workflow(&process_name, devcroft_bin).await;
+    let process_result = run_client_workflow(&process_name, devcroft_bin, &process_root).await;
     down(&process_name).unwrap();
     let _ = std::fs::remove_dir_all(&process_paths.root);
     let _ = std::fs::remove_dir_all(&process_root);
 
-    // hardened tier: no flox/nono involved at all — see
-    // `tests/gvisor_hardened_e2e.rs`'s own comment on why.
+    // hardened tier: no `nono` involved, but `up`'s shared prefix
+    // resolves the environment provider for every isolation tier
+    // unconditionally, so `flox init` is still required here — see
+    // `tests/gvisor_hardened_e2e.rs`'s module doc for why an earlier
+    // version of this comment's "no flox involved at all" claim was
+    // wrong.
     let hardened_root = std::env::temp_dir().join(format!(
         "devcroft-tier-parity-hardened-{}",
         std::process::id()
     ));
     let _ = std::fs::remove_dir_all(&hardened_root);
     std::fs::create_dir_all(&hardened_root).unwrap();
+    let hardened_init = Command::new("flox")
+        .arg("init")
+        .current_dir(&hardened_root)
+        .output()
+        .unwrap();
+    if !hardened_init.status.success() {
+        eprintln!(
+            "skipping: flox init failed: {}",
+            String::from_utf8_lossy(&hardened_init.stderr)
+        );
+        return;
+    }
+    // See `tests/gvisor_hardened_e2e.rs`'s matching comment: the
+    // sandbox's PID 1 (`oci_spec::INIT_COMMAND`) needs `sh`/`sleep` on
+    // the activated environment's own `PATH`, which a bare `flox init`
+    // does not provide.
+    let hardened_pkgs = Command::new("flox")
+        .args(["install", "bash", "coreutils"])
+        .current_dir(&hardened_root)
+        .output()
+        .unwrap();
+    if !hardened_pkgs.status.success() {
+        eprintln!(
+            "skipping: flox install bash coreutils failed: {}",
+            String::from_utf8_lossy(&hardened_pkgs.stderr)
+        );
+        return;
+    }
     let hardened_name = format!("tierparityhard{}", std::process::id());
     let (hardened_manifest, _) = parse(&format!(
         "[sandbox]\nname = {hardened_name:?}\nisolation = \"hardened\"\n"
@@ -227,7 +271,7 @@ async fn client_workflow_is_identical_across_process_and_hardened_tiers() {
         up(&hardened_manifest, &hardened_root, &UpOptions::default()).unwrap(),
         UpOutcome::Started
     );
-    let hardened_result = run_client_workflow(&hardened_name, devcroft_bin).await;
+    let hardened_result = run_client_workflow(&hardened_name, devcroft_bin, &hardened_root).await;
     down(&hardened_name).unwrap();
     let _ = std::fs::remove_dir_all(&hardened_paths.root);
     let _ = std::fs::remove_dir_all(&hardened_root);

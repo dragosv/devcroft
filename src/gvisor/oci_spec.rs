@@ -8,17 +8,23 @@
 //! compiles and is fully unit-tested on every platform, same posture as
 //! [`super::runsc_command`].
 //!
-//! One assumption worth naming: [`INIT_COMMAND`] resolves `sh` through
-//! the resolved environment's own `PATH` rather than bundling a static
-//! init binary. Every qualified provider's closure (env-provider's
-//! six-criterion test) transitively depends on a POSIX shell and
-//! coreutils — nix/flox devShells always pull in bash+coreutils via
-//! nixpkgs stdenv — so this holds for every environment devcroft
-//! actually supports. It has not been exercised against a real `runsc`
-//! (see the crate's devcontainer notes); if it turns out to be too
-//! fragile in practice, the fix is a small statically-linked init
-//! bundled the same way `landlock-abi.c` is already compiled into the
-//! devcontainer image, not a redesign of the mount model.
+//! One assumption worth naming, and now corrected rather than merely
+//! reasoned about: [`INIT_COMMAND`] resolves `sh` through the resolved
+//! environment's own `PATH` rather than bundling a static init binary.
+//! The claim that every qualified provider's closure transitively
+//! depends on a POSIX shell and coreutils holds for a nix flake
+//! devShell (nixpkgs' stdenv bootstrap pulls bash+coreutils in
+//! automatically) but **does not hold for a bare `flox init` with
+//! nothing installed** — found live (add-flox-services task 6.5) against
+//! a real `runsc`: such an environment's own `PATH` prefix has no shell
+//! at all, and the mount list's deny-by-default means the host's
+//! `/usr/bin` fallback flox's own `PATH` construction relies on isn't
+//! reachable inside the sandbox either. Every *real* project this tier
+//! targets installs something, so this is a real gap for a genuinely
+//! empty flox project, not a hypothetical one; the fix, if it's ever
+//! worth it, is a small statically-linked init bundled the same way
+//! `landlock-abi.c` is already compiled into the devcontainer image, not
+//! a redesign of the mount model.
 
 use std::collections::BTreeMap;
 
@@ -45,8 +51,15 @@ pub enum NetworkMode {
     /// of any kind, inbound or outbound.
     None,
     /// The manifest's `[network]` section grants egress: hostinet
-    /// passthrough, with `[network]` enforcement coming from Landlock on
-    /// the Sentry process, not from this mode itself.
+    /// passthrough, unfiltered. Unlike the process tier's `nono` profile,
+    /// nothing here enforces `[network]`'s domain allowlist at this
+    /// tier — an earlier version of this comment claimed Landlock on the
+    /// Sentry process did, but that was never actually wired (no code
+    /// path threads `network_allow_domain` into anything gVisor-facing),
+    /// and Landlock cannot express domain-based filtering in any current
+    /// ABI regardless. A domain allowlist at the hardened tier is
+    /// currently a known gap, not a silently-dropped enforcement — see
+    /// `docs/decisions.md`.
     Host,
 }
 
@@ -74,12 +87,23 @@ impl NetworkMode {
 pub struct BundleInputs<'a> {
     /// The sandbox's project root, bind-mounted read-write.
     pub project_root: &'a std::path::Path,
-    /// Where the rootfs skeleton lives on the host — `root.path` in the
-    /// generated spec is always `"rootfs"`, relative to the bundle
-    /// directory, per the OCI spec's own convention; this is only used to
-    /// resolve read-only store grants that must be representable as
-    /// mounts (add-gvisor-backend's "Provider grants map onto mounts or
-    /// fail loudly" requirement — checked by the caller, not here).
+    /// Where the bundle directory lives on the host — `root.path` in the
+    /// generated spec is `bundle_dir/rootfs`, **absolute**. Found live,
+    /// not reasoned about: a relative `"rootfs"` (the OCI spec's own
+    /// documented convention, and what an earlier version of this
+    /// function emitted) makes gVisor's rootless gofer fail every single
+    /// mount with "failed to safely mount: expected to open rootfs/<path>,
+    /// but found <absolute path>" — its `SafeMount` check opens the
+    /// literal `root.path`-joined destination and compares it against
+    /// `/proc/self/fd/<n>`'s always-absolute readlink target, which a
+    /// relative `root.path` can never equal. Confirmed by hand: the
+    /// identical bundle boots once `root.path` is made absolute, and
+    /// fails this way whenever it isn't.
+    pub bundle_dir: &'a std::path::Path,
+    /// Also used to resolve read-only store grants that must be
+    /// representable as mounts (add-gvisor-backend's "Provider grants map
+    /// onto mounts or fail loudly" requirement — checked by the caller,
+    /// not here).
     pub read_only_grants: &'a [String],
     /// The provider's captured activation env diff, injected into the
     /// init process and inherited by every `runsc exec` session.
@@ -172,7 +196,11 @@ pub fn build(compiled: &CompiledPolicy, inputs: &BundleInputs<'_>) -> OciSpec {
             capabilities: Capabilities::empty(),
         },
         root: Root {
-            path: "rootfs".to_string(),
+            path: inputs
+                .bundle_dir
+                .join("rootfs")
+                .to_string_lossy()
+                .into_owned(),
             readonly: true,
         },
         hostname: compiled.sandbox_name.clone(),
@@ -283,6 +311,7 @@ mod tests {
     ) -> BundleInputs<'a> {
         BundleInputs {
             project_root,
+            bundle_dir: Path::new("/bundle"),
             read_only_grants,
             env,
         }
@@ -490,7 +519,7 @@ mod tests {
         let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
 
         assert_eq!(parsed["ociVersion"], OCI_VERSION);
-        assert_eq!(parsed["root"]["path"], "rootfs");
+        assert_eq!(parsed["root"]["path"], "/bundle/rootfs");
         assert_eq!(parsed["root"]["readonly"], true);
         assert_eq!(parsed["hostname"], "myproj");
         assert!(parsed["mounts"].as_array().unwrap().len() >= 3);

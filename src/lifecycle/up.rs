@@ -402,6 +402,7 @@ fn up_hardened(
         &compiled,
         &crate::gvisor::oci_spec::BundleInputs {
             project_root,
+            bundle_dir: &paths.gvisor_bundle,
             read_only_grants: &resolution.read_only_grants,
             env: &resolution.env,
         },
@@ -423,17 +424,12 @@ fn up_hardened(
         id: &manifest.sandbox.name,
         state_root: &paths.gvisor_runsc_state,
     };
-    let project_root_str = project_root.to_string_lossy().into_owned();
     crate::gvisor::runner::run(
         &runsc,
         &container,
         &paths.gvisor_bundle,
         platform,
         network,
-        &crate::gvisor::runner::LandlockGrants {
-            read_write: &[project_root_str],
-            read_only: &resolution.read_only_grants,
-        },
         start_services,
     )
     .map_err(|e| UpError::Backend(format!("runsc run: {e}")))?;

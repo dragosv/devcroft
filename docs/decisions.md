@@ -329,9 +329,28 @@ shipped against it.
 
 `add-gvisor-backend`'s hardened tier therefore shares the host's network
 namespace (`--network=host` when the manifest grants egress, `--network=
-none` otherwise) — the tier's real, delivered guarantee is Sentry's
-user-space syscall boundary plus Landlock defense-in-depth on Sentry
-itself, not a network story stronger than the process tier's.
+none` otherwise) — the tier's real, delivered guarantee is Sentry's own
+user-space syscall boundary, not a network story stronger than the
+process tier's. `[network]`'s domain-level allowlist is not enforced at
+this tier at all (nothing threads it into anything gVisor-facing); a
+manifest that grants egress gets unfiltered host network access under
+`hardened`, a real known gap, not a silently-dropped enforcement.
+
+**Corrected, verified live (add-flox-services task 6.5):** an earlier
+version of this entry also claimed "Landlock defense-in-depth on Sentry
+itself" as part of the delivered guarantee. That layer existed in code
+(`src/gvisor/runner.rs` wrapped `runsc run` in a Landlock ruleset) but
+was never exercised against a real unprivileged user namespace until
+this devcontainer could finally run one — and it turned out to make
+`--rootless` bootstrap fail unconditionally: `runsc run`'s own chroot
+setup issues a `mount()` call to change mount propagation, which returns
+`EPERM` under *any* active Landlock ruleset regardless of what it grants
+(confirmed by elimination, including a maximally permissive one).
+Landlock cannot mediate `mount()` in any current ABI, so this was not a
+grant to widen. Removed rather than narrowed — see
+`src/gvisor/runner.rs`'s module doc for the full evidence trail. The
+tier's actual boundary was always Sentry's own seccomp/ptrace
+confinement; the Landlock layer never added anything that worked.
 
 **Revisit if:** a future backend change is willing to trade rootless for
 netstack behind an explicit, narrowly scoped privilege grant — the same

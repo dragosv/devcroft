@@ -196,68 +196,66 @@ also closed a real, pre-existing gap that predated nix entirely: `policy
 (`Origin::Provider` existed since MVP with no caller) — fixed for flox
 and nix alike.
 
-**`add-hardened-tier`/`add-gvisor-backend` are implemented** (17/17 and
-28/28 tasks) — the `hardened` tier's first concrete backend, gVisor. The
-manifest's `[sandbox].isolation` key, the `SessionBackend` trait
-`lifecycle::up` dispatches sessions through, and the `gvisor` module
-(OCI bundle synthesis from the same `CompiledPolicy` the process tier
-compiles, `runsc` command assembly, a Landlock profile applied to the
-Sentry process as defense in depth, `doctor` diagnostics, a pinned
-`runsc` install in the devcontainer) are all implemented, unit tested,
-and covered by real-tooling integration tests
-(`tests/gvisor_hardened_e2e.rs`, `tests/hardened_tier_ssh_parity.rs`)
-that self-skip wherever `runsc` isn't functionally usable, the same
-convention every other real-tooling test in this suite already follows.
-One correction along the way, made before any code shipped against the
-wrong assumption: an earlier draft leaned on gVisor's per-sandbox
-netstack to close the listen-socket gap below for free, but `runsc`
-rejects that mode outright under `--rootless`, and devcroft runs
-unprivileged everywhere by design — so the hardened tier shares the
-host's network namespace exactly like `process` does, and does **not**
-close that gap either (see the note below).
+**`add-hardened-tier`/`add-gvisor-backend` are implemented and now
+verified live**, end to end, against a real rootless `runsc` (17/17 and
+28/28 tasks). The manifest's `[sandbox].isolation` key, the
+`SessionBackend` trait `lifecycle::up` dispatches sessions through, and
+the `gvisor` module (OCI bundle synthesis from the same `CompiledPolicy`
+the process tier compiles, `runsc` command assembly, `doctor`
+diagnostics, a pinned `runsc` install in the devcontainer) are all
+implemented, unit tested, and covered by real-tooling integration tests
+(`tests/gvisor_hardened_e2e.rs`, `tests/hardened_tier_ssh_parity.rs`,
+`tests/hardened_services_wiring.rs`) that self-skip wherever `runsc`
+isn't functionally usable, the same convention every other real-tooling
+test in this suite already follows. One correction along the way, made
+before any code shipped against the wrong assumption: an earlier draft
+leaned on gVisor's per-sandbox netstack to close the listen-socket gap
+below for free, but `runsc` rejects that mode outright under
+`--rootless`, and devcroft runs unprivileged everywhere by design — so
+the hardened tier shares the host's network namespace exactly like
+`process` does, and does **not** close that gap either (see the note
+below).
 
-What isn't verified: an actual live session round-trip and SSH handshake
-against a *running* gVisor sandbox. This repo's own devcontainer ships a
-real, pinned `runsc` (task group 8's install), but could not create
-unprivileged user namespaces (`unshare --user` failed `EPERM`) —
-diagnosed as the container runtime's default seccomp profile blocking
-`clone(CLONE_NEWUSER)` for a process without effective `CAP_SYS_ADMIN`,
-not the more commonly cited `kernel.unprivileged_userns_clone` sysctl
-(that path doesn't exist on this kernel at all). `devcroft doctor`
-reported this live and correctly: `[FAIL] gvisor-backend: ... the
-systrap platform does not work on this host (... fork/exec
-/proc/self/exe: operation not permitted)`, and
-`tests/gvisor_hardened_e2e.rs` self-skipped with the same finding rather
-than claiming coverage it didn't have. `.devcontainer/devcontainer.json`
-now sets `"runArgs": ["--security-opt", "seccomp=unconfined"]` to lift
-that block — a deliberate reversal of this file's earlier "no
-security-opt relaxations" stance for Landlock, recorded in that file's
-own comment along with why the narrower `--cap-add=SYS_ADMIN` doesn't
-work here (the devcontainer's `remoteUser` is non-root, and a non-root
-process's effective capabilities stay empty regardless of the
-container's granted set). **Unverified**: the diagnosis (seccomp
-blocking `clone(CLONE_NEWUSER)` absent effective `CAP_SYS_ADMIN`) is
-confirmed directly against the running container's own
-`/proc/self/status`, but the fix itself is not — no docker socket is
-reachable from inside a running devcontainer to drive a rebuild from
-this session, so whether `seccomp=unconfined` actually clears the EPERM
-is untested. The next rebuild is what `devcroft doctor`'s gvisor-backend
-check and `tests/gvisor_hardened_e2e.rs` will either confirm or correct.
-Before `runsc`
-was installed here at all, a real release binary was fetched out-of-band
-and driven through the actual code path by hand against a real
-nix-flake project, which caught and fixed four real bugs before any of
-them could ship — a Landlock ruleset that denied `runsc` its own
-`execve`, a missing grant for the `/proc/sys` tunables `runsc`'s own
-preflight reads, missing grants for the OCI bundle and `runsc`'s
-`--root` state directory, and a `-d` flag that doesn't exist (`-detach`
-does) — and reached exactly the userns wall diagnosed above, no further.
-Everything upstream of that wall (bundle synthesis, Landlock, `runsc
-run` argument assembly) is now real-world tested; the wall itself,
-`-detach` actually detaching, signal propagation into a sandboxed
-process, and the Landlock ruleset surviving into a started Sentry remain
-unconfirmed absent a host (or a deliberately relaxed container) that
-permits unprivileged userns creation.
+**Getting a real `runsc` running here took two fixes, landed in
+sequence, each confirmed against the running container rather than
+assumed:** first, `.devcontainer/devcontainer.json` sets
+`"runArgs": ["--security-opt", "seccomp=unconfined"]` — the container
+runtime's default seccomp profile was blocking `clone(CLONE_NEWUSER)`
+for a process without effective `CAP_SYS_ADMIN` (not the more commonly
+cited `kernel.unprivileged_userns_clone` sysctl, which doesn't exist on
+this kernel at all), diagnosed directly against `/proc/self/status` and
+confirmed fixed by a later rebuild: `unshare --user --map-root-user` and
+`runsc --rootless --platform systrap do true` both now succeed in this
+devcontainer. Second — and this is what actually let a full `up` at
+`isolation = "hardened"` complete — the Landlock profile this module
+used to apply to itself before exec'ing into `runsc run`, as defense in
+depth additive to gVisor's own Sentry confinement, was **removed**. It
+turned out to make `--rootless` bootstrap fail unconditionally on every
+host, not just this one: `runsc run`'s own chroot setup issues a
+`mount()` call to change mount propagation, and that call returns
+`EPERM` under *any* active Landlock ruleset regardless of what it
+grants — confirmed by elimination (a ruleset granting `/` full
+read-write still failed identically), and Landlock cannot mediate
+`mount()` in any current ABI, so no grant could have fixed it. This had
+never been exercised against a real unprivileged user namespace before
+today; see `src/gvisor/runner.rs`'s module doc and
+`openspec/changes/add-flox-services/tasks.md` task 6.5 for the full
+evidence trail.
+
+With both fixes in, and two more real bugs caught by the same live run
+and fixed alongside them — `oci_spec::build`'s bundle never pre-created
+each mount's destination directory inside `rootfs/` (gVisor's gofer
+requires one to exist before it will bind onto it), and `root.path` was
+a relative `"rootfs"` where gVisor's own symlink-escape guard requires
+an absolute path — **a full `up` at `isolation = "hardened"` now
+completes end to end**: `exec` and the SSH round trip both work (a third
+bug, `runsc_command::exec_args` inserting a `--` separator `runsc exec`
+doesn't expect or want, was found and fixed by this same run), and a
+project declaring `[services]` gets a real `process-compose` running
+inside the sandbox via `runsc exec`, with `ps`/`status`/`logs` showing
+it and `down` reaping it cleanly. Every one of this tier's claims that
+was previously "implemented but unverified" is now verified live, not
+just reasoned about.
 
 ## Limitations
 
@@ -268,10 +266,10 @@ surface stays reachable from inside, so a kernel bug is an escape. A real
 boundary is the `hardened` tier (gVisor via `add-gvisor-backend`, or
 LiteBox; see
 [openspec/changes/add-hardened-tier/](openspec/changes/add-hardened-tier/)),
-implemented but not yet verified end to end against a live sandbox — see
-the Status section above for exactly where that verification stops.
-Every isolation claim in this README and in `devcroft`'s own output is
-scoped to `process` unless said otherwise.
+implemented and now verified end to end against a live sandbox — see the
+Status section above for what that verification covered. Every isolation
+claim in this README and in `devcroft`'s own output is scoped to
+`process` unless said otherwise.
 
 Known gaps, published rather than hidden:
 

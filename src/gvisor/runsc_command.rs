@@ -85,14 +85,23 @@ pub fn run_args(
     args
 }
 
-/// `runsc exec --cwd <cwd> <id> -- <argv>`: the native exec-into
-/// primitive `add-hardened-tier`'s `SessionBackend` trait dispatches
-/// sessions through — see [`super::session_backend::RunscExecBackend`].
-/// `cwd` is passed through unchanged rather than translated: the OCI
-/// bundle's bind mounts keep every path identical inside and outside
-/// the sandbox (`oci_spec::build`'s mounts use the same `destination`
-/// and `source`), so the session layer's own project-root cwd is
-/// directly usable here.
+/// `runsc exec --cwd <cwd> <id> <argv>`: the native exec-into primitive
+/// `add-hardened-tier`'s `SessionBackend` trait dispatches sessions
+/// through — see [`super::session_backend::RunscExecBackend`]. `cwd` is
+/// passed through unchanged rather than translated: the OCI bundle's
+/// bind mounts keep every path identical inside and outside the sandbox
+/// (`oci_spec::build`'s mounts use the same `destination` and `source`),
+/// so the session layer's own project-root cwd is directly usable here.
+///
+/// **No `--` separator before `argv`.** Found live, not reasoned about:
+/// unlike `run` (whose own doc comment covers a real Go-`flag` quirk with
+/// `-detach`), `runsc exec`'s own usage is `exec [options] <container-id>
+/// <command> [args...]` — it does not expect or consume a bare `--`, and
+/// including one makes it the literal argv\[0\] of the command to run
+/// ("error finding executable \"--\" in PATH"), silently breaking every
+/// `exec`/`shell` session at the hardened tier since add-hardened-tier
+/// shipped this. Confirmed against `runsc exec --help` and a real
+/// container.
 pub fn exec_args(container: &Container<'_>, cwd: &str, argv: &[String]) -> Vec<String> {
     let mut args = vec![
         "--root".to_string(),
@@ -101,7 +110,6 @@ pub fn exec_args(container: &Container<'_>, cwd: &str, argv: &[String]) -> Vec<S
         "--cwd".to_string(),
         cwd.to_string(),
         container.id.to_string(),
-        "--".to_string(),
     ];
     args.extend(argv.iter().cloned());
     args
@@ -253,7 +261,7 @@ mod tests {
     }
 
     #[test]
-    fn exec_args_carry_the_argv_after_a_separator() {
+    fn exec_args_carry_the_argv_directly_with_no_separator() {
         let c = container("myproj", "/state/myproj/runsc-state");
         let args = exec_args(
             &c,
@@ -261,8 +269,13 @@ mod tests {
             &["sh".to_string(), "-c".to_string(), "echo hi".to_string()],
         );
 
-        let sep_idx = args.iter().position(|a| a == "--").unwrap();
-        assert_eq!(&args[sep_idx + 1..], &["sh", "-c", "echo hi"]);
+        // `runsc exec`'s own usage is `exec [options] <container-id>
+        // <command> [args...]` — no `--` separator, unlike `runsc run`.
+        assert!(
+            !args.contains(&"--".to_string()),
+            "a bare `--` becomes the literal argv[0] runsc tries to exec"
+        );
+        assert_eq!(&args[args.len() - 3..], &["sh", "-c", "echo hi"]);
         assert!(args.contains(&"exec".to_string()));
         assert!(args.contains(&"myproj".to_string()));
         let cwd_idx = args.iter().position(|a| a == "--cwd").unwrap();

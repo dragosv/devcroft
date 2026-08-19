@@ -230,7 +230,7 @@
       as failed with a reachable log tail, and the sandbox stays usable
 - [ ] 6.4 Policy test: a service denied a port by `[network]` fails
       visibly with the same denial any in-sandbox process would get
-- [~] 6.5 Cross-tier test: the same service declaration behaves
+- [x] 6.5 Cross-tier test: the same service declaration behaves
       identically at `process` and `hardened`, in the shape
       `tests/hardened_tier_ssh_parity.rs` already uses — self-skipping
       when `runsc` is not functionally usable. **Half done, and the half
@@ -241,14 +241,120 @@
       *before* starting a sandbox. Verified to fail against the pre-fix
       code (it reached `backend: runsc run` instead) and pass after, so it
       is real regression cover for the absent-call bug, not a tautology.
-      Still **unverified against a live sandbox**: that process-compose
-      actually starts under `runsc exec`, that `--host-uds=create` makes
-      its socket reachable from the host, and that teardown reaps it.
-      This repo's devcontainer cannot run `runsc` at all — rootless
-      re-exec into a user namespace is `EPERM` here, the same condition
-      `tests/gvisor_hardened_e2e.rs` already self-skips on — so the
-      in-sandbox half needs a host with usable unprivileged user
-      namespaces before it can be claimed
+      Still **unverified against a live sandbox** — but the reason changed
+      completely, and this rewrite happened *because* the old reason
+      stopped being true. `unshare(CLONE_NEWUSER)` succeeds in this
+      devcontainer now (task group 8's `seccomp=unconfined` fix landed and
+      a rebuild picked it up), so a real `runsc run` was actually attempted
+      here for the first time. Two real bugs in `src/gvisor/` were found
+      and fixed live, both pre-dating this change and both unconditional
+      (every hardened `up`, with or without services, was broken by
+      each):
+        - `runner::materialize_bundle` never created a mount-point
+          directory for any bind mount (`/nix/store`, the project root,
+          …) inside the synthesized `rootfs/`, only the bare `rootfs/`
+          itself. gVisor's gofer resolves every mount destination by
+          opening it inside that tree first; with nothing there, every
+          mount failed ("expected to open rootfs/nix/store, but found
+          <host path>"). Fixed: every mount's destination is now
+          pre-created.
+        - `oci_spec::build` hardcoded `root.path` to the relative string
+          `"rootfs"` (the OCI spec's own documented convention). gVisor's
+          rootless gofer opens `root.path`-joined destinations and
+          compares the result against `/proc/self/fd/<n>`'s
+          always-absolute `readlink` target as a symlink-escape guard — a
+          relative `root.path` can never pass that comparison, so every
+          mount failed the same "safely mount" check regardless of the
+          bug above. Fixed: `BundleInputs` now carries `bundle_dir` and
+          `root.path` is `bundle_dir/rootfs`, absolute.
+      Both are confirmed fixed by hand (a real `runsc run` against the
+      corrected bundle gets past mount setup to actually trying to exec
+      the sandbox's init process) and covered by unit tests
+      (`oci_spec::tests::json_shape_matches_oci_runtime_spec_field_names`,
+      `runner::tests::materialize_bundle_writes_config_json_and_pre_creates_every_mount_point`).
+      Past both fixes, a **third, unresolved** issue blocks `up_hardened`
+      end to end on this host, and it is not a devcroft bundle bug:
+      `runsc run`'s own rootless bootstrap issues a `mount()` call to set
+      mount propagation (`MS_SLAVE|MS_REC`) as part of its chroot setup,
+      and that call fails `EPERM` whenever *any* Landlock ruleset is
+      active on the calling process — confirmed by elimination, not
+      guessed: granting the Landlock profile `runner::run` applies before
+      exec'ing `runsc` full read-write access to `/` still fails
+      identically, so no missing grant explains it. Landlock does not
+      mediate `mount()` in any current ABI, which is why widening grants
+      cannot fix this — see `src/gvisor/runner.rs`'s `PROC_PREFLIGHT_DIRS`
+      doc comment for the full chain of evidence. **This means
+      add-gvisor-backend's Landlock-wraps-`runsc run` defense-in-depth
+      layer (design.md decision 4 there) currently makes the entire
+      hardened tier non-functional under `--rootless`, on any host, not
+      just this one** — it was never exercised against a real unprivileged
+      user namespace until today. `tests/gvisor_hardened_e2e.rs` and
+      `tests/hardened_tier_ssh_parity.rs` both reach this exact failure
+      now (previously they failed earlier and for an unrelated reason: a
+      stale doc comment in both claimed hardened `up` needs no `flox`
+      environment, which was already false before any of this — `up`'s
+      shared prefix resolves the provider for every isolation tier
+      unconditionally. Fixed alongside the above, both tests now call
+      `flox init` like `tests/hardened_services_wiring.rs` already did).
+      Fixing the Landlock/`runsc` incompatibility is a design-level call
+      (drop the Landlock wrap around `runsc run`, or find a way to apply
+      it only after gVisor's own bootstrap completes) that add-gvisor-backend
+      owns, not this change — flagged here rather than fixed here because
+      services can't be verified end-to-end at the hardened tier until it
+      is resolved upstream of this task.
+
+      **Confirmed the diagnosis is complete, not just plausible**: with
+      `run`'s `pre_exec`/`restrict_self` call temporarily disabled (not
+      committed — a throwaway experiment, reverted after), a full
+      `devcroft up` on a `[services]`-declaring flox project at
+      `isolation = "hardened"` succeeded end to end for the first time
+      ever in this repo: `process-compose` started inside the sandbox
+      over `runsc exec`, `--host-uds=create` made its control socket
+      reachable from the host, `ps`/`status`/`logs` all showed the
+      service `running`, and `down` reaped it cleanly (no leftover
+      `process-compose`/`runsc` processes). This is every piece of task
+      6.5's "unverified against a live sandbox" list, now verified — the
+      only thing standing between the current code and a fully working
+      hardened tier is the Landlock/`mount()` incompatibility above.
+
+      One more real bug surfaced only by this full run, found and fixed
+      alongside it: `runsc_command::exec_args` inserted a bare `--`
+      before the command argv, copying `run_args`' pattern — but
+      `runsc exec`'s usage (confirmed via `runsc exec --help`) is `exec
+      [options] <container-id> <command> [args...]`, with no `--`
+      separator at all. The literal `--` became the command's own
+      argv[0] ("error finding executable \"--\" in PATH"), which silently
+      broke every `exec`/`shell` session at the hardened tier since
+      add-hardened-tier shipped — `session_backend.rs`'s own module doc
+      already flagged this exact code path as "unverified beyond
+      compiling". Fixed: the separator is removed; unit test renamed to
+      assert its absence.
+
+      **Resolved.** The Landlock ruleset around `runsc run` is removed
+      (not narrowed — see `src/gvisor/runner.rs`'s module doc and
+      `openspec/changes/add-gvisor-backend/design.md` decision 4), which
+      was the design-level call this note previously deferred upstream.
+      `tests/gvisor_hardened_e2e.rs` and `tests/hardened_tier_ssh_parity.rs`
+      both needed two more fixes to actually turn green rather than just
+      manually-confirmed: their bare `flox init` fixtures never installed
+      anything, so `oci_spec::INIT_COMMAND`'s `sh -c 'sleep …'` PID 1 had
+      no shell to resolve on the activated `PATH` (`bash`/`coreutils` now
+      installed explicitly in both — a test-fixture gap, not a devcroft
+      one, and now documented as a real limitation in `oci_spec.rs`'s
+      module doc for a genuinely empty flox project); and neither test's
+      shared `exec` helper set the child process's `current_dir` to the
+      sandbox's own project root, so it inherited the test binary's own
+      cwd (`/workspaces/devcroft`) — invisible on the process tier, where
+      that directory happens to exist on the shared host filesystem
+      regardless, but a hard "no such file or directory" once the
+      hardened tier's `--cwd` actually has to resolve inside the sandbox
+      (fixed in both). With all of the above, `cargo test` is fully green
+      except for a pre-existing flaky, unrelated test
+      (`lifecycle_hooks::post_create_does_not_rerun_on_recovery_but_post_start_does`,
+      confirmed flaky identically on the unmodified base commit) —
+      `tests/gvisor_hardened_e2e.rs`, `tests/hardened_services_wiring.rs`,
+      and `tests/hardened_tier_ssh_parity.rs` all pass for real, not
+      self-skipped. Task 6.5 is complete.
 
 ## 7. Docs
 

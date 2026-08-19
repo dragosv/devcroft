@@ -60,7 +60,21 @@
       self-skip correctly in this devcontainer, where `runsc` is present
       but the platform doesn't actually work (see 10.3)
 
-## 5. Landlock on Sentry (defense in depth)
+## 5. Landlock on Sentry (defense in depth) — REVERSED
+
+**Live testing (add-flox-services task 6.5) found this whole layer makes
+`runsc run` fail unconditionally under `--rootless`** — a `mount()` call
+`runsc`'s own chroot setup issues returns `EPERM` under any active
+Landlock ruleset, confirmed by elimination (even a ruleset granting `/`
+full read-write fails identically), and Landlock cannot mediate
+`mount()` in any ABI, so no grant could have fixed it. 5.1/5.2 were
+implemented and shipped, but never exercised against a real unprivileged
+user namespace until months later — the `landlock` crate dependency and
+the ruleset application in `src/gvisor/runner.rs` have since been
+**removed**; see design.md decision 4 for the full writeup. Left marked
+`[x]` below rather than rewritten, since they describe what was actually
+built and shipped at the time — the reversal is the record, not a retcon
+of history.
 
 - [x] 5.1 Add a `landlock` crate dependency — no existing devcroft code
       applies Landlock directly today; the process tier's enforcement
@@ -154,3 +168,19 @@
       creation (or this container's documented opt-in `security-opt`
       override) would exercise the remaining path today, no further code
       changes needed.
+
+      **Update (add-flox-services task 6.5): that host arrived.** The
+      `security-opt` override landed, `unshare --user` now succeeds
+      here, and the userns wall this entry describes is gone — but two
+      more real bugs sat behind it (a bundle whose mount destinations
+      were never pre-created, and a relative `root.path` gVisor's
+      symlink-escape guard can never match) and, past those, the
+      Landlock ruleset this entry says "remains unconfirmed" turned out
+      to be the thing actually blocking everything: it made `--rootless`
+      fail with `EPERM` on its own `mount()` call, unconditionally, on
+      any host. All four are fixed; the Landlock ruleset is removed
+      rather than confirmed (see task group 5's note and design.md
+      decision 4). A full `up` at `isolation = "hardened"`, `exec`, the
+      SSH round trip, and a live `[services]` declaration all now work
+      end to end — see `openspec/changes/add-flox-services/tasks.md`
+      task 6.5 for the complete record.

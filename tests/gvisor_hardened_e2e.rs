@@ -11,12 +11,32 @@
 //! Availability is checked the same way `doctor_gvisor_backend` does
 //! (`src/bin/devcroft.rs`): `runsc` on `PATH` is not enough by itself —
 //! `runsc --rootless --platform <platform> do true` must actually
-//! succeed. On this repo's own devcontainer (task group 8), it does not:
-//! `runsc`'s re-exec into a fresh user namespace fails with the same
-//! `EPERM` `unshare --user` reports here, so this test self-skips in
-//! exactly the environment `src/gvisor/runner.rs`'s module doc already
-//! describes as the platform boundary, not a bug — task 10.3's "honest,
-//! not claimed" status extends to this test's own skip message.
+//! succeed. Before task group 8's devcontainer fix (disabling the
+//! container runtime's default seccomp confinement, which blocked
+//! `unshare(CLONE_NEWUSER)` with `EPERM`), this test self-skipped in this
+//! repo's own devcontainer unconditionally.
+//!
+//! **Still not green even where `runsc` runs**, found by actually letting
+//! it run rather than trusting the self-skip: `up`'s shared prefix
+//! resolves the environment provider for *every* isolation tier
+//! unconditionally (`ProviderKind::from_name` / `provider.resolve` in
+//! `up.rs`, before the `Isolation::Process`/`Isolation::Hardened` split) —
+//! there never was a "no flox needed at this tier" case, despite an
+//! earlier version of this file's own doc comment claiming one for a
+//! manifest with no `[env]` section. `flox init` below is required for
+//! the same reason `tests/hardened_services_wiring.rs` already does it.
+//! Past that, a second, deeper issue blocks this test from reaching its
+//! own SSH assertions on a real kernel: `runsc run`'s rootless bootstrap
+//! issues a `mount()` call to set mount propagation
+//! (`MS_SLAVE|MS_REC`) as part of its own chroot setup, and that call
+//! fails `EPERM` under *any* active Landlock ruleset — confirmed by
+//! elimination (granting `/` read-write to the Landlock profile `run`
+//! applies before exec'ing `runsc` does not help). See
+//! `src/gvisor/runner.rs`'s `PROC_PREFLIGHT_DIRS` doc comment and
+//! `openspec/changes/add-flox-services/tasks.md` task 6.5 for the full
+//! writeup — this is a Landlock-vs-rootless-gVisor incompatibility this
+//! repo's Landlock wrapping of `runsc run` needs to be revisited for, not
+//! something a missing grant here can fix.
 
 use devcroft::config::parse;
 use devcroft::lifecycle::{StatePaths, UpOptions, UpOutcome, client_key_paths, down, up};
@@ -113,17 +133,53 @@ async fn hardened_tier_exec_and_ssh_round_trip_against_a_live_gvisor_sandbox() {
     }
     let devcroft_bin = env!("CARGO_BIN_EXE_devcroft");
 
-    // No flox/nono needed at this tier: `up_hardened` synthesizes the OCI
-    // bundle straight from `CompiledPolicy` and the project root itself
-    // (no provider resolution required for a manifest with no `[env]`
-    // section), unlike the process-tier tests this repo's other `*_up.rs`
-    // files exercise.
+    // `up`'s shared prefix resolves the environment provider before the
+    // tier split, for every isolation tier — see this file's own module
+    // doc for why `flox init` is required here even though the manifest
+    // below has no `[env]` section.
+    if Command::new("flox").arg("--version").output().is_err() {
+        eprintln!("skipping: flox not on PATH");
+        return;
+    }
     let project_root = std::env::temp_dir().join(format!(
         "devcroft-gvisor-hardened-e2e-{}",
         std::process::id()
     ));
     let _ = std::fs::remove_dir_all(&project_root);
     std::fs::create_dir_all(&project_root).unwrap();
+    let init = Command::new("flox")
+        .arg("init")
+        .current_dir(&project_root)
+        .output()
+        .unwrap();
+    if !init.status.success() {
+        eprintln!(
+            "skipping: flox init failed: {}",
+            String::from_utf8_lossy(&init.stderr)
+        );
+        return;
+    }
+    // `oci_spec::INIT_COMMAND` runs `sh -c 'while true; do sleep ...'` as
+    // the sandbox's PID 1, resolved through the activated environment's
+    // own `PATH` — a bare `flox init` with nothing installed does *not*
+    // provide this (found live: its `PATH` only falls back to host
+    // dirs like `/usr/bin`, which the sandbox's mount list never grants),
+    // unlike a nix flake devShell's stdenv bootstrap. Every real project
+    // this tier targets installs *something*, so this is a test-fixture
+    // gap, not a devcroft one — but it's still required for `up` to
+    // reach a running sandbox here.
+    let install = Command::new("flox")
+        .args(["install", "bash", "coreutils"])
+        .current_dir(&project_root)
+        .output()
+        .unwrap();
+    if !install.status.success() {
+        eprintln!(
+            "skipping: flox install bash coreutils failed: {}",
+            String::from_utf8_lossy(&install.stderr)
+        );
+        return;
+    }
 
     let sandbox_name = format!("e2egvisor{}", std::process::id());
     let (manifest, _) = parse(&format!(
@@ -150,6 +206,7 @@ async fn hardened_tier_exec_and_ssh_round_trip_against_a_live_gvisor_sandbox() {
         .arg("sh")
         .arg("-c")
         .arg("echo hi; exit 42")
+        .current_dir(&project_root)
         .output()
         .unwrap();
     assert_eq!(
