@@ -50,12 +50,11 @@ openspec status --change <change> --json       # artifact state, paths, what's n
 openspec instructions <artifact> --change <c> --json   # how to write an artifact
 ```
 
-`openspec validate --all` currently reports **10 passed, 0 failed**.
-`add-mise-provider` and `use-nono-library` are proposal-only post-MVP
-sketches (not implemented, no tasks.md), but each carries real delta
-specs consistent with its proposal.md, so the validator's "at least one
-delta spec per change" requirement is satisfied honestly rather than
-left failing.
+`openspec validate --all` currently reports **9 passed, 0 failed**.
+`use-nono-library` is a proposal-only post-MVP sketch (not implemented,
+no tasks.md), but carries real delta specs consistent with its
+proposal.md, so the validator's "at least one delta spec per change"
+requirement is satisfied honestly rather than left failing.
 `add-nix-provider` (nix flakes as a second closure-tier environment
 provider, alongside flox), `add-hardened-tier` (the backend-generic
 `SessionBackend` seam and tier dispatch), and `add-gvisor-backend` (the
@@ -67,11 +66,23 @@ see the README's Status section. `add-mvp-core`, `add-nix-provider`,
 implemented.
 
 `own-policy-baseline` and `use-nono-library` came out of measuring what
-`extends: "default"` actually contributes: 240 rules devcroft ships and
-cannot render, of which ~69 are redundant under its allowlist model and
-~49 are inert in the `wrap` mode it uses. The first change is a real
-plan; the second depends on it and is a sketch with one unresolved
-objection, recorded in its proposal.
+devcroft's compiled profile actually contains: 240 rules it ships and
+cannot render. `extends: "default"` is *not* where they come from — nono
+injects its group set into every profile, and `extends` contributes only
+`signal_mode: Isolated`. The lever is `groups.exclude`, and the gate for
+the whole change is whether a build survives excluding
+`system_read_linux_core`. Measured: it does — a full Rust build from a
+flox closure needs the project root, `/tmp`, `/nix/store` and 19
+`/dev`+`/proc` entries, with `/usr/bin/gcc` and `/bin/ls` denied.
+
+That result is what removed `add-mise-provider`. An artifact-tier
+provider is host-linked by definition, so it can no longer inherit
+library access from the baseline; it must declare those grants itself,
+rendered with a `provider:<name>` origin. mise still passes the six
+criteria — see `docs/decisions.md` §1, which now carries the constraint.
+
+`use-nono-library` depends on `own-policy-baseline` and remains a sketch
+with one unresolved objection, recorded in its proposal.
 
 Skills `/opsx:propose`, `/opsx:update`, `/opsx:apply`, `/opsx:archive`,
 `/opsx:sync`, and `/opsx:explore` drive the workflow.
@@ -213,8 +224,9 @@ mechanism exists — the decision should be **revisited, not defended**.
 - There is no non-reproducible mode. `host` and `none` providers are out of
   scope by design; the answer for a project without an environment is
   `flox init`, not a degraded fallback. Rejection messages must distinguish
-  "not yet supported" (nix flakes, devbox, mise) from "out of scope by
-  design".
+  "not yet supported" (devbox, devenv, mise, pixi, hermit) from "out of
+  scope by design" (`host`, `none`) and from "fails the qualification
+  test" (version managers). Nix flakes are implemented, not pending.
 - Known limitations are published, not hidden: no inter-sandbox process
   visibility separation in MVP, cooperative/platform-dependent network
   filtering, no cgroup resource limits.

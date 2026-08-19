@@ -49,6 +49,28 @@ Providers are further sorted into guarantee tiers:
 The tier is always visible in `status` and once at `up`. devcroft does not
 market two different guarantees under one word.
 
+**An artifact-tier provider must declare its host library grants**
+(`own-policy-baseline`). devcroft's baseline grants no host library
+paths — measured: a full Rust build from a flox closure needs the
+project root, `/tmp`, `/nix/store` and 19 `/dev`+`/proc` entries, and
+nothing from `/lib`, `/usr/lib`, or `/usr/bin`. A provider whose runtime
+links against host libraries therefore cannot inherit that access; it
+declares the paths it needs as provider grants, which compile with a
+`provider:<name>` origin and appear in `policy --render`.
+
+This is the point of the rule rather than a side effect: the difference
+between a self-contained closure and a host-linked runtime stops being a
+tier name in this document and becomes a visible difference in the
+compiled policy. Two sandboxes can be compared instead of described.
+
+It also means host passthrough returns for such providers, which is what
+the `host`/`none` entry below rejects. The distinction: there it is the
+whole product contradicting itself with nothing declared; here it is a
+named, attributed, rendered grant, governed by the existing rule that
+provider resolution must not widen the policy. If that distinction
+proves too fine in practice, the honest response is to reject the tier
+outright, and this paragraph is where that argument reopens.
+
 ### Rejected: `host` / `none` passthrough
 
 **Property that fails:** none — it does not even attempt reproducibility.

@@ -89,11 +89,29 @@
       group semantics, `wrap` invocation) rather than only the numbers
 - [ ] 6.4 `devcroft doctor` passes against nono 0.74.0
 
-## 7. Publish what changed
+## 7. Host-linked providers declare what they need
 
-- [ ] 7.1 README and `docs/decisions.md`: whichever of Decision 2 ships,
+- [ ] 7.1 Provider grants may carry host library paths, compiled with
+      `provider:<name>` origin and rendered as such — the mechanism
+      already exists (`with_provider_grants`), so this is stating the
+      contract rather than building machinery
+- [ ] 7.2 The contract is documented where a provider author will read
+      it: a provider whose runtime is host-linked declares those paths,
+      and the baseline supplies none
+- [ ] 7.3 Test: a provider declaring host library grants renders them
+      with its own origin, distinct from `baseline`
+- [ ] 7.4 The existing "provider resolution must not widen the policy"
+      rule covers these grants unchanged — verify rather than assume,
+      since it is what keeps the declaration honest
+- [ ] 7.5 `docs/decisions.md`: the artifact-tier entry gains the
+      constraint. The six criteria are unchanged; what changes is that
+      meeting them no longer implies inheriting host access
+
+## 8. Publish what changed
+
+- [ ] 8.1 README and `docs/decisions.md`: whichever of Decision 2 ships,
       the answer to "can a sandbox exec a host binary" changes or is
       confirmed. Both are user-visible claims about what a sandbox does
-- [ ] 7.2 If Decision 2 ships, `docs/decisions.md` gains the entry that
+- [ ] 8.2 If Decision 2 ships, `docs/decisions.md` gains the entry that
       the closure-tier thesis now holds at the baseline too — the gap
       this change found is exactly the kind that file exists to record

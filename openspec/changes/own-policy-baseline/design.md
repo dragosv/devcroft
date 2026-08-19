@@ -158,6 +158,43 @@ reasons". These rules are not that — devcroft neither chose them nor can
 remove them. `proposal.md` leaves the fourth-origin question open rather
 than overloading an existing variant here.
 
+## Decision 6: host-linked providers declare their grants; the tier name stops carrying the guarantee
+
+**What:** a provider whose runtime links against host libraries declares
+those paths as provider grants, compiled with `provider:<name>` origin.
+The baseline supplies none.
+
+**Why:** Decision 2 removes host library access, and `docs/decisions.md`
+defines the artifact tier as "identical downloaded artifacts, host-linked
+runtime […] behavior still depends on host libraries". Those two
+statements cannot both hold silently. Something has to give, and the
+options were to reject the tier outright or to make its requirement
+explicit.
+
+Explicit wins because it converts a documentation claim into a policy
+fact. Today the difference between a closure and a host-linked runtime
+lives in a tier name shown in `status`; afterwards it lives in
+`policy --render`, as `provider:mise` grants on `/lib` and `/usr/lib`
+that a flox or nix project simply does not have. A user comparing two
+sandboxes can see the weaker guarantee instead of being told about it.
+
+**What this costs, stated plainly:** host passthrough returns for such
+providers. That is the thing `docs/decisions.md` rejects for `host` and
+`none` — and the distinction being drawn is that there it was the whole
+product contradicting itself, whereas here it is a declared, attributed,
+renderable grant that the existing "provider resolution must not widen
+the policy" rule already governs. If that distinction turns out to be
+too fine in practice, the fallback is rejecting the tier, and this
+decision is where that argument gets reopened.
+
+**Consequence for the roadmap:** `add-mise-provider` is removed. Not
+because mise fails the six criteria — it passes them, which is why
+`docs/decisions.md` qualified it — but because the change was written
+before this constraint existed and would have to be rewritten around it.
+`pixi` and `hermit` remain qualified-but-unscheduled under the same
+constraint. The criteria in §1 are unchanged; what changes is that
+meeting them is no longer sufficient to inherit host access.
+
 ## Migration
 
 1. Land the render comparison first, as a failing test: `policy --render`

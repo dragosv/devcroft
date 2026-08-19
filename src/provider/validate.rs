@@ -31,7 +31,7 @@ const NOT_YET_SUPPORTED: &[(&str, &str)] = &[
     ),
     (
         "mise",
-        "mise support is planned (artifact tier) but not yet implemented",
+        "mise is a qualified provider (artifact tier) but not yet scheduled",
     ),
     (
         "devenv",
@@ -135,13 +135,23 @@ mod tests {
         }
     }
 
+    /// mise is qualified but unscheduled, not planned: `add-mise-provider`
+    /// was removed when `own-policy-baseline` established that the
+    /// baseline grants no host library paths, so an artifact-tier provider
+    /// has to declare those grants itself. The six criteria it meets are
+    /// unchanged — meeting them simply stopped implying host access. The
+    /// message must not promise a schedule devcroft no longer has.
     #[test]
-    fn mise_reports_planned_artifact_tier() {
+    fn mise_reports_qualified_but_unscheduled_artifact_tier() {
         match validate_provider("mise") {
             Err(ProviderError::NotYetSupported { reason, .. }) => {
-                assert!(reason.contains("planned"));
+                assert!(reason.contains("qualified"));
                 assert!(reason.contains("artifact tier"));
-                assert!(reason.contains("not yet implemented"));
+                assert!(reason.contains("not yet scheduled"));
+                assert!(
+                    !reason.contains("planned"),
+                    "no change is scheduled for mise; the message must not imply one"
+                );
             }
             other => panic!("expected NotYetSupported, got {other:?}"),
         }

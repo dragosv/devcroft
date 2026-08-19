@@ -82,12 +82,23 @@ same invariant, violated by a route that has nothing to do with groups.
   path to its source (`group:deny_shell_configs`, `group:…`, `profile`)
   through `nono why`, so this is reporting available information rather
   than reimplementing it.
+- **A provider that needs host libraries declares them.** Excluding the
+  system-read groups removes host library access from the baseline, so a
+  provider whose runtime is host-linked can no longer rely on it being
+  there. Such a provider declares those paths as provider grants,
+  rendered with its own origin — which makes the weaker guarantee
+  visible in the compiled policy rather than resting on a tier name in
+  documentation.
 - **The `doctor` version range widens and states what it tests.**
 - **The keeper-executable grant becomes renderable.**
 
 ## Capabilities
 
 ### Modified Capabilities
+
+- `env-provider`: a provider whose runtime links against host libraries
+  declares those paths as provider grants rather than inheriting them
+  from the baseline.
 
 - `policy`: the compiled profile states which backend groups it
   excludes; devcroft's own system grants carry `Origin::Baseline`;
@@ -98,7 +109,7 @@ same invariant, violated by a route that has nothing to do with groups.
 
 ## Impact
 
-- Affected specs: modified `policy`, `cli`.
+- Affected specs: modified `policy`, `cli`, `env-provider`.
 - Affected code: `src/policy/mod.rs` (group exclusions, explicit
   grants, `signal_mode`, render completeness), `src/policy/why.rs`
   (attributing a denial to a backend-enforced group), `src/lifecycle/up.rs`

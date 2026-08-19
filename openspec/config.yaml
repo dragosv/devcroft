@@ -74,14 +74,20 @@ context: |
        audience of flake-only projects without flox on top
     2. devbox (closure tier) — near-free trait validation: same store, same
        pipeline as flox, different activation command and hashed files
-    3. mise (artifact tier) — see `add-mise-provider`: mandatory
-       `mise.lock`, devcroft-owned append-only data dir, tier surfaced in
-       `status`/`up`
+    No artifact-tier provider is scheduled. `add-mise-provider` was
+    removed rather than reworked: it was written before
+    `own-policy-baseline` established that the baseline grants no host
+    library paths, so any artifact-tier provider must now declare those
+    grants itself (see `docs/decisions.md` §1). mise still passes the six
+    criteria; what changed is that passing them no longer implies
+    inheriting host access.
   - Qualified but unscheduled providers (meet the criteria — declarative
     manifest, real lockfile, immutable-capable shared store, env-diff
     capturable activation — but no committed order):
     - devenv (closure tier; open question: its built-in services overlap
       with devcroft hooks, ownership must be decided first)
+    - mise (artifact tier; mandatory `mise.lock`, devcroft-owned
+      append-only data dir; must declare host library grants)
     - pixi (artifact tier; content-addressed package cache shareable
       read-only, env lives under the project root; conda-heavy dependency
       bundling makes it the closest artifact provider to closure behavior)
