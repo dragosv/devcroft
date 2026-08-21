@@ -50,13 +50,18 @@ The tier is always visible in `status` and once at `up`. devcroft does not
 market two different guarantees under one word.
 
 **An artifact-tier provider must declare its host library grants**
-(`own-policy-baseline`). devcroft's baseline grants no host library
-paths — measured: a full Rust build from a flox closure needs the
-project root, `/tmp`, `/nix/store` and 19 `/dev`+`/proc` entries, and
-nothing from `/lib`, `/usr/lib`, or `/usr/bin`. A provider whose runtime
-links against host libraries therefore cannot inherit that access; it
-declares the paths it needs as provider grants, which compile with a
-`provider:<name>` origin and appear in `policy --render`.
+(`own-policy-baseline`, implemented). devcroft's baseline grants no host
+library paths — measured against the finished implementation: a full
+Rust build from a flox closure (`samples/flox-clap-sample`) needs only
+the project root, `/tmp`, and `/nix/store` (via the provider's own
+grant), and a full Go build from a nix closure
+(`samples/nix-go-sample`) needs the same two beyond its own store root;
+neither needs anything from `/lib`, `/usr/lib`, or `/usr/bin`, and both
+verified live that the corresponding host toolchain (`/usr/bin/gcc`,
+`/usr/bin/git`) is denied. A provider whose runtime links against host
+libraries therefore cannot inherit that access; it declares the paths
+it needs as provider grants, which compile with a `provider:<name>`
+origin and appear in `policy --render`.
 
 This is the point of the rule rather than a side effect: the difference
 between a self-contained closure and a host-linked runtime stops being a

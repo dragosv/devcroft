@@ -4,12 +4,10 @@ name = "flox-clap-sample"
 [env]
 provider = "flox"
 
-# Uncomment to grant more than the project root (already allowed
-# by default) or to change the network default:
-#
-# [filesystem]
-# allow = ["."]
-# read = ["/path/to/a/read-only/dir"]
+[filesystem]
+allow = [".", "/tmp"]
+
+# Uncomment to change the network default:
 #
 # [network]
 # default = "deny"

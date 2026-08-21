@@ -47,6 +47,20 @@ fn down_terminates_a_live_session_process_not_just_the_keeper() {
         );
         return;
     }
+    // own-policy-baseline excludes host toolchain access, so a bare
+    // `flox init` leaves nothing for a spawned session to exec.
+    let install = Command::new("flox")
+        .args(["install", "bash", "coreutils"])
+        .current_dir(&project_root)
+        .output()
+        .unwrap();
+    if !install.status.success() {
+        eprintln!(
+            "skipping: flox install coreutils failed: {}",
+            String::from_utf8_lossy(&install.stderr)
+        );
+        return;
+    }
 
     let sandbox_name = format!("e2edownkill{}", std::process::id());
     let (manifest, _) = parse(&format!("[sandbox]\nname = {sandbox_name:?}\n")).unwrap();

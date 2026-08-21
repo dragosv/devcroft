@@ -44,6 +44,20 @@ impl Sandbox {
             );
             return None;
         }
+        // own-policy-baseline excludes host toolchain access, so a bare
+        // `flox init` leaves nothing for hooks.rs's `sh -c <cmd>` to run.
+        let install = Command::new("flox")
+            .args(["install", "bash"])
+            .current_dir(&project_root)
+            .output()
+            .unwrap();
+        if !install.status.success() {
+            eprintln!(
+                "skipping: flox install bash failed: {}",
+                String::from_utf8_lossy(&install.stderr)
+            );
+            return None;
+        }
 
         let name = format!("e2ehook{tag}{}", std::process::id());
         let paths = StatePaths::new(&name).unwrap();

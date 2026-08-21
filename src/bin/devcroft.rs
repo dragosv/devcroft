@@ -498,11 +498,21 @@ fn cli_doctor() -> i32 {
     }
 }
 
-/// nono's presence, version-range compatibility (design.md decision 6:
-/// tested range `>=0.71.0, <0.72.0`), and kernel sandboxing capability —
-/// `nono setup --check-only` itself reports Landlock ABI level on Linux
-/// or Seatbelt availability on macOS, so this just surfaces its verdict
-/// rather than re-deriving it.
+/// nono's presence, compatibility with the interface devcroft depends on,
+/// and kernel sandboxing capability — `nono setup --check-only` itself
+/// reports Landlock ABI level on Linux or Seatbelt availability on macOS,
+/// so this just surfaces its verdict rather than re-deriving it.
+///
+/// own-policy-baseline (task 6.2) widened the tested range to `>=0.71.0,
+/// <0.75.0`: the full test suite, and this function's own compatibility
+/// probe below, both pass against 0.71.0 and 0.74.0 — verified live,
+/// including `nono profile schema` and `nono profile groups
+/// system_read_linux_core --json` diffed byte-for-byte identical between
+/// the two. The one real difference found, `nono why`'s attribution for a
+/// required-group denial (`policy_source` collapses from `"group:<name>"`
+/// to the generic `"filesystem.deny"` starting sometime before 0.74.0),
+/// is a `why`-only diagnostic change `policy::why` already tolerates — it
+/// does not affect what this function checks.
 fn doctor_backend() -> bool {
     let version_line = match std::process::Command::new("nono").arg("--version").output() {
         Ok(out) if out.status.success() => String::from_utf8_lossy(&out.stdout).trim().to_string(),
@@ -513,14 +523,18 @@ fn doctor_backend() -> bool {
     };
     let version = version_line.rsplit(' ').next().unwrap_or(&version_line);
     let parts: Vec<u32> = version.split('.').filter_map(|p| p.parse().ok()).collect();
-    let in_range = matches!(parts.as_slice(), [0, 71, ..]);
+    let in_range = matches!(parts.as_slice(), [0, 71..=74, ..]);
     if in_range {
-        println!("[PASS] backend: nono {version} (expected >=0.71.0, <0.72.0)");
+        println!("[PASS] backend: nono {version} (expected >=0.71.0, <0.75.0)");
     } else {
         println!(
-            "[FAIL] backend: nono {version} is outside the tested range >=0.71.0, <0.72.0 — install a matching version from https://nono.sh"
+            "[FAIL] backend: nono {version} is outside the tested range >=0.71.0, <0.75.0 — the \
+             profile schema, group semantics, or `wrap` invocation this build depends on have not \
+             been verified against it; install a matching version from https://nono.sh"
         );
     }
+
+    let compat_ok = doctor_backend_profile_compatibility();
 
     let kernel_ok = match std::process::Command::new("nono")
         .arg("setup")
@@ -551,7 +565,133 @@ fn doctor_backend() -> bool {
         }
     };
 
-    in_range && kernel_ok
+    in_range && compat_ok && kernel_ok
+}
+
+/// Exercises the interface devcroft actually depends on, per the policy
+/// spec's "Backend compatibility is checked against a surface" requirement
+/// — a version number is a proxy for this, not a substitute for it. Two
+/// things are checked against a real emitted profile, not asserted from
+/// devcroft's own knowledge:
+///
+/// 1. The profile validates against the installed backend's own schema
+///    (`nono profile validate`) — a schema change surfaces as a schema
+///    change, not a mysterious `up` failure.
+/// 2. The backend still resolves `groups.exclude` the way the compiled
+///    policy assumes (`nono profile show --json`, checking every name in
+///    `CompiledPolicy::groups_exclude` is actually absent from the
+///    resolved `groups.include`) — own-policy-baseline's entire mechanism
+///    depends on this still being true; task 1.3's regression guard pins
+///    the same assumption down as a unit test, this is its `doctor`-time
+///    equivalent against whatever backend is actually installed.
+fn doctor_backend_profile_compatibility() -> bool {
+    let (manifest, _) = match devcroft::config::parse("[sandbox]\nname = \"doctor-probe\"\n") {
+        Ok(parsed) => parsed,
+        Err(e) => {
+            println!("[FAIL] backend: could not build a probe profile: {e}");
+            return false;
+        }
+    };
+    let compiled = devcroft::policy::compile(&manifest);
+    let profile_path =
+        std::env::temp_dir().join(format!("devcroft-doctor-probe-{}.json", std::process::id()));
+    if let Err(e) = std::fs::write(&profile_path, compiled.to_nono_profile().to_json()) {
+        println!("[FAIL] backend: could not write a probe profile: {e}");
+        return false;
+    }
+    let _cleanup = ScopedFileRemove(&profile_path);
+
+    let validate = std::process::Command::new("nono")
+        .arg("profile")
+        .arg("validate")
+        .arg(&profile_path)
+        .output();
+    let schema_ok = match validate {
+        Ok(out) if out.status.success() => {
+            println!("[PASS] backend: emitted profile validates against the installed schema");
+            true
+        }
+        Ok(out) => {
+            println!(
+                "[FAIL] backend: emitted profile failed schema validation — the profile schema \
+                 this build emits is incompatible with the installed nono: {}",
+                String::from_utf8_lossy(&out.stderr)
+            );
+            false
+        }
+        Err(e) => {
+            println!("[FAIL] backend: could not run `nono profile validate`: {e}");
+            false
+        }
+    };
+
+    let show = std::process::Command::new("nono")
+        .arg("profile")
+        .arg("show")
+        .arg(&profile_path)
+        .arg("--json")
+        .output();
+    let groups_ok = match show {
+        Ok(out) if out.status.success() => {
+            let resolved: Result<serde_json::Value, _> = serde_json::from_slice(&out.stdout);
+            match resolved {
+                Ok(json) => {
+                    let included: Vec<&str> = json["groups"]["include"]
+                        .as_array()
+                        .map(|arr| arr.iter().filter_map(|v| v.as_str()).collect())
+                        .unwrap_or_default();
+                    let leaked: Vec<&&str> = compiled
+                        .groups_exclude
+                        .iter()
+                        .filter(|g| included.contains(g))
+                        .collect();
+                    if leaked.is_empty() {
+                        println!(
+                            "[PASS] backend: group exclusion still resolves the way the compiled policy assumes"
+                        );
+                        true
+                    } else {
+                        println!(
+                            "[FAIL] backend: group semantics changed — {leaked:?} were excluded but \
+                             still resolve as included; the installed nono no longer applies \
+                             `groups.exclude` the way this build assumes"
+                        );
+                        false
+                    }
+                }
+                Err(e) => {
+                    println!(
+                        "[FAIL] backend: could not parse `nono profile show --json` output: {e}"
+                    );
+                    false
+                }
+            }
+        }
+        Ok(out) => {
+            println!(
+                "[FAIL] backend: `nono profile show` failed: {}",
+                String::from_utf8_lossy(&out.stderr)
+            );
+            false
+        }
+        Err(e) => {
+            println!("[FAIL] backend: could not run `nono profile show`: {e}");
+            false
+        }
+    };
+
+    schema_ok && groups_ok
+}
+
+/// Best-effort cleanup for `doctor_backend_profile_compatibility`'s scratch
+/// file — a `doctor` run leaving a stray temp file behind is a cosmetic
+/// nuisance, never worth failing the command over.
+struct ScopedFileRemove<'a>(&'a std::path::Path);
+
+impl Drop for ScopedFileRemove<'_> {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(self.0);
+    }
 }
 
 fn doctor_provider() -> bool {
@@ -1240,6 +1380,20 @@ fn cli_policy(args: &[String]) -> i32 {
         "{}",
         devcroft::policy::render(&compile_with_provider_grants(&manifest))
     );
+    // The backend-enforced half (own-policy-baseline Decision 5): unlike
+    // the render above, this needs nono installed to query the group
+    // catalog. Its own absence is exactly the kind of degraded capability
+    // CLAUDE.md's "surfaced, never silent" invariant governs, so a missing
+    // backend prints one line naming what's missing rather than silently
+    // shrinking what `--render` shows.
+    println!();
+    match devcroft::policy::render_backend_enforced() {
+        Ok(rendered) => print!("{rendered}"),
+        Err(e) => println!(
+            "backend-enforced (reached regardless of what devcroft compiles):\n  \
+             unavailable: {e} — install nono to see what it enforces beyond devcroft's own rules"
+        ),
+    }
     0
 }
 

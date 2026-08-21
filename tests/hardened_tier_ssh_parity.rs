@@ -207,6 +207,22 @@ async fn client_workflow_is_identical_across_process_and_hardened_tiers() {
         );
         return;
     }
+    // own-policy-baseline excludes host toolchain access at the process
+    // tier (unlike the hardened tier below, which this change doesn't
+    // touch) — the workflow's `exec` and ssh shell need the same
+    // bash/coreutils the hardened fixture already installs.
+    let process_pkgs = Command::new("flox")
+        .args(["install", "bash", "coreutils"])
+        .current_dir(&process_root)
+        .output()
+        .unwrap();
+    if !process_pkgs.status.success() {
+        eprintln!(
+            "skipping: flox install bash coreutils failed: {}",
+            String::from_utf8_lossy(&process_pkgs.stderr)
+        );
+        return;
+    }
     let process_name = format!("tierparityproc{}", std::process::id());
     let (process_manifest, _) = parse(&format!("[sandbox]\nname = {process_name:?}\n")).unwrap();
     let process_paths = StatePaths::new(&process_name).unwrap();

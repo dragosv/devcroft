@@ -45,6 +45,20 @@ fn up_spawns_a_working_keeper_and_down_tears_it_back_down() {
         );
         return;
     }
+    // own-policy-baseline excludes host toolchain access, so a bare
+    // `flox init` leaves nothing for the spawned `sh` session to run.
+    let install = Command::new("flox")
+        .args(["install", "bash"])
+        .current_dir(&project_root)
+        .output()
+        .unwrap();
+    if !install.status.success() {
+        eprintln!(
+            "skipping: flox install bash failed: {}",
+            String::from_utf8_lossy(&install.stderr)
+        );
+        return;
+    }
 
     let sandbox_name = format!("e2etest{}", std::process::id());
     let (manifest, _) = parse(&format!("[sandbox]\nname = {sandbox_name:?}\n")).unwrap();

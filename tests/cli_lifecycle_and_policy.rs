@@ -58,6 +58,26 @@ impl Sandbox {
             );
             return None;
         }
+        // own-policy-baseline excludes host toolchain access
+        // (GROUPS_EXCLUDE), so a bare `flox init` with no packages leaves
+        // the sandbox with nothing to exec at all — not even `echo` or a
+        // shell. `bash` supplies both a `bin/sh` symlink (verified against
+        // a live flox environment) and, combined with `coreutils`, the
+        // plain commands these tests exec. A real project gets this from
+        // whatever toolchain it actually installs; this fixture has none,
+        // so it declares the minimum explicitly.
+        let install = Command::new("flox")
+            .args(["install", "bash", "coreutils"])
+            .current_dir(&project_root)
+            .output()
+            .unwrap();
+        if !install.status.success() {
+            eprintln!(
+                "skipping: flox install bash coreutils failed: {}",
+                String::from_utf8_lossy(&install.stderr)
+            );
+            return None;
+        }
 
         let name = format!("e2ecli{tag}{}", std::process::id());
         std::fs::write(

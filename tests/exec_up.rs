@@ -46,6 +46,20 @@ fn exec_propagates_exit_code_maps_cwd_and_forwards_sigint() {
         );
         return;
     }
+    // own-policy-baseline excludes host toolchain access, so a bare
+    // `flox init` leaves nothing for `exec -- cat`/`sleep` to run.
+    let install = Command::new("flox")
+        .args(["install", "bash", "coreutils"])
+        .current_dir(&project_root)
+        .output()
+        .unwrap();
+    if !install.status.success() {
+        eprintln!(
+            "skipping: flox install coreutils failed: {}",
+            String::from_utf8_lossy(&install.stderr)
+        );
+        return;
+    }
 
     let sandbox_name = format!("e2eexec{}", std::process::id());
     let (manifest, _) = parse(&format!("[sandbox]\nname = {sandbox_name:?}\n")).unwrap();

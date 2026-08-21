@@ -257,6 +257,51 @@ it and `down` reaping it cleanly. Every one of this tier's claims that
 was previously "implemented but unverified" is now verified live, not
 just reasoned about.
 
+**`own-policy-baseline` is implemented.** Every profile devcroft compiled
+used to carry 240 rules across 18 backend policy groups that `policy
+--render` could not show — a typical sandbox rendered 8 rules and shipped
+248. The unrendered majority came from nono injecting its full group set
+into any profile, `extends: "default"` or not (confirmed with `nono
+profile diff`: `extends` contributes exactly one setting, `signal_mode`).
+Fixed at the root: the compiled profile now names, via `groups.exclude`,
+every group it declines — `system_read_linux_core`/`system_read_macos`
+(broad host `/usr/bin`, `/lib`, `/usr/share` access that contradicted
+devcroft's own closure-tier thesis) and the inert `dangerous_commands*`
+blocklist (verified live that `rm`/`cp` both succeed under it — `wrap`
+has no resident supervisor to enforce a command blocklist, so emitting it
+would claim a protection that isn't real). `signal_mode` is now set
+explicitly rather than inherited. What still reaches the backend outside
+devcroft's own rules — the eight required deny groups plus five narrow
+optional ones (`/tmp`, `/dev` writes, a handful of `~/.local`/Homebrew
+paths) this change deliberately leaves alone — is rendered too, sourced
+live from `nono profile groups <name> --json` and attributed to
+`backend:<group>` rather than devcroft's own `baseline`, so `policy
+--render` now accounts for literally everything reaching the backend, a
+claim verified by a test that resolves a real compiled profile through
+nono and asserts nothing comes back unaccounted for.
+
+The result is real, not cosmetic: `/usr/bin/gcc` and `/bin/ls` are now
+denied inside every process-tier sandbox, verified live against
+`samples/flox-clap-sample` (a full `cargo build` still succeeds, entirely
+from the flox closure) and `samples/nix-go-sample` (`go build` too, once
+`/tmp` — needed for Go's build scratch dir — was added to the sample's
+own manifest, the same declaration any project needs now that the
+baseline no longer grants it implicitly). Two independent, pre-existing
+bugs were found and fixed along the way, both host-toolchain-passthrough
+masking the same class of gap this change targets: `devcroft shell`'s and
+the SSH server's `$SHELL`-then-fallback logic used to fall back to an
+absolute `/bin/sh`, a host path no provider closure can ever satisfy —
+now a bare `sh`, resolved by `PATH` inside the sandbox like every other
+command, so a project that installs a shell into its closure gets a
+working `devcroft shell`. And a generated `process-compose` services
+config relied on its own undeclared `/usr/bin/bash` default, fixed by
+naming `sh` explicitly (`shell_command` in the generated config) for the
+same reason. `doctor`'s backend check now also exercises the actual
+interface — schema validation and a live check that `groups.exclude`
+still resolves the way the compiled policy assumes — rather than asserting
+a version number alone, and the tested range widened to `>=0.71.0,
+<0.75.0`, verified against both ends live.
+
 ## Limitations
 
 devcroft's default (and only fully implemented) tier, `process`, is

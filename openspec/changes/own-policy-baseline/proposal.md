@@ -134,18 +134,21 @@ same invariant, violated by a route that has nothing to do with groups.
 - `signal_mode` appears in the compiled policy and in `--render`.
 - `devcroft doctor` passes against nono 0.74.0.
 
-## Open Questions
+## Open Questions — resolved
 
-- **Whether excluding the system-read groups is survivable at all.** The
-  devcroft keeper is a host-linked binary; project code is closure-linked.
-  Those have different needs and the exclusion affects both. This is the
-  question that decides whether the change ships, and it is settled by
-  task group 2, not by argument.
-- **Whether `hooks` change the answer.** Hooks are project code but are
-  written by people who may reasonably expect `sh` and `coreutils` from
-  the host. A closure that supplies them is the correct answer; whether
-  every real project's closure does is unknown.
-- **What `--render` should call the backend-enforced rules.** They are
-  not `baseline` in devcroft's existing sense — devcroft neither chose
-  nor can remove them. A fourth origin may be more honest than
-  overloading an existing one.
+- **Whether excluding the system-read groups is survivable at all.**
+  Resolved: yes. Verified live against `flox-clap-sample`, `nix-go-sample`,
+  `flox-services-sample`, and the full `tests/` suite with the exclusion
+  in place — see design.md's "Decision 2's outcome" for what task group 2
+  actually found, including two pre-existing bugs the exclusion surfaced
+  (both now fixed) and the specific keeper grant (`/dev/pts`, for pty
+  allocation) that inspection alone would not have found.
+- **Whether `hooks` change the answer.** Resolved: no, on the same terms
+  as everything else project code needs — a closure that installs a shell
+  (`flox install bash`) gets working hooks; one that doesn't, doesn't. Not
+  a new category of risk, and not devcroft's to solve by granting a host
+  shell back.
+- **What `--render` should call the backend-enforced rules.** Resolved:
+  `Origin::BackendEnforced(String)`, rendered `backend:<group>` — see
+  design.md's "Naming settled" section, including the nono 0.74.0
+  attribution regression this had to be made tolerant of.

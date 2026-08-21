@@ -209,23 +209,23 @@ fn up_process(
     outcome: UpOutcome,
     resolution: &Resolution,
 ) -> Result<UpOutcome, UpError> {
-    let mut profile = policy::compile(manifest).to_nono_profile();
-    for grant in &resolution.read_only_grants {
-        profile.filesystem.read.push(grant.clone());
-    }
     // The keeper binary itself must be readable+executable inside the
-    // boundary it's about to apply to itself — the "default" baseline
-    // (NONO_BASELINE_PROFILE) covers system paths but has no way to know
-    // where *this build* of devcroft lives. Same requirement the task
-    // 1.1/1.2 spike hit and solved the same way (`exe.parent()`).
+    // boundary it's about to apply to itself — no baseline group can know
+    // where *this build* of devcroft lives. Compiled as a rule with an
+    // origin (`with_keeper_exe_grant`) rather than appended to the
+    // projected profile after the fact, so it shows up in
+    // `policy --render`/`why` like every other grant (own-policy-baseline
+    // task 6.1).
     let exe = keeper_exe()?;
     let exe_dir = exe
         .parent()
         .ok_or_else(|| io::Error::other("devcroft executable path has no parent directory"))?;
-    profile
-        .filesystem
-        .read
-        .push(exe_dir.to_string_lossy().into_owned());
+    let mut profile = policy::compile(manifest)
+        .with_keeper_exe_grant(exe_dir.to_string_lossy().into_owned())
+        .to_nono_profile();
+    for grant in &resolution.read_only_grants {
+        profile.filesystem.read.push(grant.clone());
+    }
     std::fs::write(&paths.profile, profile.to_json())?;
 
     // Listener created BEFORE restriction (CLAUDE.md's listener-before-

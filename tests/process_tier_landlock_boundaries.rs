@@ -77,12 +77,28 @@ fn spawn_forbidden_listener() -> (u16, std::thread::JoinHandle<()>) {
 }
 
 /// `bash`'s own `/dev/tcp` (not `sh`'s — dash has no such feature) as the
-/// raw-socket client: no external tool dependency beyond what's already
-/// on the flox-provisioned sandbox's inherited system `PATH`, and its
-/// stderr on failure names the real reason (`Permission denied` for a
-/// kernel-level Landlock deny vs `Connection refused` for "nobody was
-/// listening"), which is exactly the distinction these tests need to be
-/// meaningful.
+/// raw-socket client — installed into each fixture's flox environment
+/// (own-policy-baseline excludes host toolchain access, so this is no
+/// longer "already on the sandbox's inherited system `PATH`", the false
+/// assumption this comment used to make). Its stderr on failure names the
+/// real reason (`Permission denied` for a kernel-level Landlock deny vs
+/// `Connection refused` for "nobody was listening"), which is exactly the
+/// distinction these tests need to be meaningful — and exactly why a
+/// missing `bash` would be a silent false pass: `devcroft exec`'s own
+/// "keeper refused to spawn: Permission denied" also contains the
+/// substring these tests check for.
+/// A raw-socket `/dev/tcp` connect blocked at the kernel level, regardless
+/// of which errno the running nono/kernel combination surfaces it as.
+/// Verified live against both nono 0.71.0 (`Permission denied`, EACCES)
+/// and 0.74.0 (`Operation not permitted`, EPERM) — same enforcement
+/// (`socket()` itself is refused, not merely an unreached proxy), an
+/// upstream difference in which errno the Landlock network-scope deny
+/// surfaces as, not a regression in either version. own-policy-baseline
+/// task 6.2's compatibility record for this specific behavior.
+fn stderr_is_a_kernel_level_denial(stderr: &str) -> bool {
+    stderr.contains("Permission denied") || stderr.contains("Operation not permitted")
+}
+
 fn attempt_raw_connect(devcroft_bin: &str, sandbox_name: &str, port: u16) -> std::process::Output {
     Command::new(devcroft_bin)
         .arg("exec")
@@ -135,6 +151,20 @@ fn process_tier_blocks_cross_process_signals_and_proc_reads() {
         eprintln!(
             "skipping: flox init failed: {}",
             String::from_utf8_lossy(&init.stderr)
+        );
+        let _ = victim.kill();
+        let _ = victim.wait();
+        return;
+    }
+    let install = Command::new("flox")
+        .args(["install", "bash", "coreutils"])
+        .current_dir(&project_root)
+        .output()
+        .unwrap();
+    if !install.status.success() {
+        eprintln!(
+            "skipping: flox install bash coreutils failed: {}",
+            String::from_utf8_lossy(&install.stderr)
         );
         let _ = victim.kill();
         let _ = victim.wait();
@@ -239,6 +269,19 @@ fn process_tier_blocks_raw_socket_bypass_of_deny_all_network() {
         return;
     }
 
+    let install = Command::new("flox")
+        .args(["install", "bash"])
+        .current_dir(&project_root)
+        .output()
+        .unwrap();
+    if !install.status.success() {
+        eprintln!(
+            "skipping: flox install bash failed: {}",
+            String::from_utf8_lossy(&install.stderr)
+        );
+        return;
+    }
+
     // `network.default` defaults to `deny` with an empty allowlist
     // (config::Network's Default impl) — no `[network]` section needed.
     let sandbox_name = format!("e2elandlock2{}", std::process::id());
@@ -259,7 +302,7 @@ fn process_tier_blocks_raw_socket_bypass_of_deny_all_network() {
         String::from_utf8_lossy(&out.stdout)
     );
     assert!(
-        String::from_utf8_lossy(&out.stderr).contains("Permission denied"),
+        stderr_is_a_kernel_level_denial(&String::from_utf8_lossy(&out.stderr)),
         "expected a kernel-level (Landlock network-scope) denial, not merely an unreached \
          proxy, got stderr={}",
         String::from_utf8_lossy(&out.stderr)
@@ -301,6 +344,19 @@ fn process_tier_blocks_raw_socket_bypass_of_a_domain_allowlist() {
         eprintln!(
             "skipping: flox init failed: {}",
             String::from_utf8_lossy(&init.stderr)
+        );
+        return;
+    }
+
+    let install = Command::new("flox")
+        .args(["install", "bash"])
+        .current_dir(&project_root)
+        .output()
+        .unwrap();
+    if !install.status.success() {
+        eprintln!(
+            "skipping: flox install bash failed: {}",
+            String::from_utf8_lossy(&install.stderr)
         );
         return;
     }
@@ -357,7 +413,7 @@ fn process_tier_blocks_raw_socket_bypass_of_a_domain_allowlist() {
         String::from_utf8_lossy(&out.stdout)
     );
     assert!(
-        String::from_utf8_lossy(&out.stderr).contains("Permission denied"),
+        stderr_is_a_kernel_level_denial(&String::from_utf8_lossy(&out.stderr)),
         "expected a kernel-level denial, not a proxy the raw socket simply bypassed, \
          got stderr={}",
         String::from_utf8_lossy(&out.stderr)

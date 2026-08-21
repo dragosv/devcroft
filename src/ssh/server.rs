@@ -41,11 +41,15 @@ use crate::keeper::protocol::{ExitStatus, PtySize, SpawnRequest};
 use crate::keeper::session::SessionBackend;
 use crate::keeper::{pty, session};
 
-/// The remote shell for `shell_request`/pty-less `exec_request` with no
-/// pty. SSH carries no `$SHELL`-equivalent (there's no user-account
-/// system here to look one up from either) — same fallback `exec.rs`'s
-/// client-side `shell()` uses for the identical reason.
-const LOGIN_SHELL: &str = "/bin/sh";
+/// The remote shell for `shell_request`. SSH carries no `$SHELL`-
+/// equivalent (there's no user-account system here to look one up from
+/// either). Bare `"sh"`, resolved by `PATH` inside the keeper's own
+/// environment — matching `exec_request` just below, which already used
+/// the bare form, and `exec.rs`'s client-side `shell()` fallback (own-
+/// policy-baseline): an absolute `/bin/sh` is a host path, and is never
+/// reachable once `GROUPS_EXCLUDE` declines host toolchain access,
+/// regardless of what the project's provider closure supplies.
+const LOGIN_SHELL: &str = "sh";
 
 /// Env vars accepted from the client's `env_request` (ssh spec: "env
 /// passthrough of an allowlist (TERM, LANG, LC_*)"). Anything else is

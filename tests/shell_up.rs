@@ -47,6 +47,21 @@ fn shell_runs_commands_over_a_pty_and_falls_back_when_shell_is_missing() {
         );
         return;
     }
+    // own-policy-baseline excludes host toolchain access, so a bare
+    // `flox init` leaves nothing for `SHELL=sh` (or its `/bin/sh`-turned-
+    // bare-`sh` fallback below) to resolve to.
+    let install = Command::new("flox")
+        .args(["install", "bash"])
+        .current_dir(&project_root)
+        .output()
+        .unwrap();
+    if !install.status.success() {
+        eprintln!(
+            "skipping: flox install bash failed: {}",
+            String::from_utf8_lossy(&install.stderr)
+        );
+        return;
+    }
 
     let sandbox_name = format!("e2eshell{}", std::process::id());
     let (manifest, _) = parse(&format!("[sandbox]\nname = {sandbox_name:?}\n")).unwrap();

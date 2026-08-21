@@ -4,6 +4,15 @@ name = "nix-go-sample"
 [env]
 provider = "nix"
 
+# `go build`'s scratch work directory (`$WORK`, holding per-package
+# compiler/asm output) lives under `/tmp` by default — own-policy-baseline
+# excludes host toolchain access, and `/tmp` is not part of what devcroft
+# grants a closure-tier project by default, so it must be declared like
+# any other filesystem need (verified live: the build fails with a wall of
+# "-importcfg: ... permission denied" without this).
+[filesystem]
+allow = [".", "/tmp"]
+
 # A web server needs to bind a listening socket, and Gin binds :8080
 # (main.go). devcroft's default policy denies bind()/listen() outright,
 # loopback included.

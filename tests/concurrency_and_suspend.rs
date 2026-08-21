@@ -68,6 +68,21 @@ impl Sandbox {
             );
             return None;
         }
+        // own-policy-baseline excludes host toolchain access, so a bare
+        // `flox init` leaves nothing for `exec -- pwd` etc. to run —
+        // installing coreutils gives the sandbox its own `pwd`/`echo`.
+        let install = Command::new("flox")
+            .args(["install", "coreutils"])
+            .current_dir(&project_root)
+            .output()
+            .unwrap();
+        if !install.status.success() {
+            eprintln!(
+                "skipping: flox install coreutils failed: {}",
+                String::from_utf8_lossy(&install.stderr)
+            );
+            return None;
+        }
 
         let name = format!("e2ecs{tag}{}", std::process::id());
         std::fs::write(

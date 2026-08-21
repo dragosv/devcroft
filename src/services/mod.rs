@@ -111,6 +111,15 @@ pub fn render_config(services: &[ServiceDecl]) -> String {
 
     let doc = serde_json::json!({
         "version": "0.5",
+        // process-compose's own default is an absolute `/usr/bin/bash`
+        // (confirmed by log line "Global shell command: bash -c" against a
+        // real 1.116.0 binary) — a host path own-policy-baseline's
+        // GROUPS_EXCLUDE makes unreachable regardless of what the
+        // project's provider closure supplies. Bare `sh`, PATH-resolved
+        // inside the sandbox exactly like every command a service itself
+        // runs, matching the same fix `exec.rs`'s shell fallback and
+        // `ssh::server::LOGIN_SHELL` needed for the identical reason.
+        "shell": {"shell_command": "sh", "shell_argument": "-c"},
         "processes": serde_json::Value::Object(processes),
     });
     serde_json::to_string_pretty(&doc).expect("process-compose config serialization is infallible")

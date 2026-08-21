@@ -60,14 +60,28 @@ impl std::error::Error for WhyError {}
 /// Explain whether `op` on `path` would be allowed, delegating the verdict
 /// to `nono why` and attributing it to devcroft's own compiled rule.
 pub fn why_path(compiled: &CompiledPolicy, path: &str, op: Op) -> Result<Explanation, WhyError> {
-    let allowed = nono_why_path(compiled, path, op)?;
-    let origin = origin_for_path(compiled, path, op);
-    let detail = match &origin {
-        Some(o) => format!("{} by rule {o}", verdict_word(allowed)),
-        None => format!(
-            "{} by backend default policy (no matching devcroft rule)",
-            verdict_word(allowed)
-        ),
+    let (allowed, backend_group) = nono_why_path(compiled, path, op)?;
+    // devcroft's own rules take priority when one matches — `origin_for_path`
+    // already applies "deny wins" for rules devcroft compiled. Only once
+    // none of them account for the verdict does a backend-attributed group
+    // apply: it's a required deny group devcroft neither chose nor can
+    // remove, distinct from `Baseline` for exactly that reason (Origin's
+    // own doc comment).
+    let origin =
+        origin_for_path(compiled, path, op).or_else(|| backend_group.map(Origin::BackendEnforced));
+    let detail = match (&origin, allowed) {
+        (Some(o), _) => format!("{} by rule {o}", verdict_word(allowed)),
+        // Denied with no devcroft rule and no backend group: nothing
+        // grants the path at all, distinct from a rule actively denying it
+        // (policy spec's "Ungranted path is distinguished from a denied
+        // one" scenario).
+        (None, false) => "denied: not granted by any rule".to_string(),
+        // Allowed with no devcroft rule: one of the backend's non-excluded
+        // optional groups (`user_tools`, `homebrew_linux`, `system_write_*`)
+        // granted it — narrow, host-specific conveniences own-policy-
+        // baseline leaves alone (only the broad system-read groups and the
+        // inert command blocklist are excluded).
+        (None, true) => "allowed by a backend group outside devcroft's own rules".to_string(),
     };
     Ok(Explanation {
         allowed,
@@ -155,31 +169,66 @@ fn expand_home(value: &str) -> String {
     }
 }
 
-fn nono_why_path(compiled: &CompiledPolicy, path: &str, op: Op) -> Result<bool, WhyError> {
+/// A scratch profile file for a single `nono why -p <file>` query, removed
+/// on drop. Own-policy-baseline replaced the ad-hoc `--allow`/`--read`/
+/// `--block-net` flags this used to build with the real compiled profile
+/// (`CompiledPolicy::to_nono_profile`), because those flags have no way to
+/// express `groups.exclude` — a query built from them silently answered
+/// `ALLOWED` for a path like `/usr/bin/gcc` that `GROUPS_EXCLUDE` actually
+/// denies, since nono's ad-hoc query context falls back to its own
+/// baseline group set when nothing says otherwise. `-p <file>` uses the
+/// exact same schema `up` writes to `profile.json`, so the query and the
+/// real enforcement can no longer disagree about what's excluded.
+struct QueryProfile(std::path::PathBuf);
+
+impl QueryProfile {
+    fn write(compiled: &CompiledPolicy) -> Result<Self, WhyError> {
+        let path = std::env::temp_dir().join(format!(
+            "devcroft-why-query-{}-{}.json",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or_default()
+        ));
+        std::fs::write(&path, compiled.to_nono_profile().to_json())
+            .map_err(|e| WhyError::Backend(format!("writing query profile: {e}")))?;
+        Ok(QueryProfile(path))
+    }
+}
+
+impl Drop for QueryProfile {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.0);
+    }
+}
+
+/// Returns the verdict plus, for a denial none of devcroft's own rules
+/// caused, the backend group nono attributes it to (`policy_source:
+/// "group:<name>"`).
+fn nono_why_path(
+    compiled: &CompiledPolicy,
+    path: &str,
+    op: Op,
+) -> Result<(bool, Option<String>), WhyError> {
+    let profile = QueryProfile::write(compiled)?;
     let mut cmd = std::process::Command::new("nono");
     cmd.arg("why")
         .arg("--json")
-        // Expanded for the same reason the grants below are, and it matters
-        // just as much here: the query path is `~`-rooted in the cli spec's
-        // own example (`why --path ~/.aws/credentials`), and nono would read
-        // that literal `~` as a directory relative to the cwd, matching no
-        // rule and answering DENIED for a path devcroft's own rules grant.
+        // Expanded for the same reason `up` never expands the profile's own
+        // paths but does expand this one: the query path is `~`-rooted in
+        // the cli spec's own example (`why --path ~/.aws/credentials`), and
+        // nono expands `~` inside a profile file but not in this flag,
+        // where a literal `~` reads as relative-to-cwd and matches nothing.
         // `origin_for_path` keeps the caller's unexpanded form on purpose —
         // `paths::is_within` compares `~`-rooted rules against `~`-rooted
         // paths and treats home and absolute as separate namespaces.
         .arg("--path")
         .arg(expand_home(path))
         .arg("--op")
-        .arg(op.nono_flag());
-    for allow in &compiled.filesystem_allow {
-        cmd.arg("--allow").arg(expand_home(&allow.value));
-    }
-    for read in &compiled.filesystem_read {
-        cmd.arg("--read").arg(expand_home(&read.value));
-    }
-    if compiled.network_block {
-        cmd.arg("--block-net");
-    }
+        .arg(op.nono_flag())
+        .arg("-p")
+        .arg(&profile.0);
 
     let output = cmd
         .output()
@@ -194,9 +243,29 @@ fn nono_why_path(compiled: &CompiledPolicy, path: &str, op: Op) -> Result<bool, 
 
     let json: serde_json::Value = serde_json::from_slice(&output.stdout)
         .map_err(|e| WhyError::Backend(format!("parsing `nono why` output: {e}")))?;
+    // `policy_source` is nono's own attribution for a denial none of
+    // devcroft's compiled rules caused — one of the eight required deny
+    // groups (own-policy-baseline policy spec: "A denial is attributed to
+    // whoever imposed it"). Passed through rather than inferred, but the
+    // exact string is not stable across nono releases: 0.71.0 reports
+    // `"group:deny_shell_configs"`, naming the group; 0.74.0 collapsed
+    // every required-group denial to the generic `"filesystem.deny"`,
+    // with no group name recoverable from `why` at all (verified against
+    // both versions live — an upstream regression in the diagnostic, not
+    // in enforcement, which is identical). `path_not_granted` is the one
+    // `reason` value confirmed stable across both: only that value means
+    // "nothing grants this", so anything else on a `denied` verdict is
+    // still a backend-imposed rule even when nono no longer names it.
+    let backend_group = if json["reason"].as_str() == Some("path_not_granted") {
+        None
+    } else {
+        json["policy_source"]
+            .as_str()
+            .map(|s| s.strip_prefix("group:").unwrap_or(s).to_string())
+    };
     match json["status"].as_str() {
-        Some("allowed") => Ok(true),
-        Some("denied") => Ok(false),
+        Some("allowed") => Ok((true, backend_group)),
+        Some("denied") => Ok((false, backend_group)),
         other => Err(WhyError::Backend(format!(
             "unexpected `nono why` status: {other:?}"
         ))),
@@ -241,6 +310,45 @@ mod tests {
 
         assert!(!explanation.allowed);
         assert_eq!(explanation.origin, Some(Origin::Baseline));
+    }
+
+    /// policy spec's "Backend-enforced denial names its group": `~/.bashrc`
+    /// is denied by nono's required `deny_shell_configs` group, which
+    /// devcroft neither compiles nor can exclude — distinct from
+    /// `Origin::Baseline`, which means devcroft chose the denial itself.
+    ///
+    /// Asserts the shape (`BackendEnforced`, not `None`) rather than the
+    /// exact group name: verified live that nono 0.74.0 no longer reports
+    /// which required group fired (`policy_source` collapses to the
+    /// generic `"filesystem.deny"`, `why.rs`'s own doc comment on
+    /// `backend_group` has the detail), so pinning the name would make
+    /// this test version-dependent for a fact the test doesn't need.
+    #[test]
+    fn why_path_attributes_backend_enforced_denial_to_a_backend_group() {
+        let compiled = compile(&manifest_with_src_allow());
+        let explanation = why_path(&compiled, "~/.bashrc", Op::Read).unwrap();
+
+        assert!(!explanation.allowed);
+        assert!(
+            matches!(explanation.origin, Some(Origin::BackendEnforced(_))),
+            "expected a BackendEnforced origin, got {:?}",
+            explanation.origin
+        );
+        assert!(explanation.detail.starts_with("denied by rule backend:"));
+    }
+
+    /// policy spec's "Ungranted path is distinguished from a denied one":
+    /// `/usr/bin/gcc` is a host binary own-policy-baseline's `GROUPS_EXCLUDE`
+    /// makes unreachable — no devcroft rule denies it and no backend group
+    /// denies it either, it is simply never granted.
+    #[test]
+    fn why_path_ungranted_host_binary_has_no_origin() {
+        let compiled = compile(&manifest_with_src_allow());
+        let explanation = why_path(&compiled, "/usr/bin/gcc", Op::Read).unwrap();
+
+        assert!(!explanation.allowed);
+        assert_eq!(explanation.origin, None);
+        assert_eq!(explanation.detail, "denied: not granted by any rule");
     }
 
     #[test]

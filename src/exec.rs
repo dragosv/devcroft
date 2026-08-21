@@ -83,15 +83,27 @@ pub fn exec(sandbox_name: &str, req: &ExecRequest) -> Result<i32, ExecError> {
     stream_session(stream, false)
 }
 
-/// The shell to fall back to when `$SHELL` is unset or unusable (exec
-/// spec: "respecting `$SHELL` if it is inside the allowed policy, else
-/// falling back to `/bin/sh`"). There is no way to pre-check the policy
-/// from out here — it is enforced inside the keeper's own sandbox, not
-/// this (unsandboxed) client — so this tries `$SHELL` first and only
-/// falls back once the keeper actually refuses to spawn it, which covers
-/// both "denied by policy" and "doesn't exist in the sandbox" the same
-/// way.
-const FALLBACK_SHELL: &str = "/bin/sh";
+/// The shell to fall back to when `$SHELL` is unset, unusable, or (own-
+/// policy-baseline) simply not a path the sandbox's closure supplies.
+/// Bare `"sh"`, resolved by `PATH` search inside the keeper's own
+/// environment, not the absolute `/bin/sh` this used to be — `$SHELL` is
+/// near-always an absolute host path (`/bin/bash`, `/usr/bin/zsh`), and
+/// since devcroft excludes host toolchain access from the compiled
+/// policy (`GROUPS_EXCLUDE`), an absolute host path is never reachable
+/// regardless of what the project's provider closure supplies. A bare
+/// name resolves against the keeper's PATH exactly the way `exec -- cargo`
+/// already does, so a project that installs a shell into its closure
+/// (`flox install bash`, which also provides a `bin/sh` symlink — verified
+/// against a live flox environment) gets a working `devcroft shell`; a
+/// project that installs none gets the same "keeper refused to spawn"
+/// failure either name would have produced.
+///
+/// There is no way to pre-check the policy from out here — it is enforced
+/// inside the keeper's own sandbox, not this (unsandboxed) client — so
+/// this tries `$SHELL` first and only falls back once the keeper actually
+/// refuses to spawn it, which covers both "denied by policy" and "doesn't
+/// exist in the sandbox" the same way.
+const FALLBACK_SHELL: &str = "sh";
 
 /// Runs an interactive pty shell inside `sandbox_name`'s running keeper:
 /// `$SHELL` (falling back to `/bin/sh`), sized to the local terminal, with

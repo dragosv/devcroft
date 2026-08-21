@@ -29,8 +29,12 @@ use devcroft::lifecycle::{StatePaths, UpOptions, UpOutcome, down, up};
 use std::process::Command;
 
 /// A python one-liner reporting whether binding `port` on loopback
-/// succeeds. `python3` comes from the flox-provisioned environment, the
-/// same way every other real-tooling test in this suite depends on it.
+/// succeeds. `python3` must be installed into the sandbox's flox
+/// environment (`Sandbox::new`'s `flox install python3`) — before own-
+/// policy-baseline this comment claimed it "comes from the flox-
+/// provisioned environment" while actually resolving through the host's
+/// `/usr/bin` via the now-excluded `system_read_linux_core` group, which
+/// is exactly the smuggled host passthrough that change targets.
 fn bind_probe(devcroft_bin: &str, sandbox: &str, port: u16) -> String {
     let out = Command::new(devcroft_bin)
         .arg("exec")
@@ -86,6 +90,21 @@ fn a_granted_port_binds_while_egress_stays_denied_and_other_ports_do_not() {
         eprintln!(
             "skipping: flox init failed: {}",
             String::from_utf8_lossy(&init.stderr)
+        );
+        return;
+    }
+    // own-policy-baseline excludes host toolchain access, so `python3`
+    // must come from the flox closure, not (as the comment on
+    // `bind_probe` already assumed) the host.
+    let install = Command::new("flox")
+        .args(["install", "python3"])
+        .current_dir(&project_root)
+        .output()
+        .unwrap();
+    if !install.status.success() {
+        eprintln!(
+            "skipping: flox install python3 failed: {}",
+            String::from_utf8_lossy(&install.stderr)
         );
         return;
     }

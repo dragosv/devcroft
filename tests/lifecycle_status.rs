@@ -44,6 +44,20 @@ fn status_logs_and_ps_reflect_a_real_running_keeper() {
         );
         return;
     }
+    // own-policy-baseline excludes host toolchain access, so a bare
+    // `flox init` leaves nothing for a spawned `sleep` session to run.
+    let install = Command::new("flox")
+        .args(["install", "coreutils"])
+        .current_dir(&project_root)
+        .output()
+        .unwrap();
+    if !install.status.success() {
+        eprintln!(
+            "skipping: flox install coreutils failed: {}",
+            String::from_utf8_lossy(&install.stderr)
+        );
+        return;
+    }
 
     let sandbox_name = format!("e2estatus{}", std::process::id());
     let (manifest, _) = parse(&format!("[sandbox]\nname = {sandbox_name:?}\n")).unwrap();

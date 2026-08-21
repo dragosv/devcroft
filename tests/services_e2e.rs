@@ -95,13 +95,17 @@ fn a_declared_service_runs_inside_the_sandbox_and_is_reaped_by_down() {
     }
 
     // `process-compose` is devcroft's runtime requirement for services;
-    // `python3` provides the service itself. Installing both is slow, so
-    // a failure here skips rather than fails — same posture as the other
+    // `python3` provides the service itself; `bash` supplies the `sh`
+    // process-compose's generated config now names explicitly
+    // (services/mod.rs's `shell_command`) instead of its own unreachable
+    // `/usr/bin/bash` default. Installing all three is slow, so a
+    // failure here skips rather than fails — same posture as the other
     // real-tooling tests.
     let install = Command::new("flox")
         .arg("install")
         .arg("process-compose")
         .arg("python3")
+        .arg("bash")
         .current_dir(&project_root)
         .output()
         .unwrap();

@@ -195,6 +195,72 @@ before this constraint existed and would have to be rewritten around it.
 constraint. The criteria in §1 are unchanged; what changes is that
 meeting them is no longer sufficient to inherit host access.
 
+## Decision 2's outcome (task 2.6)
+
+**Ships.** The exclusion survives, verified live against `flox-clap-sample`
+(Rust/gcc), `nix-go-sample` (Go), and `flox-services-sample`
+(python3/services), plus the full `tests/` integration suite (every
+real-`nono` test, 30+ files) run end to end with the exclusion in place.
+`/usr/bin/gcc` and `/bin/ls` are denied inside every process-tier sandbox;
+closure-supplied toolchains build and run unaffected.
+
+What task 2.1's empirical pass actually found, for the keeper (host-linked)
+and project code (closure-linked) separately:
+
+- **The keeper** needs the dynamic linker, libc, and `/dev/pts` back —
+  [`KEEPER_SYSTEM_READ`](../../../../src/policy/mod.rs) in `src/policy/mod.rs`,
+  11 entries on Linux (down from the 61 the excluded group carried). The
+  `/dev/pts` entry was the one *not* found by inspection: `devcroft shell`
+  failed with an opaque "keeper refused to spawn" until live-tested,
+  because `libc::openpty` opens `/dev/ptmx`, and nono's own group granted
+  `/dev/pts` (the directory `/dev/ptmx` resolves to) but never a standalone
+  `/dev/ptmx` entry either.
+- **Project code** needs nothing from this list — its toolchain comes
+  entirely from the provider's closure, exactly Decision 2's premise. What
+  it *does* need, unrelated to the exclusion, is `/tmp`: both
+  `flox-clap-sample`'s `cargo build` and `nix-go-sample`'s `go build` use
+  it for build scratch space, and the baseline never granted it (nor should
+  it — this is an ordinary manifest declaration, not a baseline gap). Both
+  samples' `devcroft.toml` now declare `[filesystem] allow = [".", "/tmp"]`.
+- **Two latent, pre-existing bugs surfaced**, both host-toolchain
+  passthrough silently masking a real defect until this exclusion removed
+  the mask: `exec.rs`'s `shell()` fallback and `ssh::server::LOGIN_SHELL`
+  both used to fall back to an absolute `/bin/sh` — a host path no
+  provider closure can ever place a binary at, since flox/nix both install
+  under their own store, never `/bin`. Fixed to a bare `sh`, resolved by
+  `PATH` inside the sandbox exactly like every other command already
+  works. Separately, the generated `process-compose` services config
+  relied on that tool's own undeclared `/usr/bin/bash` default; fixed by
+  naming `sh` explicitly via the config's `shell_command` field. Neither
+  bug is `own-policy-baseline`'s to have introduced — both existed since
+  `add-mvp-core`/`add-flox-services` — but neither was reachable until host
+  toolchain access stopped covering for it.
+- **`nix-go-sample`'s existing `GOFLAGS=-buildvcs=false` workaround turned
+  out never to have worked through nono at all**: verified live that
+  `nono wrap` silently drops an environment variable named exactly
+  `GOFLAGS` from the wrapped process (every other name checked —
+  `GOPATH`, `GOCACHE`, an arbitrary custom name — survives unchanged; this
+  is nono's own behavior, not a policy effect, and not `groups.exclude`'s
+  doing). It was masked by host `git` access previously; now routed
+  through `GOENV` (which does survive) pointing at a project-local Go
+  config file, restoring the original intent — disabling VCS stamping
+  without a git dependency this sample has no business acquiring.
+
+## Naming settled (task 5.2)
+
+`Origin::BackendEnforced(String)`, rendered `backend:<group>` — parallel
+to `manifest:<key>`/`provider:<name>`/`baseline`. Sourced from nono's own
+`why` attribution (`policy_source`) where available; `nono` 0.74.0 was
+found to have regressed that specific diagnostic (a required-group denial
+now reports the generic `policy_source: "filesystem.deny"` instead of
+`"group:<name>"` — enforcement is identical, only the name is lost), so
+the origin degrades to a present-but-unnamed `BackendEnforced` value in
+that case rather than fabricating a name devcroft doesn't actually know.
+`policy --render`'s own listing (`render_backend_enforced`, sourced from
+`nono profile groups <name> --json` rather than `why`) is unaffected by
+that regression and always names the group, since it enumerates the
+catalog directly.
+
 ## Migration
 
 1. Land the render comparison first, as a failing test: `policy --render`

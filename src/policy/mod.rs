@@ -7,7 +7,7 @@ mod render;
 mod why;
 
 pub use degraded::{DegradedCapability, detect as detect_degraded};
-pub use render::render;
+pub use render::{render, render_backend_enforced};
 pub use why::{Explanation, Op, WhyError, why_host, why_path};
 
 use crate::config::{Manifest, NetworkDefault};
@@ -33,13 +33,138 @@ const NONO_SCHEMA_URI: &str = "https://nono.sh/schemas/nono-profile.schema.json"
 /// must invoke nono with `-p`, never `-c`.
 const NONO_BASELINE_PROFILE: &str = "default";
 
+/// Backend policy groups devcroft declines via `groups.exclude` (own-
+/// policy-baseline Decisions 2–3). nono injects its full 18-group set into
+/// any profile that doesn't say otherwise — `extends` contributes only
+/// `signal_mode`, confirmed with `nono profile diff` — so declining a
+/// group is the only lever that removes rules, and it must be named
+/// explicitly rather than achieved by omission.
+///
+/// `system_read_linux_core` / `system_read_macos`: devcroft is closure-
+/// tier by design (`docs/decisions.md` §1) — a project's toolchain comes
+/// from the provider's store, never the host, so host `/usr/bin`, `/lib`,
+/// `/usr/share` read access is exactly the passthrough that qualification
+/// test rejects. [`KEEPER_SYSTEM_READ`] grants back only what devcroft's
+/// own host-linked keeper needs, with `Origin::Baseline`.
+///
+/// `dangerous_commands*`: verified inert under `nono wrap` (`rm`, `cp`
+/// both succeeded with the group active) — `deny.commands` needs nono's
+/// resident supervisor, which `wrap` does not provide. Emitting it would
+/// claim a protection that isn't enforced, which the cli spec's "sandbox
+/// does not claim protections it does not apply" requirement forbids.
+const GROUPS_EXCLUDE: &[&str] = &[
+    "system_read_linux_core",
+    "system_read_macos",
+    "dangerous_commands",
+    "dangerous_commands_linux",
+    "dangerous_commands_macos",
+];
+
+/// The 18 groups nono injects into every profile, minus [`GROUPS_EXCLUDE`]
+/// — what actually reaches the backend that devcroft neither compiles nor
+/// can remove, rendered by `policy --render` with `Origin::BackendEnforced`
+/// (own-policy-baseline Decision 5). The first eight are the required deny
+/// groups (`nono profile validate` refuses to exclude them); the remaining
+/// five are optional groups this change leaves alone on the merits stated
+/// in design.md ("Decision 2" scopes the exclusion to system-read access
+/// specifically) — narrow, host-specific conveniences (`/tmp`, `/dev`
+/// device writes, a handful of `~/.local`/Homebrew paths), not the broad
+/// `/usr/bin`-shaped passthrough `GROUPS_EXCLUDE` targets.
+pub(crate) const BACKEND_ENFORCED_GROUPS: &[&str] = &[
+    "deny_credentials",
+    "deny_keychains_macos",
+    "deny_keychains_linux",
+    "deny_browser_data_macos",
+    "deny_browser_data_linux",
+    "deny_macos_private",
+    "deny_shell_history",
+    "deny_shell_configs",
+    "system_write_macos",
+    "system_write_linux",
+    "user_tools",
+    "homebrew_macos",
+    "homebrew_linux",
+];
+
+/// Explicit read grants replacing what `system_read_linux_core` /
+/// `system_read_macos` used to supply implicitly — sized for the
+/// host-linked keeper binary's own needs (dynamic linker, libc, entropy),
+/// not for project code, which gets its toolchain from the provider's
+/// closure and is granted nothing here.
+///
+/// Linux: mirrors the multiarch triplets nono's own group grants
+/// unconditionally regardless of host arch (`/lib/x86_64-linux-gnu` and
+/// `/lib/aarch64-linux-gnu` both, verified via `nono profile groups
+/// system_read_linux_core --json`) rather than detecting the host triplet,
+/// since a wrong guess would silently fail to load the keeper on whichever
+/// arch it guessed wrong for. `/dev/urandom` and `/dev/null`: exercised
+/// continuously, not just at startup — every inbound SSH key exchange the
+/// keeper's embedded russh server performs after restriction draws from
+/// it.
+#[cfg(not(target_os = "macos"))]
+const KEEPER_SYSTEM_READ: &[&str] = &[
+    "/lib",
+    "/lib64",
+    "/lib/x86_64-linux-gnu",
+    "/lib/aarch64-linux-gnu",
+    "/usr/lib",
+    "/usr/lib64",
+    "/usr/lib/x86_64-linux-gnu",
+    "/usr/lib/aarch64-linux-gnu",
+    "/etc/ld.so.cache",
+    "/dev/urandom",
+    "/dev/null",
+    // `devcroft shell`/pty sessions (`keeper::pty::open_pty`, `libc::openpty`)
+    // need this: glibc's `openpty` opens `/dev/ptmx`, which on this host (and
+    // every Linux system checked) is itself a symlink to `/dev/pts/ptmx` —
+    // Landlock evaluates the resolved target, so granting the directory
+    // covers it, the same way the group this replaces did (it granted
+    // `/dev/pts` but no standalone `/dev/ptmx` entry either). Without this,
+    // `open_pty` fails before `Command::new(&req.cmd)` ever runs, surfacing
+    // as an opaque "keeper refused to spawn" with nothing shell-related in
+    // it — found via a live `devcroft shell` session, not by inspection.
+    "/dev/pts",
+];
+
+/// macOS equivalent of [`KEEPER_SYSTEM_READ`]. Not live-verified against a
+/// running Seatbelt keeper the way the Linux list is (this repo's
+/// devcontainer is Linux-only) — derived from `nono profile groups
+/// system_read_macos --json`'s own path list, narrowed to what a
+/// dynamically-linked binary and its runtime crypto need rather than the
+/// full 35-entry group. Revisit against a real macOS run before relying on
+/// it.
+#[cfg(target_os = "macos")]
+const KEEPER_SYSTEM_READ: &[&str] = &[
+    "/usr/lib",
+    "/System/Library",
+    "/private/var/db/dyld",
+    "/var/db/dyld",
+    "/dev/urandom",
+    "/dev/null",
+    // `devcroft shell`'s pty allocation — macOS's `/dev/ptmx` equivalent.
+    // Not live-verified (see this const's own doc comment).
+    "/dev/ptmx",
+];
+
+/// The signal isolation `extends: "default"` currently supplies as its
+/// *only* effective contribution (own-policy-baseline design.md Decision
+/// 4) — declared explicitly so it survives independently of `extends`
+/// rather than being the single most easily lost property in the policy.
+const SIGNAL_MODE: &str = "isolated";
+
 /// Where a compiled rule came from, rendered as `manifest:<key>`,
-/// `provider:<name>`, or `baseline`.
+/// `provider:<name>`, `baseline`, or `backend:<group>`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Origin {
     Manifest(&'static str),
     Provider(&'static str),
     Baseline,
+    /// A rule the backend enforces unconditionally — one of the eight
+    /// `required` deny groups nono refuses to exclude. Distinct from
+    /// `Baseline`: devcroft neither chose these nor can remove them, so
+    /// attributing them to devcroft's own baseline would misstate who is
+    /// responsible (own-policy-baseline design.md Decision 5).
+    BackendEnforced(String),
 }
 
 impl std::fmt::Display for Origin {
@@ -48,6 +173,7 @@ impl std::fmt::Display for Origin {
             Origin::Manifest(key) => write!(f, "manifest:{key}"),
             Origin::Provider(name) => write!(f, "provider:{name}"),
             Origin::Baseline => write!(f, "baseline"),
+            Origin::BackendEnforced(group) => write!(f, "backend:{group}"),
         }
     }
 }
@@ -96,6 +222,14 @@ pub struct CompiledPolicy {
     /// answer different questions (outbound egress vs local listeners),
     /// which is why a deny-all sandbox can still run a dev server.
     pub network_ports: Vec<AnnotatedPort>,
+    /// Backend policy groups this profile declines — see
+    /// [`GROUPS_EXCLUDE`]. Fixed, not manifest-driven, but carried on the
+    /// compiled value (rather than read from the constant at each call
+    /// site) so `policy --render` and `to_nono_profile` see the same list.
+    pub groups_exclude: Vec<&'static str>,
+    /// The backend setting `extends: "default"` used to supply implicitly
+    /// — see [`SIGNAL_MODE`].
+    pub signal_mode: &'static str,
 }
 
 /// Compile `manifest` plus baseline denials into a [`CompiledPolicy`].
@@ -110,7 +244,7 @@ pub fn compile(manifest: &Manifest) -> CompiledPolicy {
         .iter()
         .map(|p| AnnotatedValue::new(p.clone(), Origin::Manifest("filesystem.allow")))
         .collect();
-    let filesystem_read: Vec<AnnotatedValue> = manifest
+    let mut filesystem_read: Vec<AnnotatedValue> = manifest
         .filesystem
         .read
         .iter()
@@ -158,6 +292,16 @@ pub fn compile(manifest: &Manifest) -> CompiledPolicy {
         })
         .collect();
 
+    // What system_read_linux_core/macos used to grant implicitly, replaced
+    // with only what the keeper itself needs — see [`KEEPER_SYSTEM_READ`].
+    // Project code gets none of this: its toolchain comes from the
+    // provider's closure, never the host.
+    filesystem_read.extend(
+        KEEPER_SYSTEM_READ
+            .iter()
+            .map(|p| AnnotatedValue::new(*p, Origin::Baseline)),
+    );
+
     CompiledPolicy {
         sandbox_name: manifest.sandbox.name.clone(),
         filesystem_allow,
@@ -166,6 +310,8 @@ pub fn compile(manifest: &Manifest) -> CompiledPolicy {
         network_block: manifest.network.default == NetworkDefault::Deny,
         network_allow_domain,
         network_ports,
+        groups_exclude: GROUPS_EXCLUDE.to_vec(),
+        signal_mode: SIGNAL_MODE,
     }
 }
 
@@ -192,6 +338,22 @@ impl CompiledPolicy {
         self
     }
 
+    /// Grant read access to the directory holding *this build* of the
+    /// devcroft binary, with `Origin::Baseline` — the keeper must be able
+    /// to read+exec itself inside the boundary it applies to itself, and
+    /// no baseline group can know where a given build lives (own-policy-
+    /// baseline task 6.1). Previously appended to the projected
+    /// [`NonoProfile`] directly after compilation, which meant this grant
+    /// existed in `profile.json` but never in `CompiledPolicy` — the
+    /// exact kind of unrendered rule `policy --render` is supposed to
+    /// catch, and would have gone on catching, since nothing called
+    /// `render` or `why` with it applied.
+    pub fn with_keeper_exe_grant(mut self, exe_dir: impl Into<String>) -> Self {
+        self.filesystem_read
+            .push(AnnotatedValue::new(exe_dir.into(), Origin::Baseline));
+        self
+    }
+
     /// Project down to the plain nono profile JSON (no origin metadata —
     /// origins are devcroft-internal and surfaced only via
     /// `policy --render`).
@@ -201,6 +363,12 @@ impl CompiledPolicy {
             extends: NONO_BASELINE_PROFILE,
             meta: NonoMeta {
                 name: self.sandbox_name.clone(),
+            },
+            security: NonoSecurity {
+                signal_mode: self.signal_mode,
+            },
+            groups: NonoGroups {
+                exclude: self.groups_exclude.iter().map(|g| g.to_string()).collect(),
             },
             filesystem: NonoFilesystem {
                 allow: self
@@ -241,6 +409,8 @@ pub struct NonoProfile {
     pub schema: &'static str,
     pub extends: &'static str,
     pub meta: NonoMeta,
+    pub security: NonoSecurity,
+    pub groups: NonoGroups,
     pub filesystem: NonoFilesystem,
     pub network: NonoNetwork,
 }
@@ -248,6 +418,21 @@ pub struct NonoProfile {
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct NonoMeta {
     pub name: String,
+}
+
+/// `security.signal_mode` — see [`SIGNAL_MODE`].
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct NonoSecurity {
+    pub signal_mode: &'static str,
+}
+
+/// `groups.exclude` — see [`GROUPS_EXCLUDE`]. `include` is deliberately
+/// absent: devcroft never names groups to include, only ones to decline,
+/// and nono's schema treats a missing `include` as "the full injected
+/// set", which is exactly the behavior devcroft relies on here.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct NonoGroups {
+    pub exclude: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -517,8 +702,31 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("f.txt"), "hi\n").unwrap();
 
+        // `cat` is no longer covered by the compiled policy on its own:
+        // GROUPS_EXCLUDE declines system_read_linux_core/macos, so a host
+        // binary not supplied by a provider's closure is exactly what the
+        // policy spec's "Host binary not supplied by the closure" scenario
+        // says should be denied. Granting the host `cat`'s own directory
+        // stands in for what a real provider's closure would supply, so
+        // this test still exercises "profile validates and executes under
+        // real nono" rather than becoming a same-host-binary-denied test
+        // (that behavior has its own coverage below).
+        let cat_dir = std::path::Path::new(
+            std::process::Command::new("which")
+                .arg("cat")
+                .output()
+                .ok()
+                .filter(|o| o.status.success())
+                .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+                .unwrap_or_else(|| "/bin/cat".to_string())
+                .as_str(),
+        )
+        .parent()
+        .unwrap()
+        .to_string_lossy()
+        .into_owned();
         let (manifest, _) = parse(&format!(
-            "[sandbox]\nname = \"nonocheck\"\n[filesystem]\nallow = [{:?}]\n",
+            "[sandbox]\nname = \"nonocheck\"\n[filesystem]\nallow = [{:?}]\nread = [{cat_dir:?}]\n",
             dir.to_str().unwrap()
         ))
         .unwrap();
@@ -557,5 +765,72 @@ mod tests {
             String::from_utf8_lossy(&run.stderr)
         );
         assert_eq!(String::from_utf8_lossy(&run.stdout), "hi\n");
+    }
+
+    /// Task 1.1's completeness proof, plus task 1.3's regression guard for
+    /// the group-injection behavior this whole change depends on, in one
+    /// test: compiles a real profile, resolves it through the actual
+    /// backend (`nono profile show --json`, not the file devcroft wrote),
+    /// and asserts every included group is one `policy --render` already
+    /// accounts for — [`GROUPS_EXCLUDE`] (declined) or
+    /// [`BACKEND_ENFORCED_GROUPS`] (rendered via
+    /// `render_backend_enforced`). If a future nono stops injecting the
+    /// full 18-group set the way design.md's "measurement that reframes
+    /// everything" found, or starts injecting a nineteenth group neither
+    /// constant knows about, this fails instead of silently under-
+    /// rendering. Self-skips when nono is absent.
+    #[test]
+    fn every_resolved_group_is_accounted_for_by_render() {
+        if std::process::Command::new("nono")
+            .arg("--version")
+            .output()
+            .is_err()
+        {
+            return;
+        }
+        let (manifest, _) = parse("[sandbox]\nname = \"completeness\"\n").unwrap();
+        let dir = std::env::temp_dir().join(format!(
+            "devcroft-policy-completeness-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let profile_path = dir.join("profile.json");
+        std::fs::write(
+            &profile_path,
+            compile(&manifest).to_nono_profile().to_json(),
+        )
+        .unwrap();
+
+        let show = std::process::Command::new("nono")
+            .arg("profile")
+            .arg("show")
+            .arg(&profile_path)
+            .arg("--json")
+            .output()
+            .unwrap();
+        assert!(show.status.success(), "nono profile show failed: {show:?}");
+        let resolved: serde_json::Value = serde_json::from_slice(&show.stdout).unwrap();
+        let included: Vec<&str> = resolved["groups"]["include"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|v| v.as_str())
+            .collect();
+
+        for group in &included {
+            assert!(
+                BACKEND_ENFORCED_GROUPS.contains(group),
+                "resolved group {group:?} is neither excluded nor in \
+                 BACKEND_ENFORCED_GROUPS — policy --render would silently omit it"
+            );
+        }
+        for excluded in GROUPS_EXCLUDE {
+            assert!(
+                !included.contains(excluded),
+                "{excluded:?} is in GROUPS_EXCLUDE but nono still resolved it as included"
+            );
+        }
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

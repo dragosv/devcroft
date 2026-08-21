@@ -47,6 +47,23 @@ pub struct Resolution {
     /// `canonical_base_env` was already introduced to close for changed
     /// keys (found during review, previously undetected for removed ones).
     pub unset: Vec<String>,
+    /// Store paths this provider's resolved toolchain needs read access
+    /// to, compiled into the policy with a `provider:<name>` origin
+    /// (`CompiledPolicy::with_provider_grants`) and shown by
+    /// `policy --render` under that name.
+    ///
+    /// **The baseline grants no host library paths** (own-policy-baseline:
+    /// `KEEPER_SYSTEM_READ` covers only what the keeper itself needs,
+    /// never anything for project code). A closure-tier provider (flox,
+    /// nix, devbox) needs nothing here beyond its own store root — the
+    /// closure supplies its own linker and C library. A provider whose
+    /// runtime links against *host* libraries (mise, pixi, hermit —
+    /// `docs/decisions.md` §1's artifact tier) must declare those host
+    /// paths here explicitly, or its resolved environment will fail to
+    /// execute rather than silently working by inheriting access the
+    /// baseline used to grant implicitly. This is the artifact tier's
+    /// defining trade-off made visible in the compiled policy rather than
+    /// resting on a tier name in documentation.
     pub read_only_grants: Vec<String>,
     /// What this provider has to say about long-lived services. Captured
     /// host-side with the rest of resolution — the declarations are read

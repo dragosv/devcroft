@@ -32,7 +32,16 @@
           # instead of a clear "git not found". Disabling VCS stamping is
           # the correct fix either way: this sample's binary has no
           # business being tagged with devcroft's own commit hash.
-          GOFLAGS = "-buildvcs=false";
+          #
+          # Not a plain `GOFLAGS` env var: verified live (own-policy-
+          # baseline task 2.4) that `nono wrap` silently drops an
+          # environment variable named exactly `GOFLAGS` from the wrapped
+          # process — every other var checked (`GOPATH`, `GOCACHE`, an
+          # arbitrary custom name) survives unchanged, so this is nono's
+          # own behavior, not a devcroft policy effect, and not something
+          # `groups.exclude` touches. `GOENV` does survive, so this routes
+          # through Go's own persistent-config mechanism instead — set in
+          # `shellHook` below, host-side, before restriction.
 
           # Go's defaults (`$HOME/go` for GOPATH, `$HOME/.cache/go-build`
           # for GOCACHE) are outside the project root, so a
@@ -53,7 +62,9 @@
             export GOPATH="$PWD/.go"
             export GOMODCACHE="$GOPATH/pkg/mod"
             export GOCACHE="$PWD/.gocache"
+            export GOENV="$PWD/.goenv"
             mkdir -p "$GOMODCACHE" "$GOCACHE"
+            go env -w GOFLAGS=-buildvcs=false
             go mod download
           '';
         };

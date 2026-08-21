@@ -41,6 +41,20 @@ fn exec_brings_up_a_cold_sandbox_automatically() {
         );
         return;
     }
+    // own-policy-baseline excludes host toolchain access, so a bare
+    // `flox init` leaves nothing for `exec -- echo` to run.
+    let install = Command::new("flox")
+        .args(["install", "coreutils"])
+        .current_dir(&project_root)
+        .output()
+        .unwrap();
+    if !install.status.success() {
+        eprintln!(
+            "skipping: flox install coreutils failed: {}",
+            String::from_utf8_lossy(&install.stderr)
+        );
+        return;
+    }
 
     let sandbox_name = format!("e2eautoup{}", std::process::id());
     std::fs::write(
