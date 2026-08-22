@@ -11,6 +11,7 @@ categories = ["command-line-utilities", "development-tools"]
 
 [dependencies]
 libc = "0.2.189"
+nono = "0.74.0"
 rand = "0.10.2"
 russh = "0.62.5"
 russh-sftp = "2.4.0"

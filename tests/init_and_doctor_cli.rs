@@ -400,10 +400,11 @@ fn init_disambiguates_a_real_name_collision_across_projects() {
 
 #[test]
 fn doctor_reports_backend_and_provider_when_installed() {
-    if Command::new("nono").arg("--version").output().is_err()
-        || Command::new("flox").arg("--version").output().is_err()
-    {
-        eprintln!("skipping: nono and/or flox not on PATH");
+    // `nono` is no longer a runtime dependency of the backend check at all
+    // (use-nono-library: it's a linked crate, not a `PATH` lookup) — only
+    // `flox`, which this same test also checks, gates skipping.
+    if Command::new("flox").arg("--version").output().is_err() {
+        eprintln!("skipping: flox not on PATH");
         return;
     }
 
@@ -411,8 +412,7 @@ fn doctor_reports_backend_and_provider_when_installed() {
     let out = run(&dir, &["doctor"]);
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert_no_unexpected_doctor_failures(&stdout);
-    assert!(stdout.contains("[PASS] backend: nono"));
-    assert!(stdout.contains("[PASS] kernel:"));
+    assert!(stdout.contains("[PASS] backend:"));
     assert!(stdout.contains("[PASS] provider: flox"));
     assert!(
         stdout.contains("no devcroft.toml found from here"),

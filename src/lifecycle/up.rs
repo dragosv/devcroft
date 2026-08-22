@@ -52,6 +52,14 @@ pub struct UpOptions {
 #[derive(Debug)]
 pub enum UpError {
     State(io::Error),
+    /// CLAUDE.md's error contract layer `config` (exit 2): the compiled
+    /// policy cannot be enforced as written — today this only ever means
+    /// `policy::CapabilitySetError::DenyOverlapsAllow`, a manifest (or
+    /// baseline) deny rule Landlock cannot express because a broader
+    /// allow already covers it (`use-nono-library` task 2). A config-time
+    /// problem, not a provider/backend/keeper one, so it gets its own
+    /// layer rather than being folded into `Keeper`.
+    Policy(String),
     Provider(ProviderError),
     /// CLAUDE.md's error contract names `backend` as its own layer
     /// (exit code 4) — unreachable before `add-hardened-tier`, since the
@@ -81,6 +89,7 @@ impl fmt::Display for UpError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             UpError::State(e) => write!(f, "state: {e}"),
+            UpError::Policy(msg) => write!(f, "config: {msg}"),
             UpError::Provider(e) => write!(f, "provider: {e}"),
             UpError::Backend(msg) => write!(f, "backend: {msg}"),
             UpError::Keeper(msg) => write!(f, "keeper: {msg}"),
@@ -212,21 +221,38 @@ fn up_process(
     // The keeper binary itself must be readable+executable inside the
     // boundary it's about to apply to itself — no baseline group can know
     // where *this build* of devcroft lives. Compiled as a rule with an
-    // origin (`with_keeper_exe_grant`) rather than appended to the
-    // projected profile after the fact, so it shows up in
-    // `policy --render`/`why` like every other grant (own-policy-baseline
-    // task 6.1).
+    // origin (`with_keeper_exe_grant`) rather than appended after the
+    // fact, so it shows up in `policy --render`/`why` like every other
+    // grant (own-policy-baseline task 6.1).
     let exe = keeper_exe()?;
     let exe_dir = exe
         .parent()
         .ok_or_else(|| io::Error::other("devcroft executable path has no parent directory"))?;
-    let mut profile = policy::compile(manifest)
+    let compiled = policy::compile(manifest)
         .with_keeper_exe_grant(exe_dir.to_string_lossy().into_owned())
-        .to_nono_profile();
-    for grant in &resolution.read_only_grants {
-        profile.filesystem.read.push(grant.clone());
-    }
-    std::fs::write(&paths.profile, profile.to_json())?;
+        .with_provider_grants(
+            crate::provider::ProviderKind::from_name(&manifest.env.provider)
+                .map_err(UpError::Provider)?
+                .static_name(),
+            &resolution.read_only_grants,
+        );
+    let plan = compiled.to_capability_plan();
+    // Validated host-side, before anything is created — the keeper (task
+    // group 4) re-derives the identical `CapabilitySet` from the same
+    // plan right before self-restricting, but doing it here too means a
+    // `CapabilitySetError::DenyOverlapsAllow` fails `up` at the `config`
+    // layer immediately, before a listener exists or a process spawns,
+    // rather than surfacing as an opaque keeper-startup failure.
+    plan.to_capability_set(project_root)
+        .map_err(|e| UpError::Policy(e.to_string()))?;
+    // Kept for inspection/debugging parity with what `down` has always
+    // promised ("down must keep compiled policy") — no longer a nono
+    // profile nono-cli consumes (use-nono-library task 4.4), just
+    // devcroft's own compiled-policy dump.
+    std::fs::write(
+        &paths.profile,
+        serde_json::to_string_pretty(&plan).expect("CapabilityPlan serialization is infallible"),
+    )?;
 
     // Listener created BEFORE restriction (CLAUDE.md's listener-before-
     // restriction ordering, proven by the task 1.1/1.2 spike): its fd
@@ -273,6 +299,7 @@ fn up_process(
         project_root,
         &resolution.env,
         &resolution.unset,
+        &plan,
         SshHandoff {
             listener: &ssh_listener,
             host_key_pem: &host_key_pem,
@@ -580,13 +607,6 @@ fn spawn_hardened_keeper(
     Ok(pid)
 }
 
-/// `nono wrap -p <profile>` applies the compiled sandbox and execs into
-/// the keeper binary — the profile MUST be passed via `-p`/`--profile`
-/// (the named-profile schema, which supports `extends: "default"`), never
-/// `-c`/`--config` (an unrelated, stricter "capability manifest" schema
-/// requiring its own `version` field and providing no baseline system
-/// access at all — confirmed against a live nono 0.71.0; see
-/// `policy::NONO_BASELINE_PROFILE`).
 /// The ssh server's fd and key material `spawn_keeper` hands the keeper,
 /// bundled to keep that call under clippy's argument-count lint —  see
 /// its call site for why the key material can't just be a file the
@@ -597,6 +617,13 @@ struct SshHandoff<'a> {
     authorized_key_pem: &'a str,
 }
 
+/// Execs the keeper binary directly — no `nono wrap` prefix
+/// (`use-nono-library`; lifecycle spec: "The keeper restricts itself with
+/// no intermediate process"). The keeper applies `plan` to itself as its
+/// first action in `__keeper` mode, right after reconstructing the
+/// listener fds and before anything else runs — see `keeper_main`'s own
+/// doc comment for why that ordering is non-negotiable.
+#[allow(clippy::too_many_arguments)]
 fn spawn_keeper(
     exe: &Path,
     listener: &UnixListener,
@@ -604,31 +631,14 @@ fn spawn_keeper(
     project_root: &Path,
     env: &std::collections::BTreeMap<String, String>,
     unset: &[String],
+    plan: &policy::CapabilityPlan,
     ssh: SshHandoff,
     start_services: bool,
 ) -> io::Result<libc::pid_t> {
     let log = std::fs::File::create(&paths.log)?;
 
-    // Resolved against *this* process's own ambient PATH, not the
-    // provider-resolved `env` handed to `.envs(env)` below: that env
-    // replaces PATH with the activated environment's value (flox's fixed
-    // canonical baseline plus its own store paths), which has no reason
-    // to contain wherever this host actually installed `nono` (e.g.
-    // Homebrew's `/opt/homebrew/bin` on Apple Silicon) — same resolve-
-    // before-replace reasoning as `provider::flox`'s own `flox` lookup;
-    // confirmed live on macOS: without this, `Command::new("nono")` below
-    // fails with ENOENT the moment `env` overrides PATH out from under it.
-    let nono_bin = crate::paths::resolve_on_path("nono")
-        .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "nono not found on PATH"))?;
-
-    let mut cmd = Command::new(nono_bin);
-    cmd.arg("wrap")
-        .arg("--silent")
-        .arg("-p")
-        .arg(&paths.profile)
-        .arg("--")
-        .arg(exe)
-        .arg("__keeper")
+    let mut cmd = Command::new(exe);
+    cmd.arg("__keeper")
         .arg(listener.as_raw_fd().to_string())
         .arg(ssh.listener.as_raw_fd().to_string())
         .current_dir(project_root)
@@ -642,6 +652,17 @@ fn spawn_keeper(
         cmd.env_remove(key);
     }
     cmd
+        // The keeper's very first action (task group 4): deserialize this
+        // and self-restrict, before reading anything else from `env`.
+        // Same trust boundary the SSH key material below already crosses
+        // this way — the keeper cannot read this back off disk itself
+        // once sandboxed (nothing under `policy::DEVCROFT_DATA_DIR` is
+        // reachable to it, and by the time it *could* read a file, it
+        // would already need to be restricted to know it's safe to).
+        .env(
+            "DEVCROFT_CAPABILITY_PLAN",
+            serde_json::to_string(plan).expect("CapabilityPlan serialization is infallible"),
+        )
         // ssh spec's key handoff (task 6.1): the keeper can't read either
         // key back off disk itself (see the call site's comment), so both
         // travel as env vars, same trust boundary the resolved provider

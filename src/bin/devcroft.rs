@@ -498,200 +498,27 @@ fn cli_doctor() -> i32 {
     }
 }
 
-/// nono's presence, compatibility with the interface devcroft depends on,
-/// and kernel sandboxing capability — `nono setup --check-only` itself
-/// reports Landlock ABI level on Linux or Seatbelt availability on macOS,
-/// so this just surfaces its verdict rather than re-deriving it.
-///
-/// own-policy-baseline (task 6.2) widened the tested range to `>=0.71.0,
-/// <0.75.0`: the full test suite, and this function's own compatibility
-/// probe below, both pass against 0.71.0 and 0.74.0 — verified live,
-/// including `nono profile schema` and `nono profile groups
-/// system_read_linux_core --json` diffed byte-for-byte identical between
-/// the two. The one real difference found, `nono why`'s attribution for a
-/// required-group denial (`policy_source` collapses from `"group:<name>"`
-/// to the generic `"filesystem.deny"` starting sometime before 0.74.0),
-/// is a `why`-only diagnostic change `policy::why` already tolerates — it
-/// does not affect what this function checks.
+/// `use-nono-library` task group 5: the process tier's backend is a
+/// linked crate now, not a binary on `PATH` — there is no version to
+/// probe and no schema to validate (lifecycle spec: "The process tier
+/// requires no external backend binary"). What's left is a genuine
+/// platform-support question, which the library answers directly:
+/// `Sandbox::support_info()` reports Landlock ABI level on Linux or
+/// Seatbelt availability on macOS, so this just surfaces its verdict
+/// (policy spec: "Degraded capabilities are reported from the enforcement
+/// layer... by asking the enforcement layer what the running platform
+/// supports").
 fn doctor_backend() -> bool {
-    let version_line = match std::process::Command::new("nono").arg("--version").output() {
-        Ok(out) if out.status.success() => String::from_utf8_lossy(&out.stdout).trim().to_string(),
-        _ => {
-            println!("[FAIL] backend: nono not found on PATH — install it from https://nono.sh");
-            return false;
-        }
-    };
-    let version = version_line.rsplit(' ').next().unwrap_or(&version_line);
-    let parts: Vec<u32> = version.split('.').filter_map(|p| p.parse().ok()).collect();
-    let in_range = matches!(parts.as_slice(), [0, 71..=74, ..]);
-    if in_range {
-        println!("[PASS] backend: nono {version} (expected >=0.71.0, <0.75.0)");
+    let support = nono::Sandbox::support_info();
+    if support.is_supported {
+        println!("[PASS] backend: {} — {}", support.platform, support.details);
     } else {
         println!(
-            "[FAIL] backend: nono {version} is outside the tested range >=0.71.0, <0.75.0 — the \
-             profile schema, group semantics, or `wrap` invocation this build depends on have not \
-             been verified against it; install a matching version from https://nono.sh"
+            "[FAIL] backend: {} does not support sandboxing — {}",
+            support.platform, support.details
         );
     }
-
-    let compat_ok = doctor_backend_profile_compatibility();
-
-    let kernel_ok = match std::process::Command::new("nono")
-        .arg("setup")
-        .arg("--check-only")
-        .output()
-    {
-        Ok(out) => {
-            let stdout = String::from_utf8_lossy(&out.stdout);
-            let summary = stdout
-                .lines()
-                .map(str::trim)
-                .find(|l| l.contains("Landlock V") || l.to_lowercase().contains("seatbelt"))
-                .map(|l| l.trim_start_matches("* ").trim_start_matches("- "))
-                .unwrap_or("sandbox support detected");
-            if out.status.success() {
-                println!("[PASS] kernel: {summary}");
-                true
-            } else {
-                println!(
-                    "[FAIL] kernel: sandbox support check failed ({summary}) — run `nono setup --check-only` directly for details"
-                );
-                false
-            }
-        }
-        Err(e) => {
-            println!("[FAIL] kernel: could not run `nono setup --check-only`: {e}");
-            false
-        }
-    };
-
-    in_range && compat_ok && kernel_ok
-}
-
-/// Exercises the interface devcroft actually depends on, per the policy
-/// spec's "Backend compatibility is checked against a surface" requirement
-/// — a version number is a proxy for this, not a substitute for it. Two
-/// things are checked against a real emitted profile, not asserted from
-/// devcroft's own knowledge:
-///
-/// 1. The profile validates against the installed backend's own schema
-///    (`nono profile validate`) — a schema change surfaces as a schema
-///    change, not a mysterious `up` failure.
-/// 2. The backend still resolves `groups.exclude` the way the compiled
-///    policy assumes (`nono profile show --json`, checking every name in
-///    `CompiledPolicy::groups_exclude` is actually absent from the
-///    resolved `groups.include`) — own-policy-baseline's entire mechanism
-///    depends on this still being true; task 1.3's regression guard pins
-///    the same assumption down as a unit test, this is its `doctor`-time
-///    equivalent against whatever backend is actually installed.
-fn doctor_backend_profile_compatibility() -> bool {
-    let (manifest, _) = match devcroft::config::parse("[sandbox]\nname = \"doctor-probe\"\n") {
-        Ok(parsed) => parsed,
-        Err(e) => {
-            println!("[FAIL] backend: could not build a probe profile: {e}");
-            return false;
-        }
-    };
-    let compiled = devcroft::policy::compile(&manifest);
-    let profile_path =
-        std::env::temp_dir().join(format!("devcroft-doctor-probe-{}.json", std::process::id()));
-    if let Err(e) = std::fs::write(&profile_path, compiled.to_nono_profile().to_json()) {
-        println!("[FAIL] backend: could not write a probe profile: {e}");
-        return false;
-    }
-    let _cleanup = ScopedFileRemove(&profile_path);
-
-    let validate = std::process::Command::new("nono")
-        .arg("profile")
-        .arg("validate")
-        .arg(&profile_path)
-        .output();
-    let schema_ok = match validate {
-        Ok(out) if out.status.success() => {
-            println!("[PASS] backend: emitted profile validates against the installed schema");
-            true
-        }
-        Ok(out) => {
-            println!(
-                "[FAIL] backend: emitted profile failed schema validation — the profile schema \
-                 this build emits is incompatible with the installed nono: {}",
-                String::from_utf8_lossy(&out.stderr)
-            );
-            false
-        }
-        Err(e) => {
-            println!("[FAIL] backend: could not run `nono profile validate`: {e}");
-            false
-        }
-    };
-
-    let show = std::process::Command::new("nono")
-        .arg("profile")
-        .arg("show")
-        .arg(&profile_path)
-        .arg("--json")
-        .output();
-    let groups_ok = match show {
-        Ok(out) if out.status.success() => {
-            let resolved: Result<serde_json::Value, _> = serde_json::from_slice(&out.stdout);
-            match resolved {
-                Ok(json) => {
-                    let included: Vec<&str> = json["groups"]["include"]
-                        .as_array()
-                        .map(|arr| arr.iter().filter_map(|v| v.as_str()).collect())
-                        .unwrap_or_default();
-                    let leaked: Vec<&&str> = compiled
-                        .groups_exclude
-                        .iter()
-                        .filter(|g| included.contains(g))
-                        .collect();
-                    if leaked.is_empty() {
-                        println!(
-                            "[PASS] backend: group exclusion still resolves the way the compiled policy assumes"
-                        );
-                        true
-                    } else {
-                        println!(
-                            "[FAIL] backend: group semantics changed — {leaked:?} were excluded but \
-                             still resolve as included; the installed nono no longer applies \
-                             `groups.exclude` the way this build assumes"
-                        );
-                        false
-                    }
-                }
-                Err(e) => {
-                    println!(
-                        "[FAIL] backend: could not parse `nono profile show --json` output: {e}"
-                    );
-                    false
-                }
-            }
-        }
-        Ok(out) => {
-            println!(
-                "[FAIL] backend: `nono profile show` failed: {}",
-                String::from_utf8_lossy(&out.stderr)
-            );
-            false
-        }
-        Err(e) => {
-            println!("[FAIL] backend: could not run `nono profile show`: {e}");
-            false
-        }
-    };
-
-    schema_ok && groups_ok
-}
-
-/// Best-effort cleanup for `doctor_backend_profile_compatibility`'s scratch
-/// file — a `doctor` run leaving a stray temp file behind is a cosmetic
-/// nuisance, never worth failing the command over.
-struct ScopedFileRemove<'a>(&'a std::path::Path);
-
-impl Drop for ScopedFileRemove<'_> {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_file(self.0);
-    }
+    support.is_supported
 }
 
 fn doctor_provider() -> bool {
@@ -982,6 +809,7 @@ fn cli_up(args: &[String]) -> i32 {
             eprintln!("devcroft up: {e}");
             match e {
                 devcroft::lifecycle::UpError::State(_) => 1,
+                devcroft::lifecycle::UpError::Policy(_) => 2,
                 devcroft::lifecycle::UpError::Provider(_) => 3,
                 devcroft::lifecycle::UpError::Backend(_) => 4,
                 devcroft::lifecycle::UpError::Keeper(_) | devcroft::lifecycle::UpError::Ssh(_) => 5,
@@ -1380,20 +1208,6 @@ fn cli_policy(args: &[String]) -> i32 {
         "{}",
         devcroft::policy::render(&compile_with_provider_grants(&manifest))
     );
-    // The backend-enforced half (own-policy-baseline Decision 5): unlike
-    // the render above, this needs nono installed to query the group
-    // catalog. Its own absence is exactly the kind of degraded capability
-    // CLAUDE.md's "surfaced, never silent" invariant governs, so a missing
-    // backend prints one line naming what's missing rather than silently
-    // shrinking what `--render` shows.
-    println!();
-    match devcroft::policy::render_backend_enforced() {
-        Ok(rendered) => print!("{rendered}"),
-        Err(e) => println!(
-            "backend-enforced (reached regardless of what devcroft compiles):\n  \
-             unavailable: {e} — install nono to see what it enforces beyond devcroft's own rules"
-        ),
-    }
     0
 }
 
@@ -1422,14 +1236,13 @@ fn compile_with_provider_grants(
 }
 
 /// `Origin::Provider` takes `&'static str`; the manifest's provider name
-/// is a runtime `String` by the time it reaches here, so this maps the
-/// two canonical names `config::parse` ever produces back to statics.
+/// is a runtime `String` by the time it reaches here, so this maps it
+/// back to a static via `ProviderKind` (`up.rs`'s own attribution at
+/// compile time uses the same method, for the same reason).
 fn provider_static_name(name: &str) -> &'static str {
-    match name {
-        "flox" => "flox",
-        "nix" => "nix",
-        _ => "unknown",
-    }
+    devcroft::provider::ProviderKind::from_name(name)
+        .map(devcroft::provider::ProviderKind::static_name)
+        .unwrap_or("unknown")
 }
 
 /// `devcroft why --path <p> --op <read|write|readwrite> [name]` or
@@ -1487,16 +1300,8 @@ fn cli_why(args: &[String]) -> i32 {
             return 2;
         }
     };
-    match devcroft::policy::why_path(&compiled, &path, op) {
-        Ok(explanation) => {
-            print_explanation(&explanation);
-            0
-        }
-        Err(e) => {
-            eprintln!("devcroft why: backend: {e}");
-            4
-        }
-    }
+    print_explanation(&devcroft::policy::why_path(&compiled, &path, op));
+    0
 }
 
 fn print_explanation(e: &devcroft::policy::Explanation) {
@@ -1696,6 +1501,15 @@ fn maybe_auto_up(sandbox_name: &str, cwd: &std::path::Path) -> Result<(), String
 /// is the load-bearing trick the task 1.1/1.2 spike proved out). Never
 /// returns under normal operation.
 fn keeper_main(fd: RawFd, ssh_fd: RawFd) -> ! {
+    // The keeper's very first action, before reconstructing the listener
+    // fds or anything else: applies the compiled policy to *this*
+    // process, irreversibly (`use-nono-library` task group 4; lifecycle
+    // spec: "The keeper restricts itself with no intermediate process").
+    // Landlock/Seatbelt restrictions apply to the calling process and are
+    // inherited by every child it spawns afterward — hooks, services,
+    // sessions — so nothing project-supplied can start before this runs.
+    self_restrict();
+
     // SAFETY: `up` created both listeners before restriction, cleared
     // their FD_CLOEXEC, and passed the fd numbers as this process's argv
     // — they are ours alone to take ownership of.
@@ -1739,6 +1553,40 @@ fn keeper_main(fd: RawFd, ssh_fd: RawFd) -> ! {
 
     let _ = keeper.serve();
     std::process::exit(0);
+}
+
+/// Deserializes the `CapabilityPlan` `up` handed down via
+/// `DEVCROFT_CAPABILITY_PLAN`, resolves it against this process's own
+/// working directory (which `spawn_keeper` set to the project root — the
+/// same value the plan's paths were validated against host-side before
+/// `up` ever spawned this process), and applies it to the current
+/// process. Failure at any step is fatal: exits rather than continuing
+/// unrestricted, matching the lifecycle spec's "Failure to restrict is
+/// fatal" requirement — `up`'s own `wait_until_responsive` timeout is
+/// what turns this into a reported keeper-layer failure, since nothing
+/// reads this process's exit code directly.
+fn self_restrict() {
+    let plan_json = std::env::var("DEVCROFT_CAPABILITY_PLAN").unwrap_or_else(|_| {
+        eprintln!("devcroft keeper: DEVCROFT_CAPABILITY_PLAN not set");
+        std::process::exit(1);
+    });
+    let plan: devcroft::policy::CapabilityPlan =
+        serde_json::from_str(&plan_json).unwrap_or_else(|e| {
+            eprintln!("devcroft keeper: parsing DEVCROFT_CAPABILITY_PLAN: {e}");
+            std::process::exit(1);
+        });
+    let project_root = std::env::current_dir().unwrap_or_else(|e| {
+        eprintln!("devcroft keeper: determining project root: {e}");
+        std::process::exit(1);
+    });
+    let caps = plan.to_capability_set(&project_root).unwrap_or_else(|e| {
+        eprintln!("devcroft keeper: building capability set: {e}");
+        std::process::exit(1);
+    });
+    if let Err(e) = nono::Sandbox::apply_auto(&caps) {
+        eprintln!("devcroft keeper: applying sandbox: {e}");
+        std::process::exit(1);
+    }
 }
 
 /// Starts the generated process-compose config as a supervised child,

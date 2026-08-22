@@ -230,6 +230,19 @@ impl ProviderKind {
             }),
         }
     }
+
+    /// The `Origin::Provider` tag for this provider's grants — a
+    /// `&'static str` rather than the manifest's runtime `String`, so
+    /// `policy::compile`'s output can borrow it directly. Used both at
+    /// `up` (attributing a provider's store grants in the compiled
+    /// policy handed to `to_capability_set`) and by `policy --render`/
+    /// `why`'s after-the-fact reconstruction from recorded state.
+    pub fn static_name(self) -> &'static str {
+        match self {
+            ProviderKind::Flox => "flox",
+            ProviderKind::Nix => "nix",
+        }
+    }
 }
 
 impl Provider for ProviderKind {

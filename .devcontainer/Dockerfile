@@ -25,6 +25,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 #
 # Pinned to the same version used for the Seatbelt spike (task 1.2), so the
 # two platform results are comparable.
+#
+# No longer a runtime dependency of the process tier itself (`use-nono-library`:
+# the keeper links the `nono` crate directly and self-restricts, no `nono
+# wrap` exec left anywhere). Kept installed anyway — this devcontainer is a
+# development environment, not an end-user install, and the binary stays
+# useful for manual `nono profile`/`nono why`/`nono wrap` comparisons against
+# the library's own behavior (exactly how `own-policy-baseline` and
+# `use-nono-library` were both actually investigated) and for
+# `add-gvisor-backend`-adjacent debugging.
 ARG NONO_VERSION=v0.71.0
 RUN NONO_VERSION="${NONO_VERSION}" NONO_INSTALL_DIR=/usr/local/bin \
         sh -c 'curl -fsSL https://nono.sh/install.sh | sh' \

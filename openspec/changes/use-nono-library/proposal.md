@@ -1,7 +1,10 @@
 # Change: use-nono-library
 
-Status: **proposal only**, post-MVP. No tasks.md — this is a sketch
-carrying real delta specs, the same posture `add-mise-provider` holds.
+Status: **accepted, moving to implementation**. `own-policy-baseline`
+(the load-bearing dependency named below) is complete. The trust-
+dependency objection in "The unresolved objection" below is resolved —
+see design.md's Decision 4 — accepted by the project owner. See
+`tasks.md` for the implementation checklist.
 Depends on: `own-policy-baseline`, which is not optional here but
 load-bearing, for the reason in Why.
 
@@ -107,11 +110,22 @@ until it is.
 
 - Affected specs: modified `policy`, `lifecycle`.
 - Affected code: `src/policy/mod.rs` (profile emission becomes capability
-  construction), `src/lifecycle/up.rs` (`spawn_keeper` loses the `nono`
-  prefix; the keeper gains a self-restrict step), `src/bin/devcroft.rs`
-  (`doctor_backend`), `Cargo.toml`.
+  construction via `CompiledPolicy::to_capability_set`; `render_backend_enforced`,
+  `Origin::BackendEnforced`, and the `BACKEND_ENFORCED_GROUPS` list are
+  removed — see design.md Decision 5), `src/policy/why.rs` (the
+  backend-group attribution fallback is removed along with it),
+  `src/lifecycle/up.rs` (`spawn_keeper` loses the `nono` prefix; the
+  keeper gains a self-restrict step), `src/bin/devcroft.rs`
+  (`doctor_backend` becomes a platform-support check via
+  `Sandbox::support_info()`, no version/binary probe), `Cargo.toml` (adds
+  the `nono` library dependency).
 - Not affected: the hardened tier. gVisor is a different backend
   entirely and this change does not reach it — it stays as it is.
+- Security-relevant scope change, confirmed with the project owner: the
+  process tier stops enforcing nono-cli's ~100-path group catalog
+  (browser data, keychains, shell history/configs beyond devcroft's own
+  `SENSITIVE_PATHS`) — see design.md Decision 5 for why this is dropped
+  rather than replicated.
 - Installation: `nono` stops being a runtime prerequisite for the
   process tier. That is a user-visible simplification and the strongest
   practical argument for the change.
@@ -171,15 +185,19 @@ would make the change acceptable:
 - Degraded capabilities are reported from the library's platform support
   rather than inferred.
 
-## Open Questions
+## Open Questions — resolved
 
-- **Whether the trust dependency is acceptable at all**, or whether this
-  change should be blocked on an upstream feature gate. Not settled, and
-  it is the question that decides the change.
-- **Whether both consumption paths should coexist** during migration —
-  library on Linux, binary on macOS, say — or whether a split backend is
-  worse than either end state.
-- **What `doctor` should report** when there is no backend binary to
-  probe. A check that always passes is not obviously better than no
-  check, and the platform-support question it would replace it with is a
-  different question than users currently read it as answering.
+- **Whether the trust dependency is acceptable at all.** Resolved:
+  accepted by the project owner — see design.md's Decision 4.
+- **Whether both consumption paths should coexist** during migration.
+  Resolved: no split. The library's own enforcement layer
+  (`crates/nono/src/sandbox/`) is cross-platform by the same design the
+  binary already relies on (Landlock on Linux, Seatbelt on macOS) — a
+  split backend would be new complexity to avoid a problem that doesn't
+  exist. macOS is not independently verified in this implementation (no
+  macOS host in this environment, same limitation `own-policy-baseline`'s
+  macOS grants carry), tracked the same way.
+- **What `doctor` should report** with no backend binary to probe.
+  Resolved as "What Changes" already stated: the library's own
+  `SupportInfo` (or equivalent platform-capability query) answers the
+  platform-support question directly; see tasks.md.

@@ -302,6 +302,41 @@ still resolves the way the compiled policy assumes — rather than asserting
 a version number alone, and the tested range widened to `>=0.71.0,
 <0.75.0`, verified against both ends live.
 
+**`use-nono-library` is implemented.** The process tier no longer execs a
+`nono` binary at all — `nono` moved from a runtime `PATH` dependency to a
+linked library, and the keeper applies the compiled policy to *itself*
+directly (`nono::Sandbox::apply_auto`) right after inheriting its
+listener fds, closing the fd-passing hop through a foreign process the
+architecture's own listener-before-restriction invariant always described
+as temporary. `nono` is no longer required on `PATH` for `up`/`exec`/
+`down` to work; `doctor`'s backend check now reports kernel/platform
+support (`Sandbox::support_info()`) instead of a binary version. Verified
+live: a full `cargo build` under `flox-clap-sample`, with the built
+binary running, `/usr/bin/gcc` and `~/.ssh` denied throughout, and no
+`nono` process anywhere in the sandbox's process tree.
+
+This is a real, security-relevant scope narrowing, not a side effect:
+own-policy-baseline's rendering of nono-cli's ~100-path group catalog
+(browser cookies, keychains, shell history, dotfiles beyond devcroft's
+own baseline) is gone along with it — that catalog is a pure `nono-cli`
+concept, invisible to the raw library. The process tier's credential/
+privacy protection is devcroft's own `SENSITIVE_PATHS` (`~/.ssh`,
+`~/.aws`, `~/.config/gcloud`, `~/.kube`) and `DEVCROFT_DATA_DIR`, exactly
+as before, and always the load-bearing part — nono-cli's broader catalog
+targets a different threat model (wrapping an arbitrary, possibly
+untrusted AI agent with broad host access) than devcroft's (a project's
+own code, running against a curated provider closure). Confirmed with the
+project owner rather than assumed; see `openspec/changes/use-nono-library/design.md`
+Decision 5 for the full reasoning.
+
+`network.allow` (domain-level filtering) is unaffected by this change in
+the sense that matters: it was already non-functional under devcroft's
+`nono wrap`-based invocation (`wrap` has no resident supervisor, and
+domain filtering needs one — verified live that a `curl` to an *allowed*
+domain got the identical kernel-level denial as an unrelated one), and
+still compiles to a plain network block under the library. Fixing it for
+real is unrelated future work, not a regression this change introduces.
+
 ## Limitations
 
 devcroft's default (and only fully implemented) tier, `process`, is
