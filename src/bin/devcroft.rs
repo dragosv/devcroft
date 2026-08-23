@@ -564,8 +564,56 @@ fn doctor_backend() -> bool {
     support.is_supported
 }
 
+/// Checks the provider **this project actually declares**, not every
+/// provider devcroft can drive.
+///
+/// This used to fail `doctor` whenever `flox` was absent, unconditionally
+/// — so a project with `provider = "nix"`, on a host that deliberately
+/// has no flox, was told its environment was broken. Worse, the check
+/// short-circuited: a missing flox meant the nix probe never ran, so the
+/// one provider that project depends on went entirely unreported. The
+/// nix check had the rule right all along ("only needed for projects
+/// with `provider = \"nix\"`"); it just wasn't applied symmetrically.
+///
+/// With a manifest, the declared provider is required and the others are
+/// irrelevant. Without one, nothing is required — devcroft cannot know
+/// what a future manifest will ask for, so both are reported as
+/// information rather than as a verdict.
 fn doctor_provider() -> bool {
-    let flox_ok = match std::process::Command::new("flox").arg("--version").output() {
+    match discovered_provider() {
+        Some(provider) => match provider.as_str() {
+            "nix" => doctor_nix_provider(true),
+            // `config::parse` normalizes and rejects anything else, so
+            // this is flox or a provider that could not exist.
+            _ => doctor_flox_provider(true),
+        },
+        None => {
+            println!(
+                "[INFO] provider: no devcroft.toml found from here; \
+                 reporting every provider, requiring none"
+            );
+            let flox = doctor_flox_provider(false);
+            let nix = doctor_nix_provider(false);
+            let _ = (flox, nix);
+            true
+        }
+    }
+}
+
+/// The `env.provider` of the manifest discovered from the cwd, if any.
+fn discovered_provider() -> Option<String> {
+    let cwd = std::env::current_dir().ok()?;
+    let path = devcroft::config::discover(&cwd).ok()?;
+    let text = std::fs::read_to_string(&path).ok()?;
+    let (manifest, _warnings) = devcroft::config::parse(&text).ok()?;
+    Some(manifest.env.provider)
+}
+
+/// `required` distinguishes "this project depends on it" (absence is a
+/// `FAIL`) from "reporting what's available" (absence is a `WARN` and
+/// does not fail `doctor`).
+fn doctor_flox_provider(required: bool) -> bool {
+    match std::process::Command::new("flox").arg("--version").output() {
         Ok(out) if out.status.success() => {
             println!(
                 "[PASS] provider: flox found ({})",
@@ -573,12 +621,18 @@ fn doctor_provider() -> bool {
             );
             true
         }
-        _ => {
+        _ if required => {
             println!("[FAIL] provider: flox not found on PATH — install it from https://flox.dev");
             false
         }
-    };
-    flox_ok && doctor_nix_provider()
+        _ => {
+            println!(
+                "[WARN] provider: flox not found on PATH — only needed for projects with \
+                 `provider = \"flox\"`"
+            );
+            true
+        }
+    }
 }
 
 /// nix is an alternative to flox, not a hard requirement of every host
@@ -589,19 +643,25 @@ fn doctor_provider() -> bool {
 /// depend on it working, so a broken installation (flakes not enabled,
 /// design.md decision 5) is a real `[FAIL]`, same severity flox's own
 /// absence gets.
-fn doctor_nix_provider() -> bool {
-    let Ok(out) = std::process::Command::new("nix").arg("--version").output() else {
+fn doctor_nix_provider(required: bool) -> bool {
+    let found = std::process::Command::new("nix")
+        .arg("--version")
+        .output()
+        .ok()
+        .filter(|out| out.status.success());
+    let Some(out) = found else {
+        if required {
+            println!(
+                "[FAIL] provider: nix not found on PATH, but this project declares \
+                 `provider = \"nix\"` — install it from https://nixos.org/download"
+            );
+            return false;
+        }
         println!(
             "[WARN] provider: nix not found on PATH — only needed for projects with `provider = \"nix\"`"
         );
         return true;
     };
-    if !out.status.success() {
-        println!(
-            "[WARN] provider: nix not found on PATH — only needed for projects with `provider = \"nix\"`"
-        );
-        return true;
-    }
     let version = String::from_utf8_lossy(&out.stdout).trim().to_string();
 
     // A real evaluation, not `nix flake --help`. Printing help does not

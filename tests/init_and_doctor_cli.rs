@@ -1,8 +1,12 @@
 //! `devcroft init` and `devcroft doctor` (cli spec's "init"/"doctor"
 //! requirements, task 7.1), through the real built binary. `init` needs
-//! no `nono`/`flox` (it only touches the filesystem); `doctor` shells out
-//! to both, so its assertions are conditional on them actually being
-//! installed, same as every other real-tooling e2e test in this suite.
+//! no external tooling at all (it only touches the filesystem).
+//!
+//! `doctor` probes the kernel for Landlock support and shells out to
+//! whichever provider the discovered manifest declares — so a test gates
+//! only on what its own assertions need, never on the full set. A test
+//! asserting about nix does not gate on flox, and vice versa: that
+//! asymmetry is the behaviour two of these tests exist to pin down.
 
 use std::path::PathBuf;
 use std::process::Command;
@@ -426,16 +430,77 @@ fn doctor_reports_backend_and_provider_when_installed() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// `doctor` checks the provider the project declares, and no others.
+///
+/// The regression: it used to probe `flox` unconditionally and `[FAIL]`
+/// when absent, so a project with `provider = "nix"` was told its
+/// environment was broken on a host that deliberately has no flox — and
+/// because the checks were chained with `&&`, the nix probe that project
+/// actually depends on never ran at all. Deliberately does **not** gate
+/// on flox being installed: the whole point is that this project does
+/// not need it.
+#[test]
+fn doctor_checks_only_the_provider_the_manifest_declares() {
+    if !devcroft::policy::backend_supported() {
+        eprintln!("skipping: this host has no usable Landlock/Seatbelt support");
+        return;
+    }
+
+    let dir = scratch_project("doctor-nix-only");
+    std::fs::write(
+        dir.join("devcroft.toml"),
+        "[sandbox]\nname = \"doctornixonly\"\n[env]\nprovider = \"nix\"\n",
+    )
+    .unwrap();
+
+    let stdout = String::from_utf8_lossy(&run(&dir, &["doctor"]).stdout).into_owned();
+
+    assert!(
+        !stdout.contains("provider: flox"),
+        "a nix project must not report on flox at all, got:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("provider: nix"),
+        "a nix project must report on nix, got:\n{stdout}"
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// The converse, and the case that must keep working: a flox project
+/// reports flox and stays silent about nix.
+#[test]
+fn doctor_on_a_flox_project_does_not_report_nix() {
+    if !devcroft::policy::backend_supported() {
+        eprintln!("skipping: this host has no usable Landlock/Seatbelt support");
+        return;
+    }
+
+    let dir = scratch_project("doctor-flox-only");
+    std::fs::write(
+        dir.join("devcroft.toml"),
+        "[sandbox]\nname = \"doctorfloxonly\"\n[env]\nprovider = \"flox\"\n",
+    )
+    .unwrap();
+
+    let stdout = String::from_utf8_lossy(&run(&dir, &["doctor"]).stdout).into_owned();
+
+    assert!(
+        !stdout.contains("provider: nix"),
+        "a flox project must not report on nix at all, got:\n{stdout}"
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 #[test]
 fn doctor_reports_nix_when_installed_with_flakes_enabled() {
     if !devcroft::policy::backend_supported() {
         eprintln!("skipping: this host has no usable Landlock/Seatbelt support");
         return;
     }
-    if Command::new("flox").arg("--version").output().is_err() {
-        eprintln!("skipping: flox not on PATH");
-        return;
-    }
+    // No flox gate: this test asserts about nix, and `doctor` in a
+    // directory with no manifest requires no provider at all.
     // Must match `doctor`'s own probe exactly, or this test skips on a
     // different condition than the one it asserts about. `nix flake
     // --help` — what this used to use — succeeds even with the
