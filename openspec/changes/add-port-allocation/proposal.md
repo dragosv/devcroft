@@ -14,16 +14,37 @@ N > 1, which is the only N that matters for the claim.
 The reason is mundane and structural. A project declares its port in
 `devcroft.toml`, that file is committed, and every git worktree of the
 repo therefore declares the *same* port. Two sandboxes both asking for
-5432 collide with `EADDRINUSE`. There is no PID/mount/net namespace
-separation between sandboxes (`add-mvp-core` design.md Decision 5), and
-the hardened tier does not add one either — `runsc` rejects
-`--network=sandbox` under `--rootless`, and devcroft is unprivileged
-everywhere by design (`docs/decisions.md`).
+5432 collide with `EADDRINUSE`. At the `process` tier there is no
+PID/mount/net namespace separation between sandboxes (`add-mvp-core`
+design.md Decision 5), so both are binding the same host loopback.
 
-So the fix cannot be isolation. It has to be allocation: distinct real
-ports per sandbox, chosen by devcroft, and — the half that is easy to
-forget — *discoverable*, since a port nobody can find is no more useful
-than a port that collides.
+**This is tier-dependent, and an earlier version of this proposal got it
+wrong.** It claimed the hardened tier adds no namespace separation
+either, reasoning from `runsc` rejecting `--network=sandbox` under
+`--rootless`. That fact is true and irrelevant: separation at the
+hardened tier does not come from runsc's netstack, it comes from the
+network namespace devcroft *itself* requests in the OCI spec.
+`oci_spec::build` pushes a `network` namespace entry whenever the policy
+resolves to `NetworkMode::None` — asserted by
+`deny_all_policy_produces_network_none_and_a_fresh_netns` — so a
+hardened sandbox with a deny-default network already has its own
+loopback and cannot collide with anything.
+
+That reshapes the change rather than motivating it away:
+
+- **At `process`, allocation is the fix**, exactly as described above.
+- **At `hardened` with egress granted** (`NetworkMode::Host`, which
+  shares the host's namespace), the collision is real and allocation
+  applies identically.
+- **At `hardened` with a deny-default network**, there is nothing to
+  allocate around: each sandbox has its own loopback, the committed
+  5432 works unchanged in all N of them, and allocating would only
+  replace a predictable port with an unpredictable one.
+
+So the fix is allocation *where the collision exists*, and the scope is
+decided by resolved network mode, not by tier alone. Where it applies it
+must also be **discoverable**, since a port nobody can find is no more
+useful than a port that collides.
 
 This is also the second half of a problem whose first half is already
 proposed elsewhere: `add-agent-workload` fixes N worktrees silently
@@ -94,9 +115,16 @@ broken.
 
 - Two sandboxes from two worktrees of one repo, with the identical
   committed manifest, both come up with the same declared service and
-  neither collides.
-- Each reports its own port through `status`, and connecting to the
-  reported port reaches that sandbox's service and not the other's.
+  neither collides — at the `process` tier, and at `hardened` when
+  egress is granted. (With a hardened deny-default network they already
+  don't collide; see Why.)
+- Each reports its own port through `status`, and **a client running
+  inside that sandbox** (`devcroft exec`) reaches its own service on the
+  reported port. Stated from inside deliberately: at `hardened` with a
+  deny-default network a host-side client cannot reach the port at all,
+  and at `process` "reaches the right one" is guaranteed by the numbers
+  differing rather than by any isolation. Promising host-side
+  reachability would promise something allocation cannot deliver.
 - The port survives `down` then `up` for the same sandbox: a connection
   string stays valid for the sandbox's life.
 - `policy --render` shows the allocated port with an origin identifying
@@ -121,6 +149,16 @@ broken.
   unrelated connections and a long-lived service squatting there is
   antisocial. A devcroft-owned range would be more predictable and less
   polite about assuming it is free.
+
+  This is not only a politeness question — it decides whether decision 2
+  (stickiness) holds at all. Binding `:0` draws from the ephemeral
+  range; recording that number and re-binding it on a later `up` means
+  reclaiming a port the kernel was free to hand to an unrelated outbound
+  connection in between. So the stability guarantee is *weakest on
+  exactly the busy, many-sandbox hosts that motivate the change*, and
+  gets weaker the longer a sandbox lives — the opposite of what
+  "sticky for the sandbox's life" implies. Settling this settles how
+  often the decision-2 fallback actually fires.
 - **What `status` should report when the sandbox is down.** The recorded
   port is still meaningful (it will be reused on the next `up`), but
   reporting it next to a stopped sandbox may read as though something is

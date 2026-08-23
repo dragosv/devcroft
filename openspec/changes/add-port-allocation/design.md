@@ -2,16 +2,23 @@
 
 ## Context
 
-See `proposal.md` — Why. The short version: no namespace separation
-exists between sandboxes and none is coming (rootless gVisor rejects
-`--network=sandbox`), so distinct ports have to be *chosen*, not
-isolated.
+See `proposal.md` — Why. The short version: at the `process` tier no
+namespace separation exists between sandboxes, so distinct ports have to
+be *chosen* rather than isolated. At the `hardened` tier that is only
+true when egress is granted; a deny-default hardened sandbox already
+gets its own network namespace from `oci_spec::build`, and needs no
+allocation at all. **Scope follows the resolved network mode, not the
+tier**, and the proposal's earlier blanket claim to the contrary was
+wrong.
 
 Two existing facts make this tractable:
 
-- `network.ports` already compiles to nono's `open_port`, so granting an
-  arbitrary loopback port is solved. This change decides *which* port,
-  not how to permit it.
+- `network.ports` already compiles to a real loopback grant — today
+  `nono::CapabilitySet::allow_localhost_port`, via
+  `policy::CapabilityPlan` (`use-nono-library`; it was nono-cli's
+  `open_port` profile key when this was first written). So granting an
+  arbitrary loopback port is solved, and this change decides *which*
+  port, not how to permit it.
 - devcroft generates the process-compose configuration itself, including
   each service's `environment` block. It therefore controls the value a
   variable carries — without touching the provider's manifest or the
@@ -28,8 +35,10 @@ Two existing facts make this tractable:
 
 **Non-Goals:**
 
-- Network namespace separation. Rejected upstream and not revisited
-  here.
+- Network namespace separation *as something this change would add*. The
+  hardened tier already requests one for deny-default sandboxes
+  (`oci_spec::build`); the `process` tier cannot, and this change does
+  not try to give it one.
 - Rewriting service commands to inject ports. devcroft does not own
   them, and a rewriter that parses arbitrary shell would be both fragile
   and a surprise.
@@ -63,6 +72,26 @@ hidden: a service whose port is baked into its command cannot be
 allocated, and asking for both fails at `up` naming the service. That is
 better than granting a port nothing listens on.
 
+**The request has to name the service, not just the variable.** The
+first draft of this design put the request in `[network]` as a flat list
+of variable names, and that shape cannot express the failure the
+paragraph above promises — with no service attached to a request, "fail
+naming the service" has nothing to name. It also makes the detection
+rule unimplementable: in a project with `db`, `worker` and `migrate`,
+the services that legitimately never reference `DB_PORT` are the
+majority, so "fail if some declared service doesn't reference the
+variable" fails every real project, while "fail if none does" quietly
+passes a service that has the variable in `vars` but hardcodes the port
+in its command. Neither is the stated requirement.
+
+So the request is keyed by service *and* variable — the service whose
+config devcroft generates, and the variable within it to substitute.
+That makes the check local and exact: for that one service, does its
+command reference that variable? A request naming a service the
+provider never declared is itself an error, and an allocation wanted for
+sessions rather than for a service is a separate, service-less form
+rather than a special case of this one.
+
 ### 2. Sticky for the sandbox's life, recorded in `meta.json`
 
 Re-choosing on every `up` would be simpler and is wrong: a user or agent
@@ -78,6 +107,34 @@ arbitrary period.
 If a recorded port can no longer be granted, allocation falls back to
 choosing a new one rather than failing: the recorded value is a
 preference, not a contract with the rest of the host.
+
+Two things about that fallback have to be stated, because leaving either
+implicit reproduces a mistake this project already made once:
+
+- **"Can no longer be granted" really means "can no longer be bound".**
+  The policy grants whatever it is asked to, so nothing at the policy
+  layer can refuse a recorded port. The only way to discover it is
+  unavailable is to try to bind it — which is decision 4's race, run a
+  second time. The fallback is therefore not a separate mechanism; it is
+  what happens when the re-bind loses.
+- **The change must be announced at `up`, not discovered later.** The
+  whole point of stickiness is that a user or agent wrote the port
+  down. Silently swapping it invalidates exactly the artifact
+  stickiness exists to protect, and leaves the user debugging a
+  connection string that was correct yesterday. This is the same
+  mechanism-without-visibility error as decision 7 in
+  `add-flox-services` — supervision shipped before observability — so
+  the spec carries a scenario requiring the change be reported.
+
+**Interaction with decision 4, which weakens this decision more than it
+first appears.** Binding `:0` draws from the ephemeral range, so a
+recorded port is one the kernel may hand to an unrelated outbound
+connection at any time while the sandbox is down. That makes the
+fallback *more* likely the longer a sandbox lives and the busier the
+host is — i.e. the stability guarantee is weakest precisely on the
+many-sandbox hosts that motivate the change. Whether to draw from a
+devcroft-owned range instead is the proposal's open question, and it is
+load-bearing for this decision rather than cosmetic.
 
 ### 3. Discovery is part of the feature, not a follow-up
 
