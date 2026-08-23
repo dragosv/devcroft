@@ -50,20 +50,17 @@ openspec status --change <change> --json       # artifact state, paths, what's n
 openspec instructions <artifact> --change <c> --json   # how to write an artifact
 ```
 
-`openspec validate --all` currently reports **9 passed, 0 failed**.
-`use-nono-library` is a proposal-only post-MVP sketch (not implemented,
-no tasks.md), but carries real delta specs consistent with its
-proposal.md, so the validator's "at least one delta spec per change"
-requirement is satisfied honestly rather than left failing.
+`openspec validate --all` currently reports **11 passed, 0 failed**.
 `add-nix-provider` (nix flakes as a second closure-tier environment
 provider, alongside flox), `add-hardened-tier` (the backend-generic
-`SessionBackend` seam and tier dispatch), and `add-gvisor-backend` (the
+`SessionBackend` seam and tier dispatch), `add-gvisor-backend` (the
 gVisor concretization of the hardened tier — Linux-only, developed and
 live-tested inside this repo's own devcontainer once task group 8
-installed `runsc` into it) are all fully implemented, tasks.md and all —
-see the README's Status section. `add-mvp-core`, `add-nix-provider`,
-`add-hardened-tier`, and `add-gvisor-backend` are the changes actually
-implemented.
+installed `runsc` into it), `own-policy-baseline`, `use-nono-library`,
+and `fix-provisioning-hooks` are all fully implemented, tasks.md and all
+— see the README's Status section. Those plus `add-mvp-core` are the
+changes actually implemented; run `openspec list` for the rest, which are
+in flight or not started.
 
 `own-policy-baseline` and `use-nono-library` came out of measuring what
 devcroft's compiled profile actually contains: 240 rules it ships and
@@ -81,8 +78,21 @@ library access from the baseline; it must declare those grants itself,
 rendered with a `provider:<name>` origin. mise still passes the six
 criteria — see `docs/decisions.md` §1, which now carries the constraint.
 
-`use-nono-library` depends on `own-policy-baseline` and remains a sketch
-with one unresolved objection, recorded in its proposal.
+`use-nono-library` depended on `own-policy-baseline` and is now
+implemented: the process tier links nono as a library and self-restricts
+via `nono::Sandbox::apply_auto`, rather than exec'ing `nono wrap`. Its
+one recorded objection — the 141-crate trust/verification dependency
+tail — was accepted by the project owner (proposal.md, design.md
+Decision 4). The single open task is 6.4, filing the upstream ask that
+nono gate its trust module behind a Cargo feature; it is deliberately
+left for the owner to send, since filing an issue on a third-party repo
+is an external action an agent should not take unprompted.
+
+Note that this rewrite has **no bearing on the hardened tier**, which
+applies no nono restriction at all. In particular it does not revive the
+removed Landlock-over-Sentry layer: that used the `landlock` crate
+directly, and its blocker is a kernel property — see
+`src/gvisor/runner.rs`'s module doc.
 
 Skills `/opsx:propose`, `/opsx:update`, `/opsx:apply`, `/opsx:archive`,
 `/opsx:sync`, and `/opsx:explore` drive the workflow.

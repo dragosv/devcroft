@@ -28,6 +28,13 @@
 //! `openspec/changes/add-gvisor-backend/design.md` decision 4 for the
 //! full evidence trail and the reversal.
 //!
+//! **`use-nono-library` does not reopen this.** That rewrite landed after
+//! this removal, and moved the *process* tier from exec'ing `nono wrap` to
+//! calling `nono::Sandbox::apply_auto` in-process — unrelated twice over.
+//! This layer used the `landlock` crate directly and never went through
+//! nono in either form; and the blocker is the kernel's, since any active
+//! ruleset, however installed, is what `mount()` returns `EPERM` under.
+//!
 //! **Verified live**, not just "compiles": with this ruleset removed, a
 //! real `up` at `isolation = "hardened"` — including one with `[services]`
 //! declared — completed end to end against a real rootless `runsc`:

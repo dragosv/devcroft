@@ -404,14 +404,18 @@ claimed:
   It is **not** a defense against a determined attacker who controls the
   code running inside: the entire host kernel syscall surface remains
   reachable, so a kernel bug is an escape.
-- **`hardened`** (planned; Linux only — see `add-hardened-tier`). Two
-  candidate backends, both paired with Landlock as additive defense in
-  depth: gVisor, whose Sentry implements syscalls in user space so the
-  attack surface becomes Sentry rather than the host kernel; and LiteBox,
-  a Rust library OS that links OS services into the workload and thereby
-  avoids syscall traps in many cases. Both are a real security boundary,
-  at a real performance cost — builds are syscall-heavy, and that is
-  where the cost lands.
+- **`hardened`** (delivered on Linux via gVisor — `add-hardened-tier` for
+  the backend-generic seam, `add-gvisor-backend` for the concretization).
+  The Sentry implements syscalls in user space, so the attack surface
+  becomes Sentry rather than the host kernel. Sentry's own seccomp/ptrace
+  confinement is the *whole* of that boundary: an earlier version of this
+  bullet also claimed Landlock as an additive layer on top, which turned
+  out to be structurally impossible — see the netstack entry below for the
+  measurement and the retraction. LiteBox, a Rust library OS that links OS
+  services into the workload and thereby avoids syscall traps in many
+  cases, remains the second candidate backend, unimplemented. A real
+  security boundary at a real performance cost — builds are syscall-heavy,
+  and that is where the cost lands.
 
 Two rules follow, and they are not negotiable:
 
@@ -465,11 +469,60 @@ grant to widen. Removed rather than narrowed — see
 tier's actual boundary was always Sentry's own seccomp/ptrace
 confinement; the Landlock layer never added anything that worked.
 
+**Not reopened by `use-nono-library`.** That rewrite landed after this
+removal, so the question is fair on timing — but it does not bear on this,
+for two independent reasons. It moved the *process* tier from exec'ing
+`nono wrap` to calling `nono::Sandbox::apply_auto` in-process, whereas the
+removed layer never went through nono in either form: it used the
+`landlock` crate directly, which is why removing it dropped that
+dependency from `Cargo.toml` outright (it survives in `Cargo.lock` only
+transitively, through nono). And the constraint is the kernel's, not an
+integration detail — whatever code path installs the ruleset, the result
+is a process with an active Landlock ruleset, which is precisely what
+`runsc`'s `mount()` gets `EPERM` from. No library API can grant what the
+LSM does not mediate.
+
+**Measured, 2026-08-23** (`runsc release-20260810.0`, arm64, this
+devcontainer). The "Revisit if" below hypothesized that the privilege
+needed might be narrow. It was measured rather than argued, and the
+hypothesis did not survive — the requirement is *wider* than the entry's
+framing assumed, not narrower. As uid 1000, by elimination:
+
+| configuration | result |
+|---|---|
+| `--rootless --network=none` | works |
+| `--rootless --network=host` | works |
+| `--rootless --network=sandbox` | rejected: "sandbox network isn't supported with --rootless" |
+| `--network=sandbox` | `cgroup.subtree_control: read-only file system` |
+| `--network=sandbox --ignore-cgroups` | `newuidmap failed` |
+| `--network=host --ignore-cgroups` | "unable to run a rootless container without userns" |
+
+Two things follow. First, `newuidmap` is a requirement of *any*
+non-rootless run by an unprivileged user, not of netstack — netstack is
+only the reason to want non-rootless. Second, running `runsc` as root
+clears the userns/`newuidmap` requirement entirely and then fails at
+`can't run sandbox process in minimal chroot since we don't have
+CAP_SYS_ADMIN`. So the grant is not a narrow setuid helper: it is root
+*plus* `CAP_SYS_ADMIN` in the container's bounding set — materially
+closer to the blanket privileged container this entry rejects than to the
+nix-daemon precedent it invokes.
+
+One caveat on the evidence: this devcontainer also cannot run the
+unprivileged non-rootless path at all, because `newuidmap` fails here even
+for a single-line self-map. Ruled out by measurement, not assumed —
+`nosuid` (overlay is `rw,relatime`), any LSM (none active), `no_new_privs`
+(0), seccomp (0, `unconfined`), nested userns (init userns, identity map),
+missing subuid ranges (`vscode:100000:65536` present), and setuid being
+broken (`passwd -S` reads `/etc/shadow`, so elevation works). That failure
+is environmental. It does not affect the root-path finding above, which is
+what determines the cost.
+
 **Revisit if:** a future backend change is willing to trade rootless for
-netstack behind an explicit, narrowly scoped privilege grant — the same
-shape as the NOPASSWD sudo rule this repo already gives flox's
-nix-daemon for the one root action it actually needs, rather than a
-blanket privileged container. Recorded as a real option in
+netstack behind an explicit privilege grant. The shape originally imagined
+here — the NOPASSWD sudo rule this repo already gives flox's nix-daemon
+for the one root action it actually needs — is now known *not* to be
+sufficient; the measurement above is the cost to argue against. Recorded
+as a real option in
 `add-gvisor-backend`'s own Open Questions, not chosen there either.
 
 ### No resource limits (yet)

@@ -164,14 +164,22 @@ rules. See the network policy bullet below for what *is* delivered.
   decide what "tested range" means for `doctor` (pin a release tag
   range? a minimum release date?).
 - **Non-rootless netstack, as a future extension.** A hardened backend
-  running non-rootless (e.g. via a scoped, NOPASSWD-limited privilege
-  grant, mirroring how this repo already gives flox's nix-daemon a
-  narrowly scoped sudo rule rather than a blanket one) could use
-  `--network=sandbox` and deliver the original netstack story: loopback
-  binds under `deny`, no port conflicts between sandboxes. Worth
-  recording as a real, considered option for a later change — not
-  chosen now, since it trades away the unprivileged posture every other
-  tier holds to, for a single tier's network story.
+  running non-rootless could use `--network=sandbox` and deliver the
+  original netstack story: loopback binds under `deny`, no port conflicts
+  between sandboxes. Worth recording as a real, considered option for a
+  later change — not chosen now, since it trades away the unprivileged
+  posture every other tier holds to, for a single tier's network story.
+
+  **Cost measured 2026-08-23, and it is higher than this entry first
+  assumed.** The original wording proposed a scoped, NOPASSWD-limited
+  privilege grant, mirroring the narrow sudo rule this repo gives flox's
+  nix-daemon. That shape is now known to be insufficient: running `runsc`
+  as root clears the userns/`newuidmap` requirement but then fails on
+  `CAP_SYS_ADMIN`, so the grant is root *plus* `CAP_SYS_ADMIN` in the
+  container's bounding set. `newuidmap` is also a requirement of any
+  non-rootless run by an unprivileged user, independent of network mode.
+  Full matrix and what was ruled out: `docs/decisions.md`, the netstack
+  rejection entry.
 - **Provisioning stays host-side.** Provider resolution (`nix develop`,
   `flox activate`) runs before restriction, on the host, unchanged —
   but the captured env diff now describes paths that must all be
