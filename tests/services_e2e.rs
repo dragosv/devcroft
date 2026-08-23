@@ -31,8 +31,7 @@ use std::time::{Duration, Instant};
 const PORT: u16 = 18777;
 
 fn tooling_missing() -> bool {
-    Command::new("nono").arg("--version").output().is_err()
-        || Command::new("flox").arg("--version").output().is_err()
+    Command::new("flox").arg("--version").output().is_err()
 }
 
 /// Counts host processes whose argv contains `needle`, without matching
@@ -66,7 +65,7 @@ fn service_responds(devcroft_bin: &str, sandbox: &str) -> bool {
 #[test]
 fn a_declared_service_runs_inside_the_sandbox_and_is_reaped_by_down() {
     if tooling_missing() {
-        eprintln!("skipping: nono and/or flox not on PATH");
+        eprintln!("skipping: flox not on PATH");
         return;
     }
 
@@ -153,7 +152,7 @@ fn a_declared_service_runs_inside_the_sandbox_and_is_reaped_by_down() {
 
     // devcroft generated its own config — not flox's service-config.yaml.
     assert!(
-        devcroft::services::config_path(&project_root).is_file(),
+        devcroft::services::config_path(&project_root, &sandbox_name).is_file(),
         "up must write the generated process-compose config"
     );
 
@@ -169,7 +168,7 @@ fn a_declared_service_runs_inside_the_sandbox_and_is_reaped_by_down() {
     assert!(
         up_ok,
         "the declared service must be running inside the sandbox; log: {}",
-        std::fs::read_to_string(devcroft::services::log_path(&project_root))
+        std::fs::read_to_string(devcroft::services::log_path(&project_root, &sandbox_name))
             .unwrap_or_else(|_| "(no log)".into())
     );
 
@@ -180,14 +179,15 @@ fn a_declared_service_runs_inside_the_sandbox_and_is_reaped_by_down() {
 
     // Observability: a running service is reported per-service, by name.
     let status = devcroft::lifecycle::status(&dc_manifest).unwrap();
-    let services = status
+    let report = status
         .services
         .as_ref()
         .expect("a sandbox with a running service must report service state");
-    assert_eq!(services.len(), 1);
-    assert_eq!(services[0].name, "web");
+    assert_eq!(report.supervisor_error, None);
+    assert_eq!(report.states.len(), 1);
+    assert_eq!(report.states[0].name, "web");
     assert_eq!(
-        services[0].health,
+        report.states[0].health,
         devcroft::services::ServiceHealth::Running
     );
 
@@ -198,7 +198,9 @@ fn a_declared_service_runs_inside_the_sandbox_and_is_reaped_by_down() {
     // with `--keep-project`: without it, process-compose exits once its
     // last service is gone, taking the API socket — and the only record
     // of why — with it.
-    let pid = services[0].pid.expect("a running service reports its pid");
+    let pid = report.states[0]
+        .pid
+        .expect("a running service reports its pid");
     unsafe {
         libc::kill(pid as libc::pid_t, libc::SIGKILL);
     }
@@ -206,8 +208,8 @@ fn a_declared_service_runs_inside_the_sandbox_and_is_reaped_by_down() {
     let mut reported_failed = false;
     while Instant::now() < deadline {
         let st = devcroft::lifecycle::status(&dc_manifest).unwrap();
-        if let Some(svcs) = st.services.as_ref()
-            && svcs.iter().any(|s| s.health.is_failure())
+        if let Some(report) = st.services.as_ref()
+            && report.states.iter().any(|s| s.health.is_failure())
         {
             reported_failed = true;
             break;
@@ -238,6 +240,26 @@ fn a_declared_service_runs_inside_the_sandbox_and_is_reaped_by_down() {
          service it spawned"
     );
 
+    // With the supervisor now gone but the sandbox's recorded
+    // declarations intact, `status` must still account for the declared
+    // service rather than reporting nothing. This is the regression the
+    // `services` spec's "SHALL NOT be omitted from service listings"
+    // forbids: before reconciliation, a dead supervisor and a sandbox
+    // that never declared anything produced byte-identical output.
+    let after = devcroft::lifecycle::status(&dc_manifest).unwrap();
+    let report = after.services.as_ref().expect(
+        "a sandbox that declared services must not report none once the supervisor is gone",
+    );
+    assert!(
+        report.supervisor_error.is_some(),
+        "an unreachable supervisor must be named, not silently omitted"
+    );
+    assert!(
+        report.states.iter().any(|s| s.name == "web"),
+        "the declared service must still be listed, got: {:?}",
+        report.states
+    );
+
     let _ = std::fs::remove_dir_all(&paths.root);
     let _ = std::fs::remove_dir_all(&project_root);
 }
@@ -245,7 +267,7 @@ fn a_declared_service_runs_inside_the_sandbox_and_is_reaped_by_down() {
 #[test]
 fn services_without_process_compose_fail_at_the_provider_layer() {
     if tooling_missing() {
-        eprintln!("skipping: nono and/or flox not on PATH");
+        eprintln!("skipping: flox not on PATH");
         return;
     }
     unsafe {
@@ -293,7 +315,11 @@ fn services_without_process_compose_fail_at_the_provider_layer() {
 
     // Nothing should have been left running or written.
     assert!(
-        !Path::new(&devcroft::services::config_path(&project_root)).exists(),
+        !Path::new(&devcroft::services::config_path(
+            &project_root,
+            &sandbox_name
+        ))
+        .exists(),
         "a failed precondition must not leave a generated config behind"
     );
 

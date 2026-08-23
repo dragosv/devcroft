@@ -14,3 +14,9 @@
 # Added by cargo
 
 /target
+
+# devcroft's own generated service artifacts, if a sandbox is ever brought
+# up against this repo itself: `up` writes the process-compose config, its
+# log, and its unix socket here (see src/services/mod.rs — the project root
+# is the only place the sandbox can both write and read).
+.devcroft/

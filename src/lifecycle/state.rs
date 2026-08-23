@@ -114,6 +114,18 @@ pub struct Meta {
     /// by definition, a `process`-tier one.
     #[serde(default = "default_resolved_backend")]
     pub resolved_backend: String,
+    /// The service names the provider declared at this `up`.
+    ///
+    /// Recorded because it is the only thing that makes a *missing*
+    /// service reportable. `status` learns live state by querying
+    /// process-compose, which can only ever describe services it
+    /// accepted — so a declared service the supervisor never took, or a
+    /// supervisor that died before accepting any, showed up as an empty
+    /// listing indistinguishable from a sandbox declaring no services.
+    /// Reconciling the live answer against this list is what turns both
+    /// into something `status` can name (`services::reconcile`).
+    #[serde(default)]
+    pub declared_services: Vec<String>,
 }
 
 fn default_resolved_backend() -> String {
@@ -130,6 +142,14 @@ fn default_resolved_backend() -> String {
 /// same directory is atomic on every platform devcroft targets, so a
 /// concurrent reader only ever sees the old complete file or the new
 /// complete file, never a partial one.
+///
+/// **This is a whole-file replace, not a merge**, and its one caller
+/// (`up`) builds a fresh [`Meta`] literal every time. So any field added
+/// here is re-derived at every `up` or it is silently reset — there is no
+/// read-modify-write anywhere in this path. Every field today is
+/// re-derived, which is why that works; a field that must *persist*
+/// across `up` (a sticky allocated port, say) cannot simply be added to
+/// the struct, it needs the caller to read the previous value back first.
 pub fn write_meta(path: &Path, meta: &Meta) -> io::Result<()> {
     let json = serde_json::to_string_pretty(meta)
         .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
@@ -287,6 +307,7 @@ mod tests {
             env_fingerprint: "abc123".to_string(),
             read_only_grants: vec!["/nix/store".to_string()],
             resolved_backend: "process".to_string(),
+            declared_services: Vec::new(),
         };
         write_meta(&paths.meta, &meta).unwrap();
         assert_eq!(read_meta(&paths.meta).unwrap(), Some(meta));
@@ -304,6 +325,7 @@ mod tests {
             env_fingerprint: "abc123".to_string(),
             read_only_grants: Vec::new(),
             resolved_backend: "process".to_string(),
+            declared_services: Vec::new(),
         };
         write_meta(&paths.meta, &meta).unwrap();
         assert!(!paths.meta.with_extension("json.tmp").exists());

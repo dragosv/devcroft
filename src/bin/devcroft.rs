@@ -357,6 +357,45 @@ fn disambiguate_name(base: &str, project_root: &std::path::Path) -> String {
 /// detects an existing flox environment or a single-ecosystem toolchain
 /// pin, generates a minimal `devcroft.toml`, and never overwrites an
 /// existing one without `--force`.
+/// Adds `.devcroft/` to the project's `.gitignore`, since `up` writes the
+/// service supervisor's generated config, log, and unix socket there.
+///
+/// It has to be the project root — the state dir is baseline-denied to
+/// the sandbox and `/tmp` is write-but-not-read under the baseline, so
+/// it is the only place process-compose can both read its config and
+/// bind its socket (`services::ARTIFACT_DIR`). That makes devcroft the
+/// one writing untracked files into the user's working tree, and
+/// therefore the one responsible for not leaving `git status` dirty —
+/// which matters most in exactly the worktree-heavy fan-out flow
+/// `add-agent-workload` targets, where it would be dirty in every one.
+///
+/// Best-effort and never fatal: appends only if not already covered, and
+/// creates the file only when the project is a git repository, so this
+/// never invents a `.gitignore` in a directory git does not track.
+fn ignore_artifact_dir(project_root: &std::path::Path) {
+    let entry = format!("{}/", devcroft::services::ARTIFACT_DIR);
+    let gitignore = project_root.join(".gitignore");
+    let existing = std::fs::read_to_string(&gitignore).unwrap_or_default();
+    if existing.lines().any(|l| l.trim() == entry) {
+        return;
+    }
+    if existing.is_empty() && !project_root.join(".git").exists() {
+        return;
+    }
+
+    let mut next = existing;
+    if !next.is_empty() && !next.ends_with('\n') {
+        next.push('\n');
+    }
+    next.push_str("\n# devcroft's generated service config, log, and supervisor socket\n");
+    next.push_str(&entry);
+    next.push('\n');
+
+    if std::fs::write(&gitignore, next).is_ok() {
+        println!("devcroft: added {entry} to {}", gitignore.display());
+    }
+}
+
 fn cli_init(args: &[String]) -> i32 {
     const USAGE: &str = "devcroft init: usage: devcroft init [--force]";
     let force = match args {
@@ -423,6 +462,7 @@ fn cli_init(args: &[String]) -> i32 {
         return 1;
     }
     println!("devcroft: wrote {}", manifest_path.display());
+    ignore_artifact_dir(&cwd);
 
     if has_flox {
         println!("devcroft: found an existing flox environment (.flox/); ready for `devcroft up`.");
@@ -809,7 +849,8 @@ fn cli_up(args: &[String]) -> i32 {
             eprintln!("devcroft up: {e}");
             match e {
                 devcroft::lifecycle::UpError::State(_) => 1,
-                devcroft::lifecycle::UpError::Policy(_) => 2,
+                devcroft::lifecycle::UpError::Policy(_)
+                | devcroft::lifecycle::UpError::Config(_) => 2,
                 devcroft::lifecycle::UpError::Provider(_) => 3,
                 devcroft::lifecycle::UpError::Backend(_) => 4,
                 devcroft::lifecycle::UpError::Keeper(_) | devcroft::lifecycle::UpError::Ssh(_) => 5,
@@ -950,8 +991,8 @@ fn print_status(s: &devcroft::lifecycle::SandboxStatus, provider: &str) {
     // so failures are named per service rather than summarized.
     match &s.services {
         None => {}
-        Some(services) => {
-            for svc in services {
+        Some(report) => {
+            for svc in &report.states {
                 // The pid is only shown while running: process-compose
                 // keeps reporting the last pid after a service dies, and
                 // printing it next to "failed" reads as though something
@@ -963,7 +1004,17 @@ fn print_status(s: &devcroft::lifecycle::SandboxStatus, provider: &str) {
                     _ => println!("service {}: {}", svc.name, svc.health.label()),
                 }
             }
-            let failed = services.iter().filter(|s| s.health.is_failure()).count();
+            // A supervisor that never came up, or died, is the failure
+            // that used to be invisible: every service disappeared from
+            // the listing at once and the sandbox read as healthy.
+            if let Some(err) = &report.supervisor_error {
+                println!("services: {err} — see `devcroft logs` for output");
+            }
+            let failed = report
+                .states
+                .iter()
+                .filter(|s| s.health.is_failure())
+                .count();
             if failed > 0 {
                 println!("services: {failed} failed — see `devcroft logs` for output");
             }
@@ -1067,13 +1118,21 @@ fn cli_ps() -> i32 {
                 // and sessions be distinguishable, and the single
                 // "process-compose (services)" registry entry that makes
                 // teardown work is deliberately not the reporting unit.
-                if let Some(root) = s.project_root.as_deref()
-                    && let Ok(Some(services)) = devcroft::services::query(
-                        &devcroft::services::socket_path(std::path::Path::new(root)),
-                    )
-                {
-                    for svc in services {
+                if let Some(root) = s.project_root.as_deref() {
+                    let socket =
+                        devcroft::services::socket_path(std::path::Path::new(root), &s.name);
+                    // Reconciled, same as `status`: a declared service
+                    // the supervisor never accepted must be listed, not
+                    // omitted.
+                    let report = devcroft::services::reconcile(
+                        &s.declared_services,
+                        devcroft::services::query(&socket),
+                    );
+                    for svc in &report.states {
                         println!("  service:{}\t{}", svc.name, svc.health.label());
+                    }
+                    if let Some(err) = &report.supervisor_error {
+                        println!("  services\t{err}");
                     }
                 }
             }
@@ -1615,13 +1674,17 @@ fn start_services_if_requested(registry: Arc<Registry>, backend: Arc<dyn Session
     let root = std::path::PathBuf::from(
         std::env::var("DEVCROFT_SERVICES_ROOT").unwrap_or_else(|_| ".".to_string()),
     );
-    let config = devcroft::services::config_path(&root)
+    // Artifacts live in a per-sandbox subdirectory of the root, so two
+    // sandboxes sharing a project root stay separated — see
+    // `services::artifact_dir`.
+    let name = std::env::var("DEVCROFT_SANDBOX_NAME").unwrap_or_default();
+    let config = devcroft::services::config_path(&root, &name)
         .to_string_lossy()
         .into_owned();
-    let log = devcroft::services::log_path(&root)
+    let log = devcroft::services::log_path(&root, &name)
         .to_string_lossy()
         .into_owned();
-    let sock = devcroft::services::socket_path(&root)
+    let sock = devcroft::services::socket_path(&root, &name)
         .to_string_lossy()
         .into_owned();
 

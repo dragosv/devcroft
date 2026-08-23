@@ -47,9 +47,12 @@ pub struct SandboxStatus {
     /// Live per-service state, queried from process-compose at call time
     /// rather than recorded at `up` — unlike `isolation`, this changes
     /// after `up` returns, so `meta.json` would only ever hold a stale
-    /// snapshot. `None` when the sandbox declares no services or none
-    /// ever started; an empty vec never occurs.
-    pub services: Option<Vec<crate::services::ServiceState>>,
+    /// snapshot — then reconciled against the service names `up`
+    /// recorded, which is what lets a declared-but-absent service or an
+    /// unreachable supervisor be reported rather than vanish.
+    /// `None` only when the sandbox declares no services and none are
+    /// running; an empty report never occurs.
+    pub services: Option<crate::services::ServicesReport>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -57,6 +60,10 @@ pub struct SandboxSummary {
     pub name: String,
     pub keeper: KeeperStatus,
     pub project_root: Option<String>,
+    /// The service names the last `up` recorded, so `ps` can reconcile
+    /// the supervisor's live answer against them exactly as `status`
+    /// does — without it, `ps` reports a dead supervisor as no services.
+    pub declared_services: Vec<String>,
 }
 
 #[derive(Debug)]
@@ -102,14 +109,21 @@ pub fn status(manifest: &Manifest) -> Result<SandboxStatus, StatusError> {
     // Queried before `meta` is consumed below, since the socket lives
     // under the project root `meta` records — the sandbox's own state
     // dir is baseline-denied and holds nothing about services.
+    //
+    // Reconciled against `meta.declared_services` rather than reported
+    // raw: the live answer can only describe services the supervisor
+    // accepted, so on its own it reports a missing service — or a
+    // supervisor that died taking all of them with it — as simply
+    // nothing at all. That is the silent failure the `services` spec
+    // forbids.
     let services = meta
         .as_ref()
-        .and_then(|meta| {
-            crate::services::query(&crate::services::socket_path(Path::new(&meta.project_root)))
-                .ok()
-                .flatten()
+        .map(|meta| {
+            let socket =
+                crate::services::socket_path(Path::new(&meta.project_root), &manifest.sandbox.name);
+            crate::services::reconcile(&meta.declared_services, crate::services::query(&socket))
         })
-        .filter(|s| !s.is_empty());
+        .filter(|r| !r.is_empty());
 
     let isolation = meta.map(|meta| meta.resolved_backend);
 
@@ -142,8 +156,10 @@ pub fn logs(sandbox_name: &str, tail_lines: Option<usize>) -> io::Result<String>
     // line with the emitting process's name, which satisfies the
     // per-service attribution requirement without devcroft re-tagging.
     if let Some(meta) = state::read_meta(&paths.meta)?
-        && let Ok(service_log) =
-            std::fs::read_to_string(crate::services::log_path(Path::new(&meta.project_root)))
+        && let Ok(service_log) = std::fs::read_to_string(crate::services::log_path(
+            Path::new(&meta.project_root),
+            sandbox_name,
+        ))
         && !service_log.trim().is_empty()
     {
         contents.push_str("\n--- services ---\n");
@@ -181,11 +197,17 @@ pub fn ps() -> io::Result<Vec<SandboxSummary>> {
         let name = entry.file_name().to_string_lossy().into_owned();
         let paths = StatePaths::in_dir(entry.path());
         let keeper = keeper_status(&paths).unwrap_or(KeeperStatus::Stale);
-        let project_root = state::read_meta(&paths.meta)?.map(|meta| meta.project_root);
+        let meta = state::read_meta(&paths.meta)?;
+        let declared_services = meta
+            .as_ref()
+            .map(|m| m.declared_services.clone())
+            .unwrap_or_default();
+        let project_root = meta.map(|meta| meta.project_root);
         out.push(SandboxSummary {
             name,
             keeper,
             project_root,
+            declared_services,
         });
     }
     out.sort_by(|a, b| a.name.cmp(&b.name));
@@ -292,6 +314,7 @@ mod tests {
                     env_fingerprint: "fp".to_string(),
                     read_only_grants: Vec::new(),
                     resolved_backend: "process".to_string(),
+                    declared_services: Vec::new(),
                 },
             )
             .unwrap();

@@ -39,12 +39,27 @@ use crate::provider::ServiceDecl;
 /// this file.
 pub const ARTIFACT_DIR: &str = ".devcroft";
 
-pub fn config_path(project_root: &Path) -> PathBuf {
-    project_root.join(ARTIFACT_DIR).join("services.yaml")
+/// Per-sandbox artifact directory: `<root>/.devcroft/<sandbox-name>/`.
+///
+/// Keyed on the sandbox name, not the project root alone, and that is a
+/// correctness requirement rather than tidiness. Two sandboxes with
+/// different names can share one project root — that is exactly the
+/// arrangement `add-port-allocation` task 6.1 offers as the alternative
+/// to git worktrees. Keyed on the root alone, the second `up` overwrites
+/// the first's generated config, both supervisors race for one socket
+/// path, and `status`/`ps` for either sandbox reports the other's
+/// services. Nothing about that fails loudly; it just silently reports
+/// the wrong thing.
+pub fn artifact_dir(project_root: &Path, sandbox_name: &str) -> PathBuf {
+    project_root.join(ARTIFACT_DIR).join(sandbox_name)
 }
 
-pub fn log_path(project_root: &Path) -> PathBuf {
-    project_root.join(ARTIFACT_DIR).join("services.log")
+pub fn config_path(project_root: &Path, sandbox_name: &str) -> PathBuf {
+    artifact_dir(project_root, sandbox_name).join("services.yaml")
+}
+
+pub fn log_path(project_root: &Path, sandbox_name: &str) -> PathBuf {
+    artifact_dir(project_root, sandbox_name).join("services.log")
 }
 
 /// Renders `services` as a process-compose configuration.
@@ -125,9 +140,18 @@ pub fn render_config(services: &[ServiceDecl]) -> String {
     serde_json::to_string_pretty(&doc).expect("process-compose config serialization is infallible")
 }
 
-pub fn socket_path(project_root: &Path) -> PathBuf {
-    project_root.join(ARTIFACT_DIR).join("services.sock")
+pub fn socket_path(project_root: &Path, sandbox_name: &str) -> PathBuf {
+    artifact_dir(project_root, sandbox_name).join("services.sock")
 }
+
+/// `sockaddr_un.sun_path` is 108 bytes on Linux and 104 on macOS, minus
+/// the NUL — a limit that bites here rather than theoretically, because
+/// [`socket_path`] is one directory deeper than it used to be
+/// (per-sandbox keying) and the project root is chosen by the user, not
+/// by devcroft. Over the limit, `process-compose` fails to bind with an
+/// error naming neither the path nor the reason, so `up` checks it
+/// host-side and fails at layer `config` instead.
+pub const MAX_SOCKET_PATH: usize = 103;
 
 /// One service's live state, as reported by process-compose.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -137,7 +161,9 @@ pub struct ServiceState {
     pub pid: Option<i64>,
 }
 
-/// The four states the `services` spec requires be distinguishable.
+/// The four states the `services` spec requires be distinguishable,
+/// plus the two process-compose reports that map onto none of them —
+/// see [`ServiceState::from_json`] for the live measurements.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ServiceHealth {
     Running,
@@ -151,6 +177,14 @@ pub enum ServiceHealth {
     Exited,
     /// Declared but not present in process-compose's view at all.
     NotStarted,
+    /// Accepted by process-compose but not started yet — waiting on a
+    /// `depends_on` gate. Distinct from [`ServiceHealth::NotStarted`],
+    /// which means the supervisor has no record of it whatsoever.
+    Pending,
+    /// Will never run: a dependency it gates on failed. Not a failure
+    /// *of this service* — the dependency reports that — but decidedly
+    /// not healthy either.
+    Skipped,
 }
 
 impl ServiceHealth {
@@ -160,32 +194,69 @@ impl ServiceHealth {
             ServiceHealth::Failed { exit_code } => format!("failed (exit {exit_code})"),
             ServiceHealth::Exited => "exited".to_string(),
             ServiceHealth::NotStarted => "not started".to_string(),
+            ServiceHealth::Pending => "pending".to_string(),
+            ServiceHealth::Skipped => "skipped (dependency failed)".to_string(),
         }
     }
 
     pub fn is_failure(self) -> bool {
         matches!(self, ServiceHealth::Failed { .. })
     }
+
+    /// Whether this state should stop a sandbox reading as "all services
+    /// fine". Broader than [`ServiceHealth::is_failure`], which counts
+    /// only services that themselves failed: a skipped or never-started
+    /// service is not a failure to attribute, but it is not health
+    /// either, and the `services` spec forbids presenting it as such.
+    pub fn is_healthy(self) -> bool {
+        matches!(
+            self,
+            ServiceHealth::Running | ServiceHealth::Exited | ServiceHealth::Pending
+        )
+    }
 }
 
 impl ServiceState {
     /// Maps one process-compose process entry onto [`ServiceHealth`].
     ///
-    /// The mapping is driven by `exit_code`, **not** by `status`, and
-    /// that is the whole point: confirmed live against deliberately
-    /// failing services, process-compose reports `status: "Completed"`
-    /// for a clean exit *and* for `exit 7` alike. Trusting `status`
-    /// would render a crashed database as "Completed", which reads as
-    /// healthy — precisely the silent failure the `services` spec
-    /// forbids.
+    /// For a service that has actually *run*, the mapping is driven by
+    /// `exit_code`, **not** by `status`: confirmed live against
+    /// deliberately failing services, process-compose reports
+    /// `status: "Completed"` for a clean exit *and* for `exit 7` alike.
+    /// Trusting `status` there would render a crashed database as
+    /// "Completed", which reads as healthy — precisely the silent
+    /// failure the `services` spec forbids.
+    ///
+    /// But `exit_code` is meaningless for a service that has *not* run,
+    /// and two such states report one that actively misleads. Measured
+    /// against a real process-compose 1.120.0, not reasoned about:
+    ///
+    /// | `status`    | `is_running` | `exit_code` | correct reading |
+    /// |-------------|--------------|-------------|-----------------|
+    /// | `Pending`   | `false`      | `0`         | waiting on `depends_on` |
+    /// | `Skipped`   | `false`      | `1`         | dependency failed, will never run |
+    /// | `Running`   | `true`       | `0`         | running |
+    /// | `Completed` | `false`      | `0`         | exited cleanly |
+    /// | `Completed` | `false`      | `7`         | failed |
+    ///
+    /// Read by `exit_code` alone, the first row is "exited" (a service
+    /// still queuing to start looks like one that already finished —
+    /// what `status` immediately after `up` would show) and the second
+    /// is "failed (exit 1)", an exit code no process ever produced. So
+    /// `status` is consulted *first*, and only for the two states where
+    /// no run has happened; everywhere else `exit_code` stays the
+    /// authority.
     fn from_json(v: &serde_json::Value) -> Option<Self> {
         let name = v.get("name")?.as_str()?.to_string();
+        let status = v.get("status").and_then(serde_json::Value::as_str);
         let is_running = v.get("is_running").and_then(serde_json::Value::as_bool);
         let exit_code = v.get("exit_code").and_then(serde_json::Value::as_i64);
-        let health = match (is_running, exit_code) {
-            (Some(true), _) => ServiceHealth::Running,
-            (_, Some(code)) if code != 0 => ServiceHealth::Failed { exit_code: code },
-            (Some(false), _) => ServiceHealth::Exited,
+        let health = match (status, is_running, exit_code) {
+            (Some("Pending"), _, _) => ServiceHealth::Pending,
+            (Some("Skipped"), _, _) => ServiceHealth::Skipped,
+            (_, Some(true), _) => ServiceHealth::Running,
+            (_, _, Some(code)) if code != 0 => ServiceHealth::Failed { exit_code: code },
+            (_, Some(false), _) => ServiceHealth::Exited,
             _ => ServiceHealth::NotStarted,
         };
         Some(ServiceState {
@@ -210,48 +281,218 @@ impl ServiceState {
 /// It also sidesteps the CLI writing warn/debug lines to stdout ahead of
 /// its JSON.
 ///
-/// Returns `Ok(None)` when the socket does not exist or cannot be
-/// reached — a sandbox with no services, or one whose services never
-/// started. Callers must not treat that as an error.
-pub fn query(socket: &Path) -> std::io::Result<Option<Vec<ServiceState>>> {
+/// Why a query did not produce state.
+///
+/// Split out because collapsing every failure into one "no state" answer
+/// is what let a dead supervisor read as a healthy sandbox: three
+/// declared services plus a `process-compose` that died at startup
+/// produced exactly the same `None` as a sandbox declaring no services
+/// at all, and `status` printed nothing either way. The `services`
+/// spec's "SHALL NOT be omitted from service listings" needs these two
+/// to be distinguishable.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Unreachable {
+    /// No socket at the expected path. Expected and benign on its own —
+    /// a sandbox declaring no services never creates one.
+    NoSocket,
+    /// The socket is there but did not yield usable state. Always worth
+    /// reporting: something created it and then stopped answering.
+    Unusable(String),
+}
+
+impl std::fmt::Display for Unreachable {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Unreachable::NoSocket => write!(f, "no supervisor socket"),
+            Unreachable::Unusable(why) => write!(f, "{why}"),
+        }
+    }
+}
+
+/// Cap on the supervisor's response. Generous next to a real listing
+/// (a few hundred bytes per service) and small next to memory pressure,
+/// so a peer that streams forever is cut off rather than followed.
+const MAX_RESPONSE: u64 = 4 * 1024 * 1024;
+
+/// How long the whole exchange may take. The per-read timeout below
+/// bounds each individual `read`, which a peer dripping one byte at a
+/// time resets forever; this bounds the sum.
+const QUERY_DEADLINE: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// Asks the supervisor for per-service state over the unix socket it
+/// already listens on.
+///
+/// Speaks HTTP directly rather than shelling out to `process-compose
+/// list`: the binary lives in the *sandbox's* environment, so a host-side
+/// command like `status` would otherwise have to resolve it or spawn a
+/// session just to read state. It also sidesteps the CLI writing
+/// warn/debug lines to stdout ahead of its JSON.
+///
+/// **This reads a socket the sandbox controls.** At the `process` tier
+/// that is accident protection, consistent with the tier's framing; at
+/// `hardened` it is a real trust inversion, since `--host-uds=create`
+/// exists precisely so the host can reach inward. So the peer is treated
+/// as untrusted input rather than as devcroft's own supervisor: the path
+/// must be a socket owned by this user (not a regular file or a FIFO
+/// swapped in underneath), the response is capped at [`MAX_RESPONSE`],
+/// and the exchange is bounded by [`QUERY_DEADLINE`] as a whole and not
+/// only per-read.
+pub fn query(socket: &Path) -> Result<Vec<ServiceState>, Unreachable> {
     use std::io::{Read, Write};
+    use std::os::unix::fs::FileTypeExt;
     use std::os::unix::net::UnixStream;
 
-    if !socket.exists() {
-        return Ok(None);
-    }
-    let Ok(mut stream) = UnixStream::connect(socket) else {
-        return Ok(None);
+    let meta = match std::fs::symlink_metadata(socket) {
+        Ok(m) => m,
+        Err(_) => return Err(Unreachable::NoSocket),
     };
-    stream.set_read_timeout(Some(std::time::Duration::from_secs(3)))?;
-    stream.set_write_timeout(Some(std::time::Duration::from_secs(3)))?;
+    if !meta.file_type().is_socket() {
+        return Err(Unreachable::Unusable(format!(
+            "{} exists but is not a socket",
+            socket.display()
+        )));
+    }
+    // Ownership, checked rather than assumed: the project root is
+    // writable by whatever runs in the sandbox, so the path this
+    // resolves to is not devcroft's to trust by construction.
+    {
+        use std::os::unix::fs::MetadataExt;
+        // SAFETY: getuid is always successful and takes no arguments.
+        let uid = unsafe { libc::getuid() };
+        if meta.uid() != uid {
+            return Err(Unreachable::Unusable(format!(
+                "{} is owned by uid {}, not {uid}",
+                socket.display(),
+                meta.uid()
+            )));
+        }
+    }
+
+    let started = std::time::Instant::now();
+    let mut stream =
+        UnixStream::connect(socket).map_err(|e| Unreachable::Unusable(format!("connect: {e}")))?;
+    stream
+        .set_read_timeout(Some(QUERY_DEADLINE))
+        .and_then(|()| stream.set_write_timeout(Some(QUERY_DEADLINE)))
+        .map_err(|e| Unreachable::Unusable(format!("socket timeout: {e}")))?;
     // `Connection: close` so the server ends the body by closing, which
-    // makes `read_to_end` terminate without parsing chunked encoding.
-    stream.write_all(b"GET /processes HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")?;
+    // makes the read terminate without parsing chunked encoding.
+    stream
+        .write_all(b"GET /processes HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")
+        .map_err(|e| Unreachable::Unusable(format!("write: {e}")))?;
 
     let mut raw = Vec::new();
-    if stream.read_to_end(&mut raw).is_err() {
-        return Ok(None);
+    // `take` bounds the total, so a peer that never closes cannot grow
+    // this without limit; the deadline check below bounds the time.
+    if let Err(e) = stream.take(MAX_RESPONSE).read_to_end(&mut raw) {
+        return Err(Unreachable::Unusable(format!("read: {e}")));
     }
+    if started.elapsed() > QUERY_DEADLINE {
+        return Err(Unreachable::Unusable(
+            "supervisor did not answer within the deadline".to_string(),
+        ));
+    }
+    if raw.len() as u64 >= MAX_RESPONSE {
+        return Err(Unreachable::Unusable(format!(
+            "response exceeded {MAX_RESPONSE} bytes"
+        )));
+    }
+
     let text = String::from_utf8_lossy(&raw);
     let Some(body) = text.split_once("\r\n\r\n").map(|(_, b)| b) else {
-        return Ok(None);
+        return Err(Unreachable::Unusable(
+            "no HTTP body in response".to_string(),
+        ));
     };
     // Start at the first `{`: chunked framing (or any preamble) would
     // otherwise break the parse.
     let Some(start) = body.find('{') else {
-        return Ok(None);
+        return Err(Unreachable::Unusable(
+            "no JSON in response body".to_string(),
+        ));
     };
-    let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&body[start..]) else {
-        return Ok(None);
-    };
+    let parsed = serde_json::from_str::<serde_json::Value>(&body[start..])
+        .map_err(|e| Unreachable::Unusable(format!("malformed JSON: {e}")))?;
     let Some(items) = parsed.get("data").and_then(serde_json::Value::as_array) else {
-        return Ok(None);
+        return Err(Unreachable::Unusable(
+            "response JSON has no `data` array".to_string(),
+        ));
     };
 
     let mut states: Vec<ServiceState> = items.iter().filter_map(ServiceState::from_json).collect();
     states.sort_by(|a, b| a.name.cmp(&b.name));
-    Ok(Some(states))
+    Ok(states)
+}
+
+/// What `status`/`ps` should show for a sandbox's services, reconciling
+/// what the supervisor reports against what the provider actually
+/// declared at `up`.
+///
+/// The reconciliation is the point. Querying alone can only report what
+/// process-compose knows about, so a declared service the supervisor
+/// never accepted was reported by *absence* — and a supervisor that died
+/// outright made every service disappear at once while the sandbox went
+/// on looking healthy. Both are the silent-failure mode the `services`
+/// spec forbids.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct ServicesReport {
+    pub states: Vec<ServiceState>,
+    /// Set when services were declared but the supervisor could not be
+    /// reached — the diagnostic that would otherwise exist only in the
+    /// keeper's log.
+    pub supervisor_error: Option<String>,
+}
+
+impl ServicesReport {
+    pub fn is_empty(&self) -> bool {
+        self.states.is_empty() && self.supervisor_error.is_none()
+    }
+}
+
+/// Builds the report for one sandbox. `declared` is what the provider
+/// resolved at `up` (recorded in `meta.json`); `queried` is this call's
+/// live answer.
+pub fn reconcile(
+    declared: &[String],
+    queried: Result<Vec<ServiceState>, Unreachable>,
+) -> ServicesReport {
+    match queried {
+        Ok(mut states) => {
+            // A declared service the supervisor has no record of is
+            // `NotStarted` — the fourth state, which until now nothing
+            // could actually produce, since only process-compose's own
+            // listing was ever consulted and it cannot report a service
+            // it never accepted.
+            for name in declared {
+                if !states.iter().any(|s| &s.name == name) {
+                    states.push(ServiceState {
+                        name: name.clone(),
+                        health: ServiceHealth::NotStarted,
+                        pid: None,
+                    });
+                }
+            }
+            states.sort_by(|a, b| a.name.cmp(&b.name));
+            ServicesReport {
+                states,
+                supervisor_error: None,
+            }
+        }
+        // Nothing declared and no socket: an ordinary sandbox without
+        // services. The only case that legitimately reports nothing.
+        Err(Unreachable::NoSocket) if declared.is_empty() => ServicesReport::default(),
+        Err(why) => ServicesReport {
+            states: declared
+                .iter()
+                .map(|name| ServiceState {
+                    name: name.clone(),
+                    health: ServiceHealth::NotStarted,
+                    pid: None,
+                })
+                .collect(),
+            supervisor_error: Some(format!("supervisor unreachable: {why}")),
+        },
+    }
 }
 
 /// Locates `process-compose` through the *resolved environment's* `PATH`,
@@ -386,11 +627,108 @@ mod tests {
     }
 
     #[test]
-    fn query_on_a_missing_socket_is_not_an_error() {
-        // A sandbox with no services has no socket; callers must not see
-        // that as a failure.
+    fn query_on_a_missing_socket_reports_no_socket() {
         let missing = Path::new("/nonexistent/devcroft/services.sock");
-        assert_eq!(query(missing).unwrap(), None);
+        assert_eq!(query(missing), Err(Unreachable::NoSocket));
+    }
+
+    /// A regular file where the socket should be is *not* the benign
+    /// "no services" case — something put it there. The project root is
+    /// sandbox-writable, so this is checked rather than assumed.
+    #[test]
+    fn query_refuses_a_path_that_is_not_a_socket() {
+        let dir = std::env::temp_dir().join(format!("devcroft-sockcheck-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let impostor = dir.join("services.sock");
+        std::fs::write(&impostor, b"not a socket").unwrap();
+
+        match query(&impostor) {
+            Err(Unreachable::Unusable(why)) => assert!(why.contains("not a socket")),
+            other => panic!("expected Unusable, got {other:?}"),
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Measured against process-compose 1.120.0: a service gated behind
+    /// `depends_on` reports `is_running: false, exit_code: 0` — which
+    /// read by exit code alone is indistinguishable from a clean exit.
+    /// `status` is what separates them.
+    #[test]
+    fn a_pending_service_is_not_reported_as_exited() {
+        let pending = serde_json::json!({
+            "name": "slowstart", "status": "Pending", "exit_code": 0,
+            "is_running": false, "pid": 0
+        });
+        let state = ServiceState::from_json(&pending).unwrap();
+        assert_eq!(state.health, ServiceHealth::Pending);
+        assert!(!state.health.is_failure());
+    }
+
+    /// Also measured live: a service skipped because its dependency
+    /// failed carries `exit_code: 1` that no process ever produced.
+    /// Reporting "failed (exit 1)" would invent a failure.
+    #[test]
+    fn a_skipped_service_does_not_borrow_a_synthetic_exit_code() {
+        let skipped = serde_json::json!({
+            "name": "migrate", "status": "Skipped", "exit_code": 1,
+            "is_running": false, "pid": 0
+        });
+        let state = ServiceState::from_json(&skipped).unwrap();
+        assert_eq!(state.health, ServiceHealth::Skipped);
+        assert!(!state.health.is_failure());
+        // Not a failure to attribute, but not health either.
+        assert!(!state.health.is_healthy());
+    }
+
+    /// The gap that let a dead supervisor look like a healthy sandbox.
+    #[test]
+    fn a_dead_supervisor_is_reported_not_silently_empty() {
+        let report = reconcile(
+            &["db".to_string(), "api".to_string()],
+            Err(Unreachable::Unusable("connect: refused".to_string())),
+        );
+        assert!(report.supervisor_error.is_some());
+        assert_eq!(report.states.len(), 2);
+        assert!(
+            report
+                .states
+                .iter()
+                .all(|s| s.health == ServiceHealth::NotStarted)
+        );
+    }
+
+    /// The benign case must stay silent: no services declared, no
+    /// socket, nothing to report.
+    #[test]
+    fn no_declared_services_and_no_socket_reports_nothing() {
+        let report = reconcile(&[], Err(Unreachable::NoSocket));
+        assert!(report.is_empty());
+    }
+
+    /// `NotStarted` was previously unreachable: only process-compose's
+    /// own listing was consulted, and it cannot report a service it
+    /// never accepted. Reconciling against the declared set is what
+    /// makes the fourth state produceable.
+    #[test]
+    fn a_declared_service_the_supervisor_never_saw_is_not_started() {
+        let running = ServiceState {
+            name: "db".to_string(),
+            health: ServiceHealth::Running,
+            pid: Some(42),
+        };
+        let report = reconcile(&["db".to_string(), "ghost".to_string()], Ok(vec![running]));
+
+        assert_eq!(report.supervisor_error, None);
+        let ghost = report.states.iter().find(|s| s.name == "ghost").unwrap();
+        assert_eq!(ghost.health, ServiceHealth::NotStarted);
+    }
+
+    #[test]
+    fn artifacts_are_keyed_on_the_sandbox_name_not_just_the_root() {
+        let root = Path::new("/proj");
+        assert_ne!(socket_path(root, "alpha"), socket_path(root, "beta"));
+        assert_ne!(config_path(root, "alpha"), config_path(root, "beta"));
+        assert_ne!(log_path(root, "alpha"), log_path(root, "beta"));
     }
 
     #[test]

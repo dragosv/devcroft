@@ -149,9 +149,27 @@
       `is_running` onto the four states the `services` spec requires.
       **Parse from the first `[`**: the CLI emits warn/debug lines to
       stdout ahead of the JSON (failed `getpwuid`, missing XDG dir), so
-      assuming clean JSON fails on the first call. **Confirm against a
-      real failing service** what `status` reads for failed-at-start vs
-      exited-later; only the running case is verified so far
+      assuming clean JSON fails on the first call.
+      **Now actually complete — it was marked done while three of the
+      four states were wrong or unreachable.** Measured against a real
+      process-compose 1.120.0 rather than reasoned about (table in
+      `ServiceState::from_json`):
+      (a) `NotStarted` was **unreachable**: only process-compose's own
+      listing was consulted, and it cannot report a service it never
+      accepted, so a declared-but-missing service was reported by
+      absence. `Meta::declared_services` now records what the provider
+      declared and `services::reconcile` produces the state.
+      (b) A **pending** service (`depends_on` gate) reports
+      `is_running: false, exit_code: 0` — read by exit code alone that
+      is "exited", so `status` immediately after `up` showed a service
+      still queuing to start as one that had already finished.
+      (c) A **skipped** service (dependency failed) reports
+      `exit_code: 1` that no process produced, rendering as
+      "failed (exit 1)" — an invented failure. `status` is now consulted
+      first for exactly these two non-run states, with `exit_code`
+      still authoritative everywhere else (a crash really does report
+      `status: "Completed"`, which is why it cannot be trusted
+      generally)
 - [x] 3.4 No automatic restart (design.md decision 3). Now a property of
       the *generated* config rather than of devcroft's own supervision
       loop: emit process-compose's no-restart policy explicitly rather
@@ -220,12 +238,20 @@
 
 ## 6. Tests
 
-- [ ] 6.1 Integration test, gated on real `flox` the way this repo's
+- [x] 6.1 Integration test, gated on real `flox` the way this repo's
       existing real-tooling tests self-skip: a project declaring a
       service comes up, the service runs inside the sandbox, `ps` shows
-      it, `logs` has its output
-- [ ] 6.2 Teardown test: after `down`, the service process is gone from
-      the host — asserted by process absence
+      it, `logs` has its output. **Was left unchecked while
+      `tests/services_e2e.rs::a_declared_service_runs_inside_the_sandbox_and_is_reaped_by_down`
+      already covered it** — it brings up a real flox project declaring
+      a `python3 -m http.server` service, waits for it to answer from
+      inside the sandbox over `exec`, and asserts `status` reports it
+      running by name with its pid
+- [x] 6.2 Teardown test: after `down`, the service process is gone from
+      the host — asserted by process absence. Same test as 6.1, second
+      half: it polls `ps -eo args` for both `http.server` and
+      `process-compose up` until neither remains, rather than trusting
+      any stop command's exit status
 - [ ] 6.3 Failure test: a service whose command exits non-zero is listed
       as failed with a reachable log tail, and the sandbox stays usable
 - [ ] 6.4 Policy test: a service denied a port by `[network]` fails
@@ -372,6 +398,54 @@
       deferred roadmap, and close the devenv ownership open question with
       the decision this change made (services supervised and restartable;
       hooks one-shot and `up`-failing)
+
+## 9. Review findings
+
+> A review of the shipped change found five defects, four of them
+> variants of the same one: a service problem that reports as nothing at
+> all. Recorded here rather than folded silently into the groups above,
+> since each was a property the specs already claimed to guarantee.
+
+- [x] 9.1 **A dead supervisor was invisible.** `query` collapsed every
+      failure — missing socket, refused connect, unparsable body, no
+      `data` key — into one `Ok(None)`, `status` additionally dropped the
+      empty list, and the only record of the failure was an `eprintln!`
+      in the keeper's log. Three declared services plus a
+      `process-compose` that died at startup produced byte-identical
+      output to a sandbox declaring none, directly against the `services`
+      spec's "SHALL NOT be omitted from service listings". `query` now
+      returns `Result<_, Unreachable>` distinguishing "no socket" from
+      "did not answer", and `status`/`ps` reconcile it against
+      `Meta::declared_services`. Covered by
+      `a_dead_supervisor_is_reported_not_silently_empty` and, end to end,
+      by the post-`down` assertion in `tests/services_e2e.rs`
+- [x] 9.2 **Two of the four states were wrong, one unreachable** — see
+      task 3.3, now measured live rather than assumed
+- [x] 9.3 **Service artifacts were keyed on the project root alone.**
+      Two sandboxes with different names sharing one root (the
+      alternative to worktrees `add-port-allocation` contemplates)
+      overwrote each other's generated config, raced for one supervisor
+      socket, and each reported the other's services — silently, in every
+      case. Now `<root>/.devcroft/<sandbox-name>/`
+      (`services::artifact_dir`), with `rm` cleaning up the per-sandbox
+      directory it created and the shared parent only when empty. Since
+      the path grew a level, `up` now also checks it against the
+      `sun_path` limit host-side and fails at layer `config`, rather than
+      letting process-compose fail to bind with an error naming neither
+      the path nor the reason
+- [x] 9.4 **`.devcroft/` was gitignored nowhere.** devcroft writes a
+      config, a log, and a unix socket into the working tree, so every
+      worktree in the fan-out flow showed dirty. `init` now appends the
+      entry (only for a git repository, never inventing a `.gitignore`),
+      and this repo's own `.gitignore` carries it
+- [x] 9.5 **Host-side code read a sandbox-controlled socket unguarded.**
+      `query` connected to whatever was at the path with no type or
+      ownership check, `read_to_end` had no size cap, and its per-read
+      timeout was resettable forever by a peer dripping bytes. Real at
+      the `process` tier and a genuine trust inversion at `hardened`,
+      where `--host-uds=create` exists precisely to let the host reach
+      inward. Now: must be a socket owned by this uid, capped at
+      `MAX_RESPONSE`, bounded by `QUERY_DEADLINE` overall
 
 ## 8. Verification
 

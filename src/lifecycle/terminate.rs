@@ -5,6 +5,7 @@
 
 use std::fmt;
 use std::io;
+use std::path::Path;
 use std::time::Duration;
 
 use super::state::{self, Health, StatePaths};
@@ -43,9 +44,38 @@ pub fn down(sandbox_name: &str) -> Result<(), TerminateError> {
     down_at(&StatePaths::new(sandbox_name)?)
 }
 
-/// Stops the keeper and removes all state for the sandbox.
+/// Stops the keeper and removes all state for the sandbox — including
+/// the service artifacts, which are the one part that does not live in
+/// the state dir.
+///
+/// They cannot: `process-compose` has to read its config and bind its
+/// socket from inside the sandbox, and the state dir is baseline-denied
+/// there (`services::ARTIFACT_DIR`). So they sit in the project root,
+/// and `rm` is the only thing that can clean them up. Scoped to exactly
+/// `<root>/.devcroft/<name>/` — never the shared `.devcroft/` parent,
+/// which may hold another sandbox's artifacts.
 pub fn rm(sandbox_name: &str) -> Result<(), TerminateError> {
-    rm_at(&StatePaths::new(sandbox_name)?)
+    let paths = StatePaths::new(sandbox_name)?;
+    // Read before the state dir goes away: `meta.json` is the only
+    // record of which project root this sandbox belongs to.
+    let project_root = state::read_meta(&paths.meta)
+        .ok()
+        .flatten()
+        .map(|meta| meta.project_root);
+    rm_at(&paths)?;
+    if let Some(root) = project_root {
+        let artifacts = crate::services::artifact_dir(Path::new(&root), sandbox_name);
+        match std::fs::remove_dir_all(&artifacts) {
+            Ok(()) => {}
+            Err(e) if e.kind() == io::ErrorKind::NotFound => {}
+            Err(e) => return Err(e.into()),
+        }
+        // Best-effort: succeeds only while empty, so the last sandbox
+        // out takes the shared parent with it and any other sandbox's
+        // artifacts keep it alive.
+        let _ = std::fs::remove_dir(Path::new(&root).join(crate::services::ARTIFACT_DIR));
+    }
+    Ok(())
 }
 
 // Split from `down`/`rm` so tests can drive a `StatePaths` pointed at a

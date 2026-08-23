@@ -337,6 +337,48 @@ domain got the identical kernel-level denial as an unrelated one), and
 still compiles to a plain network block under the library. Fixing it for
 real is unrelated future work, not a regression this change introduces.
 
+**Service reporting was rebuilt after a review found it silent in four
+different ways.** All four shared one shape: a service problem that
+showed up as *nothing at all*. `status` learned service state only by
+asking `process-compose`, so anything the supervisor could not answer for
+vanished rather than being reported — against the `services` spec's own
+"SHALL NOT be omitted from service listings".
+
+- **A dead supervisor looked like a healthy sandbox.** Three declared
+  services plus a `process-compose` that died at startup produced output
+  byte-identical to a project declaring no services; the only trace was a
+  line in the keeper log. `up` now records the declared service names,
+  and `status`/`ps` reconcile the live answer against them, so an
+  unreachable supervisor is named and its services still listed.
+- **Two of the four service states were wrong, measured live against
+  process-compose 1.120.0 rather than assumed.** A service still waiting
+  on a `depends_on` gate reports `is_running: false, exit_code: 0` — read
+  by exit code alone, `status` called it "exited", so a service that
+  hadn't started yet looked like one that had already finished. A service
+  *skipped* because its dependency failed reports `exit_code: 1` that no
+  process ever produced, rendering as "failed (exit 1)", an invented
+  failure. Both now report as themselves. `exit_code` remains
+  authoritative for services that actually ran, because a real crash
+  reports `status: "Completed"` exactly like a clean exit does.
+- **Service artifacts were keyed on the project root alone.** Two
+  sandboxes with different names sharing one root overwrote each other's
+  generated config, raced for one supervisor socket, and each reported
+  the other's services. They now live in `.devcroft/<sandbox-name>/`, and
+  `rm` cleans up the directory it created. Since the path grew a level,
+  `up` also checks it against the OS socket-path limit and fails at layer
+  `config` rather than letting the supervisor fail to bind for an
+  unstated reason.
+- **`.devcroft/` was gitignored nowhere**, so devcroft's own generated
+  files left `git status` dirty in every worktree — worst in exactly the
+  fan-out flow it targets. `init` now adds the entry.
+
+One hardening fix came with them: `status`/`ps` read a socket the
+*sandbox* controls, which is accident protection at the process tier but
+a real trust inversion at `hardened`, where `--host-uds=create` exists
+precisely to let the host reach inward. That read now verifies the path
+is a socket owned by the invoking user, caps the response size, and
+bounds the whole exchange rather than only each individual read.
+
 ## Limitations
 
 devcroft's default (and only fully implemented) tier, `process`, is

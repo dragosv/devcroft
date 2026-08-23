@@ -60,6 +60,13 @@ pub enum UpError {
     /// problem, not a provider/backend/keeper one, so it gets its own
     /// layer rather than being folded into `Keeper`.
     Policy(String),
+    /// Also CLAUDE.md's `config` layer (exit 2), but for a manifest that
+    /// cannot be *realized on this host* rather than one whose policy
+    /// cannot be compiled — today, a project path deep enough that the
+    /// service supervisor's socket would exceed the OS `sun_path` limit.
+    /// Same layer and exit code as [`UpError::Policy`], kept separate
+    /// because the cause and the fix are unrelated.
+    Config(String),
     Provider(ProviderError),
     /// CLAUDE.md's error contract names `backend` as its own layer
     /// (exit code 4) — unreachable before `add-hardened-tier`, since the
@@ -89,7 +96,7 @@ impl fmt::Display for UpError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             UpError::State(e) => write!(f, "state: {e}"),
-            UpError::Policy(msg) => write!(f, "config: {msg}"),
+            UpError::Policy(msg) | UpError::Config(msg) => write!(f, "config: {msg}"),
             UpError::Provider(e) => write!(f, "provider: {e}"),
             UpError::Backend(msg) => write!(f, "backend: {msg}"),
             UpError::Keeper(msg) => write!(f, "keeper: {msg}"),
@@ -166,6 +173,15 @@ pub fn up(
             env_fingerprint,
             read_only_grants: resolution.read_only_grants.clone(),
             resolved_backend: resolved_backend.clone(),
+            // What the provider declared, recorded so `status` can
+            // report a service the supervisor never accepted — see
+            // `Meta::declared_services`.
+            declared_services: resolution
+                .services
+                .declared()
+                .iter()
+                .map(|s| s.name.clone())
+                .collect(),
         },
     )?;
 
@@ -290,7 +306,10 @@ fn up_process(
         .to_openssh()
         .map_err(|e| UpError::Ssh(e.to_string()))?;
 
-    let start_services = prepare_services(project_root, resolution, opts)?;
+    // `Some(name)` means "start services, using this sandbox's artifact
+    // subdirectory"; `None` means there are none to start.
+    let services = prepare_services(project_root, &manifest.sandbox.name, resolution, opts)?
+        .then_some(manifest.sandbox.name.as_str());
 
     let keeper_pid = spawn_keeper(
         &exe,
@@ -305,7 +324,7 @@ fn up_process(
             host_key_pem: &host_key_pem,
             authorized_key_pem: &authorized_key_pem,
         },
-        start_services,
+        services,
     )
     .map_err(|e| UpError::Keeper(e.to_string()))?;
     // Both fds must outlive this function for the child to inherit them
@@ -344,12 +363,30 @@ fn up_process(
 /// project-supplied runs.
 fn prepare_services(
     project_root: &Path,
+    sandbox_name: &str,
     resolution: &Resolution,
     opts: &UpOptions,
 ) -> Result<bool, UpError> {
     let services = resolution.services.declared();
     if opts.skip_hooks || services.is_empty() {
         return Ok(false);
+    }
+    // Checked here, host-side, because the failure downstream is opaque:
+    // over the `sun_path` limit, process-compose fails to bind with an
+    // error naming neither the path nor the length. See
+    // `services::MAX_SOCKET_PATH` — the per-sandbox subdirectory this
+    // path now carries makes it one level deeper than it used to be.
+    let socket = crate::services::socket_path(project_root, sandbox_name);
+    let socket_len = socket.as_os_str().as_encoded_bytes().len();
+    if socket_len > crate::services::MAX_SOCKET_PATH {
+        return Err(UpError::Config(format!(
+            "the service supervisor's socket path is {socket_len} bytes, over the \
+             {} the OS allows for a unix socket: {}\n\
+             move the project closer to the filesystem root, or shorten \
+             `[sandbox].name`",
+            crate::services::MAX_SOCKET_PATH,
+            socket.display()
+        )));
     }
     // `process-compose` must come from the project's own environment,
     // never the host's PATH and never a scanned store path — see
@@ -366,7 +403,7 @@ fn prepare_services(
             )),
         ));
     }
-    let config_path = crate::services::config_path(project_root);
+    let config_path = crate::services::config_path(project_root, sandbox_name);
     if let Some(dir) = config_path.parent() {
         std::fs::create_dir_all(dir)?;
     }
@@ -421,7 +458,10 @@ fn up_hardened(
     // boundary. Ordered ahead of `runsc run` for the same reason
     // `up_process` puts it ahead of `spawn_keeper` — a missing
     // `process-compose` must fail before a sandbox exists, not after.
-    let start_services = prepare_services(project_root, resolution, opts)?;
+    // `Some(name)` means "start services, using this sandbox's artifact
+    // subdirectory"; `None` means there are none to start.
+    let services = prepare_services(project_root, &manifest.sandbox.name, resolution, opts)?
+        .then_some(manifest.sandbox.name.as_str());
 
     let compiled = policy::compile(manifest);
     let network = crate::gvisor::oci_spec::NetworkMode::from_compiled_policy(&compiled);
@@ -457,7 +497,7 @@ fn up_hardened(
         &paths.gvisor_bundle,
         platform,
         network,
-        start_services,
+        services.is_some(),
     )
     .map_err(|e| UpError::Backend(format!("runsc run: {e}")))?;
 
@@ -500,7 +540,7 @@ fn up_hardened(
             host_key_pem: &host_key_pem,
             authorized_key_pem: &authorized_key_pem,
         },
-        start_services,
+        services,
     )
     .map_err(|e| UpError::Keeper(e.to_string()))?;
     std::mem::forget(listener);
@@ -555,7 +595,7 @@ fn spawn_hardened_keeper(
     runsc: &Path,
     container_id: &str,
     ssh: SshHandoff,
-    start_services: bool,
+    services: Option<&str>,
 ) -> io::Result<libc::pid_t> {
     let log = std::fs::File::create(&paths.log)?;
 
@@ -579,8 +619,13 @@ fn spawn_hardened_keeper(
         // routing service startup through the `SessionBackend` seam.
         .env(
             "DEVCROFT_START_SERVICES",
-            if start_services { "1" } else { "0" },
+            if services.is_some() { "1" } else { "0" },
         )
+        // Which sandbox's artifact subdirectory to use. Service paths are
+        // keyed on the sandbox name as well as the root, so that two
+        // sandboxes sharing one project root do not overwrite each
+        // other's config or fight over one supervisor socket.
+        .env("DEVCROFT_SANDBOX_NAME", services.unwrap_or_default())
         // The sandbox sees the project root at the identical path, so one
         // absolute value is correct on both sides of the boundary — and
         // `runsc exec --cwd` needs an absolute path, which the process
@@ -633,7 +678,7 @@ fn spawn_keeper(
     unset: &[String],
     plan: &policy::CapabilityPlan,
     ssh: SshHandoff,
-    start_services: bool,
+    services: Option<&str>,
 ) -> io::Result<libc::pid_t> {
     let log = std::fs::File::create(&paths.log)?;
 
@@ -678,8 +723,13 @@ fn spawn_keeper(
         // design.md decision 4 settled on independently.
         .env(
             "DEVCROFT_START_SERVICES",
-            if start_services { "1" } else { "0" },
+            if services.is_some() { "1" } else { "0" },
         )
+        // Which sandbox's artifact subdirectory to use. Service paths are
+        // keyed on the sandbox name as well as the root, so that two
+        // sandboxes sharing one project root do not overwrite each
+        // other's config or fight over one supervisor socket.
+        .env("DEVCROFT_SANDBOX_NAME", services.unwrap_or_default())
         // Absolute, not relative-to-cwd: the hardened tier's control
         // server runs host-side and dispatches through `runsc exec
         // --cwd`, which needs an absolute path. Same value here keeps
