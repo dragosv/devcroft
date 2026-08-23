@@ -113,31 +113,31 @@ unmet requirement rather than instructing the user to change providers.
   an absent lockfile as a distinct state, not as equivalent to an empty
   or unchanged one
 
-### Requirement: Provisioning never executes project code
-The system SHALL NOT execute project-supplied commands during provider
-resolution, for any provider. Where a provider's activation can be
-configured to run a project-defined hook or script, the system SHALL
-capture the environment without running it, or SHALL fail at layer
-`provider` naming the construct it cannot safely skip.
+### Requirement: devbox captures its environment without running the init hook
+The devbox provider SHALL satisfy the general "Provisioning does not
+execute project code" requirement (`fix-provisioning-hooks`) by using
+the entry point that hands back an environment rather than the one that
+runs a command inside it.
 
-This is the two-phase execution rule applied to a case where a provider
-invites the violation: devbox environments may define an initialization
-hook, and running one during the trusted host-side phase would execute
-project code with the host's own network and filesystem access, before
-any restriction exists. Hooks are project code and belong inside the
-boundary, exactly as manifest hooks do.
+Measured against devbox 0.18.0: `devbox run` executes `shell.init_hook`,
+`--pure` included, and `devbox shellenv` does not — under any variant,
+including `--init-hook`, which only appends a source line to the emitted
+text rather than executing anything.
+
+This is not a marginal case. `devbox init` writes an `init_hook` into
+every new `devbox.json`, so having one is the out-of-the-box state and
+there is no population of hook-free devbox projects to fall back on.
+The provider SHALL therefore report `false` for having run an activation
+hook, and a test SHALL assert the hook does not run — the property is
+devcroft's choice of entry point, not devbox's caution, and a later
+switch to `devbox run` would silently reintroduce the violation.
 
 #### Scenario: A project-defined init hook does not run at up
 - **WHEN** provider is `devbox` and the project defines an
   initialization hook that would write a file or contact the network
 - **THEN** resolution completes without that hook having run, observable
   by the file not existing and no request having been made
-
-#### Scenario: An unskippable hook fails loudly
-- **WHEN** a provider's activation cannot be captured without running
-  project-defined code
-- **THEN** `up` fails at layer `provider` naming the construct, rather
-  than running it
+- **AND** `up` prints no activation-hook warning, because none ran
 
 ### Requirement: Resolution depends only on committed files
 The system SHALL capture an environment that is a function of the

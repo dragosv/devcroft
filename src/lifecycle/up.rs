@@ -182,6 +182,7 @@ pub fn up(
                 .iter()
                 .map(|s| s.name.clone())
                 .collect(),
+            ran_activation_hook: resolution.ran_activation_hook,
         },
     )?;
 

@@ -9,17 +9,19 @@ use super::capture;
 use super::{Provider, ProviderError, Resolution};
 use crate::paths::resolve_on_path;
 use std::collections::BTreeMap;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::Command;
 
 pub struct NixProvider;
 
 impl Provider for NixProvider {
     /// Resolve a nix flake's default dev shell: verify `flake.nix` exists,
-    /// then `nix`, then `flake.lock`, then probe evaluability, then run
-    /// `nix develop --command sh -c 'env -0 > <tmp>'` once to capture the
-    /// activated environment, diff it against the same fixed baseline
-    /// `flox.rs` uses, and derive the read-only store grants.
+    /// then `nix`, then `flake.lock`, then probe evaluability, then read
+    /// the dev shell's build environment as structured data — never by
+    /// entering the shell, which would run its `shellHook`
+    /// (`fix-provisioning-hooks`; see [`capture_activated_env`]) — diff
+    /// it against the same fixed baseline `flox.rs` uses, and derive the
+    /// read-only store grants.
     fn resolve(&self, project_root: &Path) -> Result<Resolution, ProviderError> {
         ensure_flake_present(project_root)?;
         let nix_bin = resolve_on_path("nix").ok_or(ProviderError::MissingBinary {
@@ -43,6 +45,10 @@ impl Provider for NixProvider {
             // for services here fails loudly instead of silently
             // starting nothing.
             services: super::ServiceSupport::Unsupported,
+            // Structurally impossible here: `print-dev-env --json`
+            // hands the `shellHook` back as inert data and devcroft
+            // never evaluates it (see `capture_activated_env`).
+            ran_activation_hook: false,
         })
     }
 }
@@ -136,69 +142,109 @@ fn classify_metadata_failure(stderr: &str) -> ProviderError {
     ProviderError::ResolutionFailed(format!("`nix flake metadata` failed: {}", stderr.trim()))
 }
 
+/// Reads the dev shell's build environment as **structured data**, never
+/// by entering the shell (`fix-provisioning-hooks`).
+///
+/// This used to run `nix develop --command sh -c 'env -0 > <tmp>'`, and
+/// that executed the dev shell's `shellHook` — arbitrary project shell,
+/// host-side, before any restriction, with the invoking user's own
+/// network and filesystem access. The two-phase rule's justification for
+/// trusting this phase is that it runs "pinned tooling from a lockfile,
+/// not project code"; a `shellHook` is project code, so the
+/// justification did not hold.
+///
+/// **`nix print-dev-env` alone is not the fix, which is worth stating
+/// because it looks like one.** Generating the script does not run the
+/// hook, but the script it emits ends with `eval "${shellHook:-}"`, so
+/// evaluating it runs the hook after all — measured, with a sentinel.
+/// A switch to `print-dev-env` + `eval` would have changed nothing while
+/// appearing to fix it.
+///
+/// `--json` is the fix: the hook arrives as an ordinary entry
+/// (`{"type": "exported", "value": "…"}`) that devcroft reads and never
+/// evaluates. It also removes the shell from the pipeline entirely,
+/// which retires the quoting and multi-line-value fragility that made
+/// this module reject `print-dev-env` in the first place.
 fn capture_activated_env(
     nix_bin: &Path,
     project_root: &Path,
     base: &BTreeMap<String, String>,
 ) -> Result<BTreeMap<String, String>, ProviderError> {
-    // `env -0`'s stdout is redirected to a file inside the `--command`
-    // script rather than captured as the child process's own stdout, so
-    // that a dev shell's `shellHook` printing to stdout (common — status
-    // messages, banners) can never corrupt the capture: shellHook chatter
-    // goes to `nix develop`'s real stdout, which this discards, while only
-    // the redirected `env -0` dump is ever read back (design.md risk 2).
-    let dump_path = scratch_dump_path();
-    let script = format!("env -0 > '{}'", dump_path.display());
-
     let output = Command::new(nix_bin)
-        .arg("develop")
+        .arg("print-dev-env")
         .arg(project_root)
         .arg("--no-update-lock-file")
         .arg("--no-write-lock-file")
-        .arg("--command")
-        .arg("sh")
-        .arg("-c")
-        .arg(&script)
+        .arg("--json")
         .current_dir(project_root)
         .env_clear()
         .envs(base)
         .output()
-        .map_err(|e| ProviderError::ResolutionFailed(format!("running `nix develop`: {e}")))?;
+        .map_err(|e| {
+            ProviderError::ResolutionFailed(format!("running `nix print-dev-env`: {e}"))
+        })?;
 
     if !output.status.success() {
-        let _ = std::fs::remove_file(&dump_path);
         return Err(ProviderError::ResolutionFailed(format!(
-            "`nix develop` exited with {}: {}",
+            "`nix print-dev-env` exited with {}: {}",
             output.status,
             String::from_utf8_lossy(&output.stderr)
         )));
     }
 
-    let raw = std::fs::read(&dump_path).map_err(|e| {
-        ProviderError::ResolutionFailed(format!(
-            "reading captured environment dump {}: {e}",
-            dump_path.display()
-        ))
-    })?;
-    let _ = std::fs::remove_file(&dump_path);
-
-    Ok(capture::parse_env_dump(&raw))
+    parse_dev_env_json(&output.stdout)
 }
 
-/// A scratch path for the `env -0` capture (see [`capture_activated_env`]),
-/// unique enough to survive concurrent `up`s of different sandboxes on the
-/// same host: pid plus a nanosecond timestamp, not a security boundary —
-/// just collision avoidance for a file that lives for one `nix develop`
-/// invocation.
-fn scratch_dump_path() -> PathBuf {
-    let nanos = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_nanos())
-        .unwrap_or(0);
-    std::env::temp_dir().join(format!(
-        "devcroft-nix-envdump-{}-{nanos}.tmp",
-        std::process::id()
-    ))
+/// The subset of `nix print-dev-env --json` devcroft consumes.
+///
+/// Only `variables` is read, and only entries whose `type` is
+/// `exported`. `var` and `array` entries, and the `bashFunctions` map,
+/// are ignored deliberately rather than overlooked: the previous
+/// `env -0` capture could not observe any of them either, so ignoring
+/// them is what keeps this change a pure mechanism swap. Adopting them
+/// would be an additive decision with its own trade-offs.
+///
+/// Measured equivalence against the old mechanism on a real flake: 74
+/// exported keys against 74 captured, differing only in shell
+/// bookkeeping the old one picked up as noise (`PWD`, `SHLVL`, `_`,
+/// `OLDPWD`).
+fn parse_dev_env_json(raw: &[u8]) -> Result<BTreeMap<String, String>, ProviderError> {
+    #[derive(serde::Deserialize)]
+    struct DevEnv {
+        variables: BTreeMap<String, Variable>,
+    }
+    #[derive(serde::Deserialize)]
+    struct Variable {
+        #[serde(rename = "type")]
+        kind: String,
+        /// Deliberately untyped. `array`-typed entries carry `value` as
+        /// a JSON list, and `Option<String>` does **not** tolerate that
+        /// — `#[serde(default)]` covers a *missing* field, not one of
+        /// the wrong shape, so the whole parse failed on the first
+        /// array. Found by the test, not by reading the schema.
+        #[serde(default)]
+        value: serde_json::Value,
+    }
+
+    let parsed: DevEnv = serde_json::from_slice(raw).map_err(|e| {
+        // Never fall back to the old mechanism on a parse failure: that
+        // would silently reintroduce the hook execution this exists to
+        // remove. Fail at layer `provider` instead.
+        ProviderError::ResolutionFailed(format!("parsing `nix print-dev-env --json` output: {e}"))
+    })?;
+
+    Ok(parsed
+        .variables
+        .into_iter()
+        .filter(|(_, v)| v.kind == "exported")
+        .filter_map(|(k, v)| match v.value {
+            serde_json::Value::String(value) => Some((k, value)),
+            // An `exported` entry whose value is not a string has no
+            // representation in a process environment; skipping it
+            // matches what the old `env -0` capture would have seen.
+            _ => None,
+        })
+        .collect())
 }
 
 /// Content fingerprint of a nix flake's `flake.nix` + `flake.lock`, for
@@ -223,6 +269,7 @@ pub fn flake_fingerprint(project_root: &Path) -> Result<String, ProviderError> {
 mod tests {
     use super::*;
     use std::fs;
+    use std::path::PathBuf;
 
     fn tempdir(name: &str) -> PathBuf {
         let dir =

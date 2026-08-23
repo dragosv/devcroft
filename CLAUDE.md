@@ -130,12 +130,35 @@ order.
 
 **Two-phase execution, fixed and non-negotiable.** Provider provisioning
 (package materialization, environment capture) runs host-side at `up`,
-*before* restrictions, using the host's own network — trusted because it
-executes pinned tooling from a lockfile, not project code. Everything after
-restriction — sessions and hooks — runs inside the boundary. The manifest's
-`[network]` and `[filesystem]` sections govern **runtime only, never
-provisioning**. Hooks are project code and never get provisioning privileges;
-a hook that needs the network needs an allowlist entry.
+*before* restrictions, using the host's own network. Everything after
+restriction — sessions and devcroft's own manifest hooks — runs inside the
+boundary. The manifest's `[network]` and `[filesystem]` sections govern
+**runtime only, never provisioning**. devcroft's `[hooks]` are project code
+and never get provisioning privileges; a hook that needs the network needs
+an allowlist entry.
+
+The provisioning phase is trusted because it runs pinned tooling from a
+lockfile — but **that is a goal, not a guarantee, and the gap is
+provider-dependent** (`fix-provisioning-hooks`). A provider's *own*
+activation hook is project code too, and some providers cannot be asked
+for an environment without running it. Measured:
+
+- **nix**: fixed. `print-dev-env --json` returns the build environment as
+  data, `shellHook` included as an inert string. Never evaluated. Note
+  that plain `print-dev-env` is *not* a fix — the script it emits ends
+  with `eval "${shellHook:-}"`.
+- **devbox** (proposed): `shellenv --pure` does not run `init_hook`;
+  `devbox run` does. Use the former.
+- **flox**: **not fixable.** No `flox activate` mode suppresses
+  `[hook].on-activate` — not `--mode run`, `--mode dev`, or
+  `--no-start-services`. devcroft detects the hook and `up` prints one
+  warning; refusing was rejected because `on-activate` is idiomatic flox
+  and the user's own `flox activate` runs it identically.
+
+The rule for any new provider: prefer the entry point that hands back an
+environment over the one that runs a command inside it, since the latter
+runs hooks in every provider measured so far. Where no such entry point
+exists, report it — never let it pass silently.
 
 **Environment resolves once, at `up`.** Provider activation runs once and is
 captured as an env diff, then injected into the keeper. Sessions inherit it.

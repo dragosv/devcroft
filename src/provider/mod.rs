@@ -69,6 +69,22 @@ pub struct Resolution {
     /// host-side with the rest of resolution — the declarations are read
     /// from the provider's own manifest, never by running project code.
     pub services: ServiceSupport,
+    /// Whether capturing this environment executed an activation hook
+    /// the project defines — arbitrary shell, run host-side, before any
+    /// restriction, with the invoking user's own network and filesystem
+    /// access (`fix-provisioning-hooks`).
+    ///
+    /// The two-phase rule's justification for trusting the provisioning
+    /// phase is that it runs "pinned tooling from a lockfile, not
+    /// project code". An `on-activate` block is project code, so when
+    /// this is true that justification does not hold and `up` says so.
+    ///
+    /// It is a fact about *this resolution*, not about the provider:
+    /// the same provider reports `false` for a project that defines no
+    /// hook, which is what keeps the warning worth reading. Providers
+    /// that can capture without executing hooks (nix, via
+    /// `print-dev-env --json`) always report `false`.
+    pub ran_activation_hook: bool,
 }
 
 /// A provider's service story. Deliberately three-valued rather than a

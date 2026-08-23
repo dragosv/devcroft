@@ -29,8 +29,53 @@ impl Provider for FloxProvider {
             unset: capture::unset_env(&baseline, &activated),
             read_only_grants: capture::store_grants(&activated),
             services: read_service_declarations(project_root)?,
+            // Not "does flox support hooks" but "did this capture run
+            // one" — see `declares_activation_hook`.
+            ran_activation_hook: declares_activation_hook(project_root),
         })
     }
+}
+
+/// Whether this environment's manifest defines `[hook].on-activate`,
+/// which `flox activate` runs during capture.
+///
+/// **There is no way to avoid running it**, measured against flox 1.14.0
+/// rather than assumed: neither the default `flox activate -- <cmd>`,
+/// nor `--mode run`, nor `--mode dev`, nor `--no-start-services`
+/// suppresses it. flox's own help notes that the `<cmd>` form "does not
+/// run any profile scripts", which is accurate and describes
+/// `[profile]` — a different manifest section from `[hook]`.
+///
+/// So detection exists to let `up` *report* what already happened
+/// (`fix-provisioning-hooks`), not to prevent it. Refusing such a
+/// project was considered and rejected: `on-activate` is how flox
+/// environments do setup, the user's own `flox activate` runs it too,
+/// and a rule that rejects the common case of the default provider is a
+/// rule that gets disabled.
+///
+/// Errs toward reporting. A manifest that cannot be read or parsed
+/// counts as "might have one", because a false negative defeats the
+/// warning entirely while a false positive is merely noise. It does
+/// **not** match on the raw text: `flox init`'s stock manifest ships a
+/// `[hook]` section whose `on-activate` is commented out, so a
+/// substring search would warn on every freshly created environment and
+/// teach users to ignore the warning.
+fn declares_activation_hook(project_root: &Path) -> bool {
+    let path = project_root.join(".flox/env/manifest.toml");
+    let Ok(text) = std::fs::read_to_string(&path) else {
+        // No manifest at all is not this function's error to raise —
+        // `ensure_environment_present` already ran, so reaching here
+        // means something unusual. Report rather than assume safety.
+        return true;
+    };
+    let Ok(parsed) = text.parse::<toml::Table>() else {
+        return true;
+    };
+    parsed
+        .get("hook")
+        .and_then(|h| h.as_table())
+        .and_then(|h| h.get("on-activate"))
+        .is_some_and(|v| v.as_str().is_some_and(|s| !s.trim().is_empty()))
 }
 
 /// Read `[services]` out of the flox manifest, host-side, during the

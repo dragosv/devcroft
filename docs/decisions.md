@@ -27,7 +27,34 @@ A provider qualifies if it satisfies all six:
 3. **Immutable-capable shared store** — packages can be materialized once
    and exposed read-only to many sandboxes without a write grant.
 4. **Capturable activation** — the resolved environment can be extracted
-   host-side at `up` (env-diff or equivalent).
+   host-side at `up` (env-diff or equivalent) **without executing
+   project code**. The second half was always what this meant and was
+   never written down, which is how two shipped providers came to
+   violate it unnoticed (`fix-provisioning-hooks`).
+
+   Provisioning runs before any restriction exists, with the invoking
+   user's own network and filesystem access. A provider's activation
+   hook — flox's `[hook].on-activate`, a nix devShell's `shellHook`,
+   devbox's `shell.init_hook` — is project code, so running it during
+   provisioning voids the reason that phase is trusted at all.
+
+   Measured, and the pattern is consistent: every provider offers a
+   "run a command inside the activated shell" entry point, and every
+   one of those runs the hook. Most also offer a "hand me the
+   environment" entry point that does not.
+
+   | provider | runs the hook | does not |
+   |---|---|---|
+   | nix | `nix develop --command` | `nix print-dev-env --json` |
+   | devbox | `devbox run` | `devbox shellenv` |
+   | flox | `flox activate -- <cmd>` | *none found* |
+
+   A provider with no hook-free entry point does not fail this
+   criterion outright — flox is devcroft's default and `on-activate` is
+   idiomatic — but the gap must be **detected and reported at `up`**,
+   never left silent. Note the near-miss: plain `nix print-dev-env`
+   looks like a fix and is not, since the script it emits ends with
+   `eval "${shellHook:-}"`.
 5. **Completeness** — the provider can describe the whole environment, not
    one ecosystem's slice of it. A provider that covers language runtimes
    but leaves the C toolchain, linker, or system libraries to the host has

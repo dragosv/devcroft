@@ -460,6 +460,17 @@ Known gaps, published rather than hidden:
   ("deterministic and inspectable", "degraded capabilities are surfaced,
   never silent") rather than just missing a feature. Create the directory
   before `up` as a workaround. Found during task 6.5.
+- **`devcroft up` on a flox project runs that project's activation hook
+  on your host, outside the sandbox.** Provider resolution happens
+  host-side before any restriction exists — that is how the toolchain
+  gets materialized — and a flox manifest's `[hook].on-activate` is
+  arbitrary shell that `flox activate` runs. Measured against flox
+  1.14.0: no mode suppresses it. devcroft detects the hook and `up`
+  prints one warning, because it cannot prevent it.
+  **So `devcroft up` on a repository you have not read is running its
+  code**, the same as typing `flox activate` there yourself. The nix
+  provider does *not* have this: it reads the dev shell's environment as
+  structured data and never evaluates the `shellHook`.
 - **Zed's remote server connects and transfers but does not start.** Its
   forked daemon exits without logging; not yet attributed to devcroft.
   Zed also needs five separate `$HOME` grants, one of which is the local

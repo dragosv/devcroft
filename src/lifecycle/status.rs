@@ -315,6 +315,7 @@ mod tests {
                     read_only_grants: Vec::new(),
                     resolved_backend: "process".to_string(),
                     declared_services: Vec::new(),
+                    ran_activation_hook: false,
                 },
             )
             .unwrap();

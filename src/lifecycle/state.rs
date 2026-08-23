@@ -126,6 +126,18 @@ pub struct Meta {
     /// into something `status` can name (`services::reconcile`).
     #[serde(default)]
     pub declared_services: Vec<String>,
+    /// Whether resolving this environment executed a project-defined
+    /// activation hook on the host, outside any sandbox
+    /// (`fix-provisioning-hooks`).
+    ///
+    /// Recorded rather than only printed, for the same reason
+    /// `resolved_backend` is: `up` reports it once, but `status` needs
+    /// to answer the same question later without re-resolving, and the
+    /// keeper cannot be asked. `#[serde(default)]` so a `meta.json`
+    /// written before this field existed still deserializes, reading as
+    /// "no hook" until the next `up` records the truth.
+    #[serde(default)]
+    pub ran_activation_hook: bool,
 }
 
 fn default_resolved_backend() -> String {
@@ -308,6 +320,7 @@ mod tests {
             read_only_grants: vec!["/nix/store".to_string()],
             resolved_backend: "process".to_string(),
             declared_services: Vec::new(),
+            ran_activation_hook: false,
         };
         write_meta(&paths.meta, &meta).unwrap();
         assert_eq!(read_meta(&paths.meta).unwrap(), Some(meta));
@@ -326,6 +339,7 @@ mod tests {
             read_only_grants: Vec::new(),
             resolved_backend: "process".to_string(),
             declared_services: Vec::new(),
+            ran_activation_hook: false,
         };
         write_meta(&paths.meta, &meta).unwrap();
         assert!(!paths.meta.with_extension("json.tmp").exists());

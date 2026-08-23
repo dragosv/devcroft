@@ -849,6 +849,45 @@ fn doctor_manifest_degradation() {
 /// session it can fall back to failing later the way auto-up can.
 /// `--recreate` is destructive (tears down and re-resolves everything),
 /// so it follows the same non-interactive-safety rule as `rm`.
+/// One warning, after a successful `up`, when resolving the environment
+/// executed a hook the project defines (`fix-provisioning-hooks`).
+///
+/// Provider resolution runs host-side, before any restriction exists,
+/// with this user's own network and filesystem access. The two-phase
+/// rule justifies trusting that phase on the grounds it runs "pinned
+/// tooling from a lockfile, not project code" — and for a flox
+/// environment with `[hook].on-activate`, that is not what happened.
+/// Measured against flox 1.14.0: no `flox activate` mode suppresses the
+/// hook, so devcroft cannot prevent this and says so instead.
+///
+/// Read back from `meta.json` rather than returned from `up`: the fact
+/// belongs to the resolution, `up`'s return type is compared by value in
+/// dozens of tests, and recording it means `status` can answer the same
+/// question later without re-resolving.
+///
+/// Not printed when no hook ran — a warning that always fires is one
+/// people stop reading.
+fn warn_if_activation_hook_ran(manifest: &devcroft::config::Manifest) {
+    let Ok(paths) = devcroft::lifecycle::StatePaths::new(&manifest.sandbox.name) else {
+        return;
+    };
+    let ran = devcroft::lifecycle::read_meta(&paths.meta)
+        .ok()
+        .flatten()
+        .is_some_and(|m| m.ran_activation_hook);
+    if !ran {
+        return;
+    }
+    eprintln!(
+        "devcroft: warning: provider '{}' ran this project's activation hook on the host \
+         while resolving the environment — outside the sandbox, with your own network and \
+         filesystem access. devcroft cannot capture this provider's environment without \
+         running it. Treat `devcroft up` on a repository you have not read as running its \
+         code.",
+        manifest.env.provider
+    );
+}
+
 fn cli_up(args: &[String]) -> i32 {
     const USAGE: &str =
         "devcroft up: usage: devcroft up [name] [--recreate] [--yes] [--skip-hooks]";
@@ -906,6 +945,7 @@ fn cli_up(args: &[String]) -> i32 {
                 devcroft::lifecycle::UpOutcome::Recreated => "recreated",
             };
             println!("devcroft: sandbox '{}' is {msg}.", manifest.sandbox.name);
+            warn_if_activation_hook_ran(&manifest);
             0
         }
         Err(e) => {
