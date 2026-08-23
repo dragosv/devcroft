@@ -9,7 +9,8 @@ use devcroft::lifecycle::{Health, StatePaths, down, health};
 use std::process::Command;
 
 fn skip_if_tooling_missing() -> bool {
-    Command::new("flox").arg("--version").output().is_err()
+    !devcroft::policy::backend_supported()
+        || Command::new("flox").arg("--version").output().is_err()
 }
 
 #[test]

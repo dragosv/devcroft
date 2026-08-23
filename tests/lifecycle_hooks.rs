@@ -16,6 +16,10 @@ struct Sandbox {
 
 impl Sandbox {
     fn new(tag: &str, manifest_extra: &str) -> Option<Self> {
+        if !devcroft::policy::backend_supported() {
+            eprintln!("skipping: this host has no usable Landlock/Seatbelt support");
+            return None;
+        }
         if Command::new("flox").arg("--version").output().is_err() {
             eprintln!("skipping: flox not on PATH");
             return None;

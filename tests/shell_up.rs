@@ -14,7 +14,8 @@ use std::io::Write;
 use std::process::{Command, Stdio};
 
 fn skip_if_tooling_missing() -> bool {
-    Command::new("flox").arg("--version").output().is_err()
+    !devcroft::policy::backend_supported()
+        || Command::new("flox").arg("--version").output().is_err()
 }
 
 #[test]

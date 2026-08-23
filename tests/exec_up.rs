@@ -10,6 +10,10 @@ use std::time::Duration;
 
 #[test]
 fn exec_propagates_exit_code_maps_cwd_and_forwards_sigint() {
+    if !devcroft::policy::backend_supported() {
+        eprintln!("skipping: this host has no usable Landlock/Seatbelt support");
+        return;
+    }
     if Command::new("flox").arg("--version").output().is_err() {
         eprintln!("skipping: flox not on PATH");
         return;

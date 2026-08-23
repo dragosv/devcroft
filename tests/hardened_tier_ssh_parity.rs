@@ -22,7 +22,7 @@ use std::task::{Context, Poll};
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 
 fn process_tier_available() -> bool {
-    Command::new("flox").arg("--version").output().is_ok()
+    devcroft::policy::backend_supported() && Command::new("flox").arg("--version").output().is_ok()
 }
 
 /// Mirrors `tests/gvisor_hardened_e2e.rs`'s `gvisor_available` exactly —

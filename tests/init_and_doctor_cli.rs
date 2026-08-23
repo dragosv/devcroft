@@ -399,8 +399,14 @@ fn init_disambiguates_a_real_name_collision_across_projects() {
 #[test]
 fn doctor_reports_backend_and_provider_when_installed() {
     // `nono` is no longer a runtime dependency of the backend check at all
-    // (use-nono-library: it's a linked crate, not a `PATH` lookup) — only
-    // `flox`, which this same test also checks, gates skipping.
+    // (use-nono-library: it's a linked crate, not a `PATH` lookup). What
+    // gates skipping is whether the kernel actually has Landlock — this
+    // test asserts doctor prints `[PASS] backend:`, which it correctly
+    // will not do on a host where the probe fails.
+    if !devcroft::policy::backend_supported() {
+        eprintln!("skipping: this host has no usable Landlock/Seatbelt support");
+        return;
+    }
     if Command::new("flox").arg("--version").output().is_err() {
         eprintln!("skipping: flox not on PATH");
         return;
@@ -422,6 +428,10 @@ fn doctor_reports_backend_and_provider_when_installed() {
 
 #[test]
 fn doctor_reports_nix_when_installed_with_flakes_enabled() {
+    if !devcroft::policy::backend_supported() {
+        eprintln!("skipping: this host has no usable Landlock/Seatbelt support");
+        return;
+    }
     if Command::new("flox").arg("--version").output().is_err() {
         eprintln!("skipping: flox not on PATH");
         return;
@@ -459,6 +469,10 @@ fn doctor_reports_nix_when_installed_with_flakes_enabled() {
 
 #[test]
 fn doctor_reports_manifest_degradation_when_one_is_discoverable() {
+    if !devcroft::policy::backend_supported() {
+        eprintln!("skipping: this host has no usable Landlock/Seatbelt support");
+        return;
+    }
     if Command::new("flox").arg("--version").output().is_err() {
         eprintln!("skipping: flox not on PATH");
         return;

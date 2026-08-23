@@ -11,7 +11,9 @@ mod render;
 mod why;
 
 pub use capability_set::{CapabilityPlan, CapabilitySetError};
-pub use degraded::{DegradedCapability, detect as detect_degraded};
+pub use degraded::{
+    DegradedCapability, backend_support, backend_supported, detect as detect_degraded,
+};
 pub use render::render;
 pub use why::{Explanation, Op, why_host, why_path};
 

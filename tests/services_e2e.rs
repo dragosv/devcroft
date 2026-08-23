@@ -31,7 +31,8 @@ use std::time::{Duration, Instant};
 const PORT: u16 = 18777;
 
 fn tooling_missing() -> bool {
-    Command::new("flox").arg("--version").output().is_err()
+    !devcroft::policy::backend_supported()
+        || Command::new("flox").arg("--version").output().is_err()
 }
 
 /// Counts host processes whose argv contains `needle`, without matching

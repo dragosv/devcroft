@@ -549,7 +549,10 @@ fn cli_doctor() -> i32 {
 /// layer... by asking the enforcement layer what the running platform
 /// supports").
 fn doctor_backend() -> bool {
-    let support = nono::Sandbox::support_info();
+    // Via the lib rather than `nono::` directly, so the integration
+    // tests' own process-tier gate can ask the identical question — see
+    // `policy::backend_support`.
+    let support = devcroft::policy::backend_support();
     if support.is_supported {
         println!("[PASS] backend: {} — {}", support.platform, support.details);
     } else {

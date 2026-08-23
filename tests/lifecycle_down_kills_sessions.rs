@@ -17,6 +17,10 @@ fn is_alive(pid: libc::pid_t) -> bool {
 
 #[test]
 fn down_terminates_a_live_session_process_not_just_the_keeper() {
+    if !devcroft::policy::backend_supported() {
+        eprintln!("skipping: this host has no usable Landlock/Seatbelt support");
+        return;
+    }
     if Command::new("flox").arg("--version").output().is_err() {
         eprintln!("skipping: flox not on PATH");
         return;

@@ -37,6 +37,34 @@ pub fn detect(compiled: &CompiledPolicy) -> Vec<DegradedCapability> {
     detect_for_host(compiled, HostCapabilities::current())
 }
 
+/// Whether the process tier can actually enforce anything on this host,
+/// and what it found — `doctor`'s backend line, and the honest gate for
+/// any test that brings up a real process-tier sandbox.
+///
+/// This is a genuine kernel probe, not a version string or a binary
+/// lookup. `nono::Sandbox::support_info` walks the Landlock ABI
+/// candidates from V6 down to V1, building a real ruleset at each with
+/// `CompatLevel::HardRequirement` and calling `create()` — the highest
+/// one the running kernel accepts is the answer. It never calls
+/// `restrict_self`, so probing restricts nothing and is safe to call
+/// from anywhere, including a test process that goes on to do other
+/// work. The result is cached in the library for the process's lifetime.
+///
+/// Worth stating because the obvious-looking alternative was wrong for
+/// years: devcroft's tests used to gate on `nono --version` succeeding,
+/// which only ever proved a binary was on `PATH`. It said nothing about
+/// whether the kernel had Landlock at all — a container with it
+/// compiled out, or an old kernel, passed that gate and then failed the
+/// actual `up`.
+pub fn backend_support() -> nono::SupportInfo {
+    nono::Sandbox::support_info()
+}
+
+/// Shorthand for [`backend_support`]'s verdict.
+pub fn backend_supported() -> bool {
+    backend_support().is_supported
+}
+
 struct HostCapabilities {
     domain_filtering: bool,
 }

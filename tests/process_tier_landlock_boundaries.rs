@@ -57,7 +57,8 @@ use std::net::TcpListener;
 use std::process::{Command, Stdio};
 
 fn tooling_missing() -> bool {
-    Command::new("flox").arg("--version").output().is_err()
+    !devcroft::policy::backend_supported()
+        || Command::new("flox").arg("--version").output().is_err()
 }
 
 /// A loopback listener the sandbox has no legitimate reason to reach —

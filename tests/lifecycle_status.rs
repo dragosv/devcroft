@@ -14,6 +14,10 @@ use std::process::Command;
 
 #[test]
 fn status_logs_and_ps_reflect_a_real_running_keeper() {
+    if !devcroft::policy::backend_supported() {
+        eprintln!("skipping: this host has no usable Landlock/Seatbelt support");
+        return;
+    }
     if Command::new("flox").arg("--version").output().is_err() {
         eprintln!("skipping: flox not on PATH");
         return;
