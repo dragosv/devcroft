@@ -74,13 +74,17 @@ context: |
        audience of flake-only projects without flox on top
     2. devbox (closure tier) — near-free trait validation: same store, same
        pipeline as flox, different activation command and hashed files
-    No artifact-tier provider is scheduled. `add-mise-provider` was
-    removed rather than reworked: it was written before
-    `own-policy-baseline` established that the baseline grants no host
-    library paths, so any artifact-tier provider must now declare those
-    grants itself (see `docs/decisions.md` §1). mise still passes the six
-    criteria; what changed is that passing them no longer implies
-    inheriting host access.
+    No artifact-tier provider is scheduled, and that is now a recorded
+    decision rather than a scheduling accident: devcroft's product
+    guarantee is the closure tier, the `Provider` seam stays generic,
+    and an artifact provider must re-qualify under demonstrated demand
+    (see `docs/decisions.md` §1, "Decided: the guarantee is the closure
+    tier"). `add-mise-provider` was removed rather than reworked: it was
+    written before `own-policy-baseline` established that the baseline
+    grants no host library paths, so any artifact-tier provider must now
+    declare those grants itself. mise still passes the six criteria;
+    what changed is that passing them no longer implies inheriting host
+    access, and that passing them alone no longer schedules it.
   - Qualified but unscheduled providers (meet the criteria — declarative
     manifest, real lockfile, immutable-capable shared store, env-diff
     capturable activation — but no committed order):

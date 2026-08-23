@@ -103,6 +103,65 @@ provider resolution must not widen the policy. If that distinction
 proves too fine in practice, the honest response is to reject the tier
 outright, and this paragraph is where that argument reopens.
 
+### Decided: the guarantee is the closure tier; the seam stays generic
+
+The question "should devcroft restrict itself to nix-based providers and
+optimize for that?" hides two questions with different answers, and this
+entry records both so the argument does not have to be re-derived.
+
+**The `Provider` seam stays provider-agnostic — because restricting it
+would delete almost nothing.** Verified against the code rather than
+assumed: the only nix-aware line in shared provider machinery is
+`capture::store_grants` looking for `/nix/store` in the activated
+`PATH`. Everything downstream — `Resolution`, policy compilation, the
+hardened tier's bind mounts, `meta.json` — consumes opaque path lists.
+The seam's genericity has now been exercised by three providers with
+three different activation mechanisms (flox, nix flakes, devbox) at
+near-zero marginal cost. Hard-coding nix into it would be a
+falsifiable-sounding decision that in fact changes nothing measurable.
+
+**The product guarantee is the closure tier.** This is where the
+commitment lives, and it is grounded in a measurement, not a
+preference: a full build from a closure needs the project root, `/tmp`,
+and the store — zero host library grants, host toolchain denied
+(`own-policy-baseline`, verified live for both flox and nix closures).
+An artifact-tier provider structurally cannot make that claim; its
+runtime links against whichever libc each host happens to have, which
+degrades reproducibility and widens the policy in the same stroke.
+
+Two consequences, stated so they can be checked later:
+
+- **nix-specific optimizations land as closure-tier features, not as a
+  reason to close the door.** The concrete candidates — narrowing store
+  grants from the store root to the resolved closure's exact paths (so
+  two sandboxes stop seeing each other's toolchains), pinning resolved
+  closures as GC roots so `nix-collect-garbage` cannot break a live
+  sandbox, store integrity verification at `up` — all work without
+  rejecting the artifact tier. Nearly the entire benefit of
+  "optimizing for nix" is available without the restriction, which is
+  why the restriction is not taken.
+- **The artifact tier is not rejected; its bar is raised from
+  "qualifies" to "re-qualifies under demonstrated demand".** mise still
+  passes the six criteria on paper, and the removed
+  `add-mise-provider` sketch (mandatory `mise.lock`, devcroft-owned
+  append-only store, declared host grants rendered with a
+  `provider:mise` origin) remains the shape an implementation would
+  take. What changed is the burden of proof, informed by what
+  qualifying devbox actually cost: every provider requires per-entry-
+  point measurement (which commands run hooks, what leaks from global
+  state, how self-contained the result is), and nix-based providers
+  amortize criteria 3 and 5 across a shared store model while each
+  artifact provider is a new store design to qualify from scratch.
+  "The third provider is free" was true because it was the third *nix*
+  provider.
+
+**Revisit if** either input changes: real demand for an artifact
+provider materializes (at which point the rendered-grants distinction
+above gets its practical test), or the nix monoculture cost bites —
+upstream churn in flakes, the daemon, or store semantics now hits every
+provider devcroft ships simultaneously, and that concentration risk is
+accepted here, not denied.
+
 ### Rejected: `host` / `none` passthrough
 
 **Property that fails:** none — it does not even attempt reproducibility.
