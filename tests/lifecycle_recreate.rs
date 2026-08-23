@@ -11,10 +11,8 @@ use std::process::Command;
 
 #[test]
 fn recreate_replaces_a_running_keeper_with_a_fresh_one() {
-    if Command::new("nono").arg("--version").output().is_err()
-        || Command::new("flox").arg("--version").output().is_err()
-    {
-        eprintln!("skipping: nono and/or flox not on PATH");
+    if Command::new("flox").arg("--version").output().is_err() {
+        eprintln!("skipping: flox not on PATH");
         return;
     }
 

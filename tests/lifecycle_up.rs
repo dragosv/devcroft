@@ -16,10 +16,8 @@ use std::process::Command;
 
 #[test]
 fn up_spawns_a_working_keeper_and_down_tears_it_back_down() {
-    if Command::new("nono").arg("--version").output().is_err()
-        || Command::new("flox").arg("--version").output().is_err()
-    {
-        eprintln!("skipping: nono and/or flox not on PATH");
+    if Command::new("flox").arg("--version").output().is_err() {
+        eprintln!("skipping: flox not on PATH");
         return;
     }
 

@@ -86,10 +86,8 @@ fn pid_owns_no_listening_tcp_socket(pid: libc::pid_t) -> bool {
 
 #[tokio::test]
 async fn ssh_server_authenticates_the_real_client_key_and_binds_no_tcp() {
-    if Command::new("nono").arg("--version").output().is_err()
-        || Command::new("flox").arg("--version").output().is_err()
-    {
-        eprintln!("skipping: nono and/or flox not on PATH");
+    if Command::new("flox").arg("--version").output().is_err() {
+        eprintln!("skipping: flox not on PATH");
         return;
     }
 

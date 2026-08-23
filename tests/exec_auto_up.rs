@@ -9,14 +9,13 @@ use devcroft::lifecycle::{Health, StatePaths, down, health};
 use std::process::Command;
 
 fn skip_if_tooling_missing() -> bool {
-    Command::new("nono").arg("--version").output().is_err()
-        || Command::new("flox").arg("--version").output().is_err()
+    Command::new("flox").arg("--version").output().is_err()
 }
 
 #[test]
 fn exec_brings_up_a_cold_sandbox_automatically() {
     if skip_if_tooling_missing() {
-        eprintln!("skipping: nono and/or flox not on PATH");
+        eprintln!("skipping: flox not on PATH");
         return;
     }
 

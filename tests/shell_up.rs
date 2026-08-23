@@ -14,14 +14,13 @@ use std::io::Write;
 use std::process::{Command, Stdio};
 
 fn skip_if_tooling_missing() -> bool {
-    Command::new("nono").arg("--version").output().is_err()
-        || Command::new("flox").arg("--version").output().is_err()
+    Command::new("flox").arg("--version").output().is_err()
 }
 
 #[test]
 fn shell_runs_commands_over_a_pty_and_falls_back_when_shell_is_missing() {
     if skip_if_tooling_missing() {
-        eprintln!("skipping: nono and/or flox not on PATH");
+        eprintln!("skipping: flox not on PATH");
         return;
     }
 

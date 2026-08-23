@@ -10,10 +10,8 @@ use std::time::Duration;
 
 #[test]
 fn exec_propagates_exit_code_maps_cwd_and_forwards_sigint() {
-    if Command::new("nono").arg("--version").output().is_err()
-        || Command::new("flox").arg("--version").output().is_err()
-    {
-        eprintln!("skipping: nono and/or flox not on PATH");
+    if Command::new("flox").arg("--version").output().is_err() {
+        eprintln!("skipping: flox not on PATH");
         return;
     }
 

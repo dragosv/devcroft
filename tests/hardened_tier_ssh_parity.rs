@@ -2,8 +2,8 @@
 //! tell the difference" scenario — the same client workflow (an `exec`
 //! round trip, then an SSH handshake through `devcroft proxy`) driven
 //! against a `process`-tier sandbox and a `hardened`-tier sandbox,
-//! asserted identical. Requires both tiers' real tooling (`nono`+`flox`
-//! for `process`, a functionally usable `runsc` for `hardened` — see
+//! asserted identical. Requires both tiers' real tooling (`flox` for
+//! `process`, a functionally usable `runsc` for `hardened` — see
 //! `tests/gvisor_hardened_e2e.rs`'s `gvisor_available` for why binary
 //! presence alone isn't enough) and self-skips otherwise, same as every
 //! other real-tooling test in this suite. See `tests/lifecycle_up.rs`
@@ -22,8 +22,7 @@ use std::task::{Context, Poll};
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 
 fn process_tier_available() -> bool {
-    Command::new("nono").arg("--version").output().is_ok()
-        && Command::new("flox").arg("--version").output().is_ok()
+    Command::new("flox").arg("--version").output().is_ok()
 }
 
 /// Mirrors `tests/gvisor_hardened_e2e.rs`'s `gvisor_available` exactly —
@@ -170,7 +169,7 @@ async fn run_client_workflow(
 #[tokio::test]
 async fn client_workflow_is_identical_across_process_and_hardened_tiers() {
     if !process_tier_available() {
-        eprintln!("skipping: nono and/or flox not on PATH");
+        eprintln!("skipping: flox not on PATH");
         return;
     }
     if !gvisor_available() {

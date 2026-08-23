@@ -57,8 +57,7 @@ use std::net::TcpListener;
 use std::process::{Command, Stdio};
 
 fn tooling_missing() -> bool {
-    Command::new("nono").arg("--version").output().is_err()
-        || Command::new("flox").arg("--version").output().is_err()
+    Command::new("flox").arg("--version").output().is_err()
 }
 
 /// A loopback listener the sandbox has no legitimate reason to reach —
@@ -116,7 +115,7 @@ fn attempt_raw_connect(devcroft_bin: &str, sandbox_name: &str, port: u16) -> std
 #[test]
 fn process_tier_blocks_cross_process_signals_and_proc_reads() {
     if tooling_missing() {
-        eprintln!("skipping: nono and/or flox not on PATH");
+        eprintln!("skipping: flox not on PATH");
         return;
     }
 
@@ -241,7 +240,7 @@ fn process_tier_blocks_cross_process_signals_and_proc_reads() {
 #[test]
 fn process_tier_blocks_raw_socket_bypass_of_deny_all_network() {
     if tooling_missing() {
-        eprintln!("skipping: nono and/or flox not on PATH");
+        eprintln!("skipping: flox not on PATH");
         return;
     }
 
@@ -320,7 +319,7 @@ fn process_tier_blocks_raw_socket_bypass_of_deny_all_network() {
 #[test]
 fn process_tier_blocks_raw_socket_bypass_of_a_domain_allowlist() {
     if tooling_missing() {
-        eprintln!("skipping: nono and/or flox not on PATH");
+        eprintln!("skipping: flox not on PATH");
         return;
     }
 

@@ -1,7 +1,7 @@
 //! End-to-end coverage for the `nix` provider (add-nix-provider task 5),
-//! through the real built binary against a real `nono`+`nix` sandbox —
+//! through the real built binary against a real `nix` sandbox —
 //! same pattern `cli_lifecycle_and_policy.rs` uses for flox. Skips
-//! quietly wherever `nono` and/or a flakes-enabled `nix` aren't on PATH,
+//! quietly wherever a flakes-enabled `nix` isn't on PATH,
 //! same as every other real-tooling test in this suite.
 
 use std::path::PathBuf;
@@ -21,12 +21,11 @@ fn run(cwd: &std::path::Path, args: &[&str]) -> std::process::Output {
 }
 
 fn nix_available() -> bool {
-    Command::new("nono").arg("--version").output().is_ok()
-        && Command::new("nix")
-            .arg("flake")
-            .arg("--help")
-            .output()
-            .is_ok_and(|o| o.status.success())
+    Command::new("nix")
+        .arg("flake")
+        .arg("--help")
+        .output()
+        .is_ok_and(|o| o.status.success())
 }
 
 /// A minimal, real flake exporting one distinctive env var — same fixture
@@ -62,7 +61,7 @@ impl Sandbox {
     /// paths (missing-lock tests) need a flake *without* one.
     fn new(tag: &str, locked: bool) -> Option<Self> {
         if !nix_available() {
-            eprintln!("skipping: nono and/or a flakes-enabled nix not on PATH");
+            eprintln!("skipping: a flakes-enabled nix is not on PATH");
             return None;
         }
         unsafe {

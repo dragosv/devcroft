@@ -67,10 +67,8 @@ impl AsyncWrite for ChildPipe {
 
 #[tokio::test]
 async fn proxy_bridges_a_real_ssh_handshake_through_its_stdio() {
-    if Command::new("nono").arg("--version").output().is_err()
-        || Command::new("flox").arg("--version").output().is_err()
-    {
-        eprintln!("skipping: nono and/or flox not on PATH");
+    if Command::new("flox").arg("--version").output().is_err() {
+        eprintln!("skipping: flox not on PATH");
         return;
     }
 
@@ -195,10 +193,8 @@ async fn proxy_rejects_a_host_without_the_devcroft_suffix() {
 /// confirmed healthy rather than driving a full handshake.
 #[tokio::test]
 async fn proxy_brings_up_a_cold_sandbox_automatically() {
-    if Command::new("nono").arg("--version").output().is_err()
-        || Command::new("flox").arg("--version").output().is_err()
-    {
-        eprintln!("skipping: nono and/or flox not on PATH");
+    if Command::new("flox").arg("--version").output().is_err() {
+        eprintln!("skipping: flox not on PATH");
         return;
     }
 

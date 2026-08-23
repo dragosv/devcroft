@@ -323,10 +323,8 @@ fn init_prefers_an_existing_flake_over_a_toolchain_pin() {
 
 #[test]
 fn init_disambiguates_a_real_name_collision_across_projects() {
-    if Command::new("nono").arg("--version").output().is_err()
-        || Command::new("flox").arg("--version").output().is_err()
-    {
-        eprintln!("skipping: nono and/or flox not on PATH");
+    if Command::new("flox").arg("--version").output().is_err() {
+        eprintln!("skipping: flox not on PATH");
         return;
     }
     unsafe {
@@ -424,10 +422,8 @@ fn doctor_reports_backend_and_provider_when_installed() {
 
 #[test]
 fn doctor_reports_nix_when_installed_with_flakes_enabled() {
-    if Command::new("nono").arg("--version").output().is_err()
-        || Command::new("flox").arg("--version").output().is_err()
-    {
-        eprintln!("skipping: nono and/or flox not on PATH");
+    if Command::new("flox").arg("--version").output().is_err() {
+        eprintln!("skipping: flox not on PATH");
         return;
     }
     // Must match `doctor`'s own probe exactly, or this test skips on a
@@ -463,10 +459,8 @@ fn doctor_reports_nix_when_installed_with_flakes_enabled() {
 
 #[test]
 fn doctor_reports_manifest_degradation_when_one_is_discoverable() {
-    if Command::new("nono").arg("--version").output().is_err()
-        || Command::new("flox").arg("--version").output().is_err()
-    {
-        eprintln!("skipping: nono and/or flox not on PATH");
+    if Command::new("flox").arg("--version").output().is_err() {
+        eprintln!("skipping: flox not on PATH");
         return;
     }
 

@@ -64,10 +64,8 @@ fn bind_probe(devcroft_bin: &str, sandbox: &str, port: u16) -> String {
 
 #[test]
 fn a_granted_port_binds_while_egress_stays_denied_and_other_ports_do_not() {
-    if Command::new("nono").arg("--version").output().is_err()
-        || Command::new("flox").arg("--version").output().is_err()
-    {
-        eprintln!("skipping: nono and/or flox not on PATH");
+    if Command::new("flox").arg("--version").output().is_err() {
+        eprintln!("skipping: flox not on PATH");
         return;
     }
 
