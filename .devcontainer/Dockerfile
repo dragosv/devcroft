@@ -76,6 +76,56 @@ RUN set -eu; \
     && rm -rf /var/lib/apt/lists/* "/tmp/${DEB}" \
     && flox --version
 
+# devbox provider (add-devbox-provider task 0.1). Official GitHub release
+# tarball, architecture-detected, verified against the published
+# `checksums.txt` — same posture as nono's, flox's, and runsc's pinned,
+# checksummed installs. DEVBOX_VERSION pins the release for the reason the
+# others do, and for one more specific to this change: task group 0 exists
+# to *measure* devbox's activation behavior (whether it runs a project's
+# init hook, whether machine-global packages leak into the capture), and a
+# measurement is worthless without the version it was taken against.
+#
+# Deliberately not the official `get.jetify.com/devbox` installer script:
+# it resolves the latest release itself, which is exactly the drift the
+# pin exists to prevent, and it would put the version outside this file's
+# control.
+#
+# devbox is a frontend over Nix and cannot materialize anything without
+# it — installed above as part of flox, and reachable on PATH here. That
+# dependency is why this block follows flox's rather than standing alone.
+#
+# UNVERIFIED beyond this build step, same posture as the flox and runsc
+# installs: no container rebuild has exercised it (no docker socket is
+# reachable from inside a running devcontainer to test one). The
+# `devbox version` at the end makes a broken download fail the build
+# loudly; whether devbox *functions* against this image's nix is a task
+# 0.2 question, answered by measurement rather than by this comment.
+ARG DEVBOX_VERSION=0.18.0
+RUN set -eu; \
+    cd /tmp; \
+    case "$(dpkg --print-architecture)" in \
+        amd64) DEVBOX_ARCH=amd64 ;; \
+        arm64) DEVBOX_ARCH=arm64 ;; \
+        *) echo "unsupported architecture: $(dpkg --print-architecture)" >&2; exit 1 ;; \
+    esac; \
+    TARBALL="devbox_${DEVBOX_VERSION}_linux_${DEVBOX_ARCH}.tar.gz"; \
+    BASE="https://github.com/jetify-com/devbox/releases/download/${DEVBOX_VERSION}"; \
+    curl -fsSLO "${BASE}/${TARBALL}"; \
+    curl -fsSL "${BASE}/checksums.txt" | grep " ${TARBALL}\$" | sha256sum -c -; \
+    tar xzf "${TARBALL}" devbox \
+    && mv devbox /usr/local/bin/devbox \
+    && chmod +x /usr/local/bin/devbox \
+    && rm -f "/tmp/${TARBALL}" \
+    && devbox version
+
+# devbox phones home for update checks and telemetry on ordinary commands.
+# Both are disabled here for the same reason NONO_NO_UPDATE_CHECK is: a
+# provider resolution that reaches the network on its own schedule makes
+# `up` timing and failure modes depend on something outside the project,
+# and devcroft's whole provisioning model is "materialize from a lockfile,
+# host-side, then restrict".
+ENV DEVBOX_NO_TELEMETRY=1
+
 # gVisor backend (add-gvisor-backend). Installed via the official release
 # bucket, architecture-detected, and verified against the published
 # per-arch SHA512 — same posture as nono's and flox's pinned, checksummed

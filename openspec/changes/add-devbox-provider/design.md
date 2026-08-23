@@ -1,0 +1,261 @@
+# Design: add-devbox-provider
+
+## Context
+
+See `proposal.md` — Why. What shapes the approach here is what already
+exists rather than what is new: `add-nix-provider` generalized provider
+dispatch, and the shape a third provider must fit into is fixed.
+
+Three constraints do the work:
+
+- **`Resolution` is the whole contract.** A provider returns an env diff,
+  a list of unsets, read-only grants, and its service story. Everything
+  downstream — policy compilation, keeper injection, staleness, `status`
+  — is keyed off the provider name in `provider::mod` and nowhere else.
+  A provider that needs more than this is a finding, not a feature.
+- **The canonical baseline is shared, and that is deliberate.** flox and
+  nix both diff activation against the same fixed pre-activation
+  environment (a real `HOME`, a conventional `PATH`, nothing else), which
+  is what makes the captured diff independent of whoever ran `up`. devbox
+  reuses it unchanged; a provider that needs its own baseline would be
+  reintroducing the non-reproducibility that baseline exists to close.
+- **The closure tier grants nothing from the host.** `own-policy-baseline`
+  measured this: a full build from a flox or nix closure needs the project
+  root, `/tmp`, and the store — nothing from `/lib`, `/usr/lib`, or
+  `/usr/bin`. devbox inherits that only if its resolved environment really
+  is a self-contained closure, which is a claim to verify, not assume.
+
+The material difference from `add-nix-provider`: that change was written
+against tooling the author could run. **devbox is not installed in this
+repo's devcontainer**, so every statement about its CLI comes from
+documentation. The task ordering below is the response to that.
+
+## Goals / Non-Goals
+
+**Goals:**
+
+- A third closure-tier provider that adds no new concepts — no new
+  guarantee tier, no new store model, no manifest translation.
+- Confirm the `Provider` trait generalizes to a provider that is *not*
+  built on the same activation mechanism as the previous two.
+- Keep every devbox-specific fact in `src/provider/devbox.rs`, with
+  `provider::mod` gaining only dispatch arms.
+
+**Non-Goals:**
+
+- **devbox services.** See proposal — Impact. The declarations come from
+  plugin-supplied process-compose configs rather than a documented schema
+  in `devbox.json`, which is the shape `add-flox-services` decision 1
+  rejected. `ServiceSupport::Unsupported` in this change.
+- **Multiple named environments.** devbox has an environment concept
+  beyond the default; out of scope for the first cut exactly as
+  non-default `devShells` were for nix.
+- **Translating `devbox.json` into anything.** devcroft reads it only to
+  fingerprint it and to check it exists. devbox owns its own format.
+- **Making devbox available in the devcontainer for end users.** Adding
+  it to the image is a development-environment decision (task group 0),
+  not part of what this change ships.
+
+## Decisions
+
+### 1. Capture via `shellenv --pure`, evaluated in a controlled shell
+
+**Measured against devbox 0.18.0 (task 0.2). The first draft of this
+decision chose the opposite mechanism, and measurement inverted it.**
+
+The draft preferred `devbox run -- sh -c 'env -0 > <tmp>'`, reusing the
+trick `nix.rs` already uses twice, and rejected `devbox shellenv` as
+fragile shell-parsing. Both halves turned out wrong:
+
+- **`devbox run` runs the project's init hook** — measured, including
+  with `--pure`. That is project code executing during the trusted
+  host-side phase, which the two-phase rule forbids outright. It is
+  disqualified on a correctness ground the draft never considered, not
+  on the fragility ground it was chosen to avoid.
+- **`devbox shellenv` does not run the hook**, under any variant tried
+  (default, `--pure`, and even `--init-hook`). `--init-hook` does not
+  execute anything: it appends one `. .devbox/gen/scripts/.hooks.sh`
+  line to the emitted text, leaving execution to whoever evaluates it.
+  devcroft simply never passes the flag.
+
+The draft's fragility concern about `shellenv` was nonetheless correct —
+its output is *not* a clean list of assignments. Measured, it contains
+multi-line values whose contents are themselves shell (nixpkgs'
+`mkShell` `$out`-recording snippet), and it ends with a real
+`if ! type refresh …; then alias refresh=…; fi` block plus `hash -r`.
+Parsing that line-by-line would silently produce a wrong environment.
+
+**Chosen: evaluate, then dump.** Run
+`sh -c 'eval "$(devbox shellenv --pure)"; env -0 > <tmp>'` from
+devcroft's canonical baseline environment. This keeps the `env -0`
+machine-readable capture the other two providers already use — no shell
+parsing anywhere — while letting devbox's own shell code set the
+environment up, and never sourcing the hook.
+
+`--pure` is **mandatory, not a refinement**. Without it, `shellenv`
+re-exports the operator's entire ambient environment into its output:
+measured, the capture carried `CLAUDECODE`, `AI_AGENT`, and a
+`BROWSER` pointing into a VS Code server install. With it, a decoy
+`PATH` prepend and decoy variables did not survive into the capture, and
+two runs from different polluted shells produced identical results.
+
+Alternative still rejected: reimplementing devbox's resolution by
+reading `devbox.lock` directly and materializing store paths ourselves.
+It would remove the CLI dependency, but devcroft would own a second
+implementation of devbox's semantics, which will drift. The provider
+contract is "run the provider's own activation and capture it".
+
+### 1a. Store grants follow a profile symlink, not bare store paths
+
+Measured, and different in shape from flox and nix: a devbox project's
+declared packages are **not** on `PATH` as store paths. They arrive via
+`<project>/.devbox/nix/profile/default`, a symlink chain
+(`default-1-link` → `/nix/store/…-profile`) rooted inside the project.
+The store paths themselves appear in `HOST_PATH`.
+
+Two consequences for task 1.3:
+
+- Grant derivation must resolve through the profile link rather than
+  scraping `PATH` for `/nix/store/...` prefixes, or it will grant the
+  stdenv closure and miss every package the project actually declared.
+- The link lives under the project root, which is already granted
+  read-write, so no new grant shape is needed — but the *target* must be
+  covered by the store grant, and a `.devbox` directory that is
+  gitignored by devbox is still real state inside the working tree.
+
+### 2. The init-hook problem is a qualification question, not a detail
+
+devbox environments can define an initialization hook that runs on
+activation. If capture cannot avoid running it, then resolving a devbox
+environment executes project code during the trusted host-side phase —
+with the host's network and filesystem, before any restriction exists.
+That is a direct violation of the two-phase rule, which is
+non-negotiable per CLAUDE.md.
+
+This is specced as a requirement (`env-provider`: "Provisioning never
+executes project code") rather than left as an implementation note,
+because the honest outcome depended on what devbox actually does.
+
+**Measured (task 0.3): devbox passes criterion 4, but only through the
+mechanism decision 1 now chooses.** A hook writing a sentinel file did
+not run under `devbox shellenv` in any variant; it did run under
+`devbox run`, `--pure` included. So the qualification does not come from
+devbox being careful — it comes from picking the one entry point that
+does not activate. That makes decision 1 load-bearing for correctness
+rather than for ergonomics, and a future switch back to `devbox run`
+for any reason would silently reintroduce a two-phase violation.
+
+The stakes are higher than a normal edge case because `devbox init`
+writes an `init_hook` into **every** new `devbox.json` — having one is
+the out-of-the-box state, not an unusual choice. There is no population
+of hook-free devbox projects to fall back on.
+
+Task 1.6 therefore asserts the hook does not run, as a test rather than
+as a comment: it is the guard on the property that qualified devbox.
+
+Stating the rejection condition up front was the point, and it nearly
+fired. A provider change that cannot fail is not being evaluated.
+
+### 3. Global packages are a lockfile-integrity question
+
+devbox maintains a machine-global package set. If activation includes it,
+the captured environment is not a function of the committed files, and
+two machines produce different sandboxes from the same repo — criterion 2
+in substance even though `devbox.lock` exists on paper.
+
+Handled the same way as decision 2: specced as a requirement
+(`env-provider`: "Resolution depends only on committed files"), measured
+in task 0.4, and a blocker if it could not be excluded.
+
+**Measured: no leak.** A package added with `devbox global add` did not
+appear in the project capture — not on `PATH`, not in any variable's
+value. devbox's global profile is opt-in at the shell level (it tells
+the user to add `eval "$(devbox global shellenv)"` to an rcfile) and
+project activation does not consult it. Combined with `--pure` from
+decision 1, which strips whatever the operator's shell had already
+loaded, the captured environment is a function of the committed files.
+
+Worth keeping the requirement in the spec even though it passed: it
+passed because of how devbox scopes its global profile today, which is
+devbox's decision to revisit, not devcroft's.
+
+### 4. Nix is devbox's precondition, reported as devbox's
+
+devbox cannot work without Nix, so `up` must check for it. The reporting
+choice matters: telling a devbox user "nix is missing" invites the wrong
+fix (switching providers). The error names Nix as *devbox's* requirement
+and how to install it, keeping the provider the user chose intact.
+
+This also means `doctor`'s devbox check is two probes, not one, and the
+`cli` delta says so. It is the first provider whose preconditions include
+another provider's tooling — worth naming because it is the pattern
+`devenv` will need too.
+
+### 5. Fold the unspecced `doctor` scoping into this change's `cli` delta
+
+`doctor` was recently changed to check only the provider the manifest
+declares, rather than probing flox unconditionally. That behavior shipped
+without a spec, and the existing `doctor` requirement still describes a
+backend check by binary version — which stopped being true when the
+process tier moved to a linked library.
+
+A `MODIFIED` requirement must carry full updated content, so this
+change's `cli` delta cannot copy the stale text forward without
+asserting something false. It states the current contract instead:
+capability probed rather than inferred, and providers scoped to what the
+project declares. That is not scope creep into unrelated territory — the
+devbox check *is* a per-provider check, and it needs the rule it depends
+on to exist in a spec.
+
+## Risks / Trade-offs
+
+- **Everything about devbox here is documentation-derived** → Mitigation:
+  task group 0 runs before any implementation task and can reject the
+  change. No code is written against an unverified claim; the design
+  decisions above each name what would falsify them.
+
+- **`devbox run` may run the init hook with no way to suppress it** →
+  Mitigation: this is decision 2's rejection condition, not a bug to work
+  around. Recording it as a criterion-4 failure is a valid outcome of
+  this change, and a more useful one than a provider with a silent
+  two-phase violation.
+
+- **devbox's closure may not be as self-contained as flox's or nix's** →
+  Mitigation: task 3.4 repeats `own-policy-baseline`'s own measurement —
+  a real build inside the sandbox with the host toolchain denied. If it
+  needs host libraries, devbox is not closure tier for devcroft's
+  purposes regardless of being Nix-backed, and the tier claim changes
+  rather than the measurement being explained away.
+
+- **Adding devbox to the devcontainer grows the image and adds a
+  dependency the project does not otherwise need** → Mitigation: it is a
+  development image, the same argument that kept the `nono` binary after
+  `use-nono-library`. The tests self-skip without it, so contributors
+  who do not install it lose devbox coverage and nothing else.
+
+- **A third provider makes the "adding a provider touches one file"
+  claim harder to keep honest, since each provider adds arms rather than
+  reducing them** → Mitigation: success criteria in the proposal make it
+  falsifiable — if anything outside `provider::mod` and the new module
+  must change shape, that is recorded as the trait not generalizing, not
+  absorbed silently.
+
+## Migration Plan
+
+Additive. No existing manifest changes meaning: `devbox` was previously
+a validation error, so no manifest in the field names it and none can
+change behavior. The `config` delta's third scenario is the regression
+test — a manifest not naming devbox compiles byte-identically.
+
+Rollback is removing the dispatch arms and the module; the name returns
+to `NOT_YET_SUPPORTED` with its existing message.
+
+## Open Questions
+
+- Whether `devcroft init` should offer to run `devbox init` for a project
+  that has none, the way it currently only *advises* `flox init`. The
+  advisory form is consistent and requires no decision now; making init
+  run provider commands is a broader change than this one.
+- Whether the devbox provider should accept a non-default environment via
+  a manifest key later. Additive whenever it is wanted, and settling it
+  now would not change the specs or the task breakdown.
