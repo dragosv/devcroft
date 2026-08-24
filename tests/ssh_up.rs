@@ -136,6 +136,16 @@ async fn ssh_server_authenticates_the_real_client_key_and_binds_no_tcp() {
     assert_eq!(root_mode.mode() & 0o777, 0o700, "state dir must be 0700");
     let socket_mode = std::fs::metadata(&paths.ssh_socket).unwrap().permissions();
     assert_eq!(socket_mode.mode() & 0o777, 0o600, "ssh socket must be 0600");
+    // The control socket carries the spawn protocol, so it is the more
+    // sensitive of the two — yet it was the one left at umask (0755),
+    // relying entirely on the 0700 root. Asserted here alongside its
+    // sibling so the asymmetry cannot come back.
+    let control_mode = std::fs::metadata(&paths.socket).unwrap().permissions();
+    assert_eq!(
+        control_mode.mode() & 0o777,
+        0o600,
+        "control socket must be 0600"
+    );
 
     let (client_private_path, _) = client_key_paths().unwrap();
     let client_key = PrivateKey::read_openssh_file(&client_private_path).unwrap();

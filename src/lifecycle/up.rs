@@ -277,6 +277,16 @@ fn up_process(
     // reachable once the keeper can no longer widen its own boundary.
     let _ = std::fs::remove_file(&paths.socket); // a stale file would fail bind()
     let listener = UnixListener::bind(&paths.socket)?;
+    // 0600, for the same belt-and-suspenders reason the ssh socket below
+    // has always had it. This used to be left at whatever umask produced
+    // (0755 here), protected only by the 0700 root — which is real, but
+    // is the *only* thing protecting it, and `up`'s own state-dir
+    // creation above notes that a root existing from before that mode
+    // was set keeps its old permissions. Asymmetric in the wrong
+    // direction, too: this is the spawn protocol, so it is the more
+    // sensitive of the two sockets, not the less. Found by adversarial
+    // review; no spec required it, which was itself the gap.
+    std::fs::set_permissions(&paths.socket, std::fs::Permissions::from_mode(0o600))?;
     clear_cloexec(listener.as_raw_fd())?;
 
     // The ssh server's socket (ssh spec, task 6.1): same listener-before-
@@ -508,6 +518,10 @@ fn up_hardened(
     // a 0700 dir, still never binding TCP").
     let _ = std::fs::remove_file(&paths.socket);
     let listener = UnixListener::bind(&paths.socket)?;
+    // Same 0600 as the process tier's control socket — see the comment
+    // there. This tier needs it at least as much: `--host-uds=create`
+    // exists precisely to let the host reach inward.
+    std::fs::set_permissions(&paths.socket, std::fs::Permissions::from_mode(0o600))?;
     clear_cloexec(listener.as_raw_fd())?;
 
     let _ = std::fs::remove_file(&paths.ssh_socket);

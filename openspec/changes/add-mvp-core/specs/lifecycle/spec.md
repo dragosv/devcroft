@@ -14,11 +14,29 @@ restrictions, and SHALL apply restrictions to the keeper such that the
 keeper and all its descendants are inside the boundary while the sockets
 remain reachable from outside.
 
+Every listener socket the system creates SHALL be mode 0600, inside the
+0700 state dir. The `ssh` spec states this for the SSH socket; it applies
+to the **control** socket equally, and if anything more so — the control
+socket carries the spawn protocol, so it is the more sensitive of the
+two, not the less.
+
+Stated explicitly because its absence was a real gap: the control socket
+was left at whatever the umask produced (0755 in practice) while the SSH
+socket set 0600 explicitly, so the 0700 state dir was the only thing
+protecting the more sensitive of the two. That directory mode is applied
+only to a state root the system itself creates, so a root predating it
+keeps its old permissions — leaving nothing behind the socket at all.
+
 #### Scenario: Keeper cannot widen its own boundary
 - **WHEN** the keeper is running
 - **AND** code inside the sandbox attempts to spawn a process outside the
   restriction set
 - **THEN** the kernel denies it; there is no API path to escape
+
+#### Scenario: Both sockets are 0600
+- **WHEN** a sandbox is up, at either isolation tier
+- **THEN** the control socket and the SSH socket are both mode 0600, and
+  the state dir containing them is 0700
 
 ### Requirement: Idempotent up
 The system SHALL make `devcroft up` idempotent: if a healthy keeper exists,
