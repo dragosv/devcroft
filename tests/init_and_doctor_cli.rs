@@ -33,14 +33,17 @@ fn run(cwd: &std::path::Path, args: &[&str]) -> std::process::Output {
 /// not about every independent check `doctor` runs. `gvisor-backend` is
 /// legitimately, per the `cli` delta spec's own "runsc present but
 /// platform unusable" scenario, `[FAIL]` rather than `[WARN]` on a host
-/// where `runsc` is installed but its platform doesn't actually work —
-/// true of this repo's own devcontainer once task group 8 installed
-/// `runsc` into it (rootless gVisor needs a user-namespace creation this
-/// container's default seccomp profile denies; see
-/// `.devcontainer/devcontainer.json`'s own comment on that). Asserting
-/// blanket `doctor` success would make these tests depend on a platform
-/// capability they have nothing to do with, so this only fails on a
-/// `[FAIL]` line the test doesn't already expect.
+/// where `runsc` is installed but its platform doesn't actually work.
+/// Asserting blanket `doctor` success would make these tests depend on a
+/// platform capability they have nothing to do with, so this only fails
+/// on a `[FAIL]` line the test doesn't already expect.
+///
+/// This used to add "true of this repo's own devcontainer" — which
+/// stopped being true once `.devcontainer/devcontainer.json` gained
+/// `seccomp=unconfined` and rootless `runsc` started working here;
+/// `doctor` now reports `[PASS] gvisor-backend` in this container, and
+/// the README says so at length. The tolerance stays, because it is
+/// about *other* hosts; the stale justification for it does not.
 fn assert_no_unexpected_doctor_failures(stdout: &str) {
     // `provider: nix` joins `gvisor-backend` as a tolerated failure for
     // the same reason: both are optional capabilities whose absence says

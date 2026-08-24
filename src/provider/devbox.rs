@@ -469,26 +469,17 @@ fn capture_activated_env(
 /// this against the fingerprint recorded at the last `up`.
 ///
 /// A lockfile's absence is hashed as a distinct state, not folded into
-/// "empty" (spec: "A lockfile appearing is itself a change") — a marker
-/// byte precedes the lock content specifically so an absent lock and a
-/// present-but-empty one never collide, which reusing `flox.rs`/`nix.rs`'s
-/// `unwrap_or_default()` pattern here would risk.
+/// "empty" (spec: "A lockfile appearing is itself a change"). This was
+/// open-coded here first and is now `capture::optional_file_part`, shared
+/// with flox and nix — which had the same stated intent and the
+/// `unwrap_or_default()` implementation that does not deliver it.
 pub fn devbox_fingerprint(project_root: &Path) -> Result<String, ProviderError> {
     ensure_project_present(project_root)?;
     let json_path = project_root.join("devbox.json");
     let json = std::fs::read(&json_path).map_err(|e| {
         ProviderError::ResolutionFailed(format!("reading {}: {e}", json_path.display()))
     })?;
-
-    let lock_path = project_root.join("devbox.lock");
-    let lock: Vec<u8> = match std::fs::read(&lock_path) {
-        Ok(bytes) => {
-            let mut marked = vec![b'P'];
-            marked.extend(bytes);
-            marked
-        }
-        Err(_) => vec![b'A'],
-    };
+    let lock = capture::optional_file_part(&project_root.join("devbox.lock"));
 
     Ok(capture::fingerprint(&[&json, &lock]))
 }

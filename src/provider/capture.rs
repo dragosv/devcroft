@@ -105,6 +105,34 @@ pub(super) fn store_grants(activated: &BTreeMap<String, String>) -> Vec<String> 
     vec![DEFAULT_STORE_ROOT.to_string()]
 }
 
+/// A lockfile's contents for [`fingerprint`], with **absent** and
+/// **present-but-empty** kept distinct.
+///
+/// Every provider's fingerprint pairs an always-present environment
+/// definition with a lockfile that may not exist yet, and each of their
+/// doc comments states the same intent: a lockfile appearing is itself a
+/// change. Reading it with `unwrap_or_default()` — which flox and nix
+/// both did — breaks exactly that for the empty case, since an absent
+/// file and a zero-byte one both become `[]` and hash identically.
+///
+/// Neither flox nor nix writes empty lockfiles, so this was unreachable
+/// in practice rather than a live bug; it is fixed because the three
+/// providers stating one rule and implementing two of it is how the
+/// reachable version of this arrives later. Found by adversarial review,
+/// which is also why the marker lives here instead of being open-coded a
+/// third time in `devbox.rs`.
+pub(super) fn optional_file_part(path: &std::path::Path) -> Vec<u8> {
+    match std::fs::read(path) {
+        Ok(bytes) => {
+            let mut marked = Vec::with_capacity(bytes.len() + 1);
+            marked.push(b'P');
+            marked.extend(bytes);
+            marked
+        }
+        Err(_) => vec![b'A'],
+    }
+}
+
 /// FNV-1a 64-bit over `parts`, each separated so `("ab", "c")` and
 /// `("a", "bc")` never collide. Not cryptographic — this is a change
 /// detector, not a security boundary, so no external hashing crate is
@@ -246,5 +274,54 @@ mod tests {
         let a = fingerprint(&[b"x", b"y"]);
         let b = fingerprint(&[b"x", b"y"]);
         assert_eq!(a, b);
+    }
+
+    /// The property every provider's fingerprint doc comment claims —
+    /// "a lockfile appearing is itself a change" — held for
+    /// absent-vs-nonempty and broke for absent-vs-empty, because
+    /// `unwrap_or_default()` maps both to `[]`.
+    #[test]
+    fn optional_file_part_distinguishes_absent_from_present_but_empty() {
+        let dir = std::env::temp_dir().join(format!(
+            "devcroft-optional-part-{}-{}",
+            std::process::id(),
+            line!()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("lock");
+
+        let absent = optional_file_part(&path);
+        std::fs::write(&path, b"").unwrap();
+        let present_empty = optional_file_part(&path);
+
+        assert_ne!(absent, present_empty);
+        assert_ne!(
+            fingerprint(&[b"manifest", &absent]),
+            fingerprint(&[b"manifest", &present_empty])
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn optional_file_part_still_tracks_content_changes() {
+        let dir = std::env::temp_dir().join(format!(
+            "devcroft-optional-part-{}-{}",
+            std::process::id(),
+            line!()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("lock");
+
+        std::fs::write(&path, b"one").unwrap();
+        let before = optional_file_part(&path);
+        std::fs::write(&path, b"two").unwrap();
+        let after = optional_file_part(&path);
+
+        assert_ne!(before, after);
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

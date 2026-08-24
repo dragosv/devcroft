@@ -259,8 +259,9 @@ pub fn flake_fingerprint(project_root: &Path) -> Result<String, ProviderError> {
     })?;
     // The lock does not exist until `nix flake lock` runs; its absence is
     // itself part of what makes a fingerprint change once one appears —
-    // same reasoning as flox's manifest.lock handling.
-    let lock = std::fs::read(project_root.join("flake.lock")).unwrap_or_default();
+    // same reasoning, and now the same helper, as flox's manifest.lock
+    // handling (`unwrap_or_default()` hashed absent and empty alike).
+    let lock = capture::optional_file_part(&project_root.join("flake.lock"));
 
     Ok(capture::fingerprint(&[&flake, &lock]))
 }

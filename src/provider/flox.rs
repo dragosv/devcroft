@@ -277,8 +277,11 @@ pub fn manifest_fingerprint(project_root: &Path) -> Result<String, ProviderError
         ProviderError::ResolutionFailed(format!("reading {}: {e}", manifest_path.display()))
     })?;
     // The lockfile does not exist until the first activation; its absence
-    // is itself part of what makes a fingerprint change once one appears.
-    let lock = std::fs::read(project_root.join(".flox/env/manifest.lock")).unwrap_or_default();
+    // is itself part of what makes a fingerprint change once one appears
+    // — which is why this goes through `optional_file_part` rather than
+    // `unwrap_or_default()`, the latter having collapsed "absent" and
+    // "present but empty" into the same hash.
+    let lock = capture::optional_file_part(&project_root.join(".flox/env/manifest.lock"));
 
     Ok(capture::fingerprint(&[&manifest, &lock]))
 }

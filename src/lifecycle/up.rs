@@ -138,15 +138,6 @@ pub fn up(
     // "Tier resolution fails loudly" design decision).
     let resolved_backend = resolve_backend(manifest.sandbox.isolation)?;
 
-    // ssh spec: "0700 state dir" — set on creation (mode only applies to
-    // dirs `create_dir_all`/`DirBuilder` actually create, so an
-    // already-existing root from before this existed is left alone, same
-    // as `create_dir_all`'s own idempotency).
-    std::fs::DirBuilder::new()
-        .recursive(true)
-        .mode(0o700)
-        .create(&paths.root)?;
-
     // Host-side, before any restriction applies (design.md decision 2):
     // the resolved environment and its store grants are captured now,
     // once, and folded into the profile/bundle the sandbox will be
@@ -166,6 +157,26 @@ pub fn up(
     let env_fingerprint =
         crate::provider::manifest_fingerprint(&manifest.env.provider, project_root)
             .map_err(UpError::Provider)?;
+
+    // ssh spec: "0700 state dir" — set on creation (mode only applies to
+    // dirs `create_dir_all`/`DirBuilder` actually create, so an
+    // already-existing root from before this existed is left alone, same
+    // as `create_dir_all`'s own idempotency).
+    //
+    // Created here, immediately before the first write into it, rather
+    // than at the top of `up`: it used to be created before provider
+    // resolution, so every `up` that failed at layer `provider` — a
+    // missing `.flox/`, an unlocked flake, a devbox project needing
+    // `devbox install` — left an empty state directory behind for a
+    // sandbox that never existed. Found by adversarial review, by
+    // noticing this repo's own state dir had accumulated 23 of them from
+    // test runs. Failures *after* this point still leave a directory,
+    // and should: by then it holds real state, and `rm` is the cleanup.
+    std::fs::DirBuilder::new()
+        .recursive(true)
+        .mode(0o700)
+        .create(&paths.root)?;
+
     state::write_meta(
         &paths.meta,
         &state::Meta {
