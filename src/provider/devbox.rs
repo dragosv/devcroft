@@ -83,13 +83,41 @@ fn ensure_project_present(project_root: &Path) -> Result<(), ProviderError> {
 /// missing binary — not `devbox`, which is already known to be present at
 /// this point — so the message reads as "you also need nix", never as
 /// "switch providers".
+///
+/// **Probes the capability rather than the binary's presence.** An
+/// earlier version checked only `PATH`, which this repo has already been
+/// bitten by once: `doctor`'s nix check used to probe with `nix flake
+/// --help`, which succeeds even when the experimental features are off,
+/// and so reported a healthy nix on a host where resolution then failed
+/// (README, add-nix-provider). A `nix` that cannot evaluate is exactly
+/// the failure this precondition exists to convert into a precise,
+/// early error, and a presence check reports it as success.
+///
+/// `nix eval --expr 1` is the same probe `nix.rs`'s own provider path
+/// settled on, chosen for the same reason: it requires `nix-command`,
+/// which is what resolution actually fails on.
 fn ensure_nix_usable() -> Result<(), ProviderError> {
-    resolve_on_path("nix")
-        .map(|_| ())
-        .ok_or(ProviderError::MissingBinary {
-            provider: "nix",
-            hint: "devcroft doctor",
-        })
+    let nix = resolve_on_path("nix").ok_or(ProviderError::MissingBinary {
+        provider: "nix",
+        hint: "devcroft doctor",
+    })?;
+
+    let usable = Command::new(&nix)
+        .arg("eval")
+        .arg("--expr")
+        .arg("1")
+        .output()
+        .is_ok_and(|o| o.status.success());
+
+    if usable {
+        Ok(())
+    } else {
+        Err(ProviderError::ResolutionFailed(
+            "devbox requires a usable Nix, but `nix eval` failed on this host; devbox is a \
+             frontend over Nix and cannot resolve packages without it (see `devcroft doctor`)"
+                .to_string(),
+        ))
+    }
 }
 
 /// The lock key devbox would record for a declared package, replicating

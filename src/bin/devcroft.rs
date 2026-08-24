@@ -763,8 +763,17 @@ fn doctor_devbox_provider(required: bool) -> bool {
     };
     let version = String::from_utf8_lossy(&out.stdout).trim().to_string();
 
+    // `nix eval --expr 1`, not `nix --version` — the same probe the nix
+    // provider's own check settled on, and for the same reason this
+    // command already learned once: printing a version (or a help page)
+    // proves the binary exists and nothing about whether it can
+    // evaluate, which is what devbox actually needs. A version check
+    // here would reproduce exactly the false `[PASS]` the nix check was
+    // fixed for.
     let nix_usable = std::process::Command::new("nix")
-        .arg("--version")
+        .arg("eval")
+        .arg("--expr")
+        .arg("1")
         .output()
         .is_ok_and(|o| o.status.success());
     if nix_usable {
