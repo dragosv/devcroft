@@ -1014,6 +1014,11 @@ fn cli_up(args: &[String]) -> i32 {
         Ok(m) => m,
         Err(code) => return code,
     };
+    // config spec: "validation succeeds but a warning is printed at
+    // `up`, once". Printed before the sandbox comes up, so a grant of
+    // `~/.ssh` is visible above whatever the run produces rather than
+    // scrolled off underneath it.
+    print_manifest_warnings(&cwd);
     let project_root = match devcroft::config::discover(&cwd) {
         Ok(p) => p.parent().unwrap_or(&cwd).to_path_buf(),
         Err(_) => cwd.clone(),
@@ -1642,6 +1647,33 @@ fn resolve_name_arg(args: &[String], usage: &str, cmd: &str) -> Result<String, i
 fn discover_manifest(
     start: &std::path::Path,
 ) -> Result<(devcroft::config::Manifest, std::path::PathBuf), String> {
+    discover_manifest_with_warnings(start).map(|(manifest, root, _)| (manifest, root))
+}
+
+/// As [`discover_manifest`], but also hands back the validation warnings
+/// `config::parse` produced.
+///
+/// Split out rather than folded into every caller because the `config`
+/// spec scopes these precisely: a sensitive-path grant "prints a warning
+/// at `up`, once", not on every command that happens to read the
+/// manifest. `up` is the one caller that asks for them; `status`,
+/// `policy`, and `why` deliberately do not, so re-running them does not
+/// re-nag about a grant the user has already been told about.
+///
+/// They used to be dropped at *every* call site, `up` included, so the
+/// spec's two warning scenarios could not fire at all — found by
+/// adversarial review, not by a failing test, because nothing tested
+/// them.
+fn discover_manifest_with_warnings(
+    start: &std::path::Path,
+) -> Result<
+    (
+        devcroft::config::Manifest,
+        std::path::PathBuf,
+        Vec<devcroft::config::Warning>,
+    ),
+    String,
+> {
     let manifest_path = devcroft::config::discover(start).map_err(|_| {
         format!(
             "no devcroft.toml found in this directory or its ancestors; pass a sandbox name explicitly.{}",
@@ -1650,10 +1682,10 @@ fn discover_manifest(
     })?;
     let text = std::fs::read_to_string(&manifest_path)
         .map_err(|e| format!("reading {}: {e}", manifest_path.display()))?;
-    let (manifest, _warnings) =
+    let (manifest, warnings) =
         devcroft::config::parse(&text).map_err(|e| format!("{}: {e}", manifest_path.display()))?;
     let project_root = manifest_path.parent().unwrap_or(start).to_path_buf();
-    Ok((manifest, project_root))
+    Ok((manifest, project_root, warnings))
 }
 
 /// The cli spec's "Name resolution": "otherwise fail with exit code 2
@@ -1705,6 +1737,26 @@ fn resolve_manifest_strict(
             eprintln!("devcroft {cmd}: {msg}");
             Err(2)
         }
+    }
+}
+
+/// Prints the manifest's validation warnings, one per line, on stderr.
+///
+/// Best-effort by design: the manifest has already been discovered and
+/// parsed successfully by the caller at this point, so a failure to
+/// re-read it here is not worth failing `up` over — the warnings are
+/// advisory, and losing them is strictly better than refusing to bring
+/// up a valid sandbox because a second read raced.
+///
+/// stderr rather than stdout so `up`'s own machine-readable-ish progress
+/// lines stay unpolluted, matching how every other advisory in this
+/// binary is emitted.
+fn print_manifest_warnings(cwd: &std::path::Path) {
+    let Ok((_, _, warnings)) = discover_manifest_with_warnings(cwd) else {
+        return;
+    };
+    for warning in warnings {
+        eprintln!("devcroft: warning: {warning}");
     }
 }
 
