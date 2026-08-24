@@ -396,26 +396,6 @@ fn ignore_artifact_dir(project_root: &std::path::Path) {
     }
 }
 
-/// Whether `devbox.json` in `cwd` declares at least one package, in
-/// either accepted shape (array or object — see `provider::devbox`'s own
-/// `package_key`). Advisory only: `init`'s "ready for `up`" message needs
-/// to know whether there is anything to lock at all, not whether it is
-/// locked precisely for this system — that precision lives in `up`'s own
-/// precondition (`env-provider` spec), not in `init`'s advice.
-fn devbox_json_declares_packages(cwd: &std::path::Path) -> bool {
-    let Ok(text) = std::fs::read_to_string(cwd.join("devbox.json")) else {
-        return false;
-    };
-    let Ok(parsed) = text.parse::<serde_json::Value>() else {
-        return false;
-    };
-    match parsed.get("packages") {
-        Some(serde_json::Value::Array(items)) => !items.is_empty(),
-        Some(serde_json::Value::Object(map)) => !map.is_empty(),
-        _ => false,
-    }
-}
-
 fn cli_init(args: &[String]) -> i32 {
     const USAGE: &str = "devcroft init: usage: devcroft init [--force]";
     let force = match args {
@@ -509,9 +489,14 @@ fn cli_init(args: &[String]) -> i32 {
             );
         }
     } else if has_devbox {
-        if devbox_json_declares_packages(&cwd) && !cwd.join("devbox.lock").is_file() {
+        // Any devbox project without a lockfile, not only one declaring
+        // packages: devbox's stdenv comes from a base nixpkgs entry that
+        // stays the floating `nixpkgs-unstable` branch until `devbox
+        // install` pins it, so a zero-package project has something to
+        // resolve too (env-provider spec; design.md decision 1c).
+        if !cwd.join("devbox.lock").is_file() {
             println!(
-                "devcroft: found an existing devbox project (devbox.json) with unresolved packages."
+                "devcroft: found an existing devbox project (devbox.json) with no devbox.lock."
             );
             println!("devcroft: run `devbox install` before `devcroft up`.");
         } else {

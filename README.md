@@ -424,6 +424,30 @@ Both are recorded in `openspec/changes/add-devbox-provider/design.md`
 decisions 1a and 1b, corrected in place rather than left standing next to
 their own contradiction.
 
+**Then an adversarial review of the shipped result found the precondition
+did not deliver the rule it was written for**, and that is worth stating
+plainly because the change had already been committed as complete.
+`up` rewrote the user's `devbox.lock` during provisioning — precisely
+what the `env-provider` spec says resolution SHALL NOT do. A project
+whose every *declared* package was locked still slipped through, because
+`devbox.lock` also carries devbox's own base nixpkgs entry, which no
+per-package check can see; `up` resolved that entry against the floating
+`nixpkgs-unstable` branch and wrote it to disk. Now enforced by comparing
+the lockfile's bytes across capture and restoring + failing on any
+change — a byte comparison rather than a larger precondition, since the
+base entry's key is not a constant (a project pinning `nixpkgs.commit`
+locks under a different one) and predicting it would mean reimplementing
+devbox's resolution rules.
+
+That carried a second correction with it: **"declares no packages" does
+not mean "nothing to resolve"**. A zero-package devbox project still gets
+its stdenv from that same unpinned base, so it is reproducible only once
+`devbox install` has written a lockfile. The spec scenario asserting such
+a project needs none, `init`'s matching advice, and three tests were all
+wrong in the same way, and are corrected together. Two of this change's
+own tests had also been passing for the wrong reason, because `devbox
+add` — unlike `devbox install` — does not write a complete lockfile.
+
 ## Limitations
 
 devcroft's default (and only fully implemented) tier, `process`, is

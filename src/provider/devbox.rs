@@ -33,8 +33,14 @@ impl Provider for DevboxProvider {
         ensure_nix_usable()?;
         ensure_everything_locked(project_root)?;
 
+        // The lockfile as it was *before* capture. Compared again after,
+        // because the precondition above cannot see every entry devbox
+        // needs — see `restore_lock_if_capture_resolved`.
+        let lock_before = read_lock(project_root);
+
         let baseline = capture::canonical_base_env()?;
         let activated = capture_activated_env(&devbox_bin, project_root, &baseline)?;
+        restore_lock_if_capture_resolved(project_root, &lock_before)?;
 
         Ok(Resolution {
             env: capture::changed_env(&baseline, &activated),
@@ -148,16 +154,85 @@ fn declared_package_keys(project_root: &Path) -> Result<Vec<String>, ProviderErr
     }
 }
 
+/// The lockfile's raw bytes, or `None` when it does not exist — both are
+/// meaningful states to compare against after capture (a lockfile devbox
+/// *creates* during capture is as much a resolution as one it edits).
+fn read_lock(project_root: &Path) -> Option<Vec<u8>> {
+    std::fs::read(project_root.join("devbox.lock")).ok()
+}
+
+/// Enforces the spec sentence [`ensure_everything_locked`] can only
+/// approximate: "Resolution SHALL respect the project's lockfile and
+/// SHALL NOT update it, resolve package versions, or contact a package
+/// index to decide *what* to install."
+///
+/// **Why a post-check is needed at all**, found by adversarial review of
+/// the shipped implementation rather than during design: a project whose
+/// every *declared* package is locked can still have capture rewrite
+/// `devbox.lock`, because devbox's lockfile also carries its own base
+/// nixpkgs entry, which is not a declared package and which
+/// [`ensure_everything_locked`] therefore never looks at. Measured: a
+/// lockfile holding a fully-resolved `cowsay@latest` but no
+/// `github:NixOS/nixpkgs/…` entry passed every precondition, and `up`
+/// then resolved that entry live — against the floating
+/// `nixpkgs-unstable` branch — and wrote it to disk.
+///
+/// **Why this is a post-check rather than one more precondition.** The
+/// base entry's key is not a constant: measured, a project pinning
+/// `nixpkgs.commit` in `devbox.json` locks under
+/// `github:NixOS/nixpkgs/<that commit>` instead of
+/// `github:NixOS/nixpkgs/nixpkgs-unstable`. Predicting the full key set
+/// means reimplementing devbox's own resolution rules, which is exactly
+/// what design.md decision 1 rejects ("devcroft would own a second
+/// implementation of devbox's semantics, which will drift"). Comparing
+/// the file's bytes needs no such knowledge and keeps working if devbox
+/// changes its key scheme.
+///
+/// Restores the original bytes before failing, so a rejected `up` leaves
+/// the working tree exactly as it found it rather than reporting a
+/// violation it already committed.
+fn restore_lock_if_capture_resolved(
+    project_root: &Path,
+    before: &Option<Vec<u8>>,
+) -> Result<(), ProviderError> {
+    let after = read_lock(project_root);
+    if &after == before {
+        return Ok(());
+    }
+
+    let lock_path = project_root.join("devbox.lock");
+    match before {
+        Some(bytes) => std::fs::write(&lock_path, bytes),
+        // Capture created a lockfile where the project had none.
+        None => std::fs::remove_file(&lock_path),
+    }
+    .map_err(|e| {
+        ProviderError::ResolutionFailed(format!(
+            "devbox resolved during `up` and rewrote {}, and restoring it failed: {e}",
+            lock_path.display()
+        ))
+    })?;
+
+    Err(ProviderError::ResolutionFailed(format!(
+        "devbox resolved packages while capturing the environment and rewrote {} \
+         (devcroft restored it); provisioning must not resolve versions or contact a \
+         package index — run `devbox install` and commit the result",
+        lock_path.display()
+    )))
+}
+
 /// Preconditions SHALL be expressed as "nothing resolves at `up`", not as
 /// "a lockfile exists" (spec, design.md decision 1b): a project declaring
 /// no packages needs no lockfile at all, and — corrected by measurement,
 /// superseding an earlier draft that required per-system lock coverage —
 /// a lock entry present for any system resolves correctly for every
-/// system from its pinned commit reference. What actually contacts a
-/// package index and rewrites the lockfile, measured directly, is a
-/// declared package with **no key at all** in `devbox.lock`. So this
-/// checks exactly that: every declared key is present, regardless of
-/// which systems its entry happens to cover.
+/// system from its pinned commit reference.
+///
+/// This is a **necessary but not sufficient** check, and deliberately so:
+/// it names the offending package precisely, before anything runs, which
+/// a byte comparison cannot do. What it cannot see is devbox's own base
+/// nixpkgs entry, so [`restore_lock_if_capture_resolved`] backstops it
+/// after capture — see that function for the measurement.
 fn ensure_everything_locked(project_root: &Path) -> Result<(), ProviderError> {
     let declared = declared_package_keys(project_root)?;
     if declared.is_empty() {
@@ -302,6 +377,23 @@ mod tests {
         }
     }
 
+    /// Materializes a **complete** lockfile the way a real project would.
+    ///
+    /// `devbox install`, specifically — not `devbox add`. Measured: `add`
+    /// writes the package's own entry but *not* devbox's base nixpkgs
+    /// entry, leaving a lockfile that capture would still have to
+    /// complete (and therefore rewrite). `install` writes both, and a
+    /// lockfile it produced survives capture byte-identically. Returns
+    /// false when the environment cannot resolve at all (no network for
+    /// nixpkgs), so callers skip rather than fail.
+    fn devbox_install(devbox: &Path, root: &Path) -> bool {
+        Command::new(devbox)
+            .arg("install")
+            .current_dir(root)
+            .output()
+            .is_ok_and(|o| o.status.success())
+    }
+
     #[test]
     fn resolve_fails_with_no_environment_when_devbox_json_missing() {
         let root = tempdir("no-env");
@@ -356,18 +448,123 @@ mod tests {
         assert!(declared_package_keys(&root).unwrap().is_empty());
     }
 
+    /// **Corrected by adversarial review.** An earlier version of this
+    /// test asserted a zero-package project resolves with *no lockfile
+    /// at all*, matching a spec scenario written on the reasoning "no
+    /// packages declared, so nothing to resolve". Measurement falsified
+    /// both: devbox's stdenv (gcc, coreutils, bash — visible on the
+    /// captured `PATH` even here) comes from its base nixpkgs, and with
+    /// no lockfile that base is the *floating* `nixpkgs-unstable`
+    /// branch, resolved at `up` and written to disk. A zero-package
+    /// devbox project is reproducible only once that base is pinned.
     #[test]
-    fn resolve_succeeds_with_no_packages_and_no_lockfile() {
-        // Requires real devbox and nix: this exercises the full
-        // resolve() path, not just the precondition helper, so the
-        // capture step must actually run.
-        if real_devbox().is_none() || resolve_on_path("nix").is_none() {
+    fn resolve_succeeds_with_no_packages_once_the_base_is_locked() {
+        let Some(devbox) = real_devbox() else { return };
+        if resolve_on_path("nix").is_none() {
             return;
         }
         let root = tempdir("zero-packages-resolve");
         write_devbox_project(&root, "{}", None);
+        if !devbox_install(&devbox, &root) {
+            return;
+        }
         let resolution = DevboxProvider.resolve(&root).unwrap();
         assert!(!resolution.ran_activation_hook);
+    }
+
+    /// The other half of the correction above: without that lockfile,
+    /// `up` must refuse rather than silently pinning whatever
+    /// `nixpkgs-unstable` points at today.
+    #[test]
+    fn resolve_refuses_a_zero_package_project_with_no_lockfile() {
+        if real_devbox().is_none() || resolve_on_path("nix").is_none() {
+            return;
+        }
+        let root = tempdir("zero-packages-unlocked");
+        write_devbox_project(&root, "{}", None);
+
+        let err = DevboxProvider.resolve(&root).unwrap_err();
+        match err {
+            ProviderError::ResolutionFailed(msg) => assert!(msg.contains("devbox install")),
+            other => panic!("expected ResolutionFailed naming `devbox install`, got {other:?}"),
+        }
+        assert!(
+            !root.join("devbox.lock").is_file(),
+            "a refused `up` must not leave behind the lockfile capture created"
+        );
+    }
+
+    /// Regression for the gap adversarial review found in the shipped
+    /// implementation: every *declared* package is fully locked, so
+    /// `ensure_everything_locked` passes, but devbox's own base nixpkgs
+    /// entry is absent — so capture resolves it live (against the
+    /// floating `nixpkgs-unstable` branch) and rewrites the user's
+    /// lockfile. `up` must now refuse, and must leave the file untouched.
+    #[test]
+    fn resolve_refuses_and_restores_when_capture_would_rewrite_the_lockfile() {
+        if real_devbox().is_none() || resolve_on_path("nix").is_none() {
+            return;
+        }
+        let root = tempdir("lock-rewrite-refused");
+        // `cowsay@latest`, fully resolved for this system, with no
+        // `github:NixOS/nixpkgs/...` base entry beside it.
+        let lock = r#"{
+  "lockfile_version": "1",
+  "packages": {
+    "cowsay@latest": {
+      "last_modified": "2026-08-12T11:28:58Z",
+      "resolved": "github:NixOS/nixpkgs/044bfe75bfe4c7bbe043dc17b5e42ea823b84a09#cowsay",
+      "source": "devbox-search",
+      "version": "3.8.4"
+    }
+  }
+}"#;
+        write_devbox_project(&root, r#"{"packages": ["cowsay@latest"]}"#, Some(lock));
+
+        let err = DevboxProvider.resolve(&root).unwrap_err();
+        match err {
+            ProviderError::ResolutionFailed(msg) => {
+                assert!(msg.contains("devbox install"), "got: {msg}");
+                assert!(msg.contains("restored"), "got: {msg}");
+            }
+            other => panic!("expected ResolutionFailed about a rewritten lockfile, got {other:?}"),
+        }
+
+        assert_eq!(
+            std::fs::read_to_string(root.join("devbox.lock")).unwrap(),
+            lock,
+            "a refused `up` must leave devbox.lock byte-identical"
+        );
+    }
+
+    /// The companion property: a project whose lockfile is genuinely
+    /// complete resolves without the post-check firing, so the guard
+    /// above cannot be satisfied by simply always failing.
+    #[test]
+    fn resolve_leaves_a_complete_lockfile_untouched() {
+        let Some(devbox) = real_devbox() else { return };
+        if resolve_on_path("nix").is_none() {
+            return;
+        }
+        let root = tempdir("lock-untouched");
+        write_devbox_project(&root, r#"{"packages": ["cowsay@latest"]}"#, None);
+        let install = Command::new(&devbox)
+            .arg("install")
+            .current_dir(&root)
+            .output()
+            .unwrap();
+        if !install.status.success() {
+            return;
+        }
+
+        let before = std::fs::read(root.join("devbox.lock")).unwrap();
+        DevboxProvider.resolve(&root).unwrap();
+        let after = std::fs::read(root.join("devbox.lock")).unwrap();
+
+        assert_eq!(
+            before, after,
+            "a complete lockfile must survive `up` unchanged"
+        );
     }
 
     #[test]
@@ -499,7 +696,8 @@ mod tests {
     /// break this test rather than silently reintroducing the violation.
     #[test]
     fn devbox_shellenv_does_not_run_the_init_hook() {
-        if real_devbox().is_none() || resolve_on_path("nix").is_none() {
+        let Some(devbox) = real_devbox() else { return };
+        if resolve_on_path("nix").is_none() {
             return;
         }
         let root = tempdir("init-hook-does-not-run");
@@ -512,6 +710,9 @@ mod tests {
             ),
             None,
         );
+        if !devbox_install(&devbox, &root) {
+            return;
+        }
 
         let resolution = DevboxProvider.resolve(&root).unwrap();
 
@@ -534,16 +735,10 @@ mod tests {
         }
         let root = tempdir("real-resolve-grants");
         write_devbox_project(&root, r#"{"packages": ["ripgrep@latest"]}"#, None);
-
-        let add = Command::new(&devbox)
-            .arg("add")
-            .arg("ripgrep@latest")
-            .current_dir(&root)
-            .output()
-            .unwrap();
-        if !add.status.success() {
-            // No network reachable to resolve nixpkgs, or similar
-            // environment limitation unrelated to what this test checks.
+        // `install`, not `add` — see `devbox_install`'s own doc comment:
+        // `add` leaves the base nixpkgs entry unlocked, which capture
+        // would then have to write, and `resolve` now refuses that.
+        if !devbox_install(&devbox, &root) {
             return;
         }
 

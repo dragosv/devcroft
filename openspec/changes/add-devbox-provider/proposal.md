@@ -61,16 +61,17 @@ Two things make this worth proposing now rather than later:
     demand that the project declare `provider = "nix"`.
   - `devbox.json` present; a missing one is a missing environment (hint
     `devbox init`), not a missing feature.
-  - Every declared package already has a key in `devbox.lock`; otherwise
-    `up` fails rather than resolving versions against whatever nixpkgs
-    currently points at. Deliberately not "`devbox.lock` exists" — a
-    project declaring no packages has no lockfile and is still
-    legitimate — and deliberately not "resolved for the running system":
-    measured against devbox 0.18.0, a lock entry resolved only for
-    another platform still resolves correctly here, from its pinned
-    commit reference; only an entry that is *entirely absent* triggers
-    live, unpinned resolution and a lockfile write. See design.md
-    decision 1b for the measurement.
+  - Every declared package already has a key in `devbox.lock`, **and**
+    capture leaves `devbox.lock` byte-identical; otherwise `up` fails
+    rather than resolving versions against whatever nixpkgs currently
+    points at. Deliberately not "resolved for the running system":
+    measured against devbox 0.18.0 with a cold store, a lock entry
+    resolved only for another platform still resolves correctly here,
+    from its pinned commit reference, without touching the file. The
+    byte comparison is what actually enforces the rule — the per-package
+    check cannot see devbox's own base nixpkgs entry, which is where the
+    shipped implementation was found to still be resolving live. See
+    design.md decisions 1b and 1c.
 - **Staleness**: fingerprint of `devbox.json` + `devbox.lock`, the same
   contract flox has over `manifest.toml` + lockfile and nix has over
   `flake.nix` + `flake.lock`.
@@ -156,8 +157,9 @@ capability, not a new capability — the same reasoning
 - Removing `devbox.lock` from a project that declares packages fails
   `up` at layer `provider`, hinting `devbox install` (devbox has no lock
   subcommand); removing `devbox.json` fails with a hint to `devbox
-  init`. A project declaring no packages comes up with no lockfile at
-  all, because it has nothing to resolve.
+  init`. A project declaring no packages needs a lockfile too — devbox's
+  stdenv comes from a base nixpkgs entry that is unpinned until one
+  exists — so it fails the same way until `devbox install` has run.
 - `policy --render` shows the store grants with origin `provider:devbox`;
   provider resolution adds no write grants.
 - Editing `devbox.json` or `devbox.lock` flips `status` to stale and

@@ -37,16 +37,22 @@ did.)
 #### Scenario: Init on a devbox project
 - **WHEN** `devbox.json` exists in the project root and no `.flox/` does
 - **THEN** the generated manifest sets `provider = "devbox"`
-- **AND** if the project declares packages that are not yet resolved,
-  init prints `devbox install` as the next step before `up` — devbox has
-  no separate lock subcommand, so naming one would send the user to a
-  command that does not exist
+- **AND** if no `devbox.lock` exists, init prints `devbox install` as the
+  next step before `up` — devbox has no separate lock subcommand, so
+  naming one would send the user to a command that does not exist
 
-#### Scenario: Init on a devbox project with nothing to resolve
-- **WHEN** `devbox.json` exists and declares no packages
+#### Scenario: Init on a devbox project declaring no packages
+- **WHEN** `devbox.json` exists, declares no packages, and no
+  `devbox.lock` exists
+- **THEN** init still prints `devbox install` as the next step, matching
+  the `env-provider` rule that a zero-package project has something to
+  resolve after all: devbox's own base nixpkgs entry, which is the
+  floating `nixpkgs-unstable` branch until a lockfile pins it
+
+#### Scenario: Init on a fully locked devbox project
+- **WHEN** `devbox.json` and `devbox.lock` both exist
 - **THEN** init reports the project as ready for `up` rather than
-  advising a lock step, matching the `env-provider` rule that a project
-  with nothing to resolve has nothing to lock
+  advising a lock step
 
 #### Scenario: Init on a nix flake project
 - **WHEN** `flake.nix` exists in the project root and neither `.flox/`

@@ -171,15 +171,66 @@ is no per-system gap to close.
 rule:** a package declared in `devbox.json` with **no key at all** in
 `devbox.lock` — e.g. added by hand without `devbox install` — causes the
 identical capture command to resolve it live against `nixpkgs-unstable`
-(a floating branch reference, not a pinned commit), fetch build outputs
-from `cache.nixos.org`, and **write the new resolution into
-`devbox.lock` on disk**. That is resolving a version, contacting an
-index, and updating the lockfile — the exact three things the
-provisioning-phase trust rests on not happening, all three, confirmed in
-one measurement.
+(a floating branch reference, not a pinned commit) and **write the new
+resolution into `devbox.lock` on disk**.
+
+**One leg of that original argument was wrong, and adversarial review
+removed it.** It also cited the `cache.nixos.org` fetch as evidence.
+A cold-store measurement — `cowsay`, never materialized on this host,
+locked only for `x86_64-darwin` while running `aarch64-linux` — shows
+the *permitted* case downloads 13 MiB from `cache.nixos.org` too, and
+still leaves the lockfile byte-identical. Fetching a pinned store path is
+precisely what "materializing already-pinned packages is permitted and
+expected" describes. The cache fetch therefore discriminates nothing;
+the lockfile write is the whole signal. Stating it as evidence made the
+conclusion look better supported than it was.
 
 So the precondition is "does the project's declared package have a key
 in `devbox.lock`'s `packages` map", full stop — no per-system check.
+
+### 1c. A byte comparison of the lockfile, after capture, is the real enforcement
+
+**Found by adversarial review of the shipped implementation, not during
+design** — decision 1b's precondition is necessary but not sufficient,
+and the gap is structural rather than an oversight in how it was coded.
+
+`devbox.lock` carries more than the project's declared packages: it also
+carries devbox's own **base nixpkgs entry**. That entry is not a declared
+package, so no per-package precondition can see it. Measured: a project
+whose every declared package was fully resolved, but whose lockfile
+lacked a `github:NixOS/nixpkgs/…` entry, passed every precondition — and
+`devcroft up` then resolved that entry against the floating
+`nixpkgs-unstable` branch and wrote it to the user's file. Confirmed
+through the real binary, by md5 before and after.
+
+**A second, larger consequence: "declares no packages" does not mean
+"has nothing to resolve".** A zero-package devbox project still gets a
+stdenv (gcc, coreutils, bash — all visible on the captured `PATH`), and
+that stdenv comes from the same unpinned base. So the earlier spec
+scenario asserting such a project needs no lockfile was wrong on
+reproducibility grounds, not merely incomplete: without one, two machines
+running `up` a month apart get different toolchains. It is replaced.
+
+**Why a post-check rather than one more precondition.** The base entry's
+key is not a constant — measured, a project pinning `nixpkgs.commit` in
+`devbox.json` locks under `github:NixOS/nixpkgs/<that commit>` instead of
+`github:NixOS/nixpkgs/nixpkgs-unstable`. Predicting the complete key set
+means reimplementing devbox's resolution rules, which decision 1 already
+rejects by name ("devcroft would own a second implementation of devbox's
+semantics, which will drift"). Comparing the file's bytes needs no such
+knowledge, and keeps working if devbox changes its scheme.
+
+The check restores the original bytes (or removes a lockfile capture
+created) before failing, so a refused `up` leaves the tree as it found
+it. Both directions are tested: a complete lockfile — one `devbox
+install` produced — survives capture byte-identically, so the guard
+cannot be satisfied by always failing.
+
+Worth recording for whoever qualifies the next provider: `devbox add`
+alone does **not** produce a complete lockfile. It writes the package's
+entry and omits the base one; only `devbox install` writes both. Two of
+this change's own tests used `add` and were passing for the wrong
+reason.
 Computing that key from `devbox.json` needs to account for two accepted
 shapes, both exercised live against devbox 0.18.0:
 

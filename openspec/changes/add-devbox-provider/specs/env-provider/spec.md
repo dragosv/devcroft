@@ -24,16 +24,33 @@ project declares SHALL have **a key in `devbox.lock`'s `packages` map**;
 where any declared package does not, `up` SHALL fail at layer `provider`
 with exit code 3, naming the package and the command that records it.
 
-Two properties of devbox's lockfile make the weaker "file exists" check
-insufficient, both observed against devbox 0.18.0:
+A lockfile can be present and non-empty while omitting a specific
+declared package entirely, e.g. after editing `devbox.json` by hand
+without re-running `devbox install`. A presence check on the *file*
+accepts this; a presence check on the *key* does not.
 
-- A project that declares no packages has **no lockfile at all**, and is
-  a legitimate — if minimal — environment. Requiring the file would
-  reject it for a reason that is not true of it.
-- A lockfile can be present and non-empty while omitting a specific
-  declared package entirely, e.g. after editing `devbox.json` by hand
-  without re-running `devbox install`. A presence check on the *file*
-  accepts this; a presence check on the *key* does not.
+**That per-key check is necessary but not sufficient**, and the system
+SHALL additionally verify, *after* capture, that `devbox.lock` is
+byte-identical to what it was before. Where it is not, the system SHALL
+restore the original file — or delete one capture created where the
+project had none — and fail at layer `provider` with exit code 3, so a
+refused `up` leaves the working tree exactly as it found it rather than
+reporting a violation it has already committed.
+
+The post-check is required because the per-key check structurally cannot
+see everything devbox resolves: `devbox.lock` also carries devbox's own
+**base nixpkgs entry**, which is not a declared package. Measured against
+devbox 0.18.0 — a project whose every declared package was fully
+resolved, but whose lockfile carried no `github:NixOS/nixpkgs/…` entry,
+passed every precondition, and `up` then resolved that entry live against
+the floating `nixpkgs-unstable` branch and wrote it to disk.
+
+The check SHALL be a byte comparison rather than a prediction of which
+keys devbox needs. The base entry's key is not a constant: measured, a
+project pinning `nixpkgs.commit` in `devbox.json` locks under
+`github:NixOS/nixpkgs/<that commit>` instead. Predicting the full key set
+would mean reimplementing devbox's resolution rules, which design.md
+decision 1 rejects on drift grounds.
 
 **Corrected by measurement, superseding an earlier draft of this
 requirement.** The draft additionally required the package's lock entry
@@ -54,10 +71,19 @@ What the same measurement confirms **does** violate the two-phase rule:
 a declared package with **no key in `devbox.lock` at all** causes the
 capture command to resolve it live against `nixpkgs-unstable` — a
 floating reference, not a pinned commit — and **write the new resolution
-back into `devbox.lock` on disk**, contacting `cache.nixos.org` in the
-process. That is exactly "resolve package versions" and "contact a
-package index" and "update it", all three of which the paragraph above
-forbids. The precondition exists to catch this case, and only this case.
+back into `devbox.lock` on disk**. That is "resolve package versions" and
+"update it", which the paragraph above forbids.
+
+**One clause of an earlier version of this paragraph was false and is
+withdrawn**, since it was doing real work in the argument: it also cited
+"contacting `cache.nixos.org`" as evidence of the violation. A cold-store
+measurement (a package never before materialized on the host, locked only
+for a foreign system) shows the *permitted* case fetches from
+`cache.nixos.org` too — 13 MiB of it — while leaving the lockfile
+untouched. Fetching a pinned store path is exactly the "materializing
+already-pinned packages is permitted and expected" case. So the binary
+cache fetch does not distinguish the two situations at all, and the
+discriminator is solely whether the lockfile changes.
 
 devbox is a frontend over Nix and cannot materialize anything without it.
 The system SHALL therefore verify Nix is usable as part of the devbox
@@ -102,16 +128,32 @@ unmet requirement rather than instructing the user to change providers.
 - **WHEN** a declared package's `devbox.lock` entry covers only a system
   other than the one `up` is running on
 - **THEN** `up` succeeds — the entry's pinned commit reference resolves
-  and materializes for the current system without contacting a package
-  index or writing back to `devbox.lock`, and per-system cache coverage
-  is not part of this precondition (measured against devbox 0.18.0;
-  see design.md)
+  and materializes for the current system without writing back to
+  `devbox.lock`, and per-system cache coverage is not part of this
+  precondition (measured against devbox 0.18.0, cold store; see
+  design.md)
 
-#### Scenario: A project declaring no packages needs no lockfile
+#### Scenario: A project declaring no packages still needs a lockfile
 - **WHEN** provider is `devbox`, `devbox.json` declares no packages, and
   no `devbox.lock` exists
-- **THEN** `up` succeeds — there is nothing to resolve, so the
-  precondition is satisfied rather than violated
+- **THEN** `up` fails at layer `provider` with exit code 3, hinting
+  `devbox install`, and no `devbox.lock` is left behind — devbox's stdenv
+  comes from its base nixpkgs, which is the floating `nixpkgs-unstable`
+  branch until a lockfile pins it, so "declares no packages" does not
+  mean "has nothing to resolve"
+
+#### Scenario: A complete lockfile survives provisioning untouched
+- **WHEN** provider is `devbox` and `devbox.lock` covers everything
+  devbox needs, as `devbox install` produces
+- **THEN** `up` succeeds and `devbox.lock` is byte-identical afterwards
+
+#### Scenario: Provisioning refuses rather than rewriting the lockfile
+- **WHEN** capture would add or change any entry in `devbox.lock` —
+  including devbox's own base nixpkgs entry, which no per-package
+  precondition can see
+- **THEN** `up` fails at layer `provider` with exit code 3, naming
+  `devbox install` as the fix, and `devbox.lock` is left exactly as it
+  was before `up` ran
 
 #### Scenario: Missing environment, not missing feature
 - **WHEN** provider is `devbox` and the project has no `devbox.json`

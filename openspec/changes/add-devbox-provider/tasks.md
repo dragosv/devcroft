@@ -179,6 +179,41 @@
 > closure and **miss every package the project actually declared**. See
 > design.md decision 1a.
 
+> ## Corrections from adversarial review, after the change first shipped
+>
+> Reviewing the delivered implementation adversarially — trying to break
+> it rather than confirm it — found that **task 1.2's precondition did
+> not actually deliver the spec sentence it was written for**, plus one
+> false clause in the evidence for 1b. Recorded here rather than folded
+> silently into the tasks above, since the whole point of group 0 was
+> that measurement outranks reasoning:
+>
+> - **`up` rewrote the user's `devbox.lock`** — the exact thing
+>   `env-provider` says resolution SHALL NOT do. A project whose every
+>   *declared* package was locked still passed, because `devbox.lock`
+>   also carries devbox's own base nixpkgs entry, which no per-package
+>   check can see. Confirmed through the real binary by md5 before/after.
+>   Fixed by comparing the lockfile's bytes across capture and restoring
+>   + failing on any change (design.md decision 1c) — a byte comparison
+>   rather than a bigger precondition, because the base entry's key is
+>   not a constant (a project pinning `nixpkgs.commit` locks under a
+>   different key) and predicting it would mean reimplementing devbox's
+>   resolution rules.
+> - **"Declares no packages" turned out not to mean "nothing to
+>   resolve".** A zero-package devbox project still gets its stdenv from
+>   that same unpinned base, so it is not reproducible without a
+>   lockfile. The `env-provider` scenario asserting otherwise, the `cli`
+>   scenario mirroring it, `init`'s advice, and three tests were all
+>   wrong in the same way and are corrected.
+> - **One leg of 1b's evidence was false.** It cited the
+>   `cache.nixos.org` fetch as proof of the violation; a cold-store
+>   measurement shows the *permitted* case fetches too (13 MiB) while
+>   leaving the lockfile untouched. Withdrawn — the lockfile write is the
+>   only discriminator.
+> - **`devbox add` does not produce a complete lockfile** (only `devbox
+>   install` does), which is why two of this change's own tests were
+>   passing for the wrong reason.
+
 ## 1. Provider implementation
 
 > **Complete.** `src/provider/devbox.rs`. Two more corrections surfaced

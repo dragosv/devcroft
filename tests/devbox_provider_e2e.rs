@@ -34,9 +34,16 @@ struct Sandbox {
 }
 
 impl Sandbox {
-    /// `packages`: names to `devbox add` during setup (may be empty).
-    /// `locked`: whether to actually resolve `packages` — `false` leaves
-    /// them declared-but-unlocked, for the missing-lock failure test.
+    /// `packages`: names to declare in `devbox.json` (may be empty).
+    /// `locked`: whether to run `devbox install`, producing a complete
+    /// lockfile — `false` leaves the project unlocked, for the
+    /// missing-lock failure tests.
+    ///
+    /// `install` runs even with **no** packages declared, which is not
+    /// redundant: devbox's base nixpkgs entry is itself a resolution, so
+    /// a zero-package project with no lockfile still resolves the
+    /// floating `nixpkgs-unstable` branch at `up` — which `resolve` now
+    /// refuses (see `provider::devbox::restore_lock_if_capture_resolved`).
     fn new(tag: &str, packages: &[&str], locked: bool) -> Option<Self> {
         if !devbox_available() {
             eprintln!("skipping: devbox or nix not on PATH");
@@ -62,7 +69,7 @@ impl Sandbox {
         )
         .unwrap();
 
-        if locked && !packages.is_empty() {
+        if locked {
             let install = Command::new("devbox")
                 .arg("install")
                 .current_dir(&project_root)
@@ -189,15 +196,42 @@ fn up_fails_at_provider_layer_when_a_declared_package_has_no_lockfile() {
     assert!(stderr.contains("devbox install"), "got: {stderr}");
 }
 
-/// Spec: "A project declaring no packages needs no lockfile."
+/// Spec: "A project declaring no packages still needs a lockfile."
+///
+/// Corrected by adversarial review — an earlier version of this test
+/// asserted the opposite ("needs no lockfile"), matching a spec scenario
+/// since replaced. devbox's stdenv comes from its base nixpkgs, which is
+/// unpinned without a lockfile, so a zero-package project is reproducible
+/// only once `devbox install` has written one.
 #[test]
-fn up_succeeds_with_no_declared_packages_and_no_lockfile() {
+fn up_succeeds_with_no_declared_packages_once_the_base_is_locked() {
     let Some(sandbox) = Sandbox::new("zeropkg", &[], true) else {
         return;
     };
 
     let out = sandbox.run(&["up"]);
     assert!(out.status.success(), "{out:?}");
+}
+
+/// The regression adversarial review found in the shipped code: `up`
+/// rewrote the user's `devbox.lock` during provisioning — the exact thing
+/// the `env-provider` spec says resolution SHALL NOT do. Here the project
+/// declares nothing and has no lockfile at all, so capture would create
+/// one; `up` must refuse and leave the tree as it found it.
+#[test]
+fn up_refuses_rather_than_writing_a_lockfile_during_provisioning() {
+    let Some(sandbox) = Sandbox::new("nolockwrite", &[], false) else {
+        return;
+    };
+
+    let out = sandbox.run(&["up"]);
+    assert_eq!(out.status.code(), Some(3), "{out:?}");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("devbox install"), "got: {stderr}");
+    assert!(
+        !sandbox.project_root.join("devbox.lock").is_file(),
+        "a refused `up` must not leave behind the lockfile capture created"
+    );
 }
 
 /// Spec: "Stale environment after devbox file change."

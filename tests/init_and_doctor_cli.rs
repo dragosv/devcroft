@@ -381,11 +381,14 @@ fn init_on_a_devbox_project_with_unresolved_packages_advises_install() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// Spec: "Init on a devbox project with nothing to resolve" — a project
-/// declaring no packages is ready for `up` with no lock advice, matching
-/// the `env-provider` rule that nothing declared means nothing to lock.
+/// Spec: "Init on a devbox project declaring no packages".
+///
+/// **Corrected by adversarial review**, along with the `env-provider`
+/// scenario it mirrored: a zero-package devbox project is *not* ready for
+/// `up` without a lockfile, because devbox's stdenv comes from a base
+/// nixpkgs entry that stays floating until `devbox install` pins it.
 #[test]
-fn init_on_a_devbox_project_with_nothing_to_resolve_is_ready() {
+fn init_on_a_devbox_project_declaring_no_packages_still_advises_install() {
     let dir = scratch_project("devbox-empty");
     std::fs::write(dir.join("devbox.json"), "{}").unwrap();
 
@@ -393,12 +396,31 @@ fn init_on_a_devbox_project_with_nothing_to_resolve_is_ready() {
     assert!(out.status.success(), "{:?}", out);
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(
+        stdout.contains("devbox install"),
+        "a zero-package devbox project still has its base nixpkgs to lock, got {stdout:?}"
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// The other side of that correction: once a lockfile exists, `init` says
+/// ready — so the advice above is not simply unconditional.
+#[test]
+fn init_on_a_fully_locked_devbox_project_is_ready() {
+    let dir = scratch_project("devbox-locked");
+    std::fs::write(dir.join("devbox.json"), "{}").unwrap();
+    std::fs::write(dir.join("devbox.lock"), r#"{"packages": {}}"#).unwrap();
+
+    let out = run(&dir, &["init"]);
+    assert!(out.status.success(), "{:?}", out);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
         stdout.contains("ready for `devcroft up`"),
-        "a devbox project declaring no packages has nothing to lock, got {stdout:?}"
+        "a locked devbox project should be ready, got {stdout:?}"
     );
     assert!(
         !stdout.contains("devbox install"),
-        "should not advise locking when nothing is declared, got {stdout:?}"
+        "should not advise locking when a lockfile exists, got {stdout:?}"
     );
 
     let _ = std::fs::remove_dir_all(&dir);
