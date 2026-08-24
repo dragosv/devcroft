@@ -10,10 +10,12 @@
 //! provider touches this file once rather than every call site.
 
 mod capture;
+mod devbox;
 mod flox;
 mod nix;
 mod validate;
 
+pub use devbox::DevboxProvider;
 pub use flox::FloxProvider;
 pub use nix::NixProvider;
 pub use validate::{normalize_provider_name, validate_provider};
@@ -195,7 +197,7 @@ impl fmt::Display for ProviderError {
             ProviderError::Unknown { name } => {
                 write!(
                     f,
-                    "unknown provider `{name}`; devcroft supports `flox` and `nix` in this release"
+                    "unknown provider `{name}`; devcroft supports `flox`, `nix`, and `devbox` in this release"
                 )
             }
             ProviderError::MissingBinary { provider, hint } => write!(
@@ -227,20 +229,22 @@ impl std::error::Error for ProviderError {}
 pub enum ProviderKind {
     Flox,
     Nix,
+    Devbox,
 }
 
 impl ProviderKind {
     /// `name` must already be validated and normalized (see
     /// [`validate_provider`], [`normalize_provider_name`]) — this only
-    /// ever sees `"flox"` or `"nix"` in practice, since `config::parse` is
-    /// the sole place a `Manifest` is constructed. Returns
-    /// [`ProviderError::Unknown`] rather than panicking so a manifest
-    /// built by a test or another caller that skipped validation still
-    /// fails through the normal error contract instead of crashing.
+    /// ever sees `"flox"`, `"nix"`, or `"devbox"` in practice, since
+    /// `config::parse` is the sole place a `Manifest` is constructed.
+    /// Returns [`ProviderError::Unknown`] rather than panicking so a
+    /// manifest built by a test or another caller that skipped validation
+    /// still fails through the normal error contract instead of crashing.
     pub fn from_name(name: &str) -> Result<Self, ProviderError> {
         match name {
             "flox" => Ok(ProviderKind::Flox),
             "nix" => Ok(ProviderKind::Nix),
+            "devbox" => Ok(ProviderKind::Devbox),
             other => Err(ProviderError::Unknown {
                 name: other.to_string(),
             }),
@@ -257,6 +261,7 @@ impl ProviderKind {
         match self {
             ProviderKind::Flox => "flox",
             ProviderKind::Nix => "nix",
+            ProviderKind::Devbox => "devbox",
         }
     }
 }
@@ -266,6 +271,7 @@ impl Provider for ProviderKind {
         match self {
             ProviderKind::Flox => FloxProvider.resolve(project_root),
             ProviderKind::Nix => NixProvider.resolve(project_root),
+            ProviderKind::Devbox => DevboxProvider.resolve(project_root),
         }
     }
 }
@@ -273,11 +279,12 @@ impl Provider for ProviderKind {
 /// Content fingerprint of the environment definition `provider` names, for
 /// staleness detection — dispatches to the matching provider's own
 /// fingerprint (flox: `manifest.toml` + lockfile; nix: `flake.nix` +
-/// `flake.lock`).
+/// `flake.lock`; devbox: `devbox.json` + `devbox.lock`).
 pub fn manifest_fingerprint(provider: &str, project_root: &Path) -> Result<String, ProviderError> {
     match ProviderKind::from_name(provider)? {
         ProviderKind::Flox => flox::manifest_fingerprint(project_root),
         ProviderKind::Nix => nix::flake_fingerprint(project_root),
+        ProviderKind::Devbox => devbox::devbox_fingerprint(project_root),
     }
 }
 

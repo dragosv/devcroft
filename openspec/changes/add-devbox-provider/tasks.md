@@ -181,122 +181,233 @@
 
 ## 1. Provider implementation
 
-- [ ] 1.1 `src/provider/devbox.rs` with `DevboxProvider`, implementing
-      `Provider::resolve` via the mechanism task 0.2 chose, diffed
-      against the existing shared canonical baseline — never a new one
-- [ ] 1.2 Preconditions, checked before any devbox command runs and each
+> **Complete.** `src/provider/devbox.rs`. Two more corrections surfaced
+> by live measurement while implementing, on top of the ones task group 0
+> already made — recorded in design.md decisions 1a and 1b, and in the
+> `env-provider` delta spec, rather than silently absorbed:
+>
+> - **1.3's premise was wrong.** `capture::store_grants` scans `PATH` for
+>   the first entry containing `/nix/store` and returns only the root
+>   prefix (`/nix/store` itself), never an enumerated path — so reusing
+>   it unchanged, unmodified, already returns the correct coarse grant.
+>   devbox's own stdenv wrapper puts literal `/nix/store/...` entries on
+>   `PATH` regardless of declared packages (measured for both a
+>   ripgrep-declaring project and an empty one), so the scrape always
+>   finds a match, and the coarse root it returns covers the profile
+>   symlink's target too, since a directory-prefix grant is not an
+>   enumeration. No profile-symlink resolution needed; task simplified
+>   to a straight reuse, verified with a non-stdenv marker package
+>   (`resolve_against_a_real_project_grants_the_store_root`).
+> - **1.2's per-system check was wrong, and would have rejected working
+>   projects.** Measured with the exact chosen capture command: a
+>   `devbox.lock` entry resolved only for a *different* system succeeds
+>   here too, from its pinned commit reference, without touching the
+>   lockfile. What actually contacts a package index and rewrites the
+>   lockfile is a declared package with **no key at all** in
+>   `devbox.lock` — confirmed directly, `nixpkgs-unstable` fetched from
+>   `cache.nixos.org`, lockfile mutated on disk. The precondition checks
+>   exactly that: every declared package's lock key present, regardless
+>   of which systems its entry covers.
+- [x] 1.1 `src/provider/devbox.rs` with `DevboxProvider`, implementing
+      `Provider::resolve` via the mechanism task 0.2 chose (`shellenv
+      --pure`, evaluated in a controlled shell, full binary path — the
+      canonical baseline `PATH` has no reason to contain wherever this
+      host installs devbox), diffed against the existing shared canonical
+      baseline
+- [x] 1.2 Preconditions, checked before any devbox command runs and each
       failing at layer `provider` with exit code 3: `devbox.json`
-      present, `devbox` on PATH, Nix usable, and **every declared package
-      resolved for the current system**. That last one is not
-      "`devbox.lock` exists" — measured against 0.18.0, a project
-      declaring no packages has no lockfile at all and is legitimate,
-      and resolutions are recorded per-system with no guarantee the
-      current system is among them, so a presence check both rejects
-      valid projects and accepts ones that will still resolve at `up`.
-      Nix's absence is reported as devbox's own unmet requirement
-      (design.md decision 4), never as advice to switch providers
-- [ ] 1.3 Derive read-only store grants from the resolved closure —
-      **not** by scraping `PATH` for `/nix/store/` prefixes, which is
-      what the other two closure providers can do and which would be
-      wrong here. Measured (0.5): a devbox project's declared packages
-      reach `PATH` through `<project>/.devbox/nix/profile/default`, a
-      symlink chain into a `/nix/store/…-profile`, while the bare store
-      paths on `PATH` are only the stdenv. Scraping would grant the
-      toolchain and miss every package the project declared. Resolve
-      through the profile link, or read `HOST_PATH`, and test against a
-      project whose declared package is *not* part of stdenv so the
-      difference is observable
-- [ ] 1.4 `devbox_fingerprint`: content hash of `devbox.json` +
+      present, `devbox` on PATH, Nix usable (reported by naming `nix`
+      itself, not `devbox`, as devbox's own unmet requirement — never
+      advice to switch providers), and every declared package has a key
+      in `devbox.lock` — corrected from "resolved for the current
+      system" by measurement; see the note above and design.md
+      decision 1b
+- [x] 1.3 Derive read-only store grants — reuses `capture::store_grants`
+      **unchanged**, corrected from the profile-symlink-resolution plan
+      by measurement; see the note above and design.md decision 1a
+- [x] 1.4 `devbox_fingerprint`: content hash of `devbox.json` +
       `devbox.lock`, matching the flox and nix staleness contracts —
-      with an **absent** lockfile hashed as a distinct state rather than
-      as empty, so a lockfile appearing between two `up`s registers as a
-      change instead of being invisible
-- [ ] 1.5 `ServiceSupport::Unsupported` — deliberate, not a stub. Leave a
+      with an **absent** lockfile marked distinct from a present-but-empty
+      one (a leading marker byte, since `flox.rs`/`nix.rs`'s own
+      `unwrap_or_default()` pattern would collide the two), so a lockfile
+      appearing between two `up`s registers as a change
+- [x] 1.5 `ServiceSupport::Unsupported` — deliberate, not a stub, with a
       comment naming why (proposal — Impact: the declarations come from
       plugin process-compose configs, which is the shape
-      `add-flox-services` decision 1 rejected) so the next reader does
-      not "finish" it by wiring up something unexamined
-- [ ] 1.6 Suppress the init hook if task 0.3 found a way to; assert in a
-      test that it does not run during resolution
+      `add-flox-services` decision 1 rejected)
+- [x] 1.6 Suppress the init hook: `shellenv --pure` never runs it (task
+      0.3's finding). Asserted live by
+      `devbox_shellenv_does_not_run_the_init_hook`, which writes a real
+      `shell.init_hook` and confirms its sentinel file does not exist
+      after `resolve()`
 
 ## 2. Dispatch and validation
 
-- [ ] 2.1 `ProviderKind::Devbox`: `from_name`, `static_name`, the
+- [x] 2.1 `ProviderKind::Devbox`: `from_name`, `static_name`, the
       `Provider` impl arm, and `manifest_fingerprint`
-- [ ] 2.2 `validate.rs`: move `devbox` out of `NOT_YET_SUPPORTED` into
+- [x] 2.2 `validate.rs`: moved `devbox` out of `NOT_YET_SUPPORTED` into
       `SUPPORTED`. No aliases (config spec: devbox has exactly one name)
-- [ ] 2.3 Verify nothing outside `src/provider/` needed to change. **If
-      `Resolution`, `policy::compile`, or `lifecycle::up`'s provider
-      handling had to change shape, record it** — that is the "the trait
-      generalizes" claim failing, and the proposal's success criteria
-      make it reportable rather than absorbable
+- [x] 2.3 Verified: only `src/provider/mod.rs` (dispatch arms) and
+      `src/provider/validate.rs` (one name moved lists) changed shape,
+      plus the new `src/provider/devbox.rs`. `Resolution`,
+      `policy::compile`, and `lifecycle::up`'s provider handling are
+      untouched — the trait generalizes, as claimed
 
 ## 3. Tests
 
-- [ ] 3.1 Unit: fingerprint changes when either file changes and is
-      stable otherwise; preconditions fail at layer `provider` with the
-      right hint for each of the four missing-thing cases
-- [ ] 3.2 Integration, self-skipping without devbox the way the existing
-      real-tooling tests do — and gated on **devbox only**, never on
-      flox, per the rule that a test gates on what its own assertions
-      need
-- [ ] 3.3 Capture determinism: the env diff is byte-identical from a
-      shell with extra `PATH` entries and extra variables set, in the
-      shape `tests/flox_env_capture_is_deterministic.rs` already uses
-- [ ] 3.4 **Closure-tier measurement**: a real build inside the sandbox
-      with `network.default = "deny"`, asserting the host toolchain
-      (`/usr/bin/gcc`) is denied and the build still succeeds. This is
-      the test that earns the tier claim; without it, "closure tier" is
-      an inference from devbox being Nix-backed
-- [ ] 3.5 `policy --render` shows the store grants with origin
-      `provider:devbox`, and provider resolution adds no write grant
-- [ ] 3.6 A manifest declaring services under `provider = "devbox"` fails
-      distinguishably from "supports services, none declared" — the
-      `services` spec already requires the two be separable, and this is
-      the second provider to exercise it
+- [x] 3.1 Unit (`src/provider/devbox.rs`): fingerprint changes when
+      either file changes and is stable otherwise, and distinguishes an
+      absent lockfile from a present-but-empty one; preconditions fail
+      with the right variant for each missing-thing case tested
+      (`NoEnvironment`, `MissingLock`, and a package-not-locked
+      `ResolutionFailed` naming the package). The fourth case —
+      `devbox`/`nix` absent from `PATH` — follows `nix.rs`/`flox.rs`'s own
+      precedent of not testing `MissingBinary` directly (no dedicated
+      test exists for it there either); a comment there already notes
+      what would report it
+- [x] 3.2 `tests/devbox_provider_e2e.rs`: integration, self-skipping
+      without devbox (and the nix it depends on) the way the existing
+      real-tooling tests do — gated on devbox only, never on flox
+- [x] 3.3 `tests/devbox_env_capture_is_deterministic.rs`: capture
+      determinism — the env diff is byte-identical from a shell with
+      extra `PATH` entries and extra variables set, in the shape
+      `tests/nix_env_capture_is_deterministic.rs` already uses
+- [x] 3.4 **Closure-tier measurement**
+      (`a_real_build_succeeds_from_the_devbox_closure_with_the_host_toolchain_denied`):
+      a real build inside the sandbox, host `/usr/bin/gcc` denied,
+      devbox's own resolved `gcc` compiling and running a real program.
+      Two corrections found while writing it, neither about devbox
+      itself: `command -v /usr/bin/gcc` is the wrong assertion — a path
+      can pass a bare existence check under Landlock while exec is still
+      denied, since stat and exec are mediated separately, so the test
+      must actually invoke the binary (matches
+      `process_tier_landlock_boundaries.rs`'s own pattern); and `/tmp` is
+      *not* part of what devcroft grants a closure-tier project by
+      default (already documented — `samples/nix-go-sample`'s manifest
+      carries the identical note for `go build`'s scratch directory), so
+      the fixture manifest declares `[filesystem] allow = [".", "/tmp"]`
+      the same way a real project would
+- [x] 3.5 `policy_render_shows_the_devbox_store_grant_after_up`: shows the
+      store grant with origin `provider:devbox`; provider resolution adds
+      no write grant (`Resolution::read_only_grants` is the only field
+      devbox populates beyond `env`/`unset`)
+- [ ] 3.6 **Blocked — not devbox-specific, and not implemented anywhere
+      yet.** Investigated rather than skipped: the mechanism this task
+      assumes ("a manifest declaring services... fails distinguishably")
+      does not exist in the codebase for *any* provider. `devcroft.toml`
+      has no `[services]` section of its own — service declarations are
+      entirely provider-side (`resolution.services`) — and
+      `lifecycle::up::prepare_services` treats `ServiceSupport::Unsupported`
+      identically to "supported, zero declared": both produce an empty
+      slice and `up` proceeds silently. The `add-flox-services` delta
+      spec this task cites (env-provider: "Services requested from a
+      provider that cannot supply them fail loudly") is real but
+      unimplemented — that change is at 30/45 tasks, not archived. So
+      there is nothing distinguishable to test yet, for nix or devbox.
+      Writing a devbox-only detection (e.g. sniffing for a
+      `process-compose.yaml`) would invent cross-cutting behavior this
+      change's own design explicitly deferred (Non-Goals: "devbox
+      services... a separate change's decision to make, not this one's").
+      Belongs to whatever change finishes `add-flox-services`'s
+      loud-failure requirement, which should then cover every provider
+      at once — including devbox, at that point trivially, since
+      `ServiceSupport::Unsupported` already reports correctly and is
+      covered by every `resolve()` test in `devbox.rs`
 
 ## 4. CLI surface
 
-- [ ] 4.1 `doctor`: a devbox check, scoped to projects declaring it, and
-      reporting Nix as devbox's own precondition. Two probes, not one
-- [ ] 4.2 `doctor`: a test that a devbox project reports devbox and stays
-      silent about flox and nix, matching the two tests that already pin
-      this for the other providers
-- [ ] 4.3 `init`: detect `devbox.json`, with precedence flox > devbox >
-      flake (cli spec, with the reasoning: a root `flake.nix` in a devbox
-      project is often generated *from* `devbox.json`, so ranking the
-      flake higher points devcroft at the derived artifact)
-- [ ] 4.4 `init`: print `devbox install` when the project declares
-      packages that are not yet resolved — **not** a lock subcommand,
-      which devbox does not have (`devbox --help` lists `install` and
-      `update`; there is no `lock`). Say nothing about resolving when
-      the project declares no packages. State in one line which other
-      environments were found and remain available
+- [x] 4.1 `doctor`: `doctor_devbox_provider`, scoped to projects
+      declaring `provider = "devbox"` via `doctor_provider`'s dispatch
+      (which previously mapped everything except `"nix"` to the flox
+      probe — devbox needed its own arm, not just a new function).
+      Reports Nix as devbox's own precondition (two probes: devbox on
+      PATH, then Nix usable) — a missing Nix names `nix` itself, never
+      `devbox`, so the message reads as "you also need nix" rather than
+      "switch providers"
+- [x] 4.2 `doctor_on_a_devbox_project_reports_devbox_and_stays_silent_about_flox_and_nix`
+      in `tests/init_and_doctor_cli.rs`, matching the two tests that
+      already pin this for flox/nix
+- [x] 4.3 `init`: detects `devbox.json`, precedence flox > devbox > flake.
+      The cli spec's own text already corrects the reasoning this task
+      description repeats (a root `flake.nix` is *not* usually generated
+      from `devbox.json` — devbox writes its generated flake under
+      `.devbox/gen/flake/`, never the project root); only the ordering
+      itself is a real requirement, kept as a deterministic tiebreak
+- [x] 4.4 `init`: prints `devbox install` when `devbox.json` declares
+      packages with no `devbox.lock` present (advisory precision, not
+      `up`'s exact precondition — matches nix's own `init` advice, which
+      similarly only checks `flake.lock` presence). Says nothing about
+      resolving when the project declares none. States in one line which
+      other environments were found and remain available, both
+      directions (flox/flake noted when devbox wins; devbox noted when
+      flox wins)
 
 ## 5. Samples and docs
 
-- [ ] 5.1 A `samples/devbox-*-sample` project with its own README, in the
-      shape the existing samples use — including the `[workspace]` table
-      if it is a Rust project, so it is not pulled into this crate's
-      workspace
-- [ ] 5.2 README Status: devbox implemented, closure tier, with whatever
-      task group 0 measured stated plainly — including anything that
-      turned out worse than expected
-- [ ] 5.3 `docs/decisions.md` §1: devbox moves from the closure-tier
-      listing into implemented providers. If group 0 found a criterion
-      failure, that is what gets written instead, with the property that
-      failed named
-- [ ] 5.4 `openspec/config.yaml`: remove devbox from the provider
-      roadmap, since the roadmap tracks what is not yet built
-- [ ] 5.5 CLAUDE.md: devbox moves out of the "not yet supported" list in
-      the framing rules, alongside the existing "Nix flakes are
-      implemented, not pending" correction
+- [x] 5.1 `samples/devbox-citytime-sample/`: a `citytime` CLI, the same
+      concept `flox-clap-sample`/`nix-flake-sample` use for direct
+      comparison across providers — but std-only, no clap/chrono,
+      because devbox's provider has no host-side hook devcroft will ever
+      execute (unlike the other two, whose real crates.io deps are
+      fetched via a hook this provider deliberately never runs — see
+      design.md decision 2), so a dependency-bearing version would need
+      vendoring or an explicit network allowlist, an unrelated question
+      this sample sidesteps. Verified live end to end: `up`, `cargo
+      build` (needs `[filesystem] allow = [".", "/tmp"]` — same
+      `own-policy-baseline` requirement `nix-go-sample` already
+      documents for Go), the built binary, host `/usr/bin/gcc` denied,
+      `devcroft ssh`, `policy --render` showing `provider:devbox`, `down`
+- [x] 5.2 README Status: a full paragraph on `add-devbox-provider`,
+      placed after `use-nono-library`/services-reporting (chronological
+      order the rest of Status follows), naming both corrections from
+      task groups 1–3 (the per-system precondition and the store-grant
+      simplification) as measured findings rather than absorbing them
+      silently. Samples table gained a row
+- [x] 5.3 `docs/decisions.md` §1: **already current, no change needed.**
+      Checked rather than assumed: this section already speaks of devbox
+      as a settled, qualified provider ("three providers with three
+      different activation mechanisms (flox, nix flakes, devbox)", "what
+      qualifying devbox actually cost") — task group 0's live
+      measurement already informed this text before any provider code
+      existed. Group 0 found no criterion failure, so there was nothing
+      to move
+- [x] 5.4 `openspec/config.yaml`: removed the "Provider roadmap, in
+      order" list entirely — both entries on it (nix flakes, devbox) are
+      now implemented, so there is no remaining roadmap to state at the
+      closure tier
+- [x] 5.5 CLAUDE.md: devbox moved out of the "not yet supported" list in
+      the framing rules (alongside the existing "Nix flakes are
+      implemented, not pending" correction, now naming devbox too); the
+      two-phase invariant's provider table updated from "proposed" to
+      "fixed, and implemented"; the Repository state section's sample
+      list and implemented-changes list both gained devbox, the latter
+      naming task 3.6's deliberate deferral rather than claiming a false
+      "tasks.md and all"
 
 ## 6. Verification
 
-- [ ] 6.1 `cargo build`, `cargo clippy`, `cargo fmt` clean
-- [ ] 6.2 `openspec validate --all` passes
-- [ ] 6.3 Report which tasks ran against a live devbox and which did not.
-      Group 0 exists because this change started with none of that
-      evidence; finishing it with the same gap unstated would be worse
-      than starting with it
+- [x] 6.1 `cargo build`, `cargo clippy --all-targets`, `cargo fmt` all
+      clean (the only clippy warning anywhere is `spike.rs`'s
+      preexisting `zombie_processes` one, unrelated to this change).
+      Full `cargo test` — every test file in the suite, not just the new
+      ones — passes with devbox and nix on `PATH`: 227 lib tests, plus
+      every integration file, zero failures
+- [x] 6.2 `openspec validate --all`: 11 passed, 0 failed
+- [x] 6.3 **Ran against a live devbox 0.18.0 for essentially everything —
+      this change has no gap task group 0 didn't already close.** Every
+      test in `src/provider/devbox.rs`, `tests/devbox_provider_e2e.rs`,
+      and `tests/devbox_env_capture_is_deterministic.rs` that exercises
+      `DevboxProvider::resolve` or the `devcroft` CLI against a real
+      project self-skips without a working `devbox` + `nix` on `PATH`
+      (verified: none silently no-op when tooling is present — all ran
+      and passed against 0.18.0 in this devcontainer). The samples
+      README's every command block (`up`, `cargo build`, the built
+      binary, `ssh`, `policy --render`, `down`) was run for real, not
+      copied from the other samples' pattern. What did *not* run against
+      a live devbox: the pure-parsing unit tests
+      (`declared_package_keys_*`, `package_key_*`, and the
+      `ensure_everything_locked_*` tests that write a synthetic
+      `devbox.lock` by hand rather than a real one) — deliberately, since
+      their whole point is to pin the parsing contract independent of
+      whether devbox happens to be installed wherever this suite runs
+      next.

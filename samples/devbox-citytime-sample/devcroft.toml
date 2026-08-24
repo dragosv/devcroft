@@ -1,0 +1,20 @@
+[sandbox]
+name = "devbox-citytime-sample"
+
+[env]
+provider = "devbox"
+
+# `/tmp` is not part of what devcroft grants a closure-tier project by
+# default (own-policy-baseline) — gcc-wrapper's intermediate compilation
+# files (the linker's scratch objects) live there, so it must be declared
+# like any other filesystem need. Same requirement, same fix, as
+# samples/nix-go-sample's own manifest documents for `go build`'s
+# scratch directory.
+[filesystem]
+allow = [".", "/tmp"]
+
+# Uncomment to change the network default:
+#
+# [network]
+# default = "deny"
+# allow = ["api.example.com"]

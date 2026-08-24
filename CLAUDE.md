@@ -10,16 +10,21 @@ tasks**. `src/` has real modules for `config`, `policy`, `provider`,
 binaries under `src/bin/`, backed by an integration `tests/` suite. Stack
 is Rust stable, edition 2024. `samples/` holds standalone example projects
 covering both closure-tier providers and the hardened tier —
-`flox-clap-sample`, `flox-rustup-sample`, and `nix-flake-sample` are Rust
-projects with their own `Cargo.toml` (each has an explicit `[workspace]`
-table so they don't get pulled into this crate's workspace); `nix-go-sample`
-(Go), `gvisor-kotlin-sample` (Kotlin/Gradle), and `flox-services-sample`
-(no application code at all) are non-Rust, so no workspace exclusion
-applies to them — see each sample's own `README.md` for what it
-demonstrates. `flox-services-sample` is the one that documents an
-*unfinished* capability on purpose: it shows `network.ports` working and
-`[services]` being parsed, and demonstrates that devcroft does not yet
-supervise those services.
+`flox-clap-sample`, `flox-rustup-sample`, `nix-flake-sample`, and
+`devbox-citytime-sample` are Rust projects with their own `Cargo.toml`
+(each has an explicit `[workspace]` table so they don't get pulled into
+this crate's workspace); `nix-go-sample` (Go), `gvisor-kotlin-sample`
+(Kotlin/Gradle), and `flox-services-sample` (no application code at all)
+are non-Rust, so no workspace exclusion applies to them — see each
+sample's own `README.md` for what it demonstrates. `flox-services-sample`
+is the one that documents an *unfinished* capability on purpose: it shows
+`network.ports` working and `[services]` being parsed, and demonstrates
+that devcroft does not yet supervise those services.
+`devbox-citytime-sample` documents a real constraint rather than a gap:
+devcroft's devbox provider never runs `shell.init_hook` (by design — see
+the two-phase execution invariant below), so unlike the flox and nix
+samples it has no host-side hook to fetch crates.io dependencies in, and
+depends on nothing beyond `std` as a result.
 
 Remaining work (see `openspec/changes/add-mvp-core/tasks.md`): task 6.5
 (cross-editor SSH validation matrix — OpenSSH, rsync, VS Code Remote-SSH,
@@ -58,9 +63,15 @@ gVisor concretization of the hardened tier — Linux-only, developed and
 live-tested inside this repo's own devcontainer once task group 8
 installed `runsc` into it), `own-policy-baseline`, `use-nono-library`,
 and `fix-provisioning-hooks` are all fully implemented, tasks.md and all
-— see the README's Status section. Those plus `add-mvp-core` are the
-changes actually implemented; run `openspec list` for the rest, which are
-in flight or not started.
+— see the README's Status section. `add-devbox-provider` (a third
+closure-tier environment provider) is implemented too, with one task
+(3.6, a services-loud-failure test) deliberately left unchecked — the
+mechanism it would test doesn't exist yet for *any* provider, and belongs
+to whichever change finishes `add-flox-services`'s own unimplemented
+"services requested from a provider that cannot supply them fail loudly"
+requirement. Those plus `add-mvp-core` are the changes actually
+implemented; run `openspec list` for the rest, which are in flight or not
+started.
 
 `own-policy-baseline` and `use-nono-library` came out of measuring what
 devcroft's compiled profile actually contains: 240 rules it ships and
@@ -157,8 +168,9 @@ for an environment without running it. Measured:
   data, `shellHook` included as an inert string. Never evaluated. Note
   that plain `print-dev-env` is *not* a fix — the script it emits ends
   with `eval "${shellHook:-}"`.
-- **devbox** (proposed): `shellenv --pure` does not run `init_hook`;
-  `devbox run` does. Use the former.
+- **devbox**: fixed, and implemented (`add-devbox-provider`). `shellenv
+  --pure` does not run `init_hook`, in any variant; `devbox run` does.
+  Uses the former.
 - **flox**: **not fixable.** No `flox activate` mode suppresses
   `[hook].on-activate` — not `--mode run`, `--mode dev`, or
   `--no-start-services`. devcroft detects the hook and `up` prints one
@@ -257,9 +269,12 @@ mechanism exists — the decision should be **revisited, not defended**.
 - There is no non-reproducible mode. `host` and `none` providers are out of
   scope by design; the answer for a project without an environment is
   `flox init`, not a degraded fallback. Rejection messages must distinguish
-  "not yet supported" (devbox, devenv, mise, pixi, hermit) from "out of
+  "not yet supported" (devenv, mise, pixi, hermit) from "out of
   scope by design" (`host`, `none`) and from "fails the qualification
-  test" (version managers). Nix flakes are implemented, not pending.
+  test" (version managers). Nix flakes and devbox are implemented, not
+  pending — devbox is the third closure-tier `env.provider`
+  (`add-devbox-provider`), confirming the `Provider` trait generalizes to
+  a substrate flox and nix don't share.
 - Known limitations are published, not hidden: no inter-sandbox process
   visibility separation in MVP, cooperative/platform-dependent network
   filtering, no cgroup resource limits.

@@ -379,6 +379,51 @@ precisely to let the host reach inward. That read now verifies the path
 is a socket owned by the invoking user, caps the response size, and
 bounds the whole exchange rather than only each individual read.
 
+**`add-devbox-provider` is implemented.** devbox is a third closure-tier
+`env.provider`, resolved by capturing `devbox shellenv --pure` (never
+`devbox run`, which — measured, not assumed — runs a project's
+`shell.init_hook`; `shellenv` never does, in any variant) and reusing the
+same fixed-baseline diff, store-grant, and staleness machinery flox and
+nix already share. This is the second provider proposed purely to
+confirm the `Provider` trait generalizes to a substrate the first two
+don't share (devbox has its own resolver and its own lockfile format, no
+flake underneath), and it does: only `src/provider/mod.rs` (dispatch
+arms) and `src/provider/validate.rs` (one name moved lists) changed
+shape beyond the new module. See
+[samples/devbox-citytime-sample](samples/devbox-citytime-sample/) for a
+working example.
+
+Two corrections were found live while implementing, not while designing —
+both narrowed what the change originally assumed devbox needed:
+
+- **The lockfile precondition checks key presence, not per-system
+  coverage.** A draft precondition required a declared package's
+  `devbox.lock` entry to cover the system `up` runs on, reasoning that an
+  entry resolved only for another platform leaves the current one
+  unresolved. Measured against a real capture: it doesn't — devbox
+  resolves any system from the entry's *pinned commit reference*, which
+  is system-independent, without touching the lockfile. What actually
+  contacts a package index and rewrites the lockfile — confirmed
+  directly, `nixpkgs-unstable` fetched from `cache.nixos.org`, lockfile
+  mutated on disk — is a declared package with **no key at all** in
+  `devbox.lock`. The precondition checks exactly that.
+- **Store grants need no profile-symlink resolution.** A devbox project's
+  declared packages reach `PATH` through a `.devbox/nix/profile/default`
+  symlink chain rather than as bare store paths, which looked like it
+  would require deriving grants by resolving that chain instead of
+  reusing the other two providers' scrape-`PATH`-for-`/nix/store`
+  mechanism. It doesn't: that mechanism already returns only the coarse
+  `/nix/store` root, never an enumerated path, and devbox's own stdenv
+  wrapper puts real `/nix/store/...` entries on `PATH` regardless of
+  declared packages — so the existing mechanism, reused completely
+  unchanged, already grants everything the symlink resolves to. Verified
+  with a package outside devbox's stdenv (ripgrep), so the claim is
+  falsifiable rather than assumed.
+
+Both are recorded in `openspec/changes/add-devbox-provider/design.md`
+decisions 1a and 1b, corrected in place rather than left standing next to
+their own contradiction.
+
 ## Limitations
 
 devcroft's default (and only fully implemented) tier, `process`, is
@@ -488,6 +533,7 @@ decisions.
 | [CLAUDE.md](CLAUDE.md) | Architecture invariants and repo conventions |
 | [samples/flox-rustup-sample/](samples/flox-rustup-sample/) | A real, verified flox + rustup + devcroft project — and the 4 real sandboxing/toolchain frictions found building it |
 | [samples/flox-clap-sample/](samples/flox-clap-sample/) | A clap-derive CLI sandboxed the same way — plus what changes once a sample has real crates.io dependencies |
+| [samples/devbox-citytime-sample/](samples/devbox-citytime-sample/) | A third `env.provider`, devbox — and why it has no host-side hook to fetch dependencies in, unlike the other two |
 
 ```sh
 openspec list             # active changes and task progress

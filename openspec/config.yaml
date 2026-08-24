@@ -68,13 +68,7 @@ context: |
   - Additional backends: MXC, microsandbox (msb), raw bwrap profiles.
     gVisor and LiteBox are the candidate vehicles for the `hardened`
     isolation tier (see `add-hardened-tier`).
-  - Provider roadmap, in order:
-    1. nix flakes (closure tier) — cheapest to implement: `nix develop` env
-       capture via `nix print-dev-env`, `flake.lock` staleness; large
-       audience of flake-only projects without flox on top
-    2. devbox (closure tier) — near-free trait validation: same store, same
-       pipeline as flox, different activation command and hashed files
-    No artifact-tier provider is scheduled, and that is now a recorded
+  - No artifact-tier provider is scheduled, and that is now a recorded
     decision rather than a scheduling accident: devcroft's product
     guarantee is the closure tier, the `Provider` seam stays generic,
     and an artifact provider must re-qualify under demonstrated demand

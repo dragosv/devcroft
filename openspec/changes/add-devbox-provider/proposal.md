@@ -61,14 +61,16 @@ Two things make this worth proposing now rather than later:
     demand that the project declare `provider = "nix"`.
   - `devbox.json` present; a missing one is a missing environment (hint
     `devbox init`), not a missing feature.
-  - Every declared package already resolved **for the running system**;
-    otherwise `up` fails rather than resolving versions against whatever
-    nixpkgs currently points at. Deliberately not "`devbox.lock`
-    exists" — measured against devbox 0.18.0, a project declaring no
-    packages has no lockfile and is still legitimate, and resolutions
-    are recorded per-system with no guarantee the current system is
-    among them, so a presence check would both reject valid projects and
-    accept ones that still resolve at `up`.
+  - Every declared package already has a key in `devbox.lock`; otherwise
+    `up` fails rather than resolving versions against whatever nixpkgs
+    currently points at. Deliberately not "`devbox.lock` exists" — a
+    project declaring no packages has no lockfile and is still
+    legitimate — and deliberately not "resolved for the running system":
+    measured against devbox 0.18.0, a lock entry resolved only for
+    another platform still resolves correctly here, from its pinned
+    commit reference; only an entry that is *entirely absent* triggers
+    live, unpinned resolution and a lockfile write. See design.md
+    decision 1b for the measurement.
 - **Staleness**: fingerprint of `devbox.json` + `devbox.lock`, the same
   contract flox has over `manifest.toml` + lockfile and nix has over
   `flake.nix` + `flake.lock`.

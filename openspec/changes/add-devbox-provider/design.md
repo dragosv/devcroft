@@ -105,23 +105,103 @@ It would remove the CLI dependency, but devcroft would own a second
 implementation of devbox's semantics, which will drift. The provider
 contract is "run the provider's own activation and capture it".
 
-### 1a. Store grants follow a profile symlink, not bare store paths
+### 1a. Store grants: `capture::store_grants` reused unchanged, no profile resolution needed
 
 Measured, and different in shape from flox and nix: a devbox project's
-declared packages are **not** on `PATH` as store paths. They arrive via
+*declared* packages are not on `PATH` as bare store paths. They arrive via
 `<project>/.devbox/nix/profile/default`, a symlink chain
 (`default-1-link` → `/nix/store/…-profile`) rooted inside the project.
-The store paths themselves appear in `HOST_PATH`.
+The store paths themselves appear in `HOST_PATH`, not `PATH`.
 
-Two consequences for task 1.3:
+**A first pass at this decision (recorded here, then corrected by
+measurement) concluded from that alone that grant derivation would have
+to resolve through the profile link, or it would "grant the stdenv
+closure and miss every package the project actually declared."** Running
+`capture::store_grants` — unmodified — against a real captured `PATH`
+disproves the second half. The function does not collect individual
+package paths; it scans `PATH` for the first entry containing
+`/nix/store` and returns only the root prefix, `/nix/store` itself (see
+its doc comment and `store_grants_reads_root_from_activated_path`). Every
+devbox `PATH`, with or without declared packages, carries devbox's own
+stdenv wrapper (`gcc-wrapper`, `coreutils`, `binutils`, …) as literal
+`/nix/store/...` entries ahead of the profile-symlink entry — measured
+for both a ripgrep-declaring project and an empty one. So the scrape
+always finds a match and always returns the same coarse `/nix/store`
+root that flox and nix already get. That root, granted read-only, covers
+*everything* under it — including whatever the profile symlink resolves
+to — because the grant is a directory prefix, not an enumeration of
+specific paths. There is nothing narrower to miss.
 
-- Grant derivation must resolve through the profile link rather than
-  scraping `PATH` for `/nix/store/...` prefixes, or it will grant the
-  stdenv closure and miss every package the project actually declared.
-- The link lives under the project root, which is already granted
-  read-write, so no new grant shape is needed — but the *target* must be
-  covered by the store grant, and a `.devbox` directory that is
-  gitignored by devbox is still real state inside the working tree.
+**Task 1.3 therefore reuses `capture::store_grants` unchanged**, matching
+what `proposal.md`'s own "Why" claimed before this decision complicated
+it ("devbox reuses the store-grant derivation ... unchanged"). The
+profile-symlink finding stays recorded above because it is true and
+explains *why* declared packages aren't directly visible on `PATH` — it
+just isn't a reason to touch grant derivation. Verified with a package
+outside the stdenv closure (ripgrep) specifically so the claim is
+falsifiable rather than assumed: if the grant were narrower than the
+whole store root, `rg`'s store path would not be covered and the
+toolchain-under-`network.default=deny` test (3.4) would catch it.
+
+The `.devbox` directory itself needs no gitignore note: `devbox init`
+does not write one, and nothing here depends on it being ignored — the
+project root is already granted read-write regardless.
+
+### 1b. The lockfile precondition checks key presence, not per-system coverage
+
+**Corrected by measurement; an earlier draft of this precondition was
+narrower than what devbox actually needs and would have rejected working
+projects.** The draft required each declared package's `devbox.lock`
+entry to cover the system `up` is running on, reasoning that an entry
+resolved only for another platform leaves the current one unresolved —
+plausible from the lockfile's shape (resolutions recorded per system),
+but not tested against real devbox behavior.
+
+Tested directly, using the exact capture command decision 1 chose: a
+`devbox.lock` entry for `ripgrep@latest` containing only an
+`x86_64-darwin` systems entry, run on an `aarch64-linux` host, resolves
+and materializes `rg` successfully — and `devbox.lock` is byte-identical
+before and after. devbox resolves the current system from the entry's
+pinned `resolved` commit reference (a fixed nixpkgs commit shared across
+all systems for that entry), not from the systems cache; the cache
+records what has been resolved before, not what is resolvable now. There
+is no per-system gap to close.
+
+**What the same session then confirmed does violate the two-phase
+rule:** a package declared in `devbox.json` with **no key at all** in
+`devbox.lock` — e.g. added by hand without `devbox install` — causes the
+identical capture command to resolve it live against `nixpkgs-unstable`
+(a floating branch reference, not a pinned commit), fetch build outputs
+from `cache.nixos.org`, and **write the new resolution into
+`devbox.lock` on disk**. That is resolving a version, contacting an
+index, and updating the lockfile — the exact three things the
+provisioning-phase trust rests on not happening, all three, confirmed in
+one measurement.
+
+So the precondition is "does the project's declared package have a key
+in `devbox.lock`'s `packages` map", full stop — no per-system check.
+Computing that key from `devbox.json` needs to account for two accepted
+shapes, both exercised live against devbox 0.18.0:
+
+- **Array form** (`"packages": ["ripgrep@latest"]`): the string is the
+  lock key verbatim, including devbox's "legacy" bare-name-with-no-`@`
+  form (`"ripgrep"` locks under the literal key `"ripgrep"`, no `@latest`
+  appended — devbox prints a deprecation warning but accepts it).
+- **Object form** (`"packages": {"ripgrep": "latest"}` or
+  `{"ripgrep": {"version": "latest", ...}}`): the lock key is
+  `"{name}@{version}"` when a version string is present (as a bare value
+  or the table's `version` field), or the bare name with no `@` when it
+  is absent — matching the array form's legacy behavior exactly.
+
+Exotic package reference shapes this does not attempt to normalize (git
+refs, `path:` local packages, per-platform overrides) are out of scope,
+consistent with design's own non-goal of not translating `devbox.json`
+semantics. Where a declared entry's key cannot be confidently computed,
+the precondition SHALL fail closed (report unresolved) rather than skip
+it — the same bias `flox.rs`'s `declares_activation_hook` already uses,
+for the same reason: a false negative here defeats the precondition
+entirely, while a false positive only costs a `devbox install` the user
+didn't strictly need.
 
 ### 2. The init-hook problem is a qualification question, not a detail
 

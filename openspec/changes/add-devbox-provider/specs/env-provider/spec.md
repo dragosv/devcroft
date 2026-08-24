@@ -20,10 +20,9 @@ hint to initialize a devbox project.
 
 The lockfile precondition SHALL be expressed as **"nothing resolves at
 `up`"**, not as "a lockfile exists". Specifically, every package the
-project declares SHALL have a recorded resolution covering **the system
-`up` is running on**; where any declared package does not, `up` SHALL
-fail at layer `provider` with exit code 3, naming the package and the
-command that records it.
+project declares SHALL have **a key in `devbox.lock`'s `packages` map**;
+where any declared package does not, `up` SHALL fail at layer `provider`
+with exit code 3, naming the package and the command that records it.
 
 Two properties of devbox's lockfile make the weaker "file exists" check
 insufficient, both observed against devbox 0.18.0:
@@ -31,12 +30,34 @@ insufficient, both observed against devbox 0.18.0:
 - A project that declares no packages has **no lockfile at all**, and is
   a legitimate — if minimal — environment. Requiring the file would
   reject it for a reason that is not true of it.
-- Resolutions are recorded **per system**, and the recorded set is not
-  guaranteed to include the current one. A lockfile committed from
-  another platform can be present and complete for that platform while
-  leaving this one unresolved, which a presence check accepts and which
-  then resolves at `up` — the exact thing the precondition exists to
-  prevent.
+- A lockfile can be present and non-empty while omitting a specific
+  declared package entirely, e.g. after editing `devbox.json` by hand
+  without re-running `devbox install`. A presence check on the *file*
+  accepts this; a presence check on the *key* does not.
+
+**Corrected by measurement, superseding an earlier draft of this
+requirement.** The draft additionally required the package's lock entry
+to cover **the system `up` is running on** specifically, reasoning that a
+lockfile resolved only for another platform leaves the current one
+unresolved. Measured against devbox 0.18.0 with the exact capture command
+decision 1 chose (`sh -c 'eval "$(devbox shellenv --pure)"; env -0'`),
+that is false: a package entry present for a *different* system only
+(e.g. `x86_64-darwin`, host running `aarch64-linux`) resolves and
+materializes cleanly, without touching the lockfile on disk. devbox
+resolves any system from the entry's pinned `resolved` commit reference,
+which is system-independent — only the *output path* varies by system,
+and the commit is already fixed. A `.lock` entry existing at all is what
+makes resolution reproducible; which systems happen to be cached under it
+is not load-bearing.
+
+What the same measurement confirms **does** violate the two-phase rule:
+a declared package with **no key in `devbox.lock` at all** causes the
+capture command to resolve it live against `nixpkgs-unstable` — a
+floating reference, not a pinned commit — and **write the new resolution
+back into `devbox.lock` on disk**, contacting `cache.nixos.org` in the
+process. That is exactly "resolve package versions" and "contact a
+package index" and "update it", all three of which the paragraph above
+forbids. The precondition exists to catch this case, and only this case.
 
 devbox is a frontend over Nix and cannot materialize anything without it.
 The system SHALL therefore verify Nix is usable as part of the devbox
@@ -77,11 +98,14 @@ unmet requirement rather than instructing the user to change providers.
   package and the command that records it, rather than resolving it
   against whatever the package set currently points at
 
-#### Scenario: Locked for another system only
-- **WHEN** every declared package has a recorded resolution, but none
-  covers the system `up` is running on
-- **THEN** `up` fails the same way — a lockfile complete for a different
-  platform is not a lockfile for this one
+#### Scenario: Locked for another system only succeeds
+- **WHEN** a declared package's `devbox.lock` entry covers only a system
+  other than the one `up` is running on
+- **THEN** `up` succeeds — the entry's pinned commit reference resolves
+  and materializes for the current system without contacting a package
+  index or writing back to `devbox.lock`, and per-system cache coverage
+  is not part of this precondition (measured against devbox 0.18.0;
+  see design.md)
 
 #### Scenario: A project declaring no packages needs no lockfile
 - **WHEN** provider is `devbox`, `devbox.json` declares no packages, and

@@ -56,6 +56,10 @@ fn assert_no_unexpected_doctor_failures(stdout: &str) {
             l.starts_with("[FAIL]")
                 && !l.starts_with("[FAIL] gvisor-backend")
                 && !l.starts_with("[FAIL] provider: nix")
+                // Same reasoning as nix: devbox's own probe depends on
+                // Nix being usable too, an independent capability these
+                // tests aren't about.
+                && !l.starts_with("[FAIL] provider: devbox")
         })
         .collect();
     assert!(
@@ -326,6 +330,156 @@ fn init_prefers_an_existing_flake_over_a_toolchain_pin() {
 }
 
 #[test]
+fn init_detects_an_existing_devbox_project() {
+    let dir = scratch_project("devbox");
+    std::fs::write(
+        dir.join("devbox.json"),
+        r#"{"packages": ["ripgrep@latest"]}"#,
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("devbox.lock"),
+        r#"{"packages": {"ripgrep@latest": {}}}"#,
+    )
+    .unwrap();
+
+    let out = run(&dir, &["init"]);
+    assert!(out.status.success(), "{:?}", out);
+    let (manifest, _) =
+        devcroft::config::parse(&std::fs::read_to_string(dir.join("devcroft.toml")).unwrap())
+            .unwrap();
+    assert_eq!(manifest.env.provider, "devbox");
+
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("ready for `devcroft up`"),
+        "a devbox project with everything locked should be ready, got {stdout:?}"
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn init_on_a_devbox_project_with_unresolved_packages_advises_install() {
+    let dir = scratch_project("devbox-unresolved");
+    std::fs::write(
+        dir.join("devbox.json"),
+        r#"{"packages": ["ripgrep@latest"]}"#,
+    )
+    .unwrap();
+
+    let out = run(&dir, &["init"]);
+    assert!(out.status.success(), "{:?}", out);
+    let (manifest, _) =
+        devcroft::config::parse(&std::fs::read_to_string(dir.join("devcroft.toml")).unwrap())
+            .unwrap();
+    assert_eq!(manifest.env.provider, "devbox");
+
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("devbox install"));
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Spec: "Init on a devbox project with nothing to resolve" — a project
+/// declaring no packages is ready for `up` with no lock advice, matching
+/// the `env-provider` rule that nothing declared means nothing to lock.
+#[test]
+fn init_on_a_devbox_project_with_nothing_to_resolve_is_ready() {
+    let dir = scratch_project("devbox-empty");
+    std::fs::write(dir.join("devbox.json"), "{}").unwrap();
+
+    let out = run(&dir, &["init"]);
+    assert!(out.status.success(), "{:?}", out);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("ready for `devcroft up`"),
+        "a devbox project declaring no packages has nothing to lock, got {stdout:?}"
+    );
+    assert!(
+        !stdout.contains("devbox install"),
+        "should not advise locking when nothing is declared, got {stdout:?}"
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn init_prefers_flox_over_devbox_when_both_are_present() {
+    let dir = scratch_project("flox-and-devbox");
+    std::fs::create_dir_all(dir.join(".flox")).unwrap();
+    std::fs::write(dir.join("devbox.json"), r#"{"packages": []}"#).unwrap();
+
+    let out = run(&dir, &["init"]);
+    assert!(out.status.success(), "{:?}", out);
+    let (manifest, _) =
+        devcroft::config::parse(&std::fs::read_to_string(dir.join("devcroft.toml")).unwrap())
+            .unwrap();
+    assert_eq!(
+        manifest.env.provider, "flox",
+        "flox must win when both a flox environment and a devbox project are present"
+    );
+
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("devbox.json") && stdout.contains("provider = \"devbox\""),
+        "should note the devbox project was also found and is available, got {stdout:?}"
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn init_prefers_devbox_over_a_flake_when_both_are_present() {
+    let dir = scratch_project("devbox-and-flake");
+    std::fs::write(dir.join("devbox.json"), r#"{"packages": []}"#).unwrap();
+    std::fs::write(
+        dir.join("flake.nix"),
+        "{ description = \"x\"; outputs = { self }: {}; }",
+    )
+    .unwrap();
+
+    let out = run(&dir, &["init"]);
+    assert!(out.status.success(), "{:?}", out);
+    let (manifest, _) =
+        devcroft::config::parse(&std::fs::read_to_string(dir.join("devcroft.toml")).unwrap())
+            .unwrap();
+    assert_eq!(
+        manifest.env.provider, "devbox",
+        "devbox must win when both a devbox project and a bare flake are present"
+    );
+
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("flake.nix") && stdout.contains("provider = \"nix\""),
+        "should note the flake was also found and is available, got {stdout:?}"
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn init_prefers_an_existing_devbox_project_over_a_toolchain_pin() {
+    let dir = scratch_project("devbox-over-pin");
+    std::fs::write(dir.join("devbox.json"), r#"{"packages": []}"#).unwrap();
+    std::fs::write(
+        dir.join("rust-toolchain.toml"),
+        "[toolchain]\nchannel = \"stable\"\n",
+    )
+    .unwrap();
+
+    let out = run(&dir, &["init"]);
+    assert!(out.status.success(), "{:?}", out);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        !stdout.contains("rustup alone"),
+        "pin advice should not print when devbox.json already exists, got {stdout:?}"
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn init_disambiguates_a_real_name_collision_across_projects() {
     if Command::new("flox").arg("--version").output().is_err() {
         eprintln!("skipping: flox not on PATH");
@@ -488,6 +642,43 @@ fn doctor_on_a_flox_project_does_not_report_nix() {
     assert!(
         !stdout.contains("provider: nix"),
         "a flox project must not report on nix at all, got:\n{stdout}"
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Task 4.2: a devbox project reports devbox and stays silent about flox
+/// and nix — the same per-provider scoping the nix/flox pair above
+/// already pins, now exercised for the third provider.
+#[test]
+fn doctor_on_a_devbox_project_reports_devbox_and_stays_silent_about_flox_and_nix() {
+    if !devcroft::policy::backend_supported() {
+        eprintln!("skipping: this host has no usable Landlock/Seatbelt support");
+        return;
+    }
+
+    let dir = scratch_project("doctor-devbox-only");
+    std::fs::write(
+        dir.join("devcroft.toml"),
+        "[sandbox]\nname = \"doctordevboxonly\"\n[env]\nprovider = \"devbox\"\n",
+    )
+    .unwrap();
+
+    let stdout = String::from_utf8_lossy(&run(&dir, &["doctor"]).stdout).into_owned();
+
+    assert!(
+        !stdout.contains("provider: flox"),
+        "a devbox project must not report on flox at all, got:\n{stdout}"
+    );
+    assert!(
+        !stdout.contains("provider: nix"),
+        "a devbox project must not report on the nix *provider* line — devbox's own \
+         Nix-usability probe reports under \"provider: devbox\", not \"provider: nix\", \
+         got:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("provider: devbox"),
+        "a devbox project must report on devbox, got:\n{stdout}"
     );
 
     let _ = std::fs::remove_dir_all(&dir);

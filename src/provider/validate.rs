@@ -21,14 +21,11 @@ const VERSION_MANAGERS: &[&str] = &[
 /// Provider names devcroft actually resolves. `flake`/`flakes` are
 /// accepted aliases for `nix` — normalized by [`normalize_provider_name`]
 /// so exactly one canonical name ever reaches provider dispatch, `status`,
-/// and policy rule origins.
-const SUPPORTED: &[&str] = &["flox", "nix", "flake", "flakes"];
+/// and policy rule origins. `devbox` has exactly one name — unlike `nix`,
+/// no alias is invented for it (config spec: "devbox provider value").
+const SUPPORTED: &[&str] = &["flox", "nix", "flake", "flakes", "devbox"];
 
 const NOT_YET_SUPPORTED: &[(&str, &str)] = &[
-    (
-        "devbox",
-        "devbox support is planned (closure tier) but not yet implemented",
-    ),
     (
         "mise",
         "mise is a qualified provider (artifact tier) but not yet scheduled",
@@ -113,6 +110,16 @@ mod tests {
     #[test]
     fn flox_name_is_unaffected_by_normalization() {
         assert_eq!(normalize_provider_name("flox"), "flox");
+    }
+
+    #[test]
+    fn devbox_is_accepted() {
+        assert!(validate_provider("devbox").is_ok());
+    }
+
+    #[test]
+    fn devbox_name_is_unaffected_by_normalization() {
+        assert_eq!(normalize_provider_name("devbox"), "devbox");
     }
 
     #[test]

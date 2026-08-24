@@ -396,6 +396,26 @@ fn ignore_artifact_dir(project_root: &std::path::Path) {
     }
 }
 
+/// Whether `devbox.json` in `cwd` declares at least one package, in
+/// either accepted shape (array or object — see `provider::devbox`'s own
+/// `package_key`). Advisory only: `init`'s "ready for `up`" message needs
+/// to know whether there is anything to lock at all, not whether it is
+/// locked precisely for this system — that precision lives in `up`'s own
+/// precondition (`env-provider` spec), not in `init`'s advice.
+fn devbox_json_declares_packages(cwd: &std::path::Path) -> bool {
+    let Ok(text) = std::fs::read_to_string(cwd.join("devbox.json")) else {
+        return false;
+    };
+    let Ok(parsed) = text.parse::<serde_json::Value>() else {
+        return false;
+    };
+    match parsed.get("packages") {
+        Some(serde_json::Value::Array(items)) => !items.is_empty(),
+        Some(serde_json::Value::Object(map)) => !map.is_empty(),
+        _ => false,
+    }
+}
+
 fn cli_init(args: &[String]) -> i32 {
     const USAGE: &str = "devcroft init: usage: devcroft init [--force]";
     let force = match args {
@@ -431,16 +451,26 @@ fn cli_init(args: &[String]) -> i32 {
     let base_name = devcroft::config::slugify(&dir_name);
     let name = disambiguate_name(&base_name, &cwd);
 
-    // cli spec's init scenarios: flox wins if both a flox environment and
-    // a nix flake are present (the more specific, devcroft-native choice),
-    // and either one supersedes advice about a toolchain pin it would
+    // cli spec's init scenarios: flox, then devbox, then a bare flake — a
+    // deterministic tiebreak, not a judgement that the losers are derived
+    // artifacts (an earlier draft justified ranking devbox above a flake
+    // by claiming a root flake.nix in a devbox project is usually
+    // generated from devbox.json; devbox writes its generated flake under
+    // .devbox/gen/flake/, never to the project root, so that reasoning is
+    // false and is not restated — only the ordering survives). Any one of
+    // the three supersedes advice about a toolchain pin it would
     // otherwise just be a fallback for.
     let has_flox = cwd.join(".flox").is_dir();
+    let has_devbox = cwd.join("devbox.json").is_file();
     let has_flake = cwd.join("flake.nix").is_file();
-    let provider = if has_flox || !has_flake {
+    let provider = if has_flox {
         "flox"
-    } else {
+    } else if has_devbox {
+        "devbox"
+    } else if has_flake {
         "nix"
+    } else {
+        "flox"
     };
 
     let manifest_toml = format!(
@@ -466,6 +496,29 @@ fn cli_init(args: &[String]) -> i32 {
 
     if has_flox {
         println!("devcroft: found an existing flox environment (.flox/); ready for `devcroft up`.");
+        if has_devbox {
+            println!(
+                "devcroft: a devbox project (devbox.json) was also found; `provider = \"devbox\"` \
+                 is available if you'd rather use that instead."
+            );
+        }
+        if has_flake {
+            println!(
+                "devcroft: a nix flake (flake.nix) was also found; `provider = \"nix\"` is \
+                 available if you'd rather use that instead."
+            );
+        }
+    } else if has_devbox {
+        if devbox_json_declares_packages(&cwd) && !cwd.join("devbox.lock").is_file() {
+            println!(
+                "devcroft: found an existing devbox project (devbox.json) with unresolved packages."
+            );
+            println!("devcroft: run `devbox install` before `devcroft up`.");
+        } else {
+            println!(
+                "devcroft: found an existing devbox project (devbox.json); ready for `devcroft up`."
+            );
+        }
         if has_flake {
             println!(
                 "devcroft: a nix flake (flake.nix) was also found; `provider = \"nix\"` is \
@@ -583,6 +636,7 @@ fn doctor_provider() -> bool {
     match discovered_provider() {
         Some(provider) => match provider.as_str() {
             "nix" => doctor_nix_provider(true),
+            "devbox" => doctor_devbox_provider(true),
             // `config::parse` normalizes and rejects anything else, so
             // this is flox or a provider that could not exist.
             _ => doctor_flox_provider(true),
@@ -594,7 +648,8 @@ fn doctor_provider() -> bool {
             );
             let flox = doctor_flox_provider(false);
             let nix = doctor_nix_provider(false);
-            let _ = (flox, nix);
+            let devbox = doctor_devbox_provider(false);
+            let _ = (flox, nix, devbox);
             true
         }
     }
@@ -693,6 +748,56 @@ fn doctor_nix_provider(required: bool) -> bool {
              `experimental-features = nix-command flakes` to nix.conf"
         );
         false
+    }
+}
+
+/// Two probes, not one (design.md decision 4): devbox is a frontend over
+/// Nix and cannot resolve anything without it, so a missing Nix must be
+/// reported as *devbox's* unmet requirement — never as "switch
+/// providers" — matching `provider::devbox`'s own `up`-time precondition,
+/// which names `nix` itself for exactly the same reason.
+fn doctor_devbox_provider(required: bool) -> bool {
+    let devbox_found = std::process::Command::new("devbox")
+        .arg("version")
+        .output()
+        .ok()
+        .filter(|out| out.status.success());
+    let Some(out) = devbox_found else {
+        if required {
+            println!(
+                "[FAIL] provider: devbox not found on PATH, but this project declares \
+                 `provider = \"devbox\"` — install it from https://www.jetify.com/devbox"
+            );
+            return false;
+        }
+        println!(
+            "[WARN] provider: devbox not found on PATH — only needed for projects with \
+             `provider = \"devbox\"`"
+        );
+        return true;
+    };
+    let version = String::from_utf8_lossy(&out.stdout).trim().to_string();
+
+    let nix_usable = std::process::Command::new("nix")
+        .arg("--version")
+        .output()
+        .is_ok_and(|o| o.status.success());
+    if nix_usable {
+        println!("[PASS] provider: devbox found ({version}), nix usable");
+        true
+    } else if required {
+        println!(
+            "[FAIL] provider: devbox found ({version}) but Nix is not usable — devbox is a \
+             frontend over Nix and cannot resolve packages without it; install it from \
+             https://nixos.org/download"
+        );
+        false
+    } else {
+        println!(
+            "[WARN] provider: devbox found ({version}) but Nix is not usable — needed only if \
+             a project declares `provider = \"devbox\"`"
+        );
+        true
     }
 }
 

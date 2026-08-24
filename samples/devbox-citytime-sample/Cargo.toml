@@ -1,0 +1,21 @@
+[package]
+name = "citytime"
+version = "0.1.0"
+edition = "2024"
+
+# Stops cargo's workspace-root search at this crate. Without it, cargo
+# walks upward past this directory looking for a parent workspace and
+# reaches devcroft's own Cargo.toml — outside this sample's project
+# root, so a devcroft-sandboxed session correctly denies reading it
+# (same lesson as samples/flox-rustup-sample, samples/flox-clap-sample,
+# and samples/nix-flake-sample).
+[workspace]
+
+# Deliberately no dependencies — see README's "Why no clap, no chrono"
+# section: devcroft's devbox provider never runs `shell.init_hook`
+# (design.md decision 2), which is exactly where a per-build `cargo
+# fetch` would otherwise live for the other two citytime samples. A
+# real devbox project needing crates.io dependencies has to vendor them
+# or grant an explicit network allowlist; this sample sidesteps that
+# entirely so it stays a clean demonstration of the provider, not of
+# dependency vendoring.
