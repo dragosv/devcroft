@@ -282,11 +282,19 @@
       `Provider` impl arm, and `manifest_fingerprint`
 - [x] 2.2 `validate.rs`: moved `devbox` out of `NOT_YET_SUPPORTED` into
       `SUPPORTED`. No aliases (config spec: devbox has exactly one name)
-- [x] 2.3 Verified: only `src/provider/mod.rs` (dispatch arms) and
-      `src/provider/validate.rs` (one name moved lists) changed shape,
-      plus the new `src/provider/devbox.rs`. `Resolution`,
-      `policy::compile`, and `lifecycle::up`'s provider handling are
-      untouched — the trait generalizes, as claimed
+- [x] 2.3 Verified, and **restated after adversarial review caught this
+      record being stale**: it was written before task group 4 and
+      claimed the provider files were the only ones that changed shape,
+      which stopped being true the moment `doctor`/`init` landed.
+      Accurate list: `src/provider/mod.rs` (dispatch arms),
+      `src/provider/validate.rs` (one name moved lists), the new
+      `src/provider/devbox.rs`, and `src/bin/devcroft.rs` (a `doctor`
+      probe and `init` detection). The last of those is expected — the
+      proposal's own Impact section lists it — and is *not* what the
+      success criterion is about. What the criterion actually names
+      stayed untouched: `Resolution`, `policy::compile`, and
+      `lifecycle::up`'s provider handling. The trait generalizes, as
+      claimed; the earlier wording just overstated it by omission
 
 ## 3. Tests
 

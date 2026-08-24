@@ -246,13 +246,15 @@ fn status_reports_stale_after_devbox_json_changes_and_up_suggests_recreate() {
         "must be fresh immediately after `up`"
     );
 
-    // Touch devbox.json (content change) without re-locking, so this only
-    // exercises staleness detection, not a real re-resolution.
+    // A content change that does not alter what the project declares, so
+    // this exercises staleness detection alone rather than a real
+    // re-resolution — a comment is exactly that, and devcroft now reads
+    // devbox.json as JSONC, so it stays a valid file. (An earlier version
+    // of this test did a `.replace("packages", "env").replace("env",
+    // "packages")` round trip, which is the identity function; only the
+    // newline it appended was doing any work.)
     let mut manifest = std::fs::read_to_string(sandbox.project_root.join("devbox.json")).unwrap();
-    manifest = manifest
-        .replace("packages", "env")
-        .replace("env", "packages");
-    manifest.push('\n');
+    manifest.push_str("\n// touched for the staleness test\n");
     std::fs::write(sandbox.project_root.join("devbox.json"), manifest).unwrap();
 
     let out = sandbox.run(&["status"]);

@@ -428,23 +428,24 @@ fn ensure_everything_locked(project_root: &Path) -> Result<(), ProviderError> {
 /// silently break the "activation diff is independent of who ran `up`"
 /// guarantee every provider shares.
 ///
-/// The devbox binary is invoked by its resolved absolute path inside the
-/// shell script (never bare `devbox`), because the script runs under the
-/// fixed canonical baseline `PATH`, which has no reason to contain
-/// wherever this host happens to install devbox.
+/// The devbox binary's path reaches the script as a **positional
+/// argument** (`sh -c '…' devcroft-devbox <path>`, read back as `$1`),
+/// never interpolated into the script text. This is the only provider
+/// that goes through a shell at all — flox and nix build argv directly —
+/// so it is the only one where a path containing a quote could change
+/// what the shell parses. Passing it as an argument removes the question
+/// entirely rather than relying on the path being well-behaved.
 fn capture_activated_env(
     devbox_bin: &Path,
     project_root: &Path,
     base: &BTreeMap<String, String>,
 ) -> Result<BTreeMap<String, String>, ProviderError> {
-    let script = format!(
-        "eval \"$('{}' shellenv --pure)\" && env -0",
-        devbox_bin.display()
-    );
-
     let output = Command::new("sh")
         .arg("-c")
-        .arg(&script)
+        .arg(r#"eval "$("$1" shellenv --pure)" && env -0"#)
+        // `$0` for the shell's own error messages, then `$1`.
+        .arg("devcroft-devbox-capture")
+        .arg(devbox_bin)
         .current_dir(project_root)
         .env_clear()
         .envs(base)
