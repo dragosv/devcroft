@@ -85,10 +85,42 @@ already-pinned packages is permitted and expected" case. So the binary
 cache fetch does not distinguish the two situations at all, and the
 discriminator is solely whether the lockfile changes.
 
+The system SHALL read `devbox.json` by the same rules devbox itself
+applies, and SHALL NOT reject a file devbox accepts. Measured against
+devbox 0.18.0 by feeding it each relaxation in turn: line comments
+(`//`), block comments (`/* */`), and trailing commas are accepted; hash
+comments, single-quoted strings, and unquoted keys are not. Comments and
+trailing commas inside string *values* are data and SHALL be preserved.
+
+#### Scenario: A commented devbox.json is read, not rejected
+- **WHEN** `devbox.json` contains line comments, block comments, or
+  trailing commas — all of which devbox itself accepts, and which its own
+  documentation shows
+- **THEN** `up` reads it successfully rather than failing at layer
+  `provider` with a parse error
+
+#### Scenario: Comment syntax inside a string stays data
+- **WHEN** a declared package or other string value contains `//`, `/*`,
+  or a comma
+- **THEN** the value is preserved exactly, not truncated or split
+
+### Requirement: devbox requires a usable Nix
 devbox is a frontend over Nix and cannot materialize anything without it.
 The system SHALL therefore verify Nix is usable as part of the devbox
 provider's own preconditions, and SHALL report a missing Nix as devbox's
 unmet requirement rather than instructing the user to change providers.
+
+Verification SHALL **probe the capability rather than infer it from the
+binary being present**, matching the rule the `cli` spec already states
+for `doctor` — a `nix` on `PATH` that cannot evaluate is the failure this
+precondition exists to catch, and a presence check reports it as success.
+
+#### Scenario: Nix present but unusable
+- **WHEN** provider is `devbox`, `devbox` and `nix` are both on `PATH`,
+  but `nix` cannot evaluate (experimental features disabled, unreachable
+  daemon)
+- **THEN** `up` fails at layer `provider` with exit code 3, naming Nix as
+  devbox's own unmet requirement
 
 #### Scenario: Toolchain from the devbox environment is visible in a session
 - **WHEN** provider is `devbox` and `devbox.json` declares a package

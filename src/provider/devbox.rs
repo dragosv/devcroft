@@ -111,6 +111,131 @@ fn package_key(name: &str, value: &serde_json::Value) -> String {
     }
 }
 
+/// Parses a devbox file, tolerating exactly what devbox itself tolerates.
+///
+/// `devbox.json` is **not** strict JSON. Measured against devbox 0.18.0
+/// by feeding it each relaxation in turn: line comments (`//`), block
+/// comments (`/* */`), and trailing commas are all accepted; hash
+/// comments, single-quoted strings, and unquoted keys are rejected. That
+/// is JSONC, and devbox's own documentation shows commented files, so
+/// parsing strictly rejects projects devbox considers valid — found by
+/// adversarial review, where `devcroft up` failed on a commented
+/// `devbox.json` that `devbox list` read happily.
+///
+/// A ~40-line preprocessor rather than a JSONC crate: `use-nono-library`
+/// established this repo weighs dependency tails seriously, and the
+/// transformation is small enough to test exhaustively (strings
+/// containing `//`, escaped quotes, and commas are the cases that matter,
+/// and each has a test below).
+fn parse_devbox_json(path: &Path) -> Result<serde_json::Value, ProviderError> {
+    let text = std::fs::read_to_string(path)
+        .map_err(|e| ProviderError::ResolutionFailed(format!("reading {}: {e}", path.display())))?;
+    serde_json::from_str(&strip_jsonc(&text))
+        .map_err(|e| ProviderError::ResolutionFailed(format!("parsing {}: {e}", path.display())))
+}
+
+/// Removes JSONC comments and trailing commas, leaving string contents
+/// untouched — a `//` or `,` inside a string literal is data, not syntax.
+fn strip_jsonc(text: &str) -> String {
+    let without_comments = strip_comments(text);
+    strip_trailing_commas(&without_comments)
+}
+
+fn strip_comments(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut chars = text.chars().peekable();
+    let mut in_string = false;
+    let mut escaped = false;
+
+    while let Some(c) = chars.next() {
+        if in_string {
+            out.push(c);
+            if escaped {
+                escaped = false;
+            } else if c == '\\' {
+                escaped = true;
+            } else if c == '"' {
+                in_string = false;
+            }
+            continue;
+        }
+        match c {
+            '"' => {
+                in_string = true;
+                out.push(c);
+            }
+            '/' if chars.peek() == Some(&'/') => {
+                for c in chars.by_ref() {
+                    if c == '\n' {
+                        // Keep the newline so reported error positions
+                        // still line up with the file the user sees.
+                        out.push('\n');
+                        break;
+                    }
+                }
+            }
+            '/' if chars.peek() == Some(&'*') => {
+                chars.next();
+                let mut prev = '\0';
+                for c in chars.by_ref() {
+                    if prev == '*' && c == '/' {
+                        break;
+                    }
+                    if c == '\n' {
+                        out.push('\n');
+                    }
+                    prev = c;
+                }
+            }
+            _ => out.push(c),
+        }
+    }
+    out
+}
+
+fn strip_trailing_commas(text: &str) -> String {
+    let chars: Vec<char> = text.chars().collect();
+    let mut out = String::with_capacity(text.len());
+    let mut in_string = false;
+    let mut escaped = false;
+    let mut i = 0;
+
+    while i < chars.len() {
+        let c = chars[i];
+        if in_string {
+            out.push(c);
+            if escaped {
+                escaped = false;
+            } else if c == '\\' {
+                escaped = true;
+            } else if c == '"' {
+                in_string = false;
+            }
+            i += 1;
+            continue;
+        }
+        if c == '"' {
+            in_string = true;
+            out.push(c);
+            i += 1;
+            continue;
+        }
+        if c == ',' {
+            let mut j = i + 1;
+            while j < chars.len() && chars[j].is_whitespace() {
+                j += 1;
+            }
+            if matches!(chars.get(j), Some('}') | Some(']')) {
+                i += 1;
+                continue;
+            }
+        }
+        out.push(c);
+        i += 1;
+    }
+    out
+}
+
 /// The lock keys `devbox.json`'s `packages` field declares, in whichever
 /// of the two accepted shapes it uses — array of `"name@version"` strings,
 /// or an object map of `name` to a version string or a table. An
@@ -120,12 +245,7 @@ fn package_key(name: &str, value: &serde_json::Value) -> String {
 /// `declares_activation_hook` already uses for the same reason.
 fn declared_package_keys(project_root: &Path) -> Result<Vec<String>, ProviderError> {
     let devbox_json_path = project_root.join("devbox.json");
-    let text = std::fs::read_to_string(&devbox_json_path).map_err(|e| {
-        ProviderError::ResolutionFailed(format!("reading {}: {e}", devbox_json_path.display()))
-    })?;
-    let parsed: serde_json::Value = serde_json::from_str(&text).map_err(|e| {
-        ProviderError::ResolutionFailed(format!("parsing {}: {e}", devbox_json_path.display()))
-    })?;
+    let parsed = parse_devbox_json(&devbox_json_path)?;
 
     let Some(packages) = parsed.get("packages") else {
         return Ok(Vec::new());
@@ -247,12 +367,11 @@ fn ensure_everything_locked(project_root: &Path) -> Result<(), ProviderError> {
         });
     }
 
-    let text = std::fs::read_to_string(&lock_path).map_err(|e| {
-        ProviderError::ResolutionFailed(format!("reading {}: {e}", lock_path.display()))
-    })?;
-    let parsed: serde_json::Value = serde_json::from_str(&text).map_err(|e| {
-        ProviderError::ResolutionFailed(format!("parsing {}: {e}", lock_path.display()))
-    })?;
+    // Same tolerant parse as `devbox.json`. `devbox.lock` is generated
+    // rather than hand-authored, so comments in it are unlikely — but
+    // reading the two files by different rules would be a surprise
+    // waiting to happen, and costs nothing to avoid.
+    let parsed = parse_devbox_json(&lock_path)?;
     let locked: BTreeSet<&str> = parsed
         .get("packages")
         .and_then(|v| v.as_object())
@@ -439,6 +558,60 @@ mod tests {
         write_devbox_project(&root, r#"{"packages": {"ripgrep": "latest"}}"#, None);
         let keys = declared_package_keys(&root).unwrap();
         assert_eq!(keys, vec!["ripgrep@latest".to_string()]);
+    }
+
+    #[test]
+    fn strip_jsonc_removes_line_and_block_comments() {
+        let src = r#"{
+  // line
+  "packages": [], /* block */
+  "shell": {}
+}"#;
+        let parsed: serde_json::Value = serde_json::from_str(&strip_jsonc(src)).unwrap();
+        assert!(parsed.get("packages").is_some());
+        assert!(parsed.get("shell").is_some());
+    }
+
+    #[test]
+    fn strip_jsonc_removes_trailing_commas_in_objects_and_arrays() {
+        let src = r#"{"packages": ["a", "b",], "shell": {"x": 1,},}"#;
+        let parsed: serde_json::Value = serde_json::from_str(&strip_jsonc(src)).unwrap();
+        assert_eq!(parsed["packages"].as_array().unwrap().len(), 2);
+    }
+
+    /// The case that breaks a naive implementation: `//`, `/*` and `,`
+    /// inside a string literal are data, not syntax.
+    #[test]
+    fn strip_jsonc_leaves_string_contents_alone() {
+        let src = r#"{"packages": ["https://example.com/x", "a,b", "/* not a comment */"]}"#;
+        let parsed: serde_json::Value = serde_json::from_str(&strip_jsonc(src)).unwrap();
+        let pkgs = parsed["packages"].as_array().unwrap();
+        assert_eq!(pkgs[0], "https://example.com/x");
+        assert_eq!(pkgs[1], "a,b");
+        assert_eq!(pkgs[2], "/* not a comment */");
+    }
+
+    /// An escaped quote must not be read as the end of the string, or
+    /// everything after it is treated as syntax.
+    #[test]
+    fn strip_jsonc_handles_escaped_quotes_inside_strings() {
+        let src = r#"{"packages": ["say \"hi\" // now"]}"#;
+        let parsed: serde_json::Value = serde_json::from_str(&strip_jsonc(src)).unwrap();
+        assert_eq!(parsed["packages"][0], r#"say "hi" // now"#);
+    }
+
+    #[test]
+    fn declared_package_keys_reads_a_commented_devbox_json() {
+        let root = tempdir("declared-jsonc");
+        write_devbox_project(
+            &root,
+            "{\n  // devbox's own docs show commented files\n  \"packages\": [\"ripgrep@latest\",],\n}",
+            None,
+        );
+        assert_eq!(
+            declared_package_keys(&root).unwrap(),
+            vec!["ripgrep@latest".to_string()]
+        );
     }
 
     #[test]
