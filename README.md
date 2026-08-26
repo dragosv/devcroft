@@ -379,6 +379,45 @@ precisely to let the host reach inward. That read now verifies the path
 is a socket owned by the invoking user, caps the response size, and
 bounds the whole exchange rather than only each individual read.
 
+**`add-flox-services` is implemented.** A flox environment's documented
+`[services]` declarations are read host-side at `up`, started **inside**
+the sandbox after restriction (they are project code, so they get no
+provisioning privileges), supervised by the keeper for the sandbox's
+lifetime, and reaped at `down`. `status`/`ps`/`logs` report them per
+service; no new top-level command was added, and a test pins that closed
+surface so `devcroft services` cannot quietly appear later.
+
+devcroft generates its own process-compose config from the published
+schema rather than shelling out to `flox services` (which would need the
+flox binary executable inside the profile — what the "environment
+resolves once" invariant already rejects) or consuming flox's
+undocumented generated one. The stated cost: `flox services status` run
+by hand shows nothing, because flox did not start these processes.
+`devcroft doctor` says so explicitly in any project that declares
+services, rather than leaving an empty list to be misread.
+
+**Finishing it found a real defect in teardown, and the first fix for it
+was wrong.** The `services` spec promises no service process survives
+`down`, verified by observing process absence rather than by trusting a
+stop command. It did not hold: the shutdown handler killed the registered
+*process group*, which is process-compose's, while process-compose puts
+each service in a group of its own — so a service that ignores SIGTERM
+outlived `down`, got reparented to init, and kept running. Every earlier
+services test used a process that dies politely, which hid it completely.
+
+The first fix set process-compose's per-process `shutdown.timeout`, which
+reads exactly like the missing escalation, and an initial probe seemed to
+confirm it. The probe was an artifact — process-compose was a background
+job of a shell that exited moments later, and that is what cleaned up the
+group. Re-measured in isolation with `setsid` and ten seconds to act,
+process-compose 1.116.0 does not escalate at all: it hangs after logging
+"Caught terminated" with the stubborn child still alive. The working fix
+keeps the guarantee where the spec puts it — devcroft's: the keeper asks
+the supervisor for its service pids before signalling anything, and
+includes each service's own process group in both sweeps. At the hardened
+tier a different mechanism covers it, and the test says which rather than
+assuming: teardown destroys the `runsc` sandbox, taking everything in it.
+
 **`add-devbox-provider` is implemented.** devbox is a third closure-tier
 `env.provider`, resolved by capturing `devbox shellenv --pure` (never
 `devbox run`, which — measured, not assumed — runs a project's
@@ -483,9 +522,19 @@ Known gaps, published rather than hidden:
   both running a dev server on 3000) still race for it with `EADDRINUSE`,
   since Landlock has no hook for that at all. There is no conflict
   detection; reach a sandbox's services through SSH's `-L` forwarding
-  rather than assuming host ports are exclusive to it. **Note this is
-  currently moot under the default policy** — see the listening-socket
-  gap below, where neither sandbox can bind in the first place.
+  rather than assuming host ports are exclusive to it.
+
+  **This bites hardest on exactly the fan-out flow devcroft targets**, and
+  is no longer moot now that services ship: `devcroft.toml` is committed,
+  so every git worktree of a repo declares the *same* port, and two
+  sandboxes each starting Postgres on 5432 collide. It is tier-dependent
+  in a way worth knowing — at `hardened` with a **deny-default** network
+  the sandbox already gets its own network namespace from the OCI spec, so
+  the committed port works unchanged in all N; the collision is real at
+  `process`, and at `hardened` when egress is granted (which shares the
+  host's namespace). The fix is `add-port-allocation`, which pairs with
+  `add-agent-workload`: that change gives N worktrees distinct sandbox
+  *names*, without which they never get as far as needing distinct ports.
 - **~~`network` blocking also blocks *listening* sockets~~ — FIXED, and
   the original diagnosis was wrong.** A deny-default policy does still
   deny `bind`/`listen` by itself, but this was published as a gap in the

@@ -25,18 +25,17 @@
 //! earlier version of this file's own doc comment claiming one for a
 //! manifest with no `[env]` section. `flox init` below is required for
 //! the same reason `tests/hardened_services_wiring.rs` already does it.
-//! Past that, a second, deeper issue blocks this test from reaching its
-//! own SSH assertions on a real kernel: `runsc run`'s rootless bootstrap
-//! issues a `mount()` call to set mount propagation
-//! (`MS_SLAVE|MS_REC`) as part of its own chroot setup, and that call
-//! fails `EPERM` under *any* active Landlock ruleset — confirmed by
-//! elimination (granting `/` read-write to the Landlock profile `run`
-//! applies before exec'ing `runsc` does not help). See
-//! `src/gvisor/runner.rs`'s `PROC_PREFLIGHT_DIRS` doc comment and
-//! `openspec/changes/add-flox-services/tasks.md` task 6.5 for the full
-//! writeup — this is a Landlock-vs-rootless-gVisor incompatibility this
-//! repo's Landlock wrapping of `runsc run` needs to be revisited for, not
-//! something a missing grant here can fix.
+//! A second, deeper issue used to block this test from reaching its own
+//! SSH assertions even on a real kernel, and is **resolved**: `runsc
+//! run`'s rootless bootstrap issues a `mount()` call to set mount
+//! propagation (`MS_SLAVE|MS_REC`) during its own chroot setup, and that
+//! call fails `EPERM` under *any* active Landlock ruleset — confirmed by
+//! elimination, since granting `/` full read-write did not help either.
+//! The Landlock wrapping of `runsc run` was removed rather than narrowed
+//! (Landlock cannot mediate `mount()` in any ABI, so no grant could have
+//! fixed it); see `src/gvisor/runner.rs`'s module doc and
+//! `openspec/changes/add-gvisor-backend/design.md` decision 4. This test
+//! passes for real now rather than self-skipping.
 
 use devcroft::config::parse;
 use devcroft::lifecycle::{StatePaths, UpOptions, UpOutcome, client_key_paths, down, up};

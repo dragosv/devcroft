@@ -266,6 +266,25 @@ fn capture_activated_env(
     Ok(capture::parse_env_dump(&output.stdout))
 }
 
+/// The names of services this project's flox environment declares, or an
+/// empty list when there is no flox environment, it declares none, or it
+/// cannot be read.
+///
+/// Exists for one caller: `up`'s check that a project is not silently
+/// dropping declared services because `env.provider` names a provider
+/// with no service concept (`lifecycle::up::
+/// ensure_no_services_declared_for_another_provider`). Best-effort by
+/// construction — an unreadable or malformed flox manifest is *not* this
+/// function's error to raise, since the project did not ask devcroft to
+/// use flox at all; the honest answer there is "nothing to warn about",
+/// not a failure about a provider the manifest does not name.
+pub fn declared_service_names(project_root: &Path) -> Vec<String> {
+    match read_service_declarations(project_root) {
+        Ok(ServiceSupport::Declared(services)) => services.into_iter().map(|s| s.name).collect(),
+        _ => Vec::new(),
+    }
+}
+
 /// Content fingerprint of a flox environment's `manifest.toml` + lockfile,
 /// for staleness detection (spec: "Stale environment after manifest
 /// change"). `provider::is_stale` (dispatched by provider name) compares

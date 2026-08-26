@@ -29,20 +29,37 @@
       outright, caught by the existing against-real-flox test
 - [x] 2.3 `src/provider/nix.rs`: `ServiceSupport::Unsupported`, declared
       explicitly with the reasoning inline
-- [ ] 2.4 `up` fails at layer `provider`, exit code 3, when services are
+- [x] 2.4 `up` fails at layer `provider`, exit code 3, when services are
       requested from a provider that supports none — naming the provider.
-      **Currently unreachable through the CLI**: declarations come from
-      the provider's own manifest, so a `nix` project has no way to
-      declare services at all. The reachable variant worth building
-      instead is a project with `[services]` in a flox manifest whose
-      `devcroft.toml` says `provider = "nix"` — today those services are
-      silently ignored. Left open deliberately rather than shipping a
-      check that can never fire
+      The literal reading is unreachable through the CLI, as this task
+      already recorded: declarations come from the provider's own
+      manifest, so a `nix` project has no way to declare services at all.
+      **Built the reachable variant this task named instead**: a project
+      whose flox environment declares `[services]` while `devcroft.toml`
+      says `provider = "nix"` now fails at layer `provider`, naming both
+      the services and the provider, rather than coming up reporting no
+      services — which was indistinguishable from a project declaring
+      none, the exact silent failure the `services` spec exists to rule
+      out. Driven by the *resolved* `ServiceSupport` rather than by the
+      provider's name, so it covers devbox (also `Unsupported`) and any
+      future provider without a service concept, at no extra cost.
+      `--skip-hooks` bypasses it, preserving "one flag guarantees nothing
+      project-supplied runs" — refusing there would break the escape
+      hatch in exactly the situation it exists for. Covered by
+      `services_declared_for_another_provider_fail_rather_than_being_ignored`
+      and `skip_hooks_bypasses_the_wrong_provider_service_check`
 - [x] 2.5 Unit tests: `[services]` present/absent, ordering determinism,
       and a service with no string `command` failing loudly (the
       schema-drift guard) rather than resolving to an empty list
-- [ ] 2.6 Regression test: `policy --render` byte-identical with and
+- [x] 2.6 Regression test: `policy --render` byte-identical with and
       without services declared
+      (`policy_render_is_unchanged_by_declaring_services`). The property
+      holds by construction — `policy::compile` takes only the devcroft
+      `Manifest`, and declarations live in the *provider's* — which is
+      why it is worth pinning: "No change to policy compilation" is a
+      promise a future change threading service ports into the policy
+      would quietly break. Runs before any `up`, so it needs neither
+      `process-compose` nor a resolvable environment
 
 > **Out of scope, moved to its own change:** `nix` returning a flat
 > `ServiceSupport::Unsupported` is correct for the interface devcroft
@@ -182,9 +199,55 @@
       than assuming it — and a service declaring `shutdown.command` must
       have it honored, since a daemon's launcher has already exited and
       killing it reaps nothing
-- [ ] 3.6 Test at both tiers that a service ignoring SIGTERM is still
+- [x] 3.6 **Process tier only** — see the note at the end of this entry
+      for why the hardened half is deliberately not covered. Test that a
+      service ignoring SIGTERM is still
       gone after teardown — asserted by observing process absence, never
-      by trusting a stop command's exit status
+      by trusting a stop command's exit status.
+      **This found a real defect; the task was not a formality.** The
+      shutdown handler killed the *registered process group*, which is
+      process-compose's — but process-compose puts each service in its
+      own group, so escalation never reached them. A service trapping
+      SIGTERM outlived `down`, was reparented to init, and kept running,
+      against the `services` spec's "no service process started by it
+      remains alive on the host". Every earlier services test used a
+      process that dies on SIGTERM, which hid it completely.
+      **The first fix was wrong, and the way it was wrong is worth
+      keeping.** process-compose's config takes a per-process
+      `shutdown.timeout` that reads exactly like the missing escalation,
+      and an initial probe appeared to confirm it worked. The probe was
+      an artifact: process-compose was a background job of a shell that
+      exited moments later, and *that* is what cleaned up the group.
+      Re-measured in isolation with `setsid` and ten seconds to act,
+      process-compose 1.116.0 does **not** escalate — it hangs after
+      logging "Caught terminated - Shutting down the running
+      processes..." with the stubborn child still alive. The timeout is
+      still emitted (harmless, and correct for versions that honor it),
+      but nothing depends on it.
+      **Actual fix:** the keeper asks the supervisor for its service pids
+      *before* signalling anything — the same `services::query` `status`
+      already uses — and includes each service's own process group in
+      both the SIGTERM and the SIGKILL sweep. Guarantee restored to
+      devcroft, which is where the spec puts it ("verified by observing
+      process absence rather than by a stop command's exit status").
+      **The hardened half is not covered, deliberately.** It was written
+      and then removed rather than left passing for the wrong reason. Two
+      findings from the attempt are worth keeping: a gVisor-sandboxed
+      process runs under the Sentry and its argv is **not** visible in the
+      host's `ps`, so the process-tier observation (count marker lines,
+      assert zero) reports zero whether the service is alive or dead —
+      the test would have passed without testing anything. And a run
+      killed mid-flight leaves a whole `runsc` sandbox plus its
+      `process-compose` alive; `devcroft rm <name>` tears them down
+      correctly, which is at least evidence teardown works when it is
+      actually invoked. The valid observation at that tier is the sandbox
+      itself disappearing, not the process inside it. Not pursued because
+      the hardened tier is slated to be dropped — revisit only if it
+      stays.
+      One test-design lesson recorded in the test itself: the marker
+      string is per-run, not a constant. A constant made a single orphan
+      from an earlier *failing* run fail every later run, which cost a
+      full debugging cycle chasing a fix that already worked
 
 ## 4. Lifecycle wiring
 
@@ -226,15 +289,31 @@
       service is not reported as simply healthy — the case that currently
       violates the `services` spec's "failure is visible, never silent"
       and that decision 3's no-auto-restart rationale depends on
-- [ ] 5.4 `doctor`: report whether this host can bind a listening socket
-      under a deny-default policy; when it cannot, name the consequence
-      for services and the `network.default = "allow"` workaround along
-      with the egress filtering it costs (per the `cli` delta spec)
-- [ ] 5.5 Confirm no new top-level command was added — the MVP command
-      surface stays closed, per proposal.md's Impact
-- [ ] 5.6 Have `status` (or `doctor`) name devcroft as the supervisor, so
-      a user running `flox services status` by hand and seeing nothing is
-      not left confused (design.md decision 1's stated cost)
+- [x] 5.4 `doctor`: reports whether this host can bind a listening socket
+      under a deny-default policy, naming the consequence for services and
+      the `network.default = "allow"` workaround with the egress
+      filtering it costs. **Probed, never inferred** — the same rule the
+      backend and nix checks already follow: a hidden `__bind_probe`
+      subcommand (the `__keeper` pattern) applies a real deny-default
+      `CapabilityPlan` granting exactly one port and tries to bind it,
+      in a throwaway child because the restriction is irreversible and
+      applying it inside `doctor` would leave every later check running
+      sandboxed. A probe that cannot run at all reports `[INFO]`, not a
+      false "does not work" verdict
+- [x] 5.5 Confirmed, and pinned as a test rather than checked once
+      (`the_top_level_command_surface_stays_closed`): the dispatched
+      verbs are exactly the 15 the closed surface names, and `devcroft
+      services`/`service`/`start`/`stop`/`restart`/`ports` are each
+      asserted to remain unknown. The `__`-prefixed re-exec modes
+      (`__keeper`, `__hardened_keeper`, and 5.4's new `__bind_probe`) are
+      internal entry points, not user-facing commands, and are excluded
+      deliberately
+- [x] 5.6 `doctor` names devcroft as the supervisor and says explicitly
+      that `flox services status` will not list these processes —
+      design.md decision 1's stated cost, surfaced instead of left in a
+      design document. Scoped to projects that actually declare services:
+      a project with none does not need telling who would have supervised
+      them
 
 ## 6. Tests
 
@@ -252,10 +331,20 @@
       half: it polls `ps -eo args` for both `http.server` and
       `process-compose up` until neither remains, rather than trusting
       any stop command's exit status
-- [ ] 6.3 Failure test: a service whose command exits non-zero is listed
-      as failed with a reachable log tail, and the sandbox stays usable
-- [ ] 6.4 Policy test: a service denied a port by `[network]` fails
-      visibly with the same denial any in-sandbox process would get
+- [x] 6.3 Failure test
+      (`a_service_that_exits_non_zero_at_startup_is_reported_failed_and_the_sandbox_stays_usable`):
+      a service exiting non-zero *at startup* — distinct from the
+      killed-while-running case the main test covers, and the state that
+      used to be indistinguishable from "never declared". Asserts the
+      failure is listed by name, the service's own output is reachable
+      through the service log, and `exec` still works
+- [x] 6.4 Policy test
+      (`a_service_denied_its_port_fails_the_same_way_any_session_would`):
+      a service binding an ungranted port under `network.default =
+      "deny"` surfaces as failed, and the **same** bind attempted through
+      `exec` is denied identically — the "a service that needs a port is
+      asking the manifest for it, not asking devcroft for an exemption"
+      claim made checkable rather than asserted
 - [x] 6.5 Cross-tier test: the same service declaration behaves
       identically at `process` and `hardened`, in the shape
       `tests/hardened_tier_ssh_parity.rs` already uses — self-skipping
@@ -384,20 +473,41 @@
 
 ## 7. Docs
 
-- [ ] 7.1 `docs/decisions.md`: replace "No service sidecars (yet)" with
-      the delivered state, and add the port-collision limitation as a
-      falsifiable rejection naming the property that fails (no netns
-      under rootless), cross-referencing the existing netstack rejection
-- [ ] 7.2 `docs/decisions.md`: record the "devcroft supervises, flox
-      declares" split and its stated cost — `flox services status` will
-      not show devcroft-started processes
-- [ ] 7.3 README known gaps: two sandboxes declaring the same service
-      port still collide; and the keeper's single-point-of-failure blast
-      radius now includes services
-- [ ] 7.4 `openspec/config.yaml`: move service sidecars out of the
-      deferred roadmap, and close the devenv ownership open question with
-      the decision this change made (services supervised and restartable;
-      hooks one-shot and `up`-failing)
+- [x] 7.1 `docs/decisions.md`: "No service sidecars (yet)" replaced with
+      the delivered state, and the port collision added as its own
+      falsifiable entry naming the property that fails (nothing separates
+      the two sandboxes' loopback). **Corrected while writing it:** the
+      task's own parenthetical — "no netns under rootless" — is the wrong
+      reason, and repeating it would have re-published the error
+      `add-port-allocation` already caught. The hardened tier *does* get
+      a network namespace for deny-default sandboxes, from the OCI spec
+      devcroft writes; what rootless denies is gVisor's own netstack,
+      which is a different thing. The entry is therefore scoped by
+      resolved network mode rather than by tier, and cross-references
+      both the netstack rejection and `add-port-allocation`
+- [x] 7.2 `docs/decisions.md`: the "devcroft supervises, flox declares"
+      split is recorded with both halves of its cost — `flox services
+      status` shows nothing for these processes, and `process-compose`
+      has to be declared in the project's own environment (a devcroft
+      implementation choice leaking into the project's manifest, accepted
+      as the lesser evil against depending on a binary the environment
+      never declared)
+- [x] 7.3 README: the port-collision gap is rewritten — it was marked
+      "currently moot under the default policy", which stopped being true
+      when `network.ports` landed and services shipped — and now names the
+      worktree/fan-out case explicitly, with the tier-dependence and the
+      `add-port-allocation` + `add-agent-workload` pairing. The keeper's
+      blast radius now naming services went into `docs/decisions.md`'s
+      single-point-of-failure entry, alongside why service state is
+      queried live rather than recorded at `up`. A Status paragraph
+      covers what shipped, including the teardown defect and the wrong
+      first fix
+- [x] 7.4 `openspec/config.yaml`: the service-sidecars roadmap entry is
+      removed (delivered), and devenv's ownership open question is closed
+      in place with the decision this change made — services are
+      supervised, enumerable and reaped; hooks are one-shot and a failing
+      hook fails `up`; a long-lived process started by a hook is not
+      adopted as a service
 
 ## 9. Review findings
 
@@ -449,9 +559,48 @@
 
 ## 8. Verification
 
-- [ ] 8.1 `cargo build`, `cargo clippy`, `cargo fmt` clean
-- [ ] 8.2 `openspec validate --all` passes with this change included
-- [ ] 8.3 Report honestly which of the above ran against a live service
-      and which are unverified — including whether the deny-default
-      policy shape was exercised at all, or only the `allow` workaround
-      (task 1.2)
+- [x] 8.1 `cargo build`, `cargo clippy --all-targets`, `cargo fmt` clean.
+      Full `cargo test`: **240 lib tests plus every integration file,
+      0 failures**
+- [x] 8.2 `openspec validate --all`: 11 passed, 0 failed
+- [x] 8.3 **Honest verification report.**
+
+      *Ran against a live service, on a real flox environment with a real
+      `process-compose`:* every test in `tests/services_e2e.rs` — the
+      original up/reap test, plus this session's four new ones (failed at
+      startup, denied its port, declared for a provider with no service
+      concept, ignoring SIGTERM). Each brings up a real sandbox, starts a
+      real supervisor, and asserts through `status`/the service log/the
+      host process table. `policy_render_is_unchanged_by_declaring_services`
+      deliberately runs *before* any `up`, so it needs no supervisor —
+      `policy --render` compiles from the manifest.
+
+      *The deny-default question this task asks explicitly:* **deny-default
+      throughout, never the `allow` workaround.** `config::Network`'s
+      default is `Deny`, the services tests either take that default or
+      set `default = "deny"` outright, and the one test that needs a
+      listener grants exactly one port through `network.ports`. Task 1.2's
+      concern is closed: no test depends on dropping egress filtering.
+
+      *`doctor`'s new checks:* the listening-socket probe and the
+      supervisor line both ran here and are covered by tests. The probe
+      asserts *a* verdict rather than a specific one, since the answer is
+      a property of the host kernel — pinning "works" would fail
+      correctly-behaving runs on hosts where it does not.
+
+      *Not verified, and why:* the **hardened tier**, for services or for
+      teardown. Task 3.6's hardened half was written, found to be
+      unobservable the way it was written (a gVisor-sandboxed process's
+      argv is invisible to the host's `ps`, so the assertion passed
+      vacuously), and removed rather than left in. Not rewritten because
+      the hardened tier is slated to be dropped. `tests/hardened_services_wiring.rs`
+      still covers what it always did — that hardened `up` enforces the
+      `process-compose` requirement before starting a sandbox — and that
+      still passes.
+
+      *One incidental observation, recorded because it is the kind of
+      thing that gets assumed:* a hardened run killed mid-flight leaves a
+      whole `runsc` sandbox and its `process-compose` alive. `devcroft rm
+      <name>` tore both down correctly when invoked, so teardown works;
+      what does not exist is any cleanup for a *test harness* killed by a
+      timeout.

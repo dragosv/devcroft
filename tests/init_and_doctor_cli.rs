@@ -772,3 +772,168 @@ fn doctor_reports_manifest_degradation_when_one_is_discoverable() {
 
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// `cli` delta spec (add-flox-services): "doctor reports whether
+/// listening sockets work".
+///
+/// Asserts the line exists and is one of the two defined verdicts rather
+/// than pinning which — the answer is a genuine property of the host
+/// kernel, and a test that demanded "works" would fail correctly-behaving
+/// doctor runs on hosts where it does not.
+#[test]
+fn doctor_reports_whether_listening_sockets_work() {
+    if !devcroft::policy::backend_supported() {
+        eprintln!("skipping: this host has no usable Landlock/Seatbelt support");
+        return;
+    }
+
+    let dir = scratch_project("doctor-listening");
+    let stdout = String::from_utf8_lossy(&run(&dir, &["doctor"]).stdout).into_owned();
+
+    let line = stdout
+        .lines()
+        .find(|l| l.contains("listening sockets:"))
+        .unwrap_or_else(|| panic!("doctor must report on listening sockets, got:\n{stdout}"));
+
+    assert!(
+        line.starts_with("[PASS]") || line.starts_with("[WARN]") || line.starts_with("[INFO]"),
+        "got: {line}"
+    );
+    // The spec requires the workaround be named *when it cannot bind* —
+    // naming it unconditionally would advise dropping egress filtering
+    // on hosts that do not need it.
+    if line.starts_with("[WARN]") {
+        assert!(
+            stdout.contains("network.default = \"allow\""),
+            "a host that cannot bind must be told the workaround, got:\n{stdout}"
+        );
+        assert!(
+            stdout.contains("egress"),
+            "and what the workaround costs, got:\n{stdout}"
+        );
+    }
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Task 5.6 / design.md decision 1's stated cost: flox declares, devcroft
+/// supervises, so `flox services status` shows nothing for services that
+/// are running fine. Silent for a project that declares none — a user
+/// with no services does not need to be told who would have supervised
+/// them.
+#[test]
+fn doctor_names_devcroft_as_the_service_supervisor_only_when_services_exist() {
+    if !devcroft::policy::backend_supported() {
+        eprintln!("skipping: this host has no usable Landlock/Seatbelt support");
+        return;
+    }
+    if Command::new("flox").arg("--version").output().is_err() {
+        eprintln!("skipping: flox not on PATH");
+        return;
+    }
+
+    let dir = scratch_project("doctor-supervisor");
+    if !Command::new("flox")
+        .arg("init")
+        .current_dir(&dir)
+        .output()
+        .unwrap()
+        .status
+        .success()
+    {
+        eprintln!("skipping: flox init failed");
+        return;
+    }
+    std::fs::write(
+        dir.join("devcroft.toml"),
+        "[sandbox]\nname = \"doctorsupervisor\"\n",
+    )
+    .unwrap();
+
+    let without = String::from_utf8_lossy(&run(&dir, &["doctor"]).stdout).into_owned();
+    assert!(
+        !without.contains("devcroft supervises"),
+        "a project declaring no services must not get the supervisor note, got:\n{without}"
+    );
+
+    // Into the stock manifest's existing `[services]` table — appending a
+    // second one makes the file fail to parse, which would make this pass
+    // for the wrong reason.
+    let manifest_path = dir.join(".flox/env/manifest.toml");
+    let manifest = std::fs::read_to_string(&manifest_path).unwrap();
+    std::fs::write(
+        &manifest_path,
+        manifest.replacen("[services]\n", "[services]\nweb.command = \"true\"\n", 1),
+    )
+    .unwrap();
+
+    let with = String::from_utf8_lossy(&run(&dir, &["doctor"]).stdout).into_owned();
+    assert!(
+        with.contains("devcroft supervises") && with.contains("web"),
+        "a services-declaring project must be told devcroft supervises them, got:\n{with}"
+    );
+    assert!(
+        with.contains("flox services status"),
+        "and specifically that flox's own command will not show them, got:\n{with}"
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Task 5.5 / proposal.md's Impact: "MVP's command surface stays closed:
+/// this change adds **no** new top-level command."
+///
+/// Pinned as a test rather than checked once, because the pressure this
+/// guards against is ongoing — service state riding on `status`/`ps`/
+/// `logs` is a deliberate constraint, and `devcroft services` is the
+/// obvious thing for a future change to reach for.
+///
+/// `__`-prefixed modes (`__keeper`, `__hardened_keeper`, `__bind_probe`)
+/// are internal re-exec entry points, not user-facing commands, and are
+/// deliberately not part of this set.
+#[test]
+fn the_top_level_command_surface_stays_closed() {
+    const CLOSED_SURFACE: &[&str] = &[
+        "init",
+        "up",
+        "down",
+        "rm",
+        "status",
+        "logs",
+        "ps",
+        "shell",
+        "exec",
+        "ssh",
+        "proxy",
+        "ssh-config",
+        "policy",
+        "why",
+        "doctor",
+    ];
+    // Verbs a future services change might plausibly add. Each must
+    // still be rejected as unknown.
+    const MUST_NOT_EXIST: &[&str] = &["services", "service", "restart", "start", "stop", "ports"];
+
+    let dir = scratch_project("closed-surface");
+
+    for cmd in CLOSED_SURFACE {
+        let stderr =
+            String::from_utf8_lossy(&run(&dir, &[cmd, "--help-nonsense"]).stderr).into_owned();
+        assert!(
+            !stderr.contains("unknown command"),
+            "`{cmd}` is part of the closed MVP surface and must be dispatched, got: {stderr}"
+        );
+    }
+
+    for cmd in MUST_NOT_EXIST {
+        let out = run(&dir, &[cmd]);
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(
+            stderr.contains("unknown command"),
+            "`devcroft {cmd}` must not exist — service state rides on \
+             status/ps/logs by design, got: {stderr}"
+        );
+    }
+
+    let _ = std::fs::remove_dir_all(&dir);
+}

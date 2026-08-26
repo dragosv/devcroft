@@ -22,6 +22,11 @@ pub(crate) mod session;
 
 pub mod protocol;
 
+/// Re-exported because `services::SHUTDOWN_TIMEOUT_SECS` is defined
+/// relative to it and the binary's shutdown handler uses it directly —
+/// the relationship (process-compose reaps its children before devcroft
+/// reaps process-compose) only holds if there is exactly one number.
+pub use connection::DEFAULT_GRACE_PERIOD;
 pub use protocol::{
     ExitStatus, Frame, PtySize, QueryResult, SessionSignal, SessionSummary, SpawnRequest,
 };

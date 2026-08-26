@@ -82,8 +82,13 @@ context: |
   - Qualified but unscheduled providers (meet the criteria — declarative
     manifest, real lockfile, immutable-capable shared store, env-diff
     capturable activation — but no committed order):
-    - devenv (closure tier; open question: its built-in services overlap
-      with devcroft hooks, ownership must be decided first)
+    - devenv (closure tier). The ownership open question this entry
+      carried — devenv's built-in services overlapping devcroft hooks —
+      is closed by `add-flox-services`: services and hooks are separate
+      mechanisms with a stated precedence. Services are supervised,
+      enumerable and reaped at teardown; hooks are one-shot and a failing
+      hook fails `up`. A long-lived process started by a hook is not
+      adopted as a service and stays the user's to reap
     - mise (artifact tier; mandatory `mise.lock`, devcroft-owned
       append-only data dir; must declare host library grants)
     - pixi (artifact tier; content-addressed package cache shareable
@@ -107,8 +112,6 @@ context: |
   - Editor convenience commands (`devcroft code|cursor|zed`)
   - Port forwarding management beyond SSH's own `-L`
   - From the devcontainer feature triage:
-    - Service sidecars (postgres, redis) via provider service support
-      (flox `[services]`, devenv) supervised by the keeper
     - Resource limits (cpu/mem) via cgroup v2 scope units on Linux — a real
       class gap vs containers, stated honestly in the README until then
     - Secret injection delegated to the backend's credential proxy (nono

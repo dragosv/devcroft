@@ -587,12 +587,67 @@ different service on the same allowed IP, or DNS-rebinding-shaped
 tricks) — untested, and a real candidate for the next thing to check
 before trusting this further.
 
-### No service sidecars (yet)
+### Service sidecars: delivered, with one gap named below
 
-devcontainers compose with Docker Compose for databases and other services.
-Planned mitigation: provider-native service support (flox `[services]`,
-devenv) supervised by the keeper. Until then, run services on the host or
-in containers alongside, and grant network access explicitly.
+devcontainers compose with Docker Compose for databases and other
+services. devcroft now has the provider-native equivalent
+(`add-flox-services`): a flox environment's documented `[services]`
+declarations are read host-side at `up`, started **inside** the sandbox
+after restriction, supervised for the sandbox's lifetime, and reaped at
+`down`. `status`/`ps`/`logs` report them; no new command was added.
+
+**devcroft supervises, the provider declares — and that split has a
+cost worth stating.** devcroft does not shell out to `flox services`:
+doing so would need the flox binary and its internals executable inside
+the compiled profile, which is exactly what the "environment resolves
+once" invariant rejects for per-session activation, and for the same
+reason. Nor does it consume flox's own generated `service-config.yaml`,
+an undocumented artifact whose process-compose binary belongs to flox's
+closure rather than the environment's. Instead devcroft generates a
+process-compose config it owns, from the published schema.
+
+The consequence: **`flox services status` run by hand shows nothing**,
+because flox did not start these processes. `devcroft status`/`ps`/`logs`
+are where they appear, and `devcroft doctor` says so explicitly in any
+project that declares services, rather than leaving the empty list to be
+misread as "my services never started". The other half of the cost is
+that `process-compose` must be declared in the project's own
+environment — a devcroft implementation choice leaking into the
+project's manifest, accepted as the lesser evil against depending on a
+binary the environment never declared.
+
+### Two sandboxes declaring the same service port still collide
+
+**Property that fails:** nothing separates the two sandboxes' loopback.
+
+A committed `devcroft.toml` describes an *instance*, so every git
+worktree of a repo declares the same port, and two sandboxes both asking
+for 5432 collide with `EADDRINUSE`. At the `process` tier there is no
+PID/mount/net namespace separation between sandboxes (`add-mvp-core`
+design.md Decision 5), so both are binding the same host loopback.
+
+This is **tier-dependent**, and the distinction is worth keeping because
+an earlier draft got it wrong by reasoning from the netstack rejection
+above:
+
+- At `process`, the collision is real at any N > 1.
+- At `hardened` **with egress granted** (`NetworkMode::Host`, sharing the
+  host's namespace), it is equally real.
+- At `hardened` **with a deny-default network**, it does not exist:
+  `oci_spec::build` already requests a network namespace, so each sandbox
+  has its own loopback and the committed 5432 works unchanged in all N.
+
+So the separation that does exist comes from the namespace devcroft asks
+for in the OCI spec, not from gVisor's own netstack — which is
+unavailable under `--rootless` for the reasons the netstack entry above
+records.
+
+**Revisit via:** `add-port-allocation`, which allocates a free loopback
+port per sandbox where the collision exists and surfaces it through
+`status`. It is scoped by resolved network mode rather than by tier, for
+the reason above, and pairs with `add-agent-workload` — that change gives
+N worktrees distinct sandbox *names*; without it they never get as far as
+needing distinct ports.
 
 ### Keeper is a single point of failure per sandbox
 
@@ -608,3 +663,13 @@ is gone, not migrated. This is the same trade a devcontainer restart makes,
 disclosed rather than silent: acceptable for a dev sandbox, not a model
 for a fleet that needs live failover across many keepers without losing
 in-flight work.
+
+**The blast radius now includes services** (`add-flox-services`). The
+keeper owns the service supervisor's lifetime — it has to, since `up` is
+a short-lived CLI process and a disconnected session is escalated after
+two seconds — so a dead keeper takes every service in that sandbox with
+it, database included. This widens an already-published gap rather than
+introducing a new one, and it is the reason service state is *queried
+live* from the supervisor rather than recorded at `up`: a keeper that
+died must not leave `status` confidently reporting services that are no
+longer running.

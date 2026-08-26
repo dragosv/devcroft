@@ -48,6 +48,10 @@ fn main() {
                 .expect("__hardened_keeper requires a runsc-state-root argument");
             hardened_keeper_main(fd, ssh_fd, container_id, runsc, state_root);
         }
+        // Hidden, like `__keeper`: `doctor`'s listening-socket probe
+        // re-execs into this so the irreversible restriction lands in a
+        // throwaway child rather than in `doctor` itself.
+        Some("__bind_probe") => std::process::exit(bind_probe_main(&args[2..])),
         Some("exec") => std::process::exit(cli_exec(&args[2..])),
         Some("shell") => std::process::exit(cli_shell(&args[2..])),
         Some("proxy") => std::process::exit(cli_proxy(&args[2..])),
@@ -545,6 +549,129 @@ fn cli_init(args: &[String]) -> i32 {
     0
 }
 
+/// `__bind_probe <port>`: applies a deny-default network policy that
+/// grants exactly one loopback port, then tries to bind it. Exit 0 means
+/// binding works under a deny-default policy on this host; anything else
+/// means it does not.
+///
+/// A separate process because the restriction is **irreversible** —
+/// applying it inside `doctor` would leave every later check running
+/// under a sandbox policy, which is both wrong and undebuggable. Same
+/// reasoning, and the same hidden-subcommand shape, as `__keeper`.
+///
+/// The probe is the real mechanism, not an approximation: it builds the
+/// same `CapabilityPlan` a manifest with `network.default = "deny"` and
+/// `ports = [N]` compiles to, so a host where this fails is exactly a
+/// host where such a manifest's services fail to bind.
+fn bind_probe_main(args: &[String]) -> i32 {
+    let Some(port) = args.first().and_then(|p| p.parse::<u16>().ok()) else {
+        eprintln!("devcroft __bind_probe: usage: devcroft __bind_probe <port>");
+        return 2;
+    };
+
+    let plan = devcroft::policy::CapabilityPlan {
+        filesystem_allow: Vec::new(),
+        filesystem_read: Vec::new(),
+        filesystem_deny: Vec::new(),
+        network_block: true,
+        network_ports: vec![port],
+        // The only value `to_capability_set` accepts; anything else
+        // panics there rather than silently meaning something.
+        signal_mode: "isolated".to_string(),
+    };
+    let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("/"));
+    let Ok(caps) = plan.to_capability_set(&cwd) else {
+        return 1;
+    };
+    if nono::Sandbox::apply_auto(&caps).is_err() {
+        return 1;
+    }
+
+    match std::net::TcpListener::bind(("127.0.0.1", port)) {
+        Ok(_) => 0,
+        Err(_) => 1,
+    }
+}
+
+/// Whether a sandbox on this host can bind a loopback listener under a
+/// deny-default network policy (`cli` delta spec: "doctor reports whether
+/// listening sockets work").
+///
+/// Returns `None` when the probe could not be run at all — distinct from
+/// a probe that ran and said no, because reporting "listening sockets do
+/// not work" on the basis of a failed fork would be a false diagnosis in
+/// the one command whose job is to predict why `up` will fail.
+fn probe_listening_socket() -> Option<bool> {
+    // Port 0 is not usable here: the probe has to grant a *specific*
+    // port in the policy and then bind that same one, which is what a
+    // real `network.ports` entry does. A high, unusual port keeps the
+    // chance of colliding with something already listening low; a
+    // collision would report a false negative, which is why the caller
+    // treats a single failure as inconclusive rather than as proof.
+    const PROBE_PORT: u16 = 47823;
+    let exe = std::env::current_exe().ok()?;
+    let status = std::process::Command::new(exe)
+        .arg("__bind_probe")
+        .arg(PROBE_PORT.to_string())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .ok()?;
+    Some(status.success())
+}
+
+/// design.md decision 1's stated cost, surfaced rather than left in a
+/// design doc: flox *declares* services, devcroft *supervises* them, so
+/// `flox services status` run by hand reports nothing for a sandbox whose
+/// services are running fine. Without this line the user's next move is
+/// to conclude their services never started.
+///
+/// Scoped to projects that actually declare services — a project with
+/// none does not need to be told who would have supervised them.
+fn doctor_service_supervisor() {
+    let Ok(cwd) = std::env::current_dir() else {
+        return;
+    };
+    let Ok(manifest_path) = devcroft::config::discover(&cwd) else {
+        return;
+    };
+    let project_root = manifest_path.parent().unwrap_or(&cwd);
+    let declared = devcroft::provider::services_declared_by_flox(project_root);
+    if declared.is_empty() {
+        return;
+    }
+    println!(
+        "[INFO] services: {} declared ({}) — devcroft supervises these itself, so \
+         `flox services status` will not list them; use `devcroft status`/`ps`/`logs`",
+        declared.len(),
+        declared.join(", ")
+    );
+}
+
+fn doctor_listening_sockets() {
+    match probe_listening_socket() {
+        Some(true) => println!(
+            "[PASS] listening sockets: a deny-default network policy still permits loopback \
+             binding on this host, so provider-declared services that listen on a port work"
+        ),
+        Some(false) => {
+            println!(
+                "[WARN] listening sockets: this host denies bind/listen under \
+                 `network.default = \"deny\"`, so a provider-declared service that listens on \
+                 a port will fail to bind"
+            );
+            println!(
+                "       workaround: `network.default = \"allow\"`, which restores binding but \
+                 drops egress filtering entirely — every outbound destination becomes reachable"
+            );
+        }
+        None => println!(
+            "[INFO] listening sockets: the probe could not be run on this host; service \
+             port binding is unverified"
+        ),
+    }
+}
+
 /// `devcroft doctor` (cli spec's "doctor" requirement, task 7.1): reports
 /// backend presence/version, kernel sandboxing capability, the provider
 /// binary, ssh-config managed-section state, and — if a manifest is
@@ -563,8 +690,10 @@ fn cli_doctor() -> i32 {
     ok &= doctor_provider();
     doctor_hardened_tier();
     ok &= doctor_gvisor_backend();
+    doctor_listening_sockets();
     doctor_ssh_config();
     doctor_manifest_degradation();
+    doctor_service_supervisor();
 
     println!();
     if ok {
@@ -2001,8 +2130,76 @@ fn start_services_if_requested(registry: Arc<Registry>, backend: Arc<dyn Session
 /// session's process group (grace period, then SIGKILL) and exit. The
 /// supervisor's own outer grace period (`lifecycle::terminate::GRACE_PERIOD`,
 /// 5s) is sized to leave this inner one room to finish first.
+/// The process groups of the services the supervisor is running, asked
+/// of the supervisor itself.
+///
+/// **Why this is needed at all**, and why the registry cannot supply it:
+/// the registry holds one entry, process-compose, and the shutdown
+/// handler kills its *process group*. A service process is not in that
+/// group — process-compose puts each one in its own — so the escalation
+/// never reached them. A service that ignores SIGTERM therefore outlived
+/// `down`, got reparented to init, and kept running, against the
+/// `services` spec's "no service process started by it remains alive on
+/// the host". Found by task 3.6's test; every earlier service test used
+/// a process that dies on SIGTERM, which hid it completely.
+///
+/// **Delegating this to process-compose does not work**, measured rather
+/// than assumed. Its config takes a per-process `shutdown.timeout`, which
+/// reads exactly like the escalation this needs. Against a real
+/// process-compose 1.116.0, with devcroft not involved at all and ten
+/// seconds to act, a service trapping SIGTERM survived and the supervisor
+/// itself hung after logging "Caught terminated — Shutting down the
+/// running processes...". So the guarantee has to be devcroft's, which is
+/// what the spec says anyway: verified by observing process absence, not
+/// by trusting a stop command.
+///
+/// Queried before any signal is sent, because afterwards the supervisor
+/// is dying and its API goes with it. Returns empty when this sandbox
+/// declares no services, when the socket is unreachable, or when a
+/// service has no pid (never started, already exited) — in each case
+/// there is nothing extra to kill and the registry's own group covers it.
+///
+/// Process tier only, and correct that way: at the hardened tier the
+/// services run inside gVisor with their own pid namespace, where these
+/// pids are meaningless — that tier's shutdown tears down the `runsc`
+/// sandbox itself, which takes every process in it.
+fn service_process_groups() -> Vec<libc::pid_t> {
+    if std::env::var("DEVCROFT_START_SERVICES").as_deref() != Ok("1") {
+        return Vec::new();
+    }
+    let root = std::path::PathBuf::from(
+        std::env::var("DEVCROFT_SERVICES_ROOT").unwrap_or_else(|_| ".".to_string()),
+    );
+    let name = std::env::var("DEVCROFT_SANDBOX_NAME").unwrap_or_default();
+    let socket = devcroft::services::socket_path(&root, &name);
+
+    let Ok(states) = devcroft::services::query(&socket) else {
+        return Vec::new();
+    };
+    states
+        .into_iter()
+        .filter_map(|s| s.pid)
+        .filter(|pid| *pid > 0)
+        .map(|pid| pid as libc::pid_t)
+        // Used as a *process group* id, not a pid: measured against a
+        // real process-compose, each service's pid is its own group
+        // leader, which is precisely why they escape the registry's
+        // sweep — and killing the group also reaps whatever the service
+        // itself spawned. If a future process-compose stopped doing
+        // that, `kill(-pid)` would simply find no such group and fail
+        // harmlessly, with the registry's own group sweep still covering
+        // the service (it would then be inside it). Degrades safely
+        // either way rather than depending on the observation holding.
+        .collect()
+}
+
 fn install_shutdown_handler(registry: Arc<Registry>) {
-    const SESSION_GRACE: std::time::Duration = std::time::Duration::from_secs(2);
+    // The same grace a disconnected session gets, not a second copy of
+    // the number: `services::SHUTDOWN_TIMEOUT_SECS` is defined relative
+    // to it (process-compose must reap its children before devcroft
+    // reaps process-compose), and two independently-maintained constants
+    // is how that relationship silently breaks.
+    const SESSION_GRACE: std::time::Duration = devcroft::keeper::DEFAULT_GRACE_PERIOD;
 
     // Signal handlers can only safely do async-signal-safe work (no
     // locks, no allocation) — Registry::snapshot needs both. So instead
@@ -2030,15 +2227,34 @@ fn install_shutdown_handler(registry: Arc<Registry>) {
         if unsafe { libc::sigwait(&set, &mut received) } != 0 {
             return;
         }
+
+        // Service pids are collected *before* anything is signalled,
+        // while the supervisor is still alive to answer — see
+        // `service_process_groups` for why the registry alone is not
+        // enough.
+        let service_pgids = service_process_groups();
+
         for (_, info) in registry.snapshot() {
             unsafe {
                 libc::kill(-info.pgid, libc::SIGTERM);
             }
         }
+        for pgid in &service_pgids {
+            unsafe {
+                libc::kill(-pgid, libc::SIGTERM);
+            }
+        }
+
         std::thread::sleep(SESSION_GRACE);
+
         for (_, info) in registry.snapshot() {
             unsafe {
                 libc::kill(-info.pgid, libc::SIGKILL);
+            }
+        }
+        for pgid in &service_pgids {
+            unsafe {
+                libc::kill(-pgid, libc::SIGKILL);
             }
         }
         std::process::exit(0);

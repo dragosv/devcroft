@@ -327,3 +327,565 @@ fn services_without_process_compose_fail_at_the_provider_layer() {
     let _ = std::fs::remove_dir_all(&paths.root);
     let _ = std::fs::remove_dir_all(&project_root);
 }
+
+/// Task 2.4, in the only shape that can actually happen.
+///
+/// The literal spec reading — a manifest asking for services under a
+/// provider with none — is unreachable: declarations come from the
+/// *provider's* manifest and `devcroft.toml` has no `[services]` of its
+/// own, so a nix project has no way to ask. The reachable variant, and
+/// the one users hit, is a project carrying a flox environment whose
+/// services are declared while `env.provider` says `nix`. Those were
+/// silently ignored: the sandbox came up reporting no services at all,
+/// indistinguishable from a project declaring none — exactly the silent
+/// failure the whole `services` spec is written against.
+///
+/// Needs both flox (to declare the services) and nix (to resolve the
+/// provider that will not run them). The check is driven by the
+/// *resolved* `ServiceSupport`, not by a guess from the provider's name,
+/// so resolution has to succeed first — which is what makes it work
+/// unchanged for any future provider reporting `Unsupported`, devbox
+/// included, rather than being a nix special case.
+#[test]
+fn services_declared_for_another_provider_fail_rather_than_being_ignored() {
+    if tooling_missing() {
+        eprintln!("skipping: flox not on PATH");
+        return;
+    }
+    if Command::new("nix").arg("--version").output().is_err() {
+        eprintln!("skipping: nix not on PATH");
+        return;
+    }
+    unsafe {
+        std::env::set_var("DEVCROFT_KEEPER_EXE", env!("CARGO_BIN_EXE_devcroft"));
+    }
+
+    let project_root = std::env::temp_dir().join(format!(
+        "devcroft-services-wrongprovider-e2e-{}",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&project_root);
+    std::fs::create_dir_all(&project_root).unwrap();
+
+    let init = Command::new("flox")
+        .arg("init")
+        .current_dir(&project_root)
+        .output()
+        .unwrap();
+    if !init.status.success() {
+        eprintln!("skipping: flox init failed");
+        return;
+    }
+
+    // Into the manifest's *existing* `[services]` table, not appended as
+    // a second one — flox's stock manifest already ships a commented
+    // `[services]` section, and a duplicate table makes the whole file
+    // fail to parse, which would make this test pass for the wrong
+    // reason (no declarations found, rather than the check firing).
+    let manifest_path = project_root.join(".flox/env/manifest.toml");
+    let manifest = std::fs::read_to_string(&manifest_path).unwrap();
+    let manifest = manifest.replacen("[services]\n", "[services]\nweb.command = \"true\"\n", 1);
+    std::fs::write(&manifest_path, manifest).unwrap();
+
+    // A real, minimal flake so the nix provider actually resolves — the
+    // check under test runs after resolution, so without this the test
+    // would pass on "no nix environment found" and prove nothing.
+    // Systems enumerated statically for the reason `provider::nix`'s own
+    // fixtures document: flakes evaluate pure, and `builtins.currentSystem`
+    // does not exist under pure evaluation.
+    std::fs::write(
+        project_root.join("flake.nix"),
+        r#"{
+  inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+  outputs = { self, nixpkgs }:
+    let systems = [ "x86_64-linux" "aarch64-linux" "x86_64-darwin" "aarch64-darwin" ];
+    in { devShells = builtins.listToAttrs (map (s: {
+         name = s; value.default = (import nixpkgs { system = s; }).mkShell {};
+       }) systems); };
+}
+"#,
+    )
+    .unwrap();
+    if !Command::new("nix")
+        .arg("flake")
+        .arg("lock")
+        .arg(&project_root)
+        .output()
+        .unwrap()
+        .status
+        .success()
+    {
+        eprintln!("skipping: nix flake lock failed (likely no network for nixpkgs)");
+        return;
+    }
+
+    let sandbox_name = format!("e2esvcwrongprov{}", std::process::id());
+    let (dc_manifest, _) = parse(&format!(
+        "[sandbox]\nname = {sandbox_name:?}\n\n[env]\nprovider = \"nix\"\n"
+    ))
+    .unwrap();
+    let paths = StatePaths::new(&sandbox_name).unwrap();
+    let _ = std::fs::remove_dir_all(&paths.root);
+
+    let err = up(&dc_manifest, &project_root, &UpOptions::default())
+        .expect_err("services declared for a provider with none must fail `up`");
+    let msg = err.to_string();
+    assert!(
+        msg.starts_with("provider:"),
+        "must fail at layer `provider`, got: {msg}"
+    );
+    assert!(
+        msg.contains("web"),
+        "the error must name the service that would be ignored, got: {msg}"
+    );
+    assert!(
+        msg.contains("nix"),
+        "the error must name the provider that cannot supply it, got: {msg}"
+    );
+
+    let _ = std::fs::remove_dir_all(&paths.root);
+    let _ = std::fs::remove_dir_all(&project_root);
+}
+
+/// `--skip-hooks` promises that nothing project-supplied runs. Refusing
+/// to come up because of services that would not have started anyway
+/// would make the escape hatch useless in exactly the situation it
+/// exists for — debugging a broken environment.
+#[test]
+fn skip_hooks_bypasses_the_wrong_provider_service_check() {
+    if tooling_missing() {
+        eprintln!("skipping: flox not on PATH");
+        return;
+    }
+    unsafe {
+        std::env::set_var("DEVCROFT_KEEPER_EXE", env!("CARGO_BIN_EXE_devcroft"));
+    }
+
+    let project_root = std::env::temp_dir().join(format!(
+        "devcroft-services-skiphooks-e2e-{}",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&project_root);
+    std::fs::create_dir_all(&project_root).unwrap();
+
+    if !Command::new("flox")
+        .arg("init")
+        .current_dir(&project_root)
+        .output()
+        .unwrap()
+        .status
+        .success()
+    {
+        eprintln!("skipping: flox init failed");
+        return;
+    }
+    let manifest_path = project_root.join(".flox/env/manifest.toml");
+    let manifest = std::fs::read_to_string(&manifest_path).unwrap();
+    let manifest = manifest.replacen("[services]\n", "[services]\nweb.command = \"true\"\n", 1);
+    std::fs::write(&manifest_path, manifest).unwrap();
+
+    let sandbox_name = format!("e2esvcskiphooks{}", std::process::id());
+    // `provider = "flox"`, so this exercises the skip path without
+    // needing a resolvable flake — the check under test is the one in
+    // `prepare_services`, which runs for every provider.
+    let (dc_manifest, _) = parse(&format!("[sandbox]\nname = {sandbox_name:?}\n")).unwrap();
+    let paths = StatePaths::new(&sandbox_name).unwrap();
+    let _ = std::fs::remove_dir_all(&paths.root);
+
+    let outcome = up(
+        &dc_manifest,
+        &project_root,
+        &UpOptions {
+            skip_hooks: true,
+            ..UpOptions::default()
+        },
+    );
+    assert!(
+        matches!(outcome, Ok(UpOutcome::Started)),
+        "--skip-hooks must still bring the sandbox up, got: {outcome:?}"
+    );
+
+    let _ = down(&sandbox_name);
+    let _ = std::fs::remove_dir_all(&paths.root);
+    let _ = std::fs::remove_dir_all(&project_root);
+}
+
+/// Task 2.6: `policy --render` is byte-identical with and without
+/// services declared.
+///
+/// The property holds by construction — `policy::compile` takes only the
+/// devcroft `Manifest`, and service declarations live in the *provider's*
+/// manifest, never reaching it. That is exactly why it is worth pinning:
+/// the proposal's "No change to policy compilation" is a promise that a
+/// future change threading service ports into the policy would quietly
+/// break, and a service asking for a port is supposed to ask the manifest
+/// for it, not devcroft for an exemption.
+///
+/// Runs before any `up`, so it needs neither `process-compose` nor a
+/// resolvable environment — `policy --render` compiles from the manifest.
+#[test]
+fn policy_render_is_unchanged_by_declaring_services() {
+    if Command::new("flox").arg("--version").output().is_err() {
+        eprintln!("skipping: flox not on PATH");
+        return;
+    }
+
+    let project_root = std::env::temp_dir().join(format!(
+        "devcroft-services-policyparity-{}",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&project_root);
+    std::fs::create_dir_all(&project_root).unwrap();
+
+    if !Command::new("flox")
+        .arg("init")
+        .current_dir(&project_root)
+        .output()
+        .unwrap()
+        .status
+        .success()
+    {
+        eprintln!("skipping: flox init failed");
+        return;
+    }
+    let sandbox_name = format!("e2esvcpolparity{}", std::process::id());
+    std::fs::write(
+        project_root.join("devcroft.toml"),
+        format!("[sandbox]\nname = {sandbox_name:?}\n"),
+    )
+    .unwrap();
+
+    let render = || {
+        let out = Command::new(env!("CARGO_BIN_EXE_devcroft"))
+            .args(["policy", "--render"])
+            .current_dir(&project_root)
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "policy --render failed: {out:?}");
+        String::from_utf8_lossy(&out.stdout).into_owned()
+    };
+
+    let without_services = render();
+
+    let manifest_path = project_root.join(".flox/env/manifest.toml");
+    let manifest = std::fs::read_to_string(&manifest_path).unwrap();
+    std::fs::write(
+        &manifest_path,
+        manifest.replacen(
+            "[services]\n",
+            "[services]\nweb.command = \"python3 -m http.server 8099\"\n",
+            1,
+        ),
+    )
+    .unwrap();
+
+    let with_services = render();
+
+    assert_eq!(
+        without_services, with_services,
+        "declaring a service must not change the compiled policy by so much as a byte"
+    );
+
+    let _ = std::fs::remove_dir_all(&project_root);
+}
+
+/// Sets up a real flox project declaring `services_toml` inside the
+/// stock manifest's existing `[services]` table, with `process-compose`
+/// (devcroft's own requirement) plus `bash` (the `sh` the generated
+/// config names) and `python3` installed.
+///
+/// Returns `None` when the tooling is unavailable or an install fails —
+/// the same skip-rather-than-fail posture every other real-tooling test
+/// in this repo uses.
+fn flox_project_declaring(tag: &str, services_toml: &str) -> Option<std::path::PathBuf> {
+    if tooling_missing() {
+        eprintln!("skipping: flox not on PATH");
+        return None;
+    }
+    unsafe {
+        std::env::set_var("DEVCROFT_KEEPER_EXE", env!("CARGO_BIN_EXE_devcroft"));
+    }
+
+    let project_root =
+        std::env::temp_dir().join(format!("devcroft-services-{tag}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&project_root);
+    std::fs::create_dir_all(&project_root).unwrap();
+
+    if !Command::new("flox")
+        .arg("init")
+        .current_dir(&project_root)
+        .output()
+        .unwrap()
+        .status
+        .success()
+    {
+        eprintln!("skipping: flox init failed");
+        return None;
+    }
+    if !Command::new("flox")
+        .args(["install", "process-compose", "python3", "bash"])
+        .current_dir(&project_root)
+        .output()
+        .unwrap()
+        .status
+        .success()
+    {
+        eprintln!("skipping: flox install failed");
+        let _ = std::fs::remove_dir_all(&project_root);
+        return None;
+    }
+
+    let manifest_path = project_root.join(".flox/env/manifest.toml");
+    let manifest = std::fs::read_to_string(&manifest_path).unwrap();
+    std::fs::write(
+        &manifest_path,
+        manifest.replacen("[services]\n", &format!("[services]\n{services_toml}"), 1),
+    )
+    .unwrap();
+
+    Some(project_root)
+}
+
+/// Polls `status` until `pred` holds for the service report, or gives up.
+fn wait_for_service_report(
+    manifest: &devcroft::config::Manifest,
+    pred: impl Fn(&devcroft::services::ServicesReport) -> bool,
+) -> Option<devcroft::services::ServicesReport> {
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while Instant::now() < deadline {
+        if let Ok(st) = devcroft::lifecycle::status(manifest)
+            && let Some(report) = st.services
+            && pred(&report)
+        {
+            return Some(report);
+        }
+        std::thread::sleep(Duration::from_millis(250));
+    }
+    None
+}
+
+/// Task 6.3 — a service whose command exits non-zero **at startup**.
+///
+/// Distinct from the killed-while-running case the main test above
+/// covers: the `services` spec requires failed-at-start and exited-later
+/// to be distinguishable, and this is the state that used to be
+/// indistinguishable from "never declared".
+#[test]
+fn a_service_that_exits_non_zero_at_startup_is_reported_failed_and_the_sandbox_stays_usable() {
+    let Some(project_root) = flox_project_declaring(
+        "failstart",
+        "boom.command = \"sh -c 'echo service-said-boom >&2; exit 3'\"\n",
+    ) else {
+        return;
+    };
+
+    let sandbox_name = format!("e2esvcfail{}", std::process::id());
+    let (dc_manifest, _) = parse(&format!("[sandbox]\nname = {sandbox_name:?}\n")).unwrap();
+    let paths = StatePaths::new(&sandbox_name).unwrap();
+    let _ = std::fs::remove_dir_all(&paths.root);
+
+    // The `services` spec's "Services do not block sandbox availability":
+    // `up` succeeds even though the service will not.
+    assert_eq!(
+        up(&dc_manifest, &project_root, &UpOptions::default()).unwrap(),
+        UpOutcome::Started
+    );
+
+    let report = wait_for_service_report(&dc_manifest, |r| {
+        r.states.iter().any(|s| s.health.is_failure())
+    })
+    .unwrap_or_else(|| {
+        panic!(
+            "a service exiting non-zero at startup must be reported as failed; log: {}",
+            std::fs::read_to_string(devcroft::services::log_path(&project_root, &sandbox_name))
+                .unwrap_or_else(|_| "(no log)".into())
+        )
+    });
+    assert!(
+        report.states.iter().any(|s| s.name == "boom"),
+        "the failed service must be listed by name, got: {:?}",
+        report.states
+    );
+
+    // "with its log tail reachable" — the reason has to be findable, not
+    // merely the fact of failure.
+    let log = std::fs::read_to_string(devcroft::services::log_path(&project_root, &sandbox_name))
+        .unwrap_or_default();
+    assert!(
+        log.contains("service-said-boom"),
+        "the service's own output must be reachable through the service log, got: {log}"
+    );
+
+    // ...and the sandbox is still usable despite it.
+    let exec = Command::new(env!("CARGO_BIN_EXE_devcroft"))
+        .args(["exec", &sandbox_name, "--", "sh", "-c", "echo alive"])
+        .current_dir(&project_root)
+        .output()
+        .unwrap();
+    assert!(
+        exec.status.success() && String::from_utf8_lossy(&exec.stdout).contains("alive"),
+        "a failed service must not make the sandbox unusable, got: {exec:?}"
+    );
+
+    let _ = down(&sandbox_name);
+    let _ = std::fs::remove_dir_all(&paths.root);
+    let _ = std::fs::remove_dir_all(&project_root);
+}
+
+/// Task 6.4 — a service denied a port by `[network]` fails visibly, with
+/// the same denial any in-sandbox process would get.
+///
+/// The "same denial" half is asserted directly rather than assumed: the
+/// identical bind is attempted through `exec`, and both must fail. That
+/// is the proposal's "a service that needs a port is asking the manifest
+/// for it, not asking devcroft for an exemption" made checkable.
+#[test]
+fn a_service_denied_its_port_fails_the_same_way_any_session_would() {
+    const UNGRANTED: u16 = 18991;
+
+    let Some(project_root) = flox_project_declaring(
+        "denyport",
+        &format!("listener.command = \"python3 -m http.server {UNGRANTED} --bind 127.0.0.1\"\n"),
+    ) else {
+        return;
+    };
+
+    let sandbox_name = format!("e2esvcdeny{}", std::process::id());
+    // Deny-default with NO ports granted: the service's bind is exactly
+    // the operation the policy refuses.
+    let (dc_manifest, _) = parse(&format!(
+        "[sandbox]\nname = {sandbox_name:?}\n[network]\ndefault = \"deny\"\n"
+    ))
+    .unwrap();
+    let paths = StatePaths::new(&sandbox_name).unwrap();
+    let _ = std::fs::remove_dir_all(&paths.root);
+
+    assert_eq!(
+        up(&dc_manifest, &project_root, &UpOptions::default()).unwrap(),
+        UpOutcome::Started
+    );
+
+    let report = wait_for_service_report(&dc_manifest, |r| {
+        r.states.iter().any(|s| s.health.is_failure())
+    })
+    .unwrap_or_else(|| {
+        panic!(
+            "a service denied its port must surface as failed, not as healthy; log: {}",
+            std::fs::read_to_string(devcroft::services::log_path(&project_root, &sandbox_name))
+                .unwrap_or_else(|_| "(no log)".into())
+        )
+    });
+    assert!(
+        report.states.iter().any(|s| s.name == "listener"),
+        "the denied service must be listed by name, got: {:?}",
+        report.states
+    );
+
+    // The same operation, from an ordinary session, must be denied
+    // identically — the service got no exemption and no extra penalty.
+    let exec = Command::new(env!("CARGO_BIN_EXE_devcroft"))
+        .args([
+            "exec",
+            &sandbox_name,
+            "--",
+            "python3",
+            "-c",
+            &format!(
+                "import socket,sys\n\
+                 s = socket.socket()\n\
+                 s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)\n\
+                 try:\n\
+                 \x20   s.bind(('127.0.0.1', {UNGRANTED}))\n\
+                 except OSError:\n\
+                 \x20   sys.exit(7)\n\
+                 sys.exit(0)\n"
+            ),
+        ])
+        .current_dir(&project_root)
+        .output()
+        .unwrap();
+    assert_eq!(
+        exec.status.code(),
+        Some(7),
+        "an ordinary session must be denied the same ungranted port, got: {exec:?}"
+    );
+
+    let _ = down(&sandbox_name);
+    let _ = std::fs::remove_dir_all(&paths.root);
+    let _ = std::fs::remove_dir_all(&project_root);
+}
+
+/// Task 3.6 (process tier) — a service that **ignores SIGTERM** is still
+/// gone after teardown.
+///
+/// The distinction that matters: `down` returning success proves nothing
+/// about whether anything died. A service trapping SIGTERM survives the
+/// polite half of teardown, so this exercises the escalation to SIGKILL
+/// after the grace period, and asserts the outcome by process absence —
+/// never by a stop command's exit status, which is the failure this
+/// whole file was written against.
+///
+/// The hardened-tier half lives in `tests/hardened_services_wiring.rs`,
+/// which is where that tier's gating already lives.
+#[test]
+fn a_service_ignoring_sigterm_is_still_gone_after_teardown() {
+    // Unique per run, not a constant: a constant marker makes runs
+    // alias each other, so a single orphan left by an earlier *failing*
+    // run is counted by every later run and keeps failing it long after
+    // the bug is fixed. That happened while developing this test, and
+    // cost a full debugging cycle chasing a fix that already worked.
+    let marker = format!("devcroft-sigterm-refusenik-{}", std::process::id());
+
+    let Some(project_root) = flox_project_declaring(
+        "sigterm",
+        &format!(
+            "stubborn.command = \"sh -c 'trap \\\"\\\" TERM; while true; do sleep 1; done' {marker}\"\n"
+        ),
+    ) else {
+        return;
+    };
+
+    let sandbox_name = format!("e2esvcsigterm{}", std::process::id());
+    let (dc_manifest, _) = parse(&format!("[sandbox]\nname = {sandbox_name:?}\n")).unwrap();
+    let paths = StatePaths::new(&sandbox_name).unwrap();
+    let _ = std::fs::remove_dir_all(&paths.root);
+
+    assert_eq!(
+        up(&dc_manifest, &project_root, &UpOptions::default()).unwrap(),
+        UpOutcome::Started
+    );
+
+    // Sanity: it has to actually be running, or "gone after down" is
+    // vacuous.
+    let running = wait_for_service_report(&dc_manifest, |r| {
+        r.states
+            .iter()
+            .any(|s| s.health == devcroft::services::ServiceHealth::Running)
+    });
+    assert!(
+        running.is_some() && host_process_count(&marker) > 0,
+        "the SIGTERM-ignoring service must be running before teardown is meaningful; log: {}",
+        std::fs::read_to_string(devcroft::services::log_path(&project_root, &sandbox_name))
+            .unwrap_or_else(|_| "(no log)".into())
+    );
+
+    down(&sandbox_name).unwrap();
+
+    let deadline = Instant::now() + Duration::from_secs(20);
+    let mut reaped = false;
+    while Instant::now() < deadline {
+        if host_process_count(&marker) == 0 {
+            reaped = true;
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(250));
+    }
+    assert!(
+        reaped,
+        "a service that ignores SIGTERM must still be gone after teardown — \
+         escalation to SIGKILL is what makes `down` a guarantee rather than a request"
+    );
+
+    let _ = std::fs::remove_dir_all(&paths.root);
+    let _ = std::fs::remove_dir_all(&project_root);
+}

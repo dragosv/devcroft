@@ -16,7 +16,7 @@ use std::time::{Duration, Instant};
 
 use crate::config::{Isolation, Manifest};
 use crate::policy;
-use crate::provider::{Provider, ProviderError, ProviderKind, Resolution};
+use crate::provider::{Provider, ProviderError, ProviderKind, Resolution, ServiceSupport};
 
 use super::hooks;
 use super::state::{self, Health, StatePaths};
@@ -383,12 +383,61 @@ fn up_process(
 /// executes to produce the config; `--skip-hooks` suppresses it for the
 /// same reason it suppresses hooks — one flag that guarantees nothing
 /// project-supplied runs.
+/// The `services` spec's "Services requested from a provider that cannot
+/// supply them fail loudly", in the only shape that can actually happen.
+///
+/// The literal reading — a manifest asking for services under `nix` —
+/// is unreachable: declarations come from the *provider's* own manifest,
+/// and `devcroft.toml` has no `[services]` section of its own, so a nix
+/// project has no way to ask. Task 2.4 was left open for exactly that
+/// reason rather than shipping a check that could never fire.
+///
+/// What *is* reachable, and what users actually hit: a project carrying a
+/// flox environment whose `[services]` are declared, with `devcroft.toml`
+/// saying `provider = "nix"`. Those services were silently ignored — the
+/// sandbox came up reporting no services at all, indistinguishable from a
+/// project that declares none, which is the failure mode the whole
+/// `services` spec is written against.
+///
+/// Deliberately narrow: it only fires when another provider devcroft
+/// *supports* has real declarations sitting there. It is a "you asked for
+/// this and it will not happen" check, not an invitation to scan the
+/// project for anything service-shaped.
+fn ensure_no_services_declared_for_another_provider(
+    project_root: &Path,
+    opts: &UpOptions,
+) -> Result<(), UpError> {
+    // `--skip-hooks` promises nothing project-supplied runs; refusing to
+    // start because of services that would not have started anyway would
+    // make the escape hatch useless for debugging.
+    if opts.skip_hooks {
+        return Ok(());
+    }
+    let declared = crate::provider::services_declared_by_flox(project_root);
+    if declared.is_empty() {
+        return Ok(());
+    }
+    Err(UpError::Provider(
+        crate::provider::ProviderError::ResolutionFailed(format!(
+            "this project's flox environment declares {} service(s) ({}), but \
+             `env.provider` is `nix`, which has no service concept — they would \
+             be silently ignored; set `provider = \"flox\"` to run them, or \
+             remove them from the flox manifest",
+            declared.len(),
+            declared.join(", ")
+        )),
+    ))
+}
+
 fn prepare_services(
     project_root: &Path,
     sandbox_name: &str,
     resolution: &Resolution,
     opts: &UpOptions,
 ) -> Result<bool, UpError> {
+    if let ServiceSupport::Unsupported = resolution.services {
+        ensure_no_services_declared_for_another_provider(project_root, opts)?;
+    }
     let services = resolution.services.declared();
     if opts.skip_hooks || services.is_empty() {
         return Ok(false);

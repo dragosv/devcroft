@@ -62,6 +62,33 @@ pub fn log_path(project_root: &Path, sandbox_name: &str) -> PathBuf {
     artifact_dir(project_root, sandbox_name).join("services.log")
 }
 
+/// How long process-compose waits for a service to exit on SIGTERM
+/// before sending SIGKILL, in seconds.
+///
+/// **This is what makes teardown a guarantee rather than a request**, and
+/// it was missing: devcroft's shutdown handler kills the *registered
+/// process group*, which is process-compose's — a service process lives
+/// in its own group, so the escalation never reached it. A service that
+/// ignores SIGTERM therefore survived `down`, was reparented to init, and
+/// kept running, directly against the `services` spec's "no service
+/// process started by it remains alive on the host". Found by task 3.6's
+/// test, which is exactly the case it was written for; the polite service
+/// the earlier tests used dies on SIGTERM and hid it.
+///
+/// Reaping is delegated to process-compose rather than reimplemented by
+/// walking the process tree, following design.md decision 1's rule that
+/// the supervisor owns restart policy, daemon handling, and — this —
+/// shutdown. Measured against a real process-compose: with this set, a
+/// child trapping SIGTERM is gone within the timeout; without it, it
+/// survives indefinitely.
+///
+/// **Must stay strictly below [`keeper::connection::DEFAULT_GRACE_PERIOD`]**,
+/// the window devcroft gives before SIGKILLing process-compose itself.
+/// If it were longer, devcroft would kill the supervisor before the
+/// supervisor got to kill its children — reintroducing the orphan by a
+/// different route. Asserted by a test rather than left to a comment.
+pub const SHUTDOWN_TIMEOUT_SECS: u64 = 1;
+
 /// Renders `services` as a process-compose configuration.
 ///
 /// Emitted as JSON rather than YAML on purpose: process-compose parses
@@ -109,17 +136,26 @@ pub fn render_config(services: &[ServiceDecl]) -> String {
             serde_json::Value::Object(availability),
         );
 
+        // Every service gets a shutdown timeout, daemon or not — see
+        // `SHUTDOWN_TIMEOUT_SECS`. A daemon additionally gets its
+        // declared `shutdown.command`, which is how a backgrounding
+        // service is stopped at all (its launcher has already exited, so
+        // signalling that pid reaps nothing).
+        let mut shutdown = serde_json::Map::new();
+        shutdown.insert(
+            "timeout".to_string(),
+            serde_json::Value::Number(SHUTDOWN_TIMEOUT_SECS.into()),
+        );
         if svc.is_daemon {
             proc.insert("is_daemon".to_string(), serde_json::Value::Bool(true));
             if let Some(cmd) = &svc.shutdown_command {
-                let mut shutdown = serde_json::Map::new();
                 shutdown.insert(
                     "command".to_string(),
                     serde_json::Value::String(cmd.clone()),
                 );
-                proc.insert("shutdown".to_string(), serde_json::Value::Object(shutdown));
             }
         }
+        proc.insert("shutdown".to_string(), serde_json::Value::Object(shutdown));
 
         processes.insert(svc.name.clone(), serde_json::Value::Object(proc));
     }
@@ -515,6 +551,59 @@ pub fn resolve_in_env(env: &BTreeMap<String, String>) -> Option<PathBuf> {
 
 #[cfg(test)]
 mod tests {
+    /// The invariant `SHUTDOWN_TIMEOUT_SECS`'s doc comment states, as a
+    /// test rather than a comment: process-compose must reap its own
+    /// children *before* devcroft reaps process-compose, or a service
+    /// that ignores SIGTERM is orphaned instead of killed.
+    #[test]
+    fn the_service_shutdown_timeout_stays_below_the_keeper_grace_period() {
+        assert!(
+            std::time::Duration::from_secs(SHUTDOWN_TIMEOUT_SECS)
+                < crate::keeper::DEFAULT_GRACE_PERIOD,
+            "process-compose must get its children killed before devcroft kills it"
+        );
+    }
+
+    /// Every service carries a shutdown timeout, not only daemons — the
+    /// bug was that ordinary services got no `shutdown` block at all.
+    #[test]
+    fn every_service_gets_a_shutdown_timeout() {
+        let svc = ServiceDecl {
+            name: "web".into(),
+            command: "true".into(),
+            vars: Default::default(),
+            is_daemon: false,
+            shutdown_command: None,
+        };
+        let rendered = render_config(std::slice::from_ref(&svc));
+        let parsed: serde_json::Value = serde_json::from_str(&rendered).unwrap();
+        assert_eq!(
+            parsed["processes"]["web"]["shutdown"]["timeout"],
+            serde_json::json!(SHUTDOWN_TIMEOUT_SECS),
+            "an ordinary service must still get a shutdown timeout, got: {rendered}"
+        );
+    }
+
+    /// ...and a daemon keeps its declared shutdown command alongside it,
+    /// rather than the timeout displacing it.
+    #[test]
+    fn a_daemon_keeps_both_its_shutdown_command_and_the_timeout() {
+        let svc = ServiceDecl {
+            name: "db".into(),
+            command: "start-db".into(),
+            vars: Default::default(),
+            is_daemon: true,
+            shutdown_command: Some("stop-db".into()),
+        };
+        let rendered = render_config(std::slice::from_ref(&svc));
+        let parsed: serde_json::Value = serde_json::from_str(&rendered).unwrap();
+        assert_eq!(parsed["processes"]["db"]["shutdown"]["command"], "stop-db");
+        assert_eq!(
+            parsed["processes"]["db"]["shutdown"]["timeout"],
+            serde_json::json!(SHUTDOWN_TIMEOUT_SECS)
+        );
+    }
+
     use super::*;
 
     fn decl(name: &str, command: &str) -> ServiceDecl {

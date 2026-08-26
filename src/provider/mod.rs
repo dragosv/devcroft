@@ -276,6 +276,17 @@ impl Provider for ProviderKind {
     }
 }
 
+/// Service names this project's flox environment declares, regardless of
+/// which provider the manifest actually names — see
+/// [`flox::declared_service_names`] for why that asymmetry is deliberate.
+///
+/// Lives here rather than being called as `flox::…` from `lifecycle` so
+/// the provider modules stay private to this one, matching how every
+/// other cross-module provider call is routed.
+pub fn services_declared_by_flox(project_root: &Path) -> Vec<String> {
+    flox::declared_service_names(project_root)
+}
+
 /// Content fingerprint of the environment definition `provider` names, for
 /// staleness detection — dispatches to the matching provider's own
 /// fingerprint (flox: `manifest.toml` + lockfile; nix: `flake.nix` +
