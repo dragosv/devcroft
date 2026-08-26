@@ -1,125 +1,98 @@
 # network
 
-> **Authored during integration, not supplied with the change.** The proposal
-> names `network` under "Affected specs" but no delta spec accompanied it, and
-> a change without one does not validate. Every requirement below is transcribed
-> from `proposal.md`'s What Changes / Non-Goals and `design.md`'s E1–E5 rather
-> than introduced here — but it is transcription by a second hand, so read it as
-> a draft to confirm rather than as the author's own words.
->
-> Recorded as **ADDED** rather than the proposal's "MODIFIED `network`": there is
-> no `network` capability in this repo today (the capability map is `config`,
-> `policy`, `env-provider`, `lifecycle`, `exec`, `ssh`, `cli`, plus `services`
-> from add-flox-services). `[network]` is currently a `config` schema section
-> compiled by `policy`. Whether egress deserves its own capability or belongs as
-> MODIFIED requirements inside those two is a real question this spec's shape
-> presumes an answer to.
-
 ## ADDED Requirements
 
-### Requirement: Egress leaves only through the proxy
+### Requirement: Domain allowlists are enforced
 
-Direct egress from a sandbox SHALL be denied by the kernel-level policy, and the
-proxy endpoint SHALL be the only route out. Bypassing the proxy SHALL NOT depend
-on the client choosing to cooperate.
+A declared `network.allow` SHALL be enforced. A manifest declaring an allowlist
+SHALL NOT compile to a blanket network block or to unrestricted access.
 
-Where the proxy is unavailable, the system SHALL fail closed and SHALL NOT fall
-back to unfiltered egress.
+#### Scenario: Allowed destination
 
-#### Scenario: Direct connection to an unallowed address
+- **WHEN** a sandboxed process connects to an allowlisted domain
+- **THEN** the connection succeeds through the proxy
 
-- **WHEN** a process inside the sandbox opens a socket directly to an address
-  that is not allowlisted
-- **THEN** the connection is refused by the kernel-level policy, not merely left
-  unproxied
+#### Scenario: Destination not on the allowlist
 
-#### Scenario: Client ignores proxy configuration
+- **WHEN** a sandboxed process connects to a domain that is not allowlisted
+- **THEN** the connection is refused
+- **AND** the refusal names the destination and the deciding rule
 
-- **WHEN** a client that does not honour proxy environment variables attempts to
-  connect
-- **THEN** it is mediated anyway, because mediation does not depend on the
-  client's configuration
+#### Scenario: Allowlist cannot be enforced on this platform
 
-#### Scenario: Proxy unavailable
+- **WHEN** the platform cannot enforce domain-level filtering as declared
+- **THEN** the degradation is named at `up` and in `doctor`
+- **AND** access broader than the manifest declared is not granted silently
 
-- **WHEN** the proxy cannot be started or has stopped
-- **THEN** egress fails closed, and no unfiltered path is substituted
+### Requirement: The proxy is the only route out
 
-### Requirement: The proxy runs outside the client's sandbox
+The compiled policy SHALL continue to deny direct egress at the kernel level.
+The proxy endpoint SHALL be the sole permitted network path.
 
-The proxy SHALL run in the supervisor on the host, outside whatever sandbox the
-client runs in, so that the requesting client is identified by the listener the
-connection arrived on rather than by anything the client asserts, and so that
-credentials the proxy holds are not in the same policy domain as the code being
-filtered.
+#### Scenario: Process bypasses the proxy
 
-#### Scenario: Attribution without client cooperation
+- **WHEN** a sandboxed process opens a socket directly to an address, ignoring
+  any proxy configuration
+- **THEN** the connection is refused by the enforced policy, not merely
+  unfiltered
 
-- **WHEN** two sandboxes make requests through the proxy
-- **THEN** each request is attributed to its originating sandbox without the
-  client supplying any identifier
+#### Scenario: Proxy is unavailable
 
-#### Scenario: Credentials are not reachable from the client
+- **WHEN** the proxy is not running
+- **THEN** the sandbox does not start, or its network is closed
+- **AND** it never falls back to unfiltered access
 
-- **WHEN** code inside the sandbox attempts to read the proxy's memory or
-  process state
-- **THEN** it cannot, because the proxy is outside the sandbox's policy domain
+### Requirement: The proxy runs outside the sandbox it filters
 
-### Requirement: Filtering decides on the requested name
+The proxy SHALL run in the supervisor, outside the policy domain and process
+namespace of any sandbox it serves.
 
-Allowlist entries SHALL be domains, and the decision SHALL be made on the name
-the client asked for rather than on port or address alone.
+#### Scenario: Client inspects the proxy
 
-The system SHALL state the limit of this rather than implying more: an
-allowlisted name resolves to addresses that may host other services, so the
-effective scope may be wider than the name suggests.
+- **WHEN** a sandboxed process attempts to trace or read the memory of the proxy
+- **THEN** the proxy is not reachable from inside that sandbox
+- **AND** credentials held by the proxy are never resident inside it
 
-#### Scenario: Allowlisted domain
+#### Scenario: Request attribution
 
-- **WHEN** a connection is requested to a domain on the allowlist
-- **THEN** it is permitted
+- **WHEN** a request reaches the proxy
+- **THEN** the originating sandbox is identified from the listener it arrived on
+- **AND** the identification requires nothing from the client
 
-#### Scenario: Domain not on the allowlist
+### Requirement: Network policy is declared per context
 
-- **WHEN** a connection is requested to a domain that is not on the allowlist
-- **THEN** it is refused
+Provisioning and runtime SHALL carry separate network policies, and neither
+SHALL be derived from the other.
 
-#### Scenario: The resolved-address limit is stated
+#### Scenario: Provisioning permits registries, runtime does not
 
-- **WHEN** the enforcement guarantee is documented or reported
-- **THEN** it says egress is constrained to allowlisted destinations, and does
-  not claim exfiltration is prevented
+- **WHEN** provisioning allows package registries and runtime allows nothing
+- **THEN** activation reaches those registries
+- **AND** the agent, once running, does not
 
-### Requirement: Network policy is per-context
+#### Scenario: Rendering
 
-Provisioning and runtime SHALL carry separate network policies, as they already
-carry separate path policies. Neither SHALL be derived from the other.
+- **WHEN** the operator renders policy
+- **THEN** each context's allowlist is shown with its origin
+- **AND** a context whose network reach exceeds another's is visibly so
 
-#### Scenario: Provisioning allowlist differs from runtime
+### Requirement: Refusals are legible to the developer
 
-- **WHEN** a manifest declares one allowlist for provisioning and another for
-  runtime
-- **THEN** each context is enforced against its own, and neither inherits the
-  other's entries
+A refused connection SHALL be reportable in terms of the destination and rule,
+not only as a transport failure.
 
-#### Scenario: Both contexts are inspectable
+#### Scenario: Package install fails on a refused host
 
-- **WHEN** the compiled policy is rendered
-- **THEN** both contexts' allowlists appear, each with its origin
+- **WHEN** a package manager fails because a host was refused
+- **THEN** the operator can determine which host and which rule caused it
+- **AND** the failure is distinguishable from an unrelated network error
 
-### Requirement: Refusals are legible
+### Requirement: Guarantees are stated as constraint, not prevention
 
-A refused connection SHALL report the destination and the rule that decided it,
-to the operator and — where the protocol allows — to the client.
+Documentation and diagnostics SHALL describe the allowlist as constraining
+egress to permitted destinations, and SHALL NOT claim exfiltration is prevented.
 
-#### Scenario: A developer sees which host was refused
+#### Scenario: Allowlist includes an upload-capable destination
 
-- **WHEN** a package manager's request is refused
-- **THEN** the destination and the deciding rule are reported, rather than the
-  failure surfacing only as a generic network error or a timeout
-
-#### Scenario: Refusals are attributable in a fleet
-
-- **WHEN** several sandboxes are running and one is refused
-- **THEN** the record names the originating sandbox alongside the destination
-  and the rule
+- **WHEN** an allowlisted destination accepts uploads
+- **THEN** the tooling makes clear that it remains an outbound channel
