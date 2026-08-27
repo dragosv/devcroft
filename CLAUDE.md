@@ -6,15 +6,18 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 The MVP (`add-mvp-core`) is implemented and in its final stretch — **23/25
 tasks**. `src/` has real modules for `config`, `policy`, `provider`,
-`keeper`, `lifecycle`, `ssh`, `gvisor`, plus the `devcroft` and `spike`
+`keeper`, `lifecycle`, `ssh`, `services`, plus the `devcroft` and `spike`
 binaries under `src/bin/`, backed by an integration `tests/` suite. Stack
 is Rust stable, edition 2024. `samples/` holds standalone example projects
-covering both closure-tier providers and the hardened tier —
+covering the three closure-tier providers —
 `flox-clap-sample`, `flox-rustup-sample`, `nix-flake-sample`, and
 `devbox-citytime-sample` are Rust projects with their own `Cargo.toml`
 (each has an explicit `[workspace]` table so they don't get pulled into
-this crate's workspace); `nix-go-sample` (Go), `gvisor-kotlin-sample`
-(Kotlin/Gradle), and `flox-services-sample` (no application code at all)
+this crate's workspace); `nix-go-sample` (Go), `kotlin-ktor-sample`
+(Kotlin/Gradle — was `gvisor-kotlin-sample`, renamed by
+`remove-gvisor-backend`, which also dropped the `isolation = "hardened"`
+key from its manifest that would otherwise now fail to parse), and
+`flox-services-sample` (no application code at all)
 are non-Rust, so no workspace exclusion applies to them — see each
 sample's own `README.md` for what it demonstrates. `flox-services-sample`
 is the one that documents an *unfinished* capability on purpose: it shows
@@ -55,14 +58,13 @@ openspec status --change <change> --json       # artifact state, paths, what's n
 openspec instructions <artifact> --change <c> --json   # how to write an artifact
 ```
 
-`openspec validate --all` currently reports **11 passed, 0 failed**.
+`openspec validate --all` currently reports **16 passed, 0 failed**.
 `add-nix-provider` (nix flakes as a second closure-tier environment
-provider, alongside flox), `add-hardened-tier` (the backend-generic
-`SessionBackend` seam and tier dispatch), `add-gvisor-backend` (the
-gVisor concretization of the hardened tier — Linux-only, developed and
-live-tested inside this repo's own devcontainer once task group 8
-installed `runsc` into it), `own-policy-baseline`, `use-nono-library`,
-and `fix-provisioning-hooks` are all fully implemented, tasks.md and all
+provider, alongside flox), `add-hardened-tier` (whose tier dispatch
+`remove-gvisor-backend` deleted; its backend-generic `SessionBackend`
+seam is deliberately kept), `own-policy-baseline`,
+`use-nono-library`, and `fix-provisioning-hooks` are all fully
+implemented, tasks.md and all
 — see the README's Status section. `add-devbox-provider` (a third
 closure-tier environment provider) is implemented too, with one task
 (3.6, a services-loud-failure test) deliberately left unchecked — the
@@ -98,12 +100,6 @@ Decision 4). The single open task is 6.4, filing the upstream ask that
 nono gate its trust module behind a Cargo feature; it is deliberately
 left for the owner to send, since filing an issue on a third-party repo
 is an external action an agent should not take unprompted.
-
-Note that this rewrite has **no bearing on the hardened tier**, which
-applies no nono restriction at all. In particular it does not revive the
-removed Landlock-over-Sentry layer: that used the `landlock` crate
-directly, and its blocker is a kernel property — see
-`src/gvisor/runner.rs`'s module doc.
 
 Skills `/opsx:propose`, `/opsx:update`, `/opsx:apply`, `/opsx:archive`,
 `/opsx:sync`, and `/opsx:explore` drive the workflow.
@@ -198,18 +194,17 @@ rule carries an origin: `manifest:<key>`, `provider:<name>`, or `baseline`.
 Nothing goes to the backend that cannot be shown via `policy --render`.
 Baseline denials always win, including devcroft's own data dir.
 
-**SSH is reachable only on a unix socket — never TCP — but where the server
-process runs is tier-dependent.** At the `process` tier the keeper embeds
-russh listening on a 0600 socket in a 0700 state dir, as originally
-specified. At the `hardened` tier (add-hardened-tier), no keeper runs inside
-the sandbox: the SSH/control server runs host-side and dispatches every
-session through the backend's native exec-into primitive (`runsc exec` for
-gVisor), on the identical 0600-socket-in-0700-dir. Both cases satisfy the
-same underlying invariant — the filesystem permissions are the real access
-boundary, not the process's physical location, and SSH exists for editor
-protocol compatibility, never network security. Clients reach either one via
-`ProxyCommand devcroft proxy %n`; behavior through that path is identical
-regardless of tier.
+**SSH is reachable only on a unix socket, never TCP.** The keeper embeds
+russh listening on a 0600 socket in a 0700 state dir. The filesystem
+permissions are the real access boundary — not the process's location — and
+SSH exists for editor protocol compatibility, never network security. Clients
+reach it via `ProxyCommand devcroft proxy %n`.
+
+This used to be stated as tier-dependent, because the removed hardened tier
+ran the SSH/control server host-side and dispatched sessions through the
+backend's own exec-into primitive. The underlying invariant was the same in
+both cases, which is why removing the tier did not change it — worth knowing
+if a second backend ever arrives, since it would face the same choice.
 
 **Degraded capabilities are surfaced, never silent.** If the host cannot
 enforce a requested aspect (e.g. domain allowlists on macOS Seatbelt), `up`
@@ -260,10 +255,14 @@ mechanism exists — the decision should be **revisited, not defended**.
 
 ## Framing rules
 
-- Claims about isolation are always **tier-qualified**. The default `process`
-  tier (Landlock/Seatbelt) is accident protection, not a security boundary;
-  a real boundary is the planned `hardened` tier. Never make blanket security
-  claims.
+- There is **one** isolation tier (Landlock/Seatbelt), and it is accident
+  protection, not a security boundary. The gVisor-backed `hardened` tier was
+  built and removed (`remove-gvisor-backend`; code recoverable at the tag
+  `gvisor-backend-last`) — Landlock cannot mediate `mount()`, which `runsc`
+  requires, so the two could not be stacked at all. The supported answer for a
+  stronger boundary is running devcroft inside a VM, as macOS already does.
+  Never make blanket security claims; see `docs/threat-model.md` for which use
+  case is backed and which is not.
 - Guarantee tiers (`closure` vs `artifact`) are always user-visible. Do not
   market two different guarantees under one word.
 - There is no non-reproducible mode. `host` and `none` providers are out of

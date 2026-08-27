@@ -1,8 +1,9 @@
 // Minimal Kotlin/Ktor web server — see README.md for what this sample
-// demonstrates (the `hardened` isolation tier, add-gvisor-backend) and
-// why Ktor (JetBrains' own framework, ships the same JDK+Gradle ecosystem
-// the other samples' languages don't need) over Spring Boot's much
-// heavier dependency graph.
+// demonstrates (a JVM/Gradle build under a devcroft sandbox; it was
+// written for the `hardened` tier that `remove-gvisor-backend` deleted)
+// and why Ktor (JetBrains' own framework, ships the same JDK+Gradle
+// ecosystem the other samples' languages don't need) over Spring Boot's
+// much heavier dependency graph.
 
 plugins {
     kotlin("jvm") version "2.4.10"

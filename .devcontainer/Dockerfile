@@ -32,8 +32,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # development environment, not an end-user install, and the binary stays
 # useful for manual `nono profile`/`nono why`/`nono wrap` comparisons against
 # the library's own behavior (exactly how `own-policy-baseline` and
-# `use-nono-library` were both actually investigated) and for
-# `add-gvisor-backend`-adjacent debugging.
+# `use-nono-library` were both actually investigated).
 ARG NONO_VERSION=v0.71.0
 RUN NONO_VERSION="${NONO_VERSION}" NONO_INSTALL_DIR=/usr/local/bin \
         sh -c 'curl -fsSL https://nono.sh/install.sh | sh' \
@@ -78,8 +77,8 @@ RUN set -eu; \
 
 # devbox provider (add-devbox-provider task 0.1). Official GitHub release
 # tarball, architecture-detected, verified against the published
-# `checksums.txt` — same posture as nono's, flox's, and runsc's pinned,
-# checksummed installs. DEVBOX_VERSION pins the release for the reason the
+# `checksums.txt` — same posture as nono's and flox's pinned, checksummed
+# installs. DEVBOX_VERSION pins the release for the reason the
 # others do, and for one more specific to this change: task group 0 exists
 # to *measure* devbox's activation behavior (whether it runs a project's
 # init hook, whether machine-global packages leak into the capture), and a
@@ -94,8 +93,7 @@ RUN set -eu; \
 # it — installed above as part of flox, and reachable on PATH here. That
 # dependency is why this block follows flox's rather than standing alone.
 #
-# UNVERIFIED beyond this build step, same posture as the flox and runsc
-# installs: no container rebuild has exercised it (no docker socket is
+# UNVERIFIED beyond this build step, same posture as the flox install: no container rebuild has exercised it (no docker socket is
 # reachable from inside a running devcontainer to test one). The
 # `devbox version` at the end makes a broken download fail the build
 # loudly; whether devbox *functions* against this image's nix is a task
@@ -125,39 +123,6 @@ RUN set -eu; \
 # and devcroft's whole provisioning model is "materialize from a lockfile,
 # host-side, then restrict".
 ENV DEVBOX_NO_TELEMETRY=1
-
-# gVisor backend (add-gvisor-backend). Installed via the official release
-# bucket, architecture-detected, and verified against the published
-# per-arch SHA512 — same posture as nono's and flox's pinned, checksummed
-# installs above. RUNSC_VERSION pins the release for the same reason
-# NONO_VERSION/FLOX_VERSION do: gVisor ships continuously as dated
-# releases, not semver (add-gvisor-backend's own Open Questions section
-# notes this explicitly, and is the reason `doctor`'s gvisor-backend check
-# reports the version found rather than claiming a "tested range" this
-# project hasn't decided on) — an unpinned `latest` would make the image
-# drift between rebuilds.
-#
-# UNVERIFIED beyond this build step, same posture as flox's install above:
-# this has not been exercised through an actual container rebuild (no
-# docker socket is reachable from inside a running devcontainer to test
-# one). Installing the binary here is necessary but not sufficient for the
-# hardened tier to actually work — see devcontainer.json's own comment for
-# the other half (rootless gVisor's unprivileged-userns requirement, which
-# this container cannot currently satisfy).
-ARG RUNSC_VERSION=20260810.0
-RUN set -eu; \
-    cd /tmp; \
-    case "$(dpkg --print-architecture)" in \
-        amd64) RUNSC_ARCH=x86_64 ;; \
-        arm64) RUNSC_ARCH=aarch64 ;; \
-        *) echo "unsupported architecture: $(dpkg --print-architecture)" >&2; exit 1 ;; \
-    esac; \
-    BASE="https://storage.googleapis.com/gvisor/releases/release/${RUNSC_VERSION}/${RUNSC_ARCH}"; \
-    curl -fsSLO "${BASE}/runsc"; \
-    curl -fsSL "${BASE}/runsc.sha512" | sha512sum -c -; \
-    chmod +x runsc \
-    && mv runsc /usr/local/bin/runsc \
-    && runsc --version
 
 # Drop root. Not only lint hygiene: devcroft runs as an unprivileged user, so
 # a confinement spike executed as root would be measuring a process that does

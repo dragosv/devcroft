@@ -824,9 +824,7 @@ fn a_service_denied_its_port_fails_the_same_way_any_session_would() {
 /// after the grace period, and asserts the outcome by process absence —
 /// never by a stop command's exit status, which is the failure this
 /// whole file was written against.
-///
-/// The hardened-tier half lives in `tests/hardened_services_wiring.rs`,
-/// which is where that tier's gating already lives.
+
 #[test]
 fn a_service_ignoring_sigterm_is_still_gone_after_teardown() {
     // Unique per run, not a constant: a constant marker makes runs

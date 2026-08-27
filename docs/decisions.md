@@ -393,42 +393,95 @@ access is native, subject to filesystem policy.
 State these plainly in the README. Under-promising is cheaper than
 retracting a claim after someone demonstrates a bypass.
 
-### Security guarantee depends on the isolation tier
+### Security guarantee: one tier, and what it does not cover
 
-devcroft exposes two isolation tiers. The tier is derived from the backend,
-shown in `status` and once at `up`, and determines what may honestly be
-claimed:
+devcroft has **one** isolation tier: nono with Landlock on Linux, Seatbelt on
+macOS. It protects against accidents, careless commands, and simple
+exfiltration. It is **not** a defense against a determined attacker who
+controls the code running inside — the entire host kernel syscall surface
+remains reachable, so a kernel bug is an escape.
 
-- **`process`** (default; nono with Landlock on Linux, Seatbelt on macOS).
-  Protects against accidents, careless commands, and simple exfiltration.
-  It is **not** a defense against a determined attacker who controls the
-  code running inside: the entire host kernel syscall surface remains
-  reachable, so a kernel bug is an escape.
-- **`hardened`** (delivered on Linux via gVisor — `add-hardened-tier` for
-  the backend-generic seam, `add-gvisor-backend` for the concretization).
-  The Sentry implements syscalls in user space, so the attack surface
-  becomes Sentry rather than the host kernel. Sentry's own seccomp/ptrace
-  confinement is the *whole* of that boundary: an earlier version of this
-  bullet also claimed Landlock as an additive layer on top, which turned
-  out to be structurally impossible — see the netstack entry below for the
-  measurement and the retraction. LiteBox, a Rust library OS that links OS
-  services into the workload and thereby avoids syscall traps in many
-  cases, remains the second candidate backend, unimplemented. A real
-  security boundary at a real performance cost — builds are syscall-heavy,
-  and that is where the cost lands.
+For a boundary stronger than that, run devcroft inside a VM. That is the
+supported answer rather than a deflection: it is already how the macOS path
+works. See `docs/threat-model.md` — use case B, unreviewed code in many
+instances, is not served and must not be claimed.
 
 Two rules follow, and they are not negotiable:
 
-1. Claims are always tier-qualified. devcroft never says "sandboxed"
-   without saying which tier, and never lets `process`-tier docs borrow
-   `hardened`-tier language.
-2. Backends document their own limits (nono and MXC both do); devcroft
-   inherits those limits rather than optimistic summaries of them.
+1. Claims are stated at the strength the one tier actually provides. devcroft
+   never says "sandboxed" without saying what that protects against.
+2. Backends document their own limits; devcroft inherits those limits rather
+   than optimistic summaries of them.
+
+### Removed: the gVisor hardened tier
+
+**Property that fails: it cannot compose with the sandboxing core, and it
+cannot support fleet.**
+
+There was a second tier, backed by gVisor. It was built, and it worked —
+`up`, `exec`, SSH and services all verified end to end against a real rootless
+`runsc`. It was removed anyway (`remove-gvisor-backend`), and the code is
+recoverable at the tag **`gvisor-backend-last`**.
+
+Three reasons, in the order they carry weight:
+
+1. **Landlock cannot confine anything that builds its own filesystem view.**
+   `runsc` needs `mount()`; Landlock has no hook for `mount()` at any ABI
+   version, so the two fail together with `EPERM` under any ruleset, however
+   permissive — confirmed by elimination, including a ruleset granting `/` full
+   read-write. Stacking the tiers was structurally impossible, not fiddly.
+   Composing the other way would need gVisor to implement the Landlock
+   syscalls, and would only restrict paths inside a root filesystem devcroft
+   already constructs entirely.
+2. **The middle was squeezed.** Below it, the process tier is cheaper and
+   matches what devcroft is for. Above it, a VM is stronger and already
+   required on macOS. A tier more complicated than the first and weaker than
+   the second has to earn its place, and every new capability would have been
+   designed twice.
+3. **Rootless operation cost it the property it was chosen for**, though this
+   reason is narrower than it first looks and the narrowing matters. `runsc`
+   rejects its sandboxed-network mode under `--rootless`, so the tier could
+   never have the per-instance netstack fleet wants. But port separation at
+   that tier never came from `runsc` — it came from the network namespace
+   devcroft requests in its own OCI spec, so a *deny-default* hardened sandbox
+   did get its own loopback and did not collide. The host's port space was
+   shared only once egress was granted. A tier whose port isolation vanishes
+   the moment you allow network access still cannot carry fleet; but "it
+   structurally lacks it" would be the overstatement `add-port-allocation`
+   already caught once.
+
+**Not a reason, recorded so the removal is not defended by more than the facts
+support:** "a backend outside the sandbox library gets none of its
+capabilities". Most of that library's modules — host filtering, supervisor IPC,
+attestation, audit, snapshots — run in the supervisor, outside any sandbox, and
+work regardless of backend. What genuinely could not transfer was the
+capability-set-to-Landlock path and its ABI-level scoping. Real, but narrow.
+
+**Kept:** the `SessionBackend` trait, so a future backend is an addition rather
+than a re-architecture, and a written set of criteria any candidate must meet
+(`remove-gvisor-backend`'s design.md). Also kept: three integration defects that
+only appeared when real toolchains ran — mount destinations needing to exist in
+the bundle beforehand, `root.path` needing to be absolute for gVisor's
+symlink-escape guard, and `runsc exec` rejecting the `--` separator its
+Docker-shaped equivalent accepts. None were in any documentation. Budget for
+that class of defect in any sandbox integration.
+
+**Revisit if** a candidate meets the recorded criteria — composes with or runs
+beneath the sandboxing core, supports what fleet needs, runs real toolchains,
+is called a security boundary by its own authors, and is reachable from Rust as
+a library rather than only as a subprocess.
 
 Under-promising is cheaper than retracting a claim after someone
 demonstrates a bypass.
 
 ### Rejected (for now): non-rootless gVisor for netstack
+
+> **Superseded by the removal above.** The tier this entry is about no longer
+> exists, so its conclusion is no longer load-bearing. Kept because the
+> measurements are: they are why `remove-gvisor-backend`'s third reason is
+> narrower than it looks, and the cost table at the end is the record of what
+> non-rootless operation would actually have required. Read it as evidence,
+> not as a live decision.
 
 gVisor's per-sandbox netstack (`--network=sandbox`) would let a loopback
 bind inside one sandbox stay invisible to every other sandbox and the
@@ -534,14 +587,13 @@ runaway build can take down the host. Containers get cgroups for free.
 Planned mitigation: cgroup v2 scope units per keeper on Linux. macOS has no
 comparable mechanism, so the gap there is likely permanent.
 
-**Revisit at the hardened tier:** `runsc` integrates with cgroups
-directly (gVisor's Sentry already accounts resource use per sandbox for
-its own scheduling), which the process tier has no equivalent of. MVP
-explicitly punted on resource limits everywhere, and `add-gvisor-backend`
-does not add them either — building them only for the tier that happens
-to make it easy would be scope creep for a change that is not about
-resource limits. But the door this opens is real, not hypothetical, and
-worth a dedicated change once the hardened tier itself ships.
+**Revisit target moved.** This used to say "revisit at the hardened tier",
+because `runsc` integrates with cgroups directly and the process tier has no
+equivalent. That tier is gone (see the removal entry above), so the door it
+opened is closed with it. Resource limits are now `add-linux-agent-fleet`'s,
+where they are foundational rather than incidental: one delegated cgroup v2
+scope per agent, which yields limits, atomic teardown via `cgroup.kill`, and
+the metrics `ps`/`status` would report — three things from one mechanism.
 
 ### No inter-sandbox process isolation (MVP)
 
@@ -626,16 +678,16 @@ for 5432 collide with `EADDRINUSE`. At the `process` tier there is no
 PID/mount/net namespace separation between sandboxes (`add-mvp-core`
 design.md Decision 5), so both are binding the same host loopback.
 
-This is **tier-dependent**, and the distinction is worth keeping because
-an earlier draft got it wrong by reasoning from the netstack rejection
-above:
+**With one tier, the collision is unconditional**: at `process` it is real at
+any N > 1, and there is no longer a second tier to qualify that with.
 
-- At `process`, the collision is real at any N > 1.
-- At `hardened` **with egress granted** (`NetworkMode::Host`, sharing the
-  host's namespace), it is equally real.
-- At `hardened` **with a deny-default network**, it does not exist:
-  `oci_spec::build` already requests a network namespace, so each sandbox
-  has its own loopback and the committed 5432 works unchanged in all N.
+The tier-dependence this entry used to describe is worth keeping as history,
+because getting it wrong cost a correction once. The hardened tier's port
+separation never came from gVisor's netstack — it came from the network
+namespace devcroft requested in its own OCI spec, so a deny-default hardened
+sandbox did *not* collide, while one with egress granted did. That nuance died
+with the tier; what survives is the lesson that the separation was devcroft's
+doing rather than the backend's.
 
 So the separation that does exist comes from the namespace devcroft asks
 for in the OCI spec, not from gVisor's own netstack — which is

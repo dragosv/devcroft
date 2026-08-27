@@ -29,17 +29,6 @@ pub struct StatePaths {
     /// either; `up` passes the key material down directly instead (see
     /// `ssh::keys` and `up.rs`).
     pub ssh_host_key: PathBuf,
-    /// Hardened-tier only (add-gvisor-backend): the OCI bundle
-    /// (`config.json` + `rootfs/`) `runsc run` consumes. Unused paths
-    /// for the process tier, same posture `ssh_socket`/`ssh_host_key`
-    /// already have on backends that don't need them.
-    pub gvisor_bundle: PathBuf,
-    /// Hardened-tier only: `runsc`'s own `--root` state directory —
-    /// container metadata `runsc` itself manages, not the sandbox's
-    /// filesystem state. Kept under the same per-sandbox tree as
-    /// everything else so concurrent sandboxes never share it and
-    /// rootless mode needs no `/run` access.
-    pub gvisor_runsc_state: PathBuf,
 }
 
 impl StatePaths {
@@ -60,8 +49,6 @@ impl StatePaths {
             meta: root.join("meta.json"),
             ssh_socket: root.join("ssh.sock"),
             ssh_host_key: root.join("ssh_host_ed25519_key"),
-            gvisor_bundle: root.join("bundle"),
-            gvisor_runsc_state: root.join("runsc-state"),
             root,
         }
     }
@@ -105,7 +92,7 @@ pub struct Meta {
     #[serde(default)]
     pub read_only_grants: Vec<String>,
     /// The concrete backend the isolation tier resolved to at this `up`
-    /// (`"process"`, `"gvisor/systrap"`, `"gvisor/kvm"`, ...) — recorded
+    /// (`"process"` — the only value since `remove-gvisor-backend`) — recorded
     /// here for the same reason `env_fingerprint` is: `status` needs it
     /// and the keeper itself is never told its own state dir, so it
     /// can't answer either. `#[serde(default = "default_resolved_backend")]`

@@ -82,8 +82,9 @@ struct SshServer {
     authorized_key: Arc<PublicKey>,
     /// How sessions this connection spawns actually come into being —
     /// [`session::LocalSessionBackend`] for the `process` tier, or a
-    /// hardened backend's own implementation (e.g. `runsc exec`) for the
-    /// `hardened` tier. See [`session::SessionBackend`].
+    /// backend's own implementation. One backend exists today; the trait
+    /// is kept so a second is an addition rather than a re-architecture
+    /// (`remove-gvisor-backend`, G5). See [`session::SessionBackend`].
     backend: Arc<dyn SessionBackend>,
     /// Only populated for channels that might still need the raw
     /// `Channel<Msg>` itself — currently just `sftp`'s `into_stream()`;

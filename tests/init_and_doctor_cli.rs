@@ -30,25 +30,22 @@ fn run(cwd: &std::path::Path, args: &[&str]) -> std::process::Output {
 }
 
 /// These tests are about the backend/provider/manifest lines specifically,
-/// not about every independent check `doctor` runs. `gvisor-backend` is
-/// legitimately, per the `cli` delta spec's own "runsc present but
-/// platform unusable" scenario, `[FAIL]` rather than `[WARN]` on a host
-/// where `runsc` is installed but its platform doesn't actually work.
-/// Asserting blanket `doctor` success would make these tests depend on a
-/// platform capability they have nothing to do with, so this only fails
-/// on a `[FAIL]` line the test doesn't already expect.
+/// not about every independent check `doctor` runs. Asserting blanket
+/// `doctor` success would make them depend on optional host capabilities
+/// they have nothing to do with, so this only fails on a `[FAIL]` line the
+/// test doesn't already expect.
 ///
-/// This used to add "true of this repo's own devcontainer" — which
-/// stopped being true once `.devcontainer/devcontainer.json` gained
-/// `seccomp=unconfined` and rootless `runsc` started working here;
-/// `doctor` now reports `[PASS] gvisor-backend` in this container, and
-/// the README says so at length. The tolerance stays, because it is
-/// about *other* hosts; the stale justification for it does not.
+/// The tolerated set used to include `gvisor-backend`, for a tier whose
+/// probe could legitimately fail on a host with an unusable `runsc`
+/// platform. `remove-gvisor-backend` deleted the tier and the check, so
+/// that entry went with it — a tolerance for a `[FAIL]` line no code can
+/// emit is not harmless: it is a filter that would silently swallow a real
+/// failure if the name were ever reused.
 fn assert_no_unexpected_doctor_failures(stdout: &str) {
-    // `provider: nix` joins `gvisor-backend` as a tolerated failure for
-    // the same reason: both are optional capabilities whose absence says
-    // nothing about the backend/provider/manifest lines these tests are
-    // actually about. nix earns its place here only now that `doctor`
+    // `provider: nix` is tolerated because it is an optional capability
+    // whose absence says nothing about the backend/provider/manifest
+    // lines these tests are actually about. It earns its place only now
+    // that `doctor`
     // probes flakes with a real evaluation — it used to probe with `nix
     // flake --help`, which succeeds even when the experimental feature
     // is off, so this line could never fire and the tests passed on a
@@ -57,7 +54,6 @@ fn assert_no_unexpected_doctor_failures(stdout: &str) {
         .lines()
         .filter(|l| {
             l.starts_with("[FAIL]")
-                && !l.starts_with("[FAIL] gvisor-backend")
                 && !l.starts_with("[FAIL] provider: nix")
                 // Same reasoning as nix: devbox's own probe depends on
                 // Nix being usable too, an independent capability these
@@ -888,7 +884,7 @@ fn doctor_names_devcroft_as_the_service_supervisor_only_when_services_exist() {
 /// `logs` is a deliberate constraint, and `devcroft services` is the
 /// obvious thing for a future change to reach for.
 ///
-/// `__`-prefixed modes (`__keeper`, `__hardened_keeper`, `__bind_probe`)
+/// `__`-prefixed modes (`__keeper`, `__bind_probe`)
 /// are internal re-exec entry points, not user-facing commands, and are
 /// deliberately not part of this set.
 #[test]

@@ -196,7 +196,14 @@ also closed a real, pre-existing gap that predated nix entirely: `policy
 (`Origin::Provider` existed since MVP with no caller) — fixed for flox
 and nix alike.
 
-**`add-hardened-tier`/`add-gvisor-backend` are implemented and now
+**Superseded — the hardened tier described in the next three paragraphs was
+removed** (`remove-gvisor-backend`; see Limitations below for why, and the tag
+`gvisor-backend-last` to recover the code). The history is kept rather than
+deleted because the measurements in it are the durable part: what stacking
+Landlock on a container runtime actually costs, and three integration defects
+that only real toolchains surfaced.
+
+**`add-hardened-tier`/`add-gvisor-backend` were implemented and
 verified live**, end to end, against a real rootless `runsc` (17/17 and
 28/28 tasks). The manifest's `[sandbox].isolation` key, the
 `SessionBackend` trait `lifecycle::up` dispatches sessions through, and
@@ -373,9 +380,10 @@ vanished rather than being reported — against the `services` spec's own
   fan-out flow it targets. `init` now adds the entry.
 
 One hardening fix came with them: `status`/`ps` read a socket the
-*sandbox* controls, which is accident protection at the process tier but
-a real trust inversion at `hardened`, where `--host-uds=create` exists
-precisely to let the host reach inward. That read now verifies the path
+*sandbox* controls, which is accident protection at the process tier and was
+a real trust inversion at the since-removed hardened tier, where
+`--host-uds=create` existed precisely to let the host reach inward. The
+hardening stands on its own merits regardless. That read now verifies the path
 is a socket owned by the invoking user, caps the response size, and
 bounds the whole exchange rather than only each individual read.
 
@@ -414,9 +422,9 @@ process-compose 1.116.0 does not escalate at all: it hangs after logging
 "Caught terminated" with the stubborn child still alive. The working fix
 keeps the guarantee where the spec puts it — devcroft's: the keeper asks
 the supervisor for its service pids before signalling anything, and
-includes each service's own process group in both sweeps. At the hardened
-tier a different mechanism covers it, and the test says which rather than
-assuming: teardown destroys the `runsc` sandbox, taking everything in it.
+includes each service's own process group in both sweeps. (The hardened tier
+had a different mechanism — teardown destroyed the sandbox, taking everything
+in it — which is moot now that the tier is gone.)
 
 **`add-devbox-provider` is implemented.** devbox is a third closure-tier
 `env.provider`, resolved by capturing `devbox shellenv --pure` (never
@@ -489,17 +497,53 @@ add` — unlike `devbox install` — does not write a complete lockfile.
 
 ## Limitations
 
-devcroft's default (and only fully implemented) tier, `process`, is
-Landlock or Seatbelt applied to a process tree. **This is accident
-protection, not a security boundary** — the full host kernel syscall
-surface stays reachable from inside, so a kernel bug is an escape. A real
-boundary is the `hardened` tier (gVisor via `add-gvisor-backend`, or
-LiteBox; see
-[openspec/changes/add-hardened-tier/](openspec/changes/add-hardened-tier/)),
-implemented and now verified end to end against a live sandbox — see the
-Status section above for what that verification covered. Every isolation
-claim in this README and in `devcroft`'s own output is scoped to
-`process` unless said otherwise.
+devcroft has one isolation tier: Landlock or Seatbelt applied to a process
+tree, with the environment's own policy around it. **This is accident
+protection, not a security boundary** — the full host kernel syscall surface
+stays reachable from inside, so a kernel bug is an escape. It contains an agent
+that misbehaves, deletes the wrong directory, or fights another agent for a
+port; it does not contain code written to escape.
+
+If you need that, run devcroft inside a VM. That is the supported answer rather
+than a deflection: it is already how the macOS path works. See
+[docs/threat-model.md](docs/threat-model.md) for which use case each of those
+actually backs.
+
+### We built a hardened tier and removed it
+
+An earlier version had a second tier backed by gVisor. It worked — full
+environment startup, `exec`, SSH and services, verified against real tooling.
+It was removed anyway (`remove-gvisor-backend`; the code is recoverable at the
+tag `gvisor-backend-last`), for three reasons worth stating:
+
+**Landlock cannot confine anything that builds its own filesystem view.**
+`runsc` needs `mount()`; Landlock has no hook for `mount()` at any ABI version,
+so the two fail together with `EPERM` under any ruleset, however permissive —
+confirmed by elimination, including one granting `/` full read-write. Composing
+the tiers was structurally impossible, not merely fiddly.
+
+**The middle was squeezed.** Below it, the process tier is cheaper and matches
+what devcroft is for. Above it, a VM is stronger and already required
+elsewhere. A tier more complicated than the first and weaker than the second
+has to earn its place, and every new feature would have been designed twice.
+
+**Rootless operation cost it the property it was chosen for** — with a caveat
+worth keeping, because the obvious version of this claim is wrong. `runsc`
+rejects its sandboxed-network mode under `--rootless`, so the tier could never
+give fleet a per-instance netstack. But port separation there never came from
+gVisor: it came from the network namespace devcroft requested in its own OCI
+spec, so a deny-default hardened sandbox did get its own loopback and did *not*
+collide. Only granting egress shared the host's port space. A tier whose port
+isolation disappears the moment you allow network access still cannot carry
+fleet — but "it structurally lacks it" would be overstating it.
+
+What we kept: the backend abstraction, so a future backend is an addition
+rather than a rewrite; a written set of criteria any candidate has to meet; and
+three integration defects that only appeared when real toolchains ran — mount
+destinations needing to exist in the bundle beforehand, `root.path` needing to
+be absolute for gVisor's symlink-escape guard, and an argument separator
+`runsc exec` rejects. None were in any documentation. Budget for that class of
+defect in any sandbox integration.
 
 Known gaps, published rather than hidden:
 

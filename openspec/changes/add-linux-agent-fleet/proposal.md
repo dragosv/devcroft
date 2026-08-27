@@ -60,9 +60,11 @@ of that is replaced. This change adds the **inter-agent** layer around it.
   their organisation controls, where the threat is accident and interference.
   It does not extend devcroft to running code written to escape. See
   [docs/threat-model.md](../../../docs/threat-model.md).
-- The existing two-tier isolation model (process / hardened) should be
-  re-examined: with fleet added there are now two axes, and the tiers may
-  collapse into single-agent / fleet.
+- **Resolved by `remove-gvisor-backend`, which landed first.** This entry
+  asked for the two-tier model (process / hardened) to be re-examined, since
+  fleet added a second axis. There is now one tier, so the isolation axis has
+  collapsed on its own and the only remaining axis is single-environment
+  versus fleet — which is what this change is about.
 
 ## Non-Goals
 

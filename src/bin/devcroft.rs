@@ -25,29 +25,6 @@ fn main() {
                 .expect("__keeper requires an ssh-socket fd argument");
             keeper_main(fd, ssh_fd);
         }
-        Some("__hardened_keeper") => {
-            let fd: RawFd = args
-                .get(2)
-                .and_then(|s| s.parse().ok())
-                .expect("__hardened_keeper requires a control-socket fd argument");
-            let ssh_fd: RawFd = args
-                .get(3)
-                .and_then(|s| s.parse().ok())
-                .expect("__hardened_keeper requires an ssh-socket fd argument");
-            let container_id = args
-                .get(4)
-                .cloned()
-                .expect("__hardened_keeper requires a container-id argument");
-            let runsc = args
-                .get(5)
-                .cloned()
-                .expect("__hardened_keeper requires a runsc-path argument");
-            let state_root = args
-                .get(6)
-                .cloned()
-                .expect("__hardened_keeper requires a runsc-state-root argument");
-            hardened_keeper_main(fd, ssh_fd, container_id, runsc, state_root);
-        }
         // Hidden, like `__keeper`: `doctor`'s listening-socket probe
         // re-execs into this so the irreversible restriction lands in a
         // throwaway child rather than in `doctor` itself.
@@ -688,8 +665,6 @@ fn cli_doctor() -> i32 {
     let mut ok = true;
     ok &= doctor_backend();
     ok &= doctor_provider();
-    doctor_hardened_tier();
-    ok &= doctor_gvisor_backend();
     doctor_listening_sockets();
     doctor_ssh_config();
     doctor_manifest_degradation();
@@ -921,96 +896,6 @@ fn doctor_devbox_provider(required: bool) -> bool {
              a project declares `provider = \"devbox\"`"
         );
         true
-    }
-}
-
-/// add-hardened-tier's backend-generic doctor line: whether the hardened
-/// tier is even conceivable on this platform at all, independent of
-/// which concrete backend — `doctor_gvisor_backend` below is where the
-/// real, backend-specific probe lives. The hardened tier is opt-in
-/// (`[sandbox].isolation` defaults to `process`), the same posture the
-/// `nix` provider's absence already has in this command, so absence
-/// here is always `[WARN]`, never `[FAIL]` — a host with no hardened
-/// backend at all is still fully usable for every `process`-tier
-/// project.
-fn doctor_hardened_tier() {
-    if cfg!(target_os = "linux") {
-        println!("[PASS] hardened-tier: Linux host — see the gvisor-backend check below");
-    } else {
-        println!(
-            "[WARN] hardened-tier: unavailable on this platform — the hardened tier is Linux \
-             only (a permanent limitation, not a missing install) and is only needed for \
-             `isolation = \"hardened\"` projects"
-        );
-    }
-}
-
-/// add-gvisor-backend's `doctor` diagnostics (task 7, cli delta spec):
-/// `runsc` presence and version, which platform would be selected and
-/// why, and a real smoke check of that platform — never inferred from
-/// binary presence alone. Silent on non-Linux: `doctor_hardened_tier`
-/// above already reported the platform limitation, and there is nothing
-/// gVisor-specific to add to that.
-///
-/// No version-range check: unlike nono/nix, this repo has not decided
-/// what "tested range" means for a project that ships continuously
-/// rather than by semver (add-gvisor-backend's own Open Questions section
-/// says so explicitly) — reporting a fabricated range here would
-/// misrepresent an undecided question as a settled one.
-fn doctor_gvisor_backend() -> bool {
-    if !cfg!(target_os = "linux") {
-        return true;
-    }
-
-    let Some(runsc) = devcroft::gvisor::runsc_command::resolve() else {
-        println!(
-            "[WARN] gvisor-backend: runsc not found on PATH — only needed for \
-             `isolation = \"hardened\"` projects; see https://gvisor.dev/docs/user_guide/install/"
-        );
-        return true;
-    };
-
-    let Some(version) = devcroft::gvisor::runsc_command::probe_version(&runsc) else {
-        println!(
-            "[FAIL] gvisor-backend: runsc found at {} but `runsc --version` failed — reinstall it",
-            runsc.display()
-        );
-        return false;
-    };
-
-    let platform = devcroft::gvisor::select_platform();
-    let platform_name = platform.runsc_flag();
-    let smoke = std::process::Command::new(&runsc)
-        .arg("--rootless")
-        .arg("--platform")
-        .arg(platform_name)
-        .arg("do")
-        .arg("true")
-        .output();
-    match smoke {
-        Ok(out) if out.status.success() => {
-            println!("[PASS] gvisor-backend: {version}, platform: {platform_name}");
-            true
-        }
-        Ok(out) => {
-            let stderr = String::from_utf8_lossy(&out.stderr);
-            let reason = stderr.lines().next_back().unwrap_or("unknown error");
-            println!(
-                "[FAIL] gvisor-backend: {version} found, but the {platform_name} platform \
-                 does not work on this host ({reason}) — {}",
-                if platform_name == "kvm" {
-                    "check /dev/kvm permissions, or the hardened tier will fall back to systrap \
-                     automatically on the next `up`"
-                } else {
-                    "check kernel support for gVisor's systrap platform"
-                }
-            );
-            false
-        }
-        Err(e) => {
-            println!("[FAIL] gvisor-backend: could not run `runsc do`: {e}");
-            false
-        }
     }
 }
 
@@ -2257,140 +2142,6 @@ fn install_shutdown_handler(registry: Arc<Registry>) {
                 libc::kill(-pgid, libc::SIGKILL);
             }
         }
-        std::process::exit(0);
-    });
-}
-
-/// The hardened tier's host-side control server (add-gvisor-backend
-/// task 4.2): runs post-`up_hardened`, on the host, never restricted —
-/// there is nothing to self-restrict at this tier (the sandbox's own
-/// gVisor+Landlock confinement is the boundary). Dispatches every
-/// session through `runsc exec` (`RunscExecBackend`) instead of a local
-/// fork/exec, but is otherwise identical to `keeper_main`: same
-/// `Keeper`, same wire protocol, same embedded ssh server — only the
-/// session-spawn mechanism and the shutdown sequence's extra step
-/// (tearing down the `runsc` sandbox itself) differ.
-#[cfg(target_os = "linux")]
-fn hardened_keeper_main(
-    fd: RawFd,
-    ssh_fd: RawFd,
-    container_id: String,
-    runsc: String,
-    state_root: String,
-) -> ! {
-    // SAFETY: `up_hardened` created both listeners before spawning this
-    // process, cleared their FD_CLOEXEC, and passed the fd numbers as
-    // this process's argv — they are ours alone to take ownership of,
-    // the same contract `keeper_main` has for the process tier.
-    let listener = unsafe { UnixListener::from_raw_fd(fd) };
-    let ssh_listener = unsafe { UnixListener::from_raw_fd(ssh_fd) };
-
-    let runsc_path = std::path::PathBuf::from(&runsc);
-    let state_root_path = std::path::PathBuf::from(&state_root);
-    let backend: Arc<dyn devcroft::keeper::SessionBackend> =
-        Arc::new(devcroft::gvisor::session_backend::RunscExecBackend {
-            runsc: runsc_path.clone(),
-            container_id: container_id.clone(),
-            state_root: state_root_path.clone(),
-        });
-
-    let keeper = Keeper::new(listener, Arc::clone(&backend));
-    // Must run before `ssh::start_from_env` spawns its own tokio worker
-    // threads, for the identical reason `keeper_main` orders it first —
-    // see that function's own comment.
-    install_hardened_shutdown_handler(
-        Arc::clone(keeper.registry()),
-        runsc_path,
-        container_id,
-        state_root_path,
-    );
-
-    // Same call, same position in the sequence as `keeper_main` — before
-    // ssh, before hooks — with the *only* difference being which
-    // `SessionBackend` the request is dispatched through. That is the
-    // parity add-flox-services task 3.2 asks for ("do not add a
-    // tier-specific path"): process-compose runs inside the gVisor
-    // sandbox via `runsc exec`, registered in the same registry, so
-    // `install_hardened_shutdown_handler` reaps it exactly as it reaps a
-    // live shell.
-    start_services_if_requested(Arc::clone(keeper.registry()), Arc::clone(&backend));
-
-    devcroft::ssh::start_from_env(ssh_listener, Arc::clone(&backend));
-
-    let _ = keeper.serve();
-    std::process::exit(0);
-}
-
-/// Unreachable in practice — `__hardened_keeper` is only ever spawned by
-/// `up_hardened`, which `lifecycle::up::resolve_backend` already confines
-/// to Linux hosts. This stub exists only so the crate still compiles on
-/// macOS, where `gvisor::runner`/`gvisor::session_backend` (this
-/// function's real dependencies) are not even built.
-#[cfg(not(target_os = "linux"))]
-fn hardened_keeper_main(
-    _fd: RawFd,
-    _ssh_fd: RawFd,
-    _container_id: String,
-    _runsc: String,
-    _state_root: String,
-) -> ! {
-    unreachable!("__hardened_keeper is only ever spawned by up_hardened, which is Linux-only")
-}
-
-/// `down`/`rm` for the hardened tier: drains sessions the same way
-/// `install_shutdown_handler` does (killing each local `runsc exec`
-/// client's process group — design.md decision 5 notes this is expected
-/// to propagate into the sandboxed process, unverified against a live
-/// `runsc`), then tears down the sandbox itself (`runsc kill` +
-/// `runsc delete`). That second step has no analogue at the process
-/// tier: there, the sandboxed process tree *is* the keeper's own
-/// restricted process tree, so killing the keeper's pid already stops
-/// everything. Here the sandbox is a separate, persistent `runsc run -d`
-/// container — draining sessions alone would leave it running.
-#[cfg(target_os = "linux")]
-fn install_hardened_shutdown_handler(
-    registry: Arc<Registry>,
-    runsc: std::path::PathBuf,
-    container_id: String,
-    state_root: std::path::PathBuf,
-) {
-    const SESSION_GRACE: std::time::Duration = std::time::Duration::from_secs(2);
-
-    let mut set: libc::sigset_t = unsafe { std::mem::zeroed() };
-    unsafe {
-        libc::sigemptyset(&mut set);
-        libc::sigaddset(&mut set, libc::SIGTERM);
-        libc::sigaddset(&mut set, libc::SIGINT);
-        libc::sigaddset(&mut set, libc::SIGHUP);
-        if libc::pthread_sigmask(libc::SIG_BLOCK, &set, std::ptr::null_mut()) != 0 {
-            panic!(
-                "blocking shutdown signals: {}",
-                std::io::Error::last_os_error()
-            );
-        }
-    }
-
-    std::thread::spawn(move || {
-        let mut received: libc::c_int = 0;
-        if unsafe { libc::sigwait(&set, &mut received) } != 0 {
-            return;
-        }
-        for (_, info) in registry.snapshot() {
-            unsafe {
-                libc::kill(-info.pgid, libc::SIGTERM);
-            }
-        }
-        std::thread::sleep(SESSION_GRACE);
-        for (_, info) in registry.snapshot() {
-            unsafe {
-                libc::kill(-info.pgid, libc::SIGKILL);
-            }
-        }
-        let container = devcroft::gvisor::runsc_command::Container {
-            id: &container_id,
-            state_root: &state_root,
-        };
-        let _ = devcroft::gvisor::runner::teardown(&runsc, &container);
         std::process::exit(0);
     });
 }

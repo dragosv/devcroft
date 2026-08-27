@@ -21,10 +21,14 @@ context: |
   Rationale for every rejection below, plus the provider qualification test
   and the honest list of gaps vs containers, lives in `docs/decisions.md`.
 
-  - Not a security boundary at the default `process` tier. Process-level
-    sandboxing protects against accidents and simple exfiltration. A real
-    boundary is available at the planned `hardened` tier (gVisor +
-    Landlock); claims are always tier-qualified, never blanket.
+  - Not a security boundary. Process-level sandboxing protects against
+    accidents and simple exfiltration, and that is the whole of it — there
+    is one tier. A gVisor-backed `hardened` tier was built and removed
+    (`remove-gvisor-backend`): Landlock cannot mediate `mount()`, which
+    `runsc` requires, so the two could not be stacked. The supported answer
+    for a stronger boundary is a VM, as macOS already uses. Claims are
+    stated at the strength that one tier provides, never blanket; see
+    `docs/threat-model.md`.
   - Not a container or VM manager. If the user wants images, they should use
     Dev Containers or Docker Sandboxes.
   - No non-reproducible escape hatch. Every sandbox is backed by a
@@ -65,9 +69,15 @@ context: |
 
   ## Deferred (post-MVP, tracked but not specced here)
 
-  - Additional backends: MXC, microsandbox (msb), raw bwrap profiles.
-    gVisor and LiteBox are the candidate vehicles for the `hardened`
-    isolation tier (see `add-hardened-tier`).
+  - Additional backends. The `SessionBackend` trait is kept for exactly
+    this, but a candidate must meet the criteria recorded in
+    `remove-gvisor-backend`'s design.md — composes with or runs beneath the
+    sandboxing core, supports what fleet needs, runs real toolchains, is
+    called a security boundary by its own authors, and is reachable from
+    Rust as a library rather than only as a subprocess. gVisor was
+    evaluated by being built, and removed; LiteBox and a cross-platform
+    sandbox SDK were both evaluated against the criteria and cleared
+    neither.
   - No artifact-tier provider is scheduled, and that is now a recorded
     decision rather than a scheduling accident: devcroft's product
     guarantee is the closure tier, the `Provider` seam stays generic,
@@ -98,11 +108,9 @@ context: |
       niche that matches devcroft's profile exactly)
   - Rejected providers and the six-criterion qualification test they fail:
     see `docs/decisions.md` §1
-  - Isolation tiers: `process` (Landlock/Seatbelt — default, lowest
-    overhead, accident protection) vs `hardened` (gVisor or LiteBox, plus
-    Landlock; Linux only — real security boundary, syscall-overhead cost). Derived from the
-    backend, always user-visible, and every security claim is qualified by
-    it. See `add-hardened-tier`.
+  - Isolation: one tier (Landlock/Seatbelt), accident protection rather
+    than a security boundary. The second axis that remains is
+    single-environment versus fleet, not tier.
   - Guarantee tiers: `closure` (Nix-based: identical behavior, transitive)
     vs `artifact` (lockfile-based: identical downloaded artifacts, host-linked
     runtime). Every provider maps to exactly one tier and the tier is always

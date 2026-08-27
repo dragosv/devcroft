@@ -126,7 +126,8 @@ same invariant, violated by a route that has nothing to do with groups.
   inspection.
 - The sample projects build end to end with the system-read groups
   excluded — `flox-clap-sample` (Rust), `nix-go-sample` (Go),
-  `gvisor-kotlin-sample` (Kotlin/Gradle, hardened tier).
+  `kotlin-ktor-sample` (Kotlin/Gradle — named `gvisor-kotlin-sample`
+  when this was written, before `remove-gvisor-backend`).
 - A sandbox cannot exec a host binary that the provider's closure does
   not supply, and `why` explains the denial.
 - `~/.ssh` and cloud credentials stay denied, attributed to the

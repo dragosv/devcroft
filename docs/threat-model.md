@@ -69,7 +69,12 @@ protection: the full host kernel syscall surface stays reachable, so a kernel
 bug is an escape. The industry position — argued by parties with an interest in
 selling the stronger boundary, but not thereby wrong — is that even a container
 is insufficient here, which is why microVMs are the enterprise answer. devcroft
-is below that bar and, with the hardened tier dropped, has no path to it.
+is below that bar and, with the hardened tier removed
+(`remove-gvisor-backend`), has no path to it on this roadmap. The ceiling is
+fixed at the process tier, and the named answer for anyone who needs more is a
+VM — which is a supported path rather than a deflection, since the macOS path
+already works that way. The criteria a future backend would have to meet before
+that changes are recorded in that change's `design.md`.
 
 **Consequence for the specs.** `sandbox-provisioning` is motivated by confining
 activation of code nobody has read. That motivation is real and the change is

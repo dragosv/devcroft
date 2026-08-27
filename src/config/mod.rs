@@ -26,20 +26,19 @@ pub struct Manifest {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Sandbox {
     pub name: String,
-    pub isolation: Isolation,
 }
 
-/// `[sandbox].isolation`: an intent, resolved to a concrete backend per
-/// host (`add-hardened-tier`). The manifest never names a backend
-/// directly — `process` resolves to nono, `hardened` resolves to
-/// whichever supported hardened backend (gVisor today) is available.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Default)]
-#[serde(rename_all = "lowercase")]
-pub enum Isolation {
-    #[default]
-    Process,
-    Hardened,
-}
+/// The one isolation tier devcroft provides.
+///
+/// `remove-gvisor-backend` collapsed the axis: there was a `hardened`
+/// tier backed by gVisor, and it was removed because Landlock cannot
+/// mediate `mount()` — which `runsc` requires — so the two could not be
+/// stacked at all, and because the tier sat in a squeezed middle between
+/// a cheaper process tier and a stronger VM. `[sandbox].isolation` still
+/// parses, so a manifest naming the removed tier gets a message that says
+/// so rather than a generic unknown-value error (see
+/// [`ConfigError::RemovedIsolationTier`]); it just has one valid value.
+pub const ISOLATION_TIER: &str = "process";
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 #[serde(default)]
@@ -150,7 +149,9 @@ struct RawManifest {
 #[serde(default)]
 struct RawSandbox {
     name: Option<String>,
-    isolation: Isolation,
+    /// Raw, so a removed or unknown tier produces devcroft's own message
+    /// rather than serde's "unknown variant".
+    isolation: Option<String>,
 }
 
 #[derive(Debug)]
@@ -175,6 +176,17 @@ pub enum ConfigError {
         path: String,
     },
     InvalidProvider(crate::provider::ProviderError),
+    /// `[sandbox].isolation` names the tier `remove-gvisor-backend`
+    /// removed. Its own variant rather than a generic invalid-value
+    /// error, because the spec requires the message to name the removed
+    /// tier, the supported one, and the path to a stronger boundary.
+    RemovedIsolationTier {
+        name: String,
+    },
+    /// `[sandbox].isolation` names something that never existed.
+    InvalidIsolationTier {
+        name: String,
+    },
 }
 
 impl fmt::Display for ConfigError {
@@ -206,6 +218,18 @@ impl fmt::Display for ConfigError {
                 "`filesystem.deny` entry `{path}` is never granted by `allow` or `read`"
             ),
             ConfigError::InvalidProvider(e) => write!(f, "{e}"),
+            ConfigError::RemovedIsolationTier { name } => write!(
+                f,
+                "`[sandbox].isolation = \"{name}\"` names a tier devcroft no longer \
+                 provides; the supported tier is `{ISOLATION_TIER}`. For a boundary \
+                 stronger than the process tier, run devcroft inside a VM — that is \
+                 the supported path, and is already how the macOS path works"
+            ),
+            ConfigError::InvalidIsolationTier { name } => write!(
+                f,
+                "`[sandbox].isolation = \"{name}\"` is not a known isolation tier; \
+                 the supported tier is `{ISOLATION_TIER}`"
+            ),
         }
     }
 }
@@ -264,6 +288,23 @@ pub fn parse(text: &str) -> Result<(Manifest, Vec<Warning>), ConfigError> {
     }
 
     crate::provider::validate_provider(&raw.env.provider).map_err(ConfigError::InvalidProvider)?;
+    // A manifest that omits the key is fine and gets no output at all —
+    // the spec's "Manifest omits the isolation level" scenario rules out
+    // a deprecation notice for the common case.
+    match raw.sandbox.isolation.as_deref() {
+        None => {}
+        Some(t) if t == ISOLATION_TIER => {}
+        Some("hardened") => {
+            return Err(ConfigError::RemovedIsolationTier {
+                name: "hardened".to_string(),
+            });
+        }
+        Some(other) => {
+            return Err(ConfigError::InvalidIsolationTier {
+                name: other.to_string(),
+            });
+        }
+    }
 
     validate::check_filesystem(&raw.filesystem)?;
 
@@ -278,10 +319,7 @@ pub fn parse(text: &str) -> Result<(Manifest, Vec<Warning>), ConfigError> {
 
     Ok((
         Manifest {
-            sandbox: Sandbox {
-                name,
-                isolation: raw.sandbox.isolation,
-            },
+            sandbox: Sandbox { name },
             env,
             filesystem: raw.filesystem,
             network: raw.network,
@@ -586,22 +624,57 @@ mod tests {
         assert_eq!(m.env.provider, "nix");
     }
 
+    /// Spec: "Manifest omits the isolation level" — the supported tier is
+    /// used, and **no deprecation output is produced**. A manifest that
+    /// never mentioned the removed tier should not learn it existed.
     #[test]
-    fn isolation_defaults_to_process() {
-        let (m, _) = parse("[sandbox]\nname = \"myproj\"\n").unwrap();
-        assert_eq!(m.sandbox.isolation, Isolation::Process);
+    fn omitting_isolation_parses_with_no_warning() {
+        let (_, warnings) = parse("[sandbox]\nname = \"myproj\"\n").unwrap();
+        assert!(
+            warnings.is_empty(),
+            "omitting the key must produce no output at all, got {warnings:?}"
+        );
     }
 
     #[test]
-    fn isolation_hardened_parses() {
-        let (m, _) = parse("[sandbox]\nname = \"myproj\"\nisolation = \"hardened\"\n").unwrap();
-        assert_eq!(m.sandbox.isolation, Isolation::Hardened);
+    fn the_supported_tier_parses() {
+        assert!(
+            parse(&format!(
+                "[sandbox]\nname = \"myproj\"\nisolation = \"{ISOLATION_TIER}\"\n"
+            ))
+            .is_ok()
+        );
     }
 
+    /// Spec: "Manifest selects a removed tier" — the message names the
+    /// removed tier, the supported tier, and the VM path, and there is no
+    /// silent fallback. Asserted on the rendered text because the whole
+    /// point of the dedicated variant is what the user reads.
     #[test]
-    fn isolation_invalid_value_is_a_parse_error() {
+    fn the_removed_hardened_tier_is_named_not_merely_rejected() {
+        let err = parse("[sandbox]\nname = \"myproj\"\nisolation = \"hardened\"\n").unwrap_err();
+        assert!(matches!(err, ConfigError::RemovedIsolationTier { .. }));
+        let msg = err.to_string();
+        assert!(
+            msg.contains("hardened"),
+            "must name the removed tier: {msg}"
+        );
+        assert!(
+            msg.contains(ISOLATION_TIER),
+            "must name the supported tier: {msg}"
+        );
+        assert!(
+            msg.contains("VM"),
+            "must name the stronger-boundary path: {msg}"
+        );
+    }
+
+    /// A tier that never existed is distinguishable from the one that was
+    /// removed — telling a typo it was "removed" would be a small lie.
+    #[test]
+    fn an_unknown_tier_is_not_reported_as_removed() {
         let err = parse("[sandbox]\nname = \"myproj\"\nisolation = \"vm\"\n").unwrap_err();
-        assert!(matches!(err, ConfigError::Parse(_)));
+        assert!(matches!(err, ConfigError::InvalidIsolationTier { .. }));
     }
 
     #[test]

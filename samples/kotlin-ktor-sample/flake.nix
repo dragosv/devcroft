@@ -1,5 +1,5 @@
 {
-  description = "devcroft gvisor-kotlin-sample: hello-world Ktor web server, hardened tier";
+  description = "devcroft kotlin-ktor-sample: hello-world Ktor web server";
 
   inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
 

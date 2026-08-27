@@ -1,0 +1,17 @@
+[sandbox]
+name = "kotlin-ktor-sample"
+
+[env]
+provider = "nix"
+
+# A web server needs to bind a listening socket, and Ktor binds :8080.
+# devcroft's default network policy (`network.default = "deny"`) denies
+# bind()/listen() outright, loopback included.
+#
+# `network.ports` is the narrower key and is what nix-go-sample uses:
+# egress stays denied while exactly one loopback port becomes bindable.
+# This sample keeps `default = "allow"` for now only because it has not
+# been re-run since `network.ports` landed — switching it is a one-line
+# change plus a live run, not a design question.
+[network]
+default = "allow"

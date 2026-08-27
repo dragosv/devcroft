@@ -9,41 +9,33 @@
   // than shipping a permanently weakened container for a problem this host
   // does not have.
   //
-  // `seccomp=unconfined` below is for the hardened tier (add-gvisor-backend)
-  // specifically, and is a deliberate, revisited reversal of this file's
-  // earlier "no relaxations" stance for Landlock — not the same tradeoff
-  // extended by default, an opt-in the project chose to turn on globally
-  // for anyone using this devcontainer.
+  // `seccomp=unconfined` below was added for the hardened tier
+  // (add-gvisor-backend), which `remove-gvisor-backend` has now deleted.
+  // **It is deliberately kept, and that needs justifying rather than
+  // assuming**, because the tier it was added for is gone:
   //
-  // Root cause, confirmed directly rather than assumed: rootless gVisor
-  // needs unprivileged user namespace creation (`CLONE_NEWUSER`), which
-  // failed here with EPERM on both `unshare --user` and a raw
-  // `unshare(CLONE_NEWUSER)` syscall. Not the well-known Debian
-  // `kernel.unprivileged_userns_clone` sysctl — that path does not exist
-  // on this kernel at all. It is the container runtime's default seccomp
-  // profile (moby/moby's `default.json`): its `clone`/`clone3` rule blocks
-  // the `CLONE_NEWUSER` flag with EPERM unless the calling process holds
-  // `CAP_SYS_ADMIN` in its *effective* set — defense-in-depth against
-  // nested-userns escape CVEs. Confirmed via `/proc/self/status`: `CapBnd`
-  // is Docker's reduced 14-capability default (no `SYS_ADMIN`) and
-  // `Seccomp: 2` shows a filter active.
+  //   - What it buys: unprivileged user-namespace creation
+  //     (`CLONE_NEWUSER`). The container runtime's default seccomp profile
+  //     (moby/moby's `default.json`) blocks the flag with EPERM unless the
+  //     caller holds `CAP_SYS_ADMIN` in its *effective* set, which a
+  //     non-root `remoteUser` never does — capabilities reach a non-root
+  //     process only via file capabilities or by running as root, so
+  //     `--cap-add=SYS_ADMIN` alone does not help. Confirmed directly via
+  //     `/proc/self/status`, not inferred: this is not the Debian
+  //     `kernel.unprivileged_userns_clone` sysctl, which does not exist on
+  //     this kernel.
+  //   - Why keep it: `add-linux-agent-fleet` builds net/pid/ipc/uts/mount
+  //     namespaces directly, which needs exactly this. Removing the flag
+  //     now would restore the container's default confinement and then
+  //     have to be undone for that change.
+  //   - The honest cost: nothing in the tree needs it *today*. The process
+  //     tier's Landlock needs no relaxation at all — that was verified
+  //     under the default profile. So this is a weakened container held
+  //     open for future work, which is a real trade, not a free one.
   //
-  // `--cap-add=SYS_ADMIN` alone will not fix this: `remoteUser` here is
-  // `vscode` (non-root), and a non-root process's effective capability set
-  // stays empty at exec regardless of what the container's bounding set
-  // grants — capabilities only reach a non-root process via file
-  // capabilities (`setcap`) or by running as root. `seccomp=unconfined` is
-  // the container-wide alternative that does not depend on the calling
-  // user's capabilities at all, which is why it's the one applied below;
-  // a `setcap cap_sys_admin+ep` on just `runsc` was considered and left as
-  // a narrower alternative for anyone who wants the smaller blast radius.
-  //
-  // Unverified beyond `unshare(CLONE_NEWUSER)` succeeding after a rebuild
-  // with this flag: confirming `runsc` itself starts a container end to
-  // end still needs a live run, since no docker socket is reachable from
-  // inside a running devcontainer to test a rebuild from this session.
-  // `devcroft doctor`'s gvisor-backend check names the remaining gap
-  // precisely if it still fails after rebuilding.
+  // Worth revisiting if fleet is deferred or dropped: the narrower
+  // alternative is granting the specific binary file capabilities rather
+  // than unconfining the whole container.
   "runArgs": ["--security-opt", "seccomp=unconfined"],
 
   // Fails loudly if Landlock is not reachable, instead of letting the spike

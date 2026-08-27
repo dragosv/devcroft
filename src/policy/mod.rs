@@ -395,28 +395,6 @@ mod tests {
         assert!(!compiled.network_block);
     }
 
-    /// add-hardened-tier design.md decision 4: `compile`/`render`/`why`
-    /// never look at `[sandbox].isolation` — they operate on
-    /// `CompiledPolicy` before any tier-specific projection exists, so
-    /// the same manifest compiles identically regardless of tier. This
-    /// pins that down as a regression test rather than trusting it.
-    #[test]
-    fn compilation_is_identical_regardless_of_isolation_tier() {
-        let (process_manifest, _) = parse("[sandbox]\nname = \"myproj\"\n").unwrap();
-        let (hardened_manifest, _) =
-            parse("[sandbox]\nname = \"myproj\"\nisolation = \"hardened\"\n").unwrap();
-
-        assert_eq!(
-            compile(&process_manifest),
-            compile(&hardened_manifest),
-            "CompiledPolicy must not depend on the isolation tier"
-        );
-        assert_eq!(
-            render(&compile(&process_manifest)),
-            render(&compile(&hardened_manifest))
-        );
-    }
-
     #[test]
     fn compilation_is_deterministic() {
         let (manifest, _) = parse(

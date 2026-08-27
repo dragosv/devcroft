@@ -14,7 +14,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
-use crate::config::{Isolation, Manifest};
+use crate::config::Manifest;
 use crate::policy;
 use crate::provider::{Provider, ProviderError, ProviderKind, Resolution, ServiceSupport};
 
@@ -136,7 +136,6 @@ pub fn up(
     // provider resolution do any work, never as a silent downgrade to
     // `process` (CLAUDE.md's error contract; add-hardened-tier's
     // "Tier resolution fails loudly" design decision).
-    let resolved_backend = resolve_backend(manifest.sandbox.isolation)?;
 
     // Host-side, before any restriction applies (design.md decision 2):
     // the resolved environment and its store grants are captured now,
@@ -183,7 +182,7 @@ pub fn up(
             project_root: project_root.to_string_lossy().into_owned(),
             env_fingerprint,
             read_only_grants: resolution.read_only_grants.clone(),
-            resolved_backend: resolved_backend.clone(),
+            resolved_backend: RESOLVED_BACKEND.to_string(),
             // What the provider declared, recorded so `status` can
             // report a service the supervisor never accepted — see
             // `Meta::declared_services`.
@@ -197,42 +196,19 @@ pub fn up(
         },
     )?;
 
-    match manifest.sandbox.isolation {
-        Isolation::Process => {
-            up_process(manifest, project_root, &paths, opts, outcome, &resolution)
-        }
-        Isolation::Hardened => up_hardened(
-            manifest,
-            project_root,
-            &paths,
-            opts,
-            outcome,
-            &resolution,
-            &resolved_backend,
-        ),
-    }
+    up_process(manifest, project_root, &paths, opts, outcome, &resolution)
 }
 
 /// Resolves `isolation` to the concrete backend string `status`/`meta.json`
-/// record (`"process"`, or `"gvisor/<platform>"`), failing at layer
-/// `backend` if the host cannot provide what was asked for. Cheap and
-/// side-effect-free: for `hardened` this only probes `/dev/kvm`
-/// accessibility (`gvisor::select_platform`) and checks the compile-time
-/// target OS, never spawns a process or touches the state dir.
-fn resolve_backend(isolation: Isolation) -> Result<String, UpError> {
-    match isolation {
-        Isolation::Process => Ok("process".to_string()),
-        Isolation::Hardened => {
-            if !cfg!(target_os = "linux") {
-                return Err(UpError::Backend(
-                    "the hardened isolation tier is Linux-only".to_string(),
-                ));
-            }
-            let platform = crate::gvisor::select_platform();
-            Ok(format!("gvisor/{}", platform.runsc_flag()))
-        }
-    }
-}
+/// The concrete backend recorded in `meta.json` and shown by `status`.
+///
+/// A constant since `remove-gvisor-backend`: there is one backend, so
+/// there is nothing to resolve and nothing that can fail. Kept as a named
+/// value rather than inlined because `meta.json` records it and `status`
+/// prints it, and a future second backend (the criteria are in that
+/// change's design.md, G5's trait is still here) reintroduces the choice
+/// at exactly this point.
+pub const RESOLVED_BACKEND: &str = "process";
 
 /// The `process` tier's supervisor sequence — today's `up`, unchanged in
 /// every particular, just extracted so [`up`] can dispatch to it or to
@@ -480,251 +456,6 @@ fn prepare_services(
     }
     std::fs::write(&config_path, crate::services::render_config(services))?;
     Ok(true)
-}
-
-/// The `hardened` tier's supervisor sequence (add-gvisor-backend): no
-/// nono, no fd-inheritance-across-self-restriction dance — there is
-/// nothing to self-restrict, since the host-side control process is not
-/// the trust boundary at this tier (the backend's own sandboxing is).
-/// Builds the OCI bundle from the same `CompiledPolicy` [`up_process`]
-/// projects into a nono profile, starts the sandbox detached, then
-/// starts a host-side control server (`__hardened_keeper`) dispatching
-/// sessions through `runsc exec` instead of a local fork/exec — see the
-/// `ssh` delta spec's "Sessions via native exec, dispatched host-side"
-/// requirement.
-#[cfg(target_os = "linux")]
-fn up_hardened(
-    manifest: &Manifest,
-    project_root: &Path,
-    paths: &StatePaths,
-    opts: &UpOptions,
-    outcome: UpOutcome,
-    resolution: &Resolution,
-    resolved_backend: &str,
-) -> Result<UpOutcome, UpError> {
-    let runsc = crate::gvisor::runsc_command::resolve().ok_or_else(|| {
-        UpError::Backend(
-            "runsc not found on PATH; install it and re-run, or `devcroft doctor` for details"
-                .to_string(),
-        )
-    })?;
-
-    // "Provider grants map onto mounts or fail loudly" (add-gvisor-backend):
-    // every read-only grant must be an absolute, existing host path before
-    // any sandbox starts — never silently widened or dropped.
-    for grant in &resolution.read_only_grants {
-        let path = Path::new(grant);
-        if !path.is_absolute() || !path.exists() {
-            return Err(UpError::Backend(format!(
-                "provider grant `{grant}` cannot be represented as a bundle mount: \
-                 not an absolute, existing path"
-            )));
-        }
-    }
-
-    // Before anything starts: the config is a host-side artifact written
-    // into the project root, and the project root is a rw bind mount at
-    // the *identical* path inside the sandbox (`oci_spec::build`), so the
-    // file named here is the file process-compose opens inside the
-    // boundary. Ordered ahead of `runsc run` for the same reason
-    // `up_process` puts it ahead of `spawn_keeper` — a missing
-    // `process-compose` must fail before a sandbox exists, not after.
-    // `Some(name)` means "start services, using this sandbox's artifact
-    // subdirectory"; `None` means there are none to start.
-    let services = prepare_services(project_root, &manifest.sandbox.name, resolution, opts)?
-        .then_some(manifest.sandbox.name.as_str());
-
-    let compiled = policy::compile(manifest);
-    let network = crate::gvisor::oci_spec::NetworkMode::from_compiled_policy(&compiled);
-    let spec = crate::gvisor::oci_spec::build(
-        &compiled,
-        &crate::gvisor::oci_spec::BundleInputs {
-            project_root,
-            bundle_dir: &paths.gvisor_bundle,
-            read_only_grants: &resolution.read_only_grants,
-            env: &resolution.env,
-        },
-    );
-    crate::gvisor::runner::materialize_bundle(&paths.gvisor_bundle, &spec)
-        .map_err(|e| UpError::Backend(format!("materializing OCI bundle: {e}")))?;
-
-    // `resolved_backend` is "gvisor/<platform>" (see `resolve_backend`);
-    // re-parsed rather than re-probed, so `run` uses exactly the
-    // platform `status`/`meta.json` already committed to recording for
-    // this `up`, not a second, potentially different KVM-accessibility
-    // check moments later.
-    let platform = match resolved_backend.split_once('/') {
-        Some((_, "kvm")) => crate::gvisor::Platform::Kvm,
-        _ => crate::gvisor::Platform::Systrap,
-    };
-
-    let container = crate::gvisor::runsc_command::Container {
-        id: &manifest.sandbox.name,
-        state_root: &paths.gvisor_runsc_state,
-    };
-    crate::gvisor::runner::run(
-        &runsc,
-        &container,
-        &paths.gvisor_bundle,
-        platform,
-        network,
-        services.is_some(),
-    )
-    .map_err(|e| UpError::Backend(format!("runsc run: {e}")))?;
-
-    // From here on, mirrors `up_process`'s own listener-creation and key-
-    // handoff steps exactly — the socket layout and ssh key material are
-    // tier-agnostic (`ssh` delta spec: "still only a 0600 unix socket in
-    // a 0700 dir, still never binding TCP").
-    let _ = std::fs::remove_file(&paths.socket);
-    let listener = UnixListener::bind(&paths.socket)?;
-    // Same 0600 as the process tier's control socket — see the comment
-    // there. This tier needs it at least as much: `--host-uds=create`
-    // exists precisely to let the host reach inward.
-    std::fs::set_permissions(&paths.socket, std::fs::Permissions::from_mode(0o600))?;
-    clear_cloexec(listener.as_raw_fd())?;
-
-    let _ = std::fs::remove_file(&paths.ssh_socket);
-    let ssh_listener = UnixListener::bind(&paths.ssh_socket)?;
-    std::fs::set_permissions(&paths.ssh_socket, std::fs::Permissions::from_mode(0o600))?;
-    clear_cloexec(ssh_listener.as_raw_fd())?;
-
-    let (client_private_path, client_public_path) = state::client_key_paths()?;
-    let client_key = crate::ssh::ensure_client_keypair(&client_private_path, &client_public_path)
-        .map_err(|e| UpError::Ssh(e.to_string()))?;
-    let host_key = crate::ssh::generate_host_key(&paths.ssh_host_key)
-        .map_err(|e| UpError::Ssh(e.to_string()))?;
-    let host_key_pem = host_key
-        .to_openssh(russh::keys::ssh_key::LineEnding::LF)
-        .map_err(|e| UpError::Ssh(e.to_string()))?;
-    let authorized_key_pem = client_key
-        .public_key()
-        .to_openssh()
-        .map_err(|e| UpError::Ssh(e.to_string()))?;
-
-    let exe = keeper_exe()?;
-    let control_pid = spawn_hardened_keeper(
-        &exe,
-        &listener,
-        paths,
-        project_root,
-        &runsc,
-        &manifest.sandbox.name,
-        SshHandoff {
-            listener: &ssh_listener,
-            host_key_pem: &host_key_pem,
-            authorized_key_pem: &authorized_key_pem,
-        },
-        services,
-    )
-    .map_err(|e| UpError::Keeper(e.to_string()))?;
-    std::mem::forget(listener);
-    std::mem::forget(ssh_listener);
-
-    state::write_pidfile(&paths.pidfile, control_pid)?;
-
-    wait_until_responsive(paths, KEEPER_START_TIMEOUT)
-        .map_err(|e| UpError::Keeper(format!("control server did not become responsive: {e}")))?;
-
-    if !opts.skip_hooks {
-        let run_post_create = matches!(outcome, UpOutcome::Started | UpOutcome::Recreated);
-        hooks::run(paths, project_root, &manifest.hooks, run_post_create)
-            .map_err(|e| UpError::Keeper(e.to_string()))?;
-    }
-
-    Ok(outcome)
-}
-
-/// Unreachable in practice: [`resolve_backend`] already fails at layer
-/// `backend` before `up` ever dispatches here on a non-Linux host. This
-/// stub exists only so the crate still compiles on macOS, where
-/// `crate::gvisor::runner` (this function's real implementation) is not
-/// even built.
-#[cfg(not(target_os = "linux"))]
-fn up_hardened(
-    _manifest: &Manifest,
-    _project_root: &Path,
-    _paths: &StatePaths,
-    _opts: &UpOptions,
-    _outcome: UpOutcome,
-    _resolution: &Resolution,
-    _resolved_backend: &str,
-) -> Result<UpOutcome, UpError> {
-    unreachable!("resolve_backend already rejects the hardened tier on non-Linux hosts")
-}
-
-/// Spawns the hardened tier's host-side control server
-/// (`__hardened_keeper`) detached, the same "re-exec this binary,
-/// `setsid`, forget the child" pattern [`spawn_keeper`] uses — but with
-/// no `nono wrap` prefix (nothing to self-restrict) and no resolved
-/// provider environment to inject (that's already baked into the OCI
-/// bundle's `process.env`; sessions get it from the sandbox, not from
-/// this process's own environment).
-#[cfg(target_os = "linux")]
-#[allow(clippy::too_many_arguments)]
-fn spawn_hardened_keeper(
-    exe: &Path,
-    listener: &UnixListener,
-    paths: &StatePaths,
-    project_root: &Path,
-    runsc: &Path,
-    container_id: &str,
-    ssh: SshHandoff,
-    services: Option<&str>,
-) -> io::Result<libc::pid_t> {
-    let log = std::fs::File::create(&paths.log)?;
-
-    let mut cmd = Command::new(exe);
-    cmd.arg("__hardened_keeper")
-        .arg(listener.as_raw_fd().to_string())
-        .arg(ssh.listener.as_raw_fd().to_string())
-        .arg(container_id)
-        .arg(runsc)
-        .arg(&paths.gvisor_runsc_state)
-        // Same cwd contract `spawn_keeper` gives the process tier: the
-        // control server's own cwd is the project root, which is where
-        // `ssh::server` takes each session's starting directory from.
-        .current_dir(project_root)
-        .env("DEVCROFT_SSH_HOST_KEY", ssh.host_key_pem)
-        .env("DEVCROFT_SSH_AUTHORIZED_KEY", ssh.authorized_key_pem)
-        // Same handoff as the process tier (see `spawn_keeper`): the
-        // supervisor cannot own service lifetime, so the control server
-        // starts them at its own startup — here through `RunscExecBackend`
-        // rather than a local fork/exec, which is the whole point of
-        // routing service startup through the `SessionBackend` seam.
-        .env(
-            "DEVCROFT_START_SERVICES",
-            if services.is_some() { "1" } else { "0" },
-        )
-        // Which sandbox's artifact subdirectory to use. Service paths are
-        // keyed on the sandbox name as well as the root, so that two
-        // sandboxes sharing one project root do not overwrite each
-        // other's config or fight over one supervisor socket.
-        .env("DEVCROFT_SANDBOX_NAME", services.unwrap_or_default())
-        // The sandbox sees the project root at the identical path, so one
-        // absolute value is correct on both sides of the boundary — and
-        // `runsc exec --cwd` needs an absolute path, which the process
-        // tier's implicit "." would not give it.
-        .env("DEVCROFT_SERVICES_ROOT", project_root)
-        .stdin(Stdio::null())
-        .stdout(log.try_clone()?)
-        .stderr(log);
-    // SAFETY: setsid() only touches this (freshly forked, single-
-    // threaded) child's own session/process-group state — identical
-    // reasoning to `spawn_keeper`'s own pre_exec below.
-    unsafe {
-        cmd.pre_exec(|| {
-            if libc::setsid() < 0 {
-                return Err(io::Error::last_os_error());
-            }
-            Ok(())
-        });
-    }
-
-    let child = cmd.spawn()?;
-    let pid = child.id() as libc::pid_t;
-    std::mem::forget(child);
-    Ok(pid)
 }
 
 /// The ssh server's fd and key material `spawn_keeper` hands the keeper,

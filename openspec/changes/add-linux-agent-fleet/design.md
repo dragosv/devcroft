@@ -219,8 +219,11 @@ to allowlisted destinations" and size the allowlist accordingly.
    daemon socket must be bind-mounted into each namespace and GC roots must be
    per-agent, or a GC triggered by one agent collects another's live paths.
    Needs an explicit concurrency test, not an N=1 test.
-5. **Does the two-tier model survive?** Two axes now exist (platform,
-   single/fleet). The tiers may be better expressed as the second axis.
+5. **RESOLVED — the two-tier model did not survive, for unrelated reasons.**
+   `remove-gvisor-backend` deleted the hardened tier (Landlock cannot mediate
+   `mount()`, which `runsc` requires, so the two could never be stacked). One
+   tier remains, so the question answers itself: the axis that matters is
+   single-environment versus fleet.
 6. **Kernel floor.** Landlock network rules require 6.7+; `IOCTL_DEV` is ABI v5
    (6.10); signal and abstract-socket scoping is ABI v6 (6.12). Decide the
    supported floor and the degradation behaviour below it.

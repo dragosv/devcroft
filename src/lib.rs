@@ -1,6 +1,5 @@
 pub mod config;
 pub mod exec;
-pub mod gvisor;
 pub mod keeper;
 pub mod lifecycle;
 pub(crate) mod paths;

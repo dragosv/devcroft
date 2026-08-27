@@ -493,18 +493,19 @@ which.
    `up` should say so rather than leaving `EPERM` from a `bind` call as
    the only signal.
 
-   **Tier-qualified answer, added once `add-gvisor-backend` was worked
-   out:** the planned `hardened` tier does not close this gap either. An
-   earlier draft of that change assumed gVisor's per-sandbox netstack
-   would make it moot — every sandbox gets its own network stack, so a
-   loopback bind touches nothing shared — but `runsc` rejects that mode
-   outright when combined with `--rootless`, and devcroft runs
-   unprivileged everywhere else by design, so that combination was never
-   actually available. The hardened tier ships `--network=host` when the
-   manifest grants egress, which shares the host's network namespace
-   exactly like the process tier does today — same bind, same conflict.
-   This finding stays open at every tier devcroft ships; it is not a
-   process-tier-only rough edge waiting on a stronger sandbox to fix it.
+   **No stronger sandbox was ever going to fix this.** While the
+   `hardened` tier still existed, this entry carried a tier-qualified
+   answer, because an early draft of that change assumed gVisor's
+   per-sandbox netstack would make the gap moot — every sandbox gets its
+   own network stack, so a loopback bind touches nothing shared. It would
+   not have: `runsc` rejects that mode outright when combined with
+   `--rootless`, and devcroft runs unprivileged by design, so the
+   combination was never available. The tier shipped `--network=host`,
+   sharing the host's network namespace exactly as the process tier does
+   — same bind, same conflict. `remove-gvisor-backend` has since deleted
+   the tier, which changes nothing here except that the qualification is
+   now moot twice over. This is a network-policy gap, and only a
+   network-policy change closes it.
 4. **Warn about a `$TMPDIR` that is too long for a unix socket.** devcroft
    already respects this limit for its own state paths but tells users
    nothing, and the project-local `$TMPDIR` that trips it is a pattern
