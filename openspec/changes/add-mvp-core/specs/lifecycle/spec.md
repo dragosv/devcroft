@@ -91,6 +91,12 @@ and are never granted provisioning privileges. A failing hook SHALL fail
 `up` with layer `keeper` unless `--skip-hooks` is given, and hook output
 SHALL appear in `logs`.
 
+#### Scenario: Hook output survives the keeper writing the same log
+- **WHEN** a hook produces output while the keeper writes its own
+  spawn/exit records to the same log file
+- **THEN** `logs` contains the hook's output as lines of its own, with
+  neither writer's records overwritten or split by the other's
+
 #### Scenario: Hook needs an allowlisted domain
 - **WHEN** `post_create = "cargo fetch"` and `network.allow` includes
   `crates.io`

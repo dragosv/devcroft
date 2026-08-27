@@ -486,7 +486,15 @@ fn spawn_keeper(
     ssh: SshHandoff,
     services: Option<&str>,
 ) -> io::Result<libc::pid_t> {
-    let log = std::fs::File::create(&paths.log)?;
+    // Truncate the previous run's log, then reopen with `O_APPEND` — the
+    // keeper is not this file's only writer. `hooks::run` appends hook
+    // output to it from the `up` side (lifecycle spec: "hook output SHALL
+    // appear in `logs`"), concurrently with the keeper's own spawn/exit
+    // records. Without `O_APPEND` the keeper's fd carries its own offset
+    // and overwrites whatever the hook appended in between, silently
+    // eating exactly the output the spec requires to be there.
+    std::fs::File::create(&paths.log)?;
+    let log = std::fs::OpenOptions::new().append(true).open(&paths.log)?;
 
     let mut cmd = Command::new(exe);
     cmd.arg("__keeper")

@@ -103,11 +103,11 @@ pub fn handle_with_grace(
 
     let command = describe(&spawn_req);
     let session_id = registry.insert(spawned.pgid, command.clone());
-    eprintln!(
+    log_record(format!(
         "{} spawn session={session_id} pgid={} command={command:?}",
         log_timestamp(),
         spawned.pgid
-    );
+    ));
 
     // Every outbound frame — SpawnOk included — flows through this one
     // channel/thread so there is a single writer for the connection's
@@ -158,12 +158,12 @@ pub fn handle_with_grace(
             }
             let status = to_exit_status(child.wait());
             registry.remove(session_id);
-            eprintln!(
+            log_record(format!(
                 "{} exit session={session_id} code={:?} signal={:?}",
                 log_timestamp(),
                 status.code,
                 status.signal
-            );
+            ));
             let _ = tx.send(Frame::Exit(status));
         })
     };
@@ -257,6 +257,20 @@ pub(crate) fn to_exit_status(result: std::io::Result<std::process::ExitStatus>) 
 /// reads back out of the keeper's own stdout/stderr (redirected to
 /// `paths.log` by `up`). No time-formatting crate is vendored in this
 /// workspace, and `libc::gmtime_r` is all a plain UTC stamp needs.
+/// Emit one keeper log record as a single `write` call.
+///
+/// `eprintln!` would not do: stderr is unbuffered, so a formatted record
+/// becomes one `write` per format fragment. The keeper is not the only
+/// writer of this file — `hooks::run` appends hook output to it from the
+/// `up` side — and the fd is `O_APPEND`, which makes each *write* land
+/// atomically at the end but says nothing about a record split across
+/// several. Interleaving then lands hook output inside a keeper record,
+/// mangling both. One record, one write.
+fn log_record(mut line: String) {
+    line.push('\n');
+    let _ = std::io::stderr().write_all(line.as_bytes());
+}
+
 fn log_timestamp() -> String {
     let now = unsafe { libc::time(std::ptr::null_mut()) };
     let mut tm: libc::tm = unsafe { std::mem::zeroed() };

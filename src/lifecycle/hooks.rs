@@ -111,7 +111,11 @@ fn run_one(
         .append(true)
         .open(&paths.log)
         .map_err(HookError::Connect)?;
-    let _ = writeln!(log, "[hook {name}] $ {cmd}");
+    // One write, for the same reason `keeper::connection::log_record`
+    // exists: a `File` is unbuffered, so `writeln!` would emit one write
+    // per format fragment, and the keeper is appending its own records to
+    // this file concurrently. Formatting first keeps the record whole.
+    let _ = log.write_all(format!("[hook {name}] $ {cmd}\n").as_bytes());
 
     let status: ExitStatus = loop {
         match protocol::read_frame(&mut stream).map_err(HookError::Protocol)? {

@@ -86,6 +86,23 @@ impl Sandbox {
     fn log(&self) -> String {
         std::fs::read_to_string(&self.paths.log).unwrap_or_default()
     }
+
+    /// Occurrences of `marker` as a line of its own — i.e. as hook
+    /// *output*.
+    ///
+    /// A bare `contains`/`matches` count is not good enough here, and
+    /// silently was not: the keeper logs every spawn as `command="sh -c
+    /// echo pc-marker"`, and `hooks::run` logs `[hook post_create] $ echo
+    /// pc-marker` before streaming anything. Both lines contain the marker
+    /// without the hook having produced a single byte, so a substring
+    /// assertion passes even when the hook's real output never reaches the
+    /// log. Only a line equal to the marker is `echo`'s own stdout.
+    fn hook_output(&self, marker: &str) -> usize {
+        self.log()
+            .lines()
+            .filter(|line| line.trim_end() == marker)
+            .count()
+    }
 }
 
 impl Drop for Sandbox {
@@ -111,8 +128,8 @@ fn post_create_and_post_start_run_on_first_up_and_appear_in_logs() {
     assert_eq!(outcome, UpOutcome::Started);
 
     let log = sandbox.log();
-    assert!(log.contains("pc-marker"), "log was: {log}");
-    assert!(log.contains("ps-marker"), "log was: {log}");
+    assert_eq!(sandbox.hook_output("pc-marker"), 1, "log was: {log}");
+    assert_eq!(sandbox.hook_output("ps-marker"), 1, "log was: {log}");
 }
 
 #[test]
@@ -131,11 +148,11 @@ fn post_create_does_not_rerun_on_recovery_but_post_start_does() {
     );
     let log = sandbox.log();
     assert_eq!(
-        log.matches("pc-marker").count(),
+        sandbox.hook_output("pc-marker"),
         1,
         "post_create must have run exactly once, log was: {log}"
     );
-    assert_eq!(sandbox.log().matches("ps-marker").count(), 1);
+    assert_eq!(sandbox.hook_output("ps-marker"), 1);
 
     // Simulate a crashed keeper (design.md's "Recovery after host reboot"
     // scenario), not a clean `down` — a clean teardown clears state
@@ -169,11 +186,11 @@ fn post_create_does_not_rerun_on_recovery_but_post_start_does() {
     // not cumulative with the first `up`'s.
     let log = sandbox.log();
     assert!(
-        !log.contains("pc-marker"),
+        sandbox.hook_output("pc-marker") == 0,
         "post_create must not rerun on recovery, log was: {log}"
     );
     assert!(
-        log.contains("ps-marker"),
+        sandbox.hook_output("ps-marker") == 1,
         "post_start must rerun on every keeper start, log was: {log}"
     );
 }
@@ -192,7 +209,7 @@ fn up_recreate_reruns_post_create() {
     );
     let log = sandbox.log();
     assert_eq!(
-        log.matches("pc-marker").count(),
+        sandbox.hook_output("pc-marker"),
         1,
         "post_create must have run exactly once, log was: {log}"
     );
@@ -233,7 +250,7 @@ fn up_recreate_reruns_post_create() {
     // occurrence here means `post_create` genuinely reran.
     let log = sandbox.log();
     assert_eq!(
-        log.matches("pc-marker").count(),
+        sandbox.hook_output("pc-marker"),
         1,
         "post_create must have run exactly once, log was: {log}"
     );
@@ -257,7 +274,7 @@ fn a_failing_post_create_hook_fails_up_and_names_the_hook() {
     );
 
     // post_start must not run after post_create fails.
-    assert!(!sandbox.log().contains("should-not-run"));
+    assert_eq!(sandbox.hook_output("should-not-run"), 0);
 }
 
 #[test]
