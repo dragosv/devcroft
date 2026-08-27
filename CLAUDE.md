@@ -71,9 +71,12 @@ closure-tier environment provider) is implemented too, with one task
 mechanism it would test doesn't exist yet for *any* provider, and belongs
 to whichever change finishes `add-flox-services`'s own unimplemented
 "services requested from a provider that cannot supply them fail loudly"
-requirement. Those plus `add-mvp-core` are the changes actually
-implemented; run `openspec list` for the rest, which are in flight or not
-started.
+requirement. `remove-gvisor-backend` is implemented at 16/17 for the same
+kind of reason: its last task rewrites `add-backend-capabilities` for a
+single backend, and that change does not exist in this repo yet — blocked
+on something absent, not skipped. Those plus `add-mvp-core` are the
+changes actually implemented; run `openspec list` for the rest, which are
+in flight or not started.
 
 `own-policy-baseline` and `use-nono-library` came out of measuring what
 devcroft's compiled profile actually contains: 240 rules it ships and
