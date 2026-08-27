@@ -1,5 +1,16 @@
 # Change: add-hardened-tier
 
+> **Implemented, then removed — except for one piece.**
+> `remove-gvisor-backend` deleted this tier and its dispatch, since its
+> only concrete backend (`add-gvisor-backend`) could not be stacked with
+> Landlock at all. What survives is the backend-generic `SessionBackend`
+> seam this change introduced: it is what a second backend would attach
+> to, and it costs nothing to keep. Everything below is the record of what
+> was built and measured, not current state; the tier's removal, its three
+> reasons, and the criteria for a future backend are in
+> `openspec/changes/remove-gvisor-backend/`. Deliberately not archived —
+> archiving would sync these delta specs into the main specs as truth.
+
 Status: in progress (post-MVP). Depends on: add-mvp-core complete;
 implemented alongside `add-gvisor-backend`, which concretizes this
 tier's first backend via direct `runsc` integration — `dragosv/mxc`'s

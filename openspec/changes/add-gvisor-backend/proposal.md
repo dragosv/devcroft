@@ -1,5 +1,18 @@
 # Change: add-gvisor-backend
 
+> **Implemented, then removed.** `remove-gvisor-backend` deleted this
+> backend and the tier it plugged into: Landlock cannot mediate `mount()`,
+> which `runsc` requires for its chroot setup, so the two layers could
+> never be stacked — this backend could only ever be an *alternative* to
+> the process tier, not a strengthening of it. The code is recoverable at
+> the tag `gvisor-backend-last`; the findings worth keeping are in
+> `openspec/changes/remove-gvisor-backend/design.md` (G1-G3), and the
+> criteria a future backend would have to meet are in its `design.md` too.
+> This directory is kept as the record of what was built and measured —
+> its "Status: in progress" line below is history, not current state, and
+> it is deliberately *not* archived, since archiving would sync these
+> delta specs into the main specs as current truth.
+
 Status: in progress (a Linux host is now available via this repo's own
 devcontainer; implemented directly against `runsc`, with `dragosv/mxc`'s
 `gvizor` branch — a sibling project with a shipped gVisor backend — used
