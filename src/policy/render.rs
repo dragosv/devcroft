@@ -33,6 +33,18 @@ pub fn render(compiled: &CompiledPolicy) -> String {
             writeln!(out, "  {:<40} {}", p.value, p.origin).unwrap();
         }
     }
+    // `network_proxy_port` is `None` until an actual `up` starts the
+    // proxy and folds it in (`CompiledPolicy::with_proxy_port`'s doc) —
+    // a fresh `policy --render` against the manifest alone can only ever
+    // show whether filtering is *requested*, matching the same
+    // provider-grants-are-live-only caveat this command already carries.
+    match compiled.network_proxy_port {
+        Some(port) => writeln!(out, "network.proxy: 127.0.0.1:{port} (running)").unwrap(),
+        None if compiled.wants_egress_proxy() => {
+            writeln!(out, "network.proxy: requested, not yet started (run `up`)").unwrap()
+        }
+        None => writeln!(out, "network.proxy: not requested").unwrap(),
+    }
     out
 }
 

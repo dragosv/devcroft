@@ -316,6 +316,7 @@ mod tests {
                     resolved_backend: "process".to_string(),
                     declared_services: Vec::new(),
                     ran_activation_hook: false,
+                    proxy_port: None,
                 },
             )
             .unwrap();

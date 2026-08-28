@@ -118,6 +118,17 @@ pub fn up(
         if let Health::Healthy(pid) | Health::Stale(pid) = state::health(&paths)? {
             state::terminate_and_wait(pid, TERMINATE_GRACE_PERIOD);
         }
+        // The egress proxy is a separate process from the keeper (see
+        // `crate::proxy`'s module doc for why it must be), so tearing
+        // down the keeper above says nothing about it. `--recreate`
+        // means "redo everything from the manifest", and the manifest's
+        // `network.allow` may have changed — an old proxy is running
+        // with whatever allowlist it was spawned with baked into its own
+        // env, so reusing it here would silently ignore that change
+        // until the next full `down`. Best-effort: a dead pid is a no-op.
+        if let Some(pid) = state::read_pidfile(&paths.proxy_pidfile)? {
+            state::terminate_and_wait(pid, TERMINATE_GRACE_PERIOD);
+        }
         state::clear_runtime_state(&paths)?;
         UpOutcome::Recreated
     } else {
@@ -176,6 +187,25 @@ pub fn up(
         .mode(0o700)
         .create(&paths.root)?;
 
+    // The egress proxy is a separate, permanently unsandboxed process
+    // (see `crate::proxy`'s module doc), spawned host-side here rather
+    // than inside `up_process` so its port is known in time to be
+    // recorded in `Meta` alongside everything else `status` needs and
+    // the keeper can't answer. `policy::compile` alone (no keeper-exe or
+    // provider-grant folding — neither affects the network fields) is
+    // enough to know whether one is wanted at all.
+    let proxy_port = if policy::compile(manifest).wants_egress_proxy() {
+        Some(ensure_egress_proxy(&paths, &manifest.network.allow)?)
+    } else {
+        // A manifest that no longer wants filtering (`network.allow` was
+        // emptied, or `network.default` changed to `"allow"`) leaves a
+        // proxy from a previous `up` running with nothing left to filter
+        // for — same "no orphan" reasoning `clear_runtime_state` already
+        // applies to the keeper's own pidfile.
+        stop_orphaned_egress_proxy(&paths)?;
+        None
+    };
+
     state::write_meta(
         &paths.meta,
         &state::Meta {
@@ -193,10 +223,47 @@ pub fn up(
                 .map(|s| s.name.clone())
                 .collect(),
             ran_activation_hook: resolution.ran_activation_hook,
+            proxy_port,
         },
     )?;
 
-    up_process(manifest, project_root, &paths, opts, outcome, &resolution)
+    up_process(
+        manifest,
+        project_root,
+        &paths,
+        opts,
+        outcome,
+        &resolution,
+        proxy_port,
+    )
+}
+
+/// Starts the egress proxy if none from a previous `up` is still alive,
+/// or reuses the live one's already-recorded port. Reuse only ever
+/// applies across a `Health::Stale` recovery — `--recreate` already
+/// tears the old proxy down before this runs (see the top of [`up`]), so
+/// a live pidfile here can only mean "the keeper died independently of
+/// the proxy," never "the manifest changed and this is stale."
+fn ensure_egress_proxy(paths: &StatePaths, allow: &[String]) -> Result<u16, UpError> {
+    if let Some(pid) = state::read_pidfile(&paths.proxy_pidfile)?
+        && state::is_process_alive(pid)
+        && let Some(port) = state::read_meta(&paths.meta)?.and_then(|m| m.proxy_port)
+    {
+        return Ok(port);
+    }
+    let exe = keeper_exe()?;
+    let (pid, port) = crate::proxy::spawn(&exe, paths, allow)
+        .map_err(|e| UpError::Keeper(format!("starting egress proxy: {e}")))?;
+    state::write_pidfile(&paths.proxy_pidfile, pid)?;
+    Ok(port)
+}
+
+fn stop_orphaned_egress_proxy(paths: &StatePaths) -> io::Result<()> {
+    if let Some(pid) = state::read_pidfile(&paths.proxy_pidfile)? {
+        state::terminate_and_wait(pid, TERMINATE_GRACE_PERIOD);
+    }
+    let _ = std::fs::remove_file(&paths.proxy_pidfile);
+    Ok(())
 }
 
 /// Resolves `isolation` to the concrete backend string `status`/`meta.json`
@@ -221,6 +288,7 @@ fn up_process(
     opts: &UpOptions,
     outcome: UpOutcome,
     resolution: &Resolution,
+    proxy_port: Option<u16>,
 ) -> Result<UpOutcome, UpError> {
     // The keeper binary itself must be readable+executable inside the
     // boundary it's about to apply to itself — no baseline group can know
@@ -240,6 +308,14 @@ fn up_process(
                 .static_name(),
             &resolution.read_only_grants,
         );
+    // `proxy_port` was already spawned/reused and recorded in `Meta` by
+    // the caller (`up`), before this function ever ran — see its own
+    // module-level comment for why the proxy has to exist independently
+    // of anything computed here.
+    let compiled = match proxy_port {
+        Some(port) => compiled.with_proxy_port(port),
+        None => compiled,
+    };
     let plan = compiled.to_capability_plan();
     // Validated host-side, before anything is created — the keeper (task
     // group 4) re-derives the identical `CapabilitySet` from the same
@@ -309,12 +385,37 @@ fn up_process(
     let services = prepare_services(project_root, &manifest.sandbox.name, resolution, opts)?
         .then_some(manifest.sandbox.name.as_str());
 
+    // design.md's Open Question 3, resolved: `NetworkMode::ProxyOnly`'s
+    // kernel gate only ever permits a literal `connect()` to this port —
+    // it does not redirect other destinations — so a client that never
+    // looks at these variables gets denied at the kernel layer, not
+    // silently mediated. Both cases (most tooling only honors one) and
+    // both schemes point at the same endpoint: the proxy has no TLS
+    // interception, so `HTTPS_PROXY` names a plain-`http` CONNECT
+    // endpoint, same as every other forward proxy's convention.
+    let mut env = resolution.env.clone();
+    if let Some(port) = proxy_port {
+        let endpoint = format!("http://127.0.0.1:{port}");
+        for key in ["HTTP_PROXY", "http_proxy", "HTTPS_PROXY", "https_proxy"] {
+            env.insert(key.to_string(), endpoint.clone());
+        }
+        // Without this, a well-behaved client honoring the variables
+        // above would route its own loopback traffic (e.g. a test
+        // hitting a `network.ports`-granted dev server) through the
+        // proxy too — which then denies it, since `localhost` is not
+        // something anyone would think to add to `network.allow`. Standard
+        // proxy convention, not a devcroft invention.
+        for key in ["NO_PROXY", "no_proxy"] {
+            env.insert(key.to_string(), "localhost,127.0.0.1,::1".to_string());
+        }
+    }
+
     let keeper_pid = spawn_keeper(
         &exe,
         &listener,
         paths,
         project_root,
-        &resolution.env,
+        &env,
         &resolution.unset,
         &plan,
         SshHandoff {
@@ -605,7 +706,11 @@ fn wait_until_responsive(paths: &StatePaths, timeout: Duration) -> io::Result<()
     }
 }
 
-fn clear_cloexec(fd: RawFd) -> io::Result<()> {
+/// `pub(crate)`: `crate::proxy::spawn` needs the identical clear (its
+/// listener crosses the same exec boundary the control/SSH sockets do
+/// here, just into a different child), and duplicating a five-line
+/// `fcntl` dance is worse than one more crate-visible function.
+pub(crate) fn clear_cloexec(fd: RawFd) -> io::Result<()> {
     let flags = unsafe { libc::fcntl(fd, libc::F_GETFD) };
     if flags < 0 {
         return Err(io::Error::last_os_error());

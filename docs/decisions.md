@@ -639,6 +639,21 @@ different service on the same allowed IP, or DNS-rebinding-shaped
 tricks) — untested, and a real candidate for the next thing to check
 before trusting this further.
 
+**Superseded on Linux by `add-egress-proxy`, which closes what this entry
+called genuinely open at the top level.** The section title itself is now
+only half true: filtering by *hostname* still requires the proxy's
+cooperation (the kernel gate has no concept of a domain name), but "a
+process that deliberately bypasses the proxy is not stopped" no longer
+holds for anything, allowed domain or not — `NetworkMode::ProxyOnly`
+denies every direct `connect()` except to the proxy's own port, so there
+is no raw-socket path around it to any destination, allowlisted or not.
+The resolved-IP-scope gap this entry left open is unchanged and is
+`nono::HostFilter`'s own stated limit (link-local addresses are denied
+regardless; a same-IP different-service risk on an *allowed* domain is
+not). macOS status is unchanged from the correction above — genuinely
+unverified, not assumed either way; see the README's Status section and
+`policy::degraded`'s module doc for the same note.
+
 ### Service sidecars: delivered, with one gap named below
 
 devcontainers compose with Docker Compose for databases and other

@@ -183,6 +183,17 @@ pub struct CompiledPolicy {
     /// answer different questions (outbound egress vs local listeners),
     /// which is why a deny-all sandbox can still run a dev server.
     pub network_ports: Vec<AnnotatedPort>,
+    /// The egress proxy's bound port, when domain filtering is active.
+    /// Folded in post-hoc by `with_proxy_port` — like a provider's store
+    /// grants, this can only be known by actually binding a socket at
+    /// `up`, never from the manifest alone, so it has no place in
+    /// [`compile`]'s pure projection. `Some` if and only if `up` started
+    /// the proxy for this sandbox (`network.default = "deny"` and
+    /// `network.allow` non-empty); `None` leaves the existing binary
+    /// block/allow-all path in [`capability_set::to_capability_set`]
+    /// untouched, so a sandbox with no domain filtering never spins up a
+    /// proxy it doesn't need.
+    pub network_proxy_port: Option<u16>,
     /// The backend setting `extends: "default"` used to supply implicitly
     /// under the exec-based process tier — see [`SIGNAL_MODE`]. Still
     /// meaningful under `use-nono-library`: `CapabilitySet::set_signal_mode`
@@ -275,6 +286,7 @@ pub fn compile(manifest: &Manifest) -> CompiledPolicy {
         network_block: manifest.network.default == NetworkDefault::Deny,
         network_allow_domain,
         network_ports,
+        network_proxy_port: None,
         signal_mode: SIGNAL_MODE,
     }
 }
@@ -299,6 +311,21 @@ impl CompiledPolicy {
                 .iter()
                 .map(|g| AnnotatedValue::new(g.clone(), Origin::Provider(provider))),
         );
+        self
+    }
+
+    /// Whether this policy calls for the egress proxy at all: `up` checks
+    /// this *before* binding a socket, so a sandbox with domain filtering
+    /// off never pays for a proxy process it has nothing to filter.
+    pub fn wants_egress_proxy(&self) -> bool {
+        self.network_block && !self.network_allow_domain.is_empty()
+    }
+
+    /// Fold in the egress proxy's bound port, once `up` has actually
+    /// started it (see [`Self::wants_egress_proxy`]). See
+    /// `network_proxy_port`'s doc for why this isn't part of [`compile`].
+    pub fn with_proxy_port(mut self, port: u16) -> Self {
+        self.network_proxy_port = Some(port);
         self
     }
 

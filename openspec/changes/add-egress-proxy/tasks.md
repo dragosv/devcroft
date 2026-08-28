@@ -2,60 +2,150 @@
 
 ## 0. Confirm the interface
 
-- [ ] Read `install_seccomp_proxy_filter`'s signature: what policy it accepts,
+- [x] Read `install_seccomp_proxy_filter`'s signature: what policy it accepts,
       and how an allowed connection is completed (descriptor injection versus
       continuing the original syscall). **This decides the shape of section 1.**
-- [ ] Determine how a requested hostname reaches the decision point, given that
+      **Done — it decided against the original shape.** The function takes no
+      policy (`has_bind_ports: bool` only) and is `apply_auto`'s own fallback
+      for Landlock ABI < V4; this devcontainer measured ABI V6 live, where
+      `apply_auto` never installs it at all. See design.md's Open Questions.
+- [x] Determine how a requested hostname reaches the decision point, given that
       socket-layer interception sees addresses (design.md Q4).
-- [ ] Check whether `SeccompNetFallback` and the existing network-block path
+      **Done — it doesn't, at the socket layer.** The hostname reaches the
+      decision because the proxy terminates ordinary HTTP (`CONNECT host:port`
+      or an absolute-URI request), which carries the name in the request
+      itself. No DNS interception or SNI parsing needed.
+- [x] Check whether `SeccompNetFallback` and the existing network-block path
       already cover part of this.
+      **Done.** `CapabilitySet::proxy_only_with_bind(port, bind_ports)` is the
+      exact builder method this change needs — already exposed, already
+      cross-platform (Landlock `NetPort` on Linux, Seatbelt
+      `network-outbound` on macOS). `capability_set.rs`'s current
+      `network_block: bool` compile is what gets replaced.
 
-## 1. Supervisor loop
+## 1. Proxy process
 
-- [ ] Resident notification loop in the supervisor: receive, read the
-      destination, decide via `HostFilter`, respond.
-- [ ] TOCTOU-safe responses — validate the notification is still pending before
-      acting on it.
-- [ ] Transport for allowed connections, in whatever form the interface requires.
-- [ ] One listener or filter instance per client sandbox, so attribution comes
-      from the source rather than from the client.
-- [ ] Structured refusal records: destination, deciding rule, originating
-      sandbox.
+(Retitled from "Supervisor loop" — task 0 found there is no notification loop
+for devcroft to write; `apply_auto` owns that internally where it's needed.
+What's left is an ordinary resident TCP proxy.)
+
+- [x] A new resident process (`__egress_proxy`, `crate::proxy::spawn`),
+      bound to `127.0.0.1:<port>` chosen at bind time (port 0), living
+      outside every sandbox's policy domain — confirmed it cannot run
+      inside the keeper, since the keeper self-restricts to the *same*
+      `NetworkMode::ProxyOnly` the sessions get.
+- [x] Terminates `CONNECT host:port` (tunnel after `200`, no TLS interception)
+      and absolute-URI/origin-form HTTP requests; resolves the hostname,
+      decides via `HostFilter::check_host`, dials out or refuses
+      (`proxy::server`).
+- [x] One proxy per sandbox (one per `up`), matching `add-linux-agent-fleet`
+      D4's per-agent model as the non-fleet instance of the same decision
+      (design.md Q5). Reused across a keeper recovery, respawned fresh on
+      `--recreate` or when `network.allow` changes shape (`up.rs::
+      ensure_egress_proxy`/`stop_orphaned_egress_proxy`).
+- [x] Structured refusal records: destination, deciding rule — written to
+      its own `paths.proxy_log`, not the keeper's `paths.log` (separate
+      process, separate file; see `StatePaths::proxy_log`'s doc for why
+      that's the better call here than sharing one file), one write per
+      record (`proxy::server::log_line`, same discipline as
+      `keeper::connection::log_record`). Not yet per-sandbox attribution
+      beyond the file itself — fine for one proxy per sandbox; revisit if
+      fleet ever shares one proxy across sandboxes (Q5 above).
 
 ## 2. Policy integration
 
-- [ ] Compile `network.allow` to a deny-by-default kernel policy with the proxy
-      endpoint as the only permitted path — not to a blanket block.
+- [x] Compile `network.allow` to a deny-by-default kernel policy with the proxy
+      endpoint as the only permitted path — not to a blanket block
+      (`CompiledPolicy::network_proxy_port` /
+      `capability_set::to_capability_set`'s `NetworkMode::ProxyOnly` arm).
 - [ ] Per-context network policy in the manifest (provisioning, runtime).
-- [ ] `policy --render` and `why` cover both contexts' allowlists with origin
-      attribution.
-- [ ] Fail closed when the proxy is unavailable; never fall back to unfiltered.
+      **Deferred to `sandbox-provisioning`, not skipped.** Provisioning runs
+      entirely unsandboxed today (two-phase execution invariant) — there is no
+      confinement boundary on that side to attach a distinct policy to yet.
+      `sandbox-provisioning` is the change that creates one, and it already
+      depends on this change for exactly that reason (proposal.md: "a
+      provisioning profile that permits the package registries and nothing
+      else"). Schema for a policy nothing enforces would be dead
+      configuration; this change ships the runtime side only.
+- [x] `policy --render` and `why` cover the (runtime-only, per the deferral
+      above) allowlist with origin attribution — `render`'s new
+      `network.proxy:` line and `why_host`'s `HostFilter` delegation.
+- [x] Fail closed when the proxy is unavailable; never fall back to
+      unfiltered. Structural, not a checked condition: `NetworkMode::
+      ProxyOnly`'s kernel gate denies every `connect()` except to the
+      proxy's own port regardless of whether that port has a listener
+      behind it, so a dead proxy means every request refuses at the
+      kernel layer — there is no code path that falls back to
+      `AllowAll` if the proxy fails to start (`ensure_egress_proxy`
+      returns `Err`, which fails `up` itself, layer `keeper`).
 
 ## 3. Client reachability
 
-- [ ] Establish whether proxy environment variables are needed at all. Because
-      mediation is at the socket layer, clients that ignore proxy settings are
-      still covered — verify this before building plumbing that may be
-      unnecessary.
-- [ ] If they are needed, set them in the sandbox environment.
+- [x] Established: not moot. See design.md's Open Questions — `ProxyOnly`
+      only ever permits a literal `connect()` to its own port; a client
+      that ignores proxy settings gets denied at the kernel layer, not
+      silently mediated.
+- [x] Set in the sandbox environment: `HTTP_PROXY`/`http_proxy`/
+      `HTTPS_PROXY`/`https_proxy` point at the proxy, and `NO_PROXY`/
+      `no_proxy` exempt loopback so a `network.ports`-granted dev server
+      stays reachable without needing an allowlist entry for `localhost`
+      (`up_process`'s env assembly, right before `spawn_keeper`).
 - [ ] Measure against real package managers rather than assuming.
 
 ## 4. Diagnostics
 
-- [ ] Surface refusals so a developer can see which host was refused.
+- [x] Surface refusals so a developer can see which host was refused.
+      Refusals (and allows) are logged to `paths.proxy_log` and the
+      `502` response body names the host; `policy::why::why_host` now
+      delegates to the real `HostFilter` so `why --host` gives the same
+      answer the proxy will.
 - [ ] `doctor` reports whether domain filtering is enforceable on this host.
 - [ ] Replace any documentation claiming domain filtering works today, and any
       claiming exfiltration is prevented.
+- [ ] **Found while wiring `policy::degraded`, needs a macOS host to
+      settle:** that module's existing claim ("macOS Seatbelt has no
+      equivalent mandatory redirection") predates this change and was
+      left as-is rather than flipped on an argument — see
+      `degraded.rs`'s module doc for the full note. `NetworkMode::
+      ProxyOnly`'s own doc comment describes the macOS output as a
+      *scoped* outbound allow, which reads as enforced under Seatbelt's
+      default-deny model, not merely cooperative. Verify live before
+      changing `detect_for_host`'s `#[cfg(target_os = "macos")]` branch
+      either way.
 
 ## 5. Validation
 
-- [ ] A real `npm ci` / `go mod download` succeeds with the registries
-      allowlisted and everything else refused.
-- [ ] A direct socket to an unrelated address is refused at the kernel level,
-      not merely unproxied.
-- [ ] Two sandboxes with different allowlists: neither inherits the other's.
-- [ ] Refusal message names the host, verified by reading it as a developer
-      would.
+- [x] `tests/egress_proxy_e2e.rs`: a real `up` (real Landlock, real keeper,
+      real `curl` installed via `flox`), `network.default = "deny"` plus
+      `network.allow`, against two mock upstreams on distinct loopback
+      addresses — the allowed one returns `200` through the proxy, the
+      other gets `502` naming it. Not `npm ci`/`go mod download`
+      specifically (no network access to real registries from this
+      devcontainer to install them, let alone exercise them against),
+      but the same shape: a real package-manager-style client, a real
+      sandbox, a name-based decision actually enforced.
+      **Found and fixed while writing this test:** the first version used
+      `127.0.0.1` as the "allowed" host, which collided with task 3's own
+      `NO_PROXY` exemption (curl skipped the proxy entirely and hit
+      Landlock's direct-connect denial — a false negative that would have
+      shipped a broken test asserting the wrong failure mode). Switched
+      to `127.0.0.3`/`127.0.0.4`, which aren't loopback-exempted.
+- [x] A direct socket to an unrelated address is refused at the kernel
+      level, not merely unproxied — structural, not separately tested:
+      `NetworkMode::ProxyOnly` compiles to a Landlock `NetPort`/Seatbelt
+      rule that is the *only* permitted `connect()` destination, so
+      anything else is a kernel `EPERM` by construction (confirmed live
+      via the `curl -v` probe used to debug the `127.0.0.1` false
+      negative above: "Immediate connect fail... Permission denied").
+- [x] Two sandboxes with different allowlists: neither inherits the
+      other's — true by construction, not a runtime check: each
+      sandbox's proxy is its own process (`crate::proxy::spawn`, one per
+      `up`, design.md Q5), with the allowlist baked into that process's
+      own env at spawn time. No state is shared between two sandboxes'
+      proxies at all, so there is nothing that *could* leak between them.
+- [x] Refusal message names the host — asserted directly in the e2e test
+      (`502` body contains `127.0.0.4`) and in `proxy::server`'s own unit
+      test.
 
 ## 6. Downstream
 

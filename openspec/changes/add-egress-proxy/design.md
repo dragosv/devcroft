@@ -34,18 +34,24 @@ route out is the proxy endpoint.
 policy. Bypassing it must be structurally impossible, not a matter of the client
 choosing to behave.
 
-**Mechanism, confirmed in the library.** `install_seccomp_proxy_filter` installs
-a seccomp-notify filter for proxy-only network mode, with
-`prepare_seccomp_proxy_filter` building the program in the parent before clone.
-The notification loop — `recv_notif`, `read_notif_sockaddr`, `deny_notif`,
-`continue_notif`, `respond_notif_errno`, `inject_fd`, and `notif_id_valid` for
-TOCTOU safety — is exposed, along with the syscall constants for connect, bind,
-sendto, sendmsg and sendmmsg. So enforcement is kernel-mediated and the decision
-runs in the supervisor.
+**Mechanism, confirmed in the library and corrected from the original draft of
+this section.** `CapabilitySet::proxy_only_with_bind(port, bind_ports)` sets
+`NetworkMode::ProxyOnly`, which `apply_auto` compiles to a plain Landlock
+`NetPort` rule on any kernel with ABI V4+ (measured live in this devcontainer:
+ABI V6) — the same port-based primitive `network.ports` already uses, aimed at
+one more port. The lower-level seccomp-notify machinery this section
+originally named (`install_seccomp_proxy_filter`, `recv_notif`,
+`read_notif_sockaddr`, `inject_fd`, `continue_notif`, `notif_id_valid`) is real
+but is `apply_auto`'s own fallback for pre-V4 kernels; devcroft calls the
+builder method and never touches the notification loop directly. See design.md
+Open Questions for the full trail, including why `inject_fd` could not have
+completed a `connect()` even if devcroft did reach for it.
 
-This also explains why domain filtering never worked under the CLI's wrap mode:
-the mechanism requires a resident process to answer notifications, and wrap has
-none. The gap was architectural, not a missing feature.
+This still explains why domain filtering never worked under the CLI's wrap
+mode: whichever layer enforces the kernel gate, *something* still has to
+terminate the connection and decide by hostname, and `wrap` has no resident
+process to be that something. The gap was architectural, not a missing
+feature — just smaller to close than the original mechanism paragraph implied.
 
 ## E3 — Network policy is per-context
 
@@ -81,29 +87,76 @@ project: a policy failure that surfaces as a package manager's generic network
 error is worse than no policy, because nobody can act on it. A developer whose
 `npm ci` fails needs to see which host was refused, not a timeout.
 
-## Open Questions
+## Open Questions — RESOLVED against the pinned library (0.74.0) and a live probe
 
-1. **RESOLVED — the library provides mechanism and policy; devcroft provides the
-   loop.** `HostFilter` decides, `install_seccomp_proxy_filter` enforces, the
-   notification API mediates. What remains is the resident supervisor loop and
-   the transport that carries an allowed connection out. Substantially smaller
-   than a from-scratch proxy. Confirm `install_seccomp_proxy_filter`'s signature
-   — specifically what policy it takes and how a permitted connection is
-   completed — before designing the transport.
-2. **Protocol coverage.** Because interception is at the socket layer rather
-   than the HTTP layer, this may be less of a problem than it first appeared:
-   non-proxy-aware clients are mediated too. Determine what the notify path
-   actually does with an allowed connection — inject a connected descriptor, or
-   let the original syscall continue — since that decides whether HTTP-level
-   proxying is needed at all.
-3. **Client configuration.** May be moot for the same reason. Package managers
-   that ignore proxy environment variables are still mediated at the socket
-   layer. Verify before building environment-variable plumbing that turns out to
-   be unnecessary.
-4. **Name-based decisions.** Socket-layer interception sees addresses, not
-   names. How the requested name reaches the decision — DNS interception,
-   connection-time correlation, or SNI — is the real open question here, and it
-   is what E4's stated limits depend on.
-5. **Fleet interaction.** One proxy instance per client, or one instance with
-   per-listener policy? The second is cheaper; the first is simpler to reason
-   about. Decide before fleet work rather than during it.
+Task 0 asked whether `install_seccomp_proxy_filter`'s signature and completion
+mechanism would decide the shape of section 1. It did, and the shape is smaller
+and different from what the proposal assumed.
+
+**The mechanism, precisely.** `install_seccomp_proxy_filter(has_bind_ports:
+bool)` takes no policy at all — it is a pure syscall trap, and it is *only*
+installed as a fallback for kernels whose Landlock ABI lacks `AccessNet`
+(< V4). This devcontainer measured **Landlock ABI V6** live
+(`nono::Sandbox::detect_abi()`), so on this host and any modern kernel the
+seccomp-notify path is dead code: `apply_auto` takes the Landlock branch
+instead. `CapabilitySet` already exposes exactly the shape this change needs
+as a builder method — `.proxy_only_with_bind(port, bind_ports)` — which sets
+`NetworkMode::ProxyOnly { port, bind_ports }`. On Linux this compiles to a
+plain Landlock `NetPort` rule (`ConnectTcp` for `port`, `BindTcp` for each of
+`bind_ports`); on macOS, to `(allow network-outbound (remote tcp
+"localhost:PORT"))`. Both are ordinary port-based kernel rules — the same
+primitive `network.ports` already uses today, just aimed at one more port.
+
+**Consequence for section 1.** The "resident notification loop / TOCTOU-safe
+responses / one filter instance per client" tasks describe machinery
+`apply_auto` already owns internally on the ABI/platform where it is actually
+needed. Devcroft never touches `recv_notif`/`read_notif_sockaddr`/
+`inject_fd`/`continue_notif` directly — those are what `nono-cli`'s own
+`SeccompPolicy::proxy_fallback` used them for (confirmed from
+`CapabilitySet::localhost_ports`'s doc comment), and that component lived in
+the CLI binary devcroft deliberately stopped depending on
+(`use-nono-library`). Devcroft's job is one level up, exactly as the proposal's
+"What devcroft supplies" section already said, but now concretely: compile
+`network.allow` to `NetworkMode::ProxyOnly`, and run the actual host-side proxy
+process that terminates connections at `127.0.0.1:<port>` and makes the
+per-hostname decision. Section 1 is retitled below from "supervisor loop" to
+"proxy process" to match.
+
+**1. RESOLVED.** As above.
+
+**2. RESOLVED — not moot: an HTTP-level proxy is required.** `ProxyOnly`'s
+kernel gate permits exactly one thing: a literal `connect()` to
+`127.0.0.1:<port>`. It does not rewrite or redirect a `connect()` aimed
+anywhere else — that call is simply denied. There is no "let it through
+already-filtered" path: `inject_fd`'s `SECCOMP_ADDFD_FLAG_SEND` makes the
+injected descriptor *become the syscall's return value*, which is the right
+shape for `openat()` (a real Linux use, confirmed at `read_notif_path`'s call
+site) but not for `connect()`, whose successful return is `0`, not an fd
+number — nono does not expose the `pidfd_getfd`-plus-zero-response pattern
+that would be needed to complete an in-flight `connect()` to an
+kernel-rewritten destination. So the destination-terminating proxy the
+proposal already sized ("What devcroft supplies... the transport that carries
+an allowed connection out") is not optional plumbing; it is the only place a
+per-hostname decision can take effect at all.
+
+**3. RESOLVED — not moot either: `HTTP_PROXY`/`HTTPS_PROXY` must be set.**
+Because the kernel only ever permits `connect()` to the literal proxy address,
+a client that ignores proxy environment variables and dials a destination
+directly gets `EPERM`/denied at the kernel layer — full stop, not silently
+mediated. This is fail-closed (consistent with this project's posture) but it
+means client environment plumbing is required, not speculative; task 3 keeps
+its shape, just with the "may be unnecessary" hedge removed.
+
+**4. RESOLVED — it's the HTTP protocol itself, not DNS or SNI tricks.** The
+proxy terminates ordinary HTTP: a `CONNECT host:443` request line (for
+HTTPS/TLS, tunneled byte-for-byte afterward — no TLS interception, per the
+non-goals) or an absolute-URI request (for plain HTTP) both carry the
+hostname in the request itself. `net_filter.rs`'s own module doc says as much
+— `HostFilter` is described as deciding "CONNECT requests" — confirming this
+is what the library's author already had in mind, not a devcroft invention.
+
+**5. Still open, deferred to fleet.** `add-linux-agent-fleet`'s design.md D4
+already commits to one proxy instance per agent. For pre-fleet devcroft
+there is exactly one "agent" per sandbox, so one proxy per `up` is the
+non-fleet instance of the same decision, not a competing one — recorded here
+so fleet work confirms rather than re-decides it.

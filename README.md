@@ -336,13 +336,20 @@ own code, running against a curated provider closure). Confirmed with the
 project owner rather than assumed; see `openspec/changes/use-nono-library/design.md`
 Decision 5 for the full reasoning.
 
-`network.allow` (domain-level filtering) is unaffected by this change in
-the sense that matters: it was already non-functional under devcroft's
-`nono wrap`-based invocation (`wrap` has no resident supervisor, and
-domain filtering needs one — verified live that a `curl` to an *allowed*
-domain got the identical kernel-level denial as an unrelated one), and
-still compiles to a plain network block under the library. Fixing it for
-real is unrelated future work, not a regression this change introduces.
+`network.allow` (domain-level filtering) was unaffected by *this* change
+in the sense that mattered at the time: it was already non-functional
+under devcroft's `nono wrap`-based invocation (`wrap` has no resident
+supervisor, and domain filtering needs one — verified live that a `curl`
+to an *allowed* domain got the identical kernel-level denial as an
+unrelated one), and still compiled to a plain network block under the
+library. **Superseded by `add-egress-proxy`, which fixed it for real**:
+`network.allow` now compiles to `NetworkMode::ProxyOnly` (a Landlock
+`NetPort`/Seatbelt rule permitting `connect()` to a resident proxy's port
+and nothing else), and that proxy makes the actual per-hostname decision.
+Verified live end to end (`tests/egress_proxy_e2e.rs`): a real `up`, a
+real `curl` inside the sandbox, an allowed loopback host reachable
+through the proxy, a nearby-but-not-allowlisted one refused with a `502`
+naming it.
 
 **Service reporting was rebuilt after a review found it silent in four
 different ways.** All four shared one shape: a service problem that
@@ -596,10 +603,19 @@ Known gaps, published rather than hidden:
   an architectural constraint, and one `nono profile schema` invocation
   refuted it.
 - **Network filtering is platform-dependent; on Linux it's less "purely
-  cooperative" than first assumed.** macOS Seatbelt genuinely cannot
-  enforce domain-level allowlisting without a cooperative proxy —
-  `doctor` and `up` name that degradation once, rather than silently
-  granting broader network access than the manifest asked for. On Linux,
+  cooperative" than first assumed.** `add-egress-proxy` shipped a real,
+  enforced domain filter on Linux (Landlock `NetPort` gates every
+  `connect()` except to a resident proxy, which decides by hostname) —
+  `docs/decisions.md`'s and this section's older framing, that domain
+  filtering everywhere was merely cooperative, no longer describes
+  Linux. Whether macOS Seatbelt enforces the equivalent
+  `NetworkMode::ProxyOnly` gate as strictly, or only adds a permissive
+  rule without narrowing anything else, is **unverified** — the pinned
+  library's own doc comment for the macOS output reads as a scoped allow
+  rule, which would argue for "enforced" under Seatbelt's default-deny
+  model, but this project has no macOS host to measure it live on, and
+  this project does not ship a security claim it hasn't measured. The
+  degraded-on-macOS warning stays on until someone can check. On Linux,
   the original assumption here was that a process could always bypass a
   domain allowlist with a raw socket straight to an unresolved IP.
   `tests/process_tier_landlock_boundaries.rs` tested that directly and

@@ -16,3 +16,10 @@ pub use state::{Health, Meta, StatePaths, client_key_paths, health, read_meta};
 pub use status::{KeeperStatus, SandboxStatus, SandboxSummary, StatusError, logs, ps, status};
 pub use terminate::{GRACE_PERIOD, TerminateError, down, rm};
 pub use up::{UpError, UpOptions, UpOutcome, up};
+// `pub(crate)`, not part of the public surface: `crate::proxy::spawn`
+// needs the identical fd-inheritance dance `up_process` already does for
+// the control/SSH sockets, and re-exporting through here is what makes
+// `up`'s private submodule path reachable from outside `lifecycle` at
+// all — `up::clear_cloexec` being `pub(crate)` doesn't help by itself
+// when the `up` module segment itself is private.
+pub(crate) use up::clear_cloexec;

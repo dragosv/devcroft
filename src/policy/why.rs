@@ -64,11 +64,23 @@ pub fn why_path(compiled: &CompiledPolicy, path: &str, op: Op) -> Explanation {
     }
 }
 
-/// Explain whether outbound access to `host` would be allowed. See the
-/// module doc's `network.allow` note: it compiles to a rule here (so
-/// `why --host` still explains it), but — same as before this change,
-/// design.md's own recorded Non-Goal — is not actually a working domain
-/// filter under either the old exec-based process tier or this one.
+/// Explain whether outbound access to `host` would be allowed.
+///
+/// Delegates the actual decision to `nono::HostFilter` — the same type
+/// `proxy::server` evaluates every real connection against
+/// (`add-egress-proxy`) — rather than a hand-rolled equality check, so
+/// `why` cannot drift from what the proxy will actually do: wildcard
+/// suffix entries (`*.example.com`), the hardcoded cloud-metadata deny
+/// list, and case/IDNA normalization all apply here exactly as they do
+/// live. What `why` cannot reproduce is the link-local/DNS-rebinding
+/// check, which needs a real resolution this static command never
+/// performs — called with an empty resolved-IP list, which is honest
+/// about that gap rather than pretending to check something it can't.
+///
+/// Before this change, `network.allow` compiled to a rule here that this
+/// function could name but that nothing downstream actually enforced
+/// (design.md's own recorded history). That gap is what `add-egress-proxy`
+/// closes; this function's shape is unchanged, but its answer is now true.
 pub fn why_host(compiled: &CompiledPolicy, host: &str) -> Explanation {
     if !compiled.network_block {
         return Explanation {
@@ -77,21 +89,55 @@ pub fn why_host(compiled: &CompiledPolicy, host: &str) -> Explanation {
             detail: "allowed by rule manifest:network.default".to_string(),
         };
     }
-    if let Some(rule) = compiled
+    let allow: Vec<String> = compiled
         .network_allow_domain
         .iter()
-        .find(|d| d.value == host)
-    {
-        return Explanation {
-            allowed: true,
-            origin: Some(rule.origin.clone()),
-            detail: format!("allowed by rule {}", rule.origin),
-        };
-    }
-    Explanation {
-        allowed: false,
-        origin: Some(Origin::Manifest("network.default")),
-        detail: "denied by rule manifest:network.default (host not in network.allow)".to_string(),
+        .map(|d| d.value.clone())
+        .collect();
+    let filter = nono::HostFilter::new_strict(&allow);
+    match filter.check_host(host, &[]) {
+        result if result.is_allowed() => {
+            // `check_host` doesn't say *which* allowlist entry matched,
+            // only that one did — find it again for attribution. Exact
+            // match first (the common case), then the wildcard suffix
+            // whose stripped form is a suffix of `host`, matching
+            // `HostFilter::new`'s own `*.` convention.
+            let rule = compiled
+                .network_allow_domain
+                .iter()
+                .find(|d| d.value.eq_ignore_ascii_case(host))
+                .or_else(|| {
+                    compiled.network_allow_domain.iter().find(|d| {
+                        d.value
+                            .strip_prefix('*')
+                            .is_some_and(|suffix| host.to_ascii_lowercase().ends_with(suffix))
+                    })
+                });
+            match rule {
+                Some(rule) => Explanation {
+                    allowed: true,
+                    origin: Some(rule.origin.clone()),
+                    detail: format!("allowed by rule {}", rule.origin),
+                },
+                // Reachable when `network.allow` is empty and the filter
+                // is non-strict-allow — doesn't happen via `new_strict`
+                // (empty means deny), kept only so this match is total
+                // rather than panicking on a library behavior change.
+                None => Explanation {
+                    allowed: true,
+                    origin: None,
+                    detail: "allowed by the egress proxy's host filter".to_string(),
+                },
+            }
+        }
+        result => Explanation {
+            allowed: false,
+            origin: Some(Origin::Manifest("network.default")),
+            detail: format!(
+                "denied by rule manifest:network.default ({})",
+                result.reason()
+            ),
+        },
     }
 }
 

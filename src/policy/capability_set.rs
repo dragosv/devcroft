@@ -52,6 +52,9 @@ pub struct CapabilityPlan {
     pub filesystem_deny: Vec<String>,
     pub network_block: bool,
     pub network_ports: Vec<u16>,
+    /// See [`CompiledPolicy::network_proxy_port`]'s doc — `Some` only when
+    /// `up` actually started the egress proxy for this sandbox.
+    pub network_proxy_port: Option<u16>,
     pub signal_mode: String,
 }
 
@@ -77,6 +80,7 @@ impl CompiledPolicy {
                 .collect(),
             network_block: self.network_block,
             network_ports: self.network_ports.iter().map(|p| p.value).collect(),
+            network_proxy_port: self.network_proxy_port,
             signal_mode: self.signal_mode.to_string(),
         }
     }
@@ -136,10 +140,19 @@ impl CapabilityPlan {
             caps = grant(caps, value, project_root, AccessMode::Read)?;
         }
 
-        caps = if self.network_block {
-            caps.block_network()
-        } else {
-            caps.set_network_mode(NetworkMode::AllowAll)
+        // `network_proxy_port` takes precedence over the plain block/
+        // allow-all binary: it is only ever `Some` when `up` has already
+        // started the egress proxy for this manifest's `network.allow`,
+        // so the kernel gate here just has to match the process that
+        // will actually make per-hostname decisions. See design.md's
+        // Open Questions in add-egress-proxy for why `ProxyOnly` (a plain
+        // Landlock `NetPort`/Seatbelt rule, confirmed live on this host's
+        // ABI V6) is the right primitive rather than the seccomp-notify
+        // path `apply_auto` reserves for pre-V4 kernels.
+        caps = match self.network_proxy_port {
+            Some(port) => caps.proxy_only(port),
+            None if self.network_block => caps.block_network(),
+            None => caps.set_network_mode(NetworkMode::AllowAll),
         };
         for port in &self.network_ports {
             caps = caps.allow_localhost_port(*port);

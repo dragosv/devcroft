@@ -29,6 +29,18 @@ fn main() {
         // re-execs into this so the irreversible restriction lands in a
         // throwaway child rather than in `doctor` itself.
         Some("__bind_probe") => std::process::exit(bind_probe_main(&args[2..])),
+        // Hidden: `crate::proxy::spawn` re-execs into this to run the
+        // egress proxy (add-egress-proxy) as its own permanently
+        // unsandboxed process — never `__keeper`'s. Not the user-facing
+        // `proxy` command above, which is the unrelated SSH
+        // `ProxyCommand` handler; the two share nothing but a word.
+        Some("__egress_proxy") => {
+            let fd: RawFd = args
+                .get(2)
+                .and_then(|s| s.parse().ok())
+                .expect("__egress_proxy requires a listener fd argument");
+            egress_proxy_main(fd);
+        }
         Some("exec") => std::process::exit(cli_exec(&args[2..])),
         Some("shell") => std::process::exit(cli_shell(&args[2..])),
         Some("proxy") => std::process::exit(cli_proxy(&args[2..])),
@@ -552,6 +564,7 @@ fn bind_probe_main(args: &[String]) -> i32 {
         filesystem_deny: Vec::new(),
         network_block: true,
         network_ports: vec![port],
+        network_proxy_port: None,
         // The only value `to_capability_set` accepts; anything else
         // panics there rather than silently meaning something.
         signal_mode: "isolated".to_string(),
@@ -1509,10 +1522,18 @@ fn compile_with_provider_grants(
     let Ok(Some(meta)) = devcroft::lifecycle::read_meta(&paths.meta) else {
         return compiled;
     };
-    compiled.with_provider_grants(
+    let compiled = compiled.with_provider_grants(
         provider_static_name(&manifest.env.provider),
         &meta.read_only_grants,
-    )
+    );
+    // Same live-only caveat as the provider grants just above: `compile`
+    // alone has no way to know the proxy's port, since knowing it means
+    // an `up` actually ran one. `meta.proxy_port` is `None` for a
+    // sandbox that never wanted filtering, so this is a no-op there.
+    match meta.proxy_port {
+        Some(port) => compiled.with_proxy_port(port),
+        None => compiled,
+    }
 }
 
 /// `Origin::Provider` takes `&'static str`; the manifest's provider name
@@ -1879,6 +1900,33 @@ fn keeper_main(fd: RawFd, ssh_fd: RawFd) -> ! {
     devcroft::ssh::start_from_env(ssh_listener, Arc::new(LocalSessionBackend));
 
     let _ = keeper.serve();
+    std::process::exit(0);
+}
+
+/// Runs the egress proxy (add-egress-proxy). Unlike `keeper_main`, this
+/// process never self-restricts — see `proxy`'s module doc for why it
+/// cannot: it needs genuine outbound reach to every allowlisted host,
+/// which a `NetworkMode::ProxyOnly` self-restriction would itself deny.
+/// Never returns under normal operation.
+fn egress_proxy_main(fd: RawFd) -> ! {
+    let allow: Vec<String> = std::env::var("DEVCROFT_EGRESS_ALLOW")
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_else(|| {
+            eprintln!("devcroft __egress_proxy: DEVCROFT_EGRESS_ALLOW missing or invalid");
+            std::process::exit(1);
+        });
+    // SAFETY: `crate::proxy::spawn` bound this listener before exec,
+    // cleared its FD_CLOEXEC, and passed the fd number as argv — ours
+    // alone to take ownership of, same contract as `keeper_main`'s.
+    let listener = unsafe { std::net::TcpListener::from_raw_fd(fd) };
+    let log_path = std::env::var("DEVCROFT_EGRESS_LOG")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|_| {
+            eprintln!("devcroft __egress_proxy: DEVCROFT_EGRESS_LOG missing");
+            std::process::exit(1);
+        });
+    devcroft::proxy::server::run(listener, allow, log_path);
     std::process::exit(0);
 }
 

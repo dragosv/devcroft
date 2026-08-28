@@ -29,6 +29,19 @@ pub struct StatePaths {
     /// either; `up` passes the key material down directly instead (see
     /// `ssh::keys` and `up.rs`).
     pub ssh_host_key: PathBuf,
+    /// The egress proxy's own pidfile (add-egress-proxy) — separate from
+    /// `pidfile` because the proxy is a separate process from the keeper,
+    /// spawned only when `CompiledPolicy::wants_egress_proxy()` is true,
+    /// and torn down independently: it is never restricted by (and so
+    /// never shares fate with) the keeper's own `apply_auto` call.
+    pub proxy_pidfile: PathBuf,
+    /// The egress proxy's own log — separate from `log`, which is the
+    /// keeper's (and hooks', per its own `O_APPEND`/single-write
+    /// discipline). Kept apart rather than shared because the two are
+    /// independent processes with independent lifetimes; nothing currently
+    /// requires interleaving their records in one file the way hook
+    /// output and keeper spawn/exit records must interleave.
+    pub proxy_log: PathBuf,
 }
 
 impl StatePaths {
@@ -49,6 +62,8 @@ impl StatePaths {
             meta: root.join("meta.json"),
             ssh_socket: root.join("ssh.sock"),
             ssh_host_key: root.join("ssh_host_ed25519_key"),
+            proxy_pidfile: root.join("proxy.pid"),
+            proxy_log: root.join("proxy.log"),
             root,
         }
     }
@@ -125,6 +140,18 @@ pub struct Meta {
     /// "no hook" until the next `up` records the truth.
     #[serde(default)]
     pub ran_activation_hook: bool,
+    /// The egress proxy's bound port, when `up` started or reused one for
+    /// this sandbox (add-egress-proxy) — `None` when `network.allow` is
+    /// empty and no domain filtering was requested. Recorded for the same
+    /// reason `resolved_backend` is: a later `up` reusing a still-live
+    /// proxy across a `Health::Stale` recovery needs its port back, and
+    /// the only other place it lived was this process's own now-gone
+    /// memory. `#[serde(default)]` so `meta.json` written before this
+    /// field existed still deserializes, reading as "no proxy" until the
+    /// next `up` records the truth — correct for every sandbox that
+    /// predates this change, since none of them could have started one.
+    #[serde(default)]
+    pub proxy_port: Option<u16>,
 }
 
 fn default_resolved_backend() -> String {
@@ -225,6 +252,12 @@ pub fn health(paths: &StatePaths) -> io::Result<Health> {
 pub fn clear_runtime_state(paths: &StatePaths) -> io::Result<()> {
     let _ = std::fs::remove_file(&paths.pidfile);
     let _ = std::fs::remove_file(&paths.socket);
+    // Not the keeper's own pidfile, and not touched by `health()` above,
+    // but still runtime state: a stale entry here would make a later
+    // `up` believe a proxy from a previous, now-gone run is still owned
+    // by this sandbox. `terminate.rs::stop_if_running` is what actually
+    // kills the process before this runs.
+    let _ = std::fs::remove_file(&paths.proxy_pidfile);
     Ok(())
 }
 
@@ -308,6 +341,7 @@ mod tests {
             resolved_backend: "process".to_string(),
             declared_services: Vec::new(),
             ran_activation_hook: false,
+            proxy_port: None,
         };
         write_meta(&paths.meta, &meta).unwrap();
         assert_eq!(read_meta(&paths.meta).unwrap(), Some(meta));
@@ -327,6 +361,7 @@ mod tests {
             resolved_backend: "process".to_string(),
             declared_services: Vec::new(),
             ran_activation_hook: false,
+            proxy_port: None,
         };
         write_meta(&paths.meta, &meta).unwrap();
         assert!(!paths.meta.with_extension("json.tmp").exists());

@@ -103,6 +103,16 @@ fn stop_if_running(paths: &StatePaths) -> io::Result<()> {
     if let Health::Healthy(pid) | Health::Stale(pid) = state::health(paths)? {
         state::terminate_and_wait(pid, GRACE_PERIOD);
     }
+    // The egress proxy (add-egress-proxy) is a separate process from the
+    // keeper — see `crate::proxy`'s module doc — so tearing down the
+    // keeper above says nothing about it. It has no control socket to
+    // probe health through the way the keeper does; its pidfile alone is
+    // the only record of it, so a stale (already-dead) pid here is just
+    // a no-op signal, not a distinct state worth telling apart from
+    // "healthy" the way `Health` does for the keeper.
+    if let Some(pid) = state::read_pidfile(&paths.proxy_pidfile)? {
+        state::terminate_and_wait(pid, GRACE_PERIOD);
+    }
     Ok(())
 }
 

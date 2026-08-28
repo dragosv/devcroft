@@ -10,6 +10,22 @@
 //! redirection, so a process that ignores the proxy env vars can reach a
 //! host directly. Domain filtering is therefore enforced on Linux and
 //! only cooperative (unenforced) on macOS.
+//!
+//! **Unverified on macOS as of `add-egress-proxy`, flagged rather than
+//! silently trusted either way.** `NetworkMode::ProxyOnly`'s own doc
+//! comment in the pinned library describes the macOS output as `(allow
+//! network-outbound (remote tcp "localhost:PORT"))` — a *scoped* allow
+//! rule, which under Seatbelt's own default-deny model would seem to
+//! block other outbound the same way Landlock's `NetPort` does, not
+//! merely fail to redirect it. That would make this module's claim
+//! stale. This devcontainer is Linux-only, so that reading could not be
+//! measured live the way this project measures everything else it
+//! claims (CLAUDE.md's gVisor/Landlock findings, the two-phase execution
+//! table) — the degraded-on-macOS behavior below is kept as the
+//! conservative default specifically because it is unverified, not
+//! because it is confirmed. Revisit with an actual macOS host before
+//! either keeping or removing this warning on the strength of an
+//! argument rather than a measurement.
 
 use super::CompiledPolicy;
 use std::fmt;
