@@ -61,12 +61,33 @@ non-reproducible host state).
 ### Requirement: Name constraints
 The system SHALL restrict `[sandbox].name` to `[a-z0-9][a-z0-9-]{0,31}`,
 because the name becomes a hostname label (`<name>.devcroft`) and a state
-directory component.
+directory component. **Every other source of a sandbox name — a CLI
+positional argument, an SSH hostname, or any future caller —** SHALL be
+held to the identical constraint before it is used to construct a state
+path, because it becomes the identical state directory component
+regardless of where it came from. The constraint is a property of what the
+name is used *for*, not of which code path produced it.
 
 #### Scenario: Invalid name
 - **WHEN** `name = "My Project"`
 - **THEN** validation fails naming the constraint and showing a suggested
   slug (`my-project`)
+
+#### Scenario: CLI argument attempts path traversal
+- **WHEN** an explicit name argument to any command (`rm`, `down`, `exec`,
+  `status`, `logs`, `ps`, `policy`, `why`, `shell`, `ssh`) is not a valid
+  slug — e.g. contains `/`, `..`, or is empty
+- **THEN** the command fails at layer `config` (exit 2) naming the invalid
+  value, before any path is constructed or any filesystem operation runs
+- **AND** this holds even for a value that only resolves outside the state
+  root after joining, not only for a value that is rejected by inspecting
+  its characters in isolation
+
+#### Scenario: SSH hostname attempts path traversal
+- **WHEN** a client's SSH `ProxyCommand` invocation names a sandbox whose
+  extracted name is not a valid slug
+- **THEN** `proxy` refuses before constructing any state path, with the
+  same validation `rm`/`down`/etc. apply to an explicit CLI argument
 
 ### Requirement: Filesystem policy validation
 The system SHALL validate that every path in `filesystem.allow`,

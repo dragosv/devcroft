@@ -45,7 +45,36 @@ pub struct StatePaths {
 }
 
 impl StatePaths {
+    /// The single choke point every caller reaches a state directory
+    /// through — which is exactly why the name is validated *here*
+    /// rather than trusted to each caller. Before this check, a raw,
+    /// unvalidated string reached this join from several independent
+    /// places (`cli_exec`/`cli_shell`'s own explicit-name parsing,
+    /// `ssh::proxy::sandbox_name_from_host`'s SSH-hostname extraction),
+    /// and a value like `../../target` survived the join to make
+    /// `rm`/`down` operate outside the state root entirely — confirmed
+    /// live by actually deleting a scratch directory with it. The config
+    /// spec's "Name constraints" requirement was already written to cover
+    /// exactly this ("every other source of a sandbox name... SHALL be
+    /// held to the identical constraint"); this is where it was missing.
+    ///
+    /// Returns `io::ErrorKind::InvalidInput` for an invalid name — a
+    /// distinct kind from filesystem/permission failures, so a caller
+    /// that wants a precise "not a valid sandbox name" message (rather
+    /// than devcroft's generic "state" error layer) can match on it, the
+    /// way `resolve_name_arg` does before this is ever called at all, for
+    /// the two commands (`down`, `rm`) most directly implicated by the
+    /// traversal above.
     pub fn new(sandbox_name: &str) -> io::Result<Self> {
+        if !crate::config::is_valid_name(sandbox_name) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!(
+                    "'{sandbox_name}' is not a valid sandbox name \
+                     ([a-z0-9][a-z0-9-]{{0,31}})"
+                ),
+            ));
+        }
         Ok(Self::in_dir(data_dir()?.join(sandbox_name)))
     }
 
@@ -308,6 +337,39 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         StatePaths::in_dir(dir)
+    }
+
+    /// The traversal this check exists to close, confirmed live at the
+    /// CLI level (`devcroft rm ../VICTIM --yes` recursively deleting a
+    /// directory outside the state root) and here at the unit level so
+    /// the guarantee doesn't depend on remembering to check at every
+    /// call site — `StatePaths::new` is the one place every caller
+    /// (`rm`, `down`, `exec`, `shell`, `ssh::proxy`'s hostname parsing)
+    /// necessarily passes through.
+    #[test]
+    fn new_rejects_path_traversal() {
+        for bad in ["../../etc", "..", "foo/../bar", "/etc/passwd"] {
+            match StatePaths::new(bad) {
+                Err(e) => assert_eq!(
+                    e.kind(),
+                    io::ErrorKind::InvalidInput,
+                    "{bad:?} must be rejected, not joined into a state path"
+                ),
+                Ok(_) => panic!("{bad:?} must be rejected, not joined into a state path"),
+            }
+        }
+    }
+
+    #[test]
+    fn new_rejects_empty_and_uppercase_and_overlong_names() {
+        assert!(StatePaths::new("").is_err());
+        assert!(StatePaths::new("Has-Upper").is_err());
+        assert!(StatePaths::new(&"a".repeat(33)).is_err());
+    }
+
+    #[test]
+    fn new_accepts_an_ordinary_slug() {
+        assert!(StatePaths::new("my-project-1").is_ok());
     }
 
     #[test]

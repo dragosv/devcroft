@@ -162,7 +162,12 @@ async fn proxy_reports_a_clear_error_for_an_unknown_sandbox() {
     let out = tokio::process::Command::new(devcroft_bin)
         .arg("proxy")
         .arg("--no-up")
-        .arg("no-such-sandbox-devcroft-proxy-test.devcroft")
+        // Must stay within the 32-char slug limit (config::is_valid_name)
+        // once `.devcroft` is stripped, or `proxy` now rejects it as an
+        // invalid name before ever reaching the "not up" check this test
+        // is actually about — found by this test itself once
+        // `StatePaths::new` started validating names.
+        .arg("no-such-sandbox-proxy-test.devcroft")
         .stdin(Stdio::null())
         .output()
         .await

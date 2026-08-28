@@ -1659,6 +1659,25 @@ fn resolve_name_arg(args: &[String], usage: &str, cmd: &str) -> Result<String, i
             eprintln!("{usage}");
             Err(2)
         }
+        // config spec's "Name constraints" requirement, extended to any
+        // source of a sandbox name (not just `[sandbox].name`): this
+        // string becomes a `StatePaths` component unchanged, so a value
+        // like `../../target` reaches `remove_dir_all` on `rm` untouched
+        // — found by adversarial review, confirmed live by actually
+        // deleting a scratch directory outside the state root with it.
+        // Rejected here, before `StatePaths::new` is ever called, rather
+        // than only inside it: this is the layer that can report exit 2
+        // and name the value, which a bare `io::Error` from deep inside
+        // `StatePaths::new` cannot without every caller's own error type
+        // learning to distinguish it from an ordinary I/O failure.
+        Some(name) if !devcroft::config::is_valid_name(name) => {
+            eprintln!(
+                "devcroft {cmd}: '{name}' is not a valid sandbox name \
+                 ([a-z0-9][a-z0-9-]{{0,31}}); did you mean '{}'?",
+                devcroft::config::slugify(name)
+            );
+            Err(2)
+        }
         Some(name) => Ok(name.clone()),
         None => {
             let cwd = std::env::current_dir().map_err(|e| {

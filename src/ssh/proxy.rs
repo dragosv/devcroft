@@ -43,6 +43,15 @@ impl std::error::Error for ProxyError {}
 /// %n`). Anything else is a usage error — this command is only ever
 /// meaningfully invoked with that shape, per the `ssh-config` block this
 /// crate itself emits.
+///
+/// Deliberately does not itself validate the extracted name against the
+/// config spec's slug constraint (`../../victim.devcroft` strips to
+/// `../../victim` and passes this function fine) — `proxy`'s call to
+/// `StatePaths::new` right after is where that is enforced, the same
+/// choke point every other caller of a sandbox name goes through. Found
+/// missing by adversarial review; fixed at the choke point rather than
+/// here, so any future parser feeding a name into `StatePaths` gets it
+/// for free too.
 pub fn sandbox_name_from_host(host: &str) -> Result<&str, String> {
     host.strip_suffix(".devcroft")
         .filter(|name| !name.is_empty())
