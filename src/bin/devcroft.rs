@@ -1046,6 +1046,7 @@ fn cli_up(args: &[String]) -> i32 {
     // `~/.ssh` is visible above whatever the run produces rather than
     // scrolled off underneath it.
     print_manifest_warnings(&cwd);
+    print_degraded_capabilities(&manifest);
     let project_root = match devcroft::config::discover(&cwd) {
         Ok(p) => p.parent().unwrap_or(&cwd).to_path_buf(),
         Err(_) => cwd.clone(),
@@ -1792,6 +1793,32 @@ fn print_manifest_warnings(cwd: &std::path::Path) {
     };
     for warning in warnings {
         eprintln!("devcroft: warning: {warning}");
+    }
+}
+
+/// The policy spec's "Degraded capability surfacing" requirement: report
+/// aspects this host's backend cannot enforce, "once at `up` with
+/// severity `warning`, never silently dropping them" — CLAUDE.md's
+/// "Degraded capabilities are surfaced, never silent" invariant.
+///
+/// This was specified from the MVP and never wired into `up`:
+/// `detect_degraded` had exactly one caller, `doctor`. On Linux that was
+/// latent — nothing is degraded here, so the missing call printed
+/// nothing and the absence looked identical to correctness. On macOS,
+/// where domain filtering is the aspect that degrades, `up` would have
+/// dropped the warning entirely, which is the precise failure the
+/// requirement exists to prevent. Found by an adversarial review of
+/// `add-egress-proxy`, whose own spec restates the same obligation
+/// ("named at `up` and in `doctor`").
+///
+/// Takes the already-resolved `Manifest` rather than re-discovering from
+/// cwd like `print_manifest_warnings` does: the caller has one in hand,
+/// and re-reading would let the two warning sets disagree about which
+/// manifest they describe.
+fn print_degraded_capabilities(manifest: &devcroft::config::Manifest) {
+    let compiled = devcroft::policy::compile(manifest);
+    for degraded in devcroft::policy::detect_degraded(&compiled) {
+        eprintln!("devcroft: warning: {degraded}");
     }
 }
 

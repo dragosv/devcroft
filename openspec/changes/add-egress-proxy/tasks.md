@@ -43,6 +43,15 @@ What's left is an ordinary resident TCP proxy.)
       (design.md Q5). Reused across a keeper recovery, respawned fresh on
       `--recreate` or when `network.allow` changes shape (`up.rs::
       ensure_egress_proxy`/`stop_orphaned_egress_proxy`).
+      This satisfies the spec's "proxy runs outside the sandbox it filters"
+      requirement, including its attribution scenario (one listener per
+      sandbox *is* the identity, and nothing is asked of the client). Its
+      other scenario — "credentials held by the proxy are never resident
+      inside it" — holds, but **trivially: this proxy holds no credentials
+      at all.** Phantom-token injection (`docs/threat-model.md`'s
+      capability-not-custody principle) is not built. Placement is what
+      makes it *possible* later, which is what E1 argued for; do not read
+      the satisfied scenario as meaning it exists.
 - [x] Structured refusal records: destination, deciding rule — written to
       its own `paths.proxy_log`, not the keeper's `paths.log` (separate
       process, separate file; see `StatePaths::proxy_log`'s doc for why
@@ -58,15 +67,17 @@ What's left is an ordinary resident TCP proxy.)
       endpoint as the only permitted path — not to a blanket block
       (`CompiledPolicy::network_proxy_port` /
       `capability_set::to_capability_set`'s `NetworkMode::ProxyOnly` arm).
-- [ ] Per-context network policy in the manifest (provisioning, runtime).
-      **Deferred to `sandbox-provisioning`, not skipped.** Provisioning runs
-      entirely unsandboxed today (two-phase execution invariant) — there is no
-      confinement boundary on that side to attach a distinct policy to yet.
-      `sandbox-provisioning` is the change that creates one, and it already
-      depends on this change for exactly that reason (proposal.md: "a
-      provisioning profile that permits the package registries and nothing
-      else"). Schema for a policy nothing enforces would be dead
-      configuration; this change ships the runtime side only.
+- [x] Per-context network policy in the manifest (provisioning, runtime).
+      **Moved to `sandbox-provisioning`, requirement and all** — not left
+      standing here unimplemented. Provisioning runs entirely unsandboxed
+      today (two-phase execution invariant), so there is no confinement
+      boundary on that side to attach a distinct policy to; a per-context
+      policy needs two contexts and there is one. The requirement now lives
+      in `sandbox-provisioning/specs/network/spec.md`, which is the change
+      that creates the second context and already depended on this one for
+      exactly this reason (its design.md, open question 2). This change
+      ships the runtime context's enforcement, which is the mechanism the
+      second context reuses unchanged.
 - [x] `policy --render` and `why` cover the (runtime-only, per the deferral
       above) allowlist with origin attribution — `render`'s new
       `network.proxy:` line and `why_host`'s `HostFilter` delegation.
@@ -99,7 +110,20 @@ What's left is an ordinary resident TCP proxy.)
       `502` response body names the host; `policy::why::why_host` now
       delegates to the real `HostFilter` so `why --host` gives the same
       answer the proxy will.
-- [ ] `doctor` reports whether domain filtering is enforceable on this host.
+- [x] `doctor` reports whether domain filtering is enforceable on this host —
+      `doctor_manifest_degradation` already did this; verified live
+      (`[PASS] manifest: no degraded capabilities ... on this host` for a
+      `default = "deny"` + `allow` manifest on this Linux host, which is
+      the correct answer now that filtering really is enforced here).
+      **`up` did not**, though both this change's spec ("named at `up` and
+      in `doctor`") and `add-mvp-core`'s own "Degraded capability
+      surfacing" requirement have always required it —
+      `policy::detect_degraded` had exactly one caller, `doctor`. Latent on
+      Linux (nothing degrades, so the missing call printed nothing and
+      looked identical to correctness) and silent on macOS, which is the
+      one platform the requirement was written for. Wired up in
+      `cli_up` via `print_degraded_capabilities`; the macOS half stays
+      unverifiable from this devcontainer, same caveat as the item below.
 - [ ] Replace any documentation claiming domain filtering works today, and any
       claiming exfiltration is prevented.
 - [ ] **Found while wiring `policy::degraded`, needs a macOS host to

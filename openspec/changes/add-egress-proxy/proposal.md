@@ -31,8 +31,12 @@ rather than a section inside each.
 - **MODIFIED** `network`: `network.allow` becomes enforced rather than declared.
   The compiled policy routes egress through the proxy instead of compiling to a
   blanket block.
-- Manifest gains a per-context network policy, so provisioning and runtime can
-  differ.
+- ~~Manifest gains a per-context network policy, so provisioning and runtime can
+  differ.~~ **Moved to `sandbox-provisioning`** (which now owns the
+  requirement) when this change shipped: a per-context policy needs two
+  contexts, and provisioning does not run inside a boundary of its own until
+  that change creates one. This change ships the runtime context's enforcement,
+  which is the mechanism the second context will reuse.
 - Diagnostics report refusals with the destination and the deciding rule.
 
 ## Impact
@@ -67,12 +71,21 @@ considerably:
   respond with an errno, inject a descriptor, and validate a notification is
   still pending for TOCTOU safety.
 
-What devcroft supplies is the resident supervisor loop, the per-context policy,
-and the transport that carries an allowed connection out. This is the piece the
-CLI's wrap mode structurally could not have: the mechanism needs a resident
-process to answer notifications.
+**That "Confirm before designing" instruction was followed, and it changed
+this section.** The list above describes a seccomp-notify design that turned
+out not to apply: `install_seccomp_proxy_filter` accepts no policy at all
+(`has_bind_ports: bool`) and is only ever installed as `apply_auto`'s fallback
+for Landlock ABI < V4 — measured live at **ABI V6** here, where it is never
+installed. The notification API is real but is the library's own internal
+business on those kernels; devcroft never touches it. What the library actually
+provides at devcroft's level is `CapabilitySet::proxy_only_with_bind`, which
+compiles to a plain Landlock `NetPort`/Seatbelt rule, plus `HostFilter` for the
+hostname decision. See `design.md`'s Open Questions for the full trail.
 
-**Confirm before designing the transport:** the signature of
-`install_seccomp_proxy_filter` — what policy it accepts, and how a permitted
-connection is completed. That determines whether an HTTP-level proxy is needed
-at all or whether mediation happens entirely at the socket layer.
+What devcroft supplies is therefore smaller and more ordinary than this section
+first assumed: a resident HTTP proxy process that terminates `CONNECT` and
+absolute-URI requests and decides by hostname. The per-context half of the
+policy moved to `sandbox-provisioning` (see What Changes). The point that
+survives unchanged is why the CLI's wrap mode structurally could not do this:
+whichever layer enforces the kernel gate, something resident still has to
+terminate the connection and decide by name, and `wrap` has no such process.

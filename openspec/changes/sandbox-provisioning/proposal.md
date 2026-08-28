@@ -4,6 +4,12 @@
 installs are the common case — so confining it without a domain allowlist leaves
 unreviewed code with open egress. See `design.md`, open question 2.
 
+That dependency has now shipped, and it handed this change a requirement along
+with the mechanism: **"Network policy is declared per context" moved here**
+(`specs/network/spec.md`) when `add-egress-proxy` landed. It could not be
+satisfied there — a per-context policy needs two contexts, and provisioning is
+the second one, which this change is what creates.
+
 ## Why
 
 `devcroft up` on a flox or devbox project runs that project's code on the host,
@@ -51,7 +57,8 @@ avoiding execution, but by confining it.
 
 ## Impact
 
-- Affected specs: `env-provider`, `policy`
+- Affected specs: `env-provider`, `policy`, `network` (the per-context
+  requirement inherited from `add-egress-proxy`)
 - Affects the flox and devbox providers. The nix provider gains a provisioning
   profile for consistency but its resolution path is unchanged.
 - Linux first. On macOS the same structure applies with the platform's sandbox

@@ -57,6 +57,13 @@
 
 - [ ] Network during provisioning: a real provisioning allowlist, from
       `add-egress-proxy`. Not a binary on/off — see design.md open question 2.
+      **No longer deferred-and-unowned: `add-egress-proxy` has shipped, and
+      its "Network policy is declared per context" requirement moved into
+      this change** (`specs/network/spec.md`). The mechanism exists —
+      `CompiledPolicy::network_proxy_port` is per-compilation, so a
+      provisioning compilation gets its own proxy and allowlist without new
+      machinery. What is missing is only the second context, which is this
+      change's own subject.
 - [ ] Cache sharing across agents: read-only share plus per-agent overlay.
       **Decide before fleet work**, not after.
 - [ ] macOS fidelity statement.

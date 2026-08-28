@@ -63,6 +63,17 @@ registries and should have nothing else; runtime often needs neither, or needs a
 different set. Deriving one from the other means granting one of them something
 it should not have.
 
+**Status: the decision stands; the requirement moved.** This change shipped the
+runtime context only, and its normative requirement now lives in
+`sandbox-provisioning/specs/network/spec.md`. The decision above is still the
+one being implemented — it is recorded here because it is *this* change's
+mechanism (a resident proxy plus a deny-by-default kernel gate) that the second
+context reuses, and because a reader asking "why is there only one context?"
+should find the answer next to the design that assumed two. Nothing about the
+mechanism forecloses the second context: `CompiledPolicy::network_proxy_port`
+is a per-compilation value, so a provisioning compilation gets its own proxy
+and its own allowlist without changing the shape of anything here.
+
 ## E4 — Filtering is by name, and the name is the unit of policy
 
 **Decision.** Allowlist entries are domains. The decision is made on the name

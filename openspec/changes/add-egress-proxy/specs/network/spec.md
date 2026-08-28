@@ -59,23 +59,6 @@ namespace of any sandbox it serves.
 - **THEN** the originating sandbox is identified from the listener it arrived on
 - **AND** the identification requires nothing from the client
 
-### Requirement: Network policy is declared per context
-
-Provisioning and runtime SHALL carry separate network policies, and neither
-SHALL be derived from the other.
-
-#### Scenario: Provisioning permits registries, runtime does not
-
-- **WHEN** provisioning allows package registries and runtime allows nothing
-- **THEN** activation reaches those registries
-- **AND** the agent, once running, does not
-
-#### Scenario: Rendering
-
-- **WHEN** the operator renders policy
-- **THEN** each context's allowlist is shown with its origin
-- **AND** a context whose network reach exceeds another's is visibly so
-
 ### Requirement: Refusals are legible to the developer
 
 A refused connection SHALL be reportable in terms of the destination and rule,
