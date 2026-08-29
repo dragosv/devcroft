@@ -45,7 +45,15 @@ of that is replaced. This change adds the **inter-agent** layer around it.
   namespace, with the egress proxy hosted *outside* the sandbox and reached via
   a forwarded port.
 - **NEW** `service-ports`: a port model where a service declares its in-namespace
-  port and optionally a host-side mapping.
+  port and optionally a host-side mapping. **Specified**
+  (`specs/service-ports/spec.md`) — the first of this change's capabilities
+  other than `agent-supervisor` to have normative requirements rather than
+  only tasks. It divides explicitly with `add-port-allocation` rather than
+  competing: that change allocates because today's sandboxes share the host
+  loopback, and its own spec exempts a sandbox with its own network
+  namespace — which is exactly the case fleet creates. Neither allocates an
+  in-namespace port; only the optional host mapping is allocated, and only
+  by fleet.
 - **NEW** `workspace-isolation`: per-agent git clones backed by a shared bare
   mirror, and safe concurrent use of the Nix store and daemon.
 

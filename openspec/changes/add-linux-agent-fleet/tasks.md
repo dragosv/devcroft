@@ -88,13 +88,40 @@ the implementation before it resolves.
 
 ## 5. Service ports
 
-- [ ] Extend the environment schema with the declared port and optional host
-      mapping.
-- [ ] Allocate host ports per agent; release on exit.
-- [ ] Report mappings in agent status.
-- [ ] Wire the same schema into the macOS single-developer path.
-- [ ] Test: five agents bind the same declared port; each host mapping reaches
-      the correct agent.
+> Now has a normative delta spec (`specs/service-ports/spec.md`), written
+> before implementation because five of this change's six declared
+> capabilities had none and tasks are not acceptance criteria. Writing it
+> settled two things these tasks had left ambiguous — see 5.1.
+
+- [ ] 5.1 Declare the port and optional host mapping in **devcroft's own
+      manifest, keyed by service name**, sharing `add-port-allocation`'s
+      configuration surface.
+      **This replaces "extend the environment schema", which was not
+      implementable as written.** devcroft reads services from the
+      *provider's* manifest and models them as `provider::ServiceDecl`
+      (name, command, per-service `vars`, daemon flags) — a mirror of
+      flox's documented `[services]` schema, which devcroft consumes and
+      does not own. There is no port field to extend, and adding one
+      upstream is not devcroft's to do. The port lives in the command
+      string or in `vars`, neither of which devcroft can reliably parse,
+      so the declaration has to be devcroft's own.
+- [ ] 5.2 Allocate host ports per agent; release on exit.
+- [ ] 5.3 Report mappings in agent status, distinguishing "no mappings
+      declared" from "mappings not yet established".
+- [ ] 5.4 Wire the same schema into the macOS single-developer path, and
+      surface the degradation there rather than letting a shared port
+      read as a private one.
+- [ ] 5.5 Test: five agents bind the same declared port; each host mapping
+      reaches the correct agent.
+- [ ] 5.6 Test: a service whose command hardcodes its port runs unchanged
+      in every agent, with no warning. **The second half is the
+      assertion that matters** — the same manifest under
+      `add-port-allocation` must fail loudly, and a test that only checks
+      "it works" would pass equally against an implementation that had
+      wrongly copied that change's refusal into fleet.
+- [ ] 5.7 Test: a declared port naming a service the provider does not
+      declare fails at `up`, distinguishably from a service that failed
+      to start.
 
 ## 6. Hygiene and follow-up
 
