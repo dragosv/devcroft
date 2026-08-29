@@ -27,7 +27,27 @@ nobody can support — that is the point, not a setback.
 - [ ] 1.6 Resource limits: `not-adopted`. The library's `ResourceLimits` is a
       declaration only — rendering it to cgroups lived in the CLI devcroft
       stopped depending on (confirmed in `add-linux-agent-fleet` task 0).
-- [ ] 1.7 Snapshot/`undo`, keystore, audit: `not-adopted`.
+- [ ] 1.7 Snapshot/`undo`, keystore: `not-adopted`. Audit: `not-adopted`
+      today, **with a named consumer** — `add-agent-interaction`'s durable
+      record should be `nono`'s append-only NDJSON with a rolling chain hash
+      and Merkle commit, rather than a second log format.
+- [ ] 1.7b Credential brokering (`nono-proxy` reverse mode, `jwt_phantom`):
+      `not-adopted` today; `add-egress-proxy` E6 adopts the crate and
+      `add-agent-workload` specifies the capability. Record the `jwt_phantom`
+      detail as evidence of why "we could write this ourselves" is a weaker
+      argument than it sounds: a consumer that validates token *structure*
+      rejects an opaque placeholder before any request is made, and that is
+      not a thing anyone designs for in advance.
+- [ ] 1.7c L7 endpoint policy (`SERVICE:METHOD:PATH`): `not-adopted`, **no
+      consumer yet**. Recorded because the matrix's job is showing the gap
+      between offered and used, and "allow github.com, GET only" is a real
+      want no devcroft change currently expresses.
+- [ ] 1.7d TLS interception, SPIFFE, AWS routing: `not-adopted` **by
+      decision, not by omission** — `add-egress-proxy` refuses the first
+      explicitly and the others are out of scope. The distinction matters:
+      these arrive as capabilities of a dependency devcroft now takes, so a
+      future reader must be able to tell "we chose not to" from "nobody got
+      to it".
 - [ ] 1.8 `supervisor` (runtime capability approval): `not-adopted` **today,
       with a named consumer** — `add-agent-interaction` adopts it to turn a
       policy denial into a request an operator can answer. Worth recording as

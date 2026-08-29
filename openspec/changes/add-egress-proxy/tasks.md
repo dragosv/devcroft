@@ -137,6 +137,33 @@ What's left is an ordinary resident TCP proxy.)
       changing `detect_for_host`'s `#[cfg(target_os = "macos")]` branch
       either way.
 
+## 4b. Adopt nono-proxy (design.md E6)
+
+- [ ] 4b.1 Add `nono-proxy = "0.74.0"`, pinned to the same version as `nono`.
+      **Record the cost where the earlier one is recorded**: 116 additional
+      crates, measured — the same order as `use-nono-library`'s 141-crate
+      trust tail, which was accepted reluctantly. This is a second helping of
+      that trade and is the owner's call, not an obvious win.
+- [ ] 4b.2 Replace `proxy::server`'s accept loop with `nono_proxy::start`.
+      devcroft keeps the process, the pidfile, `up`/`down`/`rm` ownership,
+      `CompiledPolicy::network_proxy_port` and the `ProxyOnly` kernel gate —
+      the crate supplies only what runs inside the process.
+- [ ] 4b.3 Enable `require_auth` and plumb the per-session token into the
+      sandbox environment. **This is the gap that motivated adoption**, not a
+      detail: without it the proxy is an open relay on loopback.
+- [ ] 4b.4 Confirm the fail-closed property still holds structurally — the
+      kernel gate permits exactly one port whether or not anything is
+      listening on it, so a dead proxy denies rather than opens.
+- [ ] 4b.5 Confirm TLS interception, SPIFFE and AWS routing stay **off**.
+      A test asserting the sandbox sees no injected CA would pin the first,
+      which is the one with a real security consequence if it drifted on.
+- [ ] 4b.6 Keep or port the existing e2e coverage
+      (`tests/egress_proxy_e2e.rs`) against the new implementation — the
+      allow/deny behaviour it asserts is the contract, and it must not be
+      dropped because the code beneath it changed.
+- [ ] 4b.7 Test the auth boundary directly: a caller without the token is
+      refused, and refused *before* any allowlist decision.
+
 ## 5. Validation
 
 - [x] `tests/egress_proxy_e2e.rs`: a real `up` (real Landlock, real keeper,
@@ -161,12 +188,23 @@ What's left is an ordinary resident TCP proxy.)
       anything else is a kernel `EPERM` by construction (confirmed live
       via the `curl -v` probe used to debug the `127.0.0.1` false
       negative above: "Immediate connect fail... Permission denied").
-- [x] Two sandboxes with different allowlists: neither inherits the
-      other's — true by construction, not a runtime check: each
-      sandbox's proxy is its own process (`crate::proxy::spawn`, one per
-      `up`, design.md Q5), with the allowlist baked into that process's
-      own env at spawn time. No state is shared between two sandboxes'
-      proxies at all, so there is nothing that *could* leak between them.
+- [ ] Two sandboxes with different allowlists: neither inherits the
+      other's.
+      **Reopened — the earlier claim was wrong, and wrong in a way worth
+      keeping.** It argued this held "by construction" because each
+      sandbox's proxy is its own process with its own allowlist, so "no
+      state is shared and nothing *could* leak". That reasons about
+      process state and misses the network surface: the proxy is an
+      **unauthenticated listener on loopback**, so any local process that
+      can reach the port gets that sandbox's allowlisted egress. Landlock
+      `NetPort` grants are port-based, which incidentally limits one
+      *sandbox* reaching another's proxy — but nothing stops an
+      unsandboxed process on the host from using either.
+      Found by reading `nono-proxy`'s `ProxyConfig::require_auth`, whose
+      own doc states the missing property directly: the per-session
+      `Proxy-Authorization` token "is the localhost auth boundary that
+      stops other local processes from using the proxy". Closed by
+      adopting that proxy (design.md E6).
 - [x] Refusal message names the host — asserted directly in the e2e test
       (`502` body contains `127.0.0.4`) and in `proxy::server`'s own unit
       test.

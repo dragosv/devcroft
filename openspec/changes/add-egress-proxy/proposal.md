@@ -27,7 +27,13 @@ rather than a section inside each.
 ## What Changes
 
 - **NEW** a resident egress proxy owned by the supervisor, enforcing a
-  domain-level allowlist.
+  domain-level allowlist. **Supplied by the `nono-proxy` crate** rather than
+  written here (design.md E6) — devcroft owns the process and its lifecycle;
+  the crate owns the loop inside it. Adopted after devcroft's own
+  implementation and that crate turned out to have converged on the identical
+  architecture, and after reading its config surfaced a property devcroft's
+  version lacked: a per-session token, without which a loopback proxy is an
+  open relay lending its sandbox's allowlist to any local process.
 - **MODIFIED** `network`: `network.allow` becomes enforced rather than declared.
   The compiled policy routes egress through the proxy instead of compiling to a
   blanket block.
@@ -48,6 +54,22 @@ rather than a section inside each.
 - The proxy runs on the host, outside whatever sandbox the client is in. That
   placement is what gives attribution and keeps credentials out of the client's
   reach.
+
+## What adopting `nono-proxy` does not mean
+
+The crate is broader than this change. Three of its capabilities are
+**deliberately not enabled**, and adopting the dependency must not be read as
+adopting them:
+
+- **TLS interception.** Remains a non-goal below. The crate supports it; this
+  change refuses it.
+- **SPIFFE identity and AWS-specific routing.** Present in the dependency,
+  unused, and out of scope.
+
+Two more are wanted but belong to other changes, and are named here so the
+seam is visible rather than discovered: reverse-proxy **credential injection**
+(`add-agent-workload`) and **approval hooks** for L7 endpoint decisions
+(`add-agent-interaction`).
 
 ## Non-Goals
 

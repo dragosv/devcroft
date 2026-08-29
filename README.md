@@ -135,7 +135,7 @@ and sessions, hooks, services and SSH all run inside that boundary.
 | Isolation | one tier, Landlock (Linux) / Seatbelt (macOS) |
 | Access | `exec`, `shell`, and a real SSH server per sandbox |
 | Services | provider-declared, supervised per sandbox |
-| Egress | domain allowlists, enforced through a resident proxy |
+| Egress | domain allowlists, enforced through a resident proxy (`nono-proxy`) |
 | Policy | deterministic, inspectable via `policy --render` and `why` |
 
 Verified end to end against real tooling in this repo's own devcontainer —

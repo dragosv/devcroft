@@ -15,7 +15,11 @@ gain it later.
       Cheaper now than retrofitted; leaning no, per A2.
 - [ ] 0.3 Who implements `ApprovalBackend` (open question 3) — this decides
       whether the approval half works in a fleet or only with an operator
-      attached.
+      attached. **The hook's location is settled**: `nono-proxy` accepts the
+      trait directly (`start_with_approval`), and `add-egress-proxy` now
+      adopts that crate, so devcroft already runs the process that would call
+      it. What is unanswered is the implementation, and the fleet case is the
+      hard one — a terminal prompt assumes someone is watching.
 
 ## 1. Attention: state and reporting
 
@@ -54,10 +58,20 @@ gain it later.
 
 ## 4. Approval: mechanism
 
-- [ ] 4.1 Adopt `nono::supervisor` — `SupervisorListener`, `CapabilityRequest`,
-      `ApprovalBackend`, and fd return via `SCM_RIGHTS`. Currently a
-      `not-adopted` entry in `add-backend-capabilities`; adopting it should
-      update that entry in the same change.
+- [ ] 4.1 Adopt `nono::supervisor` for **filesystem** capability requests —
+      `SupervisorListener`, `CapabilityRequest`, `ApprovalBackend`, and fd
+      return via `SCM_RIGHTS`. Currently a `not-adopted` entry in
+      `add-backend-capabilities`; adopting it should update that entry in the
+      same change.
+- [ ] 4.1b Wire an `ApprovalBackend` into the egress proxy for **network**
+      endpoint decisions (`nono_proxy::start_with_approval`). Separate task
+      from 4.1 on purpose: same trait, two different call sites, and the
+      network one comes free with `add-egress-proxy`'s adoption while the
+      filesystem one is its own piece of work.
+- [ ] 4.1c Reuse the proxy's audit trail rather than inventing a second one —
+      `nono`'s is append-only NDJSON with a rolling chain hash and a Merkle
+      root, which is what 4.3's "durable record" should mean. devcroft's own
+      proxy log is a log; this is evidence.
 - [ ] 4.2 Bounded timeout, denying on expiry, on approver error, and on no
       approver — with the three distinguishable to the agent and in the record.
 - [ ] 4.3 Durable record of every request, decision and reason.

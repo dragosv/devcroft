@@ -107,6 +107,24 @@ nono gate its trust module behind a Cargo feature; it is deliberately
 left for the owner to send, since filing an issue on a third-party repo
 is an external action an agent should not take unprompted.
 
+**`add-egress-proxy` now adopts a second crate from the same project,
+`nono-proxy` 0.74.0** (its design.md E6), and the same objection applies
+again with a measured number: **116 additional crates**. That is the same
+order as the trust tail above. It was taken anyway, for a reason worth
+knowing before anyone reopens it: devcroft had already written its own
+CONNECT proxy, the two turned out to have converged on the identical
+architecture, and reading the crate's config surfaced a property devcroft's
+version lacked — a per-session `Proxy-Authorization` token, without which a
+loopback proxy is an open relay lending its sandbox's allowlist to any
+local process. The choice is between owning that class of
+security-sensitive detail or importing it; the dependency graph is the
+price of the second.
+
+Three of that crate's capabilities are **off by decision, not by
+omission** — TLS interception (an explicit non-goal), SPIFFE, and AWS
+routing. Enabling any of them is a change to what devcroft claims, not a
+configuration tweak.
+
 Skills `/opsx:propose`, `/opsx:update`, `/opsx:apply`, `/opsx:archive`,
 `/opsx:sync`, and `/opsx:explore` drive the workflow.
 

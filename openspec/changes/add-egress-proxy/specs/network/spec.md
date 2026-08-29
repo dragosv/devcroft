@@ -79,3 +79,35 @@ egress to permitted destinations, and SHALL NOT claim exfiltration is prevented.
 
 - **WHEN** an allowlisted destination accepts uploads
 - **THEN** the tooling makes clear that it remains an outbound channel
+
+### Requirement: The proxy endpoint is authenticated, not merely local
+
+The proxy SHALL require callers to authenticate, and SHALL reject requests
+that do not. Binding to loopback SHALL NOT be treated as sufficient
+authorisation.
+
+Loopback is a reachability boundary, not an authorisation one. Every process
+on the host can reach it, including processes devcroft did not start and
+sandboxes other than the one the proxy serves. An unauthenticated proxy is
+therefore an open relay that lends its sandbox's allowlist to anything local
+— which inverts the property the allowlist exists to provide.
+
+This was missed on the first implementation, and recorded as satisfied "by
+construction" on the reasoning that separate proxy processes share no state.
+They do not; they share the loopback interface, which is the surface that
+matters.
+
+#### Scenario: An unauthenticated local caller
+
+- **WHEN** a process that is not the sandbox this proxy serves connects to the
+  proxy endpoint without valid credentials
+- **THEN** the request is refused
+- **AND** it is refused before any allowlist decision is made, since the
+  question of *whose* allowlist applies has not been answered
+
+#### Scenario: Two sandboxes with different allowlists
+
+- **WHEN** two sandboxes are running with different `network.allow` lists
+- **THEN** neither can reach a destination only the other allows
+- **AND** this holds because each proxy authenticates its own client, not
+  merely because the two run as separate processes

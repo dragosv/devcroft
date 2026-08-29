@@ -48,6 +48,16 @@ one backend the interesting axis is no longer *backend versus backend* but
 **offered versus adopted**: what the sandbox library provides, and what devcroft
 actually uses.
 
+**The axis has already paid for itself, before the change is built.** An
+audit of what `nono`/`nono-proxy` offer against what devcroft uses turned up
+three capabilities answering requirements devcroft had already written as
+open — credential brokering for `add-agent-workload`, approval hooks for
+`add-agent-interaction`, and audit integrity for that change's durable
+record — plus one property devcroft's own proxy was missing and had recorded
+as satisfied: a per-session token, without which a loopback proxy is an open
+relay. None of that was discoverable from the prose, which is the argument
+for the matrix in one paragraph.
+
 That axis turns out to be wide. devcroft sets exactly one of the library's
 capability knobs (`signal_mode`) and inherits the defaults for the rest —
 `ProcessInfoMode`, `IpcMode`, resource limits, snapshot/undo, the keystore —

@@ -88,6 +88,74 @@ resolves to addresses that may host other services; the resolved-IP scope may be
 wider than intended. This is a real gap and it is the reason the non-goal above
 says "constrained", not "prevented".
 
+## E6 — Adopt `nono-proxy` rather than growing devcroft's own
+
+**Decision.** Replace devcroft's hand-written CONNECT loop
+(`proxy::server`) with the `nono-proxy` crate, pinned to the same `0.74.0`
+as the `nono` library devcroft already depends on. The resident process
+stays devcroft's (`__egress_proxy`); what changes is that it calls
+`nono_proxy::start(ProxyConfig)` instead of running its own accept loop.
+
+**Rationale — and the first argument is not "more features".** devcroft's
+proxy and `nono-proxy` independently arrived at the identical architecture.
+That crate's own module doc says: "The proxy runs **unsandboxed** in the
+supervisor process. The sandboxed child can only reach `localhost:<port>`
+via `NetworkMode::ProxyOnly`." That is, sentence for sentence, what E1/E2
+argued for and what task 0 measured. Two implementations converging is
+good evidence the design is right — and poor justification for maintaining
+the second one.
+
+**The finding that turned this from "nice" into "should".** Reading
+`ProxyConfig` surfaced a property devcroft's implementation does not have
+and whose absence was not noticed:
+
+> `require_auth`: the token is the localhost auth boundary that stops other
+> local processes from using the proxy.
+
+devcroft's proxy authenticates nothing. It binds loopback and serves
+whoever connects, so any local process can use a sandbox's allowlisted
+egress. Worse, this change's own task list recorded the opposite as
+satisfied — "no state is shared between two sandboxes' proxies, so there is
+nothing that *could* leak" — reasoning about process state while missing
+the network surface entirely. A per-session `Proxy-Authorization` token is
+the fix, and it is one of several such details that only appear once
+someone has run a proxy in production.
+
+**What comes with it, mapped to requirements devcroft has already written
+as open:**
+
+| capability | devcroft requirement it answers |
+| --- | --- |
+| reverse-proxy credential injection | `add-agent-workload`'s "the backend's credential mechanism", which does not otherwise exist |
+| `jwt_phantom` | a bug devcroft would have hit: consumers that validate token *structure* reject an opaque placeholder before any request is made |
+| `start_with_approval` | `add-agent-interaction`'s approval half, at the L7 endpoint level |
+| append-only audit with chain + Merkle commit | `add-agent-interaction`'s "durable record of every request and decision" |
+| L7 endpoint policy (`SERVICE:METHOD:PATH`) | nothing yet — but "allow github.com, GET only" is a real want this change cannot currently express |
+| upstream/corporate proxy chaining | nothing yet; a real deployment constraint devcroft has not considered |
+
+**The cost, stated rather than buried.** 116 additional crates, measured.
+That is the same order as the 141-crate trust tail `use-nono-library`
+recorded as its one objection and the owner accepted reluctantly. This is a
+second helping of that trade, and it is the project owner's call rather
+than an obvious win: the alternative is reimplementing session-token auth,
+credential injection, phantom shaping and audit integrity in devcroft,
+which is a large amount of security-sensitive code to own for the sake of a
+smaller dependency graph.
+
+**What devcroft keeps.** The process, its lifecycle, and the policy
+integration: `crate::proxy::spawn`, the pidfile, `up`/`down`/`rm`
+ownership, `CompiledPolicy::network_proxy_port`, and the `NetworkMode::
+ProxyOnly` kernel gate. `nono-proxy` supplies the loop inside the process,
+not the process. This preserves E1's placement argument intact and keeps
+the fail-closed property, which is structural (the kernel gate permits one
+port whether or not anything listens on it).
+
+**What devcroft does not take.** TLS interception stays a non-goal — the
+crate supports it, this change refuses it, and adopting the crate must not
+be read as adopting that. Same for SPIFFE and the AWS-specific routing:
+present in the dependency, unused by devcroft, and not to be enabled
+silently.
+
 ## E5 — Refusals must be legible
 
 **Decision.** A refused connection reports the destination and the rule that

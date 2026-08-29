@@ -29,10 +29,26 @@ request.
 
 ### Requirement: Key-shaped credentials are delivered as environment variables
 The system SHALL deliver an API-key-shaped credential to the sandbox as
-an environment variable through the backend's credential mechanism,
-without granting any filesystem path for it. The secret's value SHALL NOT
-be written into the compiled policy, into `meta.json`, or into any file
-under the state directory.
+an environment variable, without granting any filesystem path for it. The
+secret's value SHALL NOT be written into the compiled policy, into
+`meta.json`, or into any file under the state directory.
+
+**"The backend's credential mechanism" is no longer a placeholder.** This
+requirement previously deferred to one, and an adversarial review correctly
+objected that none existed — the process backend had no broker, so the
+implementation would have been ordinary environment injection inherited by
+every keeper descendant, described as something stronger. That objection
+stands against *this* requirement, which is why the wording above now says
+plainly what it does: an environment variable, with the exposure that
+implies, stated in "The residual exposure is stated, not implied" below.
+
+The stronger mechanism now has a home: `add-egress-proxy` adopts
+`nono-proxy` (its design.md E6), whose reverse-proxy mode injects the real
+credential at the proxy while the sandbox holds only a placeholder. That is
+the capability-not-custody property `docs/threat-model.md` describes, and
+it is specified separately below rather than folded in here, because the
+two deliver genuinely different guarantees and a manifest should be able to
+ask for either.
 
 #### Scenario: Key credential grants no filesystem access
 - **WHEN** an API-key credential is requested
@@ -93,3 +109,52 @@ edit.
 - **WHEN** a user consults the documentation for credential support
 - **THEN** it states that in-sandbox code can read an exposed credential,
   rather than implying the credential is isolated from it
+
+### Requirement: A credential may be brokered so the sandbox never holds it
+
+For a credential used to reach a network service, the system SHALL support
+delivering a **placeholder** to the sandbox while the real secret is injected
+outside it, at the egress proxy, on requests to the declared upstream. The real
+value SHALL NOT be present in the sandbox's environment, filesystem, or memory.
+
+This is a stronger guarantee than environment delivery and is not a
+replacement for it: a credential consumed by something other than an HTTP call
+cannot be brokered this way, and must still be delivered directly with its
+exposure stated. A manifest declares which it wants; devcroft does not silently
+choose.
+
+The mechanism is the proxy devcroft already runs for egress
+(`add-egress-proxy`), which is why this is expressible at all — the proxy sits
+outside the sandbox's policy domain by construction, so a secret held there is
+not reachable by `ptrace` or `/proc/<pid>/mem` from inside.
+
+#### Scenario: A brokered credential is used
+
+- **WHEN** the agent makes a request to an upstream for which a brokered
+  credential is declared
+- **THEN** the upstream receives the real credential
+- **AND** nothing inside the sandbox ever held it
+
+#### Scenario: The agent inspects its own environment
+
+- **WHEN** a process inside the sandbox reads the environment, its own memory,
+  or the filesystem looking for the credential
+- **THEN** it finds only the placeholder
+- **AND** the placeholder is useless against the upstream directly
+
+#### Scenario: A placeholder must survive client-side validation
+
+- **WHEN** the consuming client checks a credential's *structure* before using
+  it — a JWT-shaped token, for instance
+- **THEN** the placeholder satisfies that check
+- **AND** the request still reaches the proxy for substitution, rather than
+  being rejected client-side before any request is made
+
+#### Scenario: A credential that cannot be brokered
+
+- **WHEN** a declared credential is consumed by something other than a request
+  through the proxy
+- **THEN** brokering is refused rather than silently downgraded to environment
+  delivery
+- **AND** the manifest must ask for direct delivery explicitly, with the
+  exposure that carries

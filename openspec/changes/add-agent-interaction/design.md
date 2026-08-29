@@ -131,3 +131,14 @@ the question arises, which is exactly the assumption fleet breaks.
    attached operator; a file or socket assumes an external tool. This is the
    question that decides whether the approval half is usable in a fleet at all,
    and it should be answered before the half is built rather than during.
+
+   **Partly answered by `add-egress-proxy` adopting `nono-proxy`.** That crate
+   takes an `ApprovalBackend` directly (`start_with_approval`), and routes
+   named backends through an `ApprovalBackendRegistry` for L7 endpoint-policy
+   `approve` decisions. So *where the hook goes* is settled for the network
+   half: devcroft already runs that proxy, and it already accepts the trait.
+   What remains open is narrower and still the real question — **who
+   implements it**, and specifically whether a fleet-usable implementation
+   exists that does not assume an attached operator. Note the scope limit:
+   this covers approvals for network endpoints. A denied *filesystem* path
+   goes through `nono::supervisor` instead, which is a separate adoption.
