@@ -2,14 +2,23 @@
 
 ## Context
 
-See `proposal.md` — Why. The short version: at the `process` tier no
-namespace separation exists between sandboxes, so distinct ports have to
-be *chosen* rather than isolated. At the `hardened` tier that is only
-true when egress is granted; a deny-default hardened sandbox already
-gets its own network namespace from `oci_spec::build`, and needs no
-allocation at all. **Scope follows the resolved network mode, not the
-tier**, and the proposal's earlier blanket claim to the contrary was
-wrong.
+See `proposal.md` — Why. The short version: devcroft's sandboxes share
+the host's loopback, so distinct ports have to be *chosen* rather than
+isolated. A `network.ports` grant is a Landlock `NetPort` rule — it says
+which ports this process tree may bind, not which network stack it binds
+them in — so two sandboxes granted the same port are contending for the
+same one.
+
+**Scope follows whether a sandbox has its own network namespace, not
+which sandbox implementation it uses.** That principle is unchanged from
+the original version of this document; only the set of cases it ranges
+over shrank. It used to distinguish `process` (shared loopback) from
+`hardened` with egress (also shared) from `hardened` deny-default (its
+own netns via `oci_spec::build`). `remove-gvisor-backend` deleted that
+tier and its OCI spec, leaving exactly one live case: shared, always.
+The second case returns with `add-linux-agent-fleet`, which gives each
+agent its own netns — see D8 there for the in-namespace-port-plus-
+optional-host-mapping model this change must not fight.
 
 Two existing facts make this tractable:
 
@@ -35,10 +44,12 @@ Two existing facts make this tractable:
 
 **Non-Goals:**
 
-- Network namespace separation *as something this change would add*. The
-  hardened tier already requests one for deny-default sandboxes
-  (`oci_spec::build`); the `process` tier cannot, and this change does
-  not try to give it one.
+- Network namespace separation *as something this change would add*.
+  devcroft's current sandbox cannot create one, and this change does not
+  try to give it one — `add-linux-agent-fleet` is where namespaces come
+  from. Allocation is the answer for sandboxes that share a loopback;
+  it is not a substitute for isolation, and it stops being needed
+  (inside the namespace) once real isolation exists.
 - Rewriting service commands to inject ports. devcroft does not own
   them, and a rewriter that parses arbitrary shell would be both fragile
   and a surprise.

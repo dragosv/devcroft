@@ -7,6 +7,26 @@
 Provider activation SHALL run inside a provisioning sandbox. No provider's
 activation SHALL execute unconfined on the host.
 
+**Scoped to project shell, deliberately.** "Activation" here means the
+arbitrary shell a project supplies and the provider executes — flox's
+`[hook].on-activate`, devbox's `shell.init_hook`. It does **not** claim
+that no repository-controlled input is interpreted host-side at all,
+because for at least one supported provider that would be false:
+resolving a nix project runs `nix flake metadata` and `nix print-dev-env
+--json`, both of which evaluate `flake.nix`, which the repository
+controls. Neither runs `shellHook` — that is the property
+`fix-provisioning-hooks` measured and CLAUDE.md states — but evaluating a
+repository's Nix expressions is not the same as executing nothing from
+that repository.
+
+The distinction is load-bearing rather than pedantic: a Nix evaluation is
+constrained by the evaluator (a pure functional language, no arbitrary
+syscalls, no ambient shell), while an activation hook is a shell with
+whatever authority the calling process had. Confining the second is what
+this change delivers. Narrowing the first — or qualifying which
+evaluators are trusted to be sandboxes in their own right — is separate
+work this requirement must not be read as having done.
+
 #### Scenario: Activation with a hook
 
 - **WHEN** a project's activation runs arbitrary shell as part of resolution
@@ -16,13 +36,25 @@ activation SHALL execute unconfined on the host.
 #### Scenario: Repository not reviewed by the user
 
 - **WHEN** `up` runs on a repository whose contents the user has not inspected
-- **THEN** nothing in that repository executes outside the provisioning sandbox
-- **AND** the boundary applies before any of the project's own code runs
+- **THEN** no shell that repository supplies executes outside the provisioning
+  sandbox
+- **AND** the boundary applies before any of the project's own shell runs
+
+#### Scenario: A provider evaluates repository-controlled definitions
+
+- **WHEN** a provider resolves by evaluating a repository-controlled
+  definition rather than by executing project shell — `flake.nix` under
+  `nix print-dev-env --json`, a `devbox.json` under `shellenv --pure`
+- **THEN** that evaluation is permitted to run host-side, bounded by the
+  provider's own evaluator rather than by the provisioning sandbox
+- **AND** the residual exposure is stated rather than implied: what
+  constrains it is the evaluator's own semantics, and devcroft is
+  relying on that rather than enforcing it
 
 #### Scenario: Provider needs no execution to resolve
 
-- **WHEN** a provider resolves by reading structured data rather than executing
-  project shell
+- **WHEN** a provider resolves by reading structured data, executing neither
+  project shell nor a repository-controlled expression
 - **THEN** it retains that path
 - **AND** it is still described by a provisioning profile, so every provider's
   reach is inspectable by the same mechanism

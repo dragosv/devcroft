@@ -14,37 +14,32 @@ N > 1, which is the only N that matters for the claim.
 The reason is mundane and structural. A project declares its port in
 `devcroft.toml`, that file is committed, and every git worktree of the
 repo therefore declares the *same* port. Two sandboxes both asking for
-5432 collide with `EADDRINUSE`. At the `process` tier there is no
-PID/mount/net namespace separation between sandboxes (`add-mvp-core`
-design.md Decision 5), so both are binding the same host loopback.
-
-**This is tier-dependent, and an earlier version of this proposal got it
-wrong.** It claimed the hardened tier adds no namespace separation
-either, reasoning from `runsc` rejecting `--network=sandbox` under
-`--rootless`. That fact is true and irrelevant: separation at the
-hardened tier does not come from runsc's netstack, it comes from the
-network namespace devcroft *itself* requests in the OCI spec.
-`oci_spec::build` pushes a `network` namespace entry whenever the policy
-resolves to `NetworkMode::None` — asserted by
-`deny_all_policy_produces_network_none_and_a_fresh_netns` — so a
-hardened sandbox with a deny-default network already has its own
-loopback and cannot collide with anything.
-
-That reshapes the change rather than motivating it away:
-
-- **At `process`, allocation is the fix**, exactly as described above.
-- **At `hardened` with egress granted** (`NetworkMode::Host`, which
-  shares the host's namespace), the collision is real and allocation
-  applies identically.
-- **At `hardened` with a deny-default network**, there is nothing to
-  allocate around: each sandbox has its own loopback, the committed
-  5432 works unchanged in all N of them, and allocating would only
-  replace a predictable port with an unpredictable one.
+5432 collide with `EADDRINUSE`. There is no PID/mount/net namespace
+separation between sandboxes (`add-mvp-core` design.md Decision 5), so
+both are binding the same host loopback — a `network.ports` grant is a
+Landlock `NetPort` rule about which ports this process tree may bind,
+not a separate stack to bind them in.
 
 So the fix is allocation *where the collision exists*, and the scope is
-decided by resolved network mode, not by tier alone. Where it applies it
-must also be **discoverable**, since a port nobody can find is no more
-useful than a port that collides.
+decided by whether a sandbox has its own network namespace. Where it
+applies it must also be **discoverable**, since a port nobody can find
+is no more useful than a port that collides.
+
+**Rewritten after `remove-gvisor-backend`.** This section used to
+enumerate three cases — `process` (shared loopback), `hardened` with
+egress granted (also shared), and `hardened` deny-default (its own netns
+from `oci_spec::build`, so nothing to allocate around). That tier and
+the OCI spec that gave it a namespace are gone, collapsing all three
+into one: every sandbox shares the host loopback, so allocation always
+applies. The principle the old text arrived at — scope follows the
+resolved network mode, not the tier — is the part worth keeping, and it
+is what makes this rewrite mechanical rather than a redesign.
+
+The second case comes back with `add-linux-agent-fleet`, which gives
+each agent its own netns. There the in-namespace port is authoritative
+and identical across agents (fleet design D8), and the host-side mapping
+is fleet's to allocate, not this change's. Whichever lands second must
+consume the other's model rather than define a parallel one.
 
 This is also the second half of a problem whose first half is already
 proposed elsewhere: `add-agent-workload` fixes N worktrees silently
@@ -115,16 +110,15 @@ broken.
 
 - Two sandboxes from two worktrees of one repo, with the identical
   committed manifest, both come up with the same declared service and
-  neither collides — at the `process` tier, and at `hardened` when
-  egress is granted. (With a hardened deny-default network they already
-  don't collide; see Why.)
+  neither collides.
 - Each reports its own port through `status`, and **a client running
   inside that sandbox** (`devcroft exec`) reaches its own service on the
-  reported port. Stated from inside deliberately: at `hardened` with a
-  deny-default network a host-side client cannot reach the port at all,
-  and at `process` "reaches the right one" is guaranteed by the numbers
-  differing rather than by any isolation. Promising host-side
-  reachability would promise something allocation cannot deliver.
+  reported port. Stated from inside deliberately: "reaches the right
+  one" is guaranteed by the numbers differing, not by any isolation —
+  every sandbox shares the host loopback, so a host-side client could
+  reach *either* sandbox's service by number alone. Promising anything
+  stronger would promise something allocation cannot deliver, and
+  cannot until fleet's namespaces exist.
 - The port survives `down` then `up` for the same sandbox: a connection
   string stays valid for the sandbox's life.
 - `policy --render` shows the allocated port with an origin identifying

@@ -39,10 +39,20 @@ does not do: `npm ci`, `poetry install`, generating a `.env`, running
 migrations, `git config`, writing into `~/.cache`. Expecting hooks to touch only
 Nix-related paths is not a realistic assumption to build on.
 
-The nix provider does not have this problem — it reads the dev shell's
-environment as structured data and never evaluates the `shellHook`. This change
-gives the other providers a comparable property by a different route: not by
-avoiding execution, but by confining it.
+The nix provider does not have *this* problem — `print-dev-env --json`
+returns the dev shell's environment as data and never evaluates the
+`shellHook`. This change gives the other providers a comparable property by a
+different route: not by avoiding execution, but by confining it.
+
+Worth being exact about what "as data" does and does not cover, since a
+reviewer flagged the looser reading of this sentence as an overclaim:
+producing that JSON means **evaluating `flake.nix`**, which the repository
+controls. What nix avoids is running the project's *shell*; it does not avoid
+interpreting the project's Nix. The difference that makes this acceptable is
+the evaluator — pure, no ambient shell, no arbitrary syscalls — not an absence
+of repository-controlled input. The `env-provider` delta spec states the same
+boundary normatively; neither document should be read as claiming nothing from
+an unreviewed repository is interpreted host-side.
 
 ## What Changes
 

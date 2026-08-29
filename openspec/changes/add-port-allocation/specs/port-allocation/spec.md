@@ -12,27 +12,44 @@ actually connect to it.
 ### Requirement: Allocation applies where a collision is possible
 The system SHALL apply allocation to sandboxes that share a loopback
 with other sandboxes, and SHALL NOT allocate for a sandbox that has its
-own network namespace. Sandboxes at the `process` tier, and sandboxes at
-the `hardened` tier whose policy grants egress, share the host's
-loopback; a `hardened` sandbox with a deny-default network is given its
-own network namespace by the generated OCI spec and cannot collide with
-another sandbox at all. For those, allocating would replace a
-predictable committed port with an unpredictable one and fix nothing.
+own network namespace.
 
-Where allocation does not apply, a manifest requesting it SHALL still be
-valid, and `status` SHALL report the port as the declared value rather
-than silently omitting the request.
+Today every sandbox shares the host's loopback, so allocation always
+applies. devcroft has one sandbox boundary (`remove-gvisor-backend`), and
+it grants loopback ports via a Landlock `NetPort` rule — a rule about
+which ports this process tree may bind, not a separate network stack to
+bind them in. Two sandboxes granted `5432` are binding the same `5432`.
 
-#### Scenario: Allocated at the process tier
-- **WHEN** a sandbox at the `process` tier requests allocation
-- **THEN** devcroft chooses a port, and two such sandboxes from the same
-  committed manifest receive different ones
+The exemption is written for the case that will exist rather than one
+that does: `add-linux-agent-fleet` gives each agent its own network
+namespace, at which point the in-namespace port is authoritative and
+identical for every agent (that change's design D8), and allocating
+inside it would replace a predictable committed port with an
+unpredictable one while fixing nothing. **The host-side mapping fleet
+layers on top of that is fleet's to define, not this change's** — this
+requirement only commits to not fighting it.
 
-#### Scenario: Not allocated when the sandbox has its own loopback
-- **WHEN** a sandbox at the `hardened` tier with a deny-default network
-  requests allocation
-- **THEN** the declared port is used unchanged, and `status` reports it
-  as declared rather than allocated
+**Reconciled after `remove-gvisor-backend`.** This requirement previously
+discriminated on the `process` vs `hardened` tier, because a
+deny-default `hardened` sandbox got its own netns from the generated OCI
+spec. That tier and its OCI spec are gone, so both branches of the old
+rule collapsed into one — and the underlying principle, which the
+proposal already stated correctly ("scope follows the resolved network
+mode, not the tier"), survives the removal unchanged. It just has one
+live case now instead of three.
+
+#### Scenario: Two sandboxes from one committed manifest
+- **WHEN** two sandboxes created from the same committed manifest each
+  request allocation
+- **THEN** devcroft chooses a port for each, and the two differ
+
+#### Scenario: A sandbox with its own network namespace
+- **WHEN** a sandbox has its own network namespace, so no other sandbox
+  can bind the same loopback port
+- **THEN** allocation does not apply, and the manifest's declared port is
+  used unchanged
+- **AND** this case has no live instance until fleet exists; a manifest
+  written for it today is simply allocated normally
 
 ### Requirement: Allocation is requested by variable, not by number
 The system SHALL allow a manifest to request that devcroft choose a

@@ -3,17 +3,27 @@
 > Added after review found the proposal's central premise contradicted by
 > the project's own code. Do this group first: it decides how much of the
 > rest applies.
+>
+> **Reduced to one task by `remove-gvisor-backend`.** 0.1 and 0.3 asked
+> about the `hardened` tier's own network namespace, which came from an
+> OCI spec (`src/gvisor/oci_spec.rs`) that no longer exists — 0.1 would
+> have had a deleted file to confirm against, and 0.3 a tier `config`
+> now rejects outright. Both are struck rather than reworded: the case
+> they covered has no live instance, and the case that replaces it
+> (fleet's per-agent netns) belongs to `add-linux-agent-fleet`, which
+> owns the namespace and the host-side mapping alike. 0.2's principle is
+> what survives, with one live branch instead of three.
 
-- [ ] 0.1 Confirm against `src/gvisor/oci_spec.rs` that a `hardened`
-      sandbox with a deny-default network already gets its own network
-      namespace (`deny_all_policy_produces_network_none_and_a_fresh_netns`),
-      so no collision exists there and allocation must not apply
-- [ ] 0.2 Gate allocation on the **resolved network mode**, not the
-      isolation tier: applies at `process`, and at `hardened` only when
-      egress is granted (`NetworkMode::Host`)
-- [ ] 0.3 Test: a `hardened` deny-default sandbox requesting allocation
-      keeps its declared port unchanged, and `status` says so rather
-      than silently ignoring the request
+- [x] ~~0.1 Confirm against `src/gvisor/oci_spec.rs`...~~ **Struck:**
+      the tier, its OCI spec, and the test named here were deleted by
+      `remove-gvisor-backend`. Nothing to confirm.
+- [ ] 0.2 Gate allocation on whether the sandbox **has its own network
+      namespace**, not on which sandbox implementation it uses. Today
+      that is always false, so allocation always applies; keep the gate
+      rather than hardcoding "always" so fleet has the seam it needs
+- [x] ~~0.3 Test: a `hardened` deny-default sandbox...~~ **Struck:** a
+      `hardened` manifest now fails at layer `config` before any of this
+      runs. The equivalent test belongs to fleet, against a real netns
 
 ## 1. Config surface
 
