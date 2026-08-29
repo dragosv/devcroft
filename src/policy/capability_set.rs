@@ -210,10 +210,32 @@ impl CapabilityPlan {
 /// `filesystem_read` entry — same `is_within` containment model `why.rs`
 /// already uses for attribution, applied here to reject a conflict devcroft
 /// cannot enforce rather than compile a sandbox that silently doesn't.
+///
+/// Includes an *exact* match between a deny and an allow entry, not just a
+/// strictly nested one — `is_within(x, x)` is true by construction, and an
+/// earlier version of this function excluded that case with `deny !=
+/// allow`, on the reasoning (never written down, reconstructed by git
+/// history and by checking which entries can ever produce an exact match
+/// at all) that identical strings "aren't really overlapping". They are:
+/// `DEVCROFT_DATA_DIR` is the only `filesystem_deny` entry `policy::compile`
+/// ever pushes unconditionally (`SENSITIVE_PATHS` entries are *omitted* from
+/// deny when granted, so they never reach this function carrying the same
+/// string an allow entry does), so the only way `deny == allow` could ever
+/// happen was a manifest granting `~/.local/share/devcroft` verbatim — and
+/// the exclusion let that compile silently. Confirmed live: `policy
+/// --render` showed the grant under `filesystem.allow`, the baseline deny
+/// unchanged underneath it, `why` reported the path DENIED, and Landlock got
+/// a real read-write grant to the directory holding this sandbox's
+/// ephemeral SSH host key — the exact "baseline denials always win,
+/// including devcroft's own data dir" invariant this project states as
+/// load-bearing, silently violated by two checks each independently
+/// assuming the other would catch it. `DEVCROFT_DATA_DIR`'s own doc comment
+/// already says "never overridable by the manifest"; this is what makes
+/// that literally true rather than aspirational.
 fn check_no_deny_overlaps_allow(plan: &CapabilityPlan) -> Result<(), CapabilitySetError> {
     for deny in &plan.filesystem_deny {
         for allow in plan.filesystem_allow.iter().chain(&plan.filesystem_read) {
-            if deny != allow && is_within(deny, allow) {
+            if is_within(deny, allow) {
                 return Err(CapabilitySetError::DenyOverlapsAllow {
                     deny: deny.clone(),
                     allow: allow.clone(),
@@ -475,6 +497,37 @@ mod tests {
             .to_capability_set(&root)
             .unwrap_err();
         assert!(matches!(err, CapabilitySetError::DenyOverlapsAllow { .. }));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// The exact-match case this function used to exclude with `deny !=
+    /// allow`: `policy::compile` pushes `DEVCROFT_DATA_DIR`
+    /// ("~/.local/share/devcroft") into `filesystem_deny`
+    /// unconditionally, so a manifest granting that exact path verbatim
+    /// used to produce `deny == allow` and slip past this check entirely
+    /// — the one entry `compile`'s own doc comment says is "never
+    /// overridable by the manifest". Confirmed live before this fix: the
+    /// grant compiled, `why --path ~/.local/share/devcroft --op
+    /// readwrite` reported it DENIED as baseline, and Landlock got a real
+    /// read-write grant to the directory holding the sandbox's ephemeral
+    /// SSH host key. Must now fail identically to the nested case above.
+    #[test]
+    fn exact_match_between_deny_and_allow_is_also_a_compile_error() {
+        let root = project_dir();
+        std::fs::create_dir_all(&root).unwrap();
+        let (manifest, _) = parse(
+            "[sandbox]\nname = \"capsettest\"\n[filesystem]\nallow = [\".\", \"~/.local/share/devcroft\"]\n",
+        )
+        .unwrap();
+
+        let err = compile(&manifest)
+            .to_capability_plan()
+            .to_capability_set(&root)
+            .unwrap_err();
+        assert!(
+            matches!(err, CapabilitySetError::DenyOverlapsAllow { .. }),
+            "expected a DenyOverlapsAllow error, got: {err}"
+        );
         let _ = std::fs::remove_dir_all(&root);
     }
 

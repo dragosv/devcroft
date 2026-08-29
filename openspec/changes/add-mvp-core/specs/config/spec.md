@@ -101,10 +101,28 @@ the sensitive-path warning, baseline-deny-unless-granted) reasons about, and
 none of those checks may be silently bypassed by what the string actually
 resolves to on disk.
 
-#### Scenario: Deny wins over allow
+#### Scenario: A deny nested inside a broader allow is rejected, not narrowed
 - **WHEN** `allow = ["~"]` and `deny = ["~/.ssh"]`
-- **THEN** validation succeeds and the compiled policy grants `~` minus
-  `~/.ssh`
+- **THEN** compilation fails naming both entries, rather than succeeding
+  with a compiled policy that grants `~` minus `~/.ssh`
+- **AND** this holds identically when the two entries are the *same*
+  string, not only when one nests inside the other — a manifest granting
+  `~/.local/share/devcroft` (devcroft's own data dir, which every
+  compilation denies unconditionally per the "Baseline denials"
+  requirement) verbatim fails the same way, not silently
+
+**Corrected from an earlier, aspirational version of this scenario.**
+Landlock is purely additive — there is no deny primitive to carve a hole
+out of a broader grant with, confirmed live against `nono-cli` itself
+refusing to start on exactly this shape ("Landlock deny-overlap is not
+enforceable on Linux"). A literal "`~` minus `~/.ssh`" was never
+achievable; a compile-time rejection is what "deny wins" actually means
+under this constraint — the sandbox does not start with a grant broader
+than intended, rather than starting with one. `policy::capability_set`'s
+own module doc has stated this since `use-nono-library`; this scenario
+had not been updated to match until a review of the exact-match variant
+above found the two describing different outcomes for the same
+architecture.
 
 #### Scenario: Sensitive-path warning
 - **WHEN** `allow` includes a known credential directory (`~/.ssh`, `~/.aws`,
