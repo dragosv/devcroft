@@ -113,8 +113,14 @@ same reason.
 ### Requirement: Fleet state records durable identity separately from runtime facts
 
 Fleet SHALL persist, per agent, a stable identity: its workspace, its cgroup
-path, its lifecycle state, its policy fingerprint and its port mappings. Facts
+path, its lifecycle state, its policy fingerprint, its port mappings, and
+whether that agent needs attention (`add-agent-interaction`). Facts
 reconstructible after a crash SHALL NOT be persisted as though authoritative.
+
+Attention belongs in this record rather than being added later, and the reason
+is fleet-specific: an agent that stops to ask something is the normal case at
+N > 1, and "which of my agents is blocked" is a listing question. A record
+without it forces the answer to be a search.
 
 The distinction matters at recovery: a supervisor restarting after a crash must
 be able to tell an agent it still owns from a stale record, and must not adopt

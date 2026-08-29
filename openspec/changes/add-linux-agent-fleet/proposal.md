@@ -25,6 +25,13 @@
   runs coding agents; it does not define what a coding agent *is*, how its
   runtime is declared, or how its credentials reach it. See "Composing with
   the agent workload" below.
+- `add-agent-interaction` — for an agent that stops and needs something. Not a
+  hard dependency, but it should land **before** this change builds its
+  supervisor: an agent needing a decision is the normal case at N > 1, and its
+  per-agent record is cheaper to design with attention than to retrofit with
+  it. Fleet's whole premise — start N agents and come back later — fails
+  quietly without it, because the blocked agent is indistinguishable from the
+  busy ones.
 
 ## Why
 

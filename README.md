@@ -181,6 +181,9 @@ Run `openspec list` for live progress. The larger ones:
 - **`sandbox-provisioning`** — move provider resolution inside a boundary.
 - **`add-agent-workload`** — how an agent's own tooling and credentials are
   declared, rather than assumed present on the host.
+- **`add-agent-interaction`** — what happens when an agent stops and needs a
+  decision. Today nothing does: a blocked agent is indistinguishable from a
+  busy one, which is fine at N=1 and defeats the point of a fleet.
 - **`add-port-allocation`** — distinct ports for parallel sandboxes that share
   the host's loopback (the non-fleet case).
 

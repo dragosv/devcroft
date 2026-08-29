@@ -28,9 +28,15 @@ nobody can support — that is the point, not a setback.
       declaration only — rendering it to cgroups lived in the CLI devcroft
       stopped depending on (confirmed in `add-linux-agent-fleet` task 0).
 - [ ] 1.7 Snapshot/`undo`, keystore, audit: `not-adopted`.
-- [ ] 1.8 Per-agent network namespaces: Linux `enforced`, evidence
+- [ ] 1.8 `supervisor` (runtime capability approval): `not-adopted` **today,
+      with a named consumer** — `add-agent-interaction` adopts it to turn a
+      policy denial into a request an operator can answer. Worth recording as
+      an example of what this matrix is for: the mechanism has been shipped in
+      the library the whole time, devcroft solved nothing with it, and nothing
+      anywhere said so.
+- [ ] 1.9 Per-agent network namespaces: Linux `enforced`, evidence
       `tests/fleet_netns.rs`; macOS `unsupported`.
-- [ ] 1.9 Inter-sandbox process visibility: `not-adopted` outside fleet — the
+- [ ] 1.10 Inter-sandbox process visibility: `not-adopted` outside fleet — the
       known gap the README already publishes.
 
 ## 2. Surface it
