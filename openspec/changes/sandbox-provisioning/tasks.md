@@ -2,10 +2,35 @@
 
 ## 0. Spike first — this sizes the whole change
 
+- [ ] **Determine whether Flox can separate materialization from
+      `hook.on-activate` at all** — this precedes measuring grants, because
+      if it cannot, no grant set is the answer (design.md P2b/P2c, open
+      question 1). Check for any public, versioned materialize path, pre-hook
+      context, or separate hook runner. `--mode dev`, `--mode run` and
+      `--no-start-services` were already measured and all run the hook.
+      **A negative result is a valid, expected outcome**, not a reason to
+      widen the profile.
 - [ ] Measure what `flox activate` actually needs when confined: run it under a
       deny-by-default profile against a real project and add grants until it
       works. Record the minimal set. Candidates to check: the provider's config
-      and data directories, the nix daemon socket, `TMPDIR`, the terminal.
+      and data directories, `TMPDIR`, the terminal.
+      **Note what is deliberately absent from that list:** the nix daemon
+      socket. It used to appear here as an ordinary candidate grant, which is
+      exactly the conflation P2a rejects — measuring "does it work once I add
+      the daemon" would qualify a profile that hands host-global
+      materialization authority to project shell. Measure the *resolver's*
+      needs separately (below) and keep the hook's profile without it.
+- [ ] Measure what a **trusted resolver** needs, separately from the hook: what
+      materialization requires when no project code is running. This is the
+      half that legitimately holds daemon authority, and the point of measuring
+      it apart is to know exactly how much authority the split is protecting.
+- [ ] Qualify the hook-free paths for the two eligible providers —
+      `nix print-dev-env --json` and `devbox shellenv --pure` — as running
+      inside the provisioning worker with no daemon connection.
+- [ ] Implement the fail-closed provider-layer diagnostic for the blocked case:
+      a Flox environment with `hook.on-activate` under confined provisioning
+      fails naming the hook and why, and points at the upstream request rather
+      than suggesting a workaround (there isn't a safe one).
 - [ ] Repeat for `devbox`.
 - [ ] Confirm the environment can be written to a descriptor the supervisor
       holds, across the boundary, without a shell round trip.

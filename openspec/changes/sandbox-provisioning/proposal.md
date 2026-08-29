@@ -82,3 +82,11 @@ an unreviewed repository is interpreted host-side.
   effects.
 - Preventing a hook from modifying the project's own working tree. That is
   what hooks are for.
+- Treating read-write `/nix` access, or a connection to a host-global
+  package-manager daemon, as a narrow filesystem grant. Materialization
+  authority is modelled as its own capability (design.md P2a) and is never
+  handed to project-controlled activation code (P2b). A provider that cannot
+  separate the two fails closed rather than receiving either as a fallback —
+  which today means Flox environments with `hook.on-activate` (P2c). The
+  upstream request that would unblock them is drafted at
+  [docs/flox-confined-activation-issue.md](../../../docs/flox-confined-activation-issue.md).

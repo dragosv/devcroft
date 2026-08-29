@@ -23,12 +23,29 @@ the implementation before it resolves.
       parsing and formatting. Delegated scope creation, applying the limits,
       atomic teardown, metrics and the preflight check are all devcroft's, as
       section 1 already lists them. Sizing unchanged; one struct reused
-- [ ] Decide whether the re-exec helper is needed, or whether the library's
+- [x] Decide whether the re-exec helper is needed, or whether the library's
       child-safe operations cover everything the supervisor does after clone (D2).
+      **Decided: required.** Not because of the library — which does support
+      raw clone — but because the child must enter namespaces, run the identity
+      handshake, build a mount plan, become PID 1 and reap, and receive an
+      inherited listener. The library removing one reason for re-exec does not
+      remove the other five.
 - [ ] Pin the crate to an exact version and record the upgrade policy (D10).
 - [ ] Confirm the snapshot layer is the content-addressable `undo` module rather
       than an overlay, and measure agent startup cost at N agents on a
       representative worktree (Open Question 3).
+- [ ] **Spike (blocking): the seccomp notification listener handoff.** The
+      proxy-only filter traps `sendmsg`, so the listener FD cannot be passed
+      over an ordinary control socket after installation. Validate a bootstrap
+      (`CLONE_FILES`, or the pidfd route) that transfers it to the host's proxy
+      loop. **No proxy work starts until this resolves** (D9).
+- [ ] **Spike: slirp4netns with the exact flags fleet needs**, per supported
+      distribution — `--disable-host-loopback`, explicit inbound forwarding, no
+      automatic forwarding — verifying behaviour rather than binary presence
+      (D5). Blocked in this devcontainer until `/dev/net/tun` is available.
+- [ ] **Spike: systemd user-service delegation** — create the subtree, enable
+      controllers, move a child into a leaf, `cgroup.kill` it, and observe
+      `cgroup.events` report it empty (D6).
 - [ ] Decide the supported kernel floor and the degradation behaviour below it
       (Open Question 6). Note `SeccompNetFallback` and
       `probe_seccomp_block_network_support` already provide a network-blocking
@@ -36,7 +53,10 @@ the implementation before it resolves.
 
 ## 1. Resource control
 
-- [ ] Implement delegated slice creation and per-agent scope creation.
+- [ ] Run fleet as a systemd user service with `Delegate=yes`; discover the
+      cgroup via `/proc/self/cgroup` rather than assuming a fixed path.
+- [ ] Create the empty internal `fleet` node plus one domain leaf per agent;
+      keep the supervisor and each agent's host-side proxy out of the leaves.
 - [ ] Apply memory, CPU weight, IO weight and PID limits from configuration.
 - [ ] Implement teardown via `cgroup.kill`.
 - [ ] Read metrics and exit events from the agent's cgroup interface files.
@@ -103,12 +123,18 @@ the implementation before it resolves.
       has it. Without this, neither candidate can be evaluated at all,
       and the selection criteria D5 names (throughput on loopback-heavy
       workloads especially) are unmeasurable.
-- [ ] Implement connectivity into each netns using the selected helper.
+- [ ] Implement connectivity into each netns using slirp4netns (D5's baseline),
+      gated on the behavioural preflight above.
+- [ ] Install the proxy-only seccomp filter and transfer its listener to the
+      host proxy loop **before the keeper starts** (D9's phase-0 gate).
 - [ ] Host one proxy instance per agent in the supervisor, outside the sandbox.
 - [ ] Forward the proxy port into each agent namespace.
 - [ ] Attribute requests to agents by listener; include the agent ID in audit
       logs.
-- [ ] Test: no route out of the namespace except the forwarded proxy port.
+- [ ] Test: a direct socket is refused by the seccomp policy **even though the
+      network helper could route it**. The old wording ("no route out except
+      the forwarded proxy port") tested the helper's configuration; the point
+      is that the helper is not the boundary, so the test must defeat it.
 - [ ] Test: agent B's request to a destination only agent A allows is refused.
 - [ ] Revise any documentation claiming exfiltration is prevented.
 
@@ -119,8 +145,18 @@ the implementation before it resolves.
       maintenance when the fleet is idle.
 - [ ] Remove or block the upstream remote in agent clones; implement the
       integration step for accepted sessions.
-- [ ] Bind-mount the Nix daemon socket into each namespace.
-- [ ] Implement per-agent GC roots, released on agent exit.
+- [ ] Mount the provider's **resolved runtime paths read-only** into each
+      agent (closure paths for closure-tier providers; devcroft-owned artifact
+      paths plus explicit host library grants for qualified artifact-tier ones).
+      **Replaces "bind-mount the Nix daemon socket" and "per-agent GC roots",
+      which are struck.** Those tasks assumed agents hold package-manager
+      authority; `sandbox-provisioning` P2a/P2b establishes they must not, and
+      the multi-agent case is where that matters most — a host-global store is
+      shared by every agent, so granting one agent's project code authority
+      over it is authority over every other agent's toolchain. With no daemon
+      socket in any agent there are no per-agent GC roots to manage either.
+- [ ] Refuse, naming the requested authority, any workflow that needs a
+      package-manager daemon or a writable host-global store.
 - [ ] Test: concurrent commits across agents, no spurious lock failures.
 - [ ] Test: store GC during an active fleet retains all live paths.
 
@@ -143,32 +179,41 @@ the implementation before it resolves.
       upstream is not devcroft's to do. The port lives in the command
       string or in `vars`, neither of which devcroft can reliably parse,
       so the declaration has to be devcroft's own.
-- [ ] 5.2 Allocate host ports per agent; release on exit.
-- [ ] 5.3 Report mappings in agent status, distinguishing "no mappings
+- [ ] 5.2 Start each agent's declared service stack under that agent's keeper
+      and inside its cgroup leaf; gate agent readiness on those services being
+      ready, so a task dispatched to a ready agent does not race its own
+      database coming up.
+- [ ] 5.3 Allocate host ports per agent; release on exit.
+- [ ] 5.4 Report mappings in agent status, distinguishing "no mappings
       declared" from "mappings not yet established".
-- [ ] 5.4 Wire the same schema into the macOS single-developer path, and
+- [ ] 5.5 Wire the same schema into the macOS single-developer path, and
       surface the degradation there rather than letting a shared port
       read as a private one.
-- [ ] 5.5 Test: five agents bind the same declared port; each host mapping
+- [ ] 5.6 Test: five agents bind the same declared port; each host mapping
       reaches the correct agent.
-- [ ] 5.6 Test: a service whose command hardcodes its port runs unchanged
+- [ ] 5.7 Test: a service whose command hardcodes its port runs unchanged
       in every agent, with no warning. **The second half is the
       assertion that matters** — the same manifest under
       `add-port-allocation` must fail loudly, and a test that only checks
       "it works" would pass equally against an implementation that had
       wrongly copied that change's refusal into fleet.
-- [ ] 5.7 Test: a declared port naming a service the provider does not
+- [ ] 5.8 Test: a declared port naming a service the provider does not
       declare fails at `up`, distinguishably from a service that failed
       to start.
 
 ## 6. Hygiene and follow-up
 
-- [ ] Confirm the init helper leaves an insertion point between ruleset
-      application and exec, for `add-syscall-filtering` (D9). No filter is
-      implemented in this change.
+- [ ] Confirm the init helper leaves an insertion point between applying the
+      sandbox ruleset and starting the workload, for `add-syscall-filtering`.
+      **Reworded: D9 reversed.** This used to add "No filter is implemented in
+      this change", which is no longer true — the proxy-only seccomp filter is
+      now mandatory where egress is granted. What stays deferred is *general*
+      syscall-surface hardening, which is what the seam is for.
 - [ ] Integration test that exercises sandbox behaviour, to be run on every
       crate upgrade.
-- [ ] Revisit the two-tier isolation model against the two-axis reality
-      (Open Question 5); update the existing spec suite if the tiers collapse.
+- [x] ~~Revisit the two-tier isolation model against the two-axis reality.~~
+      **Struck:** `remove-gvisor-backend` deleted the second tier, so the axis
+      collapsed on its own. The remaining axis is single-environment versus
+      fleet, which is this change's subject.
 - [ ] Document the macOS-to-fleet path via a Linux VM, including where the
       worktree lives.

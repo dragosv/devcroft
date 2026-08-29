@@ -83,3 +83,53 @@ and SHALL report precisely which prerequisite is missing.
 - **WHEN** fleet commands are invoked on macOS
 - **THEN** the supervisor SHALL report that fleet is Linux-only and point to the
   VM-based path
+
+### Requirement: Per-agent endpoints are created before restriction
+
+Each agent SHALL have its own control and SSH sockets, created by the
+supervisor before that agent's restriction is applied, with mode 0600 inside a
+0700 state directory.
+
+This is the existing listener-before-restriction ordering applied per agent
+rather than per sandbox: Landlock and seccomp are inherited by children and
+cannot be joined from outside, so a socket that does not predate the
+restriction is unreachable for the agent's lifetime. The filesystem permissions
+remain the real access boundary — the same as for a single sandbox, and for the
+same reason.
+
+#### Scenario: Reaching one agent
+
+- **WHEN** a client connects to a specific agent's SSH endpoint
+- **THEN** it reaches that agent and no other
+- **AND** the socket's permissions, not its location, are what restrict access
+
+#### Scenario: Socket creation fails
+
+- **WHEN** an agent's sockets cannot be created
+- **THEN** that agent does not start
+- **AND** the failure does not leave a partially-started agent whose endpoints
+  are unreachable
+
+### Requirement: Fleet state records durable identity separately from runtime facts
+
+Fleet SHALL persist, per agent, a stable identity: its workspace, its cgroup
+path, its lifecycle state, its policy fingerprint and its port mappings. Facts
+reconstructible after a crash SHALL NOT be persisted as though authoritative.
+
+The distinction matters at recovery: a supervisor restarting after a crash must
+be able to tell an agent it still owns from a stale record, and must not adopt
+a cgroup or a port mapping that some other process now holds. Recording a live
+PID as durable identity is exactly the mistake — pids are reused, which the
+single-sandbox lifecycle already had to learn.
+
+#### Scenario: Supervisor restarts
+
+- **WHEN** the supervisor restarts while agents are running
+- **THEN** it reconciles its recorded agents against what is actually alive
+- **AND** it neither adopts an agent it no longer owns nor abandons one it does
+
+#### Scenario: A stale agent record
+
+- **WHEN** a recorded agent's processes are gone
+- **THEN** its record is reconciled rather than reported as running
+- **AND** its port mappings are released for reuse

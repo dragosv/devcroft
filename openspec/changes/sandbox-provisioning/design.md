@@ -46,6 +46,76 @@ Making them separate also makes the trade visible: `policy --render` shows what
 provisioning may reach, so "wider than runtime" is an inspectable fact rather
 than an implementation detail.
 
+## P2a — Materializing a Nix environment is not "`/nix` read-write"
+
+**Decision.** The provisioning profile keeps `/nix/store` **read-only**.
+Materialization happens through the `nix-daemon` socket, modelled as a distinct
+*package-manager capability*, never as a broad write grant on `/nix`.
+
+**Rationale.** The two are easy to conflate and are not the same thing at all.
+Writing to `/nix/store` directly would let activation place arbitrary content in
+a store every other environment on the machine reads from. Talking to the daemon
+is a request to a service that validates what it is asked to realise, and that
+can — in principle — be mediated per operation.
+
+Granting `/nix` read-write because "materialization needs to write to the store"
+would be the single largest silent widening available in this change, and it
+would be invisible in exactly the way this project's policy invariants exist to
+prevent: it renders as an ordinary filesystem grant. Daemon authority is
+therefore modelled and rendered as its own thing (see the `policy` delta), so a
+profile that has it is visibly different from one that merely reads the store.
+
+## P2b — Trusted materialization does not hand daemon authority to project code
+
+**Decision.** Project-controlled activation code never receives the daemon
+socket. A provider qualifies for fully confined activation only if it can
+separate materialization from hook execution, or if devcroft can mediate the
+daemon through a proven operation-scoped interface.
+
+Until then, a Flox environment whose hook would require daemon-backed
+materialization **fails closed**, at layer `provider`. It does not silently
+receive a writable `/nix` or the daemon socket as a fallback.
+
+**Rationale.** This is the whole point of the split. Materialization is trusted
+because it runs pinned tooling from a lockfile; a hook is project code and is
+trusted exactly as much as the repository is — which, for the case this change
+exists to serve, is not at all. Fusing them would mean the untrusted half
+inherits the trusted half's authority, and a host-global one at that.
+
+Failing closed is the uncomfortable option and is chosen deliberately. The
+alternative is a fallback that grants the authority anyway, which would make the
+requirement decorative: a rule with a fallback that triggers on exactly the
+cases it was written for is not a rule.
+
+## P2c — Providers differ, and Flox is the blocked case
+
+**Decision.** Eligibility for confined activation is per provider, decided by
+whether the provider can be asked for an environment without running the
+project's hook.
+
+| provider | hook-free path | hook runs? | eligible |
+| --- | --- | --- | --- |
+| Nix flakes | `nix print-dev-env --json` | no | yes |
+| Devbox | `devbox shellenv --pure` | no | yes |
+| Flox with `hook.on-activate` | none | **always** | **blocked** |
+
+Flox has no public materialize path, no pre-hook context, and no separate hook
+runner — measured across `--mode dev`, `--mode run` and `--no-start-services`,
+none of which suppress the hook (`fix-provisioning-hooks`).
+
+**Rationale, and what this is not.** This is not a judgement about Flox, and
+`hook.on-activate` is not an abuse of the format — it is where people put
+everything Nix does not do. It is a statement about what devcroft can promise
+given the interfaces that exist today. The request that would unblock it is
+written up in [docs/flox-confined-activation-issue.md](../../../docs/flox-confined-activation-issue.md),
+addressed to Flox rather than worked around here, precisely because every
+available workaround is a security compromise.
+
+Note the asymmetry worth stating plainly: Flox is the provider devcroft
+recommends by default and the one `init` scaffolds. The provider with the best
+ergonomics is the one that cannot be fully confined. That tension is real and
+should not be smoothed over in the docs.
+
 ## P3 — The environment crosses the boundary as data
 
 **Decision.** Activation writes the resulting environment to a descriptor the
@@ -102,11 +172,27 @@ the runtime policy to fit provisioning, which is backwards.
 
 ## Open Questions
 
-1. **What does `flox activate` actually require?** The provisioning policy's
-   default grants have to be measured against real projects, not assumed —
-   likely the provider's own config and data directories and the nix daemon
-   socket, possibly more. **Spike this before writing the default profile;** it
-   determines whether the change is small or large.
+1. **Can Flox separate materialization from `hook.on-activate`?** — **blocking
+   for confined Flox activation, and not answerable from inside this repo.**
+
+   This question used to read "what does `flox activate` actually require?",
+   which assumed the answer was a list of grants to measure. It isn't. The
+   measurement was done (`fix-provisioning-hooks`) and produced a harder
+   result: no documented invocation yields an environment without running the
+   project's hook, so there is no set of grants that makes confined Flox
+   activation safe — the hook would hold whatever authority materialization
+   needs, including the `nix-daemon` socket.
+
+   **This must not be answered by granting the hook the daemon socket or a
+   writable `/nix`.** Both would "work" and both defeat P2a/P2b. If the answer
+   turns out to be no, the correct outcome is the fail-closed behaviour P2b
+   specifies, not a fallback.
+
+   The unblocking path is upstream, drafted at
+   [docs/flox-confined-activation-issue.md](../../../docs/flox-confined-activation-issue.md).
+   Until it lands, this change ships with Flox-with-a-hook blocked and the
+   other two providers eligible — which is a real, useful subset, not a
+   stalemate.
 2. **Network during provisioning — RESOLVED as a dependency, not a question.**
    Denying it breaks `npm ci`; allowing it opens an outbound channel from
    unreviewed code, which is the exact thing this change exists to close.

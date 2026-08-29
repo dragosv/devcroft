@@ -159,3 +159,40 @@ aspect is reported (`policy::degraded`).
 - **THEN** the limitation is named, with the aspect, the reason, and what
   the fallback actually provides
 - **AND** it is never reported as though isolation were in effect
+
+### Requirement: Each agent runs its own service stack
+
+Services declared by an agent's provider environment SHALL be started inside
+that agent, supervised by that agent's keeper, and contained in that agent's
+cgroup leaf. An agent SHALL NOT share service instances with another agent or
+with the host.
+
+An agent SHALL NOT be reported ready until its declared services are ready, so
+that a task dispatched to a ready agent does not race its own database coming
+up.
+
+This is what makes the port isolation above worth having. Two agents each
+binding 5432 is only useful if there are two Postgres instances to bind it —
+isolation without per-agent services would give each agent its own private way
+to reach nothing.
+
+#### Scenario: Two agents, one declared database
+
+- **WHEN** two agents run from a repository whose provider declares a database
+  service
+- **THEN** each has its own instance, with its own data
+- **AND** neither observes the other's, and neither uses the host's
+
+#### Scenario: Agent readiness
+
+- **WHEN** an agent's declared services have not finished starting
+- **THEN** the agent is not reported ready
+- **AND** a caller waiting for readiness can dispatch work without separately
+  polling the services
+
+#### Scenario: A declared service fails to start
+
+- **WHEN** one of an agent's services fails
+- **THEN** that agent reports the failure, naming the service
+- **AND** other agents are unaffected — a failure is scoped to the agent whose
+  service it is, not to the fleet

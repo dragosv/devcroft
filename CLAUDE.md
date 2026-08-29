@@ -176,6 +176,19 @@ for an environment without running it. Measured:
   warning; refusing was rejected because `on-activate` is idiomatic flox
   and the user's own `flox activate` runs it identically.
 
+  **That answer is context-dependent, and the contexts are about to
+  diverge — do not read the two as contradictory.** Warning is right
+  *today*, where provisioning is unconfined either way, so refusing would
+  block a user from something their own shell does identically. Under
+  `sandbox-provisioning` the promise changes to "activation is confined",
+  and flox-with-a-hook cannot keep it: materialization needs `nix-daemon`
+  authority, the hook is project code, and flox cannot separate them — so
+  there it **fails closed at layer `provider`** rather than silently
+  handing project shell a host-global capability (that change's P2b/P2c).
+  Same measured fact, different promise, opposite correct behaviour. The
+  upstream request that would collapse the two back together is drafted
+  at `docs/flox-confined-activation-issue.md`.
+
 The rule for any new provider: prefer the entry point that hands back an
 environment over the one that runs a command inside it, since the latter
 runs hooks in every provider measured so far. Where no such entry point

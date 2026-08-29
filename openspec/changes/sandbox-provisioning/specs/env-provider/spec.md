@@ -143,3 +143,37 @@ it executes.
 - **WHEN** activation writes to the lockfile during provisioning
 - **THEN** the change is detected and the original restored
 - **AND** `up` fails rather than proceeding from a mutated lockfile
+
+### Requirement: Package-manager materialization authority is separate from activation code
+
+The authority to materialize an environment — a `nix-daemon` socket or any
+equivalent package-manager service — SHALL be modelled as its own capability,
+separate from filesystem grants. Resolved stores SHALL remain read-only to both
+provisioning and runtime. Project-controlled activation code SHALL NOT receive
+that authority under any circumstances.
+
+A provider that cannot demonstrably separate materialization from execution of
+project-supplied activation code SHALL fail at layer `provider`, and SHALL NOT
+be granted a writable store or a daemon connection as a fallback.
+
+#### Scenario: Runtime uses a resolved Nix closure
+
+- **WHEN** a sandbox runs against an environment resolved from a Nix closure
+- **THEN** the store paths are granted read-only
+- **AND** neither the runtime nor any activation code holds a daemon connection
+
+#### Scenario: A Flox environment with an activation hook
+
+- **WHEN** a project's Flox environment declares `hook.on-activate` and
+  confined provisioning is required
+- **THEN** `up` fails at layer `provider`, naming the hook and why it cannot be
+  confined
+- **AND** no fallback grants the hook daemon authority or a writable store
+
+#### Scenario: Hook-free capture for providers that support it
+
+- **WHEN** a provider offers a documented path that returns the environment
+  without running project activation code (`nix print-dev-env --json`,
+  `devbox shellenv --pure`)
+- **THEN** that path is used, inside the provisioning worker
+- **AND** the project's own activation script is never evaluated
