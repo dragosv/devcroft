@@ -161,9 +161,16 @@ async fn ssh_server_authenticates_the_real_client_key_and_binds_no_tcp() {
         "an unrelated key must be rejected"
     );
 
+    // The pidfile is now "<pid> <start_time>" (state::write_pidfile,
+    // added so a resurrected unrelated process at a reused pid can never
+    // be mistaken for the recorded one) — only `read_pidfile` itself is
+    // public within the crate, so this test (outside it) parses the
+    // first token directly rather than reaching for a private function.
     let pid: libc::pid_t = std::fs::read_to_string(&paths.pidfile)
         .unwrap()
-        .trim()
+        .split_whitespace()
+        .next()
+        .unwrap()
         .parse()
         .unwrap();
     assert!(

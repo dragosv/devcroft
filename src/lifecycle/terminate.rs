@@ -8,7 +8,7 @@ use std::io;
 use std::path::Path;
 use std::time::Duration;
 
-use super::state::{self, Health, StatePaths};
+use super::state::{self, StatePaths};
 
 /// Longer than the keeper's own inner per-session grace period
 /// (`keeper::connection::DEFAULT_GRACE_PERIOD`, 2s): the keeper's SIGTERM
@@ -100,19 +100,17 @@ fn rm_at(paths: &StatePaths) -> Result<(), TerminateError> {
 }
 
 fn stop_if_running(paths: &StatePaths) -> io::Result<()> {
-    if let Health::Healthy(pid) | Health::Stale(pid) = state::health(paths)? {
-        state::terminate_and_wait(pid, GRACE_PERIOD);
-    }
+    // `terminate_and_wait` reads and identity-verifies each pidfile
+    // itself (`state::is_same_process` — see its doc for the reuse race
+    // this closes) and no-ops if either is absent or stale, so no
+    // separate `health()`/liveness check is needed first.
+    state::terminate_and_wait(&paths.pidfile, GRACE_PERIOD);
     // The egress proxy (add-egress-proxy) is a separate process from the
     // keeper — see `crate::proxy`'s module doc — so tearing down the
     // keeper above says nothing about it. It has no control socket to
     // probe health through the way the keeper does; its pidfile alone is
-    // the only record of it, so a stale (already-dead) pid here is just
-    // a no-op signal, not a distinct state worth telling apart from
-    // "healthy" the way `Health` does for the keeper.
-    if let Some(pid) = state::read_pidfile(&paths.proxy_pidfile)? {
-        state::terminate_and_wait(pid, GRACE_PERIOD);
-    }
+    // the only record of it.
+    state::terminate_and_wait(&paths.proxy_pidfile, GRACE_PERIOD);
     Ok(())
 }
 

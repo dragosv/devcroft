@@ -66,12 +66,24 @@ proceeding.
 The system SHALL provide `down` (stop keeper, keep state and compiled
 policy) and `rm` (stop keeper, remove all state for the sandbox). Both
 SHALL terminate the entire session process tree, escalating SIGTERM to
-SIGKILL after a grace period.
+SIGKILL after a grace period. A pid recorded on disk SHALL be verified to
+still identify the same process before it is signaled — a bare pid number
+by itself does not survive the process it named dying and the kernel
+reusing that number for something devcroft never spawned.
 
 #### Scenario: Down with live sessions
 - **WHEN** two interactive sessions are open and the user runs `down`
 - **THEN** sessions receive SIGTERM, then SIGKILL after the grace period,
   and the keeper exits last
+
+#### Scenario: A recorded pid has since been reused
+- **WHEN** the keeper (or the egress proxy) named in a sandbox's pidfile
+  has died, and the kernel has since reused that pid for an unrelated
+  process
+- **THEN** `down`/`rm`/`up --recreate` do not signal that process
+- **AND** the sandbox's own runtime state is still cleared, so a
+  subsequent `up` proceeds normally rather than being blocked by a
+  pidfile that will never again identify a live match
 
 ### Requirement: Status and logs
 The system SHALL provide `status` (keeper health, uptime, session count,

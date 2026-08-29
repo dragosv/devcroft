@@ -236,21 +236,43 @@ pub enum Health {
     Stale(libc::pid_t),
 }
 
-pub fn read_pidfile(path: &Path) -> io::Result<Option<libc::pid_t>> {
+/// `(pid, start_time)` — `start_time` is what lets a later reader tell
+/// "this pid" from "a different process that happens to have the same
+/// number now", see [`process_start_time`]'s doc for why plain `kill(pid,
+/// 0)` cannot.
+pub fn read_pidfile(path: &Path) -> io::Result<Option<(libc::pid_t, u64)>> {
     match std::fs::read_to_string(path) {
-        Ok(s) => Ok(s.trim().parse().ok()),
+        Ok(s) => {
+            let mut parts = s.split_whitespace();
+            let pid = parts.next().and_then(|p| p.parse().ok());
+            let start_time = parts.next().and_then(|p| p.parse().ok());
+            Ok(pid.zip(start_time))
+        }
         Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(None),
         Err(e) => Err(e),
     }
 }
 
+/// Records `pid` alongside its current start time, read fresh from the
+/// OS at write time — never trust a caller-supplied start time, since the
+/// whole point is to capture what the kernel says about this specific
+/// process right now.
 pub fn write_pidfile(path: &Path, pid: libc::pid_t) -> io::Result<()> {
-    std::fs::write(path, pid.to_string())
+    std::fs::write(path, format!("{pid} {}", process_start_time(pid)?))
 }
 
 /// `kill(pid, 0)`: sends no signal, just checks whether the pid could be
 /// signaled. `EPERM` still means a live process (just not one we own);
 /// only `ESRCH` (and friends) means it's actually gone.
+///
+/// This alone cannot tell "the process we recorded" from "a different
+/// process the kernel has since reused this pid number for" — see
+/// [`is_same_process`], which is what every caller that is about to
+/// *signal* a recorded pid should use instead. Kept as its own function
+/// (rather than folded away) because a few callers only ever care about
+/// bare liveness of a pid they hold for other reasons (e.g. a test's own
+/// freshly-spawned child, checked once, never persisted to disk and read
+/// back across a process boundary where reuse could occur).
 pub fn is_process_alive(pid: libc::pid_t) -> bool {
     if unsafe { libc::kill(pid, 0) } == 0 {
         return true;
@@ -258,14 +280,87 @@ pub fn is_process_alive(pid: libc::pid_t) -> bool {
     io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
 }
 
-/// A pidfile alone only proves a process with that pid exists somewhere —
-/// pids get reused, so liveness is confirmed by also probing the control
-/// socket the same keeper would be listening on.
+/// A process's start time in clock ticks since boot — Linux's
+/// `/proc/[pid]/stat`, field 22 (`starttime`), per `proc(5)`. Two
+/// different processes can share a pid number at different times, but
+/// never the same (pid, start_time) pair at once: the kernel does not
+/// reuse a pid until the previous holder has been fully reaped, and
+/// start time only increases, so a stale on-disk recording can never
+/// coincidentally match a new process's.
+///
+/// `comm` (field 2) is parenthesized and may itself contain spaces or
+/// parentheses, so fields are located from the *last* `)` rather than by
+/// naive whitespace splitting — the standard technique `ps`/`top` also
+/// use for this file.
+///
+/// Non-Linux (no `/proc`): returns `0`, a sentinel [`is_same_process`]
+/// treats as "not verifiable here" and falls back to plain liveness —
+/// the same protection this project's other platform-dependent checks
+/// already state honestly rather than silently degrading (`policy::
+/// degraded`'s macOS domain-filtering caveat is the same shape). `0` is
+/// not a value a real process can have here: it would mean starting in
+/// the same clock tick as the kernel itself booted.
+#[cfg(target_os = "linux")]
+fn process_start_time(pid: libc::pid_t) -> io::Result<u64> {
+    let stat = std::fs::read_to_string(format!("/proc/{pid}/stat"))?;
+    let after_comm = stat.rfind(')').ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("unexpected /proc/{pid}/stat format: no ')' found"),
+        )
+    })?;
+    // Field 3 (`state`) is the first field after `comm`'s closing paren;
+    // field 22 (`starttime`) is therefore index 22 - 3 = 19 in a
+    // zero-indexed split of everything after it.
+    stat[after_comm + 1..]
+        .split_whitespace()
+        .nth(19)
+        .and_then(|f| f.parse().ok())
+        .ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("/proc/{pid}/stat has no parseable starttime field"),
+            )
+        })
+}
+
+#[cfg(not(target_os = "linux"))]
+fn process_start_time(_pid: libc::pid_t) -> io::Result<u64> {
+    Ok(0)
+}
+
+/// Whether `pid` currently identifies the same process it did when
+/// `recorded_start_time` was captured (via [`write_pidfile`]) — the check
+/// every caller about to *signal* a pid read back from disk must use
+/// instead of [`is_process_alive`] alone, per the review that found
+/// `down`/`rm`/`up --recreate` would otherwise `SIGTERM`/`SIGKILL`
+/// whatever unrelated process a dead keeper's or proxy's pid had since
+/// been reused for. `recorded_start_time == 0` (this platform has no
+/// `/proc`, see [`process_start_time`]) falls back to bare liveness,
+/// preserving this project's existing (weaker, stated) macOS posture
+/// rather than claiming a guarantee this platform can't back.
+pub fn is_same_process(pid: libc::pid_t, recorded_start_time: u64) -> bool {
+    if recorded_start_time == 0 {
+        return is_process_alive(pid);
+    }
+    process_start_time(pid)
+        .map(|current| current == recorded_start_time)
+        .unwrap_or(false)
+}
+
+/// A pidfile alone only proves a process with that pid existed *when it
+/// was written* — pids get reused, so this cross-checks the recorded
+/// start time (see [`is_same_process`]) before ever calling the result
+/// `Healthy`/`Stale` rather than "gone". A successful socket connect adds
+/// a second, independent signal for `Healthy` specifically, but `Stale`
+/// (pid apparently alive, socket not responding) had no such backstop
+/// before this — exactly the case a resurrected unrelated process could
+/// otherwise be mistaken for our own.
 pub fn health(paths: &StatePaths) -> io::Result<Health> {
-    let Some(pid) = read_pidfile(&paths.pidfile)? else {
+    let Some((pid, start_time)) = read_pidfile(&paths.pidfile)? else {
         return Ok(Health::None);
     };
-    if !is_process_alive(pid) {
+    if !is_same_process(pid, start_time) {
         return Ok(Health::Stale(pid));
     }
     match UnixStream::connect(&paths.socket) {
@@ -294,18 +389,45 @@ pub fn clear_runtime_state(paths: &StatePaths) -> io::Result<()> {
 /// by `up --recreate` (replacing a running keeper) and by `down`/`rm`
 /// (lifecycle::terminate) — the exact "escalating SIGTERM to SIGKILL
 /// after a grace period" the lifecycle spec's teardown requirement names.
-pub fn terminate_and_wait(pid: libc::pid_t, grace: Duration) {
+/// Reads `pidfile`, verifies it still names the same process it did when
+/// written (`is_same_process` — a pid whose identity can't be confirmed
+/// is left alone entirely, on the theory that the number may by now
+/// belong to something devcroft never spawned), and only then signals
+/// it. Takes the pidfile itself rather than a bare `pid_t` specifically
+/// so every caller re-reads and re-verifies at the moment of signaling
+/// rather than trusting a pid a caller extracted from `Health` (or from
+/// its own earlier `read_pidfile` call) some indeterminate time earlier
+/// — narrowing, not just moving, the reuse window the missing check
+/// originally left open.
+///
+/// A no-op if the pidfile is absent or already stale — callers no longer
+/// need their own liveness check before calling this.
+pub fn terminate_and_wait(pidfile: &Path, grace: Duration) {
+    let Ok(Some((pid, start_time))) = read_pidfile(pidfile) else {
+        return;
+    };
+    if !is_same_process(pid, start_time) {
+        return;
+    }
+    terminate_and_wait_pid(pid, start_time, grace);
+}
+
+/// The actual SIGTERM-then-SIGKILL escalation, re-checking identity (not
+/// just liveness) at each step — the process could exit and its pid be
+/// reused by something else *during* the grace period, not only before
+/// this function was called.
+fn terminate_and_wait_pid(pid: libc::pid_t, start_time: u64, grace: Duration) {
     unsafe {
         libc::kill(pid, libc::SIGTERM);
     }
     let deadline = Instant::now() + grace;
     while Instant::now() < deadline {
-        if !is_process_alive(pid) {
+        if !is_same_process(pid, start_time) {
             return;
         }
         std::thread::sleep(Duration::from_millis(50));
     }
-    if is_process_alive(pid) {
+    if is_same_process(pid, start_time) {
         unsafe {
             libc::kill(pid, libc::SIGKILL);
         }
@@ -377,8 +499,14 @@ mod tests {
         let paths = tempdir("pidfile-roundtrip");
         assert_eq!(read_pidfile(&paths.pidfile).unwrap(), None);
 
-        write_pidfile(&paths.pidfile, 4242).unwrap();
-        assert_eq!(read_pidfile(&paths.pidfile).unwrap(), Some(4242));
+        // A real pid, not an arbitrary number: `write_pidfile` now reads
+        // `/proc/<pid>/stat` to capture a real start time, which a made-up
+        // pid has none of.
+        let pid = std::process::id() as libc::pid_t;
+        write_pidfile(&paths.pidfile, pid).unwrap();
+        let (read_pid, start_time) = read_pidfile(&paths.pidfile).unwrap().unwrap();
+        assert_eq!(read_pid, pid);
+        assert!(is_same_process(pid, start_time));
     }
 
     #[test]
@@ -460,7 +588,10 @@ mod tests {
         let mut child = std::process::Command::new("true").spawn().unwrap();
         let dead_pid = child.id() as libc::pid_t;
         child.wait().unwrap();
-        write_pidfile(&paths.pidfile, dead_pid).unwrap();
+        // Not `write_pidfile`: it reads the *live* process's start time,
+        // which a pid already dead by this point has none of — see
+        // `status.rs`'s identical test for why.
+        std::fs::write(&paths.pidfile, format!("{dead_pid} 1")).unwrap();
 
         assert_eq!(health(&paths).unwrap(), Health::Stale(dead_pid));
     }
@@ -491,7 +622,10 @@ mod tests {
     #[test]
     fn clear_runtime_state_removes_pidfile_and_socket_but_keeps_profile() {
         let paths = tempdir("clear-runtime-state");
-        write_pidfile(&paths.pidfile, 1234).unwrap();
+        // `clear_runtime_state` just removes the file unconditionally —
+        // an arbitrary, not-necessarily-real pid is fine here, unlike
+        // `write_pidfile` (which now reads a real process's start time).
+        std::fs::write(&paths.pidfile, "1234 1").unwrap();
         let _listener = UnixListener::bind(&paths.socket).unwrap();
         std::fs::write(&paths.profile, "{}").unwrap();
 
@@ -504,11 +638,13 @@ mod tests {
 
     #[test]
     fn terminate_and_wait_kills_a_live_process() {
+        let paths = tempdir("terminate-live");
         let mut child = std::process::Command::new("sleep")
             .arg("100")
             .spawn()
             .unwrap();
         let pid = child.id() as libc::pid_t;
+        write_pidfile(&paths.pidfile, pid).unwrap();
         assert!(is_process_alive(pid));
 
         // A signaled process is a zombie (kill(pid, 0) still "succeeds")
@@ -519,9 +655,57 @@ mod tests {
             let _ = child.wait();
         });
 
-        terminate_and_wait(pid, Duration::from_secs(2));
+        terminate_and_wait(&paths.pidfile, Duration::from_secs(2));
         reaper.join().unwrap();
 
         assert!(!is_process_alive(pid));
+    }
+
+    /// The bug this whole mechanism exists to close: a pidfile naming a
+    /// pid that is very much alive, but is no longer (or never was) the
+    /// process devcroft recorded — the `is_same_process` check must
+    /// refuse to signal it, however "live" `kill(pid, 0)` alone would
+    /// say it is.
+    #[test]
+    fn terminate_and_wait_does_not_signal_a_mismatched_recording() {
+        let paths = tempdir("terminate-mismatch");
+        let mut child = std::process::Command::new("sleep")
+            .arg("100")
+            .spawn()
+            .unwrap();
+        let pid = child.id() as libc::pid_t;
+        // A pidfile naming this real, live pid but with a start time that
+        // cannot be its real one — standing in for "this pid has since
+        // been reused by an unrelated process" without needing to
+        // actually wait for a real reuse to occur, which isn't
+        // deterministically producible in a test.
+        std::fs::write(&paths.pidfile, format!("{pid} 1")).unwrap();
+
+        terminate_and_wait(&paths.pidfile, Duration::from_millis(200));
+
+        assert!(
+            is_process_alive(pid),
+            "a pid whose recorded start time doesn't match must not be signaled"
+        );
+        child.kill().unwrap();
+        let _ = child.wait();
+    }
+
+    #[test]
+    fn terminate_and_wait_is_a_no_op_without_a_pidfile() {
+        let paths = tempdir("terminate-absent");
+        // Must not panic or error — every current caller relies on this
+        // being safe to call unconditionally, with no separate liveness
+        // check of their own beforehand.
+        terminate_and_wait(&paths.pidfile, Duration::from_millis(50));
+    }
+
+    #[test]
+    fn is_same_process_false_after_the_process_exits() {
+        let mut child = std::process::Command::new("true").spawn().unwrap();
+        let pid = child.id() as libc::pid_t;
+        let start_time = process_start_time(pid).unwrap_or(0);
+        child.wait().unwrap();
+        assert!(!is_same_process(pid, start_time));
     }
 }

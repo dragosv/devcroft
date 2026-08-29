@@ -115,9 +115,13 @@ pub fn up(
     let paths = StatePaths::new(&manifest.sandbox.name)?;
 
     let outcome = if opts.recreate {
-        if let Health::Healthy(pid) | Health::Stale(pid) = state::health(&paths)? {
-            state::terminate_and_wait(pid, TERMINATE_GRACE_PERIOD);
-        }
+        // `terminate_and_wait` reads and identity-verifies each pidfile
+        // itself (`is_same_process` — a resurrected unrelated process
+        // must never be signaled on the strength of a bare pid number
+        // read back off disk), and no-ops cleanly if either is absent or
+        // stale, so no separate `health()` check or liveness guard is
+        // needed here first.
+        state::terminate_and_wait(&paths.pidfile, TERMINATE_GRACE_PERIOD);
         // The egress proxy is a separate process from the keeper (see
         // `crate::proxy`'s module doc for why it must be), so tearing
         // down the keeper above says nothing about it. `--recreate`
@@ -125,10 +129,8 @@ pub fn up(
         // `network.allow` may have changed — an old proxy is running
         // with whatever allowlist it was spawned with baked into its own
         // env, so reusing it here would silently ignore that change
-        // until the next full `down`. Best-effort: a dead pid is a no-op.
-        if let Some(pid) = state::read_pidfile(&paths.proxy_pidfile)? {
-            state::terminate_and_wait(pid, TERMINATE_GRACE_PERIOD);
-        }
+        // until the next full `down`.
+        state::terminate_and_wait(&paths.proxy_pidfile, TERMINATE_GRACE_PERIOD);
         state::clear_runtime_state(&paths)?;
         UpOutcome::Recreated
     } else {
@@ -245,8 +247,14 @@ pub fn up(
 /// a live pidfile here can only mean "the keeper died independently of
 /// the proxy," never "the manifest changed and this is stale."
 fn ensure_egress_proxy(paths: &StatePaths, allow: &[String]) -> Result<u16, UpError> {
-    if let Some(pid) = state::read_pidfile(&paths.proxy_pidfile)?
-        && state::is_process_alive(pid)
+    // `is_same_process`, not `is_process_alive`: a resurrected unrelated
+    // process at a reused pid would otherwise pass as "our proxy is
+    // still running", skip spawning a real one, and leave egress
+    // completely unfiltered — a silent security downgrade, and arguably
+    // worse than the sibling bug in `terminate_and_wait` (signaling the
+    // wrong process is at least noisy).
+    if let Some((pid, start_time)) = state::read_pidfile(&paths.proxy_pidfile)?
+        && state::is_same_process(pid, start_time)
         && let Some(port) = state::read_meta(&paths.meta)?.and_then(|m| m.proxy_port)
     {
         return Ok(port);
@@ -259,9 +267,7 @@ fn ensure_egress_proxy(paths: &StatePaths, allow: &[String]) -> Result<u16, UpEr
 }
 
 fn stop_orphaned_egress_proxy(paths: &StatePaths) -> io::Result<()> {
-    if let Some(pid) = state::read_pidfile(&paths.proxy_pidfile)? {
-        state::terminate_and_wait(pid, TERMINATE_GRACE_PERIOD);
-    }
+    state::terminate_and_wait(&paths.proxy_pidfile, TERMINATE_GRACE_PERIOD);
     let _ = std::fs::remove_file(&paths.proxy_pidfile);
     Ok(())
 }

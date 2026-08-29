@@ -276,7 +276,14 @@ mod tests {
         let mut child = std::process::Command::new("true").spawn().unwrap();
         let pid = child.id() as libc::pid_t;
         child.wait().unwrap();
-        state::write_pidfile(&paths.pidfile, pid).unwrap();
+        // Written directly, not via `state::write_pidfile`: that function
+        // reads the *live* process's start time, which a pid already
+        // dead by this point has none of — production code never calls
+        // it on a pid it hasn't just spawned. A fabricated start time
+        // simulates "this file was written by an earlier `up`, and the
+        // process it named is gone by the time something checks now",
+        // which is the scenario this test is actually about.
+        std::fs::write(&paths.pidfile, format!("{pid} 1")).unwrap();
 
         assert_eq!(keeper_status(&paths).unwrap(), KeeperStatus::Stale);
     }
