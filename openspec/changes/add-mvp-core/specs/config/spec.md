@@ -93,7 +93,13 @@ name is used *for*, not of which code path produced it.
 The system SHALL validate that every path in `filesystem.allow`,
 `filesystem.read`, and `filesystem.deny` is either relative to the project
 root or an absolute/tilde path, and SHALL reject rules that are provably
-useless (deny of a path never granted).
+useless (deny of a path never granted). A project-relative entry SHALL
+additionally be rejected if, once symlinks are followed, its real target
+falls outside the project root — the manifest string is what a reviewer
+reads and what every other check in this requirement (deny-wins-over-allow,
+the sensitive-path warning, baseline-deny-unless-granted) reasons about, and
+none of those checks may be silently bypassed by what the string actually
+resolves to on disk.
 
 #### Scenario: Deny wins over allow
 - **WHEN** `allow = ["~"]` and `deny = ["~/.ssh"]`
@@ -115,6 +121,23 @@ useless (deny of a path never granted).
   left unrejected it lets a relative entry resolve outside the project
   root once `nono` (invoked with the project root as its cwd) resolves
   it, silently violating "relative to the project root"
+
+#### Scenario: A project-relative symlink escapes the project root
+- **WHEN** a `filesystem.allow`/`read` entry is project-relative (not
+  `~`-rooted or absolute) and is, or resolves through, a symlink whose
+  real target lies outside the project root — e.g. a dependency or a
+  malicious PR creating `vendor/cache -> ~/.ssh` inside the project, then
+  an innocuous-looking `allow = ["vendor/cache"]`
+- **THEN** `up` fails at layer `config` naming the entry and its real
+  target, before any sandbox is created
+- **AND** `policy --render` fails identically rather than silently
+  showing the lexical entry as an ordinary in-project grant — the two
+  commands must agree, since a render that looks fine for a policy that
+  cannot actually be enforced is the exact failure this command exists to
+  prevent
+- **AND** an explicit `~/...` or absolute entry is unaffected: it already
+  names its target directly, so there is no lexical string for a symlink
+  to diverge from
 
 ### Requirement: Network policy model
 The system SHALL model network policy as `default = "deny" | "allow"` plus

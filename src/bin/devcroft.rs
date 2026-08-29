@@ -1498,10 +1498,33 @@ fn cli_policy(args: &[String]) -> i32 {
         Ok(m) => m,
         Err(code) => return code,
     };
-    print!(
-        "{}",
-        devcroft::policy::render(&compile_with_provider_grants(&manifest))
-    );
+    let compiled = compile_with_provider_grants(&manifest);
+    // CLAUDE.md's own invariant: "Nothing goes to the backend that cannot
+    // be shown via policy --render." That cuts both ways — this command
+    // must also never show a policy as fine when it would actually fail
+    // to compile. Without this, a project-relative grant that is a
+    // symlink escaping the project root (`CapabilitySetError::
+    // SymlinkEscapesProjectRoot`) rendered as an ordinary in-project
+    // entry, silently, while `up` rejected the identical manifest —
+    // inspection and enforcement disagreeing is exactly the failure mode
+    // this command exists to prevent. Same validation `up` already runs
+    // before creating anything, just without a real sandbox behind it.
+    let Ok(project_root) = devcroft::config::discover(&cwd).map(|p| {
+        p.parent()
+            .map(std::path::Path::to_path_buf)
+            .unwrap_or(cwd.clone())
+    }) else {
+        print!("{}", devcroft::policy::render(&compiled));
+        return 0;
+    };
+    if let Err(e) = compiled
+        .to_capability_plan()
+        .to_capability_set(&project_root)
+    {
+        eprintln!("devcroft policy: {e}");
+        return 2;
+    }
+    print!("{}", devcroft::policy::render(&compiled));
     0
 }
 

@@ -41,6 +41,7 @@ use super::CompiledPolicy;
 use crate::paths::is_within;
 use nono::{AccessMode, CapabilitySet, NetworkMode, NonoError, SignalMode};
 use serde::{Deserialize, Serialize};
+use std::io;
 use std::path::{Path, PathBuf};
 
 /// The plain-value subset of [`CompiledPolicy`] the keeper needs to
@@ -93,6 +94,30 @@ pub enum CapabilitySetError {
     /// see the module doc — so it is a compile-time error rather than a
     /// silently-ineffective deny.
     DenyOverlapsAllow { deny: String, allow: String },
+    /// A project-relative `filesystem.allow`/`filesystem.read` entry
+    /// resolves, once symlinks are followed, to somewhere outside the
+    /// project root. `is_within`'s containment model (and everything
+    /// built on it — the sensitive-path warning, the baseline-deny-
+    /// unless-granted check, `check_no_deny_overlaps_allow` above)
+    /// compares the *lexical* manifest string, never the filesystem: a
+    /// project-relative entry that is itself a symlink to `~/.ssh`
+    /// passes every one of those checks looking like an ordinary
+    /// in-project grant, then `nono::allow_path` canonicalizes and grants
+    /// the real target. A compile-time error here, not a silent grant of
+    /// whatever the symlink happens to point at — the manifest's own
+    /// string is what a reviewer reads, and it must not lie about what
+    /// gets granted, project-controlled dependency or not.
+    SymlinkEscapesProjectRoot {
+        value: String,
+        canonical_target: PathBuf,
+    },
+    /// `canonicalize()` failed on a path `resolved.exists()` had just
+    /// confirmed exists — a permission error on an intermediate
+    /// directory, or a TOCTOU race with something removing it. Rare
+    /// enough that a plain `io::Error` is honest about it rather than
+    /// forcing a fabricated `NonoError` variant onto a failure that never
+    /// reaches the library at all.
+    Canonicalize { value: String, source: io::Error },
     /// Building a capability for a granted path failed for a reason other
     /// than "it doesn't exist" (e.g. it resolved to a file where a
     /// directory was expected).
@@ -108,6 +133,20 @@ impl std::fmt::Display for CapabilitySetError {
                  cannot enforce a deny nested inside an allow; narrow the allow, remove the \
                  deny, or restructure the manifest so they don't overlap"
             ),
+            CapabilitySetError::SymlinkEscapesProjectRoot {
+                value,
+                canonical_target,
+            } => write!(
+                f,
+                "'{value}' resolves outside the project root once symlinks are followed \
+                 (real target: {}) — a project-relative grant must stay inside the project; \
+                 if this path outside the project is genuinely intended, grant it directly \
+                 with an absolute path or a `~/...` form instead",
+                canonical_target.display()
+            ),
+            CapabilitySetError::Canonicalize { value, source } => {
+                write!(f, "resolving the real path of '{value}': {source}")
+            }
             CapabilitySetError::Backend(e) => write!(f, "{e}"),
         }
     }
@@ -191,13 +230,43 @@ fn grant(
     project_root: &Path,
     mode: AccessMode,
 ) -> Result<CapabilitySet, CapabilitySetError> {
-    let resolved = resolve(value, project_root);
+    let (resolved, is_project_relative) = resolve(value, project_root);
     if !resolved.exists() {
         // Tolerated, not an error — see the module doc's multiarch
         // KEEPER_SYSTEM_READ example. A grant for a path this host simply
         // doesn't have is a no-op, exactly like nono-cli's own profile
         // reader treats it.
         return Ok(caps);
+    }
+    // Symlink-escape guard (found by adversarial review, confirmed live:
+    // a project-relative `credential-link -> ~/.ssh` granted the real
+    // `~/.ssh` while every lexical check — the sensitive-path warning,
+    // the baseline-deny-unless-granted rule, `check_no_deny_overlaps_
+    // allow` — saw only an innocuous in-project string). Only applies to
+    // project-relative entries: an explicit absolute or `~/...` grant
+    // already names its target directly, canonicalization or not, so
+    // there is no lexical/real divergence for a reviewer to be misled by.
+    if is_project_relative {
+        let canonical_target =
+            resolved
+                .canonicalize()
+                .map_err(|source| CapabilitySetError::Canonicalize {
+                    value: value.to_string(),
+                    source,
+                })?;
+        let canonical_root =
+            project_root
+                .canonicalize()
+                .map_err(|source| CapabilitySetError::Canonicalize {
+                    value: ".".to_string(),
+                    source,
+                })?;
+        if !canonical_target.starts_with(&canonical_root) {
+            return Err(CapabilitySetError::SymlinkEscapesProjectRoot {
+                value: value.to_string(),
+                canonical_target,
+            });
+        }
     }
     Ok(if resolved.is_dir() {
         caps.allow_path(resolved, mode)?
@@ -210,15 +279,19 @@ fn grant(
 /// `src`, ...) — the same four forms `paths::is_within` already
 /// distinguishes, resolved here into a real filesystem path because
 /// (unlike the JSON profile nono-cli used to read) the library's
-/// `allow_path`/`allow_file` need one directly.
-fn resolve(value: &str, project_root: &Path) -> PathBuf {
+/// `allow_path`/`allow_file` need one directly. The `bool` says whether
+/// `value` took the project-relative branch — `grant`'s symlink-escape
+/// guard only applies there: an explicit `~/...` or absolute entry
+/// already names its target directly, so there is no lexical string for
+/// a hidden symlink target to diverge from.
+fn resolve(value: &str, project_root: &Path) -> (PathBuf, bool) {
     let home = || PathBuf::from(std::env::var("HOME").unwrap_or_default());
     match value {
-        "~" => home(),
+        "~" => (home(), false),
         v => match v.strip_prefix("~/") {
-            Some(rest) => home().join(rest),
-            None if v.starts_with('/') => PathBuf::from(v),
-            None => project_root.join(v),
+            Some(rest) => (home().join(rest), false),
+            None if v.starts_with('/') => (PathBuf::from(v), false),
+            None => (project_root.join(v), true),
         },
     }
 }
@@ -286,6 +359,97 @@ mod tests {
                 .iter()
                 .any(|c| c.original == std::path::Path::new("/this/path/does/not/exist/anywhere"))
         );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// The traversal this check exists to close: a project-relative
+    /// entry that is a symlink to somewhere outside the project must be
+    /// rejected, not silently granted while `policy --render` shows it
+    /// as an ordinary in-project string — confirmed live at the CLI
+    /// level (a symlink to a scratch "credential" directory, granted
+    /// despite reading as `credential-link` in the manifest) and here at
+    /// the unit level so the guarantee doesn't depend on remembering to
+    /// canonicalize at every caller.
+    #[test]
+    fn project_relative_symlink_escaping_the_project_root_is_rejected() {
+        let root = project_dir();
+        std::fs::create_dir_all(&root).unwrap();
+        let outside = project_dir(); // a second, sibling scratch dir — not under `root`
+        std::fs::create_dir_all(&outside).unwrap();
+        std::os::unix::fs::symlink(&outside, root.join("escape-link")).unwrap();
+
+        let (manifest, _) = parse(
+            r#"
+            [sandbox]
+            name = "capsettest"
+            [filesystem]
+            allow = [".", "escape-link"]
+            "#,
+        )
+        .unwrap();
+
+        let err = compile(&manifest)
+            .to_capability_plan()
+            .to_capability_set(&root)
+            .unwrap_err();
+        assert!(
+            matches!(err, CapabilitySetError::SymlinkEscapesProjectRoot { .. }),
+            "expected a SymlinkEscapesProjectRoot error, got: {err}"
+        );
+
+        let _ = std::fs::remove_dir_all(&root);
+        let _ = std::fs::remove_dir_all(&outside);
+    }
+
+    #[test]
+    fn project_relative_symlink_staying_inside_the_project_is_allowed() {
+        let root = project_dir();
+        std::fs::create_dir_all(root.join("real")).unwrap();
+        std::os::unix::fs::symlink(root.join("real"), root.join("inside-link")).unwrap();
+
+        let (manifest, _) = parse(
+            r#"
+            [sandbox]
+            name = "capsettest"
+            [filesystem]
+            allow = [".", "inside-link"]
+            "#,
+        )
+        .unwrap();
+
+        compile(&manifest)
+            .to_capability_plan()
+            .to_capability_set(&root)
+            .unwrap();
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn an_explicit_home_grant_is_never_treated_as_an_escape() {
+        // `~/.ssh` names its target directly — canonicalization of an
+        // explicit `~`/absolute entry is not this check's concern, and
+        // must not become one: the sensitive-path warning is what
+        // governs those, not this guard.
+        let root = project_dir();
+        std::fs::create_dir_all(&root).unwrap();
+        let (manifest, _) = parse(
+            r#"
+            [sandbox]
+            name = "capsettest"
+            [filesystem]
+            allow = [".", "~/.ssh"]
+            "#,
+        )
+        .unwrap();
+
+        // Must not error even though `~/.ssh` is outside `root` by
+        // construction — that's the whole point of an explicit grant.
+        compile(&manifest)
+            .to_capability_plan()
+            .to_capability_set(&root)
+            .unwrap();
+
         let _ = std::fs::remove_dir_all(&root);
     }
 
