@@ -85,12 +85,17 @@ pub fn rm(sandbox_name: &str) -> Result<(), TerminateError> {
 // subprocess, which inherits whatever `HOME` happened to be set to at
 // that instant).
 fn down_at(paths: &StatePaths) -> Result<(), TerminateError> {
+    // Same lock `up` holds for its own critical section — serializes
+    // this against a concurrent `up` for the same sandbox, not only
+    // `up` against itself. See `acquire_lifecycle_lock`'s doc.
+    let _lock = state::acquire_lifecycle_lock(&paths.lifecycle_lock)?;
     stop_if_running(paths)?;
     state::clear_runtime_state(paths)?;
     Ok(())
 }
 
 fn rm_at(paths: &StatePaths) -> Result<(), TerminateError> {
+    let _lock = state::acquire_lifecycle_lock(&paths.lifecycle_lock)?;
     stop_if_running(paths)?;
     match std::fs::remove_dir_all(&paths.root) {
         Ok(()) => Ok(()),

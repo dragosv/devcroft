@@ -42,6 +42,16 @@ pub struct StatePaths {
     /// requires interleaving their records in one file the way hook
     /// output and keeper spawn/exit records must interleave.
     pub proxy_log: PathBuf,
+    /// An `flock(2)` mutex serializing `up`/`down`/`rm` for this one
+    /// sandbox — see [`acquire_lifecycle_lock`]'s doc for why it exists
+    /// and what it closes. Never removed by `clear_runtime_state`, `rm`'s
+    /// directory removal included: an open, already-locked fd stays
+    /// valid after its directory entry is unlinked (POSIX `flock` binds
+    /// to the open file description, not the path), so a concurrent
+    /// waiter already blocked on it is unaffected, and the next `up`
+    /// simply recreates the path fresh via `O_CREAT`, acquiring an
+    /// unrelated, unclaimed lock.
+    pub lifecycle_lock: PathBuf,
 }
 
 impl StatePaths {
@@ -75,7 +85,23 @@ impl StatePaths {
                 ),
             ));
         }
-        Ok(Self::in_dir(data_dir()?.join(sandbox_name)))
+        let dir = data_dir()?;
+        let mut paths = Self::in_dir(dir.join(sandbox_name));
+        // Deliberately *not* `root.join("lifecycle.lock")` here (unlike
+        // `in_dir`'s fallback below): `up` must acquire this lock before
+        // it knows whether it will ever need `root` to exist at all — a
+        // provider resolution failure leaves `root` never created on
+        // purpose (see `up.rs`'s own comment on that; found by an earlier
+        // review after this repo's own state dir accumulated 23 empty
+        // leftover sandbox directories from failed `up`s). Putting the
+        // lock one level up, in the shared data dir all sandboxes already
+        // live under, means acquiring it never has to create — or risk
+        // leaving behind — a per-sandbox directory that whole prior fix
+        // exists to avoid. `ps`'s own directory scan already skips
+        // non-directory entries, so a `<name>.lock` file here is inert to
+        // it regardless.
+        paths.lifecycle_lock = dir.join(format!("{sandbox_name}.lock"));
+        Ok(paths)
     }
 
     /// Builds every path under a given root. `new` is the production
@@ -93,9 +119,70 @@ impl StatePaths {
             ssh_host_key: root.join("ssh_host_ed25519_key"),
             proxy_pidfile: root.join("proxy.pid"),
             proxy_log: root.join("proxy.log"),
+            // Inside `root` here (unlike `new`'s override above) because
+            // every test that calls `in_dir` directly already creates
+            // `root` itself before doing anything else with it — there is
+            // no "don't create the directory yet" concern to preserve for
+            // a caller that made the directory before this function ever
+            // ran.
+            lifecycle_lock: root.join("lifecycle.lock"),
             root,
         }
     }
+}
+
+/// Held for `up`/`down`/`rm`'s entire critical section — see
+/// [`acquire_lifecycle_lock`]. Never read; its only job is to keep the
+/// fd open (and so the `flock` held) until this is dropped, at which
+/// point the kernel releases it as a side effect of the fd closing.
+#[allow(dead_code)]
+pub struct LifecycleLock(std::fs::File);
+
+/// Serializes every lifecycle operation on one sandbox against every
+/// other. Before this existed, two concurrent `up` invocations for the
+/// same (not-yet-running) sandbox could both observe `Health::None`, both
+/// resolve the provider and compile the policy, and both bind the control
+/// socket and spawn a keeper — the second `write_pidfile` silently
+/// overwrites the first's record, orphaning that first keeper's listener
+/// and any sessions it already accepted, with nothing left on disk
+/// pointing at it for a later `down`/`rm` to find. Found by adversarial
+/// review.
+///
+/// `flock(2)`, not a lockfile-with-a-pid convention: the kernel releases
+/// an `flock` automatically when the holding process's file descriptor
+/// table is torn down for *any* reason — clean exit, panic, `SIGKILL` —
+/// so a process that dies while holding this can never leave a
+/// permanently stuck lock for a later invocation to wait on forever, the
+/// way a hand-rolled "does a lockfile exist" check would need its own
+/// staleness logic to avoid. Blocks until acquired rather than failing
+/// fast: two `up`s racing for the same sandbox should serialize, not
+/// have the second one error out for a condition that resolves itself in
+/// milliseconds.
+pub fn acquire_lifecycle_lock(path: &Path) -> io::Result<LifecycleLock> {
+    use std::os::fd::AsRawFd;
+    // Idempotent, and needed on a genuinely fresh install: `path` lives
+    // in the shared data dir (`StatePaths::new`'s doc explains why it's
+    // not inside the per-sandbox root), which nothing may have created
+    // yet the very first time any sandbox is ever brought up.
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    // `truncate(false)`: this file's content is never read or meant to
+    // carry anything — `flock` locks the inode, not any bytes in it — so
+    // there is nothing to preserve, but nothing to gain by truncating
+    // it either, and doing so is one more write to a file another
+    // process might (harmlessly, but needlessly) be mid-`open` on.
+    let file = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(path)?;
+    // SAFETY: `file` owns a valid fd for the duration of this call, and
+    // `flock` neither reads nor writes through it.
+    if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX) } != 0 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(LifecycleLock(file))
 }
 
 /// Where the client ed25519 keypair lives (ssh spec's "Key management"

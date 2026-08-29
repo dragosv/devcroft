@@ -113,6 +113,11 @@ pub fn up(
     opts: &UpOptions,
 ) -> Result<UpOutcome, UpError> {
     let paths = StatePaths::new(&manifest.sandbox.name)?;
+    // Held for the rest of this function — see `acquire_lifecycle_lock`'s
+    // doc for the concurrent-`up` race this closes. Every `?` and early
+    // return below drops `_lock` (and so releases it) on the way out,
+    // same as any other RAII guard.
+    let _lock = state::acquire_lifecycle_lock(&paths.lifecycle_lock)?;
 
     let outcome = if opts.recreate {
         // `terminate_and_wait` reads and identity-verifies each pidfile

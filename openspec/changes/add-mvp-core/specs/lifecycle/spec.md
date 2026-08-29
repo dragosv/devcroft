@@ -53,6 +53,15 @@ teardown, re-resolution of the environment, and recompilation of policy.
 - **THEN** `up` removes stale state, starts a new keeper, and notes the
   recovery in one line
 
+#### Scenario: Two `up` invocations race for the same sandbox
+- **WHEN** two `devcroft up` invocations for the same, not-yet-running
+  sandbox run concurrently
+- **THEN** exactly one resolves the environment, compiles the policy, and
+  starts a keeper
+- **AND** the other reports the sandbox as already up rather than also
+  starting a second keeper — idempotency holds under concurrency, not only
+  when invocations are strictly sequential
+
 ### Requirement: Suspend/resume survival
 The system SHALL ensure the keeper survives host suspend/resume, and that
 the first command after resume transparently verifies keeper health before
