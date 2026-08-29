@@ -108,14 +108,18 @@
 
 ## 4. Downstream
 
-- [ ] `add-backend-capabilities`: rewrite C1 and C5 for a single backend. The
+- [x] `add-backend-capabilities`: rewrite C1 and C5 for a single backend. The
       matrix now tracks adoption of the sandbox library's capabilities rather
       than divergence between backends.
-      **Blocked, not skipped:** that change does not exist in this repo. It is
-      cited as a dependency by `add-linux-agent-fleet` and as authoritative by
-      `docs/threat-model.md` ("prefer that matrix over any caveat written here
-      or in the README"), so the rewrite has nothing to rewrite yet. Carry this
-      forward to whenever it is written
+      **Unblocked and done — by writing the change rather than rewriting it.**
+      This was open because the change did not exist, so there was nothing to
+      rewrite; it is now authored with exactly the reframing named here (C1 is
+      "the matrix tracks adoption, not backends"). Two things were added that
+      this task did not anticipate, both from evidence accumulated since:
+      `unverified` as a first-class status distinct from both enforced and
+      unsupported, and a requirement that every entry name its evidence —
+      because the defect this project keeps hitting is not false claims but
+      reasonable unmeasured ones
 - [x] Collapsed the isolation axis everywhere it was stated: `CLAUDE.md`'s
       framing rules, `openspec/config.yaml`'s Non-Goals and its "Isolation
       tiers" bullet, `docs/decisions.md`'s tier entry, and the README's

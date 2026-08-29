@@ -35,9 +35,11 @@ and Cursor are all validated against a live sandbox; only Zed remains, no
 CLI to drive it non-interactively — see `docs/ssh-validation.md`) and task
 7.5 (publish the `devcroft` crate, reserve/point the npm name).
 
-For full status detail — what's implemented, what was fixed along the way,
-which gaps are known — see the README's Status section, which is kept
-current; do not duplicate it here.
+For current status and known gaps, see the README's Status section. For the
+blow-by-blow of what was built and **what turned out to be wrong along the
+way**, see `docs/implementation-log.md` — that history used to live in the
+README, where it had grown to 376 lines and crowded out everything else.
+Do not duplicate either here.
 
 ## Working commands
 
@@ -65,16 +67,17 @@ provider, alongside flox), `add-hardened-tier` (whose tier dispatch
 seam is deliberately kept), `own-policy-baseline`,
 `use-nono-library`, and `fix-provisioning-hooks` are all fully
 implemented, tasks.md and all
-— see the README's Status section. `add-devbox-provider` (a third
+— see `docs/implementation-log.md` for what each one found along the way.
+`add-devbox-provider` (a third
 closure-tier environment provider) is implemented too, with one task
 (3.6, a services-loud-failure test) deliberately left unchecked — the
 mechanism it would test doesn't exist yet for *any* provider, and belongs
 to whichever change finishes `add-flox-services`'s own unimplemented
 "services requested from a provider that cannot supply them fail loudly"
-requirement. `remove-gvisor-backend` is implemented at 16/17 for the same
-kind of reason: its last task rewrites `add-backend-capabilities` for a
-single backend, and that change does not exist in this repo yet — blocked
-on something absent, not skipped. Those plus `add-mvp-core` are the
+requirement. `remove-gvisor-backend` is now **complete**: its last task waited on
+`add-backend-capabilities`, which did not exist and has since been written
+(the task was to *rewrite* a change that was never authored, so writing it
+was the resolution). Those plus `add-mvp-core` are the
 changes actually implemented; run `openspec list` for the rest, which are
 in flight or not started.
 
