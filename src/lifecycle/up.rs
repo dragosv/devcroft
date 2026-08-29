@@ -447,6 +447,22 @@ fn up_process(
     wait_until_responsive(paths, KEEPER_START_TIMEOUT)
         .map_err(|e| UpError::Keeper(format!("keeper did not become responsive: {e}")))?;
 
+    // The provider's own activation script, run **inside** the boundary
+    // (`sandbox-provisioning` P2d). Ordered before devcroft's own hooks
+    // deliberately: this is what prepares the project's environment, so a
+    // `post_create` that depends on it — the common case, since that is
+    // what environment setup is for — would otherwise run first and fail.
+    //
+    // `--skip-hooks` suppresses it for the same reason it suppresses
+    // everything else: that flag's promise is that nothing
+    // project-supplied runs, and this is project-supplied.
+    if !opts.skip_hooks
+        && let Some(script) = &resolution.activation_script
+    {
+        hooks::run_activation_script(paths, project_root, script)
+            .map_err(|e| UpError::Keeper(e.to_string()))?;
+    }
+
     // Lifecycle spec: `post_create` runs once, as the first session after
     // the *first* successful `up` or after `--recreate` — exactly the
     // outcomes below, since `Recovered` means state already existed (so

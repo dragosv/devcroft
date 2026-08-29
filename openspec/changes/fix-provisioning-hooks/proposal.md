@@ -1,9 +1,24 @@
 # Change: fix-provisioning-hooks
 
-Status: proposed. Affects `add-mvp-core` (flox) and `add-nix-provider`
+Status: implemented. Affects `add-mvp-core` (flox) and `add-nix-provider`
 (nix) — both implemented and shipped. Found while measuring devbox for
 `add-devbox-provider`, which asked this question of a provider for the
 first time.
+
+**Partly superseded, in the good direction.** This change concluded that
+flox's hook could not be avoided and settled for detecting and warning
+about it — the honest fallback given flox's interface, which has not
+changed. `sandbox-provisioning` P2d has since removed the need for that
+fallback by deriving a hook-free copy of the environment to materialize
+from, so no flox project code runs on the host any more. The warning this
+change added is therefore no longer reached for that case, and
+`Resolution::ran_activation_hook` is now false for flox: the field means
+"did project code execute unconfined", and the answer became no.
+
+What survives unchanged is this change's actual contribution — asking the
+question of every provider, and the test suite
+(`tests/provisioning_runs_no_project_code.rs`) that keeps asking it. That
+suite is what caught the behaviour change when P2d landed.
 
 ## Why
 

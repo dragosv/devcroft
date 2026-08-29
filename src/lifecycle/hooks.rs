@@ -51,6 +51,30 @@ impl std::error::Error for HookError {}
 /// is a no-op. Stops at the first failure rather than running both
 /// unconditionally, since a failed `post_create` makes `post_start`
 /// running against a half-provisioned project meaningless.
+/// Run a provider's own activation script inside the sandbox
+/// (`sandbox-provisioning` P2d).
+///
+/// Separate from [`run`] because it is not one of devcroft's manifest
+/// hooks and does not obey their run-once semantics: it is the project's
+/// environment setup, and it runs on every keeper start for the same
+/// reason `post_start` does — the environment it prepares lives in the
+/// sandbox, which is new each time.
+///
+/// **This is the first time a provider's activation code runs inside the
+/// boundary rather than on the host.** Materialization already happened,
+/// host-side and hook-free, so what runs here is project code with no
+/// materialization authority — exactly the split P2b requires and flox
+/// does not expose. It is subject to the manifest's own policy like any
+/// other project code: a script needing the network needs an allowlist
+/// entry, the same rule devcroft's own hooks follow.
+pub fn run_activation_script(
+    paths: &StatePaths,
+    project_root: &Path,
+    script: &str,
+) -> Result<(), HookError> {
+    run_one("activation", script, paths, project_root)
+}
+
 pub fn run(
     paths: &StatePaths,
     project_root: &Path,

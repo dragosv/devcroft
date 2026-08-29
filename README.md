@@ -160,17 +160,15 @@ oversight:
   measure it on, and does not ship a security claim it hasn't measured.
 - **No cgroup resource limits.** One runaway build can starve the host. Also
   fleet's subject.
-- **Provisioning runs on the host.** Resolving a provider environment happens
-  before any boundary exists, which is weaker than what the sandbox itself
-  gets. `sandbox-provisioning` closes this; `up` warns about it today.
-- **Flox activation hooks currently run on the host.** No `flox activate` mode
-  suppresses `[hook].on-activate`, so today devcroft warns rather than
-  confining it. `sandbox-provisioning` closes this without waiting on flox, by
-  materializing from a derived hook-free copy of the environment and running
-  the hook inside the sandbox — measured to produce an identical closure. An
-  upstream request for a supported split is drafted at
-  [docs/flox-confined-activation-issue.md](docs/flox-confined-activation-issue.md);
-  it would make the mechanism flox's contract rather than devcroft's inference.
+- **Provisioning runs on the host** — with one exception now closed. Resolving
+  a provider environment happens before any boundary exists. For flox, whose
+  `[hook].on-activate` is arbitrary project shell, devcroft now materializes
+  from a derived hook-free copy of the environment and runs the hook *inside*
+  the sandbox instead, so no project code executes unconfined. The rest of
+  provisioning still runs host-side; `sandbox-provisioning` is the change that
+  moves it. An upstream request that would make the flox split a supported
+  contract rather than devcroft's inference is drafted at
+  [docs/flox-confined-activation-issue.md](docs/flox-confined-activation-issue.md).
 
 ### In flight
 

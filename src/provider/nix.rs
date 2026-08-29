@@ -49,6 +49,10 @@ impl Provider for NixProvider {
             // hands the `shellHook` back as inert data and devcroft
             // never evaluates it (see `capture_activated_env`).
             ran_activation_hook: false,
+            // `print-dev-env --json` / `shellenv --pure` return the
+            // environment without running the project's script, so there
+            // is nothing to defer into the sandbox — it simply never runs.
+            activation_script: None,
         })
     }
 }

@@ -21,61 +21,35 @@ impl Provider for FloxProvider {
     fn resolve(&self, project_root: &Path) -> Result<Resolution, ProviderError> {
         ensure_environment_present(project_root)?;
 
+        // The hook is the whole reason this branches. Where a project
+        // declares `[hook].on-activate`, materializing from the project's
+        // own environment would execute it host-side, unconfined, before
+        // any boundary exists — the inversion `sandbox-provisioning`
+        // exists to close. Materializing from a derived hook-free copy
+        // avoids that without changing what gets materialized (P2d).
+        let activation_script = activation_hook_script(project_root)?;
+        let materialize_from = match activation_script {
+            Some(_) => derive_hook_free_env(project_root)?,
+            None => project_root.to_path_buf(),
+        };
+
         let baseline = capture::canonical_base_env()?;
-        let activated = capture_activated_env(project_root, &baseline)?;
+        let activated = capture_activated_env(&materialize_from, &baseline)?;
 
         Ok(Resolution {
             env: capture::changed_env(&baseline, &activated),
             unset: capture::unset_env(&baseline, &activated),
             read_only_grants: capture::store_grants(&activated),
             services: read_service_declarations(project_root)?,
-            // Not "does flox support hooks" but "did this capture run
-            // one" — see `declares_activation_hook`.
-            ran_activation_hook: declares_activation_hook(project_root),
+            // False now even when a hook is declared: with P2d the
+            // capture above runs against a derived environment that has
+            // none, so nothing project-supplied executed on the host.
+            // This field means "did this resolution run project code
+            // unconfined", and the honest answer is now no.
+            ran_activation_hook: false,
+            activation_script,
         })
     }
-}
-
-/// Whether this environment's manifest defines `[hook].on-activate`,
-/// which `flox activate` runs during capture.
-///
-/// **There is no way to avoid running it**, measured against flox 1.14.0
-/// rather than assumed: neither the default `flox activate -- <cmd>`,
-/// nor `--mode run`, nor `--mode dev`, nor `--no-start-services`
-/// suppresses it. flox's own help notes that the `<cmd>` form "does not
-/// run any profile scripts", which is accurate and describes
-/// `[profile]` — a different manifest section from `[hook]`.
-///
-/// So detection exists to let `up` *report* what already happened
-/// (`fix-provisioning-hooks`), not to prevent it. Refusing such a
-/// project was considered and rejected: `on-activate` is how flox
-/// environments do setup, the user's own `flox activate` runs it too,
-/// and a rule that rejects the common case of the default provider is a
-/// rule that gets disabled.
-///
-/// Errs toward reporting. A manifest that cannot be read or parsed
-/// counts as "might have one", because a false negative defeats the
-/// warning entirely while a false positive is merely noise. It does
-/// **not** match on the raw text: `flox init`'s stock manifest ships a
-/// `[hook]` section whose `on-activate` is commented out, so a
-/// substring search would warn on every freshly created environment and
-/// teach users to ignore the warning.
-fn declares_activation_hook(project_root: &Path) -> bool {
-    let path = project_root.join(".flox/env/manifest.toml");
-    let Ok(text) = std::fs::read_to_string(&path) else {
-        // No manifest at all is not this function's error to raise —
-        // `ensure_environment_present` already ran, so reaching here
-        // means something unusual. Report rather than assume safety.
-        return true;
-    };
-    let Ok(parsed) = text.parse::<toml::Table>() else {
-        return true;
-    };
-    parsed
-        .get("hook")
-        .and_then(|h| h.as_table())
-        .and_then(|h| h.get("on-activate"))
-        .is_some_and(|v| v.as_str().is_some_and(|s| !s.trim().is_empty()))
 }
 
 /// Read `[services]` out of the flox manifest, host-side, during the
@@ -224,6 +198,141 @@ fn read_service_declarations(project_root: &Path) -> Result<ServiceSupport, Prov
 /// `up` fails at layer `provider` with the `flox init` hint (spec: "Missing
 /// environment, not missing feature") rather than letting `flox activate`
 /// produce its own, less specific error.
+/// Build a **derived, hook-free copy** of this project's flox environment
+/// and return its directory, so materialization can run without executing
+/// the project's `[hook].on-activate` (`sandbox-provisioning` P2d).
+///
+/// This is the workaround for a flox interface gap, and it works because
+/// of one measured property: **a hook is not a package input.** Stripping
+/// the `[hook]` table leaves the resolved closure byte-identical —
+/// verified live, same store path, same locked package set — so this is a
+/// *split* of materialization from activation, not a different
+/// environment. If that ever stopped holding, this would be silently
+/// materializing something the project did not declare, which is why
+/// `tests/flox_derived_env.rs` asserts the closure identity rather than
+/// merely that activation succeeds.
+///
+/// **The project's own `.flox/` is read, never written.** The derived copy
+/// lives under the project's `.devcroft/` artifact directory, for the same
+/// reason the service artifacts do (`services::ARTIFACT_DIR`): the
+/// sandbox has to *read* it at runtime — flox puts its `run/` symlinks
+/// there and `PATH` points into them — and devcroft's own state directory
+/// is baseline-denied to the sandbox. Anywhere outside the granted project
+/// root would leave the sandbox unable to reach its own toolchain.
+///
+/// Keyed by the environment's fingerprint, which makes the derived copy
+/// content-addressed: a manifest or lock change produces a different
+/// directory rather than a stale one being reused, and two concurrent
+/// resolutions of the same environment converge on identical content.
+fn derive_hook_free_env(project_root: &Path) -> Result<std::path::PathBuf, ProviderError> {
+    let fingerprint = manifest_fingerprint(project_root)?;
+    let derived = project_root
+        .join(crate::services::ARTIFACT_DIR)
+        .join(format!("{}{fingerprint}", super::DERIVED_ENV_PREFIX));
+    let env_dir = derived.join(".flox/env");
+
+    // Already derived for this exact manifest+lock: reuse it. The
+    // fingerprint is what makes this safe — a changed environment gets a
+    // different path rather than hitting this branch.
+    if env_dir.join("manifest.toml").is_file() {
+        return Ok(derived);
+    }
+
+    std::fs::create_dir_all(&env_dir).map_err(|e| {
+        ProviderError::ResolutionFailed(format!("creating {}: {e}", env_dir.display()))
+    })?;
+
+    let source = project_root.join(".flox");
+    let manifest_text = std::fs::read_to_string(source.join("env/manifest.toml"))
+        .map_err(|e| ProviderError::ResolutionFailed(format!("reading the flox manifest: {e}")))?;
+
+    std::fs::write(env_dir.join("manifest.toml"), strip_hook(&manifest_text)?).map_err(|e| {
+        ProviderError::ResolutionFailed(format!("writing the derived manifest: {e}"))
+    })?;
+
+    // The lock and `env.json` are copied verbatim when present. The lock
+    // is what pins the closure — copying it is what makes the derived
+    // environment resolve to the same packages rather than re-resolving.
+    // `env.json` carries the environment's *name*, which flox surfaces as
+    // `FLOX_ENV_DESCRIPTION`; without it the derived environment would
+    // report itself under the scratch directory's name.
+    for optional in ["env/manifest.lock", "env.json"] {
+        let from = source.join(optional);
+        if from.is_file() {
+            let to = derived.join(".flox").join(optional);
+            if let Some(parent) = to.parent() {
+                let _ = std::fs::create_dir_all(parent);
+            }
+            std::fs::copy(&from, &to).map_err(|e| {
+                ProviderError::ResolutionFailed(format!("copying {}: {e}", from.display()))
+            })?;
+        }
+    }
+
+    Ok(derived)
+}
+
+/// Remove the `[hook]` table from a flox manifest, leaving everything
+/// else — `[install]`, `[vars]`, `[services]`, `[profile]` — untouched.
+///
+/// Operates on the parsed TOML rather than on text. A regex over the raw
+/// manifest would be shorter and wrong in a way that matters here:
+/// `flox init`'s stock manifest ships a commented-out `[hook]` block, and
+/// a hook's body is a multi-line string that can itself contain anything,
+/// including lines that look like TOML table headers. Getting this wrong
+/// silently changes what gets materialized, which is the one thing this
+/// function must not do.
+fn strip_hook(manifest_text: &str) -> Result<String, ProviderError> {
+    let mut parsed: toml::Table = manifest_text
+        .parse()
+        .map_err(|e| ProviderError::ResolutionFailed(format!("parsing the flox manifest: {e}")))?;
+    parsed.remove("hook");
+    toml::to_string(&parsed).map_err(|e| {
+        ProviderError::ResolutionFailed(format!("serialising the derived manifest: {e}"))
+    })
+}
+
+/// The project's `[hook].on-activate` script, read as **data**.
+///
+/// Never executed here. It travels out through `Resolution` so that `up`
+/// can run it *inside* the sandbox after restriction — the two-phase
+/// execution invariant, applied to a provider's activation code for the
+/// first time.
+///
+/// **Fails rather than guessing on an unreadable or malformed manifest**,
+/// and the direction matters. This replaced a `-> bool` predicate whose
+/// documented posture was to err toward "there might be a hook", because
+/// a false negative defeated the warning it fed. The same asymmetry is
+/// now sharper: a false negative here would route the project down the
+/// *undeived* path and execute its hook on the host — the exact thing
+/// this mechanism exists to prevent. Since a manifest that cannot be
+/// parsed also cannot have its `[hook]` table stripped, there is no safe
+/// way to proceed, so it is an error.
+///
+/// Does not match on raw text. `flox init`'s stock manifest ships a
+/// `[hook]` section whose `on-activate` is commented out; a substring
+/// search would treat every freshly created environment as hooked.
+fn activation_hook_script(project_root: &Path) -> Result<Option<String>, ProviderError> {
+    let path = project_root.join(".flox/env/manifest.toml");
+    let text = std::fs::read_to_string(&path)
+        .map_err(|e| ProviderError::ResolutionFailed(format!("reading {}: {e}", path.display())))?;
+    let parsed = text.parse::<toml::Table>().map_err(|e| {
+        ProviderError::ResolutionFailed(format!(
+            "parsing {}: {e}\n\
+             devcroft must parse this manifest to separate materialization from \
+             `[hook].on-activate`; it will not fall back to running the hook on the host",
+            path.display()
+        ))
+    })?;
+    Ok(parsed
+        .get("hook")
+        .and_then(|h| h.as_table())
+        .and_then(|h| h.get("on-activate"))
+        .and_then(|v| v.as_str())
+        .map(str::to_string)
+        .filter(|s| !s.trim().is_empty()))
+}
+
 fn ensure_environment_present(project_root: &Path) -> Result<(), ProviderError> {
     if project_root.join(".flox").is_dir() {
         Ok(())

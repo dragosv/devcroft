@@ -12,12 +12,22 @@
 //! - **nix**: a devShell `shellHook`. Fixable — `nix print-dev-env
 //!   --json` hands the hook back as inert data, so devcroft never
 //!   evaluates it.
-//! - **flox**: `[hook].on-activate`. *Not* fixable — measured against
-//!   flox 1.14.0, no `flox activate` mode suppresses it (`--mode run`,
-//!   `--mode dev`, `--no-start-services` all run it). So the flox test
-//!   asserts the honest fallback instead: the hook does run, and
-//!   resolution reports that it did, so `up` can warn rather than
-//!   staying silent about project code having executed unconfined.
+//! - **flox**: `[hook].on-activate`. Not suppressible *by flox* — measured
+//!   against flox 1.14.0, no activation mode skips it (`--mode run`,
+//!   `--mode dev`, `--no-start-services` all run it). It is nonetheless
+//!   fixed, by devcroft rather than upstream: materialization runs against
+//!   a derived hook-free copy of the environment, and the hook runs inside
+//!   the sandbox afterwards (`sandbox-provisioning` P2d, exercised in
+//!   `tests/flox_derived_env.rs`).
+//!
+//! **This file's title is now true of every provider**, which it was not
+//! when written. The flox test below used to assert the honest fallback —
+//! the hook runs, and resolution *reports* that it did, so `up` can warn.
+//! Its own sanity assertion carried the trigger for revisiting it: "if this
+//! now fails, flox gained a way to avoid it and the provider should use
+//! it". It did fail, for a near-miss reason worth recording — devcroft
+//! constructed the way rather than flox providing one — and the assertions
+//! are inverted accordingly.
 //!
 //! Self-skipping on missing tooling, gated on **only** what each test
 //! needs — the nix test does not require flox and vice versa.
@@ -138,7 +148,7 @@ fn nix_resolution_does_not_run_the_dev_shells_shell_hook() {
 }
 
 #[test]
-fn flox_resolution_reports_that_an_activation_hook_ran() {
+fn flox_resolution_does_not_run_the_projects_activation_hook() {
     if !flox_usable() {
         eprintln!("skipping: flox not on PATH");
         return;
@@ -180,29 +190,38 @@ fn flox_resolution_reports_that_an_activation_hook_ran() {
         }
     };
 
-    // flox offers no way to capture without running the hook, so the
-    // requirement is not "it did not run" but "devcroft knows it did"
-    // — which is what lets `up` warn instead of staying silent.
+    // The requirement is now the same one the other providers meet: the
+    // project's hook must not have executed on the host at all.
     let ran = marker.exists();
     let reported = resolution.ran_activation_hook;
+    let captured = resolution.activation_script.is_some();
     let _ = std::fs::remove_dir_all(&dir);
 
     assert!(
-        ran,
-        "sanity: flox is expected to run on-activate during capture; if this now \
-         fails, flox gained a way to avoid it and the provider should use it"
+        !ran,
+        "the project's on-activate hook executed on the host during resolution — \
+         the derived hook-free environment (P2d) is what must prevent this, and \
+         a failure here means resolution fell back to the project's own \
+         environment"
     );
     assert!(
-        reported,
-        "resolution ran the project's on-activate hook host-side but did not report \
-         it, so `up` cannot warn — the silent case this change exists to remove"
+        !reported,
+        "nothing project-supplied ran unconfined, so resolution must not report \
+         that it did — this field means 'did project code execute on the host', \
+         and a stale `true` would make `up` warn about something that did not \
+         happen"
+    );
+    assert!(
+        captured,
+        "the hook must still be captured as data, or it would silently never run \
+         at all — which would break every project whose hook does real setup"
     );
 }
 
 /// The converse, and the one that keeps the warning meaningful: an
 /// environment with no hook must not be reported as having run one.
 #[test]
-fn flox_resolution_reports_nothing_when_there_is_no_hook() {
+fn flox_resolution_reports_no_hook_when_there_is_none() {
     if !flox_usable() {
         eprintln!("skipping: flox not on PATH");
         return;

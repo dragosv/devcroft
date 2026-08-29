@@ -173,15 +173,22 @@ for an environment without running it. Measured:
 - **devbox**: fixed, and implemented (`add-devbox-provider`). `shellenv
   --pure` does not run `init_hook`, in any variant; `devbox run` does.
   Uses the former.
-- **flox**: **not fixable *by a flox flag* — fixable by devcroft.** No
-  `flox activate` mode suppresses `[hook].on-activate`: not `--mode run`,
-  `--mode dev`, or `--no-start-services`. Today devcroft detects the hook
-  and `up` prints one warning. `sandbox-provisioning` P2d closes it
-  without upstream help, by materializing from a **derived, hook-free copy
-  of the environment** that devcroft owns, then running the hook inside
-  the sandbox. Measured: stripping `[hook]` yields a byte-identical locked
-  package set and an identical store path, because a hook is not a package
-  input — so it is a genuine split, not a different environment.
+- **flox**: **fixed by devcroft, not by a flox flag — and implemented.**
+  No `flox activate` mode suppresses `[hook].on-activate`: not
+  `--mode run`, `--mode dev`, nor `--no-start-services`. devcroft therefore
+  materializes from a **derived, hook-free copy** of the environment it
+  owns, and runs the hook *inside* the sandbox
+  (`flox::derive_hook_free_env`, `hooks::run_activation_script`;
+  `sandbox-provisioning` P2d). Measured: stripping `[hook]` yields a
+  byte-identical locked package set and an identical store path, because a
+  hook is not a package input — a genuine split, not a different
+  environment. Asserted in `tests/flox_derived_env.rs`.
+
+  Consequence worth knowing before it surprises someone: a flox hook now
+  runs under the *manifest's own policy*, so one reaching for host tooling
+  is denied where it previously succeeded. That is `own-policy-baseline`
+  working as designed — a hook's commands must come from the closure —
+  but it is a real behaviour change for hooks that assumed host access.
 
   **That answer is context-dependent, and the contexts are about to
   diverge — do not read the two as contradictory.** Warning is right

@@ -60,6 +60,10 @@ impl Provider for DevboxProvider {
             // than trusted as a property of devbox in general, since a
             // future switch to `devbox run` would silently reintroduce it.
             ran_activation_hook: false,
+            // `print-dev-env --json` / `shellenv --pure` return the
+            // environment without running the project's script, so there
+            // is nothing to defer into the sandbox — it simply never runs.
+            activation_script: None,
         })
     }
 }

@@ -33,6 +33,16 @@ pub trait Provider {
     fn resolve(&self, project_root: &Path) -> Result<Resolution, ProviderError>;
 }
 
+/// Directory-name prefix for a derived, hook-free provider environment
+/// (`sandbox-provisioning` P2d, `flox::derive_hook_free_env`).
+///
+/// Shared here rather than private to the flox provider because two
+/// unrelated places must agree on it: the provider creates these
+/// directories, and `rm` has to recognise them as a shared cache it may
+/// only remove when nothing else is left. A literal repeated in both
+/// would be a rename away from leaking directories forever.
+pub const DERIVED_ENV_PREFIX: &str = "flox-env-";
+
 /// What a provider's activation produced: the environment diff to inject
 /// into the keeper, the read-only paths the compiled policy must grant for
 /// the resolved toolchain to run, and any baseline variable activation
@@ -67,6 +77,21 @@ pub struct Resolution {
     /// defining trade-off made visible in the compiled policy rather than
     /// resting on a tier name in documentation.
     pub read_only_grants: Vec<String>,
+    /// A provider's own activation script, captured as **data** during
+    /// resolution and never executed host-side
+    /// (`sandbox-provisioning` P2d).
+    ///
+    /// `Some` only where a provider both has such a script and can be
+    /// materialized without running it — today that means flox's
+    /// `[hook].on-activate`, reached through a derived hook-free copy of
+    /// the environment. nix and devbox have documented hook-free paths
+    /// and never populate this; their project scripts simply do not run.
+    ///
+    /// The caller runs it *inside* the sandbox, after restriction, which
+    /// is what makes provider activation obey the same two-phase rule as
+    /// devcroft's own hooks rather than being the one thing that escapes
+    /// it.
+    pub activation_script: Option<String>,
     /// What this provider has to say about long-lived services. Captured
     /// host-side with the rest of resolution — the declarations are read
     /// from the provider's own manifest, never by running project code.

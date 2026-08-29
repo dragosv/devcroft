@@ -70,10 +70,34 @@ pub fn rm(sandbox_name: &str) -> Result<(), TerminateError> {
             Err(e) if e.kind() == io::ErrorKind::NotFound => {}
             Err(e) => return Err(e.into()),
         }
+        // Derived flox environments (`sandbox-provisioning` P2d) are
+        // content-addressed and **shared** between sandboxes on one
+        // project root, so they are not this sandbox's to delete while
+        // another might still be using one: a running sandbox's `PATH`
+        // points into it, and removing it would break that sandbox
+        // mid-flight. They are removed only once nothing else remains —
+        // the same last-one-out rule the shared parent already follows,
+        // extended to cover a cache that would otherwise survive forever
+        // and, by keeping the parent non-empty, prevent it being cleaned
+        // up at all.
+        let shared = Path::new(&root).join(crate::services::ARTIFACT_DIR);
+        if let Ok(entries) = std::fs::read_dir(&shared) {
+            let remaining: Vec<_> = entries.filter_map(Result::ok).collect();
+            let only_derived = remaining.iter().all(|e| {
+                e.file_name()
+                    .to_string_lossy()
+                    .starts_with(crate::provider::DERIVED_ENV_PREFIX)
+            });
+            if only_derived {
+                for entry in remaining {
+                    let _ = std::fs::remove_dir_all(entry.path());
+                }
+            }
+        }
         // Best-effort: succeeds only while empty, so the last sandbox
         // out takes the shared parent with it and any other sandbox's
         // artifacts keep it alive.
-        let _ = std::fs::remove_dir(Path::new(&root).join(crate::services::ARTIFACT_DIR));
+        let _ = std::fs::remove_dir(shared);
     }
     Ok(())
 }

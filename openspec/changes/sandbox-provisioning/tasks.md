@@ -34,11 +34,26 @@
       set and an identical store path, and the hook does not run. The hook then
       works when run inside that already-materialized environment. So the
       earlier plan — refuse flox pending upstream — is not needed.
-- [ ] Implement the derived hook-free environment: copy the project's flox
-      environment (manifest, lock, `env.json`) into a devcroft-owned directory
-      **outside the project**, strip the `[hook]` table, and materialize from
-      that. The project's `.flox/` is read, never written.
-- [ ] Correct the flox context variables when running the hook. Measured, the
+- [x] Implement the derived hook-free environment
+      (`flox::derive_hook_free_env`): copy the project's flox environment
+      (manifest, lock, `env.json`), strip the `[hook]` table, and materialize
+      from that. The project's `.flox/` is read, never written.
+      **One correction to the plan as written:** "outside the project" is
+      wrong and would have broken the sandbox. flox's `PATH` points at its
+      own `run/` symlinks inside the environment directory, so the sandbox
+      must *read* that directory at runtime — and anywhere outside the granted
+      project root is unreachable to it. It therefore lives under the
+      project's `.devcroft/` artifact directory, the same reasoning (and the
+      same gitignore) as the service artifacts. Content-addressed by the
+      environment fingerprint, so a manifest change derives afresh rather than
+      reusing a stale copy.
+- [x] Run the captured script inside the sandbox
+      (`hooks::run_activation_script`, called from `up_process` before
+      devcroft's own hooks — a `post_create` that depends on the environment
+      the script sets up would otherwise run first and fail).
+- [ ] Correct the flox context variables when running the hook. **Not yet
+      done — the mechanism works without it, which is exactly why it is worth
+      keeping on the list rather than assuming it is fine.** Measured, the
       ones that point at the derived directory are `FLOX_ENV`,
       `FLOX_ENV_PROJECT`, `FLOX_ENV_DIRS`, `FLOX_ENV_DESCRIPTION` and
       `FLOX_PROMPT_ENVIRONMENTS`. `FLOX_ENV_PROJECT` is the one that matters —
