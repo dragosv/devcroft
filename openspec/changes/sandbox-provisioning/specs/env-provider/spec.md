@@ -162,13 +162,24 @@ be granted a writable store or a daemon connection as a fallback.
 - **THEN** the store paths are granted read-only
 - **AND** neither the runtime nor any activation code holds a daemon connection
 
-#### Scenario: A Flox environment with an activation hook
+#### Scenario: A provider that exposes no hook-free path
 
-- **WHEN** a project's Flox environment declares `hook.on-activate` and
-  confined provisioning is required
-- **THEN** `up` fails at layer `provider`, naming the hook and why it cannot be
-  confined
-- **AND** no fallback grants the hook daemon authority or a writable store
+- **WHEN** a provider offers no documented way to materialize without running
+  project activation code — flox, measured across every activation mode
+- **THEN** devcroft constructs the separation itself, materializing from a
+  derived environment it owns with the project's activation code removed
+- **AND** the project's own environment definition is read, never rewritten
+- **AND** the activation code then runs inside the provisioning sandbox,
+  against the already-materialized environment
+
+#### Scenario: Activation code that itself requires materialization authority
+
+- **WHEN** a project's activation code needs to realise new packages while
+  running, rather than declaring them as dependencies
+- **THEN** it fails at layer `provider`, naming what it attempted
+- **AND** no fallback grants it daemon authority or a writable store
+- **AND** the error distinguishes this from "this provider cannot be confined",
+  since the fix is to declare the dependency rather than to wait for anything
 
 #### Scenario: Hook-free capture for providers that support it
 

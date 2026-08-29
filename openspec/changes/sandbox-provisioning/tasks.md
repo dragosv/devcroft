@@ -2,14 +2,15 @@
 
 ## 0. Spike first — this sizes the whole change
 
-- [ ] **Determine whether Flox can separate materialization from
-      `hook.on-activate` at all** — this precedes measuring grants, because
-      if it cannot, no grant set is the answer (design.md P2b/P2c, open
-      question 1). Check for any public, versioned materialize path, pre-hook
-      context, or separate hook runner. `--mode dev`, `--mode run` and
-      `--no-start-services` were already measured and all run the hook.
-      **A negative result is a valid, expected outcome**, not a reason to
-      widen the profile.
+- [x] **Determine whether Flox can separate materialization from
+      `hook.on-activate` at all** (design.md open question 1).
+      **Answered: not by flox, but yes by devcroft.** Flox exposes no public
+      materialize path, pre-hook context, or separate hook runner — confirmed
+      across `--mode dev`, `--mode run` and `--no-start-services`. The question
+      was framed as "can flox do this?", and the useful reframing was "can the
+      split be constructed without flox's help?" — which it can, by deriving a
+      hook-free copy of the environment (P2d). The original framing would have
+      concluded "refuse flox" from a true premise.
 - [ ] Measure what `flox activate` actually needs when confined: run it under a
       deny-by-default profile against a real project and add grants until it
       works. Record the minimal set. Candidates to check: the provider's config
@@ -27,10 +28,32 @@
 - [ ] Qualify the hook-free paths for the two eligible providers —
       `nix print-dev-env --json` and `devbox shellenv --pure` — as running
       inside the provisioning worker with no daemon connection.
-- [ ] Implement the fail-closed provider-layer diagnostic for the blocked case:
-      a Flox environment with `hook.on-activate` under confined provisioning
-      fails naming the hook and why, and points at the upstream request rather
-      than suggesting a workaround (there isn't a safe one).
+- [x] **Establish that flox can be split by devcroft, without upstream.**
+      Measured live (design.md P2d): materializing from a derived copy of the
+      environment with `[hook]` removed yields a byte-identical locked package
+      set and an identical store path, and the hook does not run. The hook then
+      works when run inside that already-materialized environment. So the
+      earlier plan — refuse flox pending upstream — is not needed.
+- [ ] Implement the derived hook-free environment: copy the project's flox
+      environment (manifest, lock, `env.json`) into a devcroft-owned directory
+      **outside the project**, strip the `[hook]` table, and materialize from
+      that. The project's `.flox/` is read, never written.
+- [ ] Correct the flox context variables when running the hook. Measured, the
+      ones that point at the derived directory are `FLOX_ENV`,
+      `FLOX_ENV_PROJECT`, `FLOX_ENV_DIRS`, `FLOX_ENV_DESCRIPTION` and
+      `FLOX_PROMPT_ENVIRONMENTS`. `FLOX_ENV_PROJECT` is the one that matters —
+      hooks use it to find the project root, and uncorrected a hook would
+      resolve paths into devcroft's scratch directory.
+- [ ] Check whether `[profile]` scripts run on the same path and need the same
+      treatment. **Unmeasured** — do not assume either way.
+- [ ] Detect a derived environment whose lock has drifted from the project's,
+      and re-derive rather than materializing something the project did not
+      declare.
+- [ ] Implement the fail-closed diagnostic for what remains genuinely refused:
+      activation code that needs materialization authority *while running as
+      project code*. The error must distinguish this from "this provider
+      cannot be confined", since the fix is to declare the dependency in
+      `[install]` rather than to wait for anything.
 - [ ] Repeat for `devbox`.
 - [ ] Confirm the environment can be written to a descriptor the supervisor
       holds, across the boundary, without a shell round trip.

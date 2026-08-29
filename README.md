@@ -163,10 +163,14 @@ oversight:
 - **Provisioning runs on the host.** Resolving a provider environment happens
   before any boundary exists, which is weaker than what the sandbox itself
   gets. `sandbox-provisioning` closes this; `up` warns about it today.
-- **Flox activation hooks cannot be confined.** No `flox activate` mode
-  suppresses `[hook].on-activate`. nix and devbox have hook-free paths;
-  flox does not, and the upstream request that would fix it is drafted at
-  [docs/flox-confined-activation-issue.md](docs/flox-confined-activation-issue.md).
+- **Flox activation hooks currently run on the host.** No `flox activate` mode
+  suppresses `[hook].on-activate`, so today devcroft warns rather than
+  confining it. `sandbox-provisioning` closes this without waiting on flox, by
+  materializing from a derived hook-free copy of the environment and running
+  the hook inside the sandbox — measured to produce an identical closure. An
+  upstream request for a supported split is drafted at
+  [docs/flox-confined-activation-issue.md](docs/flox-confined-activation-issue.md);
+  it would make the mechanism flox's contract rather than devcroft's inference.
 
 ### In flight
 

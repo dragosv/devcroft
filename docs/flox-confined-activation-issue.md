@@ -37,23 +37,34 @@ Materialization needs real authority: on Nix-backed providers it talks to the
 machine. Running a project's hook needs no such authority; it is ordinary
 project code, and devcroft treats it exactly like the project's own source.
 
-Because Flox fuses the two, a consumer has only bad options:
+Because Flox fuses the two, a consumer's obvious options are all bad:
 
 1. **Give the hook daemon authority.** Project-controlled shell inherits a
    host-global capability over a store shared with every other environment on
    the machine. For devcroft's multi-agent case that means one repository's
    hook can affect every other agent's store.
-2. **Refuse Flox environments that have a hook.** Correct, and what devcroft
-   does — but `hook.on-activate` is idiomatic Flox, so this refuses a large
-   share of real environments.
-   comit 
-3. **Run activation unconfined on the host.** What devcroft does today, with a
-   warning. It is the inversion the whole `sandbox-provisioning` change exists
-   to close: the project's code runs *before* any boundary exists, which is
-   weaker than what the code gets afterwards.
+2. **Refuse Flox environments that have a hook.** Safe, and unpleasant —
+   `hook.on-activate` is idiomatic Flox, so this refuses a large share of real
+   environments, including the ones `flox init` scaffolds.
+3. **Run activation unconfined on the host.** An inversion: the project's code
+   runs *before* any boundary exists, which is weaker than what that same code
+   gets afterwards.
 
-None of these is a good outcome for a Flox user, and (1) is the one a consumer
-under delivery pressure is most likely to pick.
+**What devcroft actually does, and why this request is still worth filing.**
+There is a fourth option, and devcroft has taken it: materialize from a
+**derived copy of the environment with the `[hook]` table removed**, then run
+the hook afterwards inside a sandbox. Measured against real Flox, stripping
+`[hook]` produces a byte-identical locked package set and an identical store
+path — a hook is not a package input, so removing it cannot change what gets
+realised.
+
+That works, and it is not what a consumer should have to do. It means devcroft
+parses and rewrites Flox's configuration format to reconstruct a boundary Flox
+could simply expose. A schema change, a second place project code can run, or
+any divergence between "what `[hook]` contains" and "what runs at activation"
+would silently break it, and devcroft would not necessarily notice. The ask is
+therefore not "unblock us" — it is "make this a supported contract rather than
+an inference maintained against your internals".
 
 ## Other providers already do this
 
@@ -98,7 +109,7 @@ What a consumer needs from (2) is that the hook runs with **no daemon authority
 remaining**. If the hook can still reach the daemon after materialization, the
 split has not bought anything.
 
-## The flow this unblocks
+## The flow this would make supported
 
 ```
 1. trusted resolver
@@ -116,8 +127,10 @@ split has not bought anything.
      project code runs under the manifest's own policy
 ```
 
-Stage 1 and stage 2 are the split being requested. Everything else already
-works.
+Stage 1 and stage 2 are the split being requested. devcroft can already
+construct that split by deriving a hook-free environment; what it cannot do is
+*rely* on it. A public interface makes stages 1 and 2 Flox's contract instead
+of devcroft's reconstruction of one.
 
 ## What we are not asking for
 

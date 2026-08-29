@@ -173,11 +173,15 @@ for an environment without running it. Measured:
 - **devbox**: fixed, and implemented (`add-devbox-provider`). `shellenv
   --pure` does not run `init_hook`, in any variant; `devbox run` does.
   Uses the former.
-- **flox**: **not fixable.** No `flox activate` mode suppresses
-  `[hook].on-activate` — not `--mode run`, `--mode dev`, or
-  `--no-start-services`. devcroft detects the hook and `up` prints one
-  warning; refusing was rejected because `on-activate` is idiomatic flox
-  and the user's own `flox activate` runs it identically.
+- **flox**: **not fixable *by a flox flag* — fixable by devcroft.** No
+  `flox activate` mode suppresses `[hook].on-activate`: not `--mode run`,
+  `--mode dev`, or `--no-start-services`. Today devcroft detects the hook
+  and `up` prints one warning. `sandbox-provisioning` P2d closes it
+  without upstream help, by materializing from a **derived, hook-free copy
+  of the environment** that devcroft owns, then running the hook inside
+  the sandbox. Measured: stripping `[hook]` yields a byte-identical locked
+  package set and an identical store path, because a hook is not a package
+  input — so it is a genuine split, not a different environment.
 
   **That answer is context-dependent, and the contexts are about to
   diverge — do not read the two as contradictory.** Warning is right

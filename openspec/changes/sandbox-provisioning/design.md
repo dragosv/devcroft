@@ -72,9 +72,17 @@ socket. A provider qualifies for fully confined activation only if it can
 separate materialization from hook execution, or if devcroft can mediate the
 daemon through a proven operation-scoped interface.
 
-Until then, a Flox environment whose hook would require daemon-backed
-materialization **fails closed**, at layer `provider`. It does not silently
-receive a writable `/nix` or the daemon socket as a fallback.
+A hook that itself requires daemon-backed materialization — installing a package
+at activation time rather than declaring it — **fails closed** at layer
+`provider`. It does not silently receive a writable `/nix` or the daemon socket
+as a fallback.
+
+Note what P2d changes about the scope of that rule, since the two are easy to
+read as contradicting: P2d removes the need to refuse flox *for having a hook*,
+because materialization no longer runs the hook at all. What stays refused is
+narrower and correct — a hook that needs materialization authority **while
+running as project code**. Declaring the package in `[install]`, where it
+belongs, resolves it.
 
 **Rationale.** This is the whole point of the split. Materialization is trusted
 because it runs pinned tooling from a lockfile; a hook is project code and is
@@ -87,7 +95,7 @@ alternative is a fallback that grants the authority anyway, which would make the
 requirement decorative: a rule with a fallback that triggers on exactly the
 cases it was written for is not a rule.
 
-## P2c — Providers differ, and Flox is the blocked case
+## P2c — Providers differ in what they expose, and flox needs help
 
 **Decision.** Eligibility for confined activation is per provider, decided by
 whether the provider can be asked for an environment without running the
@@ -97,24 +105,91 @@ project's hook.
 | --- | --- | --- | --- |
 | Nix flakes | `nix print-dev-env --json` | no | yes |
 | Devbox | `devbox shellenv --pure` | no | yes |
-| Flox with `hook.on-activate` | none | **always** | **blocked** |
+| Flox with `hook.on-activate` | none *provided by flox* | always, via any flox invocation | **yes — see P2d** |
 
-Flox has no public materialize path, no pre-hook context, and no separate hook
-runner — measured across `--mode dev`, `--mode run` and `--no-start-services`,
-none of which suppress the hook (`fix-provisioning-hooks`).
+Flox exposes no public materialize path, no pre-hook context, and no separate
+hook runner — measured across `--mode dev`, `--mode run` and
+`--no-start-services`, none of which suppress the hook
+(`fix-provisioning-hooks`). **That remains true and is no longer disqualifying**:
+P2d constructs the split devcroft needs instead of waiting for flox to expose
+one. An earlier version of this decision listed flox as blocked; that was
+correct about the interface and wrong about the conclusion.
 
-**Rationale, and what this is not.** This is not a judgement about Flox, and
+**Rationale, and what this is not.** This is not a judgement about flox, and
 `hook.on-activate` is not an abuse of the format — it is where people put
-everything Nix does not do. It is a statement about what devcroft can promise
-given the interfaces that exist today. The request that would unblock it is
-written up in [docs/flox-confined-activation-issue.md](../../../docs/flox-confined-activation-issue.md),
-addressed to Flox rather than worked around here, precisely because every
-available workaround is a security compromise.
+everything Nix does not do. It is a statement about what each provider hands
+back, and what devcroft has to construct for itself as a result.
 
-Note the asymmetry worth stating plainly: Flox is the provider devcroft
-recommends by default and the one `init` scaffolds. The provider with the best
-ergonomics is the one that cannot be fully confined. That tension is real and
-should not be smoothed over in the docs.
+An earlier version of this section concluded that "every available workaround is
+a security compromise" and therefore that flox had to be refused pending
+upstream. That was wrong, and worth recording as wrong: the workarounds
+considered were all variants of *granting the hook more authority* (a writable
+store, the daemon socket), and every one of those is indeed a compromise. The
+option not considered was **taking authority away from the materialization step
+instead** — deriving a hook-free environment, which needs no new authority at
+all. P2d is that option.
+
+The asymmetry that made this urgent: flox is the provider devcroft recommends
+by default and the one `init` scaffolds. Leaving the default provider
+unconfinable would have made confined provisioning a feature almost nobody
+got — which is why "refuse flox until upstream moves" was not an acceptable
+resting place, and why P2d exists.
+
+## P2d — Materialize from a devcroft-derived, hook-free manifest
+
+**Decision.** For a flox environment declaring `hook.on-activate`, devcroft
+materializes from a **derived environment it owns**: a copy of the project's
+flox environment with the `[hook]` table removed, activated to realise packages
+and capture the environment. The project's hook then runs **inside the
+provisioning sandbox**, against that already-materialized environment.
+
+This gives devcroft the materialize/hook split flox does not expose, without
+granting project code daemon authority and without refusing the default
+provider.
+
+**Measured, not assumed.** Verified live against real flox:
+
+| check | result |
+|---|---|
+| Does stripping `[hook]` change the resolved closure? | **No** — identical store path (`jq-1.8.1`) |
+| Do the locked package sets differ? | **No** — byte-identical `packages` |
+| Does the hook run during derived activation? | **No** |
+| Does the hook still work when run inside the derived environment afterwards? | **Yes** — packages on `PATH`, flox context present |
+
+The closure is unchanged because `[hook]` is not a package input: it contributes
+nothing to resolution, so removing it cannot alter what gets realised. That is
+what makes this a *split* rather than a *different environment*.
+
+**The derived environment is devcroft-owned and lives outside the project.** It
+is not written into `.flox/`, so this does not mutate project state and does not
+interact with the lockfile-integrity requirement — the project's own manifest
+and lock are read, never rewritten.
+
+**Enumerated caveat: flox context variables point at the derived directory.**
+Measured, the differing variables are exactly `FLOX_ENV`, `FLOX_ENV_PROJECT`,
+`FLOX_ENV_DIRS`, `FLOX_ENV_DESCRIPTION` and `FLOX_PROMPT_ENVIRONMENTS`. Of
+these `FLOX_ENV_PROJECT` is the one that matters: it is how a hook idiomatically
+finds the project root, and left uncorrected a hook would resolve paths into
+devcroft's scratch directory instead of the user's project. devcroft therefore
+sets these to the project's real values when running the hook. Copying the
+environment's `env.json` preserves the environment *name*, so
+`FLOX_ENV_DESCRIPTION` is already correct.
+
+**Why this is a workaround and the upstream request still stands.** devcroft is
+reconstructing a boundary by transforming someone else's configuration format,
+which means tracking that format: a future flox schema change could alter where
+hooks live or add a second place project code can run, and this would need to
+follow. A supported API would make the split flox's contract rather than
+devcroft's inference. The request at
+[docs/flox-confined-activation-issue.md](../../../docs/flox-confined-activation-issue.md)
+is therefore still worth filing — but it is now an ergonomics and
+maintenance-burden ask, not a blocker.
+
+**What it does not fix.** `[profile]` scripts, if flox runs them on the same
+path, would need the same treatment; that is unmeasured and is a task, not an
+assumption. And the hook still runs — inside a sandbox, which is the entire
+point, but a hook that legitimately needs materialization authority (installing
+a package at activation time) will fail there, correctly, per P2b.
 
 ## P3 — The environment crosses the boundary as data
 
@@ -172,8 +247,19 @@ the runtime policy to fit provisioning, which is backwards.
 
 ## Open Questions
 
-1. **Can Flox separate materialization from `hook.on-activate`?** — **blocking
-   for confined Flox activation, and not answerable from inside this repo.**
+1. **~~Can Flox separate materialization from `hook.on-activate`?~~ —
+   RESOLVED, by not needing flox to.**
+
+   **The answer to the question as posed is no**, and it is still no. What
+   changed is that the question was the wrong one: devcroft can construct the
+   split itself by deriving a hook-free environment (P2d), measured to produce
+   an identical closure. The framing below assumed the only way to get a split
+   was for flox to provide one, and would have concluded "refuse flox" from a
+   premise that is entirely true. Kept for that reason — it is a clean example
+   of a correct measurement leading to a wrong conclusion because of how the
+   question was scoped.
+
+   Original text follows.
 
    This question used to read "what does `flox activate` actually require?",
    which assumed the answer was a list of grants to measure. It isn't. The
