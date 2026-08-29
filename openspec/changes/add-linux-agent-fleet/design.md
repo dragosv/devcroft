@@ -104,7 +104,8 @@ manifest and compiles to a blanket network block. This decision is about
 
 ## D5 — Unprivileged connectivity: pasta (passt) or slirp4netns
 
-**Status: OPEN — prototype before finalising the spec.**
+**Status: still OPEN for egress — but the spike found the question is
+narrower than this decision assumed, and does not gate service ports.**
 
 An empty netns has loopback and no route out. Something must provide
 connectivity from user space. Both candidates also perform selective port
@@ -115,6 +116,59 @@ Selection criteria: forwarding semantics and flag stability, throughput on
 loopback-heavy workloads, packaging across target distributions, and behaviour
 on process teardown. This is the only piece of the architecture with no prior
 art inside the project — build a spike first.
+
+### Spike results (measured, this devcontainer, kernel 7.0.14)
+
+**1. Unprivileged user+net namespaces work.** `unshare --user --net
+--map-root-user` succeeds; `/proc/sys/user/max_user_namespaces` is 48184 and
+there is no `unprivileged_userns_clone` restriction here. The gate for
+everything below is open.
+
+**2. This decision's own premise is misleading, and the correction matters.**
+"An empty netns has loopback" is true only in the sense that a `lo` *device*
+exists — it is `DOWN` with no address. Measured consequence:
+
+```
+fresh netns, lo untouched:  bind(127.0.0.1:5432) OK, connect() → ENETUNREACH
+after `ip link set lo up`:  bind OK, connect OK
+```
+
+A service would therefore **start, report itself healthy, and be silently
+unreachable** — the precise failure shape `add-flox-services` exists to
+prevent. Bringing `lo` up requires no external tool, no TUN device, and no
+elevated privilege beyond the user namespace the agent already has. It belongs
+to namespace construction (task group 3), not connectivity (group 4), and was
+not previously anyone's task. Added as 3.x.
+
+**3. Both candidates are unavailable here, for the same reason.** `pasta` and
+`slirp4netns` both fail with `open("/dev/net/tun"): No such file or
+directory`; this devcontainer has no `/dev/net` at all. The throughput and
+forwarding-semantics comparison this decision calls for **cannot be run in
+this environment** — developing fleet's egress path needs the devcontainer to
+pass the device through. That is a prerequisite to finishing D5, not a result
+of it.
+
+**4. Service ports do not depend on any of that.** Demonstrated directly:
+two concurrent netns, each running `ip link set lo up` and binding
+`127.0.0.1:5432`, each reaching its own listener, with the host's own 5432
+left free.
+
+```
+agent a17: bound 5432, reached postgres-of-a17
+agent a18: bound 5432, reached postgres-of-a18
+host 5432 still free — agents did not take it
+```
+
+No pasta, no slirp4netns, no TUN device. This is the whole of what
+`specs/service-ports/spec.md` promises for the in-namespace case, and it is
+already achievable. **D5 gates egress — reaching the proxy, reaching a
+registry, and the host-side mapping — not port isolation.** An agent with
+loopback up and no forwarding is fully network-isolated except its own
+loopback, which is a safe default rather than a broken state.
+
+The practical consequence for sequencing: `service-ports` and the in-namespace
+half of fleet can be built and tested before D5 resolves. Only the optional
+host mapping waits.
 
 ## D6 — One delegated cgroup v2 scope per agent
 

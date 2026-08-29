@@ -36,6 +36,22 @@
   // Worth revisiting if fleet is deferred or dropped: the narrower
   // alternative is granting the specific binary file capabilities rather
   // than unconfining the whole container.
+  //
+  // **Confirmed by fleet's D5 spike:** unprivileged `user`+`net`
+  // namespaces do work here, so the justification above holds up — two
+  // simulated agents were shown binding the same loopback port without
+  // colliding, using nothing but `unshare` and `ip link set lo up`.
+  //
+  // **A second prerequisite that spike found, deliberately NOT added
+  // here yet:** fleet's *egress* path (pasta or slirp4netns, D5) needs
+  // `/dev/net/tun`, and this container has no `/dev/net` at all — both
+  // candidates fail with `open("/dev/net/tun"): No such file or
+  // directory`, so the D5 comparison cannot be run until the device is
+  // passed through (`--device /dev/net/tun`). Left out on purpose: it is
+  // another standing relaxation for work that has not started, the same
+  // trade this comment argues has a real cost, and the in-namespace
+  // service-port half of fleet does not need it. Add it when the D5
+  // spike actually resumes, not before.
   "runArgs": ["--security-opt", "seccomp=unconfined"],
 
   // Fails loudly if Landlock is not reachable, instead of letting the spike

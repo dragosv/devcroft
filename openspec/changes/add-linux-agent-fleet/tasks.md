@@ -49,6 +49,17 @@ the implementation before it resolves.
 - [ ] Implement the internal `devcroft-init` subcommand: single-threaded, config
       over pipe, ruleset over inherited fd.
 - [ ] Implement namespace creation (net, pid, ipc, uts, mount).
+- [ ] **Bring `lo` up inside each agent's netns.** Found by the D5 spike:
+      a fresh netns's loopback device is `DOWN` with no address, and a
+      service bound there gets `bind()` success followed by client
+      `ENETUNREACH` — it starts, reports healthy, and is silently
+      unreachable, the exact failure `add-flox-services` exists to
+      prevent. Belongs here rather than in group 3 (Networking): it needs
+      no forwarding helper, no TUN device, and no privilege beyond the
+      user namespace, and every in-namespace service depends on it.
+- [ ] Test: a service bound inside a constructed namespace is actually
+      *reachable* from inside it, not merely bound. Asserting `bind()`
+      succeeded would pass against the broken case above.
 - [ ] Implement the mount plan: read-only system layer with merged-`/usr`
       symlinks, private `/proc`, minimal `/dev`, private `/tmp`, workspace bind.
 - [ ] Verify the agent command, its language runtime, its config directories and
@@ -65,6 +76,20 @@ the implementation before it resolves.
 - [ ] **Spike:** pasta vs slirp4netns — forwarding semantics, throughput, flag
       stability, packaging, teardown behaviour. Write the finding into `design.md`
       as the D5 resolution.
+      **Started; blocked on the devcontainer, findings recorded in
+      design.md under D5.** Both candidates fail identically here with
+      `open("/dev/net/tun"): No such file or directory` — this
+      devcontainer has no `/dev/net` at all, so the comparison cannot be
+      run. What the spike did settle: unprivileged user+net namespaces
+      work, the `lo`-is-DOWN trap above, and that **service ports do not
+      depend on this decision** (two agents were shown binding the same
+      port with no helper and no TUN device). Egress is what waits on
+      D5, not port isolation.
+- [ ] **Prerequisite for resuming the spike:** pass `/dev/net/tun` into
+      the devcontainer (`--device`), or run the comparison on a host that
+      has it. Without this, neither candidate can be evaluated at all,
+      and the selection criteria D5 names (throughput on loopback-heavy
+      workloads especially) are unmeasurable.
 - [ ] Implement connectivity into each netns using the selected helper.
 - [ ] Host one proxy instance per agent in the supervisor, outside the sandbox.
 - [ ] Forward the proxy port into each agent namespace.
