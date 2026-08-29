@@ -49,7 +49,12 @@ the implementation before it resolves.
 - [ ] Implement the internal `devcroft-init` subcommand: single-threaded, config
       over pipe, ruleset over inherited fd.
 - [ ] Implement namespace creation (net, pid, ipc, uts, mount).
-- [ ] **Bring `lo` up inside each agent's netns.** Found by the D5 spike:
+      **`net` is done** (`src/fleet/netns.rs`,
+      `enter_network_namespace`) — the rest (pid, ipc, uts, mount) is
+      not. Split out and built first because the D5 spike showed the
+      network half is independently deliverable and is what
+      `service-ports` rests on entirely.
+- [x] **Bring `lo` up inside each agent's netns.** Found by the D5 spike:
       a fresh netns's loopback device is `DOWN` with no address, and a
       service bound there gets `bind()` success followed by client
       `ENETUNREACH` — it starts, reports healthy, and is silently
@@ -57,9 +62,17 @@ the implementation before it resolves.
       prevent. Belongs here rather than in group 3 (Networking): it needs
       no forwarding helper, no TUN device, and no privilege beyond the
       user namespace, and every in-namespace service depends on it.
-- [ ] Test: a service bound inside a constructed namespace is actually
+- [x] Test: a service bound inside a constructed namespace is actually
       *reachable* from inside it, not merely bound. Asserting `bind()`
       succeeded would pass against the broken case above.
+      `tests/fleet_netns.rs`. **Verified the tests actually fail when the
+      feature is broken**, which caught a flaw in the tests themselves:
+      the skip guard originally used the same probe as the assertion, so
+      disabling `bring_loopback_up` made all four report `ok` — a
+      regression was indistinguishable from an unsupported host. The
+      guard now asks strictly less than the tests assert (namespace
+      creation only), and with the feature disabled three of the four
+      fail as they should.
 - [ ] Implement the mount plan: read-only system layer with merged-`/usr`
       symlinks, private `/proc`, minimal `/dev`, private `/tmp`, workspace bind.
 - [ ] Verify the agent command, its language runtime, its config directories and

@@ -29,6 +29,16 @@ fn main() {
         // re-execs into this so the irreversible restriction lands in a
         // throwaway child rather than in `doctor` itself.
         Some("__bind_probe") => std::process::exit(bind_probe_main(&args[2..])),
+        // Hidden, same reasoning as `__bind_probe`: entering a network
+        // namespace is irreversible for the process that does it, so the
+        // probe runs in a child nobody minds losing.
+        Some("__netns_probe") => std::process::exit(netns_probe_main(&args[2..])),
+        // Hidden: simulates one fleet agent binding a service port
+        // inside its own namespace, for `tests/fleet_netns.rs`. Lives in
+        // the real binary rather than the test so it enters a namespace
+        // the same way production will — a test-only reimplementation
+        // could drift from what devcroft actually does.
+        Some("__netns_agent_sim") => std::process::exit(netns_agent_sim_main(&args[2..])),
         // Hidden: `crate::proxy::spawn` re-execs into this to run the
         // egress proxy (add-egress-proxy) as its own permanently
         // unsandboxed process — never `__keeper`'s. Not the user-facing
@@ -583,6 +593,173 @@ fn bind_probe_main(args: &[String]) -> i32 {
     }
 }
 
+/// Whether this host could give a fleet agent its own network namespace,
+/// which is what lets N agents each bind the same service port
+/// (`add-linux-agent-fleet`'s `service-ports`).
+///
+/// Reported as `[INFO]`, never `[FAIL]`: fleet is not implemented, so a
+/// host that cannot do this is not currently broken in any way — it just
+/// could not run fleet if fleet existed. Reporting it as a failure would
+/// make `doctor` red for a capability nothing uses yet, which is the
+/// opposite of "every finding is actionable".
+///
+/// Probed by attempting it in a throwaway child rather than reading a
+/// sysctl: seccomp, AppArmor and `max_user_namespaces` can each deny it
+/// independently, and no single readable value predicts all three — the
+/// same reason `doctor_backend` probes Landlock for real.
+fn doctor_agent_namespaces() {
+    let Ok(exe) = std::env::current_exe() else {
+        return;
+    };
+    match devcroft::fleet::netns::probe(&exe) {
+        Ok(true) => println!(
+            "[INFO] fleet: per-agent network namespaces are available on this host \
+             (agents could each bind the same service port)"
+        ),
+        Ok(false) | Err(_) => println!(
+            "[INFO] fleet: per-agent network namespaces are unavailable on this host; \
+             fleet is not implemented yet, so nothing is affected today"
+        ),
+    }
+}
+
+/// Two probes, deliberately separated — see the `--reachable` note.
+///
+/// Default (no argument): can this host create a per-agent network
+/// namespace *at all*? Nothing more. This is the **capability** gate: a
+/// container runtime's seccomp profile, an AppArmor policy restricting
+/// unprivileged user namespaces, or an exhausted `max_user_namespaces`
+/// can each deny it, and none is a devcroft bug.
+///
+/// `--reachable`: the full thing — namespace, loopback up, bind, and a
+/// real connection. This is the **behaviour** under test.
+///
+/// **They must stay separate, and that was learned the hard way here.**
+/// The first version of this probe did both at once, and
+/// `tests/fleet_netns.rs` used it for its skip guard *and* its
+/// assertion. Disabling `bring_loopback_up` to check the tests had
+/// teeth, they all reported `ok` — the guard had seen the same failure
+/// and skipped every test silently. A regression in the feature was
+/// indistinguishable from a host that cannot run it, which is the
+/// failure mode this project keeps finding elsewhere (a check that
+/// cannot fail on the machine you develop on) reproduced in a brand-new
+/// test. The gate must therefore depend on strictly less than what the
+/// test asserts.
+///
+/// The reachable probe binds port 0, not a fixed number: it is
+/// demonstrating namespace setup, and a specific port could collide with
+/// something on the *host* and read as a namespace failure. Concurrent
+/// agents deliberately binding the *same* number is asserted separately,
+/// where collision is the subject rather than noise.
+fn netns_probe_main(args: &[String]) -> i32 {
+    use std::io::{Read, Write};
+
+    if devcroft::fleet::netns::enter_network_namespace().is_err() {
+        return 1;
+    }
+    // Capability gate: creating the namespace is the whole question.
+    if !args.iter().any(|a| a == "--reachable") {
+        return 0;
+    }
+    if devcroft::fleet::netns::bring_loopback_up().is_err() {
+        return 1;
+    }
+
+    let Ok(listener) = std::net::TcpListener::bind("127.0.0.1:0") else {
+        return 1;
+    };
+    let Ok(addr) = listener.local_addr() else {
+        return 1;
+    };
+    std::thread::spawn(move || {
+        if let Ok((mut conn, _)) = listener.accept() {
+            let _ = conn.write_all(b"PONG");
+        }
+    });
+
+    let Ok(mut client) = std::net::TcpStream::connect(addr) else {
+        return 1;
+    };
+    let mut buf = [0u8; 4];
+    match client.read_exact(&mut buf) {
+        Ok(()) if &buf == b"PONG" => 0,
+        _ => 1,
+    }
+}
+
+/// Simulates one fleet agent: enter a namespace, bring loopback up, bind
+/// the given port, and prove this agent reaches *its own* listener.
+///
+/// Prints `served-by-<agent>` so the caller can verify identity rather
+/// than mere success — five agents that each bound something prove
+/// nothing if they all reached the same listener, which is exactly what
+/// a broken namespace setup would look like.
+///
+/// With `--hold`, prints `READY` and then blocks, so a caller can test
+/// what is reachable *from outside* while the listener is genuinely
+/// live. Readiness is signalled rather than slept on: a fixed sleep
+/// would make the caller's assertion depend on machine speed.
+fn netns_agent_sim_main(args: &[String]) -> i32 {
+    use std::io::{Read, Write};
+
+    let Some(agent) = args.first() else {
+        eprintln!("devcroft __netns_agent_sim: usage: <agent> <port> [--hold]");
+        return 2;
+    };
+    let Some(port) = args.get(1).and_then(|p| p.parse::<u16>().ok()) else {
+        eprintln!("devcroft __netns_agent_sim: usage: <agent> <port> [--hold]");
+        return 2;
+    };
+    let hold = args.iter().any(|a| a == "--hold");
+
+    if let Err(e) = devcroft::fleet::netns::enter_network_namespace() {
+        eprintln!("entering namespace: {e}");
+        return 1;
+    }
+    if let Err(e) = devcroft::fleet::netns::bring_loopback_up() {
+        eprintln!("bringing loopback up: {e}");
+        return 1;
+    }
+
+    let listener = match std::net::TcpListener::bind(("127.0.0.1", port)) {
+        Ok(l) => l,
+        Err(e) => {
+            eprintln!("binding 127.0.0.1:{port}: {e}");
+            return 1;
+        }
+    };
+
+    let reply = format!("served-by-{agent}");
+    let served = reply.clone();
+    std::thread::spawn(move || {
+        while let Ok((mut conn, _)) = listener.accept() {
+            let _ = conn.write_all(served.as_bytes());
+        }
+    });
+
+    if hold {
+        print!("READY");
+        let _ = std::io::stdout().flush();
+        std::thread::sleep(std::time::Duration::from_secs(30));
+        return 0;
+    }
+
+    let mut client = match std::net::TcpStream::connect(("127.0.0.1", port)) {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("connecting to own listener: {e}");
+            return 1;
+        }
+    };
+    let mut buf = String::new();
+    if let Err(e) = client.read_to_string(&mut buf) {
+        eprintln!("reading from own listener: {e}");
+        return 1;
+    }
+    print!("{buf}");
+    if buf == reply { 0 } else { 1 }
+}
+
 /// Whether a sandbox on this host can bind a loopback listener under a
 /// deny-default network policy (`cli` delta spec: "doctor reports whether
 /// listening sockets work").
@@ -679,6 +856,7 @@ fn cli_doctor() -> i32 {
     ok &= doctor_backend();
     ok &= doctor_provider();
     doctor_listening_sockets();
+    doctor_agent_namespaces();
     doctor_ssh_config();
     doctor_manifest_degradation();
     doctor_service_supervisor();
