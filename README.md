@@ -165,7 +165,9 @@ goes over a unix socket only your user can reach.
 - **Background services** — Postgres, Redis, whatever your environment
   declares — started and stopped with the sandbox.
 - **Network allowlists** — name the hosts a project may reach; everything
-  else is refused by the kernel, not by asking nicely. Enforced on Linux.
+  else is refused by the kernel, not by asking nicely. TCP goes through a
+  filtering proxy; UDP is denied outright by the sandbox's own network
+  namespace. Enforced on Linux.
 - **Policy you can read** — the same config always produces the same
   rules, and `devcroft policy --render` shows every one of them with the
   reason it exists. To check one thing:

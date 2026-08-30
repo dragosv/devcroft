@@ -84,8 +84,10 @@ fn namespace_summary(compiled: &CompiledPolicy) -> &'static str {
         "own (declared ports are reachable inside the sandbox and via \
          `devcroft ssh -L`, not on the host's loopback)"
     } else {
-        "own if this environment declares services, otherwise shared with the host \
-         (services and ports are what there is to isolate)"
+        // No longer conditional on services: every `network.default =
+        // \"deny\"` sandbox is isolated, because Landlock's network rules
+        // are TCP-only and the namespace is what denies UDP.
+        "own (denies UDP, which Landlock's TCP-only network rules do not)"
     }
 }
 

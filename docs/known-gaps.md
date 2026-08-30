@@ -55,6 +55,35 @@ Fleet (`add-linux-agent-fleet`) is a second, harder consumer of the same
 primitive — N agents under one supervisor, plus an optional host-side
 mapping for reaching one from outside — not yet built.
 
+## UDP was not blocked by `network.default = "deny"` — fixed by isolation
+
+**Landlock's network rules are TCP-only.** `NetPort` gates
+`connect`/`bind` for AF_INET *stream* sockets and says nothing about
+datagrams, so a sandbox with `network.default = "deny"` and an allowlist
+naming one host completed a full DNS round-trip to `8.8.8.8:53` — query
+sent, 61 bytes of reply received. The allowlist constrained nothing
+because it was never in the path. DNS exfiltration and QUIC/HTTP3 would
+both have bypassed the proxy entirely.
+
+nono *does* ship a seccomp filter denying UDP, raw and non-stream sockets.
+It is `apply_auto`'s fallback for pre-V4 Landlock kernels and is never
+installed on a V6 host — the same trap `add-egress-proxy` task 0 hit with
+`install_seccomp_proxy_filter`. Reading the library for "does it deny
+UDP" answers yes, about the wrong path.
+
+**Closed** by giving every `network_block` sandbox its own network
+namespace, not only those declaring ports. An isolated sandbox has no
+route out at all, so UDP fails with `ENETUNREACH` whatever the policy
+layer covers. Egress that is wanted still works, through the relay.
+Asserted in `tests/udp_egress_denied.rs`, which was verified to fail
+(`LEAK 61`) with the fix reverted.
+
+**Residual:** a host that cannot create unprivileged network namespaces
+gets no isolation and therefore still leaks UDP. `up` warns about the
+missing namespace, but the warning is about port collisions and does not
+mention this. Closing that properly needs the seccomp filter nono only
+installs on old kernels — an upstream ask, or a devcroft-side filter.
+
 ## Unix sockets are not mediated by the policy
 
 **Landlock's network rules cover TCP only.** `connect()` to a pathname

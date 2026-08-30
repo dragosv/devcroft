@@ -357,8 +357,33 @@ impl CompiledPolicy {
     /// `false`, leaving that sandbox exactly where it was before this
     /// existed (shared host ports, `add-port-allocation`'s open gap),
     /// which is a known limitation, not a regression this introduces.
-    pub fn wants_network_isolation(&self, services_declared: bool) -> bool {
-        self.network_block && (!self.network_ports.is_empty() || services_declared)
+    pub fn wants_network_isolation(&self, _services_declared: bool) -> bool {
+        // Every deny-network sandbox, not only those with something to
+        // isolate. That second condition used to be here and was removed
+        // for a security reason, not a tidiness one.
+        //
+        // **Landlock's network rules are TCP-only.** `NetPort` gates
+        // `connect`/`bind` for AF_INET stream sockets and says nothing
+        // about UDP, so a sandbox with `network.default = "deny"` — with
+        // or without an allowlist — could open a UDP socket and complete
+        // a full DNS round-trip to 8.8.8.8, measured. nono does have a
+        // seccomp filter that denies UDP, but it is `apply_auto`'s
+        // fallback for pre-V4 Landlock kernels and is never installed on
+        // a V6 host. Same shape as the `install_seccomp_proxy_filter`
+        // finding in `add-egress-proxy` task 0: the library has two
+        // paths, and the modern one does not cover what the fallback did.
+        //
+        // A network namespace closes it without needing either filter —
+        // an isolated sandbox has no route out at all, so UDP fails with
+        // `ENETUNREACH` regardless of protocol coverage. Egress that
+        // *is* wanted still works, because it goes through the relay
+        // (`add-egress-proxy` E7), which is TCP to the proxy's own port.
+        //
+        // The cost of widening this is a namespace for sandboxes that
+        // declare no ports — which is a probe and an `unshare`, and
+        // nothing observable, since a sandbox with no declared ports has
+        // no host-visible ports to lose.
+        self.network_block
     }
 
     /// Whether isolating this sandbox would collide with a port it
@@ -580,7 +605,7 @@ mod tests {
     }
 
     #[test]
-    fn wants_network_isolation_needs_something_to_isolate_but_not_zero_egress() {
+    fn every_deny_network_sandbox_is_isolated_regardless_of_ports_or_egress() {
         let deny_with_ports = compile(
             &parse("[sandbox]\nname = \"p\"\n[network]\ndefault = \"deny\"\nports = [5432]\n")
                 .unwrap()
@@ -589,16 +614,19 @@ mod tests {
         assert!(deny_with_ports.wants_network_isolation(false));
         assert!(deny_with_ports.wants_network_isolation(true));
 
-        // Nothing to isolate: no ports, and the caller reports no
-        // services either. Entering a namespace would cost a syscall for
-        // no observable benefit.
+        // A bare deny sandbox is isolated too, and this assertion was
+        // inverted to make it so. It used to read "nothing to isolate:
+        // entering a namespace would cost a syscall for no observable
+        // benefit" — which was true about *ports* and wrong about
+        // egress. Landlock's network rules are TCP-only, so such a
+        // sandbox could send UDP freely; the namespace is what denies
+        // it (`tests/udp_egress_denied.rs`).
         let deny_bare = compile(
             &parse("[sandbox]\nname = \"p\"\n[network]\ndefault = \"deny\"\n")
                 .unwrap()
                 .0,
         );
-        assert!(!deny_bare.wants_network_isolation(false));
-        // Services alone are enough, with no `network.ports` declared.
+        assert!(deny_bare.wants_network_isolation(false));
         assert!(deny_bare.wants_network_isolation(true));
 
         // **An allowlist no longer disqualifies isolation.** This
