@@ -71,9 +71,19 @@ host access — it is the authority nix itself extends to any local user.
 The same is not true of every socket: a Docker socket reachable this way
 would be a full host compromise, and devcroft's policy would not stop it.
 
-Closing this needs seccomp filtering on `connect()` — the machinery
-`add-egress-proxy`'s D9 already contemplates for the proxy-only path —
-not a Landlock rule, since no Landlock ABI expresses it.
+**Closing it needs a mount namespace, not a Landlock rule.** No Landlock
+ABI expresses AF_UNIX at all, so the fix has to come from somewhere else.
+Two candidates, and the cheaper one is better: seccomp filtering on
+`connect()` (the machinery `add-egress-proxy`'s D9 contemplates for the
+proxy-only path), or simply not having the path in the sandbox's mount
+view. Measured: masking `/nix` with a tmpfs inside an unprivileged
+`unshare(CLONE_NEWUSER | CLONE_NEWNS)` turns the connect into `No such
+file or directory` — nothing to filter, because there is nothing to
+name. That is `add-linux-agent-fleet` task group 2's mount plan, which
+already exists as a task for other reasons.
+
+This entry originally said seccomp was what it needed. That was one
+answer stated as the only one.
 
 **The same property is load-bearing in the other direction**, which is
 why it is worth understanding rather than only patching: a pathname unix

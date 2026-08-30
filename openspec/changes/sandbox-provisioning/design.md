@@ -86,11 +86,19 @@ fails loudly rather than leaving this paragraph stale again.
 
 What survives: *devcroft never grants* the daemon socket, and the failing-closed
 behaviour at layer `provider` is real. What does not: the implication that a
-hook therefore cannot reach it. Until `connect()` is seccomp-filtered — the
-machinery `add-egress-proxy` D9 contemplates — this requirement is enforced by
-devcroft's own refusal to grant, not by the kernel, and P2a/P2b's "agents must
-not hold package-manager authority" is a design intent rather than a boundary
-on any host running a nix daemon.
+hook therefore cannot reach it. Until the sandbox gets a mount namespace that
+does not contain the socket's path, this requirement is enforced by devcroft's
+own refusal to grant, not by the kernel, and P2a/P2b's "agents must not hold
+package-manager authority" is a design intent rather than a boundary on any
+host running a nix daemon.
+
+**The fix is `add-linux-agent-fleet` task group 2's mount plan**, not a new
+mechanism: masking `/nix` inside an unprivileged
+`unshare(CLONE_NEWUSER | CLONE_NEWNS)` makes the connect fail with `No such
+file or directory` — measured. Seccomp filtering on `connect()` would also
+work and is what this note first proposed, but it filters a syscall whose
+argument still names a real path; removing the path is simpler and closes the
+whole class rather than one socket.
 
 Note what P2d changes about the scope of that rule, since the two are easy to
 read as contradicting: P2d removes the need to refuse flox *for having a hook*,
