@@ -137,7 +137,61 @@ What's left is an ordinary resident TCP proxy.)
       changing `detect_for_host`'s `#[cfg(target_os = "macos")]` branch
       either way.
 
-## 4b. Adopt nono-proxy (design.md E6)
+## 4a. Close the auth gap in devcroft's own proxy (ahead of 4b)
+
+Done first, and independently of adopting `nono-proxy`: the finding (an
+unauthenticated loopback proxy is an open relay) is a defect in shipped code,
+and fixing it does not need to wait on a 116-crate dependency swap. The two
+are sequenced, not merged — a session token here is a self-contained ~150
+line change; the crate adoption below is a separate, larger decision that
+brings other capabilities along with it.
+
+- [x] Generate a per-session token at `proxy::spawn` (`generate_token`, 128
+      random bits, hex-encoded — same order of magnitude as the ephemeral SSH
+      host key already regenerated per `up`). Passed to the proxy process via
+      `DEVCROFT_EGRESS_TOKEN`, returned to the caller alongside the port so
+      both travel together everywhere (`proxy::spawn` now returns
+      `(pid, port, token)`; `up.rs` carries them as one `Option<(u16, String)>`
+      rather than two options that could drift apart).
+- [x] Persist the token in `Meta` (`proxy_token`, mirroring `proxy_port`) so
+      a `Health::Stale` recovery can reuse a still-live proxy without
+      resetting its credential. A `meta.json` with a port but no token (only
+      possible from before this change) is **not** eligible for reuse —
+      `ensure_egress_proxy` requires both or spawns fresh.
+- [x] Require `Proxy-Authorization` on every request, checked in
+      `proxy::server::authorized` *before* the allowlist decision — the
+      order the spec's new requirement calls for, since "whose allowlist
+      applies" has no answer for an unauthenticated caller.
+- [x] Deliver the token via **userinfo in the proxy URL**
+      (`http://<token>@127.0.0.1:<port>`), not a bespoke header or env var —
+      `curl`, `git`, `npm`, and `pip` already turn userinfo into
+      `Proxy-Authorization: Basic <base64(token:)>` unprompted, so
+      authenticating needs no devcroft-specific proxy support from any
+      client. `authorized()` accepts only `Basic`, decodes it, and compares
+      the username half in constant time.
+- [x] Refuse with `407 Proxy Authentication Required`, not `502` — a missing
+      or wrong credential and a denied host are different facts, and folding
+      them into one status would make a misconfigured proxy indistinguishable
+      from a correctly-enforced allowlist.
+- [x] Tests: `authorized()` unit tests (matching token, wrong token, missing
+      header, malformed base64, non-`Basic` scheme); an end-to-end test
+      (`an_unauthenticated_caller_is_refused_even_for_an_allowed_host`)
+      proving the refusal is for *auth*, not the allowlist, by using a host
+      that would otherwise be permitted and asserting the log records
+      `reason=unauthenticated` rather than a `host=` allowlist decision; the
+      existing end-to-end allow/deny test and the real-`up` e2e test
+      (`tests/egress_proxy_e2e.rs`) both updated to authenticate and still
+      pass unmodified in their actual assertions.
+- [x] "Two sandboxes with different allowlists" (task 5, reopened below):
+      **closed by this fix directly**, not deferred to 4b — the missing
+      property was authentication, and authentication now exists.
+
+## 4b. Adopt nono-proxy (design.md E6) — separate decision, not blocking
+
+**No longer urgent**, now that 4a closes the auth gap directly. What remains
+here is the broader trade: credential brokering, approval hooks, and audit
+integrity that only the crate brings, at the cost of 116 additional crates.
+Proceed when that trade is wanted, not because the auth defect requires it.
 
 - [ ] 4b.1 Add `nono-proxy = "0.74.0"`, pinned to the same version as `nono`.
       **Record the cost where the earlier one is recorded**: 116 additional
@@ -147,22 +201,19 @@ What's left is an ordinary resident TCP proxy.)
 - [ ] 4b.2 Replace `proxy::server`'s accept loop with `nono_proxy::start`.
       devcroft keeps the process, the pidfile, `up`/`down`/`rm` ownership,
       `CompiledPolicy::network_proxy_port` and the `ProxyOnly` kernel gate —
-      the crate supplies only what runs inside the process.
-- [ ] 4b.3 Enable `require_auth` and plumb the per-session token into the
-      sandbox environment. **This is the gap that motivated adoption**, not a
-      detail: without it the proxy is an open relay on loopback.
-- [ ] 4b.4 Confirm the fail-closed property still holds structurally — the
+      the crate supplies only what runs inside the process. Its own
+      `require_auth`/session-token mechanism replaces 4a's, rather than
+      stacking with it.
+- [ ] 4b.3 Confirm the fail-closed property still holds structurally — the
       kernel gate permits exactly one port whether or not anything is
       listening on it, so a dead proxy denies rather than opens.
-- [ ] 4b.5 Confirm TLS interception, SPIFFE and AWS routing stay **off**.
+- [ ] 4b.4 Confirm TLS interception, SPIFFE and AWS routing stay **off**.
       A test asserting the sandbox sees no injected CA would pin the first,
       which is the one with a real security consequence if it drifted on.
-- [ ] 4b.6 Keep or port the existing e2e coverage
-      (`tests/egress_proxy_e2e.rs`) against the new implementation — the
-      allow/deny behaviour it asserts is the contract, and it must not be
-      dropped because the code beneath it changed.
-- [ ] 4b.7 Test the auth boundary directly: a caller without the token is
-      refused, and refused *before* any allowlist decision.
+- [ ] 4b.5 Port the e2e coverage (`tests/egress_proxy_e2e.rs`, 4a's auth
+      tests) against the new implementation — the allow/deny and auth-boundary
+      behaviour they assert is the contract, and must not be dropped because
+      the code beneath it changed.
 
 ## 5. Validation
 
@@ -188,23 +239,26 @@ What's left is an ordinary resident TCP proxy.)
       anything else is a kernel `EPERM` by construction (confirmed live
       via the `curl -v` probe used to debug the `127.0.0.1` false
       negative above: "Immediate connect fail... Permission denied").
-- [ ] Two sandboxes with different allowlists: neither inherits the
+- [x] Two sandboxes with different allowlists: neither inherits the
       other's.
-      **Reopened — the earlier claim was wrong, and wrong in a way worth
-      keeping.** It argued this held "by construction" because each
-      sandbox's proxy is its own process with its own allowlist, so "no
-      state is shared and nothing *could* leak". That reasons about
-      process state and misses the network surface: the proxy is an
-      **unauthenticated listener on loopback**, so any local process that
-      can reach the port gets that sandbox's allowlisted egress. Landlock
-      `NetPort` grants are port-based, which incidentally limits one
-      *sandbox* reaching another's proxy — but nothing stops an
+      **Reopened, then closed for real — the earlier claim was wrong, and
+      wrong in a way worth keeping.** It argued this held "by construction"
+      because each sandbox's proxy is its own process with its own
+      allowlist, so "no state is shared and nothing *could* leak". That
+      reasons about process state and misses the network surface: the proxy
+      was an **unauthenticated listener on loopback**, so any local process
+      that could reach the port got that sandbox's allowlisted egress.
+      Landlock `NetPort` grants are port-based, which incidentally limits one
+      *sandbox* reaching another's proxy — but nothing stopped an
       unsandboxed process on the host from using either.
-      Found by reading `nono-proxy`'s `ProxyConfig::require_auth`, whose
-      own doc states the missing property directly: the per-session
-      `Proxy-Authorization` token "is the localhost auth boundary that
-      stops other local processes from using the proxy". Closed by
-      adopting that proxy (design.md E6).
+      Found by reading `nono-proxy`'s `ProxyConfig::require_auth`, whose own
+      doc states the missing property directly: the per-session
+      `Proxy-Authorization` token "is the localhost auth boundary that stops
+      other local processes from using the proxy". **Closed directly in
+      devcroft's own proxy (task group 4a)**, not by adopting that crate —
+      the property needed was authentication, which is now present without
+      the dependency. Asserted by
+      `an_unauthenticated_caller_is_refused_even_for_an_allowed_host`.
 - [x] Refusal message names the host — asserted directly in the e2e test
       (`502` body contains `127.0.0.4`) and in `proxy::server`'s own unit
       test.

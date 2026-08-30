@@ -42,15 +42,39 @@ use crate::lifecycle::StatePaths;
 /// restriction shape `up_process` uses for the control and SSH sockets,
 /// though this process is never restricted at all.
 ///
+/// Length of the generated session token, in random bytes before hex
+/// encoding — 128 bits, the same order of magnitude as the ephemeral SSH
+/// host key this project already regenerates per `up` (`ssh::keys`), and
+/// far past what a local guessing attempt over a proxy connection could
+/// exhaust before an operator would notice the sandbox behaving oddly.
+const TOKEN_BYTES: usize = 16;
+
+/// A random per-session token, hex-encoded. Generated fresh by every
+/// `spawn` call — never derived from anything predictable, since its
+/// only job is to be something a process that isn't this sandbox cannot
+/// already know.
+fn generate_token() -> String {
+    let bytes: [u8; TOKEN_BYTES] = rand::random();
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
+
 /// Returns the bound port (folded into the compiled policy via
 /// `CompiledPolicy::with_proxy_port`, so the kernel gate matches the
-/// process that will actually enforce it) and the spawned pid (recorded
-/// in `paths.proxy_pidfile` by the caller so `down`/`rm` can tear it
-/// down independently of the keeper).
-pub fn spawn(exe: &Path, paths: &StatePaths, allow: &[String]) -> io::Result<(libc::pid_t, u16)> {
+/// process that will actually enforce it), the per-session token every
+/// request must present (`add-egress-proxy`'s authentication
+/// requirement — binding to loopback alone is reachability, not
+/// authorisation), and the spawned pid (recorded in `paths.proxy_pidfile`
+/// by the caller so `down`/`rm` can tear it down independently of the
+/// keeper).
+pub fn spawn(
+    exe: &Path,
+    paths: &StatePaths,
+    allow: &[String],
+) -> io::Result<(libc::pid_t, u16, String)> {
     let listener = std::net::TcpListener::bind(("127.0.0.1", 0))?;
     let port = listener.local_addr()?.port();
     crate::lifecycle::clear_cloexec(listener.as_raw_fd())?;
+    let token = generate_token();
 
     std::fs::File::create(&paths.proxy_log)?;
     let log = std::fs::OpenOptions::new()
@@ -64,6 +88,7 @@ pub fn spawn(exe: &Path, paths: &StatePaths, allow: &[String]) -> io::Result<(li
             "DEVCROFT_EGRESS_ALLOW",
             serde_json::to_string(allow).expect("Vec<String> serialization is infallible"),
         )
+        .env("DEVCROFT_EGRESS_TOKEN", &token)
         // `server::run` opens this itself for structured allow/refuse
         // records (one write per record, same discipline
         // `keeper::connection::log_record` established) — a separate fd
@@ -92,5 +117,5 @@ pub fn spawn(exe: &Path, paths: &StatePaths, allow: &[String]) -> io::Result<(li
     // The listener's fd must outlive this function for the child to
     // inherit it across exec; ownership passes to the proxy process.
     std::mem::forget(listener);
-    Ok((child.id() as libc::pid_t, port))
+    Ok((child.id() as libc::pid_t, port, token))
 }

@@ -324,6 +324,7 @@ mod tests {
                     declared_services: Vec::new(),
                     ran_activation_hook: false,
                     proxy_port: None,
+                    proxy_token: None,
                 },
             )
             .unwrap();

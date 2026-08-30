@@ -11,6 +11,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::thread;
 
+use base64::Engine;
 use nono::HostFilter;
 
 /// Bytes read for the request line plus headers before giving up — a
@@ -24,13 +25,21 @@ const MAX_HEADER_BYTES: usize = 64 * 1024;
 /// path optimized for concurrency, and it matches `keeper::connection`'s
 /// own thread-per-session style rather than introducing async machinery
 /// for its own sake.
-pub fn run(listener: TcpListener, allow: Vec<String>, log_path: PathBuf) {
+///
+/// `token` is the per-session credential every request must present via
+/// `Proxy-Authorization` (`add-egress-proxy`'s authentication
+/// requirement). Binding to loopback is reachability, not authorisation:
+/// every process on the host can reach it, so a proxy that accepted any
+/// local caller would lend this sandbox's allowlisted egress to anything
+/// local, including another sandbox's unsandboxed operator tooling.
+pub fn run(listener: TcpListener, allow: Vec<String>, log_path: PathBuf, token: String) {
     // `new_strict`: an empty allowlist denies rather than allows. `spawn`
     // is only ever called when `CompiledPolicy::wants_egress_proxy()` is
     // true, which already implies a non-empty `network.allow`, but a
     // proxy that fails open on an empty list would be a silent footgun
     // for any future caller that forgets to check first.
     let filter = Arc::new(HostFilter::new_strict(&allow));
+    let token = Arc::new(token);
     let log = Arc::new(Mutex::new(
         std::fs::OpenOptions::new()
             .append(true)
@@ -41,9 +50,10 @@ pub fn run(listener: TcpListener, allow: Vec<String>, log_path: PathBuf) {
     for stream in listener.incoming() {
         let Ok(stream) = stream else { continue };
         let filter = Arc::clone(&filter);
+        let token = Arc::clone(&token);
         let log = Arc::clone(&log);
         thread::spawn(move || {
-            let _ = handle_connection(stream, &filter, &log);
+            let _ = handle_connection(stream, &filter, &token, &log);
         });
     }
 }
@@ -61,11 +71,17 @@ struct Target {
     /// to the upstream for a plain HTTP request; unused for `CONNECT`,
     /// which sends its own `200` instead of relaying the request line.
     header_bytes: Vec<u8>,
+    /// The raw `Proxy-Authorization` header value, if the client sent
+    /// one — checked against this process's token before any allowlist
+    /// decision. `None` when absent, which is refused exactly like a
+    /// present-but-wrong value; there is no unauthenticated path.
+    proxy_auth: Option<String>,
 }
 
 fn handle_connection(
     mut client: TcpStream,
     filter: &HostFilter,
+    token: &str,
     log: &Mutex<std::fs::File>,
 ) -> io::Result<()> {
     let peer = client
@@ -85,6 +101,16 @@ fn handle_connection(
             return Ok(());
         }
     };
+
+    // Checked before the allowlist decision, deliberately: the question
+    // "whose allowlist applies" has no answer for an unauthenticated
+    // caller, so there is nothing yet to decide by hostname (design.md
+    // E6, the "authenticated, not merely local" requirement).
+    if !authorized(target.proxy_auth.as_deref(), token) {
+        log_line(log, &format!("refuse peer={peer} reason=unauthenticated"));
+        let _ = write_auth_required(&mut client, target.is_connect);
+        return Ok(());
+    }
 
     // Resolved *before* the filter decision, but a resolution failure
     // does not short-circuit into its own refusal here: `check_host` only
@@ -201,6 +227,7 @@ fn read_target(client: &mut TcpStream) -> io::Result<Option<Target>> {
 
     let mut header_bytes = request_line.clone().into_bytes();
     let mut host_header: Option<String> = None;
+    let mut proxy_auth: Option<String> = None;
     loop {
         let mut line = String::new();
         let n = read_capped_line(&mut reader, &mut line, &mut budget)?;
@@ -208,10 +235,13 @@ fn read_target(client: &mut TcpStream) -> io::Result<Option<Target>> {
         if n == 0 || line.trim_end() == "" {
             break;
         }
-        if let Some((name, value)) = line.split_once(':')
-            && name.trim().eq_ignore_ascii_case("host")
-        {
-            host_header = Some(value.trim().to_string());
+        if let Some((name, value)) = line.split_once(':') {
+            let name = name.trim();
+            if name.eq_ignore_ascii_case("host") {
+                host_header = Some(value.trim().to_string());
+            } else if name.eq_ignore_ascii_case("proxy-authorization") {
+                proxy_auth = Some(value.trim().to_string());
+            }
         }
     }
 
@@ -222,6 +252,7 @@ fn read_target(client: &mut TcpStream) -> io::Result<Option<Target>> {
             host,
             port,
             header_bytes,
+            proxy_auth,
         }));
     }
 
@@ -244,7 +275,46 @@ fn read_target(client: &mut TcpStream) -> io::Result<Option<Target>> {
         host,
         port,
         header_bytes,
+        proxy_auth,
     }))
+}
+
+/// Checks a `Proxy-Authorization` header against this process's token.
+///
+/// Only the `Basic` scheme is accepted, because it is the one every
+/// standard HTTP client already generates unprompted from userinfo in a
+/// proxy URL (`http://<token>@127.0.0.1:<port>`) — the whole point of
+/// this shape is that `curl`, `git`, `npm`, and friends need no proxy-auth
+/// support devcroft invented, only support they already have. The
+/// password half is ignored: the token is the username, and there is
+/// nothing else to check once it matches.
+fn authorized(header: Option<&str>, token: &str) -> bool {
+    let Some(header) = header else { return false };
+    let Some(encoded) = header.strip_prefix("Basic ") else {
+        return false;
+    };
+    let Ok(decoded) = base64::engine::general_purpose::STANDARD.decode(encoded.trim()) else {
+        return false;
+    };
+    let Ok(decoded) = String::from_utf8(decoded) else {
+        return false;
+    };
+    let presented = decoded.split(':').next().unwrap_or(&decoded);
+    constant_time_eq(presented.as_bytes(), token.as_bytes())
+}
+
+/// Equal-time comparison so a failed match does not leak how many
+/// leading bytes were right through response timing — cheap to get right
+/// here and the kind of detail nobody notices is missing until it is
+/// exploited.
+fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    a.iter()
+        .zip(b.iter())
+        .fold(0u8, |acc, (x, y)| acc | (x ^ y))
+        == 0
 }
 
 /// `"host:port"` or bare `"host"` (defaulting to `default_port`) —
@@ -291,6 +361,38 @@ fn read_capped_line(
     }
     *budget -= n;
     Ok(n)
+}
+
+/// `407`, not `502` — an allowlist refusal and a missing/wrong
+/// credential are different facts, and collapsing them would make a
+/// misconfigured (or absent) proxy token indistinguishable from a
+/// correctly-denied host, which is exactly the confusion `write_refusal`
+/// exists to avoid one layer up. `Proxy-Authenticate` is included for
+/// clients that surface it, though devcroft's own env wiring never
+/// depends on the client prompting — it already sends the credential
+/// unprompted via userinfo.
+fn write_auth_required(client: &mut TcpStream, is_connect: bool) -> io::Result<()> {
+    let detail = "devcroft: proxy authentication required";
+    if is_connect {
+        client.write_all(
+            format!(
+                "HTTP/1.1 407 Proxy Authentication Required\r\n\
+                 Proxy-Authenticate: Basic realm=\"devcroft\"\r\n\
+                 Connection: close\r\n\r\n{detail}\r\n"
+            )
+            .as_bytes(),
+        )
+    } else {
+        client.write_all(
+            format!(
+                "HTTP/1.1 407 Proxy Authentication Required\r\n\
+                 Proxy-Authenticate: Basic realm=\"devcroft\"\r\n\
+                 Content-Type: text/plain\r\nConnection: close\r\nContent-Length: {}\r\n\r\n{detail}",
+                detail.len()
+            )
+            .as_bytes(),
+        )
+    }
 }
 
 fn write_refusal(client: &mut TcpStream, is_connect: bool, detail: &str) -> io::Result<()> {
@@ -357,6 +459,47 @@ fn log_line(log: &Mutex<std::fs::File>, line: &str) {
 mod tests {
     use super::*;
     use std::net::TcpListener as StdListener;
+
+    /// The `Proxy-Authorization` *value* a real HTTP client would send
+    /// from `http://<token>@host:port` userinfo — `Basic` over
+    /// `<token>:`, matching what `authorized()` expects.
+    fn basic_auth_value(token: &str) -> String {
+        format!(
+            "Basic {}",
+            base64::engine::general_purpose::STANDARD.encode(format!("{token}:"))
+        )
+    }
+
+    /// The full wire-format header line, for tests that write raw bytes
+    /// to a socket.
+    fn basic_auth_header(token: &str) -> String {
+        format!("Proxy-Authorization: {}", basic_auth_value(token))
+    }
+
+    #[test]
+    fn authorized_accepts_the_matching_token_via_userinfo_shape() {
+        assert!(authorized(Some(&basic_auth_value("secret")), "secret"));
+    }
+
+    #[test]
+    fn authorized_rejects_a_wrong_token() {
+        assert!(!authorized(Some(&basic_auth_value("wrong")), "secret"));
+    }
+
+    #[test]
+    fn authorized_rejects_a_missing_header() {
+        assert!(!authorized(None, "secret"));
+    }
+
+    #[test]
+    fn authorized_rejects_malformed_base64() {
+        assert!(!authorized(Some("Basic not-valid-base64!!!"), "secret"));
+    }
+
+    #[test]
+    fn authorized_rejects_non_basic_scheme() {
+        assert!(!authorized(Some("Bearer secret"), "secret"));
+    }
 
     fn write_and_read_target(request: &'static [u8]) -> io::Result<Option<Target>> {
         let listener = StdListener::bind("127.0.0.1:0").unwrap();
@@ -465,13 +608,20 @@ mod tests {
         let proxy_addr = proxy_listener.local_addr().unwrap();
         let allow = vec!["127.0.0.1".to_string()];
         let log_path_for_run = log_path.clone();
-        thread::spawn(move || run(proxy_listener, allow, log_path_for_run));
+        let token = "test-token-e2e".to_string();
+        thread::spawn(move || run(proxy_listener, allow, log_path_for_run, token));
 
         // Allowed: CONNECT to the mock upstream's own address, which is
         // on the allowlist.
         let mut client = TcpStream::connect(proxy_addr).unwrap();
         client
-            .write_all(format!("CONNECT 127.0.0.1:{upstream_port} HTTP/1.1\r\n\r\n").as_bytes())
+            .write_all(
+                format!(
+                    "CONNECT 127.0.0.1:{upstream_port} HTTP/1.1\r\n{}\r\n\r\n",
+                    basic_auth_header("test-token-e2e")
+                )
+                .as_bytes(),
+            )
             .unwrap();
         let mut response = [0u8; 4096];
         let n = client.read(&mut response).unwrap();
@@ -486,10 +636,17 @@ mod tests {
         assert_eq!(&tail[..n], b"HELLO-FROM-UPSTREAM");
         upstream_thread.join().unwrap();
 
-        // Denied: a host nowhere near the allowlist.
+        // Denied: a host nowhere near the allowlist. Still authenticated —
+        // this test is about the allowlist decision, not auth.
         let mut client2 = TcpStream::connect(proxy_addr).unwrap();
         client2
-            .write_all(b"CONNECT evil.example.com:443 HTTP/1.1\r\n\r\n")
+            .write_all(
+                format!(
+                    "CONNECT evil.example.com:443 HTTP/1.1\r\n{}\r\n\r\n",
+                    basic_auth_header("test-token-e2e")
+                )
+                .as_bytes(),
+            )
             .unwrap();
         let mut response2 = [0u8; 4096];
         let n2 = client2.read(&mut response2).unwrap();
@@ -506,6 +663,82 @@ mod tests {
         let log = std::fs::read_to_string(&log_path).unwrap();
         assert!(log.contains("allow") && log.contains(&upstream_port.to_string()));
         assert!(log.contains("refuse") && log.contains("evil.example.com"));
+        let _ = std::fs::remove_file(&log_path);
+    }
+
+    /// The auth boundary itself, end to end: a caller with no credential
+    /// — the shape of "any other local process on the host" — is refused
+    /// on an *allowlisted* host, which is exactly the scenario that
+    /// distinguishes an authenticated proxy from one that merely happens
+    /// to bind loopback (`add-egress-proxy`'s corrected task: "two
+    /// sandboxes with different allowlists... this holds because each
+    /// proxy authenticates its own client, not merely because the two
+    /// run as separate processes").
+    #[test]
+    fn an_unauthenticated_caller_is_refused_even_for_an_allowed_host() {
+        let log_path = std::env::temp_dir().join(format!(
+            "devcroft-proxy-test-auth-{}.log",
+            std::process::id()
+        ));
+        std::fs::write(&log_path, "").unwrap();
+
+        let proxy_listener = StdListener::bind("127.0.0.1:0").unwrap();
+        let proxy_addr = proxy_listener.local_addr().unwrap();
+        let allow = vec!["example.com".to_string()];
+        let log_path_for_run = log_path.clone();
+        thread::spawn(move || {
+            run(
+                proxy_listener,
+                allow,
+                log_path_for_run,
+                "right-token".into(),
+            )
+        });
+
+        // No Proxy-Authorization header at all, against a host that
+        // *would* be allowed if this client were authenticated — proving
+        // the refusal comes from auth, not from the allowlist.
+        let mut unauthed = TcpStream::connect(proxy_addr).unwrap();
+        unauthed
+            .write_all(b"CONNECT example.com:443 HTTP/1.1\r\n\r\n")
+            .unwrap();
+        let mut response = [0u8; 4096];
+        let n = unauthed.read(&mut response).unwrap();
+        let response = String::from_utf8_lossy(&response[..n]);
+        assert!(
+            response.starts_with("HTTP/1.1 407"),
+            "expected 407 Proxy Authentication Required, got: {response}"
+        );
+
+        // Wrong token, same allowed host: still refused.
+        let mut wrong = TcpStream::connect(proxy_addr).unwrap();
+        wrong
+            .write_all(
+                format!(
+                    "CONNECT example.com:443 HTTP/1.1\r\n{}\r\n\r\n",
+                    basic_auth_header("wrong-token")
+                )
+                .as_bytes(),
+            )
+            .unwrap();
+        let mut response2 = [0u8; 4096];
+        let n2 = wrong.read(&mut response2).unwrap();
+        let response2 = String::from_utf8_lossy(&response2[..n2]);
+        assert!(
+            response2.starts_with("HTTP/1.1 407"),
+            "expected 407 for a wrong token, got: {response2}"
+        );
+
+        let log = std::fs::read_to_string(&log_path).unwrap();
+        assert_eq!(
+            log.matches("reason=unauthenticated").count(),
+            2,
+            "both refusals should log the auth reason, not an allowlist one: {log}"
+        );
+        assert!(
+            !log.contains("example.com HTTP") && !log.contains("host=example.com"),
+            "an unauthenticated request must never reach the allowlist decision: {log}"
+        );
         let _ = std::fs::remove_file(&log_path);
     }
 }

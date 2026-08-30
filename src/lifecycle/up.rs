@@ -201,7 +201,11 @@ pub fn up(
     // the keeper can't answer. `policy::compile` alone (no keeper-exe or
     // provider-grant folding — neither affects the network fields) is
     // enough to know whether one is wanted at all.
-    let proxy_port = if policy::compile(manifest).wants_egress_proxy() {
+    // Port and token always travel together — a proxy without a
+    // recorded token would be indistinguishable from one predating
+    // authentication entirely, so the pair is one `Option`, not two, all
+    // the way to where each half is consumed.
+    let proxy = if policy::compile(manifest).wants_egress_proxy() {
         Some(ensure_egress_proxy(&paths, &manifest.network.allow)?)
     } else {
         // A manifest that no longer wants filtering (`network.allow` was
@@ -230,7 +234,8 @@ pub fn up(
                 .map(|s| s.name.clone())
                 .collect(),
             ran_activation_hook: resolution.ran_activation_hook,
-            proxy_port,
+            proxy_port: proxy.as_ref().map(|(port, _)| *port),
+            proxy_token: proxy.as_ref().map(|(_, token)| token.clone()),
         },
     )?;
 
@@ -241,17 +246,22 @@ pub fn up(
         opts,
         outcome,
         &resolution,
-        proxy_port,
+        proxy,
     )
 }
 
 /// Starts the egress proxy if none from a previous `up` is still alive,
-/// or reuses the live one's already-recorded port. Reuse only ever
-/// applies across a `Health::Stale` recovery — `--recreate` already
+/// or reuses the live one's already-recorded port and token. Reuse only
+/// ever applies across a `Health::Stale` recovery — `--recreate` already
 /// tears the old proxy down before this runs (see the top of [`up`]), so
 /// a live pidfile here can only mean "the keeper died independently of
-/// the proxy," never "the manifest changed and this is stale."
-fn ensure_egress_proxy(paths: &StatePaths, allow: &[String]) -> Result<u16, UpError> {
+/// the proxy," never "the manifest changed and this is stale." A proxy
+/// found alive but with no recorded token (only possible from a
+/// `meta.json` written before authentication existed) is **not**
+/// eligible for reuse — it predates a token entirely, so there is
+/// nothing correct to authenticate against, and it is replaced rather
+/// than trusted.
+fn ensure_egress_proxy(paths: &StatePaths, allow: &[String]) -> Result<(u16, String), UpError> {
     // `is_same_process`, not `is_process_alive`: a resurrected unrelated
     // process at a reused pid would otherwise pass as "our proxy is
     // still running", skip spawning a real one, and leave egress
@@ -260,15 +270,16 @@ fn ensure_egress_proxy(paths: &StatePaths, allow: &[String]) -> Result<u16, UpEr
     // wrong process is at least noisy).
     if let Some((pid, start_time)) = state::read_pidfile(&paths.proxy_pidfile)?
         && state::is_same_process(pid, start_time)
-        && let Some(port) = state::read_meta(&paths.meta)?.and_then(|m| m.proxy_port)
+        && let Some(meta) = state::read_meta(&paths.meta)?
+        && let (Some(port), Some(token)) = (meta.proxy_port, meta.proxy_token)
     {
-        return Ok(port);
+        return Ok((port, token));
     }
     let exe = keeper_exe()?;
-    let (pid, port) = crate::proxy::spawn(&exe, paths, allow)
+    let (pid, port, token) = crate::proxy::spawn(&exe, paths, allow)
         .map_err(|e| UpError::Keeper(format!("starting egress proxy: {e}")))?;
     state::write_pidfile(&paths.proxy_pidfile, pid)?;
-    Ok(port)
+    Ok((port, token))
 }
 
 fn stop_orphaned_egress_proxy(paths: &StatePaths) -> io::Result<()> {
@@ -299,7 +310,7 @@ fn up_process(
     opts: &UpOptions,
     outcome: UpOutcome,
     resolution: &Resolution,
-    proxy_port: Option<u16>,
+    proxy: Option<(u16, String)>,
 ) -> Result<UpOutcome, UpError> {
     // The keeper binary itself must be readable+executable inside the
     // boundary it's about to apply to itself — no baseline group can know
@@ -323,8 +334,8 @@ fn up_process(
     // the caller (`up`), before this function ever ran — see its own
     // module-level comment for why the proxy has to exist independently
     // of anything computed here.
-    let compiled = match proxy_port {
-        Some(port) => compiled.with_proxy_port(port),
+    let compiled = match proxy {
+        Some((port, _)) => compiled.with_proxy_port(port),
         None => compiled,
     };
     let plan = compiled.to_capability_plan();
@@ -405,8 +416,16 @@ fn up_process(
     // interception, so `HTTPS_PROXY` names a plain-`http` CONNECT
     // endpoint, same as every other forward proxy's convention.
     let mut env = resolution.env.clone();
-    if let Some(port) = proxy_port {
-        let endpoint = format!("http://127.0.0.1:{port}");
+    if let Some((port, token)) = &proxy {
+        // Userinfo in the proxy URL, not a bespoke header or env var:
+        // every standard HTTP client already turns `user@host` in a
+        // proxy URL into `Proxy-Authorization: Basic <base64(user:)>`
+        // unprompted — this is the mechanism that lets `curl`/`git`/
+        // `npm`/`pip` authenticate to this sandbox's proxy without any
+        // devcroft-specific proxy support (`add-egress-proxy`'s
+        // authentication requirement; `proxy::server::authorized` is the
+        // matching check).
+        let endpoint = format!("http://{token}@127.0.0.1:{port}");
         for key in ["HTTP_PROXY", "http_proxy", "HTTPS_PROXY", "https_proxy"] {
             env.insert(key.to_string(), endpoint.clone());
         }

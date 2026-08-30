@@ -107,23 +107,26 @@ nono gate its trust module behind a Cargo feature; it is deliberately
 left for the owner to send, since filing an issue on a third-party repo
 is an external action an agent should not take unprompted.
 
-**`add-egress-proxy` now adopts a second crate from the same project,
-`nono-proxy` 0.74.0** (its design.md E6), and the same objection applies
-again with a measured number: **116 additional crates**. That is the same
-order as the trust tail above. It was taken anyway, for a reason worth
-knowing before anyone reopens it: devcroft had already written its own
-CONNECT proxy, the two turned out to have converged on the identical
-architecture, and reading the crate's config surfaced a property devcroft's
-version lacked — a per-session `Proxy-Authorization` token, without which a
-loopback proxy is an open relay lending its sandbox's allowlist to any
-local process. The choice is between owning that class of
-security-sensitive detail or importing it; the dependency graph is the
-price of the second.
+**`add-egress-proxy`'s design.md E6 proposes adopting a second crate from
+the same project, `nono-proxy` 0.74.0**, and the same objection applies
+again with a measured number: **116 additional crates**, the same order as
+the trust tail above — **not yet taken**, and not urgent, for a reason
+worth recording precisely because it changes the calculus stated when this
+was first written. Reading that crate's config surfaced a real defect in
+devcroft's own proxy — no authentication on a loopback listener, which
+makes it an open relay lending its sandbox's allowlist to any local
+process — and the defect was **fixed directly in devcroft's own proxy**
+(task group 4a: a per-session token as proxy-URL userinfo, checked before
+the allowlist decision), rather than by importing the crate. Adopting
+`nono-proxy` remains open as a *separate* decision for what else it
+brings — credential brokering, approval hooks, audit integrity — and
+should be judged on that trade alone, not as the fix for a gap that no
+longer exists.
 
-Three of that crate's capabilities are **off by decision, not by
-omission** — TLS interception (an explicit non-goal), SPIFFE, and AWS
-routing. Enabling any of them is a change to what devcroft claims, not a
-configuration tweak.
+Three of that crate's capabilities, if it is ever adopted, are **off by
+decision, not by omission** — TLS interception (an explicit non-goal),
+SPIFFE, and AWS routing. Enabling any of them is a change to what devcroft
+claims, not a configuration tweak.
 
 Skills `/opsx:propose`, `/opsx:update`, `/opsx:apply`, `/opsx:archive`,
 `/opsx:sync`, and `/opsx:explore` drive the workflow.

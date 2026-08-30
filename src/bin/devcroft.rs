@@ -2173,7 +2173,11 @@ fn egress_proxy_main(fd: RawFd) -> ! {
             eprintln!("devcroft __egress_proxy: DEVCROFT_EGRESS_LOG missing");
             std::process::exit(1);
         });
-    devcroft::proxy::server::run(listener, allow, log_path);
+    let token = std::env::var("DEVCROFT_EGRESS_TOKEN").unwrap_or_else(|_| {
+        eprintln!("devcroft __egress_proxy: DEVCROFT_EGRESS_TOKEN missing");
+        std::process::exit(1);
+    });
+    devcroft::proxy::server::run(listener, allow, log_path, token);
     std::process::exit(0);
 }
 

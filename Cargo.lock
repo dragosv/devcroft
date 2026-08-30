@@ -914,6 +914,7 @@ dependencies = [
 name = "devcroft"
 version = "0.1.0"
 dependencies = [
+ "base64",
  "libc",
  "nono",
  "rand 0.10.2",

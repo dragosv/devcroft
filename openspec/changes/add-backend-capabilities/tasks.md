@@ -32,8 +32,12 @@ nobody can support — that is the point, not a setback.
       record should be `nono`'s append-only NDJSON with a rolling chain hash
       and Merkle commit, rather than a second log format.
 - [ ] 1.7b Credential brokering (`nono-proxy` reverse mode, `jwt_phantom`):
-      `not-adopted` today; `add-egress-proxy` E6 adopts the crate and
-      `add-agent-workload` specifies the capability. Record the `jwt_phantom`
+      `not-adopted`; `add-egress-proxy` E6 proposes adopting the crate for
+      this and `add-agent-workload` specifies the capability, but the crate
+      itself is not yet taken — the auth gap that first motivated looking at
+      it was closed directly in devcroft's own proxy instead (task group 4a),
+      so this capability alone is what remains to justify adoption, not the
+      thing that made it urgent. Record the `jwt_phantom`
       detail as evidence of why "we could write this ourselves" is a weaker
       argument than it sounds: a consumer that validates token *structure*
       rejects an opaque placeholder before any request is made, and that is
@@ -44,10 +48,10 @@ nobody can support — that is the point, not a setback.
       want no devcroft change currently expresses.
 - [ ] 1.7d TLS interception, SPIFFE, AWS routing: `not-adopted` **by
       decision, not by omission** — `add-egress-proxy` refuses the first
-      explicitly and the others are out of scope. The distinction matters:
-      these arrive as capabilities of a dependency devcroft now takes, so a
-      future reader must be able to tell "we chose not to" from "nobody got
-      to it".
+      explicitly and the others are out of scope. The distinction matters if
+      `nono-proxy` is ever adopted: these would arrive as capabilities of
+      that dependency, so a future reader must be able to tell "we chose not
+      to" from "nobody got to it".
 - [ ] 1.8 `supervisor` (runtime capability approval): `not-adopted` **today,
       with a named consumer** — `add-agent-interaction` adopts it to turn a
       policy denial into a request an operator can answer. Worth recording as

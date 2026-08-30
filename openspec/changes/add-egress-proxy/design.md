@@ -105,21 +105,30 @@ argued for and what task 0 measured. Two implementations converging is
 good evidence the design is right — and poor justification for maintaining
 the second one.
 
-**The finding that turned this from "nice" into "should".** Reading
-`ProxyConfig` surfaced a property devcroft's implementation does not have
-and whose absence was not noticed:
+**The finding that motivated a closer look — and was fixed directly,
+ahead of this decision.** Reading `ProxyConfig` surfaced a property
+devcroft's implementation did not have and whose absence had not been
+noticed:
 
 > `require_auth`: the token is the localhost auth boundary that stops other
 > local processes from using the proxy.
 
-devcroft's proxy authenticates nothing. It binds loopback and serves
-whoever connects, so any local process can use a sandbox's allowlisted
-egress. Worse, this change's own task list recorded the opposite as
+devcroft's proxy authenticated nothing. It bound loopback and served
+whoever connected, so any local process could use a sandbox's allowlisted
+egress. Worse, this change's own task list had recorded the opposite as
 satisfied — "no state is shared between two sandboxes' proxies, so there is
 nothing that *could* leak" — reasoning about process state while missing
-the network surface entirely. A per-session `Proxy-Authorization` token is
-the fix, and it is one of several such details that only appear once
-someone has run a proxy in production.
+the network surface entirely.
+
+**This is now fixed in devcroft's own proxy (task group 4a), independently
+of whether the crate below is ever adopted.** A per-session token,
+delivered as userinfo in the proxy URL so standard clients authenticate
+without any devcroft-specific support, checked before the allowlist
+decision, refused with `407` rather than `502` so the two failure modes
+stay distinguishable. The rest of this section's argument for adopting
+`nono-proxy` stands on its remaining merits — credential brokering,
+approval hooks, audit integrity — not on this defect, which no longer
+needs the dependency to close.
 
 **What comes with it, mapped to requirements devcroft has already written
 as open:**

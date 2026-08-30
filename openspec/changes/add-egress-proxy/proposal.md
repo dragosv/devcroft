@@ -27,13 +27,17 @@ rather than a section inside each.
 ## What Changes
 
 - **NEW** a resident egress proxy owned by the supervisor, enforcing a
-  domain-level allowlist. **Supplied by the `nono-proxy` crate** rather than
-  written here (design.md E6) — devcroft owns the process and its lifecycle;
-  the crate owns the loop inside it. Adopted after devcroft's own
-  implementation and that crate turned out to have converged on the identical
-  architecture, and after reading its config surfaced a property devcroft's
-  version lacked: a per-session token, without which a loopback proxy is an
-  open relay lending its sandbox's allowlist to any local process.
+  domain-level allowlist, **now authenticated per session** (task group 4a) —
+  a per-session token delivered as userinfo in the proxy URL, checked before
+  the allowlist decision. Closed directly in devcroft's own implementation
+  after reading `nono-proxy`'s config surfaced the gap: a loopback listener
+  with no auth is an open relay lending its sandbox's allowlist to any local
+  process.
+- Separately, **optionally supplied by the `nono-proxy` crate** instead of
+  devcroft's own accept loop (design.md E6, task group 4b) — a broader,
+  not-yet-decided trade for credential brokering, approval hooks, and audit
+  integrity, no longer motivated by the auth gap since that is already
+  closed.
 - **MODIFIED** `network`: `network.allow` becomes enforced rather than declared.
   The compiled policy routes egress through the proxy instead of compiling to a
   blanket block.

@@ -268,6 +268,22 @@ pub struct Meta {
     /// predates this change, since none of them could have started one.
     #[serde(default)]
     pub proxy_port: Option<u16>,
+    /// The per-session token this sandbox's proxy requires on every
+    /// request, when one is running — companion to `proxy_port` for the
+    /// same reuse reason (a `Health::Stale` recovery needs it back, and
+    /// this process's memory is the only other place it lived). Without
+    /// this, binding the proxy to loopback is not an authorisation
+    /// boundary: any local process can reach loopback, so an
+    /// unauthenticated proxy lends this sandbox's allowlisted egress to
+    /// anything on the host (`add-egress-proxy`, the corrected "two
+    /// sandboxes with different allowlists" task). `#[serde(default)]`
+    /// so `meta.json` written before this field existed still
+    /// deserializes — such a sandbox's proxy (if still alive) predates
+    /// authentication and gets replaced rather than reused, since
+    /// `ensure_egress_proxy` requires a token to consider a proxy
+    /// reusable.
+    #[serde(default)]
+    pub proxy_token: Option<String>,
 }
 
 fn default_resolved_backend() -> String {
@@ -619,6 +635,7 @@ mod tests {
             declared_services: Vec::new(),
             ran_activation_hook: false,
             proxy_port: None,
+            proxy_token: None,
         };
         write_meta(&paths.meta, &meta).unwrap();
         assert_eq!(read_meta(&paths.meta).unwrap(), Some(meta));
@@ -639,6 +656,7 @@ mod tests {
             declared_services: Vec::new(),
             ran_activation_hook: false,
             proxy_port: None,
+            proxy_token: None,
         };
         write_meta(&paths.meta, &meta).unwrap();
         assert!(!paths.meta.with_extension("json.tmp").exists());
