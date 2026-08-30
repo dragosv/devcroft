@@ -83,7 +83,7 @@ health rather than assuming it (7.3).
 `env.provider` value alongside flox, same closure tier, same contract
 (`Provider` trait, host-side activation capture, store grants, staleness
 fingerprinting). `init` and `doctor` both learned about it; see
-[samples/nix-flake-sample](samples/nix-flake-sample/) for a working
+[samples/nix-flake-sample](../samples/nix-flake-sample/) for a working
 example and `openspec/changes/add-nix-provider/` for the full spec. This
 also closed a real, pre-existing gap that predated nix entirely: `policy
 --render`/`why` never showed *any* provider's store grants before this
@@ -338,7 +338,7 @@ don't share (devbox has its own resolver and its own lockfile format, no
 flake underneath), and it does: only `src/provider/mod.rs` (dispatch
 arms) and `src/provider/validate.rs` (one name moved lists) changed
 shape beyond the new module. See
-[samples/devbox-citytime-sample](samples/devbox-citytime-sample/) for a
+[samples/devbox-citytime-sample](../samples/devbox-citytime-sample/) for a
 working example.
 
 Two corrections were found live while implementing, not while designing —
@@ -395,3 +395,16 @@ a project needs none, `init`'s matching advice, and three tests were all
 wrong in the same way, and are corrected together. Two of this change's
 own tests had also been passing for the wrong reason, because `devbox
 add` — unlike `devbox install` — does not write a complete lockfile.
+---
+
+**A published gap turned out to be a wrong diagnosis.** The README once
+claimed there was no way to express "no outbound access, but I can still
+run my dev server" — a `network` policy that blocked all connections was
+assumed to also block `bind()`/`listen()`. False: nono's profile schema
+has always carried an `open_port` field; devcroft simply never emitted it.
+`[network].ports` now does — `default = "deny"` plus `ports = [3000]`
+binds `127.0.0.1:3000` while egress stays filtered and ungranted ports
+stay denied, verified end to end in `tests/network_ports_listen.rs`. Worth
+recording how long the wrong claim survived unchecked: it was repeated
+across the docs and treated as an architectural constraint, and one `nono
+profile schema` invocation refuted it.

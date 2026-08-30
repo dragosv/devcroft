@@ -35,11 +35,18 @@ and Cursor are all validated against a live sandbox; only Zed remains, no
 CLI to drive it non-interactively — see `docs/ssh-validation.md`) and task
 7.5 (publish the `devcroft` crate, reserve/point the npm name).
 
-For current status and known gaps, see the README's Status section. For the
-blow-by-blow of what was built and **what turned out to be wrong along the
-way**, see `docs/implementation-log.md` — that history used to live in the
-README, where it had grown to 376 lines and crowded out everything else.
-Do not duplicate either here.
+For current status, see the README's Status section — kept short on
+purpose; full detail behind each published gap is in
+`docs/known-gaps.md`. For the blow-by-blow of what was built and **what
+turned out to be wrong along the way**, see `docs/implementation-log.md`.
+For the longer competitive reasoning, see `docs/comparison.md`. All three
+used to live in the README (2026-08-30: it had a 100+-line comparison
+essay and a duplicated, partly-stale gap list; before that,
+`docs/implementation-log.md` was extracted when the README hit 376
+lines). The README is now restyled to a short, ecosystem-standard shape —
+overview, install, usage, features, platform support, status, limitations,
+docs, license — matching the `nono` library's own README. Do not
+duplicate any of these here.
 
 ## Working commands
 
