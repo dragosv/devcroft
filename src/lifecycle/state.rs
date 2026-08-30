@@ -43,7 +43,7 @@ pub struct StatePaths {
     /// output and keeper spawn/exit records must interleave.
     pub proxy_log: PathBuf,
     /// An `flock(2)` mutex serializing `up`/`down`/`rm` for this one
-    /// sandbox — see [`acquire_lifecycle_lock`]'s doc for why it exists
+    /// sandbox — see `acquire_lifecycle_lock`'s doc for why it exists
     /// and what it closes. Never removed by `clear_runtime_state`, `rm`'s
     /// directory removal included: an open, already-locked fd stays
     /// valid after its directory entry is unlinked (POSIX `flock` binds
@@ -132,7 +132,7 @@ impl StatePaths {
 }
 
 /// Held for `up`/`down`/`rm`'s entire critical section — see
-/// [`acquire_lifecycle_lock`]. Never read; its only job is to keep the
+/// `acquire_lifecycle_lock`. Never read; its only job is to keep the
 /// fd open (and so the `flock` held) until this is dropped, at which
 /// point the kernel releases it as a side effect of the fd closing.
 #[allow(dead_code)]
@@ -370,7 +370,7 @@ pub fn write_pidfile(path: &Path, pid: libc::pid_t) -> io::Result<()> {
 ///
 /// This alone cannot tell "the process we recorded" from "a different
 /// process the kernel has since reused this pid number for" — see
-/// [`is_same_process`], which is what every caller that is about to
+/// `is_same_process`, which is what every caller that is about to
 /// *signal* a recorded pid should use instead. Kept as its own function
 /// (rather than folded away) because a few callers only ever care about
 /// bare liveness of a pid they hold for other reasons (e.g. a test's own
@@ -396,7 +396,7 @@ pub fn is_process_alive(pid: libc::pid_t) -> bool {
 /// naive whitespace splitting — the standard technique `ps`/`top` also
 /// use for this file.
 ///
-/// Non-Linux (no `/proc`): returns `0`, a sentinel [`is_same_process`]
+/// Non-Linux (no `/proc`): returns `0`, a sentinel `is_same_process`
 /// treats as "not verifiable here" and falls back to plain liveness —
 /// the same protection this project's other platform-dependent checks
 /// already state honestly rather than silently degrading (`policy::
@@ -453,7 +453,7 @@ pub fn is_same_process(pid: libc::pid_t, recorded_start_time: u64) -> bool {
 
 /// A pidfile alone only proves a process with that pid existed *when it
 /// was written* — pids get reused, so this cross-checks the recorded
-/// start time (see [`is_same_process`]) before ever calling the result
+/// start time (see `is_same_process`) before ever calling the result
 /// `Healthy`/`Stale` rather than "gone". A successful socket connect adds
 /// a second, independent signal for `Healthy` specifically, but `Stale`
 /// (pid apparently alive, socket not responding) had no such backstop

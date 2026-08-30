@@ -24,7 +24,7 @@ pub struct SpawnedSession {
 
 /// How a session actually comes into being. The `process` tier's keeper
 /// (and the ssh server, whichever tier it runs under) drive every session
-/// through this trait rather than calling [`spawn`] directly, so a
+/// through this trait rather than calling `spawn` directly, so a
 /// hardened backend with a native exec-into primitive (e.g. `runsc exec`)
 /// can supply its own implementation — in its own module — without
 /// `connection.rs`/`pty.rs`/`protocol.rs`/`registry.rs` or the ssh

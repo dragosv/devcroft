@@ -55,7 +55,34 @@ cargo build                 # build the devcroft binary + spike
 cargo test                  # integration tests; self-skip if flox/nono missing from PATH
 cargo clippy                # lint; currently clean
 cargo fmt                   # format
+cargo doc --no-deps         # rustdoc; currently zero warnings — keep it there,
+                            # docs.rs renders these publicly
 ```
+
+**After any `Cargo.lock` change**, regenerate the dependency attribution:
+
+```sh
+python3 scripts/gen-third-party-licenses.py   # rewrites THIRD-PARTY-LICENSES.md
+```
+
+devcroft is **Apache-2.0** (`LICENSE-APACHE` + `NOTICE`), matching nono
+and the sigstore crates it links rather than the Rust-conventional dual
+`MIT OR Apache-2.0` — a dual license would let a user take MIT and no
+patent grant while changing none of their real obligations, since nono,
+russh and every `sigstore-*` are Apache-2.0-only and linked regardless.
+189 of the 335 shipped dependencies are Apache-2.0, whose §4(a) requires
+recipients get a copy of the License.
+The generator's non-obvious part: `nono`, `russh` and every `sigstore-*`
+declare Apache-2.0 but vendor no license file, so it substitutes the
+canonical text for those — exact, not approximate, because the Apache-2.0
+text has no per-holder copyright line (unlike MIT, which is why MIT is
+never substituted).
+
+**Packaging is an anchored `include` allowlist** in `Cargo.toml`. Without
+the leading `/` on each pattern the globs match at any depth and sweep in
+`samples/`, flox store symlinks, and a vendored Go module cache. If you
+add a file the published crate needs, add it there — the default would
+otherwise ship `openspec/` (131 files) and `.claude/` permanently.
 
 This project is also spec-driven via the [OpenSpec](https://github.com/Fission-AI/OpenSpec) CLI:
 

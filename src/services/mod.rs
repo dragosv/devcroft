@@ -82,7 +82,7 @@ pub fn log_path(project_root: &Path, sandbox_name: &str) -> PathBuf {
 /// child trapping SIGTERM is gone within the timeout; without it, it
 /// survives indefinitely.
 ///
-/// **Must stay strictly below [`keeper::connection::DEFAULT_GRACE_PERIOD`]**,
+/// **Must stay strictly below [`crate::keeper::DEFAULT_GRACE_PERIOD`]**,
 /// the window devcroft gives before SIGKILLing process-compose itself.
 /// If it were longer, devcroft would kill the supervisor before the
 /// supervisor got to kill its children — reintroducing the orphan by a
@@ -199,12 +199,12 @@ pub struct ServiceState {
 
 /// The four states the `services` spec requires be distinguishable,
 /// plus the two process-compose reports that map onto none of them —
-/// see [`ServiceState::from_json`] for the live measurements.
+/// see `ServiceState::from_json` for the live measurements.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ServiceHealth {
     Running,
     /// Exited non-zero. **Not** distinguishable from a clean exit by
-    /// process-compose's `status` field alone — see [`ServiceState::from_json`].
+    /// process-compose's `status` field alone — see `ServiceState::from_json`.
     Failed {
         exit_code: i64,
     },
@@ -370,8 +370,8 @@ const QUERY_DEADLINE: std::time::Duration = std::time::Duration::from_secs(5);
 /// exists precisely so the host can reach inward. So the peer is treated
 /// as untrusted input rather than as devcroft's own supervisor: the path
 /// must be a socket owned by this user (not a regular file or a FIFO
-/// swapped in underneath), the response is capped at [`MAX_RESPONSE`],
-/// and the exchange is bounded by [`QUERY_DEADLINE`] as a whole and not
+/// swapped in underneath), the response is capped at `MAX_RESPONSE`,
+/// and the exchange is bounded by `QUERY_DEADLINE` as a whole and not
 /// only per-read.
 pub fn query(socket: &Path) -> Result<Vec<ServiceState>, Unreachable> {
     use std::io::{Read, Write};

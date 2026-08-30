@@ -1,4 +1,4 @@
-//! Compiles a [`Manifest`](crate::config::Manifest) plus baseline denials
+//! Compiles a [`Manifest`] plus baseline denials
 //! into a [`CompiledPolicy`], projected into the `nono` library's
 //! `CapabilitySet` for the process tier's self-restriction
 //! (`use-nono-library`) — deterministic, and with every rule traceable
@@ -167,7 +167,7 @@ pub struct AnnotatedPort {
 }
 
 /// The manifest compiled into policy rules, still carrying origin
-/// annotations. [`capability_set::to_capability_set`] projects this down
+/// annotations. [`CapabilityPlan::to_capability_set`] projects this down
 /// to the `nono` library's `CapabilitySet` the process tier applies to
 /// itself.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -190,12 +190,12 @@ pub struct CompiledPolicy {
     /// [`compile`]'s pure projection. `Some` if and only if `up` started
     /// the proxy for this sandbox (`network.default = "deny"` and
     /// `network.allow` non-empty); `None` leaves the existing binary
-    /// block/allow-all path in [`capability_set::to_capability_set`]
+    /// block/allow-all path in [`CapabilityPlan::to_capability_set`]
     /// untouched, so a sandbox with no domain filtering never spins up a
     /// proxy it doesn't need.
     pub network_proxy_port: Option<u16>,
     /// The backend setting `extends: "default"` used to supply implicitly
-    /// under the exec-based process tier — see [`SIGNAL_MODE`]. Still
+    /// under the exec-based process tier — see `SIGNAL_MODE`. Still
     /// meaningful under `use-nono-library`: `CapabilitySet::set_signal_mode`
     /// takes the same value directly.
     pub signal_mode: &'static str,
@@ -205,7 +205,7 @@ pub struct CompiledPolicy {
 ///
 /// Deterministic: identical manifests always produce identically-ordered
 /// output, since manifest lists preserve TOML order and baseline entries
-/// are appended in the fixed order of [`SENSITIVE_PATHS`].
+/// are appended in the fixed order of `SENSITIVE_PATHS`.
 pub fn compile(manifest: &Manifest) -> CompiledPolicy {
     let mut filesystem_allow: Vec<AnnotatedValue> = manifest
         .filesystem

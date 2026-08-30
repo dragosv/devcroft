@@ -303,7 +303,7 @@ impl Provider for ProviderKind {
 
 /// Service names this project's flox environment declares, regardless of
 /// which provider the manifest actually names — see
-/// [`flox::declared_service_names`] for why that asymmetry is deliberate.
+/// `flox::declared_service_names` for why that asymmetry is deliberate.
 ///
 /// Lives here rather than being called as `flox::…` from `lifecycle` so
 /// the provider modules stay private to this one, matching how every

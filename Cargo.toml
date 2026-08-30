@@ -2,12 +2,29 @@
 name = "devcroft"
 version = "0.1.0"
 edition = "2024"
+# Edition 2024 requires 1.85; stated explicitly so a too-old toolchain
+# reports that rather than failing with syntax errors deep in the build.
+rust-version = "1.85"
 description = "Isolated, reproducible development environments built on OS-level sandboxing (Landlock/Seatbelt), each reachable over SSH"
-license = "MIT"
+license = "Apache-2.0"
 repository = "https://github.com/dragosv/devcroft"
+homepage = "https://github.com/dragosv/devcroft"
 readme = "README.md"
 keywords = ["sandbox", "landlock", "devcontainer", "ssh", "reproducible"]
 categories = ["command-line-utilities", "development-tools"]
+# An allowlist, not an `exclude` denylist: the default package swept in
+# 131 `openspec/` files, `.claude/`, `.devcontainer/` and `samples/` —
+# ~175 files irrelevant to a consumer, published permanently. An
+# allowlist cannot silently regain them when a new directory appears.
+# `tests/` is deliberately out: every integration test needs a real
+# flox/nix environment and a Landlock host, so it cannot run from an
+# unpacked crate anyway — it lives in the repository, which `repository`
+# above points at.
+# Leading `/` anchors each pattern to the package root. Without it these
+# are gitignore-style matches at *any* depth, which pulled in every
+# `README.md` and `LICENSE` under `samples/` — including ones inside
+# `.flox/run/` store symlinks and a vendored Go module cache.
+include = ["/src/**/*.rs", "/README.md", "/LICENSE-APACHE", "/NOTICE"]
 
 [dependencies]
 base64 = "0.22.1"

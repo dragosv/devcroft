@@ -19,7 +19,7 @@ impl Provider for NixProvider {
     /// then `nix`, then `flake.lock`, then probe evaluability, then read
     /// the dev shell's build environment as structured data — never by
     /// entering the shell, which would run its `shellHook`
-    /// (`fix-provisioning-hooks`; see [`capture_activated_env`]) — diff
+    /// (`fix-provisioning-hooks`; see `capture_activated_env`) — diff
     /// it against the same fixed baseline `flox.rs` uses, and derive the
     /// read-only store grants.
     fn resolve(&self, project_root: &Path) -> Result<Resolution, ProviderError> {
