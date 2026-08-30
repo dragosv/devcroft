@@ -167,6 +167,34 @@ Left genuinely open (untested, not claimed as safe): whether the *allowed*
 domain's own resolved-IP scope is wider than intended — a different service
 on the same allowed IP, or DNS-rebinding-shaped tricks.
 
+## An agent working in your real directory cannot be rolled back
+
+devcroft confines *where* a sandbox can write — the project root and
+little else. It does not version what happens inside that root. An agent
+that deletes the wrong files, or refactors 200 of them badly, has done so
+to your actual working tree, and devcroft offers no undo.
+
+The mitigation is the obvious one and it does work: commit before letting
+an agent loose. It is recorded as a gap anyway because the tool's own
+pitch is unattended agents, and "remember to commit first" is exactly the
+kind of instruction that fails at the moment it matters.
+
+Two mechanisms would close it, neither built:
+
+- **Per-agent git clones** (`add-linux-agent-fleet` D7, and implemented on
+  the `fleet/workspace-isolation` branch). Rollback by discarding the
+  clone. Covers the fleet case completely and the single-sandbox case not
+  at all, since there you are deliberately working in the real directory.
+- **Snapshots** — fleet task 34 names nono's content-addressed `undo`
+  module as the candidate, deferred there as "an optimisation on top" of
+  clones. This is the one that would cover working in place.
+
+A third approach exists and was considered and rejected: copy-on-write via
+seccomp interception of filesystem syscalls, as `sandlock` does. See
+[prior-art.md](prior-art.md) for why — briefly, it requires a supervisor
+outside the sandbox whose death would break the sandbox's ability to
+compute, which devcroft currently has no component of.
+
 ## No cgroup resource limits
 
 A runaway build in one sandbox can affect the whole host — nothing today

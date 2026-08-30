@@ -69,22 +69,59 @@ Unmeasurable on this devcontainer, which has no abstract sockets at all
 (`ss -xl` shows zero); real on a desktop, where dbus, X11, PipeWire and
 systemd-journald all use them.
 
-### Noted, not taken: copy-on-write without a mount namespace
+### The capability is wanted and already planned; the mechanism is not
 
 sandlock stages writes to a working directory in an upper layer via
 seccomp interception of filesystem syscalls, committing on clean exit —
 *"no mount namespace, no user namespace, no root"*.
 
-This is **not** an alternative to `add-mount-isolation`, which the two are
-easy to confuse: that change hides paths so they cannot be named, this one
-protects a directory from modification. Different goals, both valid.
+First, a confusion worth heading off: this is **not** an alternative to
+`add-mount-isolation`. That change hides paths so they cannot be named;
+this protects a directory from modification. Different goals, and taking
+one says nothing about the other.
 
-It is directly relevant to the agent case, though — an agent that makes a
-mess gets rolled back — and there are now two paths to it: this
-interception approach, or nono's own `undo` module (content-addressed
-snapshots with a Merkle root), which `add-backend-capabilities` records as
-unadopted. Whoever wants the capability should compare them rather than
-assume the library's.
+**Rollback itself is already on the roadmap**, via a different mechanism:
+`add-linux-agent-fleet` task 34 is "confirm the snapshot layer is the
+content-addressable `undo` module rather than an overlay", and that
+change's open question 2 defers snapshotting on the reasoning that
+per-agent clones (D7) give isolation without it and snapshotting is an
+optimisation on top. So the question is not whether devcroft wants an
+agent's mess to be undoable — it does — but which mechanism buys it.
+
+**Why not this one, specifically.** Three costs, and the first is the one
+that decides it:
+
+- **It needs a supervisor outside the sandbox, live for every syscall, for
+  the sandbox's whole life.** devcroft's keeper is *inside* the boundary
+  by design — it self-restricts. A seccomp-notify supervisor cannot be.
+  That introduces a component whose death breaks the sandbox's ability to
+  *compute*, which devcroft currently has none of: if the egress proxy
+  dies today, egress fails closed and everything else keeps working.
+  Trading that property for rollback is a bad trade when cheaper rollback
+  exists.
+- **Per-syscall cost, on a workload of compilers.** sandlock benchmarks
+  Redis; devcroft's characteristic workload is a build touching hundreds
+  of thousands of files, where a userspace round-trip per `open` is a
+  different order of cost than for a server handling network requests.
+- **A correctness surface where mistakes are silent.** Interception has to
+  get `rename`, `link`, `unlink`, `O_TMPFILE`, `openat` with a dirfd,
+  symlinks, hardlinks and mmap writeback all right. One wrong case is a
+  build that reads stale content and succeeds — worse than no rollback at
+  all.
+
+Snapshots pay at checkpoints instead of continuously, which also matches
+the granularity an agent workflow actually needs: work for twenty minutes,
+then review. Per-syscall fidelity buys nothing there.
+
+**Where sandlock's approach genuinely wins, and devcroft has no answer.**
+It protects the directory you are actually working in. devcroft's rollback
+story is per-agent clones, which only helps when the agent is working in a
+clone — the fleet case. A single sandbox pointed at your real project
+directory has no protection beyond "commit before letting an agent loose".
+That is a real gap with a well-understood mitigation, and the mitigation
+is why it is not being closed with a syscall-interception layer today. If
+"commit first" ever stops being an acceptable answer, this is the entry to
+reopen.
 
 ### Noted: L7 HTTP rules have a second implementer
 
