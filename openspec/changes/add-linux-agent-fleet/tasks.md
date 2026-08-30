@@ -95,6 +95,13 @@ the implementation before it resolves.
       fail as they should.
 - [ ] Implement the mount plan: read-only system layer with merged-`/usr`
       symlinks, private `/proc`, minimal `/dev`, private `/tmp`, workspace bind.
+      **Consume `add-mount-isolation` rather than implementing this
+      twice.** That change splits the same work out for the single-sandbox
+      case, because a measured gap needs it now: Landlock does not mediate
+      AF_UNIX, so every sandbox today reaches any world-accessible unix
+      socket, and a mount view is what closes it. Same relationship fleet
+      already has to `fleet::netns` — the primitive ships for one sandbox
+      first, fleet is the second consumer.
 - [ ] Verify the agent command, its language runtime, its config directories and
       CA certificates are all present in the constructed view.
 - [ ] Wire ruleset construction in the parent, namespace-local rule addition in

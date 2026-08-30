@@ -85,6 +85,12 @@ already exists as a task for other reasons.
 This entry originally said seccomp was what it needed. That was one
 answer stated as the only one.
 
+**Specified as `add-mount-isolation`**, which also carries the harder half
+this entry does not: a view narrow enough to close the gap and wide enough
+that a real compile still works. The spike that proved the mechanism
+masked all of `/nix`, which would have removed the toolchain along with
+the socket — `/nix/store` has to stay.
+
 **The same property is load-bearing in the other direction**, which is
 why it is worth understanding rather than only patching: a pathname unix
 socket crosses a *network namespace* too. That is what lets a

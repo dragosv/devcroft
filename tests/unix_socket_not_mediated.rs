@@ -23,8 +23,13 @@
 //!   namespace, so no TUN device or forwarding helper is needed. One
 //!   mechanism, one useful consequence and one unwanted one.
 //!
-//! Closing it needs seccomp filtering on `connect()` — the same machinery
-//! `add-egress-proxy`'s D9 already contemplates — not a Landlock rule.
+//! Closing it needs a mount namespace — `add-mount-isolation`, whose task
+//! 4.1 is to invert both tests below. Measured: masking a path inside an
+//! unprivileged `unshare(CLONE_NEWUSER | CLONE_NEWNS)` turns the connect
+//! into `No such file or directory`. Seccomp filtering on `connect()`
+//! would also work and was this file's original answer, but it filters a
+//! syscall whose argument still names a real path; removing the path
+//! closes the whole class.
 
 use std::io::Read;
 use std::os::unix::net::UnixListener;
