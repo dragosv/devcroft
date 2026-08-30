@@ -115,6 +115,25 @@ was the resolution). Those plus `add-mvp-core` are the
 changes actually implemented; run `openspec list` for the rest, which are
 in flight or not started.
 
+**Sequencing for what is left is in `docs/roadmap.md`** — what 0.2 through
+1.0 each have to be true for, and why in that order. Two entries there
+matter before touching the relevant change:
+
+- **`add-mount-isolation` is 0.2, ahead of everything else**, because it
+  makes a *shipped* claim true rather than adding a new one. Landlock does
+  not mediate AF_UNIX, so every sandbox today reaches any world-accessible
+  unix socket — the nix daemon's included, with `/nix` ungranted.
+  `tests/unix_socket_not_mediated.rs` asserts that gap and passes *because
+  it is open*; closing it must correct that test and three documents
+  together. The fix is a mount namespace, not seccomp (measured).
+- **Fleet's D9 gate is suspended, not struck.** It declared "no proxy work
+  starts until the seccomp handoff resolves", reasoning that a userspace
+  network helper makes proxy variables cooperative. The shipped design has
+  no such helper — loopback-only namespace, egress via a unix-socket relay
+  — so a workload ignoring `HTTPS_PROXY` is refused by Landlock's
+  `NetPort` and by having no route out. Re-derive before building either
+  way; if it holds, fleet loses its hardest phase-0 item.
+
 `own-policy-baseline` and `use-nono-library` came out of measuring what
 devcroft's compiled profile actually contains: 240 rules it ships and
 cannot render. `extends: "default"` is *not* where they come from — nono

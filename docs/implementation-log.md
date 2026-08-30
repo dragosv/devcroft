@@ -408,3 +408,52 @@ stay denied, verified end to end in `tests/network_ports_listen.rs`. Worth
 recording how long the wrong claim survived unchecked: it was repeated
 across the docs and treated as an architectural constraint, and one `nono
 profile schema` invocation refuted it.
+
+---
+
+**Isolation and egress stopped being mutually exclusive, and a recorded
+blocker turned out to be about the wrong thing.** `wants_network_isolation`
+originally refused any sandbox with `network.allow`, on the reasoning that
+an isolated namespace has no route to the host-bound egress proxy and
+bridging one needs a forwarding helper (pasta/slirp4netns) blocked on
+`/dev/net/tun` — which `add-linux-agent-fleet`'s D5 spike had measured as
+absent here.
+
+That reasoning was about **IP routing**, which devcroft never needed. It
+needs TCP streams reaching a proxy. A *pathname* unix socket crosses a
+network namespace, because it is a filesystem object governed by the mount
+namespace rather than by netns. So the proxy gained a unix listener and the
+keeper relays to it from inside the namespace, and a sandbox now gets its
+own port table *and* filtered egress — the combination an agent actually
+needs, and the one shape devcroft could not produce.
+
+Worth keeping because the mistake is reusable: a blocker had been recorded
+accurately (the TUN device really is absent) against a requirement that was
+never the actual one.
+
+**The same property is a hole in the boundary.** Landlock's network rules
+cover TCP only, so AF_UNIX connect falls through to plain filesystem
+permissions — a sandbox reaches any world-accessible unix socket, including
+`/nix/var/nix/daemon-socket/socket` with `/nix` ungranted, which is the
+package-manager authority `sandbox-provisioning` says agents must not hold.
+`sandbox-provisioning`'s design.md had asserted the opposite. Recorded as a
+gap that a test asserts *because it is open*
+(`tests/unix_socket_not_mediated.rs`), so closing it fails loudly rather
+than leaving another stale claim. The fix is a mount namespace, not seccomp
+— measured — and is specified as `add-mount-isolation`.
+
+**And the isolation work broke something no test could see.** Giving a
+sandbox its own namespace also took its declared ports off the host's
+loopback, so "run a dev server, open localhost:3000" stopped working for
+exactly the `default = "deny"` shape the docs recommend. Every port test
+devcroft had was written from *inside* the sandbox — binding via `exec`,
+counting processes from the host — and all stayed green while the property
+a user cares about disappeared. A test that only looks from inside the
+boundary cannot see a change in what the boundary exposes.
+
+**A correction that did not reach the artifacts people act on.** The D5/D9
+findings above were written into fleet's `design.md` and left out of its
+`tasks.md`, where a blocking gate ("no proxy work starts until this
+resolves") stood unqualified for another commit. design.md is read to
+understand; tasks.md is read to decide what to do next. Correcting only the
+first is how a stale blocker survives being disproved.

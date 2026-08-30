@@ -34,15 +34,32 @@ the implementation before it resolves.
 - [ ] Confirm the snapshot layer is the content-addressable `undo` module rather
       than an overlay, and measure agent startup cost at N agents on a
       representative worktree (Open Question 3).
-- [ ] **Spike (blocking): the seccomp notification listener handoff.** The
+- [ ] **Re-derive whether D9's filter is needed at all — do this before the
+      spike below, not after.** D9 declared the proxy-only seccomp filter
+      mandatory and made the handoff spike a hard gate, reasoning that a
+      userspace network helper providing a general stack makes proxy
+      environment variables cooperative. **The shipped design has no such
+      helper**: the namespace has loopback only and egress is a relay to a
+      unix socket (`add-egress-proxy` E7), so a workload ignoring
+      `HTTPS_PROXY` is refused by Landlock's `NetPort` *and* by there being
+      no route out. If that holds for a fleet agent, both items below stop
+      being blockers and this group loses its hardest work.
+- [ ] ~~**Spike (blocking): the seccomp notification listener handoff.**~~
+      **Gate suspended pending the re-derivation above**, not struck: the
+      spike itself is still the right work *if* the filter is needed. The
       proxy-only filter traps `sendmsg`, so the listener FD cannot be passed
-      over an ordinary control socket after installation. Validate a bootstrap
-      (`CLONE_FILES`, or the pidfd route) that transfers it to the host's proxy
-      loop. **No proxy work starts until this resolves** (D9).
+      over an ordinary control socket after installation; a bootstrap
+      (`CLONE_FILES`, or the pidfd route) would have to transfer it to the
+      host's proxy loop. What is no longer true is "**no proxy work starts
+      until this resolves**" — proxy work shipped, without the filter, and
+      the egress it produces is non-cooperative by construction (D9).
 - [ ] **Spike: slirp4netns with the exact flags fleet needs**, per supported
       distribution — `--disable-host-loopback`, explicit inbound forwarding, no
       automatic forwarding — verifying behaviour rather than binary presence
       (D5). Blocked in this devcontainer until `/dev/net/tun` is available.
+      **Scope reduced to the host-side port mapping**: reaching the proxy and
+      (through it) a registry needs no helper, since a unix socket crosses a
+      network namespace. Nothing in fleet's in-namespace half waits on this.
 - [ ] **Spike: systemd user-service delegation** — create the subtree, enable
       controllers, move a child into a leaf, `cgroup.kill` it, and observe
       `cgroup.events` report it empty (D6).
