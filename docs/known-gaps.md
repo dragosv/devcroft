@@ -30,7 +30,17 @@ properties in one sandbox: it binds its declared port while the host
 holds the same number, *and* reaches an allowlisted host while a
 non-allowlisted one stays refused.
 
-Two limits worth knowing:
+**A granted port is namespace-local, and that is a behaviour change.**
+Before isolation, a dev server bound inside a sandbox answered on the
+host's own `127.0.0.1:<port>`; now it does not — measured, both
+directions. That is the same property that stops two sandboxes colliding,
+seen from the other side. `up` prints a note naming
+`devcroft ssh -L` when it applies, `policy --render` marks the ports
+namespace-local, and `tests/host_port_reachability.rs` asserts both
+directions so a future host-side mapping (fleet's D8) has to update the
+claim rather than silently contradict it.
+
+Two further limits worth knowing:
 
 - The relay binds the proxy's own port number inside the namespace, which
   is what keeps `HTTP_PROXY` and the compiled `proxy_only` gate identical

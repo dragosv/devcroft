@@ -123,6 +123,22 @@ default = "deny"
 allow = ["api.example.com"]
 ```
 
+### Reaching a sandbox's ports
+
+A sandbox that declares `network.ports` or services gets its own network
+namespace, so its ports are **private to it** — that's what stops two
+sandboxes of one project colliding on the same committed port. The
+tradeoff: they don't appear on your host's `localhost`. Reach a dev
+server inside a sandbox with a tunnel:
+
+```sh
+ssh -L 3000:127.0.0.1:3000 -N my-project.devcroft   # then open localhost:3000
+```
+
+`devcroft up` says this when it applies, and `policy --render` marks such
+ports namespace-local. A sandbox with `network.default = "allow"` is not
+isolated and its ports stay directly reachable.
+
 ### Connecting an editor
 
 ```sh

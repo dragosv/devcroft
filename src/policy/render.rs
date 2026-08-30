@@ -32,6 +32,28 @@ pub fn render(compiled: &CompiledPolicy) -> String {
         for p in &compiled.network_ports {
             writeln!(out, "  {:<40} {}", p.value, p.origin).unwrap();
         }
+        // Where the port actually lives, not just that it is granted.
+        // A grant reads identically whether the sandbox has its own
+        // network namespace or shares the host's, and the two behave
+        // differently in the way a user notices first: an isolated
+        // sandbox's port answers from inside and through `ssh -L`, but
+        // not on the host's own loopback. Rendering the grant without
+        // that distinction would let two sandboxes with byte-identical
+        // output behave differently — the opposite of what this command
+        // is for.
+        //
+        // Stated as a condition rather than a fact because `--render`
+        // runs against the manifest alone: whether isolation *engages*
+        // also depends on the host's namespace support, which only a
+        // real `up` probes (it warns there when it does not).
+        if compiled.wants_network_isolation(false) {
+            writeln!(
+                out,
+                "  (namespace-local: this sandbox gets its own network namespace, so \
+                 these ports do not appear on the host's loopback)"
+            )
+            .unwrap();
+        }
     }
     // `network_proxy_port` is `None` until an actual `up` starts the
     // proxy and folds it in (`CompiledPolicy::with_proxy_port`'s doc) —

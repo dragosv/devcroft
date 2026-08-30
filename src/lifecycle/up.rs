@@ -457,6 +457,35 @@ fn up_process(
             }
         };
 
+    // Isolation moves a declared port out of the host's reach, and a user
+    // running a dev server has no way to discover that except by the
+    // browser failing to connect. Measured: with `default = "deny"` and
+    // `ports = [18440]`, a server bound inside the sandbox answers `200`
+    // through `devcroft ssh -L` and nothing at all on the host's own
+    // `127.0.0.1:18440`, where before isolation it answered directly.
+    //
+    // CLAUDE.md's "degraded capabilities are surfaced, never silent"
+    // invariant is about capabilities the *host* cannot enforce, so this
+    // is not literally that case — nothing is degraded, the port works
+    // exactly as granted. But the principle is the same one, and the
+    // failure it prevents is identical: a user who is not told reads a
+    // manifest granting a port, sees it bind, and cannot reach it.
+    if isolate_network && !compiled.network_ports.is_empty() {
+        let ports: Vec<String> = compiled
+            .network_ports
+            .iter()
+            .map(|p| p.value.to_string())
+            .collect();
+        eprintln!(
+            "devcroft: note: this sandbox has its own network namespace, so its \
+             declared port(s) {} are reachable from inside it and through \
+             `devcroft ssh -L <local>:127.0.0.1:<port> {}`, but not directly on \
+             the host's own loopback",
+            ports.join(", "),
+            manifest.sandbox.name,
+        );
+    }
+
     // design.md's Open Question 3, resolved: `NetworkMode::ProxyOnly`'s
     // kernel gate only ever permits a literal `connect()` to this port —
     // it does not redirect other destinations — so a client that never
