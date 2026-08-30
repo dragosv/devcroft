@@ -42,13 +42,20 @@ stands against *this* requirement, which is why the wording above now says
 plainly what it does: an environment variable, with the exposure that
 implies, stated in "The residual exposure is stated, not implied" below.
 
-The stronger mechanism now has a home: `add-egress-proxy` adopts
-`nono-proxy` (its design.md E6), whose reverse-proxy mode injects the real
-credential at the proxy while the sandbox holds only a placeholder. That is
-the capability-not-custody property `docs/threat-model.md` describes, and
-it is specified separately below rather than folded in here, because the
-two deliver genuinely different guarantees and a manifest should be able to
-ask for either.
+The stronger mechanism has a *place* to live but not yet an
+implementation, and this requirement no longer pretends otherwise. It
+originally said `add-egress-proxy` "adopts `nono-proxy`", whose
+reverse-proxy mode injects the real credential while the sandbox holds a
+placeholder. That crate was proposed (E6) and **not taken** — devcroft's
+own proxy was extended instead, so the sentence named a dependency that
+does not exist.
+
+What is true: devcroft runs a resident proxy of its own, outside every
+sandbox's policy domain, which is the placement that makes brokering
+possible at all (E1). Building reverse-proxy injection into it, or
+adopting `nono-proxy` for it, are both open options; the capability below
+is specified against neither, since it describes what the sandbox must
+observe rather than which code produces it.
 
 #### Scenario: Key credential grants no filesystem access
 - **WHEN** an API-key credential is requested

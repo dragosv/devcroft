@@ -214,7 +214,8 @@ these:
   dropped.
 - Zed's remote server connects and transfers but does not start.
 
-**Being worked on:** running many agents on one host with per-agent resource
+**Being worked on** (see [docs/roadmap.md](docs/roadmap.md) for the
+ordering and its reasoning): running many agents on one host with per-agent resource
 budgets; building the environment itself inside a sandbox rather than on
 the host; and a way for an agent that gets stuck to say so instead of
 looking identical to one that's busy. Specs for all of these are in
@@ -256,6 +257,7 @@ actually backs.
 | [openspec/changes/add-mvp-core/](openspec/changes/add-mvp-core/) | The MVP — proposal, design, tasks, 7 capability specs |
 | [docs/comparison.md](docs/comparison.md) | How devcroft compares to Dev Containers, flox alone, `nono-cli`, and today's coding-agent products |
 | [docs/known-gaps.md](docs/known-gaps.md) | Full detail behind the Status section's gap list |
+| [docs/roadmap.md](docs/roadmap.md) | What 0.2 through 1.0 have to be true for, and why in that order |
 | [docs/decisions.md](docs/decisions.md) | Every "why doesn't devcroft support X", answered falsifiably |
 | [docs/threat-model.md](docs/threat-model.md) | Which use case the isolation tier backs, and which it doesn't |
 | [docs/implementation-log.md](docs/implementation-log.md) | Build history — what was built, and what turned out to be wrong |

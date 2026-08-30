@@ -244,10 +244,18 @@ host 5432 still free — agents did not take it
 
 No pasta, no slirp4netns, no TUN device. This is the whole of what
 `specs/service-ports/spec.md` promises for the in-namespace case, and it is
-already achievable. **D5 gates egress — reaching the proxy, reaching a
-registry, and the host-side mapping — not port isolation.** An agent with
-loopback up and no forwarding is fully network-isolated except its own
-loopback, which is a safe default rather than a broken state.
+already achievable.
+
+**D5's scope has since shrunk to the host-side mapping alone.** This
+paragraph used to read "D5 gates egress — reaching the proxy, reaching a
+registry, and the host-side mapping". Reaching the proxy turned out to need
+no helper either: a pathname unix socket crosses a network namespace, so
+the proxy listens on one and the keeper relays to it from inside
+(`add-egress-proxy` E7, shipped, `tests/isolated_egress_e2e.rs`). A registry
+is then reachable *through* that proxy, which is the only way devcroft wants
+it reachable anyway. What still waits on a forwarding helper is the optional
+host-side port mapping — reaching a specific agent's service from outside —
+and nothing else.
 
 The practical consequence for sequencing: `service-ports` and the in-namespace
 half of fleet can be built and tested before D5 resolves. Only the optional
@@ -334,14 +342,28 @@ with devcontainers.
 **proxy-only seccomp-notify filter** `add-egress-proxy` provides. General
 syscall-surface hardening remains deferred to `add-syscall-filtering`.
 
-**This reverses the previous decision**, which deferred seccomp from the fleet
-MVP entirely on the reasoning that "the boundary is Landlock plus the network
-policy". That reasoning does not survive D5: once a userspace network helper is
-providing a general stack inside the agent's namespace, proxy environment
-variables are *cooperative*. A workload that simply ignores `HTTPS_PROXY` and
-opens its own socket reaches whatever the helper can route to. Landlock's
-network rules are port-based and cannot express "only this endpoint"; the
-filter can, and nothing else in the design can.
+**This reversed the previous decision** — which deferred seccomp entirely on
+the reasoning that "the boundary is Landlock plus the network policy" — on the
+grounds that a userspace network helper providing a general stack inside the
+agent's namespace makes proxy environment variables *cooperative*: a workload
+that ignores `HTTPS_PROXY` and opens its own socket reaches whatever the helper
+can route to.
+
+**That premise no longer holds, and the reversal should be re-examined before
+any seccomp work starts.** It depends on there being a helper providing a
+general stack. The shipped design has none: the agent's namespace has loopback
+only, and its egress is a relay to a unix socket (`add-egress-proxy` E7). A
+workload ignoring `HTTPS_PROXY` and opening a direct socket is refused twice
+over — Landlock's `NetPort` permits exactly the relay port, and there is no
+route out of the namespace regardless. Egress is non-cooperative *by
+construction*, which is what D9's filter was introduced to achieve.
+
+This matters for sequencing more than for design: the phase-0 gate below
+declares that no proxy work starts until the notification-listener handoff is
+validated. If the filter is not needed, that gate does not apply, and fleet's
+blocking-verification group loses its hardest item. **Re-derive this before
+building either way** — the claim above is reasoned from a shipped mechanism
+and one measured test, not from a fleet agent under load.
 
 So the filter is not extra hardening layered on a working boundary — it **is**
 the boundary for runtime egress. Direct sockets fail closed; only the agent's
