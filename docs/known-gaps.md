@@ -192,9 +192,23 @@ it doesn't hold: `policy --render` shows `network.block: true` even with an
 allowlist set, and a raw socket to an IP unrelated to any allowed domain
 gets a kernel-level `Permission denied` — nono's own Landlock network
 scoping, not an unenforced proxy hint the socket simply never talks to.
-Left genuinely open (untested, not claimed as safe): whether the *allowed*
-domain's own resolved-IP scope is wider than intended — a different service
-on the same allowed IP, or DNS-rebinding-shaped tricks.
+**DNS rebinding is closed, and by construction rather than by care.** A
+sandboxed process cannot resolve names at all — measured: `gethostbyname`
+inside a sandbox raises `gaierror`, because DNS is UDP and the sandbox's
+network namespace has no route out. Every name is resolved host-side, by
+the proxy, which then dials the addresses it just checked rather than
+resolving a second time. Rebinding needs the *client* to resolve, and it
+cannot. This is a stronger position than pinning a synthetic `/etc/hosts`
+(what `sandlock` does), which constrains the client's resolution rather
+than removing it.
+
+**Same-IP virtual hosting is still open**, and it is the narrower thing
+that remains true. If an allowed name and a disallowed one share an
+address, a client that asks for the allowed name gets a TLS tunnel to
+that address and can send whatever `Host:` header it likes inside it. The
+proxy decides by the name in `CONNECT` and does not inspect the tunnel —
+TLS interception is an explicit non-goal. Untested, and not claimed as
+safe.
 
 ## An agent working in your real directory cannot be rolled back
 

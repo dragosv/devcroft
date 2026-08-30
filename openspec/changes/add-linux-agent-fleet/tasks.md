@@ -85,6 +85,16 @@ the implementation before it resolves.
 - [ ] Create the empty internal `fleet` node plus one domain leaf per agent;
       keep the supervisor and each agent's host-side proxy out of the leaves.
 - [ ] Apply memory, CPU weight, IO weight and PID limits from configuration.
+- [ ] **Wall-clock timeout, which needs no cgroups and is missing entirely.**
+      devcroft has no execution limit of any kind today — a runaway agent
+      runs until someone notices. A timer plus the escalating
+      SIGTERM/SIGKILL `state::terminate_and_wait` already implements is
+      the whole mechanism, and unlike memory or CPU it does not depend on
+      D6's systemd delegation. Worth landing ahead of the cgroup work
+      rather than with it: it is the cheapest bound on an unattended
+      agent, and `timeout 30 devcroft exec …` only helps a human who is
+      watching. Noted from `sandlock`, which exposes it as `-t/--timeout`
+      (`docs/prior-art.md`).
 - [ ] Implement teardown via `cgroup.kill`.
 - [ ] Read metrics and exit events from the agent's cgroup interface files.
 - [ ] Preflight check for cgroup v2 delegation with an actionable diagnostic.

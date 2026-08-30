@@ -23,9 +23,15 @@ What actually remains:
 - **Hosts without unprivileged user namespaces**, where `up` degrades to
   the shared host port table with a warning. Allocation is the only fix
   there.
-- **The optional host-side mapping**: reaching a specific sandbox's
-  service *from the host* still needs a port chosen and forwarded, which
-  is genuinely this change's subject and `add-linux-agent-fleet`'s D8.
+- **The host-side mapping**, which is now this change's centre of gravity
+  rather than a footnote. Isolation made a sandbox's ports private, which
+  is the point, and the cost is that `localhost:3000` no longer reaches a
+  dev server inside one. Reaching it needs a host port chosen and
+  forwarded — the *choosing* is what this change was always about, and the
+  *forwarding* has a mechanism now: relay into the namespace over a unix
+  socket, the egress relay run backwards (design.md P-NEW). No forwarding
+  helper, no `/dev/net/tun`, no seccomp. This is also
+  `add-linux-agent-fleet`'s D8, and whichever lands first should own it.
 - **A sandbox whose manifest declares the same port the egress proxy was
   assigned**, where isolation is skipped to avoid breaking egress. Rare
   (the proxy port is OS-assigned from the ephemeral range) and arguably

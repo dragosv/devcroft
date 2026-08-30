@@ -178,6 +178,66 @@ one, which is the property that matters.
 **Revisit if** this proves common in practice rather than theoretical;
 the fix is real, just expensive.
 
+### P-NEW — Host reachability is a relay, not a shared port table
+
+**Decision.** Expose a sandbox's service to the host by relaying into its
+network namespace over a unix socket, not by having the sandbox bind a
+host port.
+
+**Why this decision now exists at all.** This change was written when
+every sandbox shared the host's loopback, so "reaching a service" was
+free and only the *number* had to be allocated. Isolation inverted that:
+a sandbox's ports are now private, which is what stops two of them
+colliding, and the cost is that `localhost:3000` in a browser no longer
+reaches a dev server inside one. That regression is documented and
+warned about, and this is the mechanism that removes it.
+
+**Shape — the egress relay (`add-egress-proxy` E7) run backwards:**
+
+```
+browser --TCP--> host forwarder --UDS--> keeper --TCP--> service
+       (host ns)               (crosses ns)  (in ns)
+```
+
+The load-bearing property is the same one in both directions: a pathname
+unix socket is a filesystem object, so it crosses a network namespace
+where a TCP loopback listener does not.
+
+**Three constraints that decide the implementation, all learned from the
+egress direction:**
+
+- **`up` binds the unix socket, not the keeper.** The keeper self-restricts
+  with the state directory baseline-denied, and *binding* creates a file,
+  which Landlock does mediate. (Connecting does not — that asymmetry is
+  what makes the egress direction work without a grant.) So the ingress
+  socket follows control.sock and ssh.sock exactly: bound host-side
+  before restriction, inherited as an fd, never resolved by path again.
+- **The host forwarder needs a resident process, and one exists.** The
+  egress proxy is already a permanently-unsandboxed per-sandbox process.
+  A sandbox wanting ingress but no egress currently starts no proxy, so
+  the spawn condition widens — or the process is renamed for what it has
+  become, which is the sandbox's host-side helper rather than only a
+  proxy.
+- **The host port is what gets allocated**, and it is the only thing that
+  needs to be. The in-namespace port stays exactly what the manifest
+  declared, in every sandbox, with no cooperation from the service —
+  which is what this change's own `service-ports` sibling promises for
+  fleet. Allocation moves to the outside edge, where collisions actually
+  happen.
+
+**Rejected: `pidfd_getfd` and an on-behalf `bind`.** `sandlock` does port
+virtualization this way — the supervisor intercepts `bind`, performs it
+itself on a different real port, and filters `/proc/net/tcp` so the child
+sees its own number. It is more transparent than a relay: the service
+genuinely believes it holds the port, and no configuration says otherwise.
+
+It needs a seccomp-notify supervisor outside the sandbox for the sandbox's
+whole life, which `docs/prior-art.md` rejects for devcroft on a specific
+ground — it introduces a component whose death breaks the sandbox's
+ability to *compute*, which devcroft currently has none of. A relay fails
+differently and better: if the forwarder dies, ingress stops and
+everything inside the sandbox keeps running.
+
 ## Risks / Trade-offs
 
 - **A port from the ephemeral range may be re-used by the kernel for an

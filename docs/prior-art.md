@@ -123,6 +123,46 @@ is why it is not being closed with a syscall-interception layer today. If
 "commit first" ever stops being an acceptable answer, this is the entry to
 reopen.
 
+### Considered and rejected: port virtualization via `pidfd_getfd`
+
+sandlock gives each sandbox a full virtual port space: the supervisor
+intercepts `bind`, performs it on a different *real* port via
+`pidfd_getfd`, and filters `/proc/net/tcp` so the child sees only its own.
+Multiple sandboxes bind the same number; conflicts resolve transparently;
+`sb.ports()` returns the mapping.
+
+More transparent than what devcroft will do — the service genuinely
+believes it holds the port, and nothing has to be configured. Rejected on
+the same ground as the COW entry above: it needs a seccomp-notify
+supervisor outside the sandbox for the sandbox's whole life, which
+introduces a component whose death breaks the sandbox's ability to
+compute.
+
+devcroft reaches the same *user-visible* outcome — every sandbox uses the
+committed port, and the host can still reach a chosen one — by relaying
+into the namespace over a unix socket, which is the egress relay run
+backwards (`add-port-allocation` design.md P-NEW). It fails better: if the
+forwarder dies, ingress stops and the sandbox keeps running.
+
+Worth recording that sandlock's approach is the more elegant one and was
+turned down for an operational property rather than a technical one.
+
+### Noted: devcroft's DNS position is stronger, and reading this is how it got checked
+
+sandlock resolves hostnames once at start and pins them in a synthetic
+`/etc/hosts`, which constrains what the sandboxed process can resolve.
+Checking devcroft against that found something better by accident: a
+devcroft sandbox cannot resolve names *at all* — `gethostbyname` raises
+`gaierror`, because DNS is UDP and an isolated namespace has no route.
+Every name is resolved host-side by the proxy, which then dials the
+addresses it just checked.
+
+DNS rebinding needs the client to resolve, and it cannot. `known-gaps.md`
+had listed rebinding as an open question; it is now recorded as closed by
+construction, with the narrower thing that remains true — same-IP virtual
+hosting behind a TLS tunnel the proxy does not inspect — stated in its
+place.
+
 ### Noted: L7 HTTP rules have a second implementer
 
 sandlock does method/host/path access control through transparent
