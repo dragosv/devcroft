@@ -24,6 +24,20 @@ nobody can support — that is the point, not a setback.
 - [ ] 1.4 Signal isolation — the one library knob devcroft actually sets.
 - [ ] 1.5 Process-info isolation and IPC mode: `not-adopted`. devcroft never
       configures either and silently inherits the library's defaults.
+      **`IpcMode` turned out to be a live security gap, not an unused
+      knob.** Setting `IpcMode::SharedMemoryOnly` is what makes nono
+      request Landlock's `Scope::AbstractUnixSocket` (V6, kernel 6.12) —
+      see `sandbox/linux.rs`'s `abstract_unix_socket_requested`. Without
+      it a sandbox reaches every *abstract* unix socket on the host, which
+      on a desktop Linux means the dbus session bus, X11, PipeWire and
+      systemd-journald. This devcontainer happens to have none (`ss -xl`
+      shows zero), so it is unmeasurable here and real elsewhere.
+      This is the second half of the gap `docs/known-gaps.md` records —
+      the pathname half needs `add-mount-isolation`'s mount namespace,
+      but the abstract half needs one method call devcroft already has
+      access to. **Found by reading `sandlock`** (see `docs/prior-art.md`),
+      which uses exactly this scoping; the matrix had flagged the entry as
+      unadopted without anyone connecting it to the AF_UNIX finding.
 - [ ] 1.6 Resource limits: `not-adopted`. The library's `ResourceLimits` is a
       declaration only — rendering it to cgroups lived in the CLI devcroft
       stopped depending on (confirmed in `add-linux-agent-fleet` task 0).

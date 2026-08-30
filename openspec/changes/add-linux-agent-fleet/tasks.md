@@ -53,6 +53,16 @@ the implementation before it resolves.
       host's proxy loop. What is no longer true is "**no proxy work starts
       until this resolves**" — proxy work shipped, without the filter, and
       the egress it produces is non-cooperative by construction (D9).
+      **And if it is needed, a working sequence already exists to copy.**
+      `sandlock` (`docs/prior-art.md`) does the handoff by ordering rather
+      than by a trick: fork, child installs the filter and receives the
+      listener FD, child transmits that FD to the parent *as part of
+      installation* — before anything is trapped — then blocks on a
+      "ready" signal until the parent's supervisor is live on it, and only
+      then execs. The chicken-and-egg this task describes exists only if
+      the FD is passed *after* the filter is enforcing, which suggests the
+      difficulty is specific to nono's choice to trap `sendmsg` rather
+      than inherent. Read that sequence before spiking.
 - [ ] **Spike: slirp4netns with the exact flags fleet needs**, per supported
       distribution — `--disable-host-loopback`, explicit inbound forwarding, no
       automatic forwarding — verifying behaviour rather than binary presence

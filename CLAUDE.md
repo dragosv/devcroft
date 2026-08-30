@@ -115,6 +115,14 @@ was the resolution). Those plus `add-mvp-core` are the
 changes actually implemented; run `openspec list` for the rest, which are
 in flight or not started.
 
+**Ideas taken from other projects are recorded in `docs/prior-art.md`** —
+what was taken and from where, so an idea whose origin is lost does not
+get re-litigated. devcroft takes *techniques*, never tools: two standing
+requirements make that a rule (the keeper "SHALL NOT be executed as a
+child of a separate sandboxing binary"; "the process tier requires no
+external backend binary"), so bubblewrap and `sandlock` are references,
+not candidates.
+
 **Sequencing for what is left is in `docs/roadmap.md`** — what 0.2 through
 1.0 each have to be true for, and why in that order. Two entries there
 matter before touching the relevant change:

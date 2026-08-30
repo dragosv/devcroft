@@ -70,9 +70,12 @@ thinner version of:
   Postgres. devcroft does, for the common case: a sandbox with services
   or ports and no outbound network gets its own network namespace, so N
   of them bind the identical port with nothing colliding
-  (`CompiledPolicy::wants_network_isolation`, `tests/network_isolation_
-  e2e.rs`). Narrower than it sounds — a sandbox that also wants internet
-  access can't get this yet — but real for the case it covers.
+  (`CompiledPolicy::wants_network_isolation`,
+  `tests/network_isolation_e2e.rs`) — *and* keeps filtered egress inside
+  that namespace, reached through a unix socket that crosses it
+  (`tests/isolated_egress_e2e.rs`). Both properties at once is the
+  combination an agent needs and the one shape a general sandboxing CLI
+  has no model for.
 
 **This is not "host access versus none" — both tools grant host paths,
 declared differently.** `nono-cli`'s `-a`/`-r`/`-w` flags carve permissions
@@ -103,6 +106,16 @@ consuming nono as a mechanism and building policy and orchestration on
 top — is the right one; reversing it would force nono's other consumers
 to carry devcroft's opinions whether they want a dev-environment tool or
 not.
+
+## Other sandboxes devcroft has read
+
+`sandlock` and bubblewrap sit where `nono-cli` does — tools that confine a
+command rather than provision an environment — so the reasoning above
+applies to them unchanged, and neither is a backend candidate. What
+devcroft has taken from each (a seccomp handoff sequence, a Landlock
+scoping mode it already had access to, a mount-plan reference) is recorded
+in [prior-art.md](prior-art.md), so an idea's origin does not get lost and
+re-litigated.
 
 ## How coding-agent products provision environments today
 

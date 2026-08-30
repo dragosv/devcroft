@@ -81,7 +81,23 @@ host access — it is the authority nix itself extends to any local user.
 The same is not true of every socket: a Docker socket reachable this way
 would be a full host compromise, and devcroft's policy would not stop it.
 
-**Closing it needs a mount namespace, not a Landlock rule.** No Landlock
+**The gap has two halves, and only one needs new machinery.** Unix
+sockets come in two kinds and Landlock treats them differently:
+
+- **Abstract** sockets (`@`-prefixed, no filesystem path — dbus, X11,
+  PipeWire, systemd-journald on a typical desktop) *are* expressible.
+  Landlock V6 has `LANDLOCK_SCOPE_ABSTRACT_UNIX_SOCKET`, nono requests it
+  when `IpcMode::SharedMemoryOnly` is set, and **devcroft never sets it**
+  — so this half is open for no reason beyond nobody having connected the
+  two. One method call. This devcontainer has no abstract sockets at all
+  (`ss -xl` shows zero), so it is unmeasurable here and real on a normal
+  desktop.
+- **Pathname** sockets (`/nix/var/nix/daemon-socket/socket`) are *not*
+  expressible at any Landlock ABI. This is the half the nix-daemon finding
+  is about, and the half that needs the mechanism below.
+
+**Closing the pathname half needs a mount namespace, not a Landlock
+rule.** No Landlock
 ABI expresses AF_UNIX at all, so the fix has to come from somewhere else.
 Two candidates, and the cheaper one is better: seccomp filtering on
 `connect()` (the machinery `add-egress-proxy`'s D9 contemplates for the
