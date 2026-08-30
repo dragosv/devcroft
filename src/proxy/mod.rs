@@ -28,6 +28,7 @@ pub mod server;
 
 use std::io;
 use std::os::fd::AsRawFd;
+use std::os::unix::fs::PermissionsExt;
 use std::os::unix::process::CommandExt;
 use std::path::Path;
 use std::process::{Command, Stdio};
@@ -76,6 +77,22 @@ pub fn spawn(
     crate::lifecycle::clear_cloexec(listener.as_raw_fd())?;
     let token = generate_token();
 
+    // The unix listener a network-isolated sandbox reaches the proxy
+    // through — see `StatePaths::proxy_socket`. Bound here, host-side and
+    // before exec, for the same listener-before-restriction reason the
+    // control and SSH sockets are: the proxy process never gets to widen
+    // anything for itself. Mode 0600 alongside the 0700 state dir, the
+    // same belt-and-suspenders the control socket has, and it matters
+    // more here than usual: reaching this socket *is* egress through this
+    // sandbox's allowlist, and Landlock does not mediate unix-socket
+    // connect at all (`tests/unix_socket_not_mediated.rs`), so filesystem
+    // permissions are the only thing standing between another local user
+    // and this sandbox's network reach.
+    let _ = std::fs::remove_file(&paths.proxy_socket);
+    let unix_listener = std::os::unix::net::UnixListener::bind(&paths.proxy_socket)?;
+    std::fs::set_permissions(&paths.proxy_socket, std::fs::Permissions::from_mode(0o600))?;
+    crate::lifecycle::clear_cloexec(unix_listener.as_raw_fd())?;
+
     std::fs::File::create(&paths.proxy_log)?;
     let log = std::fs::OpenOptions::new()
         .append(true)
@@ -84,6 +101,7 @@ pub fn spawn(
     let mut cmd = Command::new(exe);
     cmd.arg("__egress_proxy")
         .arg(listener.as_raw_fd().to_string())
+        .arg(unix_listener.as_raw_fd().to_string())
         .env(
             "DEVCROFT_EGRESS_ALLOW",
             serde_json::to_string(allow).expect("Vec<String> serialization is infallible"),
@@ -114,8 +132,9 @@ pub fn spawn(
     }
 
     let child = cmd.spawn()?;
-    // The listener's fd must outlive this function for the child to
-    // inherit it across exec; ownership passes to the proxy process.
+    // Both listeners' fds must outlive this function for the child to
+    // inherit them across exec; ownership passes to the proxy process.
     std::mem::forget(listener);
+    std::mem::forget(unix_listener);
     Ok((child.id() as libc::pid_t, port, token))
 }

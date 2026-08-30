@@ -53,7 +53,11 @@ fn main() {
                 .get(2)
                 .and_then(|s| s.parse().ok())
                 .expect("__egress_proxy requires a listener fd argument");
-            egress_proxy_main(fd);
+            let unix_fd: RawFd = args
+                .get(3)
+                .and_then(|s| s.parse().ok())
+                .expect("__egress_proxy requires a unix listener fd argument");
+            egress_proxy_main(fd, unix_fd);
         }
         Some("exec") => std::process::exit(cli_exec(&args[2..])),
         Some("shell") => std::process::exit(cli_shell(&args[2..])),
@@ -2169,7 +2173,40 @@ fn maybe_auto_up(sandbox_name: &str, cwd: &std::path::Path) -> Result<(), String
 /// is the load-bearing trick the task 1.1/1.2 spike proved out). Never
 /// returns under normal operation.
 fn keeper_main(fd: RawFd, ssh_fd: RawFd) -> ! {
-    // The keeper's very first action, before reconstructing the listener
+    // Bound *before* `self_restrict`, and this is the one thing that has
+    // to happen first. A network-isolated sandbox reaches the host's
+    // egress proxy through a unix socket (the only thing that crosses a
+    // network namespace), and something inside the namespace has to
+    // present that as an ordinary TCP proxy endpoint for `HTTP_PROXY` to
+    // mean anything. Binding here rather than after restriction is the
+    // same listener-before-restriction ordering the control and SSH
+    // sockets already rely on — the keeper never needs bind permission
+    // for a socket it already holds.
+    //
+    // Absent when this sandbox is not isolated, in which case
+    // `HTTP_PROXY` points straight at the host proxy's own port and no
+    // relay is needed.
+    let relay = std::env::var("DEVCROFT_PROXY_RELAY_PORT")
+        .ok()
+        .and_then(|p| p.parse::<u16>().ok())
+        .zip(std::env::var("DEVCROFT_PROXY_SOCKET").ok())
+        .and_then(|(port, sock)| {
+            match std::net::TcpListener::bind(("127.0.0.1", port)) {
+                Ok(l) => Some((l, std::path::PathBuf::from(sock))),
+                Err(e) => {
+                    // Not fatal: the sandbox comes up without egress
+                    // rather than not at all, and the failure is named
+                    // rather than surfacing later as an opaque refused
+                    // connection.
+                    eprintln!(
+                        "devcroft keeper: could not bind egress relay on 127.0.0.1:{port}: {e}"
+                    );
+                    None
+                }
+            }
+        });
+
+    // The keeper's next action, before reconstructing the listener
     // fds or anything else: applies the compiled policy to *this*
     // process, irreversibly (`use-nono-library` task group 4; lifecycle
     // spec: "The keeper restricts itself with no intermediate process").
@@ -2177,6 +2214,12 @@ fn keeper_main(fd: RawFd, ssh_fd: RawFd) -> ! {
     // inherited by every child it spawns afterward — hooks, services,
     // sessions — so nothing project-supplied can start before this runs.
     self_restrict();
+
+    if let Some((listener, socket_path)) = relay {
+        std::thread::spawn(move || {
+            devcroft::proxy::server::relay_to_host_proxy(listener, socket_path);
+        });
+    }
 
     // SAFETY: `up` created both listeners before restriction, cleared
     // their FD_CLOEXEC, and passed the fd numbers as this process's argv
@@ -2228,7 +2271,7 @@ fn keeper_main(fd: RawFd, ssh_fd: RawFd) -> ! {
 /// cannot: it needs genuine outbound reach to every allowlisted host,
 /// which a `NetworkMode::ProxyOnly` self-restriction would itself deny.
 /// Never returns under normal operation.
-fn egress_proxy_main(fd: RawFd) -> ! {
+fn egress_proxy_main(fd: RawFd, unix_fd: RawFd) -> ! {
     let allow: Vec<String> = std::env::var("DEVCROFT_EGRESS_ALLOW")
         .ok()
         .and_then(|s| serde_json::from_str(&s).ok())
@@ -2250,6 +2293,24 @@ fn egress_proxy_main(fd: RawFd) -> ! {
         eprintln!("devcroft __egress_proxy: DEVCROFT_EGRESS_TOKEN missing");
         std::process::exit(1);
     });
+    // The unix listener runs on its own thread, bridging into the TCP
+    // one — a network-isolated sandbox has no route to host loopback, so
+    // this is its only path to the proxy. Started before `run` because
+    // `run` owns this thread for the process's lifetime.
+    // SAFETY: `crate::proxy::spawn` bound this listener before exec and
+    // cleared its FD_CLOEXEC, same contract as the TCP listener above.
+    let unix_listener = unsafe { std::os::unix::net::UnixListener::from_raw_fd(unix_fd) };
+    let tcp_port = match listener.local_addr() {
+        Ok(addr) => addr.port(),
+        Err(e) => {
+            eprintln!("devcroft __egress_proxy: reading own port: {e}");
+            std::process::exit(1);
+        }
+    };
+    std::thread::spawn(move || {
+        devcroft::proxy::server::bridge_unix_to_tcp(unix_listener, tcp_port);
+    });
+
     devcroft::proxy::server::run(listener, allow, log_path, token);
     std::process::exit(0);
 }

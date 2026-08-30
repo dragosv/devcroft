@@ -4,30 +4,36 @@ Status: proposed (post-MVP). Depends on: `add-flox-services` (services
 are where the collision actually bites) and `network.ports` (already
 implemented — the mechanism that grants a loopback port at all).
 
-**Scope narrowed, not removed, by a finding since this was written.**
-`CompiledPolicy::wants_network_isolation` (implemented) gives a sandbox
-its own network namespace whenever it declares services or ports *and*
-wants zero outbound network — `network.default = "deny"` with no
-`network.allow` entries. For that population, the committed port already
-works unchanged across every sandbox of the project: each gets its own
-port table, so N sandboxes binding the identical 5432 no longer collide,
-and there is nothing left for this change to allocate. Verified live,
-not assumed —
-`tests/network_isolation_e2e.rs`: two sandboxes of one project both bind
-5432 simultaneously, one holding the port open while the other binds it
-too.
+**Largely superseded by a finding since this was written, and the
+remaining scope is small.** `CompiledPolicy::wants_network_isolation`
+(implemented) gives a sandbox its own network namespace whenever it
+declares services or ports — and, since the unix-socket relay landed,
+that no longer costs it egress. For any such sandbox the committed port
+already works unchanged across every instance of the project: each has
+its own port table, so N sandboxes binding the identical 5432 do not
+collide, and there is nothing left for this change to allocate.
+Verified live in `tests/network_isolation_e2e.rs` and
+`tests/isolated_egress_e2e.rs`.
 
-What this change is still for: any sandbox that wants outbound network
-at all, allowlisted or unfiltered. An isolated namespace starts with
-loopback only, so it cannot reach the egress proxy (which binds the
-*host's* loopback) or the real network without a forwarding helper
-`add-linux-agent-fleet`'s D5 has not resolved — `wants_network_isolation`
-refuses isolation for exactly this population by construction. Those
-sandboxes still share the host's port table, still collide on a
-committed port, and are precisely who allocation below is for. The
-"Why" section's claim that "every sandbox shares the host loopback, so
-allocation always applies" is the part this correction retracts; the
-mechanism itself is unaffected.
+This proposal was corrected once already today, when isolation still
+required zero egress, to say its scope was "any sandbox wanting outbound
+network". That is now wrong too — those sandboxes get isolation as well.
+What actually remains:
+
+- **Hosts without unprivileged user namespaces**, where `up` degrades to
+  the shared host port table with a warning. Allocation is the only fix
+  there.
+- **The optional host-side mapping**: reaching a specific sandbox's
+  service *from the host* still needs a port chosen and forwarded, which
+  is genuinely this change's subject and `add-linux-agent-fleet`'s D8.
+- **A sandbox whose manifest declares the same port the egress proxy was
+  assigned**, where isolation is skipped to avoid breaking egress. Rare
+  (the proxy port is OS-assigned from the ephemeral range) and arguably
+  better fixed by re-drawing the proxy port than by allocation.
+
+The "Why" section below predates all of this and its central claim —
+"every sandbox shares the host loopback, so allocation always applies" —
+is retracted. The mechanism it describes is unaffected.
 
 ## Why
 

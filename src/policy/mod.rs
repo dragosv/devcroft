@@ -358,9 +358,22 @@ impl CompiledPolicy {
     /// existed (shared host ports, `add-port-allocation`'s open gap),
     /// which is a known limitation, not a regression this introduces.
     pub fn wants_network_isolation(&self, services_declared: bool) -> bool {
-        self.network_block
-            && self.network_allow_domain.is_empty()
-            && (!self.network_ports.is_empty() || services_declared)
+        self.network_block && (!self.network_ports.is_empty() || services_declared)
+    }
+
+    /// Whether isolating this sandbox would collide with a port it
+    /// declared for itself.
+    ///
+    /// The relay binds the host proxy's own port number *inside* the
+    /// namespace, which is what keeps `HTTP_PROXY` and the compiled
+    /// `proxy_only` gate identical isolated or not. A fresh namespace has
+    /// every port free, so the only possible clash is this sandbox's own
+    /// `network.ports` — and the proxy port is OS-assigned from the
+    /// ephemeral range, so a manifest naming 5432 or 3000 never hits it.
+    /// Checked rather than assumed, because the consequence would be the
+    /// relay silently failing to bind and egress disappearing with it.
+    pub fn proxy_port_collides_with_declared_ports(&self, proxy_port: u16) -> bool {
+        self.network_ports.iter().any(|p| p.value == proxy_port)
     }
 
     /// Fold in the egress proxy's bound port, once `up` has actually
@@ -567,7 +580,7 @@ mod tests {
     }
 
     #[test]
-    fn wants_network_isolation_only_with_zero_egress_and_something_to_isolate() {
+    fn wants_network_isolation_needs_something_to_isolate_but_not_zero_egress() {
         let deny_with_ports = compile(
             &parse("[sandbox]\nname = \"p\"\n[network]\ndefault = \"deny\"\nports = [5432]\n")
                 .unwrap()
@@ -577,7 +590,8 @@ mod tests {
         assert!(deny_with_ports.wants_network_isolation(true));
 
         // Nothing to isolate: no ports, and the caller reports no
-        // services either.
+        // services either. Entering a namespace would cost a syscall for
+        // no observable benefit.
         let deny_bare = compile(
             &parse("[sandbox]\nname = \"p\"\n[network]\ndefault = \"deny\"\n")
                 .unwrap()
@@ -587,10 +601,14 @@ mod tests {
         // Services alone are enough, with no `network.ports` declared.
         assert!(deny_bare.wants_network_isolation(true));
 
-        // Any egress at all — even alongside declared ports — refuses
-        // isolation, because an isolated namespace cannot reach the
-        // host-bound egress proxy without a forwarding helper this
-        // project does not yet have (see the method's own doc).
+        // **An allowlist no longer disqualifies isolation.** This
+        // assertion was inverted when written this morning, on the
+        // reasoning that an isolated namespace could not reach the
+        // host-bound proxy. It can: the proxy listens on a unix socket,
+        // which crosses a network namespace, and the keeper relays to it
+        // from inside (add-egress-proxy design.md E7). Both properties
+        // now hold together, which is the combination an agent needs —
+        // asserted end to end in `tests/isolated_egress_e2e.rs`.
         let deny_with_allow = compile(
             &parse(
                 "[sandbox]\nname = \"p\"\n\
@@ -599,17 +617,39 @@ mod tests {
             .unwrap()
             .0,
         );
-        assert!(!deny_with_allow.wants_network_isolation(true));
+        assert!(deny_with_allow.wants_network_isolation(true));
         assert!(deny_with_allow.wants_egress_proxy());
+    }
 
-        // Unfiltered ("allow") cannot be honoured inside an isolated
-        // namespace either — it still means "reach the real network",
-        // which loopback-only cannot do.
+    #[test]
+    fn an_unfiltered_network_default_still_gets_no_isolation() {
+        // `default = "allow"` means "reach the real network directly",
+        // and there is no proxy in that case to relay through — so an
+        // isolated namespace would have no route out at all. This is the
+        // one case the relay does not rescue, and it stays excluded by
+        // `network_block` being false.
         let allow_default = compile(
             &parse("[sandbox]\nname = \"p\"\n[network]\ndefault = \"allow\"\nports = [5432]\n")
                 .unwrap()
                 .0,
         );
         assert!(!allow_default.wants_network_isolation(true));
+        assert!(!allow_default.wants_egress_proxy());
+    }
+
+    #[test]
+    fn the_proxy_port_collision_guard_only_fires_on_a_declared_port() {
+        let compiled = compile(
+            &parse(
+                "[sandbox]\nname = \"p\"\n\
+                 [network]\ndefault = \"deny\"\nallow = [\"example.com\"]\nports = [5432]\n",
+            )
+            .unwrap()
+            .0,
+        );
+        // The relay binds the proxy's own number inside the namespace, so
+        // this is the one collision a fresh namespace does not rule out.
+        assert!(compiled.proxy_port_collides_with_declared_ports(5432));
+        assert!(!compiled.proxy_port_collides_with_declared_ports(41234));
     }
 }

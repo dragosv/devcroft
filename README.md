@@ -21,13 +21,10 @@ VM per branch really solves it, and both are heavy enough that people
 run four and stop.
 
 That is the gap devcroft closes: a sandbox that declares services or
-ports and wants no outbound network of its own — the common shape for a
-local Postgres used only by tests — gets its own network namespace. Same
-committed port, every sandbox, no collision, no config to write. It's
-narrower than it sounds: a sandbox that *also* wants to reach the
-internet can't get this yet, since an isolated namespace has no route out
-without a forwarding helper devcroft doesn't have. That combination still
-collides today, same as before this existed — see [Status](#status).
+ports gets its own network namespace. Same committed port in every
+sandbox, no collision, no allocation, nothing for the service to
+cooperate with — and outbound access still works inside it, so an agent
+gets both its own Postgres and the registries and APIs it needs.
 
 Containers solve the isolation but cost too much to run eight of, and
 they don't give you a reproducible toolchain by themselves — you still
@@ -187,13 +184,8 @@ Known gaps are published rather than hidden — see
 [docs/known-gaps.md](docs/known-gaps.md) for the detail behind each of
 these:
 
-- **Sandboxes with any outbound network still share the host's ports.**
-  Fixed for sandboxes that want zero outbound network (`network.default =
-  "deny"`, no `network.allow`) and declare services or ports — each gets
-  its own network namespace, so the same committed port works in every
-  one. A sandbox that also wants to reach the internet can't get this yet
-  and still collides, same as before. This is the gap the
-  [Why](#why) section is about.
+- Network isolation needs unprivileged user namespaces; a host without
+  them falls back to shared host ports, with a warning at `up`.
 - **Unix sockets bypass the policy.** Landlock mediates TCP, not AF_UNIX, so
   a sandbox reaches any unix socket the filesystem permits — including a nix
   daemon socket, which grants it that daemon's authority.
@@ -206,9 +198,7 @@ these:
   dropped.
 - Zed's remote server connects and transfers but does not start.
 
-**Being worked on:** extending network isolation to sandboxes that also
-want outbound access, which needs a forwarding helper this host doesn't
-have yet; running many agents on one host with per-agent resource
+**Being worked on:** running many agents on one host with per-agent resource
 budgets; building the environment itself inside a sandbox rather than on
 the host; and a way for an agent that gets stuck to say so instead of
 looking identical to one that's busy. Specs for all of these are in

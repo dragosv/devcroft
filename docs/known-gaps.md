@@ -5,31 +5,41 @@ these is a gap in what's actually built, not a design decision —
 `docs/decisions.md` has the falsifiable "why not X" reasoning for the
 latter.
 
-## Port collisions: fixed for sandboxes with zero outbound network
+## Port collisions: fixed
 
 `CompiledPolicy::wants_network_isolation` gives a sandbox its own network
-namespace when it declares services or `network.ports` *and* wants no
-outbound network at all — `network.default = "deny"` with no
-`network.allow` entries. For that population, `devcroft.toml` being
-committed is no longer a problem: every git worktree of a repo declares
-the *same* port, and each sandbox now has its own port table, so N of them
-binding the identical 5432 no longer collide — no allocation, no
-cooperation from the service, no config to write. Verified live, not
-assumed: `tests/network_isolation_e2e.rs` brings up two real sandboxes of
-one project, has one hold the port open, and confirms the other binds the
+namespace when it declares services or `network.ports`. `devcroft.toml`
+being committed is no longer a problem: every git worktree of a repo
+declares the *same* port, each sandbox has its own port table, so N of
+them binding the identical 5432 no longer collide — no allocation, no
+cooperation from the service, no config to write. Verified live:
+`tests/network_isolation_e2e.rs` brings up two real sandboxes of one
+project, has one hold the port open, and confirms the other binds the
 identical number anyway.
 
-**The gap that survives is the combination this can't cover.** An isolated
-namespace starts with loopback only — nothing routes it to the real
-network, filtered or not — so a sandbox that also wants `network.allow` or
-`network.default = "allow"` cannot be isolated without a forwarding helper
-(pasta/slirp4netns), which `add-linux-agent-fleet`'s D5 has not resolved.
-`wants_network_isolation` refuses isolation for that population by
-construction, on purpose: silently entering a namespace it can't route out
-of would break egress rather than fix ports. Those sandboxes still share
-the host's port table and still collide on a committed port — this is
-`add-port-allocation`'s remaining scope, narrowed by this fix rather than
-made obsolete by it (see that change's own corrected proposal).
+**Egress works inside that namespace too**, which was not true when this
+section was first written. The original scope excluded any sandbox
+wanting `network.allow`, on the reasoning that an isolated namespace has
+no route to the host-bound egress proxy and closing that needs a
+forwarding helper (pasta/slirp4netns) blocked on `/dev/net/tun`. That
+reasoning was about *IP routing*, which devcroft never needed — it needs
+TCP streams reaching a proxy. A pathname unix socket crosses a network
+namespace, so the proxy gained a unix listener and the keeper relays to
+it from inside the namespace. `tests/isolated_egress_e2e.rs` asserts both
+properties in one sandbox: it binds its declared port while the host
+holds the same number, *and* reaches an allowlisted host while a
+non-allowlisted one stays refused.
+
+Two limits worth knowing:
+
+- The relay binds the proxy's own port number inside the namespace, which
+  is what keeps `HTTP_PROXY` and the compiled `proxy_only` gate identical
+  isolated or not. If a manifest also declares that number in
+  `network.ports`, isolation is skipped with a warning rather than
+  breaking egress — the proxy port is OS-assigned from the ephemeral
+  range, so this is rare rather than theoretical.
+- A host that cannot create unprivileged network namespaces degrades to
+  the shared host port table, with one warning at `up`.
 
 Fleet (`add-linux-agent-fleet`) is a second, harder consumer of the same
 primitive — N agents under one supervisor, plus an optional host-side

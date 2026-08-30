@@ -407,11 +407,18 @@ fn up_process(
     let services = prepare_services(project_root, &manifest.sandbox.name, resolution, opts)?
         .then_some(manifest.sandbox.name.as_str());
 
-    // The port-collision fix (README's own "Why"): a sandbox that wants
-    // zero outbound network and declares ports or services gets its own
-    // network namespace, so its declared ports have a private table
-    // instead of the host's shared one. See `wants_network_isolation`'s
-    // own doc for why this is mutually exclusive with any egress.
+    // The port-collision fix (README's own "Why"): a sandbox that
+    // declares ports or services gets its own network namespace, so its
+    // declared ports have a private table instead of the host's shared
+    // one.
+    //
+    // This used to require zero egress, on the reasoning that an
+    // isolated namespace has no route to the host-bound proxy and no
+    // forwarding helper exists. That was measured and turned out wrong:
+    // a *pathname unix socket crosses a network namespace*, so the proxy
+    // gained a unix listener and the keeper relays to it from inside the
+    // namespace. Both properties now hold at once, which is what an agent
+    // actually needs — its own Postgres and its own filtered egress.
     //
     // Probed rather than assumed, and only when actually wanted — the
     // probe forks a real child (`fleet::netns::probe`), which is not
@@ -421,7 +428,21 @@ fn up_process(
     // is where every sandbox already was before this existed. Degrading
     // silently would violate CLAUDE.md's "Degraded capabilities are
     // surfaced, never silent" invariant, so this warns once.
-    let wants_isolation = compiled.wants_network_isolation(services.is_some());
+    let wants_isolation = compiled.wants_network_isolation(services.is_some())
+        // The relay binds the proxy's own port number inside the
+        // namespace; if this manifest also declared that number, the
+        // relay would fail to bind and egress would vanish. Isolation is
+        // the half that gets dropped, since the collision it prevents is
+        // less costly than the egress it would break.
+        && match &proxy {
+            Some((port, _)) if compiled.proxy_port_collides_with_declared_ports(*port) => {
+                eprintln!(
+                    "devcroft: warning: network isolation is skipped for this sandbox:                      the egress proxy was assigned port {port}, which this manifest also                      declares in `network.ports` (fallback: shared host port table;                      re-run `up` to draw a different proxy port)"
+                );
+                false
+            }
+            _ => true,
+        };
     let isolate_network = wants_isolation
         && match crate::fleet::netns::probe(&exe) {
             Ok(true) => true,
@@ -484,6 +505,18 @@ fn up_process(
         },
         services,
         isolate_network,
+        // The relay is only needed when the sandbox is *both* isolated
+        // (no route to host loopback) and has a proxy to reach. Either
+        // alone needs nothing: an unisolated sandbox reaches the proxy's
+        // TCP port directly, and an isolated one with no proxy has no
+        // egress to relay.
+        isolate_network
+            .then(|| {
+                proxy
+                    .as_ref()
+                    .map(|(port, _)| (*port, paths.proxy_socket.clone()))
+            })
+            .flatten(),
     )
     .map_err(|e| UpError::Keeper(e.to_string()))?;
     // Both fds must outlive this function for the child to inherit them
@@ -663,6 +696,7 @@ fn spawn_keeper(
     ssh: SshHandoff,
     services: Option<&str>,
     isolate_network: bool,
+    relay: Option<(u16, PathBuf)>,
 ) -> io::Result<libc::pid_t> {
     // Truncate the previous run's log, then reopen with `O_APPEND` — the
     // keeper is not this file's only writer. `hooks::run` appends hook
@@ -727,6 +761,22 @@ fn spawn_keeper(
         // --cwd`, which needs an absolute path. Same value here keeps
         // one code path in `start_services_if_requested`.
         .env("DEVCROFT_SERVICES_ROOT", project_root)
+        // Set together or not at all — `keeper_main` reads them as a
+        // pair, so a half-configured relay is not representable.
+        .envs(
+            relay
+                .as_ref()
+                .map(|(port, sock)| {
+                    [
+                        ("DEVCROFT_PROXY_RELAY_PORT".to_string(), port.to_string()),
+                        (
+                            "DEVCROFT_PROXY_SOCKET".to_string(),
+                            sock.to_string_lossy().into_owned(),
+                        ),
+                    ]
+                })
+                .unwrap_or_default(),
+        )
         .stdin(Stdio::null())
         .stdout(log.try_clone()?)
         .stderr(log);

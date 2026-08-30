@@ -32,6 +32,110 @@ const MAX_HEADER_BYTES: usize = 64 * 1024;
 /// every process on the host can reach it, so a proxy that accepted any
 /// local caller would lend this sandbox's allowlisted egress to anything
 /// local, including another sandbox's unsandboxed operator tooling.
+/// Runs inside a network-isolated sandbox: accepts on a TCP listener
+/// bound in *that* namespace and forwards each connection to the host's
+/// proxy over a unix socket.
+///
+/// This is the sandbox-side half of the pair whose host side is
+/// [`bridge_unix_to_tcp`]. It exists because the two ends live in
+/// different network namespaces and a unix socket is the only thing that
+/// crosses: the sandbox has its own port table and no route to the
+/// host's loopback.
+///
+/// **The listener is bound before the keeper restricts itself**, the same
+/// listener-before-restriction ordering the control and SSH sockets use —
+/// so no bind permission is needed after restriction. Connecting to the
+/// unix socket afterwards needs no grant either, because Landlock does
+/// not mediate AF_UNIX at all (`tests/unix_socket_not_mediated.rs`).
+///
+/// It binds the *same port number* the host proxy uses, which is what
+/// keeps `HTTP_PROXY` and the compiled `proxy_only` gate byte-identical
+/// whether or not a sandbox is isolated. Safe because a fresh namespace
+/// has every port free — the number only has to avoid this sandbox's own
+/// `network.ports`, which `up` checks before choosing isolation.
+pub fn relay_to_host_proxy(listener: TcpListener, socket_path: PathBuf) {
+    for stream in listener.incoming() {
+        let Ok(client) = stream else { continue };
+        let socket_path = socket_path.clone();
+        thread::spawn(move || {
+            let Ok(upstream) = std::os::unix::net::UnixStream::connect(&socket_path) else {
+                return;
+            };
+            splice_tcp_to_unix(client, upstream);
+        });
+    }
+}
+
+/// [`splice`] with the stream types the other way round.
+fn splice_tcp_to_unix(client: TcpStream, upstream: std::os::unix::net::UnixStream) {
+    let (Ok(client_r), Ok(upstream_r)) = (client.try_clone(), upstream.try_clone()) else {
+        return;
+    };
+    let to_upstream = {
+        let mut r = client_r;
+        let mut w = upstream;
+        thread::spawn(move || {
+            let _ = io::copy(&mut r, &mut w);
+            let _ = w.shutdown(std::net::Shutdown::Write);
+        })
+    };
+    let mut r = upstream_r;
+    let mut w = client;
+    let _ = io::copy(&mut r, &mut w);
+    let _ = w.shutdown(std::net::Shutdown::Write);
+    let _ = to_upstream.join();
+}
+
+/// Bridges a unix listener into the TCP one above, one hairpin
+/// connection per accept.
+///
+/// **Why a hairpin rather than making the whole request path generic over
+/// the stream type.** The decision logic — auth before the allowlist, the
+/// `407`/`502` split, `HostFilter`, the splice — is written against
+/// `TcpStream` and is the security-critical part. Forwarding UDS bytes
+/// into the proxy's own TCP port reuses every line of it unchanged, at
+/// the cost of one extra loopback hop inside a process that is already on
+/// the host and unrestricted. Generalising over a `ClientStream` trait
+/// would touch `handle_connection`, `splice`, `write_refusal` and
+/// `write_auth_required` to save that hop — a poor trade against the risk
+/// of subtly changing who gets authenticated.
+///
+/// This is what makes a network-isolated sandbox able to use the proxy at
+/// all: it has no route to the host's loopback, but a pathname unix
+/// socket crosses the namespace boundary.
+pub fn bridge_unix_to_tcp(unix: std::os::unix::net::UnixListener, tcp_port: u16) {
+    for stream in unix.incoming() {
+        let Ok(client) = stream else { continue };
+        thread::spawn(move || {
+            let Ok(upstream) = TcpStream::connect(("127.0.0.1", tcp_port)) else {
+                return;
+            };
+            splice_unix(client, upstream);
+        });
+    }
+}
+
+/// [`splice`]'s shape for a unix client, kept separate rather than made
+/// generic for the same reason [`bridge_unix_to_tcp`] exists.
+fn splice_unix(client: std::os::unix::net::UnixStream, upstream: TcpStream) {
+    let (Ok(client_r), Ok(upstream_r)) = (client.try_clone(), upstream.try_clone()) else {
+        return;
+    };
+    let to_upstream = {
+        let mut r = client_r;
+        let mut w = upstream;
+        thread::spawn(move || {
+            let _ = io::copy(&mut r, &mut w);
+            let _ = w.shutdown(std::net::Shutdown::Write);
+        })
+    };
+    let mut r = upstream_r;
+    let mut w = client;
+    let _ = io::copy(&mut r, &mut w);
+    let _ = w.shutdown(std::net::Shutdown::Write);
+    let _ = to_upstream.join();
+}
+
 pub fn run(listener: TcpListener, allow: Vec<String>, log_path: PathBuf, token: String) {
     // `new_strict`: an empty allowlist denies rather than allows. `spawn`
     // is only ever called when `CompiledPolicy::wants_egress_proxy()` is

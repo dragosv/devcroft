@@ -88,6 +88,55 @@ resolves to addresses that may host other services; the resolved-IP scope may be
 wider than intended. This is a real gap and it is the reason the non-goal above
 says "constrained", not "prevented".
 
+## E7 — The proxy also listens on a unix socket, for isolated sandboxes
+
+**Decision.** The proxy binds a pathname unix socket alongside its TCP
+listener. A sandbox in its own network namespace reaches it through that,
+via a relay the keeper runs inside the namespace.
+
+**Rationale — and it retracts a blocker this project believed.** A
+network-isolated sandbox has its own port table and no route to the
+host's loopback, so E1's host placement (which is what gives attribution
+and keeps credentials out of the client's reach) appeared to be
+incompatible with isolation. `add-linux-agent-fleet`'s D5 recorded the
+apparent fix — a forwarding helper, pasta or slirp4netns — as blocked on
+`/dev/net/tun`, absent in this devcontainer.
+
+That framing was about **IP routing**, which devcroft never needed. It
+needs TCP streams reaching a proxy. A *pathname* unix socket crosses a
+network namespace, because it is a filesystem object governed by the
+mount namespace and file permissions rather than by netns. Measured
+before being built on: `tests/unix_socket_not_mediated.rs`.
+
+**Shape.** Two splices, one on each side of the boundary:
+
+```
+session --TCP--> keeper relay --UDS--> proxy --TCP--> upstream
+        (in netns)            (crosses ns)  (host)
+```
+
+- The keeper binds the relay listener **before self-restricting**, the
+  same listener-before-restriction ordering the control and SSH sockets
+  use, so it needs no bind permission afterwards.
+- It binds the *same port number* the host proxy uses, which keeps
+  `HTTP_PROXY` and the compiled `proxy_only` gate byte-identical whether
+  or not a sandbox is isolated. A fresh namespace has every port free, so
+  the only possible clash is the sandbox's own `network.ports` — checked
+  at `up`, and isolation is skipped (with a warning) rather than egress
+  broken.
+- The host side is a hairpin into the proxy's own TCP port rather than a
+  second copy of the request path. The auth-before-allowlist ordering,
+  the `407`/`502` split and `HostFilter` are the security-critical part;
+  reusing them unchanged is worth one extra loopback hop inside a process
+  that is already unrestricted.
+
+**What this costs, stated rather than buried.** Reaching that socket *is*
+egress through this sandbox's allowlist, and Landlock does not mediate
+AF_UNIX connect at all — so its `0600` mode inside the `0700` state dir
+is the only thing between another local user and this sandbox's network
+reach. That is the same property that makes the design work, and it is
+recorded as a gap in its own right in `docs/known-gaps.md`.
+
 ## E6 — Adopt `nono-proxy` rather than growing devcroft's own
 
 **Decision.** Replace devcroft's hand-written CONNECT loop

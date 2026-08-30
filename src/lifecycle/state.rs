@@ -42,6 +42,24 @@ pub struct StatePaths {
     /// requires interleaving their records in one file the way hook
     /// output and keeper spawn/exit records must interleave.
     pub proxy_log: PathBuf,
+    /// The egress proxy's *unix* listener, alongside its TCP one.
+    ///
+    /// Exists because a pathname unix socket crosses a **network
+    /// namespace** while a TCP loopback listener does not. A sandbox
+    /// isolated by `CompiledPolicy::wants_network_isolation` has its own
+    /// port table and no route to the host's loopback, so this is the
+    /// only way it can reach a proxy that must stay outside its
+    /// namespace to have real network access. Measured before being
+    /// built on (`tests/unix_socket_not_mediated.rs`): the same property
+    /// also means Landlock does not mediate reaching it, which is a
+    /// documented gap in its own right — see `docs/known-gaps.md`.
+    ///
+    /// Short by construction. `sun_path` is 108 bytes and this lives
+    /// under the state dir, not the project root, so a deeply nested
+    /// project cannot push it over — the failure mode being avoided is
+    /// the one `UpError::Config` already names for service supervisor
+    /// sockets.
+    pub proxy_socket: PathBuf,
     /// An `flock(2)` mutex serializing `up`/`down`/`rm` for this one
     /// sandbox — see `acquire_lifecycle_lock`'s doc for why it exists
     /// and what it closes. Never removed by `clear_runtime_state`, `rm`'s
@@ -119,6 +137,7 @@ impl StatePaths {
             ssh_host_key: root.join("ssh_host_ed25519_key"),
             proxy_pidfile: root.join("proxy.pid"),
             proxy_log: root.join("proxy.log"),
+            proxy_socket: root.join("proxy.sock"),
             // Inside `root` here (unlike `new`'s override above) because
             // every test that calls `in_dir` directly already creates
             // `root` itself before doing anything else with it — there is
