@@ -180,7 +180,7 @@ fn an_isolated_sandboxs_granted_port_is_namespace_local_not_host_visible() {
          own namespace, so two sandboxes of one project would collide on this port \
          again. If host-side port mapping was deliberately added (fleet D8), this \
          assertion is the thing to update, together with `up`'s note and \
-         `policy --render`'s namespace-local line."
+         `policy --render`'s `network.namespace` line."
     );
 }
 

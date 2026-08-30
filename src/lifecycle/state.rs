@@ -504,6 +504,17 @@ pub fn clear_runtime_state(paths: &StatePaths) -> io::Result<()> {
     // by this sandbox. `terminate.rs::stop_if_running` is what actually
     // kills the process before this runs.
     let _ = std::fs::remove_file(&paths.proxy_pidfile);
+    // The two listener sockets, for the same reason as `socket` above:
+    // they are runtime state, and leaving them makes `down` report a
+    // clean stop while a stale socket file remains on disk.
+    //
+    // Both are re-created (`remove_file` then `bind`) by the next `up`,
+    // so this was harmless rather than a bug — but only `socket` was
+    // being cleared, which made the three sockets inconsistent for no
+    // reason anyone had recorded. `ssh_socket` was already in this state
+    // before the proxy existed; `proxy_socket` inherited the omission.
+    let _ = std::fs::remove_file(&paths.ssh_socket);
+    let _ = std::fs::remove_file(&paths.proxy_socket);
     Ok(())
 }
 
