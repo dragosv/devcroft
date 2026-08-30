@@ -194,6 +194,9 @@ these:
   one. A sandbox that also wants to reach the internet can't get this yet
   and still collides, same as before. This is the gap the
   [Why](#why) section is about.
+- **Unix sockets bypass the policy.** Landlock mediates TCP, not AF_UNIX, so
+  a sandbox reaches any unix socket the filesystem permits — including a nix
+  daemon socket, which grants it that daemon's authority.
 - No inter-sandbox process visibility separation.
 - Domain filtering is enforced on Linux; unverified on macOS.
 - No cgroup resource limits.

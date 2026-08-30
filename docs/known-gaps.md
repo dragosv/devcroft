@@ -35,6 +35,43 @@ Fleet (`add-linux-agent-fleet`) is a second, harder consumer of the same
 primitive — N agents under one supervisor, plus an optional host-side
 mapping for reaching one from outside — not yet built.
 
+## Unix sockets are not mediated by the policy
+
+**Landlock's network rules cover TCP only.** `connect()` to a pathname
+unix socket falls through to ordinary filesystem permissions, so a
+sandboxed process reaches any unix socket whose DAC allows it —
+*including sockets in directories the compiled policy does not grant*.
+Measured, not inferred: `tests/unix_socket_not_mediated.rs` runs a real
+Landlock-restricted process with only its cwd granted and connects to a
+socket under `/tmp` regardless.
+
+The instance that matters: `/nix/var/nix/daemon-socket/socket` is
+`srw-rw-rw-` under nix's multi-user model, and a sandbox connects to it
+with `/nix` ungranted. That hands the sandbox whatever authority the nix
+daemon grants an unprivileged client — realizing store paths, building
+derivations — which is exactly the package-manager authority
+`sandbox-provisioning` P2a/P2b says an agent must not hold. That change's
+design.md previously stated a hook "does not silently receive a writable
+`/nix` or the daemon socket"; the second half of that was not true, and
+is now corrected there.
+
+Bounded, but real. The daemon enforces its own protocol and nix
+deliberately makes that socket world-accessible, so this is not arbitrary
+host access — it is the authority nix itself extends to any local user.
+The same is not true of every socket: a Docker socket reachable this way
+would be a full host compromise, and devcroft's policy would not stop it.
+
+Closing this needs seccomp filtering on `connect()` — the machinery
+`add-egress-proxy`'s D9 already contemplates for the proxy-only path —
+not a Landlock rule, since no Landlock ABI expresses it.
+
+**The same property is load-bearing in the other direction**, which is
+why it is worth understanding rather than only patching: a pathname unix
+socket crosses a *network namespace* too. That is what lets a
+network-isolated sandbox reach devcroft's host-side egress proxy without
+a TUN device or a forwarding helper. One mechanism, one wanted
+consequence and one unwanted one.
+
 ## No inter-sandbox process visibility separation
 
 Landlock hides nothing: sandboxes share the host's raw process namespace.

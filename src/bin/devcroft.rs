@@ -33,6 +33,10 @@ fn main() {
         // namespace is irreversible for the process that does it, so the
         // probe runs in a child nobody minds losing.
         Some("__netns_probe") => std::process::exit(netns_probe_main(&args[2..])),
+        // Hidden: does Landlock mediate connect() to a pathname unix
+        // socket? Decides whether an isolated sandbox reaching the host
+        // egress proxy over a UDS needs an explicit filesystem grant.
+        Some("__uds_probe") => std::process::exit(uds_probe_main(&args[2..])),
         // Hidden: simulates one fleet agent binding a service port
         // inside its own namespace, for `tests/fleet_netns.rs`. Lives in
         // the real binary rather than the test so it enters a namespace
@@ -661,6 +665,65 @@ fn doctor_agent_namespaces() {
 /// something on the *host* and read as a namespace failure. Concurrent
 /// agents deliberately binding the *same* number is asserted separately,
 /// where collision is the subject rather than noise.
+/// Probe: with a Landlock policy applied, can this process still
+/// `connect()` to a pathname unix socket?
+///
+/// Argument 1 is the socket path. `--grant` additionally grants that path
+/// read-write before restricting; without it the path is ungranted and
+/// only the project root (this process's cwd) is allowed.
+///
+/// Exit 0 = connected, 1 = refused, 2 = setup failure. The two runs
+/// together answer the design question: if the ungranted run *also*
+/// connects, Landlock does not mediate AF_UNIX connect at all and no
+/// grant is needed; if it refuses and the granted run succeeds, a grant
+/// is both necessary and sufficient.
+fn uds_probe_main(args: &[String]) -> i32 {
+    use std::io::Write;
+    use std::os::unix::net::UnixStream;
+
+    let Some(sock) = args.first() else {
+        eprintln!("devcroft __uds_probe: usage: <socket-path> [--grant]");
+        return 2;
+    };
+    let grant = args.iter().any(|a| a == "--grant");
+
+    // Always grant cwd, so the process can function at all — mirrors a
+    // real sandbox, where the project root is granted by default.
+    let Ok(cwd) = std::env::current_dir() else {
+        return 2;
+    };
+    let caps = nono::CapabilitySet::new();
+    let Ok(caps) = caps.allow_path(&cwd, nono::AccessMode::ReadWrite) else {
+        return 2;
+    };
+    let caps = if grant {
+        match caps.allow_file(std::path::Path::new(sock), nono::AccessMode::ReadWrite) {
+            Ok(c) => c,
+            Err(e) => {
+                eprintln!("devcroft __uds_probe: granting {sock}: {e}");
+                return 2;
+            }
+        }
+    } else {
+        caps
+    };
+    if let Err(e) = nono::Sandbox::apply_auto(&caps) {
+        eprintln!("devcroft __uds_probe: apply_auto failed: {e}");
+        return 2;
+    }
+
+    match UnixStream::connect(sock) {
+        Ok(mut s) => {
+            let _ = s.write_all(b"ping");
+            0
+        }
+        Err(e) => {
+            eprintln!("devcroft __uds_probe: connect refused: {e}");
+            1
+        }
+    }
+}
+
 fn netns_probe_main(args: &[String]) -> i32 {
     use std::io::{Read, Write};
 

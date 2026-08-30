@@ -121,6 +121,15 @@ authorised to do through the tools it legitimately has.
   production, the sandbox has not solved production governance.
 - Application-level permissions, approval policies, logging and review sit
   beside the sandbox, not under it.
+- **Unix sockets are outside the policy entirely.** Landlock mediates TCP,
+  not AF_UNIX, so a sandboxed process reaches any unix socket the
+  filesystem permissions allow — including ones in ungranted directories.
+  On a host with a nix daemon that means the sandbox holds whatever
+  authority that daemon extends to a local user; on a host with a Docker
+  socket it would mean far more. Measured in
+  `tests/unix_socket_not_mediated.rs`; see `docs/known-gaps.md`. This is a
+  property of the mechanism, not an oversight in the policy, and closing
+  it needs seccomp rather than a Landlock rule.
 
 The value is that the boundary moves out of the prompt and into infrastructure.
 That is a real gain and a bounded one.

@@ -74,8 +74,23 @@ daemon through a proven operation-scoped interface.
 
 A hook that itself requires daemon-backed materialization — installing a package
 at activation time rather than declaring it — **fails closed** at layer
-`provider`. It does not silently receive a writable `/nix` or the daemon socket
-as a fallback.
+`provider`. It does not silently receive a writable `/nix` as a fallback.
+
+**Corrected: the daemon socket half of that sentence was false.** It used to
+read "a writable `/nix` or the daemon socket", which asserted something
+devcroft does not enforce. Landlock mediates TCP but not AF_UNIX, so a
+sandbox connects to `/nix/var/nix/daemon-socket/socket` — mode `srw-rw-rw-`
+under nix's multi-user model — whether or not `/nix` is granted. Measured in
+`tests/unix_socket_not_mediated.rs`, which asserts the gap so that closing it
+fails loudly rather than leaving this paragraph stale again.
+
+What survives: *devcroft never grants* the daemon socket, and the failing-closed
+behaviour at layer `provider` is real. What does not: the implication that a
+hook therefore cannot reach it. Until `connect()` is seccomp-filtered — the
+machinery `add-egress-proxy` D9 contemplates — this requirement is enforced by
+devcroft's own refusal to grant, not by the kernel, and P2a/P2b's "agents must
+not hold package-manager authority" is a design intent rather than a boundary
+on any host running a nix daemon.
 
 Note what P2d changes about the scope of that rule, since the two are easy to
 read as contradicting: P2d removes the need to refuse flox *for having a hook*,
