@@ -321,6 +321,48 @@ impl CompiledPolicy {
         self.network_block && !self.network_allow_domain.is_empty()
     }
 
+    /// Whether this sandbox should get its own network namespace, giving
+    /// its declared ports a private table instead of the host's shared
+    /// one — the fix for two sandboxes both binding 5432 (README's own
+    /// "Why").
+    ///
+    /// Deliberately narrow: `true` only when the manifest asks for zero
+    /// outbound network at all (`network.default = "deny"` and no
+    /// `network.allow` entries) *and* there is something to isolate
+    /// (`network.ports` non-empty, or the caller reports services are
+    /// declared). Both halves are load-bearing, not incidental:
+    ///
+    /// - **Zero egress, not "filtered egress".** An isolated namespace
+    ///   starts with loopback only — nothing routes it to the real
+    ///   network at all, filtered or not. `add-egress-proxy`'s proxy
+    ///   binds on the *host's* loopback; a sandbox in its own namespace
+    ///   cannot reach it without a forwarding helper (pasta/slirp4netns),
+    ///   which `add-linux-agent-fleet`'s D5 has not resolved. Reusing
+    ///   this for a sandbox with any `network.allow` entry — i.e. when
+    ///   [`Self::wants_egress_proxy`] is also true — would silently
+    ///   break that sandbox's egress instead of isolating its ports, so
+    ///   the two are mutually exclusive by construction: this returns
+    ///   `false` whenever `wants_egress_proxy` would return `true`.
+    ///   `network.default = "allow"` (unfiltered, and today's default
+    ///   for a bare manifest) is refused for the identical reason: an
+    ///   isolated namespace cannot reach *anything* external without
+    ///   that same missing helper, so "allow" cannot be honoured inside
+    ///   one either.
+    /// - **Only when there is something to isolate.** A sandbox binding
+    ///   nothing has nothing that can collide; entering a namespace for
+    ///   it would cost a syscall for no observable benefit.
+    ///
+    /// A sandbox that wants both isolation and any outbound network gets
+    /// neither degraded nor upgraded by this method — it simply returns
+    /// `false`, leaving that sandbox exactly where it was before this
+    /// existed (shared host ports, `add-port-allocation`'s open gap),
+    /// which is a known limitation, not a regression this introduces.
+    pub fn wants_network_isolation(&self, services_declared: bool) -> bool {
+        self.network_block
+            && self.network_allow_domain.is_empty()
+            && (!self.network_ports.is_empty() || services_declared)
+    }
+
     /// Fold in the egress proxy's bound port, once `up` has actually
     /// started it (see [`Self::wants_egress_proxy`]). See
     /// `network_proxy_port`'s doc for why this isn't part of [`compile`].
@@ -522,5 +564,52 @@ mod tests {
         let plan = compiled.to_capability_plan();
         assert!(plan.network_block);
         assert_eq!(plan.network_ports, vec![5432]);
+    }
+
+    #[test]
+    fn wants_network_isolation_only_with_zero_egress_and_something_to_isolate() {
+        let deny_with_ports = compile(
+            &parse("[sandbox]\nname = \"p\"\n[network]\ndefault = \"deny\"\nports = [5432]\n")
+                .unwrap()
+                .0,
+        );
+        assert!(deny_with_ports.wants_network_isolation(false));
+        assert!(deny_with_ports.wants_network_isolation(true));
+
+        // Nothing to isolate: no ports, and the caller reports no
+        // services either.
+        let deny_bare = compile(
+            &parse("[sandbox]\nname = \"p\"\n[network]\ndefault = \"deny\"\n")
+                .unwrap()
+                .0,
+        );
+        assert!(!deny_bare.wants_network_isolation(false));
+        // Services alone are enough, with no `network.ports` declared.
+        assert!(deny_bare.wants_network_isolation(true));
+
+        // Any egress at all — even alongside declared ports — refuses
+        // isolation, because an isolated namespace cannot reach the
+        // host-bound egress proxy without a forwarding helper this
+        // project does not yet have (see the method's own doc).
+        let deny_with_allow = compile(
+            &parse(
+                "[sandbox]\nname = \"p\"\n\
+                 [network]\ndefault = \"deny\"\nallow = [\"example.com\"]\nports = [5432]\n",
+            )
+            .unwrap()
+            .0,
+        );
+        assert!(!deny_with_allow.wants_network_isolation(true));
+        assert!(deny_with_allow.wants_egress_proxy());
+
+        // Unfiltered ("allow") cannot be honoured inside an isolated
+        // namespace either — it still means "reach the real network",
+        // which loopback-only cannot do.
+        let allow_default = compile(
+            &parse("[sandbox]\nname = \"p\"\n[network]\ndefault = \"allow\"\nports = [5432]\n")
+                .unwrap()
+                .0,
+        );
+        assert!(!allow_default.wants_network_isolation(true));
     }
 }

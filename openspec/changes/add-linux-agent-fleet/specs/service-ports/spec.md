@@ -24,6 +24,14 @@ host-side mapping, which devcroft performs by forwarding from *outside*
 the agent's namespace and which therefore never requires the service to
 know anything.
 
+**The same property now exists outside fleet, for the zero-egress
+case.** `CompiledPolicy::wants_network_isolation` gives *any* qualifying
+sandbox — not just a fleet agent — its own namespace, so two ordinary
+(non-fleet) sandboxes of one project already stop colliding on a
+committed port today. What fleet still adds on top is the harder half
+this spec is actually about: N agents under one supervisor, and the
+optional host-side mapping for reaching a specific one from outside.
+
 ## ADDED Requirements
 
 ### Requirement: In-namespace ports are authoritative and identical across agents

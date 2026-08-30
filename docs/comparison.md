@@ -63,11 +63,16 @@ thinner version of:
   needing to start with the sandbox and stop with it. `nono-cli` has no
   service concept at all; it sandboxes a process and exits. More
   importantly, N sandboxes of the same project all declare the *same*
-  committed port, so they need a per-sandbox network namespace to avoid
-  colliding on it. That is a property only containers and VMs otherwise
-  provide, and it is the capability that most clearly separates a
-  dev-environment tool from a general sandboxing CLI: `nono run` has
-  nowhere to put a second Postgres.
+  committed port, so they need a private port table each to avoid
+  colliding on it — a property only containers and VMs otherwise provide,
+  and the capability that most clearly separates a dev-environment tool
+  from a general sandboxing CLI: `nono run` has nowhere to put a second
+  Postgres. devcroft does, for the common case: a sandbox with services
+  or ports and no outbound network gets its own network namespace, so N
+  of them bind the identical port with nothing colliding
+  (`CompiledPolicy::wants_network_isolation`, `tests/network_isolation_
+  e2e.rs`). Narrower than it sounds — a sandbox that also wants internet
+  access can't get this yet — but real for the case it covers.
 
 **This is not "host access versus none" — both tools grant host paths,
 declared differently.** `nono-cli`'s `-a`/`-r`/`-w` flags carve permissions

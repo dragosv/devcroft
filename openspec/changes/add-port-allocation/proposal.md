@@ -4,6 +4,31 @@ Status: proposed (post-MVP). Depends on: `add-flox-services` (services
 are where the collision actually bites) and `network.ports` (already
 implemented — the mechanism that grants a loopback port at all).
 
+**Scope narrowed, not removed, by a finding since this was written.**
+`CompiledPolicy::wants_network_isolation` (implemented) gives a sandbox
+its own network namespace whenever it declares services or ports *and*
+wants zero outbound network — `network.default = "deny"` with no
+`network.allow` entries. For that population, the committed port already
+works unchanged across every sandbox of the project: each gets its own
+port table, so N sandboxes binding the identical 5432 no longer collide,
+and there is nothing left for this change to allocate. Verified live,
+not assumed —
+`tests/network_isolation_e2e.rs`: two sandboxes of one project both bind
+5432 simultaneously, one holding the port open while the other binds it
+too.
+
+What this change is still for: any sandbox that wants outbound network
+at all, allowlisted or unfiltered. An isolated namespace starts with
+loopback only, so it cannot reach the egress proxy (which binds the
+*host's* loopback) or the real network without a forwarding helper
+`add-linux-agent-fleet`'s D5 has not resolved — `wants_network_isolation`
+refuses isolation for exactly this population by construction. Those
+sandboxes still share the host's port table, still collide on a
+committed port, and are precisely who allocation below is for. The
+"Why" section's claim that "every sandbox shares the host loopback, so
+allocation always applies" is the part this correction retracts; the
+mechanism itself is unaffected.
+
 ## Why
 
 devcroft's stated audience is fleets of parallel environments on one

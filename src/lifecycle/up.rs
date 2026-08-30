@@ -407,6 +407,35 @@ fn up_process(
     let services = prepare_services(project_root, &manifest.sandbox.name, resolution, opts)?
         .then_some(manifest.sandbox.name.as_str());
 
+    // The port-collision fix (README's own "Why"): a sandbox that wants
+    // zero outbound network and declares ports or services gets its own
+    // network namespace, so its declared ports have a private table
+    // instead of the host's shared one. See `wants_network_isolation`'s
+    // own doc for why this is mutually exclusive with any egress.
+    //
+    // Probed rather than assumed, and only when actually wanted — the
+    // probe forks a real child (`fleet::netns::probe`), which is not
+    // free, so a sandbox that doesn't qualify never pays for it. An
+    // unsupported host degrades rather than fails `up`: the sandbox
+    // still comes up, just back on the host's shared port table, which
+    // is where every sandbox already was before this existed. Degrading
+    // silently would violate CLAUDE.md's "Degraded capabilities are
+    // surfaced, never silent" invariant, so this warns once.
+    let wants_isolation = compiled.wants_network_isolation(services.is_some());
+    let isolate_network = wants_isolation
+        && match crate::fleet::netns::probe(&exe) {
+            Ok(true) => true,
+            Ok(false) | Err(_) => {
+                eprintln!(
+                    "devcroft: warning: network isolation is degraded on this host: \
+                     unprivileged network namespaces are unavailable (fallback: this \
+                     sandbox's ports share the host's port table, and another sandbox \
+                     binding the same port will collide)"
+                );
+                false
+            }
+        };
+
     // design.md's Open Question 3, resolved: `NetworkMode::ProxyOnly`'s
     // kernel gate only ever permits a literal `connect()` to this port —
     // it does not redirect other destinations — so a client that never
@@ -454,6 +483,7 @@ fn up_process(
             authorized_key_pem: &authorized_key_pem,
         },
         services,
+        isolate_network,
     )
     .map_err(|e| UpError::Keeper(e.to_string()))?;
     // Both fds must outlive this function for the child to inherit them
@@ -632,6 +662,7 @@ fn spawn_keeper(
     plan: &policy::CapabilityPlan,
     ssh: SshHandoff,
     services: Option<&str>,
+    isolate_network: bool,
 ) -> io::Result<libc::pid_t> {
     // Truncate the previous run's log, then reopen with `O_APPEND` — the
     // keeper is not this file's only writer. `hooks::run` appends hook
@@ -702,11 +733,27 @@ fn spawn_keeper(
     // SAFETY: setsid() only touches this (freshly forked, single-
     // threaded) child's own session/process-group state. Detaching from
     // the supervisor's controlling terminal is what lets the keeper
-    // outlive `up`'s own process and the invoking shell.
+    // outlive `up`'s own process and the invoking shell. `enter_network_
+    // namespace`/`bring_loopback_up` are the identical two calls
+    // `tests/fleet_netns.rs` already exercises live — raw `unshare`/
+    // `ioctl`, safe in a freshly forked, single-threaded, not-yet-exec'd
+    // child for the same reason `setsid` is. Spiked separately before
+    // wiring this in: `unshare(CLONE_NEWUSER)` changes what this
+    // process's own uid/gid read back as *from inside* the new
+    // namespace, but does not change the credentials the kernel actually
+    // checks file access against, so the keeper's later reads of its own
+    // project files and its own Landlock self-restriction are both
+    // unaffected — confirmed live, not assumed. Ordered before `setsid`
+    // is irrelevant (they touch disjoint kernel state); kept in the
+    // order the two capabilities were added, for a smaller diff.
     unsafe {
-        cmd.pre_exec(|| {
+        cmd.pre_exec(move || {
             if libc::setsid() < 0 {
                 return Err(io::Error::last_os_error());
+            }
+            if isolate_network {
+                crate::fleet::netns::enter_network_namespace()?;
+                crate::fleet::netns::bring_loopback_up()?;
             }
             Ok(())
         });

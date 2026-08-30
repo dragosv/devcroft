@@ -17,10 +17,19 @@
 - [x] ~~0.1 Confirm against `src/gvisor/oci_spec.rs`...~~ **Struck:**
       the tier, its OCI spec, and the test named here were deleted by
       `remove-gvisor-backend`. Nothing to confirm.
-- [ ] 0.2 Gate allocation on whether the sandbox **has its own network
-      namespace**, not on which sandbox implementation it uses. Today
-      that is always false, so allocation always applies; keep the gate
-      rather than hardcoding "always" so fleet has the seam it needs
+- [x] 0.2 Gate allocation on whether the sandbox **has its own network
+      namespace**, not on which sandbox implementation it uses.
+      **The gate is no longer hypothetical.** `CompiledPolicy::
+      wants_network_isolation` (implemented, outside this change) is
+      true for a sandbox with `network.default = "deny"`, no
+      `network.allow`, and declared services or ports — exactly the
+      condition this task predicted fleet would need a seam for, now
+      live for the non-fleet case too. This change's own scope narrows
+      to its complement: any sandbox wanting outbound network at all,
+      which `wants_network_isolation` refuses by construction (an
+      isolated namespace cannot reach the egress proxy). Consume that
+      predicate directly rather than re-deriving it — see the
+      proposal's own correction note.
 - [x] ~~0.3 Test: a `hardened` deny-default sandbox...~~ **Struck:** a
       `hardened` manifest now fails at layer `config` before any of this
       runs. The equivalent test belongs to fleet, against a real netns

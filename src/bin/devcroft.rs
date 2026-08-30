@@ -597,11 +597,19 @@ fn bind_probe_main(args: &[String]) -> i32 {
 /// which is what lets N agents each bind the same service port
 /// (`add-linux-agent-fleet`'s `service-ports`).
 ///
-/// Reported as `[INFO]`, never `[FAIL]`: fleet is not implemented, so a
-/// host that cannot do this is not currently broken in any way — it just
-/// could not run fleet if fleet existed. Reporting it as a failure would
-/// make `doctor` red for a capability nothing uses yet, which is the
-/// opposite of "every finding is actionable".
+/// Reported as `[INFO]`, never `[FAIL]`: `up` already degrades
+/// gracefully when this is unavailable (a qualifying sandbox falls back
+/// to the host's shared port table with a warning, rather than failing),
+/// so a host that cannot do this is not broken — it just does not get
+/// the port-isolation fix for sandboxes with `network.default = "deny"`,
+/// no `network.allow`, and declared services or ports. Reporting it as a
+/// failure would make `doctor` red for a degrade `up` already handles.
+///
+/// No longer fleet-only, and this doc corrected accordingly: `up` itself
+/// uses this today for any qualifying single sandbox
+/// (`CompiledPolicy::wants_network_isolation`), which is what makes two
+/// sandboxes each declaring Postgres on 5432 stop colliding. Fleet, once
+/// built, is a second consumer of the same primitive.
 ///
 /// Probed by attempting it in a throwaway child rather than reading a
 /// sysctl: seccomp, AppArmor and `max_user_namespaces` can each deny it
@@ -613,12 +621,14 @@ fn doctor_agent_namespaces() {
     };
     match devcroft::fleet::netns::probe(&exe) {
         Ok(true) => println!(
-            "[INFO] fleet: per-agent network namespaces are available on this host \
-             (agents could each bind the same service port)"
+            "[INFO] network namespaces: available on this host (sandboxes with \
+             `network.default = \"deny\"`, no `network.allow`, and services or \
+             `network.ports` each get their own port table)"
         ),
         Ok(false) | Err(_) => println!(
-            "[INFO] fleet: per-agent network namespaces are unavailable on this host; \
-             fleet is not implemented yet, so nothing is affected today"
+            "[INFO] network namespaces: unavailable on this host; qualifying \
+             sandboxes fall back to the host's shared port table, and `up` warns \
+             when that happens"
         ),
     }
 }

@@ -20,13 +20,14 @@ are visible to another, a destructive migration takes out everybody, and
 VM per branch really solves it, and both are heavy enough that people
 run four and stop.
 
-That is the gap devcroft is aimed at: give each sandbox its own network
-namespace, so all of them bind 5432 and each gets a different 5432 —
-same committed config, no allocation, no rewriting, no collision. The
-namespace mechanism is built and measured (four sandboxes binding one
-port simultaneously, and an agent's service unreachable from the host);
-wiring it to the services feature is in progress, so today's services
-still share the host's ports. See [Status](#status).
+That is the gap devcroft closes: a sandbox that declares services or
+ports and wants no outbound network of its own — the common shape for a
+local Postgres used only by tests — gets its own network namespace. Same
+committed port, every sandbox, no collision, no config to write. It's
+narrower than it sounds: a sandbox that *also* wants to reach the
+internet can't get this yet, since an isolated namespace has no route out
+without a forwarding helper devcroft doesn't have. That combination still
+collides today, same as before this existed — see [Status](#status).
 
 Containers solve the isolation but cost too much to run eight of, and
 they don't give you a reproducible toolchain by themselves — you still
@@ -186,10 +187,13 @@ Known gaps are published rather than hidden — see
 [docs/known-gaps.md](docs/known-gaps.md) for the detail behind each of
 these:
 
-- **Sandboxes still share the host's ports.** Two sandboxes both starting
-  a service on 5432 collide — the per-sandbox network namespace that fixes
-  it is built and tested, but not yet wired into the services feature.
-  This is the gap the [Why](#why) section is about.
+- **Sandboxes with any outbound network still share the host's ports.**
+  Fixed for sandboxes that want zero outbound network (`network.default =
+  "deny"`, no `network.allow`) and declare services or ports — each gets
+  its own network namespace, so the same committed port works in every
+  one. A sandbox that also wants to reach the internet can't get this yet
+  and still collides, same as before. This is the gap the
+  [Why](#why) section is about.
 - No inter-sandbox process visibility separation.
 - Domain filtering is enforced on Linux; unverified on macOS.
 - No cgroup resource limits.
@@ -199,13 +203,13 @@ these:
   dropped.
 - Zed's remote server connects and transfers but does not start.
 
-**Being worked on:** giving each sandbox its own network namespace so
-services stop colliding (the mechanism is done and tested; connecting it
-to `[services]` is what's left); running many agents on one host with
-per-agent resource budgets; building the environment itself inside a
-sandbox rather than on the host; and a way for an agent that gets stuck
-to say so instead of looking identical to one that's busy. Specs for all
-of these are in [openspec/changes/](openspec/changes/) — `openspec list`
+**Being worked on:** extending network isolation to sandboxes that also
+want outbound access, which needs a forwarding helper this host doesn't
+have yet; running many agents on one host with per-agent resource
+budgets; building the environment itself inside a sandbox rather than on
+the host; and a way for an agent that gets stuck to say so instead of
+looking identical to one that's busy. Specs for all of these are in
+[openspec/changes/](openspec/changes/) — `openspec list`
 shows live progress if you've cloned the repo.
 
 The full build history — what was built, what turned out to be wrong, and

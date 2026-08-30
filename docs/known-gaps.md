@@ -5,12 +5,40 @@ these is a gap in what's actually built, not a design decision —
 `docs/decisions.md` has the falsifiable "why not X" reasoning for the
 latter.
 
-## No inter-sandbox process visibility or port separation
+## Port collisions: fixed for sandboxes with zero outbound network
 
-Landlock hides nothing: sandboxes share the host's raw process and network
-namespaces. Fixed by `add-linux-agent-fleet`'s per-agent namespaces, not yet
-built for the general case (its network-namespace slice is implemented; see
-the README).
+`CompiledPolicy::wants_network_isolation` gives a sandbox its own network
+namespace when it declares services or `network.ports` *and* wants no
+outbound network at all — `network.default = "deny"` with no
+`network.allow` entries. For that population, `devcroft.toml` being
+committed is no longer a problem: every git worktree of a repo declares
+the *same* port, and each sandbox now has its own port table, so N of them
+binding the identical 5432 no longer collide — no allocation, no
+cooperation from the service, no config to write. Verified live, not
+assumed: `tests/network_isolation_e2e.rs` brings up two real sandboxes of
+one project, has one hold the port open, and confirms the other binds the
+identical number anyway.
+
+**The gap that survives is the combination this can't cover.** An isolated
+namespace starts with loopback only — nothing routes it to the real
+network, filtered or not — so a sandbox that also wants `network.allow` or
+`network.default = "allow"` cannot be isolated without a forwarding helper
+(pasta/slirp4netns), which `add-linux-agent-fleet`'s D5 has not resolved.
+`wants_network_isolation` refuses isolation for that population by
+construction, on purpose: silently entering a namespace it can't route out
+of would break egress rather than fix ports. Those sandboxes still share
+the host's port table and still collide on a committed port — this is
+`add-port-allocation`'s remaining scope, narrowed by this fix rather than
+made obsolete by it (see that change's own corrected proposal).
+
+Fleet (`add-linux-agent-fleet`) is a second, harder consumer of the same
+primitive — N agents under one supervisor, plus an optional host-side
+mapping for reaching one from outside — not yet built.
+
+## No inter-sandbox process visibility separation
+
+Landlock hides nothing: sandboxes share the host's raw process namespace.
+Fixed by `add-linux-agent-fleet`'s per-agent PID namespaces, not yet built.
 
 What this means in practice turned out narrower than originally assumed,
 though. On a Landlock **ABI V6** host (`doctor` reports the ABI level; this
@@ -22,21 +50,6 @@ any other ungranted path) close both, even with no PID namespace to enforce
 it structurally. This is kernel-version-dependent, not a blanket guarantee:
 older kernels without ABI V6 would plausibly still allow it, and `doctor`'s
 ABI line is how to know which regime a given host is in.
-
-What the missing namespace separation still means regardless of ABI
-version: two sandboxes binding the same port (e.g. both running a dev
-server on 3000) still race for it with `EADDRINUSE`, since Landlock has no
-hook for that at all. There is no conflict detection; reach a sandbox's
-services through SSH's `-L` forwarding rather than assuming host ports are
-exclusive to it.
-
-**This bites hardest on exactly the fan-out flow devcroft targets**, and is
-no longer moot now that services ship: `devcroft.toml` is committed, so
-every git worktree of a repo declares the *same* port, and two sandboxes
-each starting Postgres on 5432 collide. The fix is `add-port-allocation`,
-which pairs with `add-agent-workload`: that change gives N worktrees
-distinct sandbox *names*, without which they never get as far as needing
-distinct ports.
 
 ## Domain filtering: enforced on Linux, unverified on macOS
 
