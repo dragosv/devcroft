@@ -346,10 +346,14 @@ mod tests {
             .to_capability_set(&root)
             .unwrap();
 
+        // `resolved` is what `allow_path` canonicalized, so compare
+        // against the canonical root: on macOS `temp_dir()` hands back a
+        // `/var/...` path and `/var` is a symlink to `/private/var`.
+        let canonical_root = root.canonicalize().unwrap();
         assert!(
             caps.fs_capabilities()
                 .iter()
-                .any(|c| c.resolved == root && c.access == AccessMode::ReadWrite)
+                .any(|c| c.resolved == canonical_root && c.access == AccessMode::ReadWrite)
         );
         let _ = std::fs::remove_dir_all(&root);
     }
