@@ -193,6 +193,61 @@ audit of what the library offers against what devcroft uses is
 `add-backend-capabilities` — which has repeatedly turned up things sitting
 unused, `IpcMode` above being the latest.
 
+**The CLI's source is public and license-compatible, which changes what
+"inspiration" can mean here.** It lives in the same repo under
+`crates/nono-cli/` (the published crate is library-only, which is why it
+is not in the vendored source, and why this went unread for so long).
+Apache-2.0 — and since devcroft is now Apache-2.0 too, its code can be
+*adapted with attribution* rather than only studied. That is a different
+and cheaper option than the one available while devcroft was MIT.
+
+### Taken: `resource_cgroup.rs`, which is fleet's blocking group already written
+
+`add-linux-agent-fleet` task group 1 (resource control, 0/8) is the 0.2→1.0
+roadmap's gate for running N agents — without limits one runaway build
+starves the rest. `crates/nono-cli/src/resource_cgroup.rs` is a complete
+cgroup v2 implementation of it. Fleet's own task 0 had already identified
+that file as where the rendering lives; nobody had opened it.
+
+**It independently reaches D6's conclusion.** Fleet decided to drop manual
+delegation as a fallback, on the reasoning that "a hard requirement with a
+clear preflight failure is more honest than a fallback that silently
+under-enforces". The reference refuses the run at setup when delegation is
+unavailable, with no fallback. Two designs arriving at the same call is
+worth more than either alone.
+
+Four things it has that fleet's task list did not, now folded in there:
+
+- **The child attaches itself to the leaf right after `fork`**, via an
+  inherited `cgroup.procs` fd and only async-signal-safe calls. Without
+  it there is a window where the child runs uncapped in the parent's
+  cgroup.
+- **Controllers are verified present in `cgroup.subtree_control`** and the
+  run fails if not — D6's "silently under-enforce" concern as an actual
+  check rather than a principle.
+- **`memory.high` is deliberately left unset** with swap off, because a
+  program over it stalls rather than dying, which presents as a hang.
+- **Kernel evidence for why something died**: `memory.events`' `oom_kill`
+  and `pids.events`' denied-fork counters turn "the agent vanished" into
+  a reason. Silent when zero.
+
+Its stale-leaf sweep — check `/proc/<pid>` before removing a leftover —
+is the same rule devcroft already applies to pidfiles via
+`state::is_same_process`, arrived at separately.
+
+### Worth reading when the relevant work starts
+
+Not taken, but mapped, so the next person does not start from nothing:
+
+| file | devcroft's corresponding gap |
+| --- | --- |
+| `terminal_approval.rs`, `approval_runtime.rs` | `add-agent-interaction`'s open question — *who* implements `ApprovalBackend` |
+| `rollback_*.rs` (~116 KB) | the rollback gap in `known-gaps.md`; session-based, with a preflight |
+| `timeouts.rs` | the wall-clock limit fleet's group 1 now lists |
+| `pty_proxy.rs` (~129 KB) | devcroft's own pty handling is a fraction of that; likely edge cases it does not cover |
+| `why_runtime.rs` | devcroft's `why`, which answers a narrower question |
+| `sandbox_state.rs`, `state_paths.rs`, `session.rs` | direct analogues of devcroft's `StatePaths` and session registry |
+
 ## bubblewrap — <https://github.com/containers/bubblewrap>
 
 Refused as a dependency, read as a reference. `add-mount-isolation` M2

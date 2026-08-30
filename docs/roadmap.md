@@ -84,17 +84,27 @@ single runaway build starves every other agent, and no amount of isolation
 elsewhere compensates. It is the most likely failure mode at N ≥ 3 and
 currently 0/8.
 
-Two things make fleet cheaper than its task count suggests:
+Three things make fleet cheaper than 6/56 suggests:
 
-- Its network half is already shipped and consumed — per-agent namespaces,
-  ports, and egress all work today for the single-sandbox case.
+- **Its network half is already shipped** and consumed — per-agent
+  namespaces, ports, and egress all work today for the single-sandbox
+  case.
+- **The cgroup half has a working reference.** `nono-cli`'s
+  `resource_cgroup.rs` implements it, Apache-2.0, and therefore adaptable
+  with attribution now that devcroft is too (`docs/prior-art.md`). It
+  independently reached fleet's own D6 call — refuse rather than fall back
+  — and carries four details fleet's task list was missing, including a
+  post-`fork` race where the child briefly runs uncapped. The wall-clock
+  timeout in the same group needs no cgroups at all and is the cheapest
+  bound on an unattended agent.
 - **D9's blocking gate may not apply.** Fleet declares that no proxy work
   starts until a seccomp notification-listener handoff is validated, on the
   reasoning that a userspace network helper makes proxy variables
   cooperative. The shipped design has no such helper — the namespace has
   loopback only and egress is a relay — so egress is already
   non-cooperative by construction. Re-derive before building either way;
-  if it holds, fleet's hardest phase-0 item disappears.
+  if it holds, fleet's hardest phase-0 item disappears, and `sandlock`
+  shows a working handoff sequence if it does not.
 
 **`add-port-allocation`** (3/32) resolves here rather than shipping: two
 corrections in one day reduced it to hosts without user namespaces, the

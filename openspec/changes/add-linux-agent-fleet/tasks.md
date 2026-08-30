@@ -80,8 +80,41 @@ the implementation before it resolves.
 
 ## 1. Resource control
 
+> **A working reference exists and is license-compatible.** `nono-cli`'s
+> `crates/nono-cli/src/resource_cgroup.rs` implements this group's cgroup
+> half — task 0 already noted that file as where the rendering lives, and
+> nobody had read it. It is Apache-2.0, and devcroft is now Apache-2.0
+> too, so it can be *adapted with attribution* rather than only studied.
+> See `docs/prior-art.md` for what it contains and the four details below
+> that this task list did not have.
+>
+> It also **independently reaches D6's conclusion**: delegation
+> unavailable means the run is refused at setup, with no fallback — the
+> same "a hard preflight failure beats a fallback that silently
+> under-enforces" this change decided on its own.
+
 - [ ] Run fleet as a systemd user service with `Delegate=yes`; discover the
       cgroup via `/proc/self/cgroup` rather than assuming a fixed path.
+      Parse for the `0::` unified-hierarchy prefix, walk to the
+      `user@<uid>.service` ancestor, reject v1/hybrid, and **match path
+      segments exactly** — the reference does the last one specifically to
+      stop path traversal, which is not obvious from "parse
+      /proc/self/cgroup".
+- [ ] **Verify requested controllers appear in the parent's
+      `cgroup.subtree_control` and fail if not.** This is D6's
+      "silently under-enforce" concern as a concrete check: without it a
+      missing controller means the limit is configured and absent.
+- [ ] **The child attaches itself to the leaf immediately after `fork`**,
+      writing its pid to an inherited `cgroup.procs` fd using only
+      async-signal-safe calls. Otherwise there is a window where the child
+      runs uncapped in the parent's cgroup — a race this task list did not
+      previously mention, and the same post-fork discipline devcroft
+      already applies in `pre_exec`.
+- [ ] **Leave `memory.high` unset when swap is off.** With
+      `memory.swap.max=0`, a program over `memory.high` stalls instead of
+      being killed, which looks like a hang rather than a limit. Set
+      `memory.max` plus `memory.oom.group=1` so the whole leaf dies
+      together.
 - [ ] Create the empty internal `fleet` node plus one domain leaf per agent;
       keep the supervisor and each agent's host-side proxy out of the leaves.
 - [ ] Apply memory, CPU weight, IO weight and PID limits from configuration.
@@ -95,8 +128,20 @@ the implementation before it resolves.
       agent, and `timeout 30 devcroft exec …` only helps a human who is
       watching. Noted from `sandlock`, which exposes it as `-t/--timeout`
       (`docs/prior-art.md`).
-- [ ] Implement teardown via `cgroup.kill`.
+- [ ] Implement teardown via `cgroup.kill` (Linux 5.14+), then poll
+      `cgroup.procs` until the kernel has reaped — the reference polls 50
+      times at 10ms. Leave the directory behind with a warning rather than
+      blocking forever if it does not drain.
+- [ ] **Sweep stale leaves from crashed supervisors** before creating a
+      new one, confirming the owning pid is gone via `/proc/<pid>` first.
+      devcroft already applies exactly this reasoning to pidfiles
+      (`state::is_same_process`), so it is the same rule in a second
+      place, not a new one.
 - [ ] Read metrics and exit events from the agent's cgroup interface files.
+      **Including why something died**: `memory.events`' `oom_kill` counter
+      and `pids.events`' denied-fork count turn "the agent vanished" into
+      "the agent was OOM-killed". Report nothing when the counters are
+      zero, so a clean run stays quiet.
 - [ ] Preflight check for cgroup v2 delegation with an actionable diagnostic.
 - [ ] Test: runaway build in one agent leaves other agents schedulable.
 - [ ] Test: stopping an agent with orphaned descendants leaves nothing alive.
