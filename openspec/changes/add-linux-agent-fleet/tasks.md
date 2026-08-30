@@ -140,11 +140,34 @@ the implementation before it resolves.
 
 ## 4. Workspace isolation
 
-- [ ] Implement the shared bare mirror and per-agent clone with `--reference`.
-- [ ] Disable automatic GC on the mirror and all clones; add supervisor-driven
+- [x] Implement the shared bare mirror and per-agent clone with `--reference`.
+      `src/fleet/workspace.rs`: `ensure_mirror` (clone `--bare --mirror` once,
+      idempotent thereafter) and `create_agent_clone` (`git clone --reference
+      <mirror> <mirror> <dest>` — sourced from the mirror itself, not the real
+      upstream; see the next item).
+- [x] Disable automatic GC on the mirror and all clones; add supervisor-driven
       maintenance when the fleet is idle.
-- [ ] Remove or block the upstream remote in agent clones; implement the
-      integration step for accepted sessions.
+      `disable_auto_gc` (`git config gc.auto 0`) runs on both the mirror and
+      every clone. `run_maintenance` is the supervisor-driven half: it takes
+      an explicit `active_agents` count from its caller — this module owns
+      git mechanics, not fleet membership, so it cannot answer "is the fleet
+      idle" itself — and refuses (`io::ErrorKind::WouldBlock`, naming the
+      count) rather than running while any agent could still need a
+      referenced object. Wiring an actual idle signal from the eventual
+      supervisor is still open; the primitive it will call already exists.
+- [x] Remove or block the upstream remote in agent clones.
+      **Not a separate step**: cloning from the mirror rather than the real
+      upstream means the clone's `origin` is the mirror path from the moment
+      it exists — the real upstream is never configured, so there is nothing
+      to remove or block. Asserted directly
+      (`agent_clone_never_references_the_real_upstream`: the real upstream's
+      path appears nowhere in `git remote -v`).
+- [ ] Implement the integration step for accepted sessions.
+      **Deliberately not done here** — publishing an agent's accepted work
+      from the shared mirror to the real upstream is a separate mechanism
+      (review/acceptance semantics, not git plumbing) and was scoped out of
+      this pass; an agent that pushes today pushes into the mirror and stops
+      there.
 - [ ] Mount the provider's **resolved runtime paths read-only** into each
       agent (closure paths for closure-tier providers; devcroft-owned artifact
       paths plus explicit host library grants for qualified artifact-tier ones).
@@ -157,8 +180,14 @@ the implementation before it resolves.
       socket in any agent there are no per-agent GC roots to manage either.
 - [ ] Refuse, naming the requested authority, any workflow that needs a
       package-manager daemon or a writable host-global store.
-- [ ] Test: concurrent commits across agents, no spurious lock failures.
+- [x] Test: concurrent commits across agents, no spurious lock failures.
+      `concurrent_commits_across_agent_clones_do_not_collide` — four clones
+      off one mirror, each commits on its own thread simultaneously; none
+      panics or lock-fails.
 - [ ] Test: store GC during an active fleet retains all live paths.
+      Unrelated to this task group's git mirror — this is the package-store
+      (nix/flox) GC concern from the "resolved runtime paths read-only" item
+      above, and stays open with it.
 
 ## 5. Service ports
 
