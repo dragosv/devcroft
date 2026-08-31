@@ -544,3 +544,18 @@ three of these had a guard, and all three guards tested the presence of a
 tool rather than the property the test's conclusion depends on. A green
 suite here is still not a suite that ran: `cargo test -- --nocapture |
 grep skipping` is what says which.
+
+**And running the packaged binary — rather than inspecting the package —
+found the last one.** `devcroft --help` did not exist. It answered
+`unknown command "--help"`, and so did `--version`, on a CLI whose own
+crate docs tell readers to depend on "the `devcroft` binary and its
+documented command surface (`devcroft --help`, and the README)". The
+fallback message pointed at "the cli spec", a file that ships in the
+repository and not in the crate.
+
+Every audit before this one had read the package: file counts, sizes,
+licenses, what would be installed. None had *run* what it produced, which
+is why the first thing a new user does — ask the tool what it can do —
+was the one path nothing covered. `tests/cli_help_and_version.rs` now
+pins it, and needs no provider, sandbox or kernel feature, so unlike most
+of this suite it can never self-skip.

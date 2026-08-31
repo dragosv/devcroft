@@ -74,15 +74,76 @@ fn main() {
         Some("ssh") => std::process::exit(cli_ssh(&args[2..])),
         Some("policy") => std::process::exit(cli_policy(&args[2..])),
         Some("why") => std::process::exit(cli_why(&args[2..])),
-        other => {
-            eprintln!(
-                "devcroft: unknown command {:?}; see the cli spec for the full command surface",
-                other.unwrap_or("(none given)")
-            );
+        Some("help") | Some("--help") | Some("-h") => {
+            println!("{USAGE}");
+            std::process::exit(0);
+        }
+        Some("--version") | Some("-V") => {
+            println!("devcroft {}", env!("CARGO_PKG_VERSION"));
+            std::process::exit(0);
+        }
+        None => {
+            // Usage on stderr and exit 2, where an explicit `help` gets
+            // stdout and 0: one is a user asking a question and the other
+            // is a malformed invocation, and a script that pipes this
+            // should be able to tell them apart. Exit 2 is the error
+            // contract's usage code (CLAUDE.md).
+            eprintln!("{USAGE}");
+            std::process::exit(2);
+        }
+        Some(other) => {
+            eprintln!("devcroft: unknown command {other:?}\n\n{USAGE}");
             std::process::exit(2);
         }
     }
 }
+
+/// The top-level usage text.
+///
+/// It exists because `src/lib.rs` tells readers to depend on "the
+/// `devcroft` binary and its documented command surface (`devcroft
+/// --help`, and the README)" — and until the first release audit ran the
+/// packaged binary, `devcroft --help` answered `unknown command "--help"`.
+/// The old fallback also pointed a user of a published binary at "the cli
+/// spec", which ships in the repository and not in the crate.
+///
+/// Hidden `__`-prefixed modes are deliberately absent: they are re-exec
+/// targets for devcroft's own internals, not commands anyone types.
+const USAGE: &str = "\
+devcroft — isolated, reproducible development environments, each reachable over SSH
+
+usage: devcroft <command> [args...]
+
+sandboxes
+  init [--force]              write a devcroft.toml for this project
+  up [name] [--recreate]      build the environment, apply the policy, start the sandbox
+  down [name]                 stop a sandbox, keeping its state
+  rm [name] [--yes]           stop a sandbox and delete its state
+
+running things
+  exec [name] -- <cmd>        run one command inside a sandbox
+  shell [name]                open an interactive shell inside a sandbox
+
+inspecting
+  status [name]               whether a sandbox is up, and since when
+  logs [name] [--tail N]      the keeper's log
+  ps                          every sandbox on this host
+  policy --render [name]      the compiled profile, every rule with its origin
+  why --path P --op <mode>    whether one operation is allowed, and which rule decides
+  why --host <domain>         the same question for an outbound host
+  doctor                      check this host for what devcroft needs
+
+ssh
+  ssh [name]                  connect over the sandbox's own SSH server
+  ssh-config [--write]        emit (or install) the ~/.ssh/config block
+  proxy <name>.devcroft       ProxyCommand handler; not typed directly
+
+  help                        this text
+  --version                   print the version
+
+Misusing a command prints that command's own usage line, which carries
+the flags this summary leaves out. Full documentation:
+https://github.com/dragosv/devcroft";
 
 /// `devcroft exec [--no-up] [name] -- <cmd> [args...]` (task 5.1, plus
 /// auto-up from task 5.3). Returns the process exit code directly,

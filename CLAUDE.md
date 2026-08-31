@@ -384,6 +384,12 @@ MVP command surface is closed: `init`, `up`, `down`, `rm`, `status`, `logs`,
 `ps`, `shell`, `exec`, `ssh`, `proxy`, `ssh-config`, `policy`, `why`,
 `doctor`. Anything else is post-MVP.
 
+`help`/`--help`/`-h` and `--version`/`-V` are not additions to that
+surface — they describe it. `src/bin/devcroft.rs`'s `USAGE` is the only
+place a user of the *published* binary can discover what exists, so a new
+command must be listed there;
+`tests/cli_help_and_version.rs` fails if one is not.
+
 ## Before proposing a feature
 
 `docs/decisions.md` is the reference for every "why doesn't devcroft support

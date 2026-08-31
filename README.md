@@ -90,6 +90,7 @@ even `bash` won't run, so install something before continuing.
 Then:
 
 ```sh
+devcroft --help                # every command, with one line each
 devcroft init                  # write devcroft.toml
 devcroft up                    # build the environment, apply the policy, start the sandbox
 devcroft exec -- cargo test    # run one command inside it

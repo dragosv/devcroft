@@ -149,6 +149,21 @@ retired first, and every phase ends in something runnable.
       hole in the boundary. `docs/roadmap.md` records when `0.1.0` gets
       cut: when `add-mount-isolation` lands.
 
+      **A second, found by running the packaged binary rather than
+      inspecting the package.** `devcroft --help` did not exist —
+      `unknown command "--help"` — and neither did `--version`, on a CLI
+      whose own crate docs tell readers to depend on "the `devcroft`
+      binary and its documented command surface (`devcroft --help`, and
+      the README)". The fallback message also sent a user of a published
+      binary to "the cli spec", which ships in the repository and not in
+      the crate. The first thing anyone does with a freshly installed CLI
+      is ask it for help, and it answered with an error naming a file
+      they do not have. Added, with `tests/cli_help_and_version.rs`
+      pinning the contract: every command in the closed surface appears
+      in the text, hidden `__` re-exec modes do not, explicit help is
+      stdout/0 while misuse is stderr/2, and no message points at
+      anything the crate does not ship.
+
       **One release blocker found by this pass, now fixed.** `src/bin/`
       binaries are auto-discovered, and the `include` allowlist shipped
       `spike.rs` — so `cargo install devcroft` would have put a second,
