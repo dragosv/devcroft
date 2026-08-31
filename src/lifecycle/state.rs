@@ -275,6 +275,18 @@ pub struct Meta {
     /// "no hook" until the next `up` records the truth.
     #[serde(default)]
     pub ran_activation_hook: bool,
+    /// The absolute POSIX shell this `up` resolved out of the sandbox's
+    /// own closure (`shell::resolve`).
+    ///
+    /// Recorded because `devcroft shell` runs in the *client* process,
+    /// which never resolves an environment — it sends a `SpawnRequest` to
+    /// a keeper that is already restricted, so the only place it can
+    /// learn what shell that sandbox has is here. `#[serde(default)]` so
+    /// a `meta.json` written before this field existed still
+    /// deserializes; such a sandbox falls back to the bare name, which is
+    /// what it was already doing.
+    #[serde(default)]
+    pub shell: Option<String>,
     /// The egress proxy's bound port, when `up` started or reused one for
     /// this sandbox (add-egress-proxy) — `None` when `network.allow` is
     /// empty and no domain filtering was requested. Recorded for the same
@@ -664,6 +676,7 @@ mod tests {
             resolved_backend: "process".to_string(),
             declared_services: Vec::new(),
             ran_activation_hook: false,
+            shell: None,
             proxy_port: None,
             proxy_token: None,
         };
@@ -685,6 +698,7 @@ mod tests {
             resolved_backend: "process".to_string(),
             declared_services: Vec::new(),
             ran_activation_hook: false,
+            shell: None,
             proxy_port: None,
             proxy_token: None,
         };

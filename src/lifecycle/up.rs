@@ -217,12 +217,45 @@ pub fn up(
         None
     };
 
+    // devcroft's own shell dependency, resolved host-side out of the
+    // closure that was just materialized — see `crate::shell`. Resolved
+    // here rather than inside `up_process` so the answer is recorded in
+    // `Meta` with everything else the client side needs later, and so a
+    // sandbox that has no shell at all fails before any state that
+    // implies a working one is written.
+    let shell = crate::shell::resolve(&resolution.env).ok_or_else(|| {
+        UpError::Provider(crate::provider::ProviderError::ResolutionFailed(
+            "no POSIX shell found in this environment or its closure, and devcroft \
+             needs one for `shell`, SSH login sessions and services; add one to the \
+             environment manifest (e.g. `flox install bash`)\nsearched: the store \
+             entries on the resolved environment's PATH, then their closure \
+             requisites"
+                .to_string(),
+        ))
+    })?;
+
+    // The provider's own grants plus the store path the resolved shell
+    // lives in, folded together *here* rather than at compile time so
+    // `Meta` and the compiled profile cannot disagree: `policy --render`
+    // renders from `Meta`, and a rule reaching the backend that
+    // `--render` cannot show is exactly what the policy capability
+    // forbids. (The shell grant is redundant while `/nix/store` is
+    // granted wholesale; `add-mount-isolation` is what makes it load-
+    // bearing, and a grant that appears only then would appear
+    // unexplained.)
+    let mut provider_grants = resolution.read_only_grants.clone();
+    if let Some(grant) = &shell.grant
+        && !provider_grants.contains(grant)
+    {
+        provider_grants.push(grant.clone());
+    }
+
     state::write_meta(
         &paths.meta,
         &state::Meta {
             project_root: project_root.to_string_lossy().into_owned(),
             env_fingerprint,
-            read_only_grants: resolution.read_only_grants.clone(),
+            read_only_grants: provider_grants.clone(),
             resolved_backend: RESOLVED_BACKEND.to_string(),
             // What the provider declared, recorded so `status` can
             // report a service the supervisor never accepted — see
@@ -234,6 +267,7 @@ pub fn up(
                 .map(|s| s.name.clone())
                 .collect(),
             ran_activation_hook: resolution.ran_activation_hook,
+            shell: Some(shell.path.to_string_lossy().into_owned()),
             proxy_port: proxy.as_ref().map(|(port, _)| *port),
             proxy_token: proxy.as_ref().map(|(_, token)| token.clone()),
         },
@@ -246,6 +280,8 @@ pub fn up(
         opts,
         outcome,
         &resolution,
+        &shell,
+        &provider_grants,
         proxy,
     )
 }
@@ -303,6 +339,13 @@ pub const RESOLVED_BACKEND: &str = "process";
 /// every particular, just extracted so [`up`] can dispatch to it or to
 /// [`up_hardened`] from one shared prefix (state dir, provider
 /// resolution, meta).
+// `shell` and `provider_grants` are passed in rather than derived here,
+// even though both could be: they are computed once in [`up`] so that
+// `Meta` and the compiled profile cannot disagree about the shell's
+// grant, and recomputing either here would reintroduce exactly the
+// divergence that guarantee exists to prevent. Same allow, and same
+// reason, as `spawn_keeper` below.
+#[allow(clippy::too_many_arguments)]
 fn up_process(
     manifest: &Manifest,
     project_root: &Path,
@@ -310,6 +353,8 @@ fn up_process(
     opts: &UpOptions,
     outcome: UpOutcome,
     resolution: &Resolution,
+    shell: &crate::shell::ResolvedShell,
+    provider_grants: &[String],
     proxy: Option<(u16, String)>,
 ) -> Result<UpOutcome, UpError> {
     // The keeper binary itself must be readable+executable inside the
@@ -328,7 +373,7 @@ fn up_process(
             crate::provider::ProviderKind::from_name(&manifest.env.provider)
                 .map_err(UpError::Provider)?
                 .static_name(),
-            &resolution.read_only_grants,
+            provider_grants,
         );
     // `proxy_port` was already spawned/reused and recorded in `Meta` by
     // the caller (`up`), before this function ever ran — see its own
@@ -404,8 +449,14 @@ fn up_process(
 
     // `Some(name)` means "start services, using this sandbox's artifact
     // subdirectory"; `None` means there are none to start.
-    let services = prepare_services(project_root, &manifest.sandbox.name, resolution, opts)?
-        .then_some(manifest.sandbox.name.as_str());
+    let services = prepare_services(
+        project_root,
+        &manifest.sandbox.name,
+        resolution,
+        &shell.path,
+        opts,
+    )?
+    .then_some(manifest.sandbox.name.as_str());
 
     // The port-collision fix (README's own "Why"): a sandbox that
     // declares ports or services gets its own network namespace, so its
@@ -533,6 +584,7 @@ fn up_process(
             authorized_key_pem: &authorized_key_pem,
         },
         services,
+        &shell.path,
         isolate_network,
         // The relay is only needed when the sandbox is *both* isolated
         // (no route to host loopback) and has a proxy to reach. Either
@@ -648,6 +700,7 @@ fn prepare_services(
     project_root: &Path,
     sandbox_name: &str,
     resolution: &Resolution,
+    shell: &Path,
     opts: &UpOptions,
 ) -> Result<bool, UpError> {
     if let ServiceSupport::Unsupported = resolution.services {
@@ -693,7 +746,10 @@ fn prepare_services(
     if let Some(dir) = config_path.parent() {
         std::fs::create_dir_all(dir)?;
     }
-    std::fs::write(&config_path, crate::services::render_config(services))?;
+    std::fs::write(
+        &config_path,
+        crate::services::render_config(services, shell),
+    )?;
     Ok(true)
 }
 
@@ -724,6 +780,7 @@ fn spawn_keeper(
     plan: &policy::CapabilityPlan,
     ssh: SshHandoff,
     services: Option<&str>,
+    shell: &Path,
     isolate_network: bool,
     relay: Option<(u16, PathBuf)>,
 ) -> io::Result<libc::pid_t> {
@@ -769,6 +826,12 @@ fn spawn_keeper(
         // environment above already crosses this way.
         .env("DEVCROFT_SSH_HOST_KEY", ssh.host_key_pem)
         .env("DEVCROFT_SSH_AUTHORIZED_KEY", ssh.authorized_key_pem)
+        // The absolute shell `up` resolved out of this sandbox's closure
+        // (`crate::shell`). The keeper starts SSH login sessions with it;
+        // a bare `sh` would PATH-resolve to the host's, which the
+        // compiled policy denies, and the failure surfaces only as
+        // `shell request failed on channel 0`.
+        .env("DEVCROFT_SHELL", shell)
         // Services are started by the *keeper*, not by `up`: `up` exits,
         // and a session whose client disconnects is escalated after
         // `connection::DEFAULT_GRACE_PERIOD`, so anything `up` started

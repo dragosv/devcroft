@@ -98,7 +98,7 @@ pub const SHUTDOWN_TIMEOUT_SECS: u64 = 1;
 /// YAML serializer dependency for output this small, and keeps the
 /// generation deterministic (serde_json over a `BTreeMap` preserves key
 /// order) so the same declarations always produce a byte-identical file.
-pub fn render_config(services: &[ServiceDecl]) -> String {
+pub fn render_config(services: &[ServiceDecl], shell: &Path) -> String {
     let mut processes = serde_json::Map::new();
 
     for svc in services {
@@ -166,11 +166,19 @@ pub fn render_config(services: &[ServiceDecl]) -> String {
         // (confirmed by log line "Global shell command: bash -c" against a
         // real 1.116.0 binary) — a host path own-policy-baseline's
         // GROUPS_EXCLUDE makes unreachable regardless of what the
-        // project's provider closure supplies. Bare `sh`, PATH-resolved
-        // inside the sandbox exactly like every command a service itself
-        // runs, matching the same fix `exec.rs`'s shell fallback and
-        // `ssh::server::LOGIN_SHELL` needed for the identical reason.
-        "shell": {"shell_command": "sh", "shell_argument": "-c"},
+        // project's provider closure supplies.
+        //
+        // This was a bare `sh` for a while, PATH-resolved inside the
+        // sandbox. That is only correct when the closure happens to
+        // supply one: a flox environment declaring `python3` and
+        // `process-compose` and no shell — which is every real flox
+        // project, since nothing about flox itself needs a shell declared
+        // — resolved it to the host's `/usr/bin/sh` and every service
+        // died at launch with `fork/exec /usr/bin/sh: permission denied`,
+        // buried in the supervisor's own log. The absolute path
+        // `crate::shell::resolve` found in this closure removes the
+        // fallthrough rather than diagnosing it.
+        "shell": {"shell_command": shell.to_string_lossy(), "shell_argument": "-c"},
         "processes": serde_json::Value::Object(processes),
     });
     serde_json::to_string_pretty(&doc).expect("process-compose config serialization is infallible")
@@ -551,6 +559,13 @@ pub fn resolve_in_env(env: &BTreeMap<String, String>) -> Option<PathBuf> {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
+    /// A stand-in for the shell `up` resolves out of the real closure.
+    /// These tests assert the *shape* of the generated config, so the
+    /// path only has to be absolute and stable, never present.
+    const TEST_SHELL_PATH: &str = "/nix/store/test-bash/bin/sh";
+
     /// The invariant `SHUTDOWN_TIMEOUT_SECS`'s doc comment states, as a
     /// test rather than a comment: process-compose must reap its own
     /// children *before* devcroft reaps process-compose, or a service
@@ -575,7 +590,7 @@ mod tests {
             is_daemon: false,
             shutdown_command: None,
         };
-        let rendered = render_config(std::slice::from_ref(&svc));
+        let rendered = render_config(std::slice::from_ref(&svc), Path::new(TEST_SHELL_PATH));
         let parsed: serde_json::Value = serde_json::from_str(&rendered).unwrap();
         assert_eq!(
             parsed["processes"]["web"]["shutdown"]["timeout"],
@@ -595,7 +610,7 @@ mod tests {
             is_daemon: true,
             shutdown_command: Some("stop-db".into()),
         };
-        let rendered = render_config(std::slice::from_ref(&svc));
+        let rendered = render_config(std::slice::from_ref(&svc), Path::new(TEST_SHELL_PATH));
         let parsed: serde_json::Value = serde_json::from_str(&rendered).unwrap();
         assert_eq!(parsed["processes"]["db"]["shutdown"]["command"], "stop-db");
         assert_eq!(
@@ -603,8 +618,6 @@ mod tests {
             serde_json::json!(SHUTDOWN_TIMEOUT_SECS)
         );
     }
-
-    use super::*;
 
     fn decl(name: &str, command: &str) -> ServiceDecl {
         ServiceDecl {
@@ -618,7 +631,10 @@ mod tests {
 
     #[test]
     fn config_is_valid_json_and_names_each_service() {
-        let cfg = render_config(&[decl("api", "serve"), decl("worker", "work")]);
+        let cfg = render_config(
+            &[decl("api", "serve"), decl("worker", "work")],
+            Path::new(TEST_SHELL_PATH),
+        );
         let parsed: serde_json::Value = serde_json::from_str(&cfg).unwrap();
         assert_eq!(parsed["processes"]["api"]["command"], "serve");
         assert_eq!(parsed["processes"]["worker"]["command"], "work");
@@ -628,7 +644,7 @@ mod tests {
     fn restart_is_explicitly_disabled_not_left_to_the_default() {
         // design.md decision 3. Asserted directly so an upstream default
         // change cannot silently reintroduce restarts.
-        let cfg = render_config(&[decl("api", "serve")]);
+        let cfg = render_config(&[decl("api", "serve")], Path::new(TEST_SHELL_PATH));
         let parsed: serde_json::Value = serde_json::from_str(&cfg).unwrap();
         assert_eq!(parsed["processes"]["api"]["availability"]["restart"], "no");
     }
@@ -640,7 +656,8 @@ mod tests {
         svc.vars
             .insert("PGDATA".to_string(), "./pgdata".to_string());
 
-        let parsed: serde_json::Value = serde_json::from_str(&render_config(&[svc])).unwrap();
+        let parsed: serde_json::Value =
+            serde_json::from_str(&render_config(&[svc], Path::new(TEST_SHELL_PATH))).unwrap();
         let env = parsed["processes"]["db"]["environment"].as_array().unwrap();
         // Sorted, because determinism is part of the contract.
         assert_eq!(env[0], "PGDATA=./pgdata");
@@ -653,7 +670,8 @@ mod tests {
         svc.is_daemon = true;
         svc.shutdown_command = Some("pg_ctl stop".to_string());
 
-        let parsed: serde_json::Value = serde_json::from_str(&render_config(&[svc])).unwrap();
+        let parsed: serde_json::Value =
+            serde_json::from_str(&render_config(&[svc], Path::new(TEST_SHELL_PATH))).unwrap();
         assert_eq!(parsed["processes"]["db"]["is_daemon"], true);
         assert_eq!(
             parsed["processes"]["db"]["shutdown"]["command"],
@@ -663,7 +681,8 @@ mod tests {
 
     #[test]
     fn no_services_still_renders_a_valid_empty_config() {
-        let parsed: serde_json::Value = serde_json::from_str(&render_config(&[])).unwrap();
+        let parsed: serde_json::Value =
+            serde_json::from_str(&render_config(&[], Path::new(TEST_SHELL_PATH))).unwrap();
         assert!(parsed["processes"].as_object().unwrap().is_empty());
     }
 
@@ -673,8 +692,8 @@ mod tests {
         svc.vars.insert("B".to_string(), "2".to_string());
         svc.vars.insert("A".to_string(), "1".to_string());
         assert_eq!(
-            render_config(std::slice::from_ref(&svc)),
-            render_config(&[svc])
+            render_config(std::slice::from_ref(&svc), Path::new(TEST_SHELL_PATH)),
+            render_config(&[svc], Path::new(TEST_SHELL_PATH))
         );
     }
 

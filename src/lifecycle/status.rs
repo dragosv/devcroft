@@ -323,6 +323,7 @@ mod tests {
                     resolved_backend: "process".to_string(),
                     declared_services: Vec::new(),
                     ran_activation_hook: false,
+                    shell: None,
                     proxy_port: None,
                     proxy_token: None,
                 },

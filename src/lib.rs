@@ -34,4 +34,5 @@ pub mod policy;
 pub mod provider;
 pub mod proxy;
 pub mod services;
+pub mod shell;
 pub mod ssh;

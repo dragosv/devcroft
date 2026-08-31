@@ -105,6 +105,18 @@ pub fn exec(sandbox_name: &str, req: &ExecRequest) -> Result<i32, ExecError> {
 /// exist in the sandbox" the same way.
 const FALLBACK_SHELL: &str = "sh";
 
+/// The absolute shell `up` resolved out of this sandbox's own closure and
+/// recorded in `meta.json` (`crate::shell`).
+///
+/// This process is the *client*: it never resolves an environment, so
+/// `meta.json` is the only place it can learn what shell the sandbox
+/// actually has. Falling back to the bare name keeps a sandbox whose
+/// `up` predates the recorded field working exactly as it did.
+fn recorded_shell(sandbox_name: &str) -> Option<String> {
+    let paths = StatePaths::new(sandbox_name).ok()?;
+    crate::lifecycle::read_meta(&paths.meta).ok()??.shell
+}
+
 /// Runs an interactive pty shell inside `sandbox_name`'s running keeper:
 /// `$SHELL` (falling back to `/bin/sh`), sized to the local terminal, with
 /// this process's own terminal switched to raw mode so keystrokes —
@@ -112,7 +124,8 @@ const FALLBACK_SHELL: &str = "sh";
 /// being consumed locally, and `SIGWINCH` forwarded as `Resize` frames
 /// for the "resize propagation" scenario.
 pub fn shell(sandbox_name: &str, req: &ShellRequest) -> Result<i32, ExecError> {
-    let requested_shell = std::env::var("SHELL").unwrap_or_else(|_| FALLBACK_SHELL.to_string());
+    let fallback = recorded_shell(sandbox_name).unwrap_or_else(|| FALLBACK_SHELL.to_string());
+    let requested_shell = std::env::var("SHELL").unwrap_or_else(|_| fallback.clone());
     let size = terminal_size().unwrap_or(PtySize { rows: 24, cols: 80 });
 
     let spawn_req = SpawnRequest {
@@ -124,9 +137,9 @@ pub fn shell(sandbox_name: &str, req: &ShellRequest) -> Result<i32, ExecError> {
     };
 
     let stream = match connect_and_spawn(sandbox_name, &spawn_req) {
-        Err(ExecError::SpawnErr(_)) if requested_shell != FALLBACK_SHELL => {
+        Err(ExecError::SpawnErr(_)) if requested_shell != fallback => {
             let fallback_req = SpawnRequest {
-                cmd: FALLBACK_SHELL.to_string(),
+                cmd: fallback.clone(),
                 ..spawn_req
             };
             connect_and_spawn(sandbox_name, &fallback_req)?

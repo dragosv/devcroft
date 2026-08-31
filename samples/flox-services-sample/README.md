@@ -1,10 +1,14 @@
 # flox-services-sample
 
-Demonstrates two things that are easy to conflate: **granting a loopback
-port** (implemented, works today) and **devcroft supervising declared
-services** (not implemented — `add-flox-services` task group 3). This
-sample deliberately shows both, including the gap, rather than implying
-services are done.
+Demonstrates two things that are easy to conflate, both of which work
+today: **granting a loopback port** and **devcroft supervising declared
+services**. They are independent axes — a port grant is a policy rule, a
+service is a process the keeper owns — and this sample exercises each
+without the other doing the work.
+
+It is also the regression case for a third thing, by accident of how it
+was written: its flox manifest declares **no shell**, which is what every
+real flox project looks like. See "The shell nobody declares" below.
 
 ## What works today
 
@@ -70,18 +74,29 @@ by process absence, not by a stop command's exit code — during
 development, killing process-compose alone left its child running and
 holding the port.
 
-Still missing (`add-flox-services` groups 5–6): `ps`, `logs`, and
-`status` do not yet show per-service state. process-compose runs with a
-unix socket for its API (`.devcroft/services.sock`) precisely so those
-can query it later — it is not started with `--no-server`, even though
-that would also work, because the socket keeps that door open.
+`status` and `ps` report per-service state by querying that API over
+its unix socket (`.devcroft/services.sock`) — which is why
+process-compose is not started with `--no-server`, even though that would
+also avoid the default TCP bind:
+
+```
+$ devcroft status
+service api: running pid=57009
+```
+
+Immediately after `up` that line reads `not started` for about a second,
+until process-compose has bound its socket. It is a race in the report,
+not in the service. What `devcroft logs` shows is the *keeper's* log; a
+service's own output goes to `.devcroft/<sandbox>/services.log`.
 
 Two things you may hit:
 
 - **process-compose must be in the environment.** devcroft fails at
   layer `provider` if services are declared and the binary is not a
   closure member, rather than starting a sandbox whose services never
-  come up. It is never located by scanning `/nix/store`.
+  come up. It is never located by scanning `/nix/store`. This is the
+  project's dependency to declare, because the project declared the
+  services — unlike the shell below, which is devcroft's.
 - **Every port a service binds must be granted.** That includes ports
   you did not choose: process-compose binds its own API on TCP 8080 by
   default and treats failure as fatal, which killed it — and the
@@ -115,3 +130,41 @@ devcroft down                                # services stop with the sandbox
 `.devcroft/` holds the generated config, process-compose's log, and its
 API socket. It is devcroft's artifact directory, regenerated at each
 `up` — worth adding to `.gitignore` in a real project.
+
+## The shell nobody declares
+
+This sample's `[install]` section has `python3` and `process-compose` and
+no shell, which is not an oversight — it is what a real flox manifest
+looks like. Nothing about flox needs a shell declared, because under a
+plain `flox activate` the host's `PATH` is still there and `sh` resolves
+to `/usr/bin/sh`.
+
+devcroft's policy denies host binaries (`own-policy-baseline`), and
+devcroft needs a shell for three things the project never asked for: SSH
+login sessions, `devcroft shell`, and the command process-compose runs
+each service through. For a while all three resolved a bare `sh` through
+`PATH` *inside* the sandbox, which reached the host's copy and was
+refused — so on this sample every service died at launch with
+`fork/exec /usr/bin/sh: permission denied`, buried in the supervisor's
+own log, while `up` reported a healthy sandbox.
+
+devcroft now resolves an absolute shell out of the closure itself
+(`src/shell.rs`): the environment's own `PATH` if it supplies one *in the
+store*, otherwise a `bin/sh` from the closure's requisites — present here
+even though nothing declares it, because bash is already a transitive
+dependency. The chosen path is granted explicitly, so it survives
+`add-mount-isolation` tightening the blanket `/nix/store` grant, and it
+shows up like any other rule:
+
+```
+$ devcroft policy --render | grep bash
+  /nix/store/f6ls...-bash-interactive-5.3p9   provider:flox
+
+$ devcroft why --path /nix/store/f6ls...-bash-interactive-5.3p9/bin/sh --op read
+ALLOWED
+allowed by rule provider:flox
+```
+
+Requiring the project to declare `bash` was the other option, and was
+rejected: it would fail the first `up` of every existing flox project for
+a dependency devcroft introduced.

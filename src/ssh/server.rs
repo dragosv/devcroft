@@ -51,6 +51,21 @@ use crate::keeper::{pty, session};
 /// regardless of what the project's provider closure supplies.
 const LOGIN_SHELL: &str = "sh";
 
+/// The shell to start a session with: the absolute path `up` resolved out
+/// of this sandbox's own closure (`crate::shell`), handed over as
+/// `DEVCROFT_SHELL`.
+///
+/// The bare-name fallback is for a keeper spawned without it — the unit
+/// tests here, and a sandbox whose `up` predates this — and is the
+/// behaviour this replaced: correct only when the project's closure
+/// happens to supply `sh`, and otherwise resolving to a host path the
+/// policy denies. Real sessions always get the absolute form, which is
+/// what makes `devcroft ssh` work against a closure that declares no
+/// shell of its own.
+fn session_shell() -> String {
+    std::env::var("DEVCROFT_SHELL").unwrap_or_else(|_| LOGIN_SHELL.to_string())
+}
+
 /// Env vars accepted from the client's `env_request` (ssh spec: "env
 /// passthrough of an allowlist (TERM, LANG, LC_*)"). Anything else is
 /// refused outright — a client that wants more has no way to get it,
@@ -430,7 +445,7 @@ impl Handler for SshServer {
         channel: ChannelId,
         session: &mut Session,
     ) -> Result<(), Self::Error> {
-        self.start_session(channel, LOGIN_SHELL, Vec::new(), session)
+        self.start_session(channel, &session_shell(), Vec::new(), session)
             .await
     }
 
@@ -444,8 +459,13 @@ impl Handler for SshServer {
         session: &mut Session,
     ) -> Result<(), Self::Error> {
         let command = String::from_utf8_lossy(data).into_owned();
-        self.start_session(channel, "sh", vec!["-c".to_string(), command], session)
-            .await
+        self.start_session(
+            channel,
+            &session_shell(),
+            vec!["-c".to_string(), command],
+            session,
+        )
+        .await
     }
 
     async fn window_change_request(

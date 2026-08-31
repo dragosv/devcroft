@@ -20,9 +20,11 @@ key from its manifest that would otherwise now fail to parse), and
 `flox-services-sample` (no application code at all)
 are non-Rust, so no workspace exclusion applies to them — see each
 sample's own `README.md` for what it demonstrates. `flox-services-sample`
-is the one that documents an *unfinished* capability on purpose: it shows
-`network.ports` working and `[services]` being parsed, and demonstrates
-that devcroft does not yet supervise those services.
+shows `network.ports` and supervised `[services]` both working — devcroft
+generates its own process-compose config and the keeper owns the
+services' lifetime. It is also the regression case for the shell
+invariant below, because its manifest declares no shell, which is what
+every real flox manifest looks like.
 `devbox-citytime-sample` documents a real constraint rather than a gap:
 devcroft's devbox provider never runs `shell.init_hook` (by design — see
 the two-phase execution invariant below), so unlike the flox and nix
@@ -140,11 +142,12 @@ implemented, tasks.md and all
 — see `docs/implementation-log.md` for what each one found along the way.
 `add-devbox-provider` (a third
 closure-tier environment provider) is implemented too, with one task
-(3.6, a services-loud-failure test) deliberately left unchecked — the
-mechanism it would test doesn't exist yet for *any* provider, and belongs
-to whichever change finishes `add-flox-services`'s own unimplemented
-"services requested from a provider that cannot supply them fail loudly"
-requirement. `remove-gvisor-backend` is now **complete**: its last task waited on
+(3.6, a services-loud-failure test) left unchecked. **Its stated blocking
+reason is now stale**: it says the mechanism exists for no provider, but
+`add-flox-services` task 2.4 built it — `prepare_services` calls
+`ensure_no_services_declared_for_another_provider`, covered by
+`services_declared_for_another_provider_fail_rather_than_being_ignored`.
+Re-derive before treating 3.6 as blocked. `remove-gvisor-backend` is now **complete**: its last task waited on
 `add-backend-capabilities`, which did not exist and has since been written
 (the task was to *rewrite* a change that was never authored, so writing it
 was the resolution). Those plus `add-mvp-core` are the
@@ -358,6 +361,27 @@ if a second backend ever arrives, since it would face the same choice.
 enforce a requested aspect (e.g. domain allowlists on macOS Seatbelt), `up`
 prints exactly one warning naming the aspect, the reason, and the fallback.
 Never drop a capability quietly.
+
+**devcroft's shell is devcroft's dependency, not the project's.** SSH
+login sessions, `devcroft shell`'s fallback, and the command
+process-compose runs each service through all need a POSIX shell. No real
+flox/nix/devbox manifest declares one, because under a plain
+`flox activate` the host's `PATH` still resolves `sh` —
+`own-policy-baseline` removed host toolchain access without replacing it,
+so all three silently began resolving to a host path the policy denies.
+`src/shell.rs` resolves an absolute shell at `up`, from the closure: the
+resolved `PATH` **only where the hit is inside `/nix/store`** (that guard
+is the whole correctness — a provider's `PATH` ends in the host's own
+directories, and the first version of this picked `/usr/bin/dash`), else
+a `bin/sh` from the closure's requisites. The path is recorded in
+`Meta.shell`, handed to the keeper as `DEVCROFT_SHELL`, and its store
+root is folded into the provider grants **in `up()`**, so `Meta` and the
+compiled profile cannot disagree — `policy --render` renders from `Meta`,
+and a rule the backend gets that `--render` cannot show breaks the policy
+invariant. Never reintroduce a bare `"sh"` at any of the three call
+sites, and never require the project to declare one: that would fail the
+first `up` of every existing project for a dependency devcroft
+introduced.
 
 **Error contract.** Every error names its layer — `config` | `provider` |
 `backend` | `keeper` | `ssh`. Exit codes are stable: 0 success, 1 runtime,
