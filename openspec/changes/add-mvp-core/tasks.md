@@ -113,7 +113,19 @@ retired first, and every phase ends in something runnable.
       (`paths::resolve_on_path`, now shared by both).
 
 ## 7. CLI polish & release
-- [x] 7.1 `init` with flox detection; `doctor` with actionable checks
+- [x] 7.1 `init` with flox detection; `doctor` with actionable checks.
+
+      **One check added 2026-08-31, and it is the third instance of the
+      same mistake in this file.** `doctor` printed "all checks passed" on
+      a host where every `up` then failed: flox, nix and devbox all
+      materialize through one Nix store, and none of their probes touches
+      it — `flox --version`, `nix eval --expr 1` and `devbox version` are
+      all satisfied by a daemon that is not running. Checked once now,
+      as the shared substrate it is, and reported as `[FAIL]` because it
+      breaks all three providers rather than one optional capability. A
+      *missing* daemon socket stays silent: a single-user store has none
+      and builds fine, and `doctor` should not invent a finding out of an
+      absence that means nothing.
 - [x] 7.2 Error contract: layers, exit codes, non-interactive safety.
       Wired up the rest of the command surface this required to be
       meaningful: `up`, `down`, `rm`, `status`, `logs`, `ps`, `ssh`,

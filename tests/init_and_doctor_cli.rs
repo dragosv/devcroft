@@ -59,6 +59,11 @@ fn assert_no_unexpected_doctor_failures(stdout: &str) {
                 // Nix being usable too, an independent capability these
                 // tests aren't about.
                 && !l.starts_with("[FAIL] provider: devbox")
+                // And the substrate under both: a host whose nix-daemon is
+                // not running fails this legitimately, and these tests are
+                // about `init`/`doctor`'s own reporting rather than about
+                // whether this particular machine can build anything.
+                && !l.starts_with("[FAIL] nix store:")
         })
         .collect();
     assert!(

@@ -559,3 +559,18 @@ is why the first thing a new user does — ask the tool what it can do —
 was the one path nothing covered. `tests/cli_help_and_version.rs` now
 pins it, and needs no provider, sandbox or kernel feature, so unlike most
 of this suite it can never self-skip.
+
+**The same probe-the-binary mistake had a third instance, in the one
+command whose job is to catch it.** `doctor` reported "all checks passed"
+on the host where every `up` was failing — its flox, nix and devbox checks
+are each satisfied without a store, and nothing looked at the store they
+all build through. It now checks that once, as the shared substrate it is,
+and fails on it, because an unreachable daemon breaks all three providers
+rather than one optional capability. A *missing* socket stays silent: a
+single-user store has none and builds fine.
+
+Three instances in one audit — the provider capture, the test guards, and
+`doctor` itself — is enough to call it a pattern rather than three bugs.
+Each one asked whether a tool was present and reported the answer as
+though it had asked whether the tool would work. The file already carried
+the lesson in prose, twice, next to code that did not follow it.

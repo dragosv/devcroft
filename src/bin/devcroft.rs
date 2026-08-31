@@ -993,6 +993,7 @@ fn cli_doctor() -> i32 {
     let mut ok = true;
     ok &= doctor_backend();
     ok &= doctor_provider();
+    ok &= doctor_nix_store();
     doctor_listening_sockets();
     doctor_agent_namespaces();
     doctor_ssh_config();
@@ -1164,6 +1165,43 @@ fn doctor_nix_provider(required: bool) -> bool {
         println!(
             "[FAIL] provider: nix found ({version}) but flake commands are rejected — add \
              `experimental-features = nix-command flakes` to nix.conf"
+        );
+        false
+    }
+}
+
+/// The substrate all three providers share, checked once rather than
+/// three times.
+///
+/// flox, nix and devbox build through the same store, so a daemon that is
+/// not listening breaks every one of them at `up` — while each provider's
+/// own probe still passes, because `flox --version`, `nix eval --expr 1`
+/// and `devbox version` are all satisfied without a store. That is the
+/// same "probe the capability, never infer it from the binary being
+/// present" rule the nix check above already records, applied one level
+/// down; it was added after `doctor` printed "all checks passed" on a host
+/// where provider resolution failed on the very next command, which is the
+/// precise outcome the rule exists to prevent.
+fn doctor_nix_store() -> bool {
+    let socket = std::path::Path::new("/nix/var/nix/daemon-socket/socket");
+    if !socket.exists() {
+        // No daemon is not the same as no store: a single-user install has
+        // none and builds fine, and a host with no Nix at all is already
+        // reported by the provider lines above. Silence is right here —
+        // `doctor` should not invent a finding out of an absence that means
+        // nothing.
+        return true;
+    }
+    if devcroft::provider::host_can_build_nix_closures() {
+        println!("[PASS] nix store: the daemon socket accepts connections");
+        true
+    } else {
+        println!(
+            "[FAIL] nix store: {} exists but refuses connections — the nix daemon is not \
+             running, and every provider materializes through it, so `up` will fail for \
+             flox, nix and devbox alike; start it with your installer's service command \
+             (e.g. `systemctl start nix-daemon`)",
+            socket.display()
         );
         false
     }
