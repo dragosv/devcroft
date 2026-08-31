@@ -187,6 +187,12 @@ What separates 0.6 from 1.0 is evidence, not features:
 - **A soak.** N agents on one host for long enough that leaks, orphans and
   drift surface. Nothing in the current suite runs longer than a few
   seconds.
+- **A private disclosure process.** The README states plainly that
+  `0.0.x` has none — a single-maintainer, pre-1.0 project with no
+  userbase yet has nothing a formal channel would protect that a public
+  issue doesn't already cover. Worth having once 1.0 actually has users:
+  a GitHub security advisory (or equivalent) replaces the "just open an
+  issue" line at that point, not before.
 
 ## Open, and deliberately unscheduled
 

@@ -311,9 +311,13 @@ progress).
 ## Security
 
 The isolation tier is accident protection and is documented as such — please read
-[docs/threat-model.md](docs/threat-model.md) before relying on it. If you find a
-vulnerability, please report it privately to the maintainer rather than opening
-a public issue.
+[docs/threat-model.md](docs/threat-model.md) before relying on it. This is `0.0.x`,
+pre-1.0, unaudited, single-maintainer software with no security SLA — if you find
+a problem, [open an issue](https://github.com/dragosv/devcroft/issues) like any
+other bug. A private disclosure process is worth having once there's a userbase
+for it to protect; see [docs/roadmap.md](docs/roadmap.md).
+
+## License
 
 ## License
 
