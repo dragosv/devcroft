@@ -94,8 +94,13 @@ fn up_refuses_a_manifest_whose_grant_symlinks_outside_the_project() {
         .output()
         .map(|o| o.status.success())
         .unwrap_or(false);
-    if !flox_ok {
-        eprintln!("skipping: flox not available");
+    // `flox init` is not the capability this needs: it writes a manifest
+    // without building anything, and succeeds on a host whose store is
+    // unreachable. `up` then fails at layer `provider` before it ever
+    // compiles the policy, and this test reports that as "the escape was
+    // not refused" — a false accusation against the code it covers.
+    if !flox_ok || !devcroft::provider::host_can_build_nix_closures() {
+        eprintln!("skipping: no usable flox here (not on PATH, or no reachable Nix store)");
         return;
     }
 

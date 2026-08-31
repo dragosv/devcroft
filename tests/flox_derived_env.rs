@@ -28,6 +28,12 @@ fn flox_available() -> bool {
         .output()
         .map(|o| o.status.success())
         .unwrap_or(false)
+        // Presence is not capability: `flox --version` and `flox init`
+        // both succeed with the `nix-daemon` down, and the `flox activate`
+        // these tests actually exercise then fails on `Connection
+        // refused`. Guarding only on the binary reports a host that cannot
+        // build anything as a devcroft regression.
+        && devcroft::provider::host_can_build_nix_closures()
 }
 
 /// A flox project whose hook leaves evidence on disk if it ever runs.
@@ -81,7 +87,7 @@ fn resolved_jq(root: &Path) -> Option<String> {
 #[test]
 fn a_hook_does_not_run_on_the_host_during_resolution() {
     if !flox_available() {
-        eprintln!("skipping: flox not on PATH");
+        eprintln!("skipping: no usable flox here (not on PATH, or no reachable Nix store)");
         return;
     }
     let Some((root, marker)) = flox_project("nohost", Some("touch {MARKER}")) else {
@@ -116,7 +122,7 @@ fn a_hook_does_not_run_on_the_host_during_resolution() {
 #[test]
 fn the_derived_environment_resolves_to_an_identical_closure() {
     if !flox_available() {
-        eprintln!("skipping: flox not on PATH");
+        eprintln!("skipping: no usable flox here (not on PATH, or no reachable Nix store)");
         return;
     }
     let Some((with_hook, _)) = flox_project("closure-hook", Some("touch {MARKER}")) else {
@@ -146,7 +152,7 @@ fn the_derived_environment_resolves_to_an_identical_closure() {
 #[test]
 fn a_project_without_a_hook_takes_the_unchanged_path() {
     if !flox_available() {
-        eprintln!("skipping: flox not on PATH");
+        eprintln!("skipping: no usable flox here (not on PATH, or no reachable Nix store)");
         return;
     }
     let Some((root, _)) = flox_project("nohook", None) else {
@@ -185,7 +191,7 @@ fn the_hook_runs_inside_the_sandbox_instead() {
         return;
     }
     if !flox_available() {
-        eprintln!("skipping: flox not on PATH");
+        eprintln!("skipping: no usable flox here (not on PATH, or no reachable Nix store)");
         return;
     }
     // SAFETY: this process runs a single test.

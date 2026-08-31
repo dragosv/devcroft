@@ -15,13 +15,14 @@ use std::process::{Command, Stdio};
 
 fn skip_if_tooling_missing() -> bool {
     !devcroft::policy::backend_supported()
-        || Command::new("flox").arg("--version").output().is_err()
+        || (Command::new("flox").arg("--version").output().is_err()
+            || !devcroft::provider::host_can_build_nix_closures())
 }
 
 #[test]
 fn shell_runs_commands_over_a_pty_and_falls_back_when_shell_is_missing() {
     if skip_if_tooling_missing() {
-        eprintln!("skipping: flox not on PATH");
+        eprintln!("skipping: no usable flox here (not on PATH, or no reachable Nix store)");
         return;
     }
 

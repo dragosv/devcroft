@@ -49,7 +49,9 @@ except Exception as e:\n\
 \x20   print('DENIED', type(e).__name__)\n";
 
 fn flox_project_with_python() -> Option<std::path::PathBuf> {
-    if Command::new("flox").arg("--version").output().is_err() {
+    if Command::new("flox").arg("--version").output().is_err()
+        || !devcroft::provider::host_can_build_nix_closures()
+    {
         return None;
     }
     let root = std::env::temp_dir().join(format!("devcroft-udp-e2e-{}", std::process::id()));

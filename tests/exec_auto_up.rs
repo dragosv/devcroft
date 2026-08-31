@@ -10,13 +10,14 @@ use std::process::Command;
 
 fn skip_if_tooling_missing() -> bool {
     !devcroft::policy::backend_supported()
-        || Command::new("flox").arg("--version").output().is_err()
+        || (Command::new("flox").arg("--version").output().is_err()
+            || !devcroft::provider::host_can_build_nix_closures())
 }
 
 #[test]
 fn exec_brings_up_a_cold_sandbox_automatically() {
     if skip_if_tooling_missing() {
-        eprintln!("skipping: flox not on PATH");
+        eprintln!("skipping: no usable flox here (not on PATH, or no reachable Nix store)");
         return;
     }
 

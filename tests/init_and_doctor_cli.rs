@@ -502,8 +502,10 @@ fn init_prefers_an_existing_devbox_project_over_a_toolchain_pin() {
 
 #[test]
 fn init_disambiguates_a_real_name_collision_across_projects() {
-    if Command::new("flox").arg("--version").output().is_err() {
-        eprintln!("skipping: flox not on PATH");
+    if Command::new("flox").arg("--version").output().is_err()
+        || !devcroft::provider::host_can_build_nix_closures()
+    {
+        eprintln!("skipping: no usable flox here (not on PATH, or no reachable Nix store)");
         return;
     }
     unsafe {
@@ -586,8 +588,10 @@ fn doctor_reports_backend_and_provider_when_installed() {
         eprintln!("skipping: this host has no usable Landlock/Seatbelt support");
         return;
     }
-    if Command::new("flox").arg("--version").output().is_err() {
-        eprintln!("skipping: flox not on PATH");
+    if Command::new("flox").arg("--version").output().is_err()
+        || !devcroft::provider::host_can_build_nix_closures()
+    {
+        eprintln!("skipping: no usable flox here (not on PATH, or no reachable Nix store)");
         return;
     }
 
@@ -750,8 +754,10 @@ fn doctor_reports_manifest_degradation_when_one_is_discoverable() {
         eprintln!("skipping: this host has no usable Landlock/Seatbelt support");
         return;
     }
-    if Command::new("flox").arg("--version").output().is_err() {
-        eprintln!("skipping: flox not on PATH");
+    if Command::new("flox").arg("--version").output().is_err()
+        || !devcroft::provider::host_can_build_nix_closures()
+    {
+        eprintln!("skipping: no usable flox here (not on PATH, or no reachable Nix store)");
         return;
     }
 
@@ -823,8 +829,10 @@ fn doctor_names_devcroft_as_the_service_supervisor_only_when_services_exist() {
         eprintln!("skipping: this host has no usable Landlock/Seatbelt support");
         return;
     }
-    if Command::new("flox").arg("--version").output().is_err() {
-        eprintln!("skipping: flox not on PATH");
+    if Command::new("flox").arg("--version").output().is_err()
+        || !devcroft::provider::host_can_build_nix_closures()
+    {
+        eprintln!("skipping: no usable flox here (not on PATH, or no reachable Nix store)");
         return;
     }
 

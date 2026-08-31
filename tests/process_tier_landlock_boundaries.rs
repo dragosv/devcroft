@@ -58,7 +58,8 @@ use std::process::{Command, Stdio};
 
 fn tooling_missing() -> bool {
     !devcroft::policy::backend_supported()
-        || Command::new("flox").arg("--version").output().is_err()
+        || (Command::new("flox").arg("--version").output().is_err()
+            || !devcroft::provider::host_can_build_nix_closures())
 }
 
 /// A loopback listener the sandbox has no legitimate reason to reach —
@@ -116,7 +117,7 @@ fn attempt_raw_connect(devcroft_bin: &str, sandbox_name: &str, port: u16) -> std
 #[test]
 fn process_tier_blocks_cross_process_signals_and_proc_reads() {
     if tooling_missing() {
-        eprintln!("skipping: flox not on PATH");
+        eprintln!("skipping: no usable flox here (not on PATH, or no reachable Nix store)");
         return;
     }
 
@@ -241,7 +242,7 @@ fn process_tier_blocks_cross_process_signals_and_proc_reads() {
 #[test]
 fn process_tier_blocks_raw_socket_bypass_of_deny_all_network() {
     if tooling_missing() {
-        eprintln!("skipping: flox not on PATH");
+        eprintln!("skipping: no usable flox here (not on PATH, or no reachable Nix store)");
         return;
     }
 
@@ -320,7 +321,7 @@ fn process_tier_blocks_raw_socket_bypass_of_deny_all_network() {
 #[test]
 fn process_tier_blocks_raw_socket_bypass_of_a_domain_allowlist() {
     if tooling_missing() {
-        eprintln!("skipping: flox not on PATH");
+        eprintln!("skipping: no usable flox here (not on PATH, or no reachable Nix store)");
         return;
     }
 

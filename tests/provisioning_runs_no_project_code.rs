@@ -61,6 +61,7 @@ fn nix_usable() -> bool {
 
 fn flox_usable() -> bool {
     Command::new("flox").arg("--version").output().is_ok()
+        && devcroft::provider::host_can_build_nix_closures()
 }
 
 /// The sentinel an activation hook writes if it runs. Absolute, because
@@ -150,7 +151,7 @@ fn nix_resolution_does_not_run_the_dev_shells_shell_hook() {
 #[test]
 fn flox_resolution_does_not_run_the_projects_activation_hook() {
     if !flox_usable() {
-        eprintln!("skipping: flox not on PATH");
+        eprintln!("skipping: no usable flox here (not on PATH, or no reachable Nix store)");
         return;
     }
     let dir = scratch("flox");
@@ -223,7 +224,7 @@ fn flox_resolution_does_not_run_the_projects_activation_hook() {
 #[test]
 fn flox_resolution_reports_no_hook_when_there_is_none() {
     if !flox_usable() {
-        eprintln!("skipping: flox not on PATH");
+        eprintln!("skipping: no usable flox here (not on PATH, or no reachable Nix store)");
         return;
     }
     let dir = scratch("floxnohook");

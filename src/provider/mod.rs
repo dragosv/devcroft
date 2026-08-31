@@ -24,6 +24,33 @@ use std::collections::BTreeMap;
 use std::fmt;
 use std::path::Path;
 
+/// Whether this host can materialize a Nix closure at all — the shared
+/// precondition behind every provider test that resolves a *real*
+/// environment, since flox, nix and devbox are all frontends over the same
+/// store.
+///
+/// It exists because guarding on `flox --version` or `resolve_on_path("nix")`
+/// does not guard on anything the test needs. Both succeed on a host whose
+/// `nix-daemon` is not running, where `flox init` still works and
+/// `flox activate` then fails on `Connection refused` — so the suite
+/// reported a host problem as a devcroft failure. `ensure_nix_usable`'s doc
+/// comment had already named the rule ("probes the capability rather than
+/// the binary's presence"); the tests were not following it.
+///
+/// A missing socket returns `true` on purpose. A single-user store has no
+/// daemon and builds fine, so absence is not evidence of an unusable host —
+/// and the safe direction for a skip guard is to let the test run and fail
+/// loudly, never to skip on a condition that does not mean what it says.
+///
+/// Public for the same reason `policy::backend_supported` is: the
+/// integration suite in `tests/` links this crate from outside and needs
+/// the same guard. Like everything else here it is internal API — see the
+/// crate docs.
+pub fn host_can_build_nix_closures() -> bool {
+    let socket = Path::new("/nix/var/nix/daemon-socket/socket");
+    !socket.exists() || std::os::unix::net::UnixStream::connect(socket).is_ok()
+}
+
 /// Resolves a declarative environment host-side, before any sandbox
 /// restriction is applied. Implementations run once at `up`; sessions
 /// inherit the captured result for free (design.md decision 2).

@@ -18,8 +18,10 @@ use std::process::Command;
 
 #[test]
 fn a_decoy_path_entry_on_the_invoking_shell_does_not_leak_into_the_activation() {
-    if Command::new("flox").arg("--version").output().is_err() {
-        eprintln!("skipping: flox not on PATH");
+    if Command::new("flox").arg("--version").output().is_err()
+        || !devcroft::provider::host_can_build_nix_closures()
+    {
+        eprintln!("skipping: no usable flox here (not on PATH, or no reachable Nix store)");
         return;
     }
 

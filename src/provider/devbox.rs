@@ -11,6 +11,7 @@ use super::capture;
 use super::{Provider, ProviderError, Resolution, ServiceSupport};
 use crate::paths::resolve_on_path;
 use std::collections::{BTreeMap, BTreeSet};
+use std::os::unix::ffi::OsStrExt;
 use std::path::Path;
 use std::process::Command;
 
@@ -432,35 +433,86 @@ fn ensure_everything_locked(project_root: &Path) -> Result<(), ProviderError> {
 /// silently break the "activation diff is independent of who ran `up`"
 /// guarantee every provider shares.
 ///
-/// The devbox binary's path reaches the script as a **positional
-/// argument** (`sh -c '…' devcroft-devbox <path>`, read back as `$1`),
-/// never interpolated into the script text. This is the only provider
-/// that goes through a shell at all — flox and nix build argv directly —
-/// so it is the only one where a path containing a quote could change
-/// what the shell parses. Passing it as an argument removes the question
-/// entirely rather than relying on the path being well-behaved.
+/// **Two steps, and that is the whole point.** `devbox` runs as its own
+/// process so its exit status is *seen*; only its output is then eval'd in
+/// a shell. The single-step form this replaced —
+/// `sh -c 'eval "$("$1" shellenv --pure)" && env -0'` — discarded it:
+/// command substitution does not propagate status, so a devbox that failed
+/// produced an empty string, `eval ""` succeeded, `env -0` succeeded, and
+/// the shell exited 0. The status check below was unreachable for the only
+/// failure it was written to catch, and `resolve` returned `Ok` with an
+/// environment holding nothing but `PWD` — an activation that materialized
+/// no packages, reported as success, producing a sandbox in which none of
+/// the project's tooling exists.
+///
+/// Found by a dead `nix-daemon` making `shellenv --pure` exit 1 on this
+/// host; the two lockfile-refusal tests failed with "expected Err, got Ok"
+/// and the swallowed status was why. Worth stating as a class rather than
+/// an incident: `$(...)` inside a checked command hides the status of the
+/// thing actually being checked.
+///
+/// Text still reaches the shell as **positional arguments**
+/// (`sh -c '…' devcroft-devbox-capture <script>`, read back as `$1`), never
+/// interpolated into the script body. This is the only provider that goes
+/// through a shell at all — flox and nix build argv directly — so it is
+/// the only one where a quote in what is passed could change what the
+/// shell parses.
 fn capture_activated_env(
     devbox_bin: &Path,
     project_root: &Path,
     base: &BTreeMap<String, String>,
 ) -> Result<BTreeMap<String, String>, ProviderError> {
-    let output = Command::new("sh")
-        .arg("-c")
-        .arg(r#"eval "$("$1" shellenv --pure)" && env -0"#)
-        // `$0` for the shell's own error messages, then `$1`.
-        .arg("devcroft-devbox-capture")
-        .arg(devbox_bin)
+    let shellenv = Command::new(devbox_bin)
+        .arg("shellenv")
+        .arg("--pure")
         .current_dir(project_root)
         .env_clear()
         .envs(base)
         .output()
         .map_err(|e| ProviderError::ResolutionFailed(format!("running `devbox shellenv`: {e}")))?;
 
+    if !shellenv.status.success() {
+        return Err(ProviderError::ResolutionFailed(format!(
+            "`devbox shellenv --pure` exited with {}: {}",
+            shellenv.status,
+            String::from_utf8_lossy(&shellenv.stderr).trim()
+        )));
+    }
+
+    // Not merged into the status check above: a devbox that exits 0 having
+    // printed nothing is a different failure with a different cause, and
+    // reporting it as "exited with 0" would be useless. Either way it must
+    // not reach `Ok` — an empty script eval's cleanly and yields the base
+    // environment unchanged, which is exactly the silent success this
+    // function exists to prevent.
+    if shellenv.stdout.iter().all(u8::is_ascii_whitespace) {
+        return Err(ProviderError::ResolutionFailed(
+            "`devbox shellenv --pure` succeeded but printed no environment; devcroft cannot \
+             tell an empty activation from a broken one, so it refuses rather than building a \
+             sandbox with none of the project's tooling in it"
+                .to_string(),
+        ));
+    }
+
+    let output = Command::new("sh")
+        .arg("-c")
+        .arg(r#"eval "$1" && env -0"#)
+        // `$0` for the shell's own error messages, then `$1`.
+        .arg("devcroft-devbox-capture")
+        .arg(std::ffi::OsStr::from_bytes(&shellenv.stdout))
+        .current_dir(project_root)
+        .env_clear()
+        .envs(base)
+        .output()
+        .map_err(|e| {
+            ProviderError::ResolutionFailed(format!("evaluating `devbox shellenv` output: {e}"))
+        })?;
+
     if !output.status.success() {
         return Err(ProviderError::ResolutionFailed(format!(
-            "`devbox shellenv` exited with {}: {}",
+            "evaluating `devbox shellenv --pure` output exited with {}: {}",
             output.status,
-            String::from_utf8_lossy(&output.stderr)
+            String::from_utf8_lossy(&output.stderr).trim()
         )));
     }
 
@@ -511,6 +563,115 @@ mod tests {
                 .output()
                 .is_ok_and(|o| o.status.success())
         })
+    }
+
+    /// A stand-in `devbox` that behaves exactly as told, so the capture
+    /// path's failure handling can be tested on a host with no devbox, no
+    /// nix, and no daemon. The real binary cannot express "exit 0 having
+    /// printed nothing" on demand, which is one of the two cases below.
+    fn fake_devbox(root: &Path, body: &str) -> PathBuf {
+        let path = root.join("fake-devbox");
+        fs::write(&path, format!("#!/bin/sh\n{body}\n")).unwrap();
+        let mut perms = fs::metadata(&path).unwrap().permissions();
+        std::os::unix::fs::PermissionsExt::set_mode(&mut perms, 0o755);
+        fs::set_permissions(&path, perms).unwrap();
+
+        // `ETXTBSY`, and it is a real race rather than a fluke: another
+        // test thread can `fork` while this file is still open for
+        // writing, and the child holds that descriptor until it `exec`s,
+        // during which window executing this path fails. Waiting for the
+        // window to close here keeps it from surfacing as a flaky failure
+        // in whichever assertion happened to run first.
+        for _ in 0..100 {
+            match Command::new(&path).arg("--devcroft-probe").output() {
+                Err(e) if e.raw_os_error() == Some(libc::ETXTBSY) => {
+                    std::thread::sleep(std::time::Duration::from_millis(10));
+                }
+                _ => break,
+            }
+        }
+        path
+    }
+
+    /// Regression for a swallowed exit status, found because a dead
+    /// `nix-daemon` made the real `shellenv --pure` exit 1 and two
+    /// lockfile-refusal tests then failed with "expected Err, got Ok".
+    ///
+    /// The capture used to be one `sh -c 'eval "$(devbox shellenv
+    /// --pure)" && env -0'`, and command substitution discards status: a
+    /// failed devbox printed nothing, `eval ""` succeeded, and `resolve`
+    /// returned `Ok` with an environment containing only `PWD`. `up` would
+    /// then have built a sandbox with none of the project's tooling in it
+    /// and called that success.
+    #[test]
+    fn capture_reports_a_failing_shellenv_instead_of_capturing_an_empty_env() {
+        let root = tempdir("capture-shellenv-fails");
+        let devbox = fake_devbox(&root, "echo 'daemon unreachable' >&2\nexit 1");
+        let base = capture::canonical_base_env().unwrap();
+
+        let err = capture_activated_env(&devbox, &root, &base).unwrap_err();
+        match err {
+            ProviderError::ResolutionFailed(msg) => {
+                assert!(msg.contains("exited with"), "got: {msg}");
+                assert!(msg.contains("daemon unreachable"), "got: {msg}");
+            }
+            other => panic!("expected ResolutionFailed naming the failure, got {other:?}"),
+        }
+    }
+
+    /// The other half, and not reachable through the status check: a
+    /// devbox that exits 0 having printed nothing eval's cleanly and
+    /// yields the base environment unchanged — indistinguishable from a
+    /// successful activation that happened to add no variables, and
+    /// equally useless as a sandbox.
+    #[test]
+    fn capture_refuses_a_shellenv_that_succeeds_but_prints_no_environment() {
+        let root = tempdir("capture-shellenv-empty");
+        let devbox = fake_devbox(&root, "printf '  \\n'\nexit 0");
+        let base = capture::canonical_base_env().unwrap();
+
+        let err = capture_activated_env(&devbox, &root, &base).unwrap_err();
+        match err {
+            ProviderError::ResolutionFailed(msg) => {
+                assert!(msg.contains("printed no environment"), "got: {msg}")
+            }
+            other => panic!("expected ResolutionFailed about an empty capture, got {other:?}"),
+        }
+    }
+
+    /// And the success path still works, so the two refusals above are not
+    /// passing by refusing everything.
+    #[test]
+    fn capture_reads_back_what_a_successful_shellenv_exports() {
+        let root = tempdir("capture-shellenv-ok");
+        let devbox = fake_devbox(&root, "echo 'export DEVCROFT_FAKE_MARKER=present'");
+        let base = capture::canonical_base_env().unwrap();
+
+        let env = capture_activated_env(&devbox, &root, &base).unwrap();
+        assert_eq!(
+            env.get("DEVCROFT_FAKE_MARKER").map(String::as_str),
+            Some("present")
+        );
+    }
+
+    /// Whether this host can actually *resolve* a devbox package, not
+    /// merely whether the binaries exist.
+    ///
+    /// The guards below used to be `real_devbox().is_none() ||
+    /// resolve_on_path("nix").is_none()` — two presence checks — and both
+    /// pass on a host whose `nix-daemon` is down, where every one of these
+    /// tests then fails on an error that is about the host rather than
+    /// about devcroft. `ensure_nix_usable`'s own doc comment already names
+    /// this mistake ("probes the capability rather than the binary's
+    /// presence"); the tests had not followed it. `nix eval --expr 1` is
+    /// not enough here — it is pure evaluation and succeeds with no store
+    /// at all — so the store itself is probed, by
+    /// `crate::provider::host_can_build_nix_closures`, shared with flox's own
+    /// real-environment test for the same reason.
+    fn devbox_can_resolve() -> Option<PathBuf> {
+        let devbox = real_devbox()?;
+        resolve_on_path("nix")?;
+        crate::provider::host_can_build_nix_closures().then_some(devbox)
     }
 
     fn write_devbox_project(root: &Path, devbox_json: &str, lock: Option<&str>) {
@@ -674,7 +835,7 @@ mod tests {
     /// `nixpkgs-unstable` points at today.
     #[test]
     fn resolve_refuses_a_zero_package_project_with_no_lockfile() {
-        if real_devbox().is_none() || resolve_on_path("nix").is_none() {
+        if devbox_can_resolve().is_none() {
             return;
         }
         let root = tempdir("zero-packages-unlocked");
@@ -699,7 +860,7 @@ mod tests {
     /// lockfile. `up` must now refuse, and must leave the file untouched.
     #[test]
     fn resolve_refuses_and_restores_when_capture_would_rewrite_the_lockfile() {
-        if real_devbox().is_none() || resolve_on_path("nix").is_none() {
+        if devbox_can_resolve().is_none() {
             return;
         }
         let root = tempdir("lock-rewrite-refused");

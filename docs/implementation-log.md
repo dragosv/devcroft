@@ -492,3 +492,55 @@ the section was rewritten rather than deleted: `network.ports` grants
 general gap closed while this specific consumer's did not. Two documents
 had drifted in opposite directions — one claiming an editor works, one
 claiming the mechanism it needs does not exist — and neither was right.
+
+**Then the release audit's own leftovers found a real defect, and the
+route to it is the point.** Three unit tests had been failing on this
+devcontainer and were written off as environmental — the `nix-daemon` is
+not running here, and no `sudo` exists to start it. Two of them failed in
+a shape that does not match "the host is broken": they expected a refusal
+and got `Ok`. Chasing that found the devbox provider swallowing devbox's
+exit status entirely.
+
+The capture was one shell command,
+`sh -c 'eval "$(devbox shellenv --pure)" && env -0'`, followed by a check
+of the shell's status. **Command substitution does not propagate status.**
+A devbox that failed printed nothing, `eval ""` succeeded, `env -0`
+succeeded, and the shell exited 0 — so the status check was unreachable
+for the only failure it was written to catch, and `resolve` returned `Ok`
+with an environment containing nothing but `PWD`. `up` would have built a
+sandbox with none of the project's tooling in it and reported success:
+precisely the "never let it pass silently" rule this repository states for
+providers, broken by a shell idiom rather than by a decision. Now two
+steps — devbox runs as its own process so its status is seen, and only its
+output is eval'd — plus a refusal for the case that check still cannot
+see, a devbox that exits 0 having printed nothing.
+
+**The tests' guards were the same mistake one level up.** They checked
+`flox --version`, `flox init`, `nix flake --help`, `devbox version` — all
+of which succeed with an unreachable store, none of which is the
+capability the tests need. So a host that could build nothing reported
+~80 e2e failures that read as devcroft regressions, which is how the
+provider defect above stayed hidden inside noise for a whole release
+audit. `provider::host_can_build_nix_closures()` now probes the daemon
+socket and is shared by every one of them; a missing socket counts as
+usable, since a single-user store has none and the safe direction for a
+skip guard is to run the test.
+
+Two of those guards were worse than merely wrong.
+`tests/unix_socket_not_mediated.rs` asserts an open security gap and told
+its reader that a failure means "the gap has closed and those docs need
+correcting" — but a socket file with no daemon behind it produces exactly
+that failure, so a dead daemon would have reported a boundary hole as
+fixed while it stood wide open. It now connects from outside the sandbox
+first, which turns the assertion into the implication it always meant:
+reachable out here, therefore it must not be reachable in there. And
+`tests/symlink_escape_cli.rs` guarded on `flox init`, which writes a
+manifest without building anything, so `up` failed at layer `provider`
+before reaching the policy check and the test reported the escape as
+un-refused — a false accusation against code that was working.
+
+The general lesson is about where a test's *evidence* comes from. All
+three of these had a guard, and all three guards tested the presence of a
+tool rather than the property the test's conclusion depends on. A green
+suite here is still not a suite that ran: `cargo test -- --nocapture |
+grep skipping` is what says which.

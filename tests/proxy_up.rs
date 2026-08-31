@@ -71,8 +71,10 @@ async fn proxy_bridges_a_real_ssh_handshake_through_its_stdio() {
         eprintln!("skipping: this host has no usable Landlock/Seatbelt support");
         return;
     }
-    if Command::new("flox").arg("--version").output().is_err() {
-        eprintln!("skipping: flox not on PATH");
+    if Command::new("flox").arg("--version").output().is_err()
+        || !devcroft::provider::host_can_build_nix_closures()
+    {
+        eprintln!("skipping: no usable flox here (not on PATH, or no reachable Nix store)");
         return;
     }
 
@@ -206,8 +208,10 @@ async fn proxy_brings_up_a_cold_sandbox_automatically() {
         eprintln!("skipping: this host has no usable Landlock/Seatbelt support");
         return;
     }
-    if Command::new("flox").arg("--version").output().is_err() {
-        eprintln!("skipping: flox not on PATH");
+    if Command::new("flox").arg("--version").output().is_err()
+        || !devcroft::provider::host_can_build_nix_closures()
+    {
+        eprintln!("skipping: no usable flox here (not on PATH, or no reachable Nix store)");
         return;
     }
 

@@ -64,12 +64,30 @@ duplicate any of these here.
 
 ```sh
 cargo build                 # build the devcroft binary + spike
-cargo test                  # integration tests; self-skip if flox/nono missing from PATH
+cargo test                  # integration tests; self-skip on a host that cannot run them
 cargo clippy                # lint; currently clean
 cargo fmt                   # format
 cargo doc --no-deps         # rustdoc; currently zero warnings — keep it there,
                             # docs.rs renders these publicly
 ```
+
+**A green `cargo test` is not the same as a run that tested anything.**
+Every e2e test skips itself on a host that cannot support it, and a skip
+looks exactly like a pass in cargo's default output. Guard on the
+*capability*, never on the binary — `flox --version`, `flox init`,
+`nix flake --help` and `devbox version` all succeed with an unreachable
+Nix store, and every test that then tried to build an environment failed
+in a way that read as a devcroft regression. `provider::host_can_build_nix_closures()`
+is the shared probe (alongside `policy::backend_supported()`); it connects
+to the daemon socket, and treats a *missing* socket as usable, since a
+single-user store has none. To see what a run actually skipped:
+
+```sh
+cargo test -- --nocapture 2>&1 | grep skipping
+```
+
+On a devcontainer whose `nix-daemon` is not running that is ~80 tests,
+which is most of the interesting ones.
 
 **After any `Cargo.lock` change**, regenerate the dependency attribution:
 

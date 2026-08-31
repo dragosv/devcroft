@@ -39,8 +39,10 @@ fn a_decoy_path_entry_on_the_invoking_shell_does_not_leak_into_the_activation() 
         .arg("--help")
         .output()
         .is_ok_and(|o| o.status.success());
-    if !flakes_enabled {
-        eprintln!("skipping: nix not on PATH or flakes not enabled");
+    // `--help` succeeds with an unreachable store; the activation below
+    // does not. See `provider::host_can_build_nix_closures`.
+    if !flakes_enabled || !devcroft::provider::host_can_build_nix_closures() {
+        eprintln!("skipping: nix unusable here (not on PATH, flakes off, or no reachable store)");
         return;
     }
 

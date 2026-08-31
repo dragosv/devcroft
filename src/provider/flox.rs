@@ -492,7 +492,15 @@ mod tests {
         // `flox` is installed and a real environment can be initialized
         // (the devcontainer provides both — see task 3.2's Dockerfile
         // change). Skips quietly otherwise so the suite stays portable.
-        if Command::new("flox").arg("--version").output().is_err() {
+        //
+        // The store probe is not redundant with the version check: `flox
+        // --version` and `flox init` both succeed with the `nix-daemon`
+        // down, and `resolve` — which builds the environment — then fails
+        // on `Connection refused`. Guarding only on the binary reported
+        // that host state as a devcroft regression.
+        if Command::new("flox").arg("--version").output().is_err()
+            || !crate::provider::host_can_build_nix_closures()
+        {
             return;
         }
         let root = tempdir("real-resolve");

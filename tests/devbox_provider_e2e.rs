@@ -26,6 +26,10 @@ fn devbox_available() -> bool {
         .output()
         .is_ok_and(|o| o.status.success())
         && Command::new("nix").arg("--version").output().is_ok()
+        // devbox is a frontend over the same store flox and nix use, so
+        // it fails the same way on a host whose daemon is unreachable —
+        // see `provider::host_can_build_nix_closures`.
+        && devcroft::provider::host_can_build_nix_closures()
 }
 
 struct Sandbox {

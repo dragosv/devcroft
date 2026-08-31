@@ -310,7 +310,32 @@
       what would report it
 - [x] 3.2 `tests/devbox_provider_e2e.rs`: integration, self-skipping
       without devbox (and the nix it depends on) the way the existing
-      real-tooling tests do — gated on devbox only, never on flox
+      real-tooling tests do — gated on devbox only, never on flox.
+
+      **Corrected 2026-08-31: "the way the existing real-tooling tests do"
+      turned out to be the problem, not the standard.** Every such guard
+      here and elsewhere checked a binary (`devbox version`,
+      `flox --version`, `nix flake --help`), all of which succeed on a
+      host whose Nix store is unreachable — so a devcontainer with its
+      `nix-daemon` down produced ~80 e2e failures that read as devcroft
+      regressions. Now gated on
+      `provider::host_can_build_nix_closures()`, shared across all three
+      providers.
+
+      **That noise was hiding a real defect in this change's own capture
+      path**, found because two of the failures had the wrong shape
+      (expected a refusal, got `Ok`). `capture_activated_env` ran
+      `sh -c 'eval "$(devbox shellenv --pure)" && env -0'` and checked the
+      *shell's* status; command substitution discards status, so a failing
+      devbox yielded an empty eval, a zero exit, and a `Resolution`
+      containing only `PWD` — `up` would have built a sandbox with none of
+      the project's tooling and called it success, against this
+      repository's own "never let it pass silently" rule for providers.
+      Fixed in two steps (devbox runs as its own process; only its output
+      is eval'd), with a refusal for the residual case the status check
+      still cannot see — a devbox that exits 0 printing nothing — and
+      three hermetic tests driving a fake `devbox` so the failure paths
+      are covered on hosts with no devbox, nix or daemon at all.
 - [x] 3.3 `tests/devbox_env_capture_is_deterministic.rs`: capture
       determinism — the env diff is byte-identical from a shell with
       extra `PATH` entries and extra variables set, in the shape

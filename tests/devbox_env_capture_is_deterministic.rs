@@ -16,11 +16,15 @@ fn devbox_available() -> bool {
         .arg("version")
         .output()
         .is_ok_and(|o| o.status.success())
+        && devcroft::provider::host_can_build_nix_closures()
 }
 
 #[test]
 fn a_decoy_path_entry_on_the_invoking_shell_does_not_leak_into_the_activation() {
-    if !devbox_available() || Command::new("nix").arg("--version").output().is_err() {
+    if !devbox_available()
+        || (Command::new("nix").arg("--version").output().is_err()
+            || !devcroft::provider::host_can_build_nix_closures())
+    {
         eprintln!("skipping: devbox or nix not on PATH");
         return;
     }

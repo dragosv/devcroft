@@ -108,6 +108,24 @@ fn a_sandboxed_process_reaches_the_nix_daemon_socket_if_one_exists() {
         eprintln!("skipping: no nix daemon socket on this host");
         return;
     }
+    // The control, and it is not optional. The assertion below concludes
+    // "the gap has closed" from a failed connect, and a socket file whose
+    // daemon is not running produces exactly that failure — so without
+    // this, a host with a dead `nix-daemon` reports a closed security gap
+    // that is still wide open, which is the most expensive direction for
+    // this particular test to be wrong in. Measured: it happened.
+    //
+    // Connecting from *outside* any sandbox first turns the assertion into
+    // the implication it was always meant to be — reachable out here, so
+    // it must not be reachable in there — rather than a bare claim about
+    // one connect() call.
+    if std::os::unix::net::UnixStream::connect(nix_sock).is_err() {
+        eprintln!(
+            "skipping: the nix daemon socket exists but nothing is listening, so an \
+             unreachable socket inside the sandbox would prove nothing"
+        );
+        return;
+    }
 
     let out = Command::new(env!("CARGO_BIN_EXE_devcroft"))
         .arg("__uds_probe")

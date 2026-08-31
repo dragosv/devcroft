@@ -85,7 +85,9 @@ fn serve_inside(devcroft_bin: &str, sandbox: &str, port: u16) -> Option<Child> {
 }
 
 fn flox_project_with_python(tag: &str) -> Option<std::path::PathBuf> {
-    if Command::new("flox").arg("--version").output().is_err() {
+    if Command::new("flox").arg("--version").output().is_err()
+        || !devcroft::provider::host_can_build_nix_closures()
+    {
         return None;
     }
     let root =

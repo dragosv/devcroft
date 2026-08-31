@@ -21,8 +21,10 @@ fn down_terminates_a_live_session_process_not_just_the_keeper() {
         eprintln!("skipping: this host has no usable Landlock/Seatbelt support");
         return;
     }
-    if Command::new("flox").arg("--version").output().is_err() {
-        eprintln!("skipping: flox not on PATH");
+    if Command::new("flox").arg("--version").output().is_err()
+        || !devcroft::provider::host_can_build_nix_closures()
+    {
+        eprintln!("skipping: no usable flox here (not on PATH, or no reachable Nix store)");
         return;
     }
 

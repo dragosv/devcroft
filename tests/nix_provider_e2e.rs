@@ -26,6 +26,11 @@ fn nix_available() -> bool {
         .arg("--help")
         .output()
         .is_ok_and(|o| o.status.success())
+        // `nix flake --help` succeeds without a usable store, which is the
+        // same class of mistake `doctor`'s own nix check was once bitten
+        // by (README, add-nix-provider) — see
+        // `provider::host_can_build_nix_closures`.
+        && devcroft::provider::host_can_build_nix_closures()
 }
 
 /// A minimal, real flake exporting one distinctive env var — same fixture

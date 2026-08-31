@@ -80,8 +80,10 @@ fn two_sandboxes_bind_the_same_declared_port_without_colliding() {
         eprintln!("skipping: this host cannot create unprivileged network namespaces");
         return;
     }
-    if Command::new("flox").arg("--version").output().is_err() {
-        eprintln!("skipping: flox not on PATH");
+    if Command::new("flox").arg("--version").output().is_err()
+        || !devcroft::provider::host_can_build_nix_closures()
+    {
+        eprintln!("skipping: no usable flox here (not on PATH, or no reachable Nix store)");
         return;
     }
 

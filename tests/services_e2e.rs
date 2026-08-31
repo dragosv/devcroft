@@ -32,7 +32,8 @@ const PORT: u16 = 18777;
 
 fn tooling_missing() -> bool {
     !devcroft::policy::backend_supported()
-        || Command::new("flox").arg("--version").output().is_err()
+        || (Command::new("flox").arg("--version").output().is_err()
+            || !devcroft::provider::host_can_build_nix_closures())
 }
 
 /// Counts host processes whose argv contains `needle`, without matching
@@ -66,7 +67,7 @@ fn service_responds(devcroft_bin: &str, sandbox: &str) -> bool {
 #[test]
 fn a_declared_service_runs_inside_the_sandbox_and_is_reaped_by_down() {
     if tooling_missing() {
-        eprintln!("skipping: flox not on PATH");
+        eprintln!("skipping: no usable flox here (not on PATH, or no reachable Nix store)");
         return;
     }
 
@@ -268,7 +269,7 @@ fn a_declared_service_runs_inside_the_sandbox_and_is_reaped_by_down() {
 #[test]
 fn services_without_process_compose_fail_at_the_provider_layer() {
     if tooling_missing() {
-        eprintln!("skipping: flox not on PATH");
+        eprintln!("skipping: no usable flox here (not on PATH, or no reachable Nix store)");
         return;
     }
     unsafe {
@@ -349,10 +350,12 @@ fn services_without_process_compose_fail_at_the_provider_layer() {
 #[test]
 fn services_declared_for_another_provider_fail_rather_than_being_ignored() {
     if tooling_missing() {
-        eprintln!("skipping: flox not on PATH");
+        eprintln!("skipping: no usable flox here (not on PATH, or no reachable Nix store)");
         return;
     }
-    if Command::new("nix").arg("--version").output().is_err() {
+    if Command::new("nix").arg("--version").output().is_err()
+        || !devcroft::provider::host_can_build_nix_closures()
+    {
         eprintln!("skipping: nix not on PATH");
         return;
     }
@@ -454,7 +457,7 @@ fn services_declared_for_another_provider_fail_rather_than_being_ignored() {
 #[test]
 fn skip_hooks_bypasses_the_wrong_provider_service_check() {
     if tooling_missing() {
-        eprintln!("skipping: flox not on PATH");
+        eprintln!("skipping: no usable flox here (not on PATH, or no reachable Nix store)");
         return;
     }
     unsafe {
@@ -525,8 +528,10 @@ fn skip_hooks_bypasses_the_wrong_provider_service_check() {
 /// resolvable environment — `policy --render` compiles from the manifest.
 #[test]
 fn policy_render_is_unchanged_by_declaring_services() {
-    if Command::new("flox").arg("--version").output().is_err() {
-        eprintln!("skipping: flox not on PATH");
+    if Command::new("flox").arg("--version").output().is_err()
+        || !devcroft::provider::host_can_build_nix_closures()
+    {
+        eprintln!("skipping: no usable flox here (not on PATH, or no reachable Nix store)");
         return;
     }
 
@@ -599,7 +604,7 @@ fn policy_render_is_unchanged_by_declaring_services() {
 /// in this repo uses.
 fn flox_project_declaring(tag: &str, services_toml: &str) -> Option<std::path::PathBuf> {
     if tooling_missing() {
-        eprintln!("skipping: flox not on PATH");
+        eprintln!("skipping: no usable flox here (not on PATH, or no reachable Nix store)");
         return None;
     }
     unsafe {
