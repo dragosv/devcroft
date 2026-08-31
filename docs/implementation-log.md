@@ -457,3 +457,38 @@ findings above were written into fleet's `design.md` and left out of its
 resolves") stood unqualified for another commit. design.md is read to
 understand; tasks.md is read to decide what to do next. Correcting only the
 first is how a stale blocker survives being disproved.
+
+**A release review, and the number it changed.** Auditing everything for a
+first publish moved the version from `0.1.0` to `0.0.1`. Not a
+downgrade of confidence in the code — the same code either way — but a
+correction of what the number *claims*. `src/lib.rs` already told readers
+the modules are internals with no stability guarantee, and `0.1.x` says
+the opposite to cargo, which resolves `0.1.1` for a `0.1.0` dependant.
+`0.0.z` is the one range treated as incompatible with itself, so the
+assertion in the doc and the constraint in the resolver finally agree.
+The second reason is the roadmap's own: the next milestone is titled "the
+boundary is what the documentation says", which concedes today's is not,
+and `tests/unix_socket_not_mediated.rs` asserts the hole. The more
+confident number belongs on the more finished thing.
+
+**The audit found one real blocker, of a kind the previous audit was
+structured not to see.** `src/bin/` targets are auto-discovered, and the
+`include` allowlist matched `spike.rs` — so `cargo install devcroft` would
+have put a second binary, named `spike`, on every user's PATH. The earlier
+packaging audit had been thorough about the package's *contents* (265
+files and 2.0 MB cut to 50 and 781 KB) and asked nothing about what those
+contents would *install*, which is a different question with a different
+failure mode. Fixed by excluding the source, since removing the file
+removes the target.
+
+**And it retired a gap that had already been closed elsewhere.**
+`docs/ssh-validation.md` still described "no outbound access, but my dev
+server can still listen" as inexpressible, the finding that blocked VS
+Code. `network.ports` has since emitted nono's `open_port` alongside
+`block: true`, so that combination works and `tests/network_ports_listen.rs`
+asserts it. The correction is narrower than it first looked, which is why
+the section was rewritten rather than deleted: `network.ports` grants
+*named* ports, and VS Code's supervisor picks its port at runtime, so the
+general gap closed while this specific consumer's did not. Two documents
+had drifted in opposite directions — one claiming an editor works, one
+claiming the mechanism it needs does not exist — and neither was right.

@@ -4,8 +4,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Repository state
 
-The MVP (`add-mvp-core`) is implemented and in its final stretch — **23/25
-tasks**. `src/` has real modules for `config`, `policy`, `provider`,
+The MVP (`add-mvp-core`) is implemented and in its final stretch — **24/25
+tasks**, the last one being the publish itself. `src/` has real modules for `config`, `policy`, `provider`,
 `keeper`, `lifecycle`, `ssh`, `services`, plus the `devcroft` and `spike`
 binaries under `src/bin/`, backed by an integration `tests/` suite. Stack
 is Rust stable, edition 2024. `samples/` holds standalone example projects
@@ -29,11 +29,23 @@ the two-phase execution invariant below), so unlike the flox and nix
 samples it has no host-side hook to fetch crates.io dependencies in, and
 depends on nothing beyond `std` as a result.
 
-Remaining work (see `openspec/changes/add-mvp-core/tasks.md`): task 6.5
-(cross-editor SSH validation matrix — OpenSSH, rsync, VS Code Remote-SSH,
-and Cursor are all validated against a live sandbox; only Zed remains, no
-CLI to drive it non-interactively — see `docs/ssh-validation.md`) and task
-7.5 (publish the `devcroft` crate, reserve/point the npm name).
+Remaining work (see `openspec/changes/add-mvp-core/tasks.md`): task 7.5,
+and only its last step — running `cargo publish` and reserving the npm
+name, both of which need the maintainer's own accounts. Everything
+checkable is checked: `cargo package` verifies, clippy and rustdoc are
+warning-free, and the name is free on both registries (2026-08-31).
+
+**The first release is `0.0.1`, not `0.1.0`, deliberately.** `0.0.z` is
+the only range cargo treats as incompatible with itself, which is the only
+numbering consistent with what `src/lib.rs` already states — internals
+published so `tests/` can drive them, no stability offered — and it avoids
+putting a confident number on a boundary `tests/unix_socket_not_mediated.rs`
+still shows open. `docs/roadmap.md` holds the rule and says when `0.1.0`
+gets cut (when `add-mount-isolation` lands). Task 6.5, the editor matrix,
+was closed on its deliverable rather than on Zed working: the matrix
+documents what each editor needs, negatives included
+(`docs/ssh-validation.md`), and a release held on a third party's
+unattributed bug is held indefinitely.
 
 For current status, see the README's Status section — kept short on
 purpose; full detail behind each published gap is in
@@ -83,6 +95,12 @@ the leading `/` on each pattern the globs match at any depth and sweep in
 `samples/`, flox store symlinks, and a vendored Go module cache. If you
 add a file the published crate needs, add it there — the default would
 otherwise ship `openspec/` (131 files) and `.claude/` permanently.
+The one negation, `!/src/bin/spike.rs`, is load-bearing rather than tidy:
+`src/bin/` targets are auto-discovered, so shipping that file makes
+`cargo install devcroft` drop a second, generically-named `spike` binary
+on the user's PATH. Check what the package *installs*, not just how many
+files it holds — the first packaging audit got the count right and missed
+this.
 
 This project is also spec-driven via the [OpenSpec](https://github.com/Fission-AI/OpenSpec) CLI:
 
@@ -94,7 +112,7 @@ openspec status --change <change> --json       # artifact state, paths, what's n
 openspec instructions <artifact> --change <c> --json   # how to write an artifact
 ```
 
-`openspec validate --all` currently reports **16 passed, 0 failed**.
+`openspec validate --all` currently reports **18 passed, 0 failed**.
 `add-nix-provider` (nix flakes as a second closure-tier environment
 provider, alongside flox), `add-hardened-tier` (whose tier dispatch
 `remove-gvisor-backend` deleted; its backend-generic `SessionBackend`

@@ -11,6 +11,12 @@
 //! stability guarantee is offered or implied: any of these items may
 //! change shape or disappear in a patch release.
 //!
+//! The version number enforces that rather than merely asserting it.
+//! devcroft is published on a `0.0.z` line, the one range cargo treats as
+//! incompatible with itself — `0.0.1` and `0.0.2` are different major
+//! versions to the resolver. A `0.1.x` would quietly promise the opposite,
+//! since `0.1.1` resolves for a `0.1.0` dependant.
+//!
 //! Depend on the `devcroft` **binary** and its documented command surface
 //! (`devcroft --help`, and the README), not on these types. If you have a
 //! use case that genuinely needs a library, open an issue describing it —

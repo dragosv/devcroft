@@ -1,10 +1,31 @@
-# Roadmap: 0.1 to 1.0
+# Roadmap: 0.0.1 to 1.0
 
 What each release has to be true for, and why in this order. Written
 2026-08-30, after an adversarial review of every open change.
 
 This is a plan, not a promise of dates. The ordering is the argument; the
 version numbers are labels for it.
+
+**On the numbers, because two of them are now doing different jobs.** The
+headings below label the *ordering*. The first thing actually published is
+`0.0.1`, and the `0.1.0` number is held back rather than skipped:
+
+- **Semver.** `0.0.z` is the only range cargo treats as incompatible with
+  itself — to the resolver, `0.0.1` and `0.0.2` are different major
+  versions. That is exactly what `src/lib.rs` already tells a reader: the
+  modules are internals, published so `tests/` can drive them, with no
+  stability offered. `0.1.0` would promise patch-compatibility across a
+  surface nobody has curated, and dropping that promise later is the
+  breaking change.
+- **The claim.** The heading below this one is "the boundary is what the
+  documentation says", which means today's boundary is not. Publishing a
+  `0.1.0` on top of a gap the test suite asserts
+  (`tests/unix_socket_not_mediated.rs`) would put the more confident number
+  on the less finished thing.
+
+So `0.1.0` is cut when the 0.2 section here lands, and the 0.0.z line runs
+until then. That reads backwards as a pair of labels and forwards as a
+single rule: the version claims no more than the boundary does.
 
 ## What 1.0 means
 
@@ -17,11 +38,19 @@ does, on both supported platforms.
 devcroft is below that today in ways that are specific rather than vague,
 which is what makes the ordering derivable instead of arbitrary.
 
-## 0.1 — a single sandbox, honestly described
+## 0.0.1 — a single sandbox, honestly described
 
-**Status: implemented, unreleased.** Blocked only on things outside this
-document: Zed's remote server (task 6.5, not attributed to devcroft) and
-the publish itself, which needs the maintainer's accounts.
+**Status: implemented, ready to publish.** The only thing left is the
+publish itself, which needs the maintainer's crates.io account — the name
+is free on crates.io and on npm, checked 2026-08-31.
+
+Zed's remote server (task 6.5) no longer blocks this. It was the stated
+reason to hold the release, and it is the wrong shape for one: the failure
+is Zed's forked daemon exiting without writing its own log, not attributed
+to devcroft, with no CLI to drive it non-interactively. A release held on
+a third party's bug is held indefinitely. It ships documented instead —
+`docs/ssh-validation.md` has the matrix, and the README's gap list names
+it — which is what the 0.0.z number is for.
 
 What holds today, each with a test that fails if it breaks: reproducible
 environments from three closure-tier providers; a kernel-enforced boundary;
@@ -31,7 +60,9 @@ validated; deterministic, inspectable policy.
 
 ## 0.2 — the boundary is what the documentation says
 
-**`add-mount-isolation`** (0/21).
+**`add-mount-isolation`** (0/21). **This is the release that gets cut as
+`0.1.0`**, per the numbering rule above: it is the first point at which
+the version stops out-claiming the boundary.
 
 First because it is the only item on this list that makes a *shipped*
 claim true rather than adding a new one. `tests/unix_socket_not_mediated.rs`

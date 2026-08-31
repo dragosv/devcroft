@@ -44,8 +44,22 @@ retired first, and every phase ends in something runnable.
 - [x] 6.3 Channels: exec, pty/shell, window-change, env allowlist, exit
       status; SFTP subset for scp/rsync
 - [x] 6.4 direct-tcpip (`-L`) gated by policy
-- [ ] 6.5 Validation matrix: OpenSSH client, rsync, VS Code Remote-SSH,
-      Zed, Cursor — document what works per editor. Nearly done: see
+- [x] 6.5 Validation matrix: OpenSSH client, rsync, VS Code Remote-SSH,
+      Zed, Cursor — document what works per editor. **Closed for 0.0.1 on
+      2026-08-31, on the deliverable as written**: the task asks for a
+      matrix that documents what works per editor, and
+      `docs/ssh-validation.md` is that matrix, negative rows included. It
+      was left open for Zed, which is the wrong shape for a release gate —
+      the failure is Zed's forked daemon exiting without writing its own
+      log, is not attributed to devcroft, and has no CLI to drive it
+      non-interactively, so holding on it holds indefinitely. It ships as
+      a documented negative instead, which is what a `0.0.z` number is
+      for (`docs/roadmap.md`). One thing below has since changed and is
+      corrected in the matrix: the "no way to express no-egress-but-can-
+      listen" gap is closed by `network.ports` for *named* ports
+      (`tests/network_ports_listen.rs`), which backs the README's port
+      example but does **not** fix VS Code, whose supervisor picks its
+      port at runtime. See
       docs/ssh-validation.md — OpenSSH client (ssh/scp/sftp/-L) and rsync
       are validated by real end-to-end tests (`tests/ssh_channels.rs`);
       VS Code Remote-SSH and Cursor were manually validated on 2026-08-14
@@ -115,13 +129,35 @@ retired first, and every phase ends in something runnable.
 - [x] 7.3 Two-sandbox concurrency test; suspend/resume test
 - [x] 7.4 README with honest limitations section (no inter-sandbox process
       hiding, cooperative network filtering, not a hard security boundary)
-- [ ] 7.5 Publish crate `devcroft`; reserve/point npm name. Deliberately
-      held back: two of the three gaps 0.1.0's maturity was judged against
-      (hooks unimplemented, the env-diff unset gap) are now closed; the
-      SSH validation matrix is down to just Zed (see
-      docs/ssh-validation.md). The actual publish and npm name
-      reservation are the maintainer's own accounts/call, not something
-      to do preemptively.
+- [ ] 7.5 Publish crate `devcroft`; reserve/point npm name. **Everything
+      but the publish itself is done as of 2026-08-31; the remaining step
+      needs the maintainer's crates.io and npm accounts, which is why this
+      stays unchecked.** `cargo package` verifies clean, `cargo clippy` and
+      `cargo doc --no-deps` are both warning-free, `openspec validate --all`
+      is 18/18, and the name is free on both registries (checked
+      2026-08-31: crates.io returns "crate `devcroft` does not exist",
+      npm returns 404). Publish is then `cargo publish`.
+
+      **The version is `0.0.1`, not `0.1.0`, and that is a decision rather
+      than a placeholder.** `0.0.z` is the only range cargo treats as
+      incompatible with itself, which is the only numbering consistent with
+      what `src/lib.rs` already states — the modules are internals,
+      published so `tests/` can drive them, with no stability offered. A
+      `0.1.0` promises patch-compatibility across an uncurated surface, and
+      it would also put the more confident number on the less finished
+      thing while `tests/unix_socket_not_mediated.rs` still asserts an open
+      hole in the boundary. `docs/roadmap.md` records when `0.1.0` gets
+      cut: when `add-mount-isolation` lands.
+
+      **One release blocker found by this pass, now fixed.** `src/bin/`
+      binaries are auto-discovered, and the `include` allowlist shipped
+      `spike.rs` — so `cargo install devcroft` would have put a second,
+      generically-named `spike` binary on the user's PATH. The allowlist
+      now carries `!/src/bin/spike.rs`; excluding the source removes the
+      target, and `cargo package --list` is 49 files with no `spike` row.
+      Worth noting the class: the earlier audit checked the package for
+      *file count and size* and got both right, which is a different
+      question from what the package *installs*.
 
       **Release blockers found by auditing what `cargo publish` would
       actually ship, and now fixed** — "packages clean" had been asserted

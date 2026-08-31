@@ -23,7 +23,7 @@ not a substitute for the first and should not be read as one.
 | SFTP relative-path base | **Known divergence** from OpenSSH: project root, not `$HOME` | see "Zed" finding 2 |
 | `ProxyCommand`/`ssh-config` plumbing | **Validated** | `tests/proxy_up.rs`, `tests/ssh_up.rs`, `tests/ssh_config_cli.rs` |
 | rsync | **Validated** (2026-08-14, macOS/aarch64-darwin, system `openrsync`) | `tests/ssh_channels.rs::rsync_transfers_a_file_through_devcroft_proxy_over_a_plain_exec_channel` |
-| VS Code Remote-SSH | **Validated under three named preconditions** (2026-08-15 second retest, macOS/aarch64-darwin, VS Code 1.130.0) | live remote window, extension host connected. Does **not** work under the default policy: needs `serverInstallPath`, `network.default = "allow"`, and a `$TMPDIR` short enough for a unix socket path — see below |
+| VS Code Remote-SSH | **Validated under three named preconditions** (2026-08-15 second retest, macOS/aarch64-darwin, VS Code 1.130.0) | live remote window, extension host connected. Does **not** work under the default policy: needs `serverInstallPath`, `network.default = "allow"`, and a `$TMPDIR` short enough for a unix socket path — see below. `network.ports` does *not* substitute for the second: VS Code's supervisor picks its port at runtime |
 | Cursor (remote-ssh) | **Validated manually 2026-08-14; not retested, treat as suspect** (Cursor 3.15.19, anysphere.remote-ssh 1.1.14) | its servers listen on ports, so the listening-socket blocker found for VS Code on 2026-08-15 very likely applies — see below |
 | Zed | **Partial — connects, transfers, does not start** (2026-08-15, macOS/aarch64-darwin, Zed 1.4.4) | auth, upload, decompress and chmod of the 31 MB server all succeed; its forked server daemon then exits silently. Needs 5 `$HOME` grants. See below |
 
@@ -161,15 +161,33 @@ channel:
 | default (`network.block: true`) | `[Errno 1] Operation not permitted` |
 | `network.default = "allow"` | `LISTEN OK ('127.0.0.1', 52053)` |
 
-This is not really an editor finding at all — **no dev server can bind a
+This is not really an editor finding at all — **no dev server could bind a
 port inside a sandbox under the default policy.** The README's own
-port-conflict note is written as though two sandboxes race for port 3000
-and one gets `EADDRINUSE`; under the default policy neither binds and both
-get `EPERM`. The `[network]` section reads as outbound egress control and
-says nothing about revoking the ability to serve, so this is a policy
-*granularity* gap as much as a documentation one: there is currently no
-way to express "no outbound access, but my dev server can still listen",
-which is the single most common shape of local development.
+port-conflict note was written as though two sandboxes race for port 3000
+and one gets `EADDRINUSE`; under the default policy neither bound and both
+got `EPERM`. The `[network]` section reads as outbound egress control and
+says nothing about revoking the ability to serve, so this was a policy
+*granularity* gap as much as a documentation one: there was no way to
+express "no outbound access, but my dev server can still listen", which is
+the single most common shape of local development.
+
+**The general half of that is now closed, and this section is kept because
+the correction is narrower than it looks.** `network.ports` emits nono's
+`open_port` alongside `block: true`, so a sandbox binds its declared
+loopback ports *while keeping* egress filtering — the exact combination
+called inexpressible above, asserted live by
+`tests/network_ports_listen.rs`. `network.default = "allow"` is no longer
+the workaround for a dev server, and the README's port example is backed.
+
+**It does not close VS Code's case**, which is why the row above still
+carries `network.default = "allow"` as a precondition. `network.ports`
+grants *named* ports only, and the failure here is VS Code's agent host
+supervisor binding one it chooses at runtime — nothing to write in the
+manifest. Whether an unnamed-port grant should exist at all is a real
+question (it is most of what `network.default = "allow"` already does, minus
+the egress), and it is not answered here. VS Code has not been retested
+since `network.ports` landed; the row is unchanged rather than upgraded,
+because nothing has been measured that would justify changing it.
 
 **Blocker 3 — a unix socket path over macOS's 104-byte limit (new).**
 Past both of those, VS Code authenticates, downloads and extracts the full

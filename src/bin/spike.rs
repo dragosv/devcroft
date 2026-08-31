@@ -68,6 +68,12 @@ fn supervisor() {
     // The client is forked BEFORE the sandbox is applied, so it is not
     // confined. It stands in for the devcroft CLI on the host.
     let exe = env::current_exe().unwrap();
+    // Never `wait()`ed, and cannot be: this process execs into `nono` a few
+    // lines below, so the image that would reap the child is gone. Waiting
+    // here instead would deadlock — the client blocks on a socket that only
+    // the post-exec keeper accepts on. The client is reparented to init when
+    // the keeper exits, which is the whole point of forking it pre-sandbox.
+    #[expect(clippy::zombie_processes, reason = "supervisor execs; see above")]
     Command::new(&exe)
         .arg("client")
         .arg(&sock)

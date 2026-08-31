@@ -61,7 +61,8 @@ provision environments today.
 
 ## Installation
 
-Not yet published to crates.io ([status](#status)). Build from source:
+The first release is `0.0.1`, not yet pushed to crates.io
+([status](#status)). Build from source:
 
 ```sh
 git clone https://github.com/dragosv/devcroft
@@ -159,9 +160,12 @@ goes over a unix socket only your user can reach.
   no "just use whatever's on the host" fallback.
 - **A kernel-enforced boundary** — Landlock (Linux) or Seatbelt (macOS).
   Catches mistakes, not attacks — see [Limitations](#limitations).
-- **A real SSH server per sandbox** — `exec`, `shell`, and SSH all work
-  with existing editors (VS Code, Cursor; OpenSSH and rsync validated
-  end to end).
+- **A real SSH server per sandbox** — `exec`, `shell`, `scp`, `sftp`,
+  `rsync` and `-L` forwarding are validated end to end by the test suite
+  against real client binaries. Editors connect over the same server;
+  what each one actually needs is measured in
+  [docs/ssh-validation.md](docs/ssh-validation.md), including the
+  preconditions VS Code needs and where Zed stops.
 - **Background services** — Postgres, Redis, whatever your environment
   declares — started and stopped with the sandbox.
 - **Network allowlists** — name the hosts a project may reach; everything
@@ -189,11 +193,16 @@ is implemented but has no CI host measuring it yet — see
 
 ## Status
 
-Working and used daily in this repo's own development, but **not yet
-released**: publishing to crates.io is deliberately held until the last
-MVP task closes (an editor-compatibility matrix — everything but Zed
-passes). Until then, build from source. Expect the command surface to be
-stable and the rough edges below to be real.
+Working and used daily in this repo's own development. The first release
+is **`0.0.1`**, and the number is the honest part: `0.0.z` is the only
+range cargo treats as incompatible with itself, so nothing here promises
+compatibility with the next version. Expect the command surface to be
+stable in practice — it is closed, and listed below — and the rough edges
+under it to be real.
+
+`0.1.0` is deliberately held back rather than skipped, until the boundary
+matches what this page says about it (the unix-socket gap below). See
+[docs/roadmap.md](docs/roadmap.md) for that rule and what it costs.
 
 **Commands**: `init`, `up`, `down`, `rm`, `status`, `logs`, `ps`,
 `shell`, `exec`, `ssh`, `proxy`, `ssh-config`, `policy`, `why`, `doctor`.
@@ -216,7 +225,12 @@ these:
   runs inside the sandbox.
 - A `filesystem.allow` grant for a path that doesn't exist yet is silently
   dropped.
-- Zed's remote server connects and transfers but does not start.
+- Editors need more than `ssh` does. VS Code Remote-SSH works only with
+  `remote.SSH.serverInstallPath` redirected into the project and a
+  `$TMPDIR` short enough for a unix socket path, and its agent supervisor
+  binds an unpredictable port that `network.ports` cannot name in advance.
+  Cursor has not been retested since. Zed's remote server connects and
+  transfers but does not start.
 
 **Being worked on** (see [docs/roadmap.md](docs/roadmap.md) for the
 ordering and its reasoning): running many agents on one host with per-agent resource

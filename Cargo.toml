@@ -1,6 +1,13 @@
 [package]
 name = "devcroft"
-version = "0.1.0"
+# 0.0.x, not 0.1.x, and deliberately: cargo treats every 0.0.z as
+# incompatible with every other, which is the only range that matches what
+# `src/lib.rs` already states — the modules are internals, published so the
+# integration suite can drive them, with no stability guarantee. A 0.1.0
+# would promise patch-compatibility this crate does not intend to keep, and
+# would claim a boundary `docs/known-gaps.md` says is still open (AF_UNIX).
+# See `docs/roadmap.md` for when 0.1.0 gets cut.
+version = "0.0.1"
 edition = "2024"
 # Edition 2024 requires 1.85; stated explicitly so a too-old toolchain
 # reports that rather than failing with syntax errors deep in the build.
@@ -24,7 +31,12 @@ categories = ["command-line-utilities", "development-tools"]
 # are gitignore-style matches at *any* depth, which pulled in every
 # `README.md` and `LICENSE` under `samples/` — including ones inside
 # `.flox/run/` store symlinks and a vendored Go module cache.
-include = ["/src/**/*.rs", "/README.md", "/LICENSE-APACHE", "/NOTICE"]
+# `!/src/bin/spike.rs` is load-bearing, not tidiness: bin targets are
+# auto-discovered from `src/bin/`, so shipping that file would make
+# `cargo install devcroft` put a second, generically-named `spike` binary
+# on the user's PATH. Excluding the source removes the target — the spike
+# is a design proof for this repository, not a program anyone installs.
+include = ["/src/**/*.rs", "!/src/bin/spike.rs", "/README.md", "/LICENSE-APACHE", "/NOTICE"]
 
 [dependencies]
 base64 = "0.22.1"
