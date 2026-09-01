@@ -441,6 +441,32 @@ fn up_process(
     // rather than surfacing as an opaque keeper-startup failure.
     plan.to_capability_set(project_root)
         .map_err(|e| UpError::Policy(e.to_string()))?;
+
+    // The same resolved grants Landlock's own `CapabilitySet` above was
+    // just built from — `resolved_grants` and `to_capability_set` share
+    // one resolver (`policy/capability_set.rs`) precisely so the mount
+    // view built from this can never diverge from what Landlock grants.
+    let mount_grants = plan
+        .resolved_grants(project_root)
+        .map_err(|e| UpError::Policy(e.to_string()))?;
+
+    // Mount isolation is unconditional — every sandbox gets its own
+    // filesystem view, unlike network isolation below, which degrades
+    // gracefully when unavailable. Probed and failed closed *here*,
+    // before any listener exists or state is written, for the identical
+    // reason the deny-overlap check above runs before anything is
+    // created: a clear `config`-adjacent failure beats an opaque one
+    // deep inside a spawned child's `pre_exec` (design.md M4: "does not
+    // fall back to the host's namespace" — there being no fallback
+    // branch at all is what that requires, not a warning).
+    if !matches!(crate::fleet::mount::probe(&exe), Ok(true)) {
+        return Err(UpError::Backend(
+            "this host cannot create unprivileged mount namespaces, which every sandbox's \
+             filesystem view now requires (see `devcroft doctor`)"
+                .to_string(),
+        ));
+    }
+
     // Kept for inspection/debugging parity with what `down` has always
     // promised ("down must keep compiled policy") — no longer a nono
     // profile nono-cli consumes (use-nono-library task 4.4), just
@@ -620,6 +646,23 @@ fn up_process(
         }
     }
 
+    // The relay is only needed when the sandbox is *both* isolated (no
+    // route to host loopback) and has a proxy to reach. Either alone
+    // needs nothing: an unisolated sandbox reaches the proxy's TCP port
+    // directly, and an isolated one with no proxy has no egress to
+    // relay. Also exactly the condition under which the mount view needs
+    // the proxy socket (M3): that socket is only ever dialled by path at
+    // all when the relay is what's doing the dialling — an unisolated
+    // sandbox's `HTTPS_PROXY` points at the proxy's TCP port, never at
+    // this path, so there is nothing for the view to grant in that case.
+    let relay = isolate_network
+        .then(|| {
+            proxy
+                .as_ref()
+                .map(|(port, _)| (*port, paths.proxy_socket.clone()))
+        })
+        .flatten();
+
     let keeper_pid = spawn_keeper(
         &exe,
         &listener,
@@ -636,18 +679,9 @@ fn up_process(
         services,
         &shell.path,
         isolate_network,
-        // The relay is only needed when the sandbox is *both* isolated
-        // (no route to host loopback) and has a proxy to reach. Either
-        // alone needs nothing: an unisolated sandbox reaches the proxy's
-        // TCP port directly, and an isolated one with no proxy has no
-        // egress to relay.
-        isolate_network
-            .then(|| {
-                proxy
-                    .as_ref()
-                    .map(|(port, _)| (*port, paths.proxy_socket.clone()))
-            })
-            .flatten(),
+        relay.clone(),
+        &mount_grants,
+        relay.as_ref().map(|(_, sock)| sock.as_path()),
     )
     .map_err(|e| UpError::Keeper(e.to_string()))?;
     // Both fds must outlive this function for the child to inherit them
@@ -833,7 +867,21 @@ fn spawn_keeper(
     shell: &Path,
     isolate_network: bool,
     relay: Option<(u16, PathBuf)>,
+    mount_grants: &[policy::ResolvedGrant],
+    proxy_socket_for_view: Option<&Path>,
 ) -> io::Result<libc::pid_t> {
+    // The pivot-root scratch directory (`StatePaths::mount_root`'s own
+    // doc) must exist and be empty before `pre_exec` runs — created here,
+    // host-side, rather than inside the forked child, so a failure to
+    // create it surfaces as an ordinary `io::Error` from this function
+    // rather than as an opaque `pre_exec`/`spawn` failure.
+    let _ = std::fs::remove_dir_all(&paths.mount_root);
+    std::fs::create_dir_all(&paths.mount_root)?;
+    let mount_root = paths.mount_root.clone();
+    let mount_grants = mount_grants.to_vec();
+    let proxy_socket_for_view = proxy_socket_for_view.map(Path::to_path_buf);
+    let project_root_owned = project_root.to_path_buf();
+
     // Truncate the previous run's log, then reopen with `O_APPEND` — the
     // keeper is not this file's only writer. `hooks::run` appends hook
     // output to it from the `up` side (lifecycle spec: "hook output SHALL
@@ -925,28 +973,59 @@ fn spawn_keeper(
     // SAFETY: setsid() only touches this (freshly forked, single-
     // threaded) child's own session/process-group state. Detaching from
     // the supervisor's controlling terminal is what lets the keeper
-    // outlive `up`'s own process and the invoking shell. `enter_network_
-    // namespace`/`bring_loopback_up` are the identical two calls
-    // `tests/fleet_netns.rs` already exercises live — raw `unshare`/
-    // `ioctl`, safe in a freshly forked, single-threaded, not-yet-exec'd
-    // child for the same reason `setsid` is. Spiked separately before
-    // wiring this in: `unshare(CLONE_NEWUSER)` changes what this
-    // process's own uid/gid read back as *from inside* the new
-    // namespace, but does not change the credentials the kernel actually
-    // checks file access against, so the keeper's later reads of its own
-    // project files and its own Landlock self-restriction are both
-    // unaffected — confirmed live, not assumed. Ordered before `setsid`
-    // is irrelevant (they touch disjoint kernel state); kept in the
-    // order the two capabilities were added, for a smaller diff.
+    // outlive `up`'s own process and the invoking shell. The mount/
+    // network namespace calls below are the same raw `unshare`/`mount`/
+    // `ioctl` primitives `tests/fleet_netns.rs` and `tests/fleet_mount.rs`
+    // already exercise live, safe in a freshly forked, single-threaded,
+    // not-yet-exec'd child for the same reason `setsid` is.
+    //
+    // **Order is load-bearing, not just "the order these were added
+    // in" (unlike the netns-only version this replaced).** `fleet::mount::
+    // enter_mount_namespace_with_network` must run before
+    // `make_propagation_private` (there is nothing to make private
+    // until the namespace exists) and before `construct_view` (which
+    // needs both the namespace and private propagation — design.md M1).
+    // `bring_loopback_up` needs the network namespace but nothing
+    // mount-related, so it can run any time after the first call;
+    // kept together with the netns half of this closure for locality.
+    // `construct_view` runs last: it `pivot_root`s, after which this
+    // process's view of the filesystem is the sandbox's own — nothing
+    // after it may assume the host's paths still resolve.
+    //
+    // **`construct_view` ends by `chdir("/")`, and this closure chdirs
+    // back to `project_root` immediately after — not a redundant step.**
+    // `Command`'s own `current_dir(project_root)` above runs *before*
+    // any `pre_exec` closure (std's own child setup order: cwd, then
+    // stdio, then the caller's closures), so without this, the keeper
+    // would start in `/` — still the mount view's `/`, but not the
+    // project root the rest of `up` assumes it starts in. Bind-mounted
+    // at the identical absolute path it has on the host (`construct_view`
+    // never remaps paths), so the same string that worked before
+    // `pivot_root` still resolves correctly after it.
+    //
+    // Spiked separately before wiring the network half in originally:
+    // `unshare(CLONE_NEWUSER)` changes what this process's own uid/gid
+    // read back as *from inside* the new namespace, but does not change
+    // the credentials the kernel actually checks file access against —
+    // confirmed live, not assumed, and still true with mount isolation
+    // layered on top (`fleet::mount::enter_mount_namespace`'s own doc
+    // makes the identical point for its uid/gid mapping).
     unsafe {
         cmd.pre_exec(move || {
             if libc::setsid() < 0 {
                 return Err(io::Error::last_os_error());
             }
+            crate::fleet::mount::enter_mount_namespace_with_network(isolate_network)?;
             if isolate_network {
-                crate::fleet::netns::enter_network_namespace()?;
                 crate::fleet::netns::bring_loopback_up()?;
             }
+            crate::fleet::mount::make_propagation_private()?;
+            crate::fleet::mount::construct_view(
+                &mount_root,
+                &mount_grants,
+                proxy_socket_for_view.as_deref(),
+            )?;
+            std::env::set_current_dir(&project_root_owned)?;
             Ok(())
         });
     }

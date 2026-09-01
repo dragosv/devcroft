@@ -175,6 +175,38 @@ the same report rather than adding a second probe.
    job is to mirror whatever is already granted, not widen it. Worth its
    own follow-up; not tracked further here.
 
+   **A second pre-existing gap, found the same way — running a real `up`
+   end to end, not by review.** `flox-clap-sample`'s own `[hook].on-
+   activate` (`CARGO_HOME` redirection, `cargo fetch`) fails at session
+   time: `lifecycle::hooks::run_one` sends the activation script as
+   `SpawnRequest{cmd: "sh", ...}` — a bare, unresolved literal, not
+   `DEVCROFT_SHELL` (`src/shell.rs`'s own resolved-from-the-closure
+   path, used today only by `ssh/server.rs`). flox-clap-sample's closure
+   installs no shell of its own, so `Command::new("sh")` PATH-searches
+   into the canonical baseline tail and finds a real host `/bin/sh`.
+   **Confirmed pre-existing, not a regression this change introduces**:
+   reproduced against the unmodified pre-mount-isolation code (`git
+   stash`), where it fails identically but with a different symptom —
+   `EACCES` (Landlock denies the host path) there, `ENOENT` (the path
+   does not exist in the view at all) here. Same root cause, this
+   change only changes which layer refuses it first. Left unfixed here
+   for the same reason as the `$HOME/.cargo` gap above: this change's
+   job is to mirror what the policy already grants, not to widen the
+   set of things that resolve. `tests/mount_view_e2e.rs` and the manual
+   end-to-end verification below therefore use `devbox-citytime-sample`
+   (no hook at all) rather than `flox-clap-sample`.
+
+   **The real, unmodified `devcroft up` → `status` → `exec` → `down`
+   flow was run end to end against `devbox-citytime-sample`, mount
+   isolation included** — not only the `__mount_view_probe` harness
+   above. `up` succeeded, `status` reported healthy, `exec -- cargo
+   build` succeeded inside the running sandbox, and a compiled
+   connect-probe run via `exec` confirmed the daemon socket refused
+   with `ENOENT` from inside a real session, not just inside the
+   probe's own constructed view. This is the authoritative verification
+   task 4.4 asks for; the probe-based checks earlier in this section
+   established the mechanism works before wiring it into `up` at all.
+
    Minimal system layer, also measured (union across all three traces,
    excluding failed lookups and PATH-search noise from tools absent from
    a given closure): `/etc/{passwd,nsswitch.conf,ld.so.cache,hosts,
