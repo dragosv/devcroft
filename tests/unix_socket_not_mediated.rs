@@ -1,48 +1,65 @@
-//! **Landlock does not mediate `connect()` to a pathname unix socket.**
+//! **Landlock does not mediate `connect()` to a pathname unix socket —
+//! and that no longer matters, because `add-mount-isolation` closes the
+//! reachability gap at a different layer.**
 //!
-//! This test asserts a *gap*, not a guarantee — it documents behaviour
-//! devcroft currently cannot prevent, so the gap is measurable rather
-//! than folklore, and so anything that closes it makes a test fail loudly
-//! instead of leaving a stale claim in the docs.
+//! This file used to assert the gap itself: Landlock's network rules
+//! (ABI V4+) cover TCP bind/connect for AF_INET/AF_INET6 only, so a
+//! `connect()` to a pathname unix socket fell through to ordinary DAC —
+//! reachable if the filesystem permissions allowed it, regardless of the
+//! compiled policy, including sockets in directories the policy did not
+//! grant. That was real, and closing it needed a mechanism Landlock
+//! itself has no ABI for.
 //!
-//! Landlock's network rules (ABI V4+) cover TCP bind/connect for
-//! AF_INET/AF_INET6 only. AF_UNIX connect falls through to ordinary DAC:
-//! if the filesystem permissions on the socket allow it, a sandboxed
-//! process reaches it regardless of the compiled policy — including
-//! sockets in directories the policy explicitly does not grant.
+//! **`add-mount-isolation` is that mechanism.** Every sandbox now gets
+//! its own mount namespace and filesystem view
+//! (`fleet::mount::construct_view`), and a socket outside that view does
+//! not resolve at all — `connect()` fails with `ENOENT`, not a
+//! permission error, because there is nothing left to name. Landlock
+//! still governs access to what the view contains; the view now governs
+//! what exists to be reached in the first place. Both tests below are
+//! inverted from what this file asserted before: `__uds_probe` (`src/
+//! bin/devcroft.rs`) now constructs the mount view before applying
+//! Landlock, matching the real ordering `up.rs`'s `pre_exec` uses, so a
+//! refusal here is the same refusal a real sandboxed session gets.
 //!
 //! Two consequences, both recorded in `docs/known-gaps.md`:
 //!
-//! - A sandbox can reach any world-accessible unix socket on the host.
-//!   The nix daemon socket is `srw-rw-rw-` by design under nix's
-//!   multi-user model, so a sandbox holds whatever authority that daemon
-//!   grants an unprivileged client — which is the package-manager
-//!   authority `sandbox-provisioning` P2a/P2b says agents must not have.
-//! - The same property is what makes an *isolated* sandbox able to reach
-//!   devcroft's own egress proxy: a unix socket crosses a network
-//!   namespace, so no TUN device or forwarding helper is needed. One
-//!   mechanism, one useful consequence and one unwanted one.
+//! - A sandbox can no longer reach a world-accessible unix socket it was
+//!   not granted. The nix daemon socket is `srw-rw-rw-` by design under
+//!   nix's multi-user model; a sandbox now holds none of the authority
+//!   that daemon would otherwise extend to an unprivileged client —
+//!   exactly the package-manager authority `sandbox-provisioning`
+//!   P2a/P2b says agents must not have, now a kernel-enforced boundary
+//!   rather than devcroft's own refusal to grant.
+//! - The same property is still load-bearing in the *wanted* direction:
+//!   a pathname unix socket crosses a network namespace, which is what
+//!   lets an isolated sandbox reach devcroft's own egress proxy without
+//!   a TUN device or a forwarding helper. That is why the mount view
+//!   names the proxy socket back in explicitly (design.md M3) rather
+//!   than only ever removing paths — asserted separately in
+//!   `tests/mount_view_e2e.rs`, not here.
 //!
-//! **Not Linux-only.** Measured on macOS 15 (Seatbelt, via `nono`): the
-//! ungranted probe reaches the socket there too, so the gap is the
-//! backend-independent one `docs/known-gaps.md` now says it is. Getting
-//! that answer needed one correction first — Seatbelt evaluates the path
-//! as written, and `/tmp` is a symlink to `/private/tmp`, so probing
-//! `/tmp/<dir>/p.sock` is refused with `Operation not permitted` while the
-//! *same socket* at `/private/tmp/<dir>/p.sock` connects. That is
-//! symlink traversal being denied, not AF_UNIX being mediated, and reading
-//! it as the latter would have published "macOS closes this gap" off a
-//! test artifact. Hence `short_socket_dir` canonicalizes.
+//! **Linux-only in practice.** A mount namespace is what closes this gap,
+//! and macOS has no equivalent primitive — Seatbelt alone leaves the
+//! identical ungranted socket reachable (measured, macOS 15; see
+//! `docs/known-gaps.md`, `docs/threat-model.md`). Both tests below gate on
+//! `mount_namespaces_available()`, which reports unavailable on macOS, so
+//! they self-skip there rather than asserting a refusal this host cannot
+//! deliver. Getting the macOS measurement right needed one correction
+//! first — Seatbelt evaluates the path as written, and `/tmp` is a symlink
+//! to `/private/tmp`, so probing `/tmp/<dir>/p.sock` is refused with
+//! `Operation not permitted` while the *same socket* at
+//! `/private/tmp/<dir>/p.sock` connects. That is symlink traversal being
+//! denied, not AF_UNIX being mediated, and reading it as the latter would
+//! have published "macOS closes this gap" off a test artifact. Hence
+//! `short_socket_dir` canonicalizes.
 //!
-//! Closing it needs a mount namespace — `add-mount-isolation`, whose task
-//! 4.1 is to invert both tests below. Measured: masking a path inside an
-//! unprivileged `unshare(CLONE_NEWUSER | CLONE_NEWNS)` turns the connect
-//! into `No such file or directory`. Seccomp filtering on `connect()`
-//! would also work and was this file's original answer, but it filters a
-//! syscall whose argument still names a real path; removing the path
-//! closes the whole class.
+//! **The abstract-socket half of the original gap is unrelated and still
+//! open** (`docs/known-gaps.md`, `docs/threat-model.md`): an `@`-prefixed
+//! socket has no filesystem path for a mount view to remove, so it needs
+//! Landlock's own `LANDLOCK_SCOPE_ABSTRACT_UNIX_SOCKET`, which devcroft
+//! does not yet set. Nothing here measures that half.
 
-use std::io::Read;
 use std::os::unix::net::UnixListener;
 use std::path::Path;
 use std::process::Command;
@@ -51,8 +68,8 @@ use std::process::Command;
 /// path. Found the hard way while spiking this: the first attempt used a
 /// deep temp directory and failed with "path must be shorter than
 /// SUN_LEN" in *both* the granted and ungranted runs, which looks exactly
-/// like "Landlock denied it" and says nothing at all. devcroft already
-/// guards this limit for service supervisor sockets (`UpError::Config`).
+/// like "refused" and says nothing at all. devcroft already guards this
+/// limit for service supervisor sockets (`UpError::Config`).
 ///
 /// Creates the directory and returns its **canonical** path, for the
 /// second reason the module doc gives: on macOS `/tmp` is a symlink, and
@@ -65,54 +82,50 @@ fn short_socket_dir() -> std::path::PathBuf {
     std::fs::canonicalize(&dir).unwrap()
 }
 
-/// Accepts one connection and reads from it, or gives up. std offers no
-/// accept timeout, hence the non-blocking poll — and the deadline is the
-/// whole point: a bare `accept()` blocks forever on any host where the
-/// probe cannot connect, which turns a *failing* assertion into a hung
-/// test process that no CI timeout below the job ceiling catches.
-fn accept_once(listener: UnixListener) -> std::thread::JoinHandle<bool> {
-    std::thread::spawn(move || {
-        if listener.set_nonblocking(true).is_err() {
-            return false;
-        }
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
-        while std::time::Instant::now() < deadline {
-            match listener.accept() {
-                Ok((mut c, _)) => {
-                    // The accepted socket can inherit the listener's
-                    // non-blocking flag, so the read below would return
-                    // WouldBlock before the peer's bytes arrive.
-                    let _ = c.set_nonblocking(false);
-                    let mut buf = [0u8; 8];
-                    return c.read(&mut buf).is_ok();
-                }
-                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                    std::thread::sleep(std::time::Duration::from_millis(20));
-                }
-                Err(_) => return false,
-            }
-        }
-        false
-    })
+/// Skips rather than fails where unprivileged mount namespaces are
+/// unavailable — matching every other namespace-gated test in this
+/// project (`tests/fleet_netns.rs`, `tests/fleet_mount.rs`): a container
+/// runtime's seccomp profile, an AppArmor policy restricting
+/// unprivileged user namespaces, or an exhausted `max_user_namespaces`
+/// can each deny this independently, and none is a devcroft bug. Without
+/// it, `__uds_probe` cannot construct a view at all, and connecting
+/// would prove nothing about the property under test.
+fn mount_namespaces_available() -> bool {
+    Command::new(env!("CARGO_BIN_EXE_devcroft"))
+        .arg("__mount_probe")
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
 }
 
 #[test]
-fn a_sandboxed_process_reaches_an_ungranted_unix_socket() {
+fn a_sandboxed_process_cannot_reach_an_ungranted_unix_socket() {
     if !devcroft::policy::backend_supported() {
         eprintln!("skipping: this host has no usable Landlock/Seatbelt support");
+        return;
+    }
+    if !mount_namespaces_available() {
+        eprintln!("skipping: this host cannot create unprivileged mount namespaces");
         return;
     }
 
     let dir = short_socket_dir();
     let sock = dir.join("p.sock");
-    let listener = UnixListener::bind(&sock).unwrap();
+    // Held open for the probe to attempt against, but **not** accepted
+    // from — unlike this file's pre-inversion version, which spawned a
+    // thread blocked on `listener.accept()`. That thread assumed the
+    // probe would connect, which was true of the gap this file used to
+    // assert; now that the connect is expected to fail, an `accept()`
+    // that never receives one hangs forever. The listener merely needs
+    // to *exist* for the probe's `connect()` to have a real target to be
+    // refused from — a socket nothing is listening to would prove
+    // nothing (the connect could fail for either reason).
+    let _listener = UnixListener::bind(&sock).unwrap();
 
-    let accepted = accept_once(listener);
-
-    // The probe grants only its own cwd. The socket is outside it, under
-    // /tmp, which the compiled policy does not grant — so a backend
-    // mediating AF_UNIX refuses this and one that does not lets it
-    // through. That difference is the measurement.
+    // The probe grants only its own cwd, then constructs a real mount
+    // view before applying Landlock (`__uds_probe`'s own doc). The
+    // socket is outside both, under /tmp — this is the case a mount
+    // view removes.
     let cwd = std::env::temp_dir();
     let out = Command::new(env!("CARGO_BIN_EXE_devcroft"))
         .arg("__uds_probe")
@@ -121,29 +134,34 @@ fn a_sandboxed_process_reaches_an_ungranted_unix_socket() {
         .output()
         .unwrap();
 
-    let connected = out.status.success();
-    let _ = accepted.join();
     let _ = std::fs::remove_dir_all(&dir);
 
     assert!(
-        connected,
-        "expected the sandboxed probe to reach an ungranted unix socket, since \
-         neither backend's network rules cover AF_UNIX. If this now FAILS, the gap \
-         has closed — the kernel gained AF_UNIX mediation, or devcroft added \
-         seccomp filtering or a mount namespace. That is good news, and \
-         `docs/known-gaps.md`, `docs/threat-model.md` and `sandbox-provisioning`'s \
-         design.md all claim it is open and must be corrected together. stderr: {}",
+        !out.status.success(),
+        "expected the sandboxed probe to be refused reaching an ungranted unix \
+         socket — add-mount-isolation's own view should have made the path not \
+         resolve. If this now SUCCEEDS, the fix has regressed. stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains("No such file or directory"),
+        "expected refusal because the path does not resolve (spec: \"the failure \
+         is that the path does not resolve, not that a rule refused it\"), got: {}",
         String::from_utf8_lossy(&out.stderr)
     );
 }
 
 /// The concrete instance that matters, asserted separately from the
-/// general property: this is the one that contradicts a devcroft
+/// general property: this is the one that contradicted a devcroft
 /// invariant rather than being an abstract limitation.
 #[test]
-fn a_sandboxed_process_reaches_the_nix_daemon_socket_if_one_exists() {
+fn a_sandboxed_process_cannot_reach_the_nix_daemon_socket_if_one_exists() {
     if !devcroft::policy::backend_supported() {
         eprintln!("skipping: this host has no usable Landlock/Seatbelt support");
+        return;
+    }
+    if !mount_namespaces_available() {
+        eprintln!("skipping: this host cannot create unprivileged mount namespaces");
         return;
     }
     let nix_sock = Path::new("/nix/var/nix/daemon-socket/socket");
@@ -152,15 +170,13 @@ fn a_sandboxed_process_reaches_the_nix_daemon_socket_if_one_exists() {
         return;
     }
     // The control, and it is not optional. The assertion below concludes
-    // "the gap has closed" from a failed connect, and a socket file whose
-    // daemon is not running produces exactly that failure — so without
-    // this, a host with a dead `nix-daemon` reports a closed security gap
-    // that is still wide open, which is the most expensive direction for
-    // this particular test to be wrong in. Measured: it happened.
-    //
-    // Connecting from *outside* any sandbox first turns the assertion into
-    // the implication it was always meant to be — reachable out here, so
-    // it must not be reachable in there — rather than a bare claim about
+    // "the gap is closed" from a failed connect, and a socket file whose
+    // daemon is not running produces exactly that failure for an
+    // unrelated reason — so without this, a host with a dead `nix-daemon`
+    // would report a closed gap that was never actually exercised.
+    // Connecting from *outside* any sandbox first turns the assertion
+    // into the implication it is meant to be — reachable out here, so it
+    // must not be reachable in there — rather than a bare claim about
     // one connect() call.
     if std::os::unix::net::UnixStream::connect(nix_sock).is_err() {
         eprintln!(
@@ -178,10 +194,11 @@ fn a_sandboxed_process_reaches_the_nix_daemon_socket_if_one_exists() {
         .unwrap();
 
     assert!(
-        out.status.success(),
-        "expected a sandboxed process to reach the nix daemon socket with /nix \
-         ungranted — the gap `docs/known-gaps.md` documents. If this now FAILS, \
-         the gap has closed and those docs need correcting. stderr: {}",
+        !out.status.success(),
+        "expected a sandboxed process to be refused reaching the nix daemon socket \
+         with /nix/var absent from its mount view — the gap docs/known-gaps.md \
+         documents as closed. If this now SUCCEEDS, the fix has regressed. \
+         stderr: {}",
         String::from_utf8_lossy(&out.stderr)
     );
 }
