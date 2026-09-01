@@ -95,8 +95,9 @@ fn shell_runs_commands_over_a_pty_and_falls_back_when_shell_is_missing() {
     let out = child.wait_with_output().unwrap();
     assert!(
         String::from_utf8_lossy(&out.stdout).contains("shell-marker-hi"),
-        "expected pty output to contain the echoed marker, got {:?}",
-        String::from_utf8_lossy(&out.stdout)
+        "expected pty output to contain the echoed marker, got stdout={:?} stderr={:?}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
     );
     assert_eq!(out.status.code(), Some(0));
 
