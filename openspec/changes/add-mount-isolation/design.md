@@ -117,20 +117,75 @@ the same report rather than adding a second probe.
 
 ## Open Questions
 
-1. **What `/nix` actually needs to look like.** The spike masked *all* of
-   `/nix`, which closed the socket and would also have removed the
-   toolchain — the closure lives in `/nix/store`. The real plan needs
-   `/nix/store` read-only and `/nix/var` absent, which the spike did not
-   test. Same question for devbox and for a nix-flake provider whose store
-   paths differ. **Measure per provider before writing the plan**, since
-   guessing here produces a sandbox that starts and then fails at the
-   first compile.
-2. **`/proc` and PID namespaces.** A private `/proc` is only meaningful
-   with `CLONE_NEWPID`, and that makes the keeper PID 1, which must then
-   reap. Fleet's D2 already carries this. Decide whether this change takes
-   PID isolation too or leaves it to fleet — taking it closes the
-   process-visibility gap as well, at the cost of the reaping work.
-3. **macOS.** Seatbelt has no mount-namespace equivalent. The gap this
-   change closes presumably exists there too, in a different shape, and is
-   unmeasured — this project has no macOS host. Whatever ships must degrade
-   honestly rather than claiming a boundary it does not hold.
+1. **What `/nix` actually needs to look like — resolved, measured.** The
+   spike masked *all* of `/nix`, which closed the socket and would also
+   have removed the toolchain — the closure lives in `/nix/store`. Traced
+   a real `cargo build` under `strace -f -e trace=file` for all three
+   closure-tier providers, using each provider's actual captured
+   environment (`flox activate -- env -0` on a derived hook-free copy plus
+   the `[hook]` script run separately, matching what `up`/the keeper
+   actually does; `nix print-dev-env --json`; `devbox shellenv --pure`) —
+   not a bare interactive shell, since that pulls in ambient `PATH`
+   entries a real session never has:
+
+   | provider | sample | `/nix/var` touched? |
+   | --- | --- | --- |
+   | flox | `flox-clap-sample` | no |
+   | nix | `nix-flake-sample` | no |
+   | devbox | `devbox-citytime-sample` | no |
+
+   Zero occurrences in any of the three traces, including the daemon
+   socket path itself. **`/nix/store` read-only and `/nix/var` absent is
+   confirmed safe** for a real compile — the plan the spike didn't test.
+   The `/nix/var/nix/daemon-socket/socket` and
+   `/nix/var/nix/profiles/...` accesses that *do* appear in an untrimmed
+   trace belong to `flox activate`'s own `nix build` calls — host-side
+   provisioning, already outside any mount view this change constructs.
+
+   **A load-bearing side finding, not this change's job to fix.** Real
+   `cargo` builds need `CARGO_HOME` to resolve somewhere writable and
+   visible. flox's sample redirects it into the project root via
+   `[hook].on-activate` (run inside the sandbox, per
+   `fix-provisioning-hooks`), so it stays inside the view for free. The
+   nix and devbox providers run **no** hook at all (`nix.rs`,
+   `devbox.rs`'s own doc comments), so `cargo` silently falls back to
+   `$HOME/.cargo` — outside the project root, outside `/nix/store`, and
+   not part of `read_only_grants`. Measured live: a zero-dependency
+   `devbox-citytime-sample` build still touches
+   `$HOME/.cargo/{.package-cache,.global-cache,config.toml}` for cargo's
+   own bookkeeping. This is a pre-existing gap in what the *policy*
+   grants for these two providers — independent of mount isolation, whose
+   job is to mirror whatever is already granted, not widen it. Worth its
+   own follow-up; not tracked further here.
+
+   Minimal system layer, also measured (union across all three traces,
+   excluding failed lookups and PATH-search noise from tools absent from
+   a given closure): `/etc/{passwd,nsswitch.conf,ld.so.cache,hosts,
+   resolv.conf,host.conf,localtime,gitconfig}`, a CA bundle (one of the
+   conventional paths under `/etc/ssl`, `/usr/lib/ssl`,
+   `/usr/local/share`), the closure's own libc/dynamic-linker shared
+   objects, and `/usr/bin/env` (shebang interpreter). `/proc`:
+   `self/{cgroup,exe,maps,statm}` and `sys/vm/overcommit_memory` only —
+   no enumeration of other processes. `/dev`: `null`, `tty`, `urandom`,
+   `fd/*`.
+
+2. **`/proc` and PID namespaces — resolved: not taken by this change.**
+   The measured `/proc` need (above) is five entries, all either
+   self-relative or a global sysctl — nothing that requires seeing or
+   hiding other processes. A private `/proc` needs `CLONE_NEWPID` only to
+   also close process-visibility, which this change's measured
+   requirement does not call for. Taking it would make the keeper PID 1
+   (reaping becomes mandatory) to satisfy a gap nothing here measures.
+   **Leaves PID isolation to fleet's D2**, consuming this change the same
+   way fleet already consumes `netns` — the precedent the proposal names.
+   The mount view bind-mounts the specific measured `/proc` entries
+   rather than the host's `/proc` wholesale, so nothing beyond that
+   measured set is exposed either way.
+3. **macOS — still open, unmeasured, deferred.** Seatbelt has no
+   mount-namespace equivalent and this project has no macOS host. This
+   change ships Linux-only, following `fleet::netns`'s own
+   `#[cfg(not(target_os = "linux"))]` shape, and `doctor` must report the
+   capability as unavailable there rather than silently proceeding
+   restricted only by Landlock/Seatbelt's existing tier. Whatever closes
+   this later must degrade honestly rather than claim a boundary this
+   platform does not hold.
