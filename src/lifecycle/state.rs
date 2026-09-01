@@ -70,6 +70,17 @@ pub struct StatePaths {
     /// simply recreates the path fresh via `O_CREAT`, acquiring an
     /// unrelated, unclaimed lock.
     pub lifecycle_lock: PathBuf,
+    /// `add-mount-isolation`'s pivot target — an empty directory `up`
+    /// creates before spawning the keeper, which `fleet::mount::
+    /// construct_view` mounts a `tmpfs` onto and `pivot_root`s into,
+    /// inside the keeper's own private mount namespace. Never has
+    /// meaningful content from the *host*'s point of view: every mount
+    /// `construct_view` makes stays confined to that namespace (private
+    /// propagation, design.md M1), so this directory looks empty on the
+    /// host for as long as the keeper runs and needs only an ordinary
+    /// `remove_dir_all` at teardown — no unmount, since the host's own
+    /// mount table was never touched.
+    pub mount_root: PathBuf,
 }
 
 impl StatePaths {
@@ -145,6 +156,7 @@ impl StatePaths {
             // a caller that made the directory before this function ever
             // ran.
             lifecycle_lock: root.join("lifecycle.lock"),
+            mount_root: root.join("mount-root"),
             root,
         }
     }
@@ -527,6 +539,12 @@ pub fn clear_runtime_state(paths: &StatePaths) -> io::Result<()> {
     // before the proxy existed; `proxy_socket` inherited the omission.
     let _ = std::fs::remove_file(&paths.ssh_socket);
     let _ = std::fs::remove_file(&paths.proxy_socket);
+    // `remove_dir_all`, not `remove_file`: this is the pivot-root scratch
+    // directory (`StatePaths::mount_root`'s own doc), a directory rather
+    // than a socket, and its own doc explains why no unmount is needed
+    // first — every mount `construct_view` made stayed confined to the
+    // keeper's private namespace and was never visible here.
+    let _ = std::fs::remove_dir_all(&paths.mount_root);
     Ok(())
 }
 

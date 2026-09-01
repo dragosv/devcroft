@@ -65,9 +65,34 @@ use std::os::unix::fs::FileTypeExt;
 /// and is what the standalone probe and tests below exercise.
 #[cfg(target_os = "linux")]
 pub fn enter_mount_namespace() -> io::Result<()> {
+    enter_mount_namespace_with_network(false)
+}
+
+/// [`enter_mount_namespace`], optionally also entering a network
+/// namespace in the same `unshare()` call.
+///
+/// **This is the "caller's responsibility" that function's own doc
+/// mentions**, and the reason it exists as a separate function rather
+/// than making every caller combine flags by hand: mount isolation is
+/// unconditional (every sandbox gets one — spec: "SHALL NOT... fall back
+/// to the host's namespace") while network isolation stays conditional
+/// (`CompiledPolicy::wants_network_isolation`), so `up`'s own keeper
+/// spawn needs exactly this — always `CLONE_NEWNS`, `CLONE_NEWNET` only
+/// sometimes — and cannot get it by calling this module's and `netns`'s
+/// own entry points back to back (a second `unshare(CLONE_NEWUSER)`
+/// fails). Bringing loopback up, if a network namespace was requested,
+/// is still the caller's job — [`crate::fleet::netns::bring_loopback_up`]
+/// needs no namespace-creation flags of its own, only the `CLONE_NEWNET`
+/// this function already entered.
+#[cfg(target_os = "linux")]
+pub fn enter_mount_namespace_with_network(also_network: bool) -> io::Result<()> {
     let uid = unsafe { libc::getuid() };
     let gid = unsafe { libc::getgid() };
-    if unsafe { libc::unshare(libc::CLONE_NEWUSER | libc::CLONE_NEWNS) } != 0 {
+    let mut flags = libc::CLONE_NEWUSER | libc::CLONE_NEWNS;
+    if also_network {
+        flags |= libc::CLONE_NEWNET;
+    }
+    if unsafe { libc::unshare(flags) } != 0 {
         return Err(io::Error::last_os_error());
     }
     write_id_map("/proc/self/setgroups", "deny")?;
@@ -83,6 +108,11 @@ fn write_id_map(path: &str, contents: &str) -> io::Result<()> {
 
 #[cfg(not(target_os = "linux"))]
 pub fn enter_mount_namespace() -> io::Result<()> {
+    enter_mount_namespace_with_network(false)
+}
+
+#[cfg(not(target_os = "linux"))]
+pub fn enter_mount_namespace_with_network(_also_network: bool) -> io::Result<()> {
     Err(io::Error::new(
         io::ErrorKind::Unsupported,
         "mount namespaces are Linux-only; this platform has no equivalent \

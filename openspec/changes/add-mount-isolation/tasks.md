@@ -134,13 +134,31 @@ before the plan is written.
       unreachable from inside the view without `--proxy-socket`, and
       reachable with it.**
 - [x] 2.3 Fail closed if the view cannot be constructed; never fall back
-      to the host namespace (design.md M4). **Structural, not a
-      caller-added check: every step in `construct_view` is a plain `?`,
-      so the first error stops the function and propagates — there is no
-      branch that could produce a working-but-weaker view. `up`'s own
-      call site wiring this into `pre_exec` (so a construction failure
-      aborts `up` itself) is task group 2's integration work, not yet
-      done — this task is the primitive-level guarantee only.**
+      to the host namespace (design.md M4). **Structural at the primitive
+      level (every step in `construct_view` is a plain `?`, so the first
+      error stops the function and propagates — no branch could produce
+      a working-but-weaker view) *and* now wired into `up` itself**:
+      `up_process` probes `fleet::mount::probe` and fails with
+      `UpError::Backend` before any listener is bound or state is
+      written if this host cannot create unprivileged mount namespaces
+      at all — the same "before anything is created" discipline the
+      existing deny-overlap check follows — and `spawn_keeper`'s
+      `pre_exec` now unconditionally calls
+      `enter_mount_namespace_with_network` / `make_propagation_private` /
+      `construct_view` for every sandbox (network isolation stays the
+      conditional half of that same call, combined into one `unshare()`
+      — a process may create a user namespace only once). A construction
+      failure there propagates as an ordinary `Command::spawn()` error,
+      `UpError::Keeper`; there is no fallback path. **Verified with the
+      real `devcroft up` → `status` → `exec` → `down` CLI, end to end**
+      (design.md, alongside this task) — not only the probe harness.
+      **A behavioral consequence worth stating plainly**: every `up` now
+      requires unprivileged mount namespaces, unconditionally — a host
+      that previously ran devcroft under Landlock alone but cannot
+      create one (where network isolation would have degraded
+      gracefully) now has `up` refuse outright. This is exactly what
+      design.md M4 calls for, not a bug, but it is a real, user-visible
+      change from every devcroft release before this one.
 
 ## 3. Policy integration
 
