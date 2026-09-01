@@ -75,6 +75,21 @@ RUN set -eu; \
     && rm -rf /var/lib/apt/lists/* "/tmp/${DEB}" \
     && flox --version
 
+# flox provisions its own private Nix store and daemon (there is no
+# separate system-wide Nix install anywhere in this file), but the
+# `nix.conf` it ships does not enable `nix-command`/`flakes` for the bare
+# `nix` binary it puts on PATH — only flox's own internal wrapper around
+# nix has them on. Both `provider::nix` (`nix flake metadata`) and
+# `provider::devbox`'s `ensure_nix_usable()` (`nix eval --expr 1`) invoke
+# that bare binary directly, so without this every one of their tests
+# that reaches a real `nix` subprocess fails with "experimental Nix
+# feature '...' is disabled" — measured: 6 hard failures in
+# `provider::devbox::tests`, and every `provider::nix` test that isn't
+# either a hardcoded-string unit test or short-circuited by an earlier,
+# file-only check (`resolve_fails_with_missing_lock_when_flake_lock_absent`)
+# was silently never exercising a real `nix flake metadata` call either.
+RUN echo "experimental-features = nix-command flakes" >> /etc/nix/nix.conf
+
 # devbox provider (add-devbox-provider task 0.1). Official GitHub release
 # tarball, architecture-detected, verified against the published
 # `checksums.txt` — same posture as nono's and flox's pinned, checksummed

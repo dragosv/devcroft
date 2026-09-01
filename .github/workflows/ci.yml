@@ -1,0 +1,210 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  lint:
+    name: fmt, clippy, rustdoc
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
+
+      - run: cargo fmt --all -- --check
+
+      # `cargo clippy` alone (no --all-targets) is the exact command
+      # CLAUDE.md documents as "currently clean" — -D warnings turns that
+      # description into an enforced gate instead of a claim that can go
+      # stale silently.
+      - run: cargo clippy -- -D warnings
+
+      # docs.rs renders this publicly; CLAUDE.md says keep it at zero
+      # warnings.
+      - run: cargo doc --no-deps
+        env:
+          RUSTDOCFLAGS: -D warnings
+
+  test:
+    name: build + test (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.os }}
+
+      - run: cargo build
+
+      # Every e2e test self-skips on a host that can't run it (no
+      # flox/nix/devbox, no reachable nix-daemon) rather than failing —
+      # see CLAUDE.md's "a green cargo test is not the same as a run that
+      # tested anything". On macOS this is still real signal — Seatbelt is
+      # native and needs no daemon, so process-tier tests that don't need
+      # a provider-built closure actually run here, which is the host
+      # measurement the README's Status section says macOS is missing.
+      # Full flox/nix/devbox coverage is `e2e-linux` below.
+      - run: cargo test
+
+      - name: report what actually ran vs. self-skipped
+        if: always()
+        run: cargo test -- --nocapture 2>&1 | grep -i skipping || true
+
+  packaging:
+    name: cargo package
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - run: cargo package --locked --allow-dirty --no-verify
+
+      - name: verify the shipped file list
+        run: |
+          set -eu
+          cargo package --locked --allow-dirty --no-verify --list > /tmp/pkg-list.txt
+          cat /tmp/pkg-list.txt
+
+          # Regression guard for exactly the gap that shipped once before:
+          # a file the shipped NOTICE/README-crate.md promise, silently
+          # missing from Cargo.toml's include allowlist.
+          for f in README-crate.md LICENSE-APACHE NOTICE THIRD-PARTY-LICENSES.md; do
+            grep -qx "$f" /tmp/pkg-list.txt || { echo "missing from package: $f"; exit 1; }
+          done
+
+          # README.md is GitHub-only (relative links to docs/, samples/,
+          # openspec/ don't resolve from an unpacked crate); spike.rs is a
+          # design proof for this repo, not a binary anyone installs.
+          for f in README.md src/bin/spike.rs; do
+            grep -qx "$f" /tmp/pkg-list.txt && { echo "should not ship: $f"; exit 1; }
+          done
+
+          if grep -qE '^(openspec|samples|\.claude|\.devcontainer|tests)/' /tmp/pkg-list.txt; then
+            echo "package pulled in a repo-internal directory"
+            exit 1
+          fi
+
+  openspec:
+    name: openspec validate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+      - run: npm install -g @fission-ai/openspec@latest
+      - run: openspec validate --all
+
+  # Unlike the jobs above, this installs real flox + devbox (pinned to the
+  # same versions the devcontainer's own Dockerfile uses) and starts
+  # nix-daemon, so `cargo test` exercises the e2e suite instead of
+  # self-skipping most of it. This is genuinely load-bearing: measured
+  # with `--no-fail-fast` in the devcontainer this workflow was authored
+  # in, going without the nix-command/flakes fix below left 3 test
+  # binaries failing (14 named test failures: 6 in `provider::devbox`'s
+  # own unit tests, plus 8 more across two integration binaries whose
+  # names include `a_real_build_succeeds_from_the_devbox_closure...` and
+  # `up_resolves_devbox_and_the_toolchain_is_visible_in_a_session`) and 7
+  # more tests self-skipping with "nix present but flakes not enabled on
+  # this host" or equivalent. With the fix: 0 failures, and the only
+  # skip left is `rsync not on PATH` (unrelated — the binary just isn't
+  # installed here). Plain `cargo test` without `--no-fail-fast` would
+  # have shown none of this breadth — it stops at the first failing
+  # binary, so CLAUDE.md's documented working command alone would only
+  # ever have surfaced the 6 `provider::devbox` failures.
+  #
+  # Still unverified against GitHub's own hosted runners specifically — no
+  # access to actually dispatch a run from here — so this mirrors the
+  # Dockerfile's own "UNVERIFIED beyond this build step" posture and stays
+  # non-blocking (continue-on-error) until a real run confirms the install
+  # steps behave the same way on ubuntu-latest as they do here.
+  e2e-linux:
+    name: e2e (flox + nix + devbox)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      # flox's own installer provisions a private Nix store + nix-daemon
+      # (there is no separate system-wide Nix install anywhere in this
+      # repo's own Dockerfile either) — same pinned .deb, same live
+      # SHA256SUMS verification the Dockerfile uses.
+      - name: install flox (also provides nix + nix-daemon)
+        env:
+          FLOX_VERSION: "1.14.0"
+        run: |
+          set -eu
+          cd /tmp
+          case "$(dpkg --print-architecture)" in
+            amd64) FLOX_ARCH=x86_64 ;;
+            arm64) FLOX_ARCH=aarch64 ;;
+            *) echo "unsupported architecture: $(dpkg --print-architecture)" >&2; exit 1 ;;
+          esac
+          DEB="flox-${FLOX_VERSION}.${FLOX_ARCH}-linux.deb"
+          curl -fsSLO "https://downloads.flox.dev/by-env/stable/deb/${DEB}"
+          curl -fsSL "https://downloads.flox.dev/by-env/stable/flox-${FLOX_VERSION}.SHA256SUMS" \
+            | grep "deb/${DEB}\$" | awk -v f="$DEB" '{print $1"  "f}' | sha256sum -c -
+          sudo apt-get update && sudo apt-get install -y --no-install-recommends "./${DEB}"
+          flox --version
+
+      # flox's own nix.conf does not enable `nix-command`/`flakes` for the
+      # bare `nix` binary it puts on PATH — only flox's internal wrapper
+      # has them on. `provider::nix` and `provider::devbox` both invoke
+      # that bare binary directly, so without this every test that
+      # reaches a real `nix` subprocess fails with "experimental Nix
+      # feature '...' is disabled" — measured directly against this exact
+      # flox version, same fix applied to `.devcontainer/Dockerfile`.
+      - name: enable nix-command + flakes for the bare nix binary
+        run: echo "experimental-features = nix-command flakes" | sudo tee -a /etc/nix/nix.conf
+
+      - name: install devbox
+        env:
+          DEVBOX_VERSION: "0.18.0"
+        run: |
+          set -eu
+          cd /tmp
+          case "$(dpkg --print-architecture)" in
+            amd64) DEVBOX_ARCH=amd64 ;;
+            arm64) DEVBOX_ARCH=arm64 ;;
+            *) echo "unsupported architecture: $(dpkg --print-architecture)" >&2; exit 1 ;;
+          esac
+          TARBALL="devbox_${DEVBOX_VERSION}_linux_${DEVBOX_ARCH}.tar.gz"
+          BASE="https://github.com/jetify-com/devbox/releases/download/${DEVBOX_VERSION}"
+          curl -fsSLO "${BASE}/${TARBALL}"
+          curl -fsSL "${BASE}/checksums.txt" | grep " ${TARBALL}\$" | sha256sum -c -
+          tar xzf "${TARBALL}" devbox
+          sudo mv devbox /usr/local/bin/devbox
+          sudo chmod +x /usr/local/bin/devbox
+          devbox version
+
+      - name: start nix-daemon
+        run: sudo service nix-daemon status || sudo service nix-daemon start
+
+      - run: cargo test
+        env:
+          DEVBOX_NO_TELEMETRY: "1"
+
+      - name: report what actually ran vs. self-skipped
+        if: always()
+        run: cargo test -- --nocapture 2>&1 | grep -i skipping || true
