@@ -44,8 +44,8 @@ const NOT_YET_SUPPORTED: &[(&str, &str)] = &[
     ),
 ];
 
-/// Validate an `env.provider` value. `Ok(())` for `"flox"`, `"nix"`, and
-/// nix's `"flake"`/`"flakes"` aliases.
+/// Validate an `env.provider` value. `Ok(())` for `"flox"`, `"nix"` (and
+/// its `"flake"`/`"flakes"` aliases), and `"devbox"`.
 pub fn validate_provider(name: &str) -> Result<(), ProviderError> {
     if SUPPORTED.contains(&name) {
         return Ok(());

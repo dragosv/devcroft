@@ -34,8 +34,9 @@ non-allowlisted one stays refused.
 Before isolation, a dev server bound inside a sandbox answered on the
 host's own `127.0.0.1:<port>`; now it does not — measured, both
 directions. That is the same property that stops two sandboxes colliding,
-seen from the other side. `up` prints a note naming
-`devcroft ssh -L` when it applies, `policy --render` marks the ports
+seen from the other side. `up` prints a note naming the
+`ssh -L <local>:127.0.0.1:<port> <name>.devcroft` forwarding when it
+applies, `policy --render` marks the ports
 namespace-local, and `tests/host_port_reachability.rs` asserts both
 directions so a future host-side mapping (fleet's D8) has to update the
 claim rather than silently contradict it.

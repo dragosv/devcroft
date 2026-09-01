@@ -82,7 +82,7 @@ fn namespace_summary(compiled: &CompiledPolicy) -> &'static str {
         "shared with the host (network.default = \"allow\")"
     } else if !compiled.network_ports.is_empty() {
         "own (declared ports are reachable inside the sandbox and via \
-         `devcroft ssh -L`, not on the host's loopback)"
+         `ssh -L <local>:127.0.0.1:<port> <name>.devcroft`, not on the host's loopback)"
     } else {
         // No longer conditional on services: every `network.default =
         // \"deny\"` sandbox is isolated, because Landlock's network rules

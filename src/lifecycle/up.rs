@@ -512,8 +512,9 @@ fn up_process(
     // running a dev server has no way to discover that except by the
     // browser failing to connect. Measured: with `default = "deny"` and
     // `ports = [18440]`, a server bound inside the sandbox answers `200`
-    // through `devcroft ssh -L` and nothing at all on the host's own
-    // `127.0.0.1:18440`, where before isolation it answered directly.
+    // through `ssh -L <local>:127.0.0.1:18440 <name>.devcroft` and nothing
+    // at all on the host's own `127.0.0.1:18440`, where before isolation
+    // it answered directly.
     //
     // CLAUDE.md's "degraded capabilities are surfaced, never silent"
     // invariant is about capabilities the *host* cannot enforce, so this
@@ -530,7 +531,7 @@ fn up_process(
         eprintln!(
             "devcroft: note: this sandbox has its own network namespace, so its \
              declared port(s) {} are reachable from inside it and through \
-             `devcroft ssh -L <local>:127.0.0.1:<port> {}`, but not directly on \
+             `ssh -L <local>:127.0.0.1:<port> {}.devcroft`, but not directly on \
              the host's own loopback",
             ports.join(", "),
             manifest.sandbox.name,

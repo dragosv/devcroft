@@ -1,9 +1,11 @@
 # devcroft
 
-**Isolated, reproducible development environments in seconds, with no daemon,
-no image build, no container, and no VM.** Each one gets its toolchain from a
-lockfile, a boundary the kernel enforces, its own network namespace, and a real
-SSH server your editor connects to like any remote machine.
+**Isolated, reproducible development environments in seconds, with no
+host-wide daemon to install, no image build, no container, and no VM.**
+Each one gets its toolchain from a lockfile, a boundary the kernel
+enforces, a private network namespace for anything with ports or
+services, and a real SSH server your editor connects to like any remote
+machine.
 
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE-APACHE)
 [![Rust](https://img.shields.io/badge/Rust-edition%202024-orange.svg)](Cargo.toml)
@@ -26,34 +28,72 @@ schema per branch, which means a destructive migration from one agent takes out
 everybody. A container per branch really does fix it, and costs enough that
 people run four and stop.
 
-devcroft gives each sandbox **its own network namespace**. The same committed
-port in every sandbox, no collision, no allocation, nothing for the service to
-cooperate with — and outbound access still works inside it, so an agent gets both
-its own Postgres and the registries it needs.
+devcroft gives each sandbox **its own network namespace** whenever
+`network.default = "deny"` — the setting anything declaring ports or
+services needs anyway. The same committed port in every sandbox, no
+collision, no allocation, nothing for the service to cooperate with —
+and outbound access still works inside it, so an agent gets both its own
+Postgres and the registries it needs.
 
 ## Install
 
 ```sh
 git clone https://github.com/dragosv/devcroft && cd devcroft
-cargo build --release
+cargo install --path .
 ```
 
-Requires Rust stable (edition 2024) and one of `flox`, `nix`, or `devbox` —
-devcroft does not manage packages, it sandboxes an environment one of those
-produces. Not on crates.io yet; see [Status](#status).
+Requires Rust stable (edition 2024) and one of `flox`, `nix`, or `devbox`
+— devcroft does not manage packages, it sandboxes an environment one of
+those produces. Devbox itself builds on Nix, so a devbox setup still
+needs a working Nix installation underneath it. Not on crates.io yet;
+see [Status](#status). Run `devcroft doctor` to check what this host
+actually has before the first `up`.
 
 ## Run it!
 
 devcroft needs a project that already has an environment. From an empty
-directory:
+Go project:
 
 ```console
 $ flox init
 ✔ Created environment 'demo-project' (aarch64-linux)
 
-$ flox install bash coreutils ripgrep
-✔ 'bash', 'coreutils', 'ripgrep' installed to environment 'demo-project'
+$ flox install go
+✔ 'go' installed to environment 'demo-project'
+```
 
+Go's build cache has to live inside the project directory too — same
+reason the Rust sample projects redirect `CARGO_HOME`: anything outside
+the project root is refused by the kernel like any other undeclared
+path. One-time addition to `.flox/env/manifest.toml`:
+
+```toml
+[vars]
+GOCACHE = "${FLOX_ENV_PROJECT}/.gocache"
+GOTMPDIR = "${FLOX_ENV_PROJECT}/.gocache"
+```
+
+```go
+// main.go
+package main
+
+import (
+	"fmt"
+	"os"
+)
+
+func main() {
+	if len(os.Args) > 1 && os.Args[1] == "probe" {
+		probe()
+		return
+	}
+	fmt.Println("hello from inside")
+	wd, _ := os.Getwd()
+	fmt.Println(wd)
+}
+```
+
+```console
 $ devcroft init
 devcroft: wrote /home/you/demo-project/devcroft.toml
 devcroft: found an existing flox environment (.flox/); ready for `devcroft up`.
@@ -62,28 +102,40 @@ $ devcroft up
 devcroft: bringing up sandbox 'demo-project'...
 devcroft: sandbox 'demo-project' is started.
 
-$ devcroft exec -- bash -c 'echo hello from inside; pwd'
+$ devcroft exec -- go run .
 hello from inside
 /home/you/demo-project
 ```
 
 That's it. Commands now run against the packages in that lockfile, with
 read/write access to the project directory and **nothing else** — your SSH keys,
-your cloud credentials, and the rest of your disk are refused by the kernel:
+your cloud credentials, and the rest of your disk are refused by the kernel.
+`probe()` (added to `main.go` above) tries all three:
+
+```go
+func probe() {
+	home, _ := os.UserHomeDir()
+	if _, err := os.ReadFile(home + "/.ssh/known_hosts"); err != nil {
+		fmt.Println(err)
+	}
+	if err := os.WriteFile("/etc/devcroft-probe", []byte("x"), 0o644); err != nil {
+		fmt.Println(err)
+	}
+	if err := os.RemoveAll(home); err != nil {
+		fmt.Println(err)
+	}
+}
+```
 
 ```console
-$ devcroft exec -- cat ~/.ssh/known_hosts
-cat: /home/you/.ssh/known_hosts: Permission denied
-
-$ devcroft exec -- touch /etc/devcroft-probe
-touch: cannot touch '/etc/devcroft-probe': Permission denied
-
-$ devcroft exec -- rm -rf ~
-rm: cannot remove '/home/you': Permission denied
+$ devcroft exec -- go run . probe
+open /home/you/.ssh/known_hosts: permission denied
+open /etc/devcroft-probe: permission denied
+open /home: permission denied
 ```
 
 Nothing was asked politely and nothing cooperated: an agent that decides to
-delete your home directory gets `EPERM`, whatever it intended.
+delete your home directory gets `EACCES`, whatever it intended.
 
 ## Make it your own!
 
@@ -137,7 +189,7 @@ network.allow_domain:
   index.crates.io                          manifest:network.allow
 network.ports:
   5432                                     manifest:network.ports
-network.namespace: own (declared ports are reachable inside the sandbox and via `devcroft ssh -L`, not on the host's loopback)
+network.namespace: own (declared ports are reachable inside the sandbox and via `ssh -L <local>:127.0.0.1:<port> my-project.devcroft`, not on the host's loopback)
 network.proxy: 127.0.0.1:34275 (running)
 
 $ devcroft why --host evil.example.net
@@ -163,7 +215,7 @@ The tradeoff is stated out loud at `up`, not discovered later:
 ```console
 $ devcroft up
 devcroft: bringing up sandbox 'my-project'...
-devcroft: note: this sandbox has its own network namespace, so its declared port(s) 5432 are reachable from inside it and through `devcroft ssh -L <local>:127.0.0.1:<port> my-project`, but not directly on the host's own loopback
+devcroft: note: this sandbox has its own network namespace, so its declared port(s) 5432 are reachable from inside it and through `ssh -L <local>:127.0.0.1:<port> my-project.devcroft`, but not directly on the host's own loopback
 devcroft: sandbox 'my-project' is started.
 ```
 

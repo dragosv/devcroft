@@ -16,7 +16,7 @@ description = "Isolated, reproducible development environments built on OS-level
 license = "Apache-2.0"
 repository = "https://github.com/dragosv/devcroft"
 homepage = "https://github.com/dragosv/devcroft"
-readme = "README.md"
+readme = "README-crate.md"
 keywords = ["sandbox", "landlock", "devcontainer", "ssh", "reproducible"]
 categories = ["command-line-utilities", "development-tools"]
 # An allowlist, not an `exclude` denylist: the default package swept in
@@ -36,7 +36,13 @@ categories = ["command-line-utilities", "development-tools"]
 # `cargo install devcroft` put a second, generically-named `spike` binary
 # on the user's PATH. Excluding the source removes the target — the spike
 # is a design proof for this repository, not a program anyone installs.
-include = ["/src/**/*.rs", "!/src/bin/spike.rs", "/README.md", "/LICENSE-APACHE", "/NOTICE"]
+# `README.md` itself is deliberately NOT shipped: it's the GitHub-facing
+# doc (architecture, comparisons, status, full command surface) and
+# assumes a repo checkout — its relative links to docs/, samples/, and
+# openspec/changes/ don't resolve from an unpacked crate. The crate ships
+# `README-crate.md` instead: install + quick-start only, same split
+# nono-cli uses between its GitHub README and its crate README.
+include = ["/src/**/*.rs", "!/src/bin/spike.rs", "/README-crate.md", "/LICENSE-APACHE", "/NOTICE", "/THIRD-PARTY-LICENSES.md"]
 
 [dependencies]
 base64 = "0.22.1"

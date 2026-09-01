@@ -1,7 +1,8 @@
 //! The `env-provider` capability: resolves the declarative environment
 //! (toolchain, PATH, env vars) a manifest names, host-side, before any
 //! sandbox restriction applies (design.md decision 2). Implemented
-//! providers: flox (task 3.2) and nix flakes (add-nix-provider). This
+//! providers: flox (task 3.2), nix flakes (add-nix-provider), and devbox
+//! (add-devbox-provider). This
 //! module also validates `env.provider` against every other name devcroft
 //! is ever going to support, rejecting the rest up front with a message
 //! naming why, and dispatches the validated name to the right
