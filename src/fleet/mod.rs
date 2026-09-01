@@ -17,4 +17,5 @@
 //! network-isolated except its own loopback, which is a safe default
 //! rather than a half-finished one.
 
+pub mod mount;
 pub mod netns;

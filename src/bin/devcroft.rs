@@ -43,6 +43,15 @@ fn main() {
         // the same way production will — a test-only reimplementation
         // could drift from what devcroft actually does.
         Some("__netns_agent_sim") => std::process::exit(netns_agent_sim_main(&args[2..])),
+        // Hidden, same reasoning as `__netns_probe`: entering a mount
+        // namespace is irreversible for the process that does it.
+        Some("__mount_probe") => std::process::exit(mount_probe_main(&args[2..])),
+        // Hidden: proves a mount made inside a fresh, private-propagation
+        // mount namespace does not leak to the host's own namespace, for
+        // `tests/fleet_mount.rs`. Lives in the real binary rather than the
+        // test for the same reason `__netns_agent_sim` does — a test-only
+        // reimplementation could drift from what devcroft actually does.
+        Some("__mount_isolation_sim") => std::process::exit(mount_isolation_sim_main(&args[2..])),
         // Hidden: `crate::proxy::spawn` re-execs into this to run the
         // egress proxy (add-egress-proxy) as its own permanently
         // unsandboxed process — never `__keeper`'s. Not the user-facing
@@ -667,21 +676,38 @@ fn bind_probe_main(args: &[String]) -> i32 {
 
 /// Whether this host could give a fleet agent its own network namespace,
 /// which is what lets N agents each bind the same service port
-/// (`add-linux-agent-fleet`'s `service-ports`).
+/// (`add-linux-agent-fleet`'s `service-ports`) — **and**, on the same
+/// line, whether it can give every sandbox its own mount namespace
+/// (`add-mount-isolation`'s `filesystem-view`).
 ///
-/// Reported as `[INFO]`, never `[FAIL]`: `up` already degrades
-/// gracefully when this is unavailable (a qualifying sandbox falls back
-/// to the host's shared port table with a warning, rather than failing),
-/// so a host that cannot do this is not broken — it just does not get
-/// the port-isolation fix for sandboxes with `network.default = "deny"`,
-/// no `network.allow`, and declared services or ports. Reporting it as a
-/// failure would make `doctor` red for a degrade `up` already handles.
+/// One probe, one report, deliberately (design.md M4: "extends the same
+/// report rather than adding a second probe"). Both rest on the identical
+/// unprivileged user namespace — `netns::probe`'s own child adds
+/// `CLONE_NEWNET` to that `unshare()` call, `fleet::mount`'s adds
+/// `CLONE_NEWNS`, and the three things that can independently deny either
+/// (a container runtime's seccomp profile, an AppArmor policy restricting
+/// unprivileged user namespaces, `max_user_namespaces`) all gate the user
+/// namespace itself, not which companion namespace type rides with it. A
+/// second fork here to prove that again would cost without telling the
+/// operator anything the first one didn't already.
+///
+/// Reported as `[INFO]`, never `[FAIL]`, for network isolation:  `up`
+/// already degrades gracefully when it is unavailable (a qualifying
+/// sandbox falls back to the host's shared port table with a warning
+/// rather than failing), so a host that cannot do this is not broken —
+/// it just does not get the port-isolation fix for sandboxes with
+/// `network.default = "deny"`, no `network.allow`, and declared services
+/// or ports. Mount isolation has no such fallback (design.md M4: it fails
+/// closed rather than starting a sandbox weaker than its rendered
+/// policy claims), so this same unavailability is what `up` reports as a
+/// hard failure for every sandbox on such a host, not a degrade.
 ///
 /// No longer fleet-only, and this doc corrected accordingly: `up` itself
-/// uses this today for any qualifying single sandbox
+/// uses network isolation today for any qualifying single sandbox
 /// (`CompiledPolicy::wants_network_isolation`), which is what makes two
-/// sandboxes each declaring Postgres on 5432 stop colliding. Fleet, once
-/// built, is a second consumer of the same primitive.
+/// sandboxes each declaring Postgres on 5432 stop colliding, and mount
+/// isolation for every sandbox unconditionally. Fleet, once built, is a
+/// second consumer of both primitives.
 ///
 /// Probed by attempting it in a throwaway child rather than reading a
 /// sysctl: seccomp, AppArmor and `max_user_namespaces` can each deny it
@@ -693,14 +719,17 @@ fn doctor_agent_namespaces() {
     };
     match devcroft::fleet::netns::probe(&exe) {
         Ok(true) => println!(
-            "[INFO] network namespaces: available on this host (sandboxes with \
+            "[INFO] namespaces: available on this host — sandboxes with \
              `network.default = \"deny\"`, no `network.allow`, and services or \
-             `network.ports` each get their own port table)"
+             `network.ports` each get their own port table, and every sandbox \
+             gets its own filesystem view (mount isolation)"
         ),
         Ok(false) | Err(_) => println!(
-            "[INFO] network namespaces: unavailable on this host; qualifying \
-             sandboxes fall back to the host's shared port table, and `up` warns \
-             when that happens"
+            "[INFO] namespaces: unavailable on this host; qualifying sandboxes \
+             fall back to the host's shared port table for network isolation \
+             (and `up` warns when that happens), and `up` fails outright for \
+             mount isolation rather than starting a sandbox weaker than its \
+             rendered policy claims"
         ),
     }
 }
@@ -899,6 +928,87 @@ fn netns_agent_sim_main(args: &[String]) -> i32 {
     }
     print!("{buf}");
     if buf == reply { 0 } else { 1 }
+}
+
+/// Capability gate: can this host enter a private mount namespace at all?
+/// Nothing more — mirrors `netns_probe_main`'s own split between "can this
+/// happen" and "does it behave", and for the identical reason
+/// (`tests/fleet_netns.rs`'s doc comment on `namespaces_available`): a gate
+/// must depend on strictly less than what the tests it guards assert, or a
+/// regression in the feature reads as an unsupported host.
+fn mount_probe_main(_args: &[String]) -> i32 {
+    if devcroft::fleet::mount::enter_mount_namespace().is_err() {
+        return 1;
+    }
+    if devcroft::fleet::mount::make_propagation_private().is_err() {
+        return 1;
+    }
+    0
+}
+
+/// Proves a mount made after [`devcroft::fleet::mount::make_propagation_private`]
+/// does not leak to the host's own mount namespace — the property the
+/// primitive exists for, not merely that the two calls returned `Ok`.
+///
+/// Mounts a `tmpfs` over the given (pre-existing, host-visible) directory
+/// and writes a marker file into it, then signals `READY` and blocks.
+/// The caller checks that same path from the host's own mount namespace:
+/// if propagation were not private, the marker would be visible there too.
+fn mount_isolation_sim_main(args: &[String]) -> i32 {
+    use std::io::Write;
+
+    let Some(dir) = args.first() else {
+        eprintln!("devcroft __mount_isolation_sim: usage: <dir>");
+        return 2;
+    };
+
+    if let Err(e) = devcroft::fleet::mount::enter_mount_namespace() {
+        eprintln!("entering mount namespace: {e}");
+        return 1;
+    }
+    if let Err(e) = devcroft::fleet::mount::make_propagation_private() {
+        eprintln!("making propagation private: {e}");
+        return 1;
+    }
+
+    let dir_c = match std::ffi::CString::new(dir.as_str()) {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("invalid path {dir}: {e}");
+            return 2;
+        }
+    };
+    let tmpfs = c"tmpfs";
+    // SAFETY: `dir_c` and `tmpfs` are valid, NUL-terminated C strings; the
+    // remaining arguments are null/zero as an ordinary `tmpfs` mount needs
+    // no source device or extra data. `CAP_SYS_ADMIN` for this call comes
+    // from the user namespace `enter_mount_namespace` already entered.
+    let ret = unsafe {
+        libc::mount(
+            tmpfs.as_ptr(),
+            dir_c.as_ptr(),
+            tmpfs.as_ptr(),
+            0,
+            std::ptr::null(),
+        )
+    };
+    if ret != 0 {
+        eprintln!(
+            "mounting tmpfs on {dir}: {}",
+            std::io::Error::last_os_error()
+        );
+        return 1;
+    }
+
+    if let Err(e) = std::fs::write(std::path::Path::new(dir).join("marker"), b"present") {
+        eprintln!("writing marker: {e}");
+        return 1;
+    }
+
+    print!("READY");
+    let _ = std::io::stdout().flush();
+    std::thread::sleep(std::time::Duration::from_secs(30));
+    0
 }
 
 /// Whether a sandbox on this host can bind a loopback listener under a
