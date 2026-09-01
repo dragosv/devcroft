@@ -177,7 +177,7 @@ pub fn make_propagation_private() -> io::Result<()> {
 /// the keeper's own unconditional system requirements this function adds
 /// regardless of what the manifest granted: `/proc`, bind-mounted from
 /// the host's own (needed for `/proc/self/*` to resolve correctly for
-/// the keeper and for every later session — see [`mount_proc`]'s own doc
+/// the keeper and for every later session — see `mount_proc`'s own doc
 /// for why this is a bind rather than the fresh instance design.md
 /// originally called for), and a minimal `/dev`. `/tmp` is special-cased
 /// to a fresh, private `tmpfs` rather than a bind of the host's shared one
