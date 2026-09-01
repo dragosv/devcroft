@@ -234,12 +234,23 @@ before the plan is written.
 
 ## 5. Downstream
 
-- [ ] 5.1 `add-linux-agent-fleet` task group 2 consumes this rather than
+- [x] 5.1 `add-linux-agent-fleet` task group 2 consumes this rather than
       implementing its own mount plan — the same relationship fleet
-      already has to `fleet::netns`.
-- [ ] 5.2 `sandbox-provisioning`'s P2a/P2b: the daemon-socket half of its
+      already has to `fleet::netns`. **Nothing to change**: that change's
+      own tasks.md already reads "Consume `add-mount-isolation` rather
+      than implementing this twice", written forward-looking before this
+      change existed. `fleet::mount::construct_view` is now real code for
+      it to consume; actually wiring fleet's own agent spawn through it
+      (task group 2's remaining items — PID namespace/reaping, the
+      per-agent workspace bind, verifying the agent's own runtime is in
+      the view) is that change's own future work, not this one's.
+- [x] 5.2 `sandbox-provisioning`'s P2a/P2b: the daemon-socket half of its
       claim becomes kernel-enforced rather than "devcroft declines to
       grant it". Correct that design.md note again when this lands.
-- [ ] 5.3 `docs/known-gaps.md` and `docs/threat-model.md`: the AF_UNIX
+      **Done** — corrected in the same commit as task 4.1's test
+      inversion.
+- [x] 5.3 `docs/known-gaps.md` and `docs/threat-model.md`: the AF_UNIX
       entry moves from open gap to closed, or to whatever remains true on
-      macOS (open question 3).
+      macOS (open question 3). **Done** — both corrected alongside task
+      4.1; macOS stays explicitly unmeasured and deferred (design.md Open
+      Question 3, unchanged by this change).
