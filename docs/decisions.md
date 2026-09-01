@@ -162,6 +162,47 @@ upstream churn in flakes, the daemon, or store semantics now hits every
 provider devcroft ships simultaneously, and that concentration risk is
 accepted here, not denied.
 
+### Not yet built: devenv
+
+**Property that fails:** none established. This is a sequencing entry, not
+a rejection, and it exists because devenv was previously only *classified*
+here (as Nix-based, in the tier list above) and never argued.
+
+devenv is closure tier by construction: it builds on Nix, so criteria 3
+and 5 are answered by the same shared store model flox, nix flakes and
+devbox already use. That makes it the cheapest provider left to add —
+the "third provider is free" amortization applies to it, because it would
+be the fourth *nix* provider rather than the first of a new kind.
+
+**The one open question is criterion 4**, and it must be measured rather
+than assumed. `enterShell` is project code, so the entry point devcroft
+uses has to hand back the environment without running it. devenv wrapping
+Nix makes a clean answer *likely* — nix itself has one in
+`print-dev-env --json` — but "likely" is exactly what the criterion-4
+table above exists to refuse: two shipped providers violated this
+unnoticed (`fix-provisioning-hooks`) precisely because the entry point was
+assumed rather than checked.
+
+**Scheduled at 0.5, with `sandbox-provisioning`, and the reason is that
+measurement.** What the correct behaviour *is* for a provider that runs a
+hook changes at exactly that release: today devcroft warns, because
+provisioning is unconfined either way and refusing would block a user from
+something their own shell does identically; under `sandbox-provisioning`
+the promise becomes "activation is confined" and such a provider must fail
+closed at layer `provider`. Qualifying devenv before 0.5 means measuring
+against a promise about to change and then revisiting the decision;
+qualifying it at 0.5 means deciding once, against the final one.
+
+It is wanted before 0.6 rather than after: `add-manifestless-mode` exists
+to be pointed at repositories nobody has read, and detecting a
+`devenv.nix` only to report it unsupported is a poor version of that.
+
+Two things to settle when it is built, neither affecting qualification:
+devenv's `processes` are supervised by process-compose, the same
+supervisor devcroft already generates its own config for (`src/services`),
+so the overlap needs a decision rather than a collision; and its `services`
+concept has to map onto `ServiceSupport` the way flox's does.
+
 ### Rejected: `host` / `none` passthrough
 
 **Property that fails:** none — it does not even attempt reproducibility.

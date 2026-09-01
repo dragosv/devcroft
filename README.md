@@ -238,11 +238,31 @@ ssh
   proxy <name>.devcroft       ProxyCommand handler; not typed directly
 ```
 
-Three environment providers are supported — **flox**, **nix flakes**, and
-**devbox**. Each builds a *closure*: a complete, self-contained package set, so
-what runs inside doesn't depend on what you happen to have installed. There is no
-"just use the host" fallback, on purpose. Eight sandboxes of one project cost one
-build, because they share a single content-addressed store.
+## Environments
+
+Three providers are supported — **flox**, **nix flakes**, and **devbox**. Each
+builds a *closure*: a complete, self-contained package set, so what runs inside
+doesn't depend on what you happen to have installed. There is no "just use the
+host" fallback, on purpose. Eight sandboxes of one project cost one build,
+because they share a single content-addressed store.
+
+**devenv is next, and only unbuilt.** It is Nix-based, so it would be a fourth
+closure provider rather than a new kind — the cheapest one left. Its one open
+question is whether its environment can be captured without running
+`enterShell`, and that is scheduled with `sandbox-provisioning`, because what
+the right answer *is* for a provider that runs a hook changes at that release.
+
+**mise, pixi and hermit are a different answer, and not "they failed the
+test".** mise passes devcroft's six-criterion provider test, and the shape an
+implementation would take is written down. What stops it is structural: those
+tools link against whichever libc a host happens to have, which makes them an
+*artifact* tier — identical downloaded artifacts, host-dependent behaviour —
+rather than the closure tier above, and an artifact provider has to declare its
+own host library grants instead of inheriting them. That is a second, weaker
+guarantee, so it is gated on demonstrated demand rather than shipped on spec.
+
+[docs/decisions.md](docs/decisions.md) has the test and an entry per answer,
+including the ones that are rejections rather than schedules.
 
 ## How it compares
 
@@ -316,8 +336,6 @@ pre-1.0, unaudited, single-maintainer software with no security SLA — if you f
 a problem, [open an issue](https://github.com/dragosv/devcroft/issues) like any
 other bug. A private disclosure process is worth having once there's a userbase
 for it to protect; see [docs/roadmap.md](docs/roadmap.md).
-
-## License
 
 ## License
 

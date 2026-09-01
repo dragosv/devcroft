@@ -155,6 +155,18 @@ repository without it.
 It is ordered after the fleet work because the fleet claim is what devcroft
 is for, and because this change's own dependency graph is the deepest here.
 
+**A devenv provider belongs here too, and for this change's reason rather
+than its own.** devenv is closure tier and would be the fourth *nix*
+provider, so it is the cheapest one left — its only open question is
+criterion 4, whether its environment can be captured without running
+`enterShell`. What the right answer *is* for a provider that runs a hook
+flips at exactly this release: warn today, fail closed at layer `provider`
+once activation is confined. Qualifying it earlier means measuring against
+a promise about to change; qualifying it here means deciding once. It is
+wanted before 0.6, since pointing `add-manifestless-mode` at a repository
+and reporting `devenv.nix` unsupported is a poor version of "point it at
+anything". See `docs/decisions.md` §1 for the entry.
+
 ## 0.6 — point it at anything
 
 **`add-manifestless-mode`** (0/27).
