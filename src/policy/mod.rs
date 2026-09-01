@@ -10,7 +10,7 @@ mod degraded;
 mod render;
 mod why;
 
-pub use capability_set::{CapabilityPlan, CapabilitySetError};
+pub use capability_set::{CapabilityPlan, CapabilitySetError, ResolvedGrant};
 pub use degraded::{
     DegradedCapability, backend_support, backend_supported, detect as detect_degraded,
 };

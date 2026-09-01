@@ -62,6 +62,23 @@ keeper self-restricts).
 helper, for the same reasons. Read bubblewrap's mount setup as a reference
 for what a working view needs; do not depend on it.
 
+**"Merged-`/usr` symlinks" above was read here first and cashed out
+literally during task 2.1's implementation, not left as a note to
+revisit.** `resolved_grants` canonicalizes every entry, so a grant of
+`/lib` (this host: a symlink to `/usr/lib`) only ever bind-mounts the
+real target, `/usr/lib` — correct for anything that opens a path through
+ordinary resolution, wrong for an ELF binary's own hard-coded interpreter
+path. A binary linked on this host names its dynamic linker
+`/lib/ld-linux-aarch64.so.1` literally; the kernel's loader resolves that
+*inside the view*, where `/lib` does not exist unless something creates
+it. Measured: a standalone connect-probe binary — this change's own live
+isolation check — failed with a plain `ENOENT` on exec, not a linker
+error, until `fleet::mount::setup_merged_usr_compat` started recreating
+`/lib`, `/lib64`, `/bin`, `/sbin` as symlinks whenever the host itself has
+them. Bubblewrap's own README lists this exact case among its mount
+setup's reasons to exist; it was not obvious in advance which concrete
+failure it would cause here, only that it would.
+
 ## M3 — The view must contain the egress proxy socket
 
 **Decision.** The mount plan explicitly includes the sandbox's own proxy

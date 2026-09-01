@@ -52,6 +52,11 @@ fn main() {
         // test for the same reason `__netns_agent_sim` does — a test-only
         // reimplementation could drift from what devcroft actually does.
         Some("__mount_isolation_sim") => std::process::exit(mount_isolation_sim_main(&args[2..])),
+        // Hidden: live-verifies `fleet::mount::construct_view` against a
+        // real project's compiled policy — not a unit test, since the
+        // whole point is proving a real toolchain still works after
+        // pivot_root, which nothing short of actually running it can show.
+        Some("__mount_view_probe") => std::process::exit(mount_view_probe_main(&args[2..])),
         // Hidden: `crate::proxy::spawn` re-execs into this to run the
         // egress proxy (add-egress-proxy) as its own permanently
         // unsandboxed process — never `__keeper`'s. Not the user-facing
@@ -1006,6 +1011,139 @@ fn mount_isolation_sim_main(args: &[String]) -> i32 {
     let _ = std::io::stdout().flush();
     std::thread::sleep(std::time::Duration::from_secs(30));
     0
+}
+
+/// Live verification for `fleet::mount::construct_view`, not a unit test.
+///
+/// Usage: `<project-root> <new-root-scratch-dir> [--provider-grant PATH]...
+/// -- <cmd> [args...]`. Reads `<project-root>/devcroft.toml`, compiles it,
+/// folds in each `--provider-grant` as though a provider resolved it
+/// (`up` would call `CompiledPolicy::with_provider_grants` with the
+/// provider's real resolution; this probe takes it as an argument since
+/// it does not run a provider itself), resolves the grants, enters a
+/// mount namespace, builds the view, and execs the given command inside
+/// it. Exit code is the command's own — this is how task 4.4 ("a real
+/// compile succeeds inside the view") gets checked before anything here
+/// is trusted.
+fn mount_view_probe_main(args: &[String]) -> i32 {
+    let Some(project_root) = args.first() else {
+        eprintln!(
+            "devcroft __mount_view_probe: usage: <project-root> <new-root> \
+             [--provider-grant PATH]... -- <cmd> [args...]"
+        );
+        return 2;
+    };
+    let Some(new_root) = args.get(1) else {
+        eprintln!("devcroft __mount_view_probe: missing <new-root>");
+        return 2;
+    };
+
+    let mut provider_grants = Vec::new();
+    let mut proxy_socket = None;
+    let mut i = 2;
+    while let Some(a) = args.get(i) {
+        if a == "--provider-grant" {
+            let Some(v) = args.get(i + 1) else {
+                eprintln!("devcroft __mount_view_probe: --provider-grant needs a value");
+                return 2;
+            };
+            provider_grants.push(v.clone());
+            i += 2;
+        } else if a == "--proxy-socket" {
+            let Some(v) = args.get(i + 1) else {
+                eprintln!("devcroft __mount_view_probe: --proxy-socket needs a value");
+                return 2;
+            };
+            proxy_socket = Some(std::path::PathBuf::from(v));
+            i += 2;
+        } else if a == "--" {
+            i += 1;
+            break;
+        } else {
+            eprintln!("devcroft __mount_view_probe: unexpected argument {a}");
+            return 2;
+        }
+    }
+    let command = &args[i..];
+    let Some((cmd, cmd_args)) = command.split_first() else {
+        eprintln!("devcroft __mount_view_probe: missing command after --");
+        return 2;
+    };
+
+    // Must be absolute before `pivot_root`: this process's cwd stops
+    // meaning what it used to the moment `construct_view` returns, so a
+    // relative argument resolved *after* that point would resolve
+    // against the new root instead of wherever the caller actually meant.
+    let project_root = match std::fs::canonicalize(project_root) {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("canonicalizing {project_root}: {e}");
+            return 2;
+        }
+    };
+    let project_root = project_root.as_path();
+    let config_text = match std::fs::read_to_string(project_root.join("devcroft.toml")) {
+        Ok(t) => t,
+        Err(e) => {
+            eprintln!("reading devcroft.toml: {e}");
+            return 2;
+        }
+    };
+    let (manifest, _warnings) = match devcroft::config::parse(&config_text) {
+        Ok(m) => m,
+        Err(e) => {
+            eprintln!("parsing devcroft.toml: {e}");
+            return 2;
+        }
+    };
+    let mut compiled = devcroft::policy::compile(&manifest);
+    if !provider_grants.is_empty() {
+        compiled = compiled.with_provider_grants(
+            Box::leak(manifest.env.provider.clone().into_boxed_str()),
+            &provider_grants,
+        );
+    }
+    let plan = compiled.to_capability_plan();
+    let grants = match plan.resolved_grants(project_root) {
+        Ok(g) => g,
+        Err(e) => {
+            eprintln!("resolving grants: {e}");
+            return 2;
+        }
+    };
+
+    if let Err(e) = devcroft::fleet::mount::enter_mount_namespace() {
+        eprintln!("entering mount namespace: {e}");
+        return 1;
+    }
+    if let Err(e) = devcroft::fleet::mount::make_propagation_private() {
+        eprintln!("making propagation private: {e}");
+        return 1;
+    }
+    if let Err(e) = std::fs::create_dir_all(new_root) {
+        eprintln!("creating {new_root}: {e}");
+        return 1;
+    }
+    if let Err(e) = devcroft::fleet::mount::construct_view(
+        std::path::Path::new(new_root),
+        &grants,
+        proxy_socket.as_deref(),
+    ) {
+        eprintln!("constructing view: {e}");
+        return 1;
+    }
+
+    let status = std::process::Command::new(cmd)
+        .args(cmd_args)
+        .current_dir(project_root)
+        .status();
+    match status {
+        Ok(s) => s.code().unwrap_or(1),
+        Err(e) => {
+            eprintln!("running {cmd}: {e}");
+            1
+        }
+    }
 }
 
 /// Whether a sandbox on this host can bind a loopback listener under a
