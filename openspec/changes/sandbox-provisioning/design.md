@@ -76,29 +76,30 @@ A hook that itself requires daemon-backed materialization — installing a packa
 at activation time rather than declaring it — **fails closed** at layer
 `provider`. It does not silently receive a writable `/nix` as a fallback.
 
-**Corrected: the daemon socket half of that sentence was false.** It used to
-read "a writable `/nix` or the daemon socket", which asserted something
-devcroft does not enforce. Landlock mediates TCP but not AF_UNIX, so a
-sandbox connects to `/nix/var/nix/daemon-socket/socket` — mode `srw-rw-rw-`
-under nix's multi-user model — whether or not `/nix` is granted. Measured in
-`tests/unix_socket_not_mediated.rs`, which asserts the gap so that closing it
-fails loudly rather than leaving this paragraph stale again.
+**Corrected once already, and corrected again now that the fix has landed.**
+This paragraph used to read "a writable `/nix` or the daemon socket", which
+asserted something devcroft did not yet enforce: Landlock mediates TCP but not
+AF_UNIX, so a sandbox connected to `/nix/var/nix/daemon-socket/socket` — mode
+`srw-rw-rw-` under nix's multi-user model — whether or not `/nix` was granted.
+That gap is why the sentence was walked back to "devcroft never grants" rather
+than "cannot reach": the refusal was devcroft's own, not the kernel's.
 
-What survives: *devcroft never grants* the daemon socket, and the failing-closed
-behaviour at layer `provider` is real. What does not: the implication that a
-hook therefore cannot reach it. Until the sandbox gets a mount namespace that
-does not contain the socket's path, this requirement is enforced by devcroft's
-own refusal to grant, not by the kernel, and P2a/P2b's "agents must not hold
-package-manager authority" is a design intent rather than a boundary on any
-host running a nix daemon.
+**`add-mount-isolation` closed it.** Every sandbox now gets its own mount
+namespace and filesystem view (`fleet::mount::construct_view`); the daemon
+socket's path simply does not resolve inside a view that never contains
+`/nix/var`, and `connect()` fails with `No such file or directory` rather than
+succeeding against whatever authority the daemon extends to a local user.
+Measured live, not assumed: `tests/unix_socket_not_mediated.rs` (inverted
+alongside this correction) asserts the refusal, including a real `up` session
+against a real nix daemon.
 
-**The fix is `add-linux-agent-fleet` task group 2's mount plan**, not a new
-mechanism: masking `/nix` inside an unprivileged
-`unshare(CLONE_NEWUSER | CLONE_NEWNS)` makes the connect fail with `No such
-file or directory` — measured. Seccomp filtering on `connect()` would also
-work and is what this note first proposed, but it filters a syscall whose
-argument still names a real path; removing the path is simpler and closes the
-whole class rather than one socket.
+**So the original sentence, "does not silently receive a writable `/nix` or
+the daemon socket", is true again — now for the reason it originally claimed.**
+P2a/P2b's "agents must not hold package-manager authority" is a kernel-enforced
+boundary on any host running a nix daemon, not only a design intent devcroft
+happens to uphold by never granting the path. `/nix/store` stays visible
+(read-only) for the toolchain the sandbox actually needs; `/nix/var` — the
+daemon socket included — does not exist in the view at all.
 
 Note what P2d changes about the scope of that rule, since the two are easy to
 read as contradicting: P2d removes the need to refuse flox *for having a hook*,

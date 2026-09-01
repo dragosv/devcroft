@@ -776,6 +776,25 @@ fn doctor_agent_namespaces() {
 /// connects, Landlock does not mediate AF_UNIX connect at all and no
 /// grant is needed; if it refuses and the granted run succeeds, a grant
 /// is both necessary and sufficient.
+/// Probe: with a Landlock policy applied *and this sandbox's mount view
+/// constructed* (`add-mount-isolation` task 4.1 — this probe used to
+/// apply Landlock alone, which is exactly the gap
+/// `tests/unix_socket_not_mediated.rs` was written to measure), can this
+/// process still `connect()` to a pathname unix socket?
+///
+/// Argument 1 is the socket path. `--grant` additionally grants that path
+/// read-write in *both* the mount view and the `CapabilitySet` before
+/// restricting; without it the path is ungranted in both and only the
+/// current directory is allowed. The two are built from the identical
+/// grant list, same reasoning as `up`'s own `resolved_grants`/
+/// `to_capability_set` split (`policy/capability_set.rs`): a probe that
+/// let the two diverge would prove nothing about what a real sandbox
+/// does, only about whatever inconsistency crept into this file.
+///
+/// Exit 0 = connected, 1 = refused, 2 = setup failure. Before this
+/// inversion, the *un*granted run connecting proved Landlock does not
+/// mediate AF_UNIX connect at all; now, with the mount view in place
+/// too, the ungranted run refusing is what proves the gap has closed.
 fn uds_probe_main(args: &[String]) -> i32 {
     use std::io::Write;
     use std::os::unix::net::UnixStream;
@@ -791,21 +810,56 @@ fn uds_probe_main(args: &[String]) -> i32 {
     let Ok(cwd) = std::env::current_dir() else {
         return 2;
     };
-    let caps = nono::CapabilitySet::new();
-    let Ok(caps) = caps.allow_path(&cwd, nono::AccessMode::ReadWrite) else {
+    let mut grants = vec![devcroft::policy::ResolvedGrant {
+        path: cwd,
+        mode: nono::AccessMode::ReadWrite,
+    }];
+    if grant {
+        grants.push(devcroft::policy::ResolvedGrant {
+            path: std::path::PathBuf::from(sock),
+            mode: nono::AccessMode::ReadWrite,
+        });
+    }
+
+    // Mount isolation first, matching the real ordering (`up.rs`'s
+    // `pre_exec`: view constructed, then exec, then the keeper applies
+    // Landlock to itself) — a `pivot_root`ed process is what then
+    // self-restricts, not the other way around.
+    if let Err(e) = devcroft::fleet::mount::enter_mount_namespace() {
+        eprintln!("devcroft __uds_probe: entering mount namespace: {e}");
         return 2;
-    };
-    let caps = if grant {
-        match caps.allow_file(std::path::Path::new(sock), nono::AccessMode::ReadWrite) {
+    }
+    if let Err(e) = devcroft::fleet::mount::make_propagation_private() {
+        eprintln!("devcroft __uds_probe: making propagation private: {e}");
+        return 2;
+    }
+    let new_root =
+        std::env::temp_dir().join(format!("devcroft-uds-probe-root-{}", std::process::id()));
+    if std::fs::create_dir_all(&new_root).is_err() {
+        return 2;
+    }
+    if let Err(e) = devcroft::fleet::mount::construct_view(&new_root, &grants, None) {
+        eprintln!("devcroft __uds_probe: constructing view: {e}");
+        return 2;
+    }
+
+    let mut caps = nono::CapabilitySet::new();
+    for g in &grants {
+        // A unix socket special file is not a directory — `allow_file`,
+        // not `allow_path`, matching `capability_set.rs`'s own `grant()`.
+        let result = if g.path.is_dir() {
+            caps.allow_path(&g.path, g.mode)
+        } else {
+            caps.allow_file(&g.path, g.mode)
+        };
+        caps = match result {
             Ok(c) => c,
             Err(e) => {
-                eprintln!("devcroft __uds_probe: granting {sock}: {e}");
+                eprintln!("devcroft __uds_probe: granting {}: {e}", g.path.display());
                 return 2;
             }
-        }
-    } else {
-        caps
-    };
+        };
+    }
     if let Err(e) = nono::Sandbox::apply_auto(&caps) {
         eprintln!("devcroft __uds_probe: apply_auto failed: {e}");
         return 2;

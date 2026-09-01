@@ -121,15 +121,22 @@ authorised to do through the tools it legitimately has.
   production, the sandbox has not solved production governance.
 - Application-level permissions, approval policies, logging and review sit
   beside the sandbox, not under it.
-- **Unix sockets are outside the policy entirely.** Landlock mediates TCP,
-  not AF_UNIX, so a sandboxed process reaches any unix socket the
-  filesystem permissions allow — including ones in ungranted directories.
-  On a host with a nix daemon that means the sandbox holds whatever
-  authority that daemon extends to a local user; on a host with a Docker
-  socket it would mean far more. Measured in
-  `tests/unix_socket_not_mediated.rs`; see `docs/known-gaps.md`. This is a
-  property of the mechanism, not an oversight in the policy, and closing
-  it needs seccomp rather than a Landlock rule.
+- **Pathname unix sockets were outside the policy entirely; this is now
+  closed.** Landlock mediates TCP, not AF_UNIX, so a sandboxed process
+  used to reach any unix socket the filesystem permissions allowed —
+  including ones in ungranted directories, the nix daemon socket
+  included. `add-mount-isolation` closes it: every sandbox gets its own
+  mount namespace and filesystem view, and an ungranted socket's path
+  simply does not resolve inside it. Landlock still governs *access* to
+  what the view contains; the view governs what exists to be reached at
+  all — the two compose rather than one replacing the other. Measured in
+  `tests/unix_socket_not_mediated.rs`; see `docs/known-gaps.md`.
+- **Abstract unix sockets remain outside the policy.** The `@`-prefixed,
+  no-filesystem-path kind (dbus, X11, PipeWire, systemd-journald on a
+  typical desktop) has no path for a mount view to remove — Landlock V6's
+  `LANDLOCK_SCOPE_ABSTRACT_UNIX_SOCKET` is the only lever, and devcroft
+  does not set it yet. Genuinely unclosed, unlike the pathname half
+  above; see `docs/known-gaps.md`.
 
 The value is that the boundary moves out of the prompt and into infrastructure.
 That is a real gain and a bounded one.

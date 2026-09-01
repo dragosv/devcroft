@@ -162,35 +162,75 @@ before the plan is written.
 
 ## 3. Policy integration
 
-- [ ] 3.1 Compile the view with origins, so a path present because the
+- [x] 3.1 Compile the view with origins, so a path present because the
       provider resolved it is distinguishable from one the manifest
-      granted.
-- [ ] 3.2 `policy --render` shows it — the "nothing reaches the backend
+      granted. **Already true by construction, not a separate step**:
+      `resolved_grants` (task 2.1) reads `filesystem_allow`/
+      `filesystem_read`, which already carry `Origin::Manifest`/
+      `Origin::Provider`/`Origin::Baseline` — the view is compiled with
+      origins because it is compiled *from* the same origin-carrying
+      lists Landlock's own grants come from, via the one shared
+      resolver. There was no second compilation step to add origins to.
+- [x] 3.2 `policy --render` shows it — the "nothing reaches the backend
       that `--render` cannot show" invariant applies most strongly here,
       since a view decides what exists rather than what is permitted.
-- [ ] 3.3 `doctor` reports availability alongside the existing
+      **A new `filesystem.view` note in `render.rs`, deliberately not a
+      second section repeating `filesystem.allow`/`filesystem.read`**:
+      since the two are the same resolved list, a second, separately
+      rendered copy would be one invariant away from silently
+      disagreeing with the first. The note explains that equivalence and
+      names what the view adds beyond compiled rules — private `/tmp`,
+      `/proc`, `/dev`, merged-`/usr` symlinks — none of which has a
+      manifest/provider/baseline origin, since none is a policy rule.
+- [x] 3.3 `doctor` reports availability alongside the existing
       network-namespace line, not as a second probe: both rest on the same
-      unprivileged user namespace.
+      unprivileged user namespace. **Done in task group 1** (`doctor_agent_
+      namespaces`'s updated report, `src/bin/devcroft.rs`).
 
 ## 4. Tests
 
-- [ ] 4.1 **Invert `tests/unix_socket_not_mediated.rs`.** That file
+- [x] 4.1 **Invert `tests/unix_socket_not_mediated.rs`.** That file
       currently asserts the *gap* — it passes because the hole is open,
       and its failure message names the three documents that must change
       when it closes. This change is what closes it; both tests should
       then assert refusal, and the docs they name must be corrected in the
-      same commit.
-- [ ] 4.2 A sandbox cannot reach the nix daemon socket, with a real
-      daemon present on the host.
-- [ ] 4.3 An isolated sandbox with `network.allow` still reaches its
+      same commit. **Done: both tests now assert refusal (`ENOENT`), and
+      `__uds_probe` now constructs the mount view before applying
+      Landlock, matching `up`'s real ordering — a refusal here is the
+      same refusal a real session gets.** Fixed a real hang along the
+      way: the old version's accept-thread blocked on a connection that
+      the inverted expectation now never sends. `docs/known-gaps.md`,
+      `docs/threat-model.md`, and `sandbox-provisioning`'s design.md are
+      all corrected in the same commit as this task, matching the
+      original failure message's own instruction.
+- [x] 4.2 A sandbox cannot reach the nix daemon socket, with a real
+      daemon present on the host. **Satisfied by 4.1's second test**
+      (`a_sandboxed_process_cannot_reach_the_nix_daemon_socket_if_one_exists`)
+      — no separate test needed, and duplicating it would just be the
+      same assertion twice.
+- [x] 4.3 An isolated sandbox with `network.allow` still reaches its
       allowlisted hosts — the M3 regression, which would otherwise surface
-      as a sandbox that starts healthy and has no network.
-- [ ] 4.4 A real compile succeeds inside the view, per provider. This is
+      as a sandbox that starts healthy and has no network. **Already
+      covered by the pre-existing
+      `tests/isolated_egress_e2e.rs::an_isolated_sandbox_still_reaches_its_allowlisted_hosts`**,
+      which runs through the real `up()` and now transparently exercises
+      mount isolation too (confirmed passing in the full suite after
+      task group 2's `up.rs` wiring) — plus `tests/mount_view_e2e.rs`'s
+      own direct M3 test at the `construct_view` level.
+- [x] 4.4 A real compile succeeds inside the view, per provider. This is
       what 0.1's measurement is for; without it the suite proves the gap
-      closed and nothing about the sandbox still being usable.
-- [ ] 4.5 **Verify the tests fail with the feature disabled**, the
+      closed and nothing about the sandbox still being usable. **Done
+      twice over**: `tests/mount_view_e2e.rs` (regression test, devbox
+      provider) and the real `devcroft up` → `status` → `exec` → `down`
+      CLI verification (design.md, task group 2) — both green.
+- [x] 4.5 **Verify the tests fail with the feature disabled**, the
       discipline this project applies to every namespace change since
       `fleet_netns.rs`'s skip guard was found to mask a broken feature.
+      **Done live**: disabled `__uds_probe`'s `construct_view` call
+      (simulating the feature being off) and confirmed both `unix_socket_
+      not_mediated.rs` tests fail with exactly the expected message
+      ("expected... to be refused... got: success"), not silently skip —
+      then reverted.
 
 ## 5. Downstream
 

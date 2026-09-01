@@ -64,7 +64,48 @@ pub fn render(compiled: &CompiledPolicy) -> String {
         }
         None => writeln!(out, "network.proxy: not requested").unwrap(),
     }
+    writeln!(out).unwrap();
+    render_filesystem_view_note(&mut out);
     out
+}
+
+/// `add-mount-isolation` spec: "`policy --render` SHALL show what a
+/// sandbox's view contains, with the same origin attribution every other
+/// compiled rule carries."
+///
+/// **Not a second rendering of the same paths — a note explaining that
+/// the sections already above are that rendering.** `fleet::mount::
+/// construct_view`'s grants come from `CapabilityPlan::resolved_grants`,
+/// which reads exactly `filesystem_allow` and `filesystem_read` — the
+/// same two lists `filesystem.allow`/`filesystem.read` above already
+/// render, origins included (`policy/capability_set.rs`'s own doc: the
+/// two are computed by one shared resolver specifically so they cannot
+/// diverge). A second, separate "filesystem.view" section repeating the
+/// identical entries would violate the render module's own determinism
+/// property in spirit even if not in fact — two sections that must
+/// always agree are one invariant away from silently not agreeing.
+///
+/// What genuinely is not in either list above, and is named here instead
+/// of being left for a reader to discover by surprise: the view also
+/// always contains a private `/tmp` (when `/tmp` is granted — never a
+/// bind of the host's shared one), the host's `/proc` (bind-mounted,
+/// not a fresh instance — design.md's Open Question 1 explains why), a
+/// minimal `/dev`, and the standard merged-`/usr` compatibility symlinks
+/// (`/lib`, `/lib64`, `/bin`, `/sbin`) where this host has them. None of
+/// these has a manifest/provider/baseline origin to attribute, because
+/// none is a policy *rule* — they are the keeper's own unconditional
+/// construction requirements, the same category `KEEPER_SYSTEM_READ`'s
+/// entries above are, just not expressed as compiled grants.
+fn render_filesystem_view_note(out: &mut String) {
+    writeln!(
+        out,
+        "filesystem.view: every sandbox's mount view (add-mount-isolation) contains exactly \
+         the paths listed under filesystem.allow/filesystem.read above, bind-mounted \
+         read-write/read-only to match, plus a private /tmp (when granted), the keeper's own \
+         /proc, /dev, and merged-/usr compatibility symlinks — none of which has a rule origin, \
+         since none is granted by the manifest or a provider"
+    )
+    .unwrap();
 }
 
 /// How [`render`] describes where this sandbox's ports live.
@@ -129,6 +170,18 @@ mod tests {
         assert!(out.contains("~/.ssh") && out.contains("baseline"));
         assert!(out.contains("network.block: false"));
         assert!(out.contains("github.com") && out.contains("manifest:network.allow"));
+    }
+
+    /// `add-mount-isolation` spec: "policy --render SHALL show what a
+    /// sandbox's view contains." Not a separate section (see
+    /// `render_filesystem_view_note`'s own doc for why) — just confirms
+    /// the note is actually there rather than a stale claim in a comment.
+    #[test]
+    fn render_explains_the_filesystem_view() {
+        let (manifest, _) = parse("[sandbox]\nname = \"myproj\"\n").unwrap();
+        let out = render(&compile(&manifest));
+        assert!(out.contains("filesystem.view:"));
+        assert!(out.contains("filesystem.allow/filesystem.read"));
     }
 
     #[test]

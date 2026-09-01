@@ -84,74 +84,61 @@ missing namespace, but the warning is about port collisions and does not
 mention this. Closing that properly needs the seccomp filter nono only
 installs on old kernels — an upstream ask, or a devcroft-side filter.
 
-## Unix sockets are not mediated by the policy
+## Unix sockets are not mediated by Landlock — pathname half closed by `add-mount-isolation`
 
 **Landlock's network rules cover TCP only.** `connect()` to a pathname
-unix socket falls through to ordinary filesystem permissions, so a
-sandboxed process reaches any unix socket whose DAC allows it —
-*including sockets in directories the compiled policy does not grant*.
-Measured, not inferred: `tests/unix_socket_not_mediated.rs` runs a real
-Landlock-restricted process with only its cwd granted and connects to a
-socket under `/tmp` regardless.
+unix socket falls through to ordinary filesystem permissions, so
+Landlock alone never mediated it — *including sockets in directories the
+compiled policy does not grant*. That was measured, not inferred, by
+`tests/unix_socket_not_mediated.rs`, and it is the reason this entry
+existed.
 
-The instance that matters: `/nix/var/nix/daemon-socket/socket` is
-`srw-rw-rw-` under nix's multi-user model, and a sandbox connects to it
-with `/nix` ungranted. That hands the sandbox whatever authority the nix
-daemon grants an unprivileged client — realizing store paths, building
-derivations — which is exactly the package-manager authority
-`sandbox-provisioning` P2a/P2b says an agent must not hold. That change's
-design.md previously stated a hook "does not silently receive a writable
-`/nix` or the daemon socket"; the second half of that was not true, and
-is now corrected there.
+**`add-mount-isolation` closes the pathname half.** Every sandbox now
+gets its own mount namespace and filesystem view
+(`fleet::mount::construct_view`), and a socket outside that view simply
+does not resolve — `connect()` fails with `ENOENT`, not a permission
+error, because there is no path left to name. Measured, not assumed:
+`tests/unix_socket_not_mediated.rs` (same file, inverted) now asserts
+the refusal, live, including the instance that mattered most —
+`/nix/var/nix/daemon-socket/socket`, `srw-rw-rw-` under nix's multi-user
+model, previously reachable with `/nix` ungranted and now not. That was
+exactly the package-manager authority `sandbox-provisioning` P2a/P2b
+says an agent must not hold; that guarantee is now kernel-enforced
+rather than resting on devcroft's own refusal to grant a path.
 
-Bounded, but real. The daemon enforces its own protocol and nix
-deliberately makes that socket world-accessible, so this is not arbitrary
-host access — it is the authority nix itself extends to any local user.
-The same is not true of every socket: a Docker socket reachable this way
-would be a full host compromise, and devcroft's policy would not stop it.
-
-**The gap has two halves, and only one needs new machinery.** Unix
-sockets come in two kinds and Landlock treats them differently:
+**The gap had two halves, and only the harder one needed new machinery.**
+Unix sockets come in two kinds and Landlock treats them differently:
 
 - **Abstract** sockets (`@`-prefixed, no filesystem path — dbus, X11,
   PipeWire, systemd-journald on a typical desktop) *are* expressible.
   Landlock V6 has `LANDLOCK_SCOPE_ABSTRACT_UNIX_SOCKET`, nono requests it
-  when `IpcMode::SharedMemoryOnly` is set, and **devcroft never sets it**
-  — so this half is open for no reason beyond nobody having connected the
-  two. One method call. This devcontainer has no abstract sockets at all
-  (`ss -xl` shows zero), so it is unmeasurable here and real on a normal
-  desktop.
-- **Pathname** sockets (`/nix/var/nix/daemon-socket/socket`) are *not*
-  expressible at any Landlock ABI. This is the half the nix-daemon finding
-  is about, and the half that needs the mechanism below.
+  when `IpcMode::SharedMemoryOnly` is set, and **devcroft still does not
+  set it** — this half remains open, for no reason beyond nobody having
+  connected the two, and is unrelated to the mount view (a namespace
+  does not change which abstract sockets are visible; Landlock's own
+  scope rule is the only lever). This devcontainer has no abstract
+  sockets at all (`ss -xl` shows zero), so it stays unmeasurable here and
+  real on a normal desktop. One method call, still unclaimed.
+- **Pathname** sockets (`/nix/var/nix/daemon-socket/socket`) were not
+  expressible at any Landlock ABI — the half `add-mount-isolation`
+  closes, described above.
 
-**Closing the pathname half needs a mount namespace, not a Landlock
-rule.** No Landlock
-ABI expresses AF_UNIX at all, so the fix has to come from somewhere else.
-Two candidates, and the cheaper one is better: seccomp filtering on
-`connect()` (the machinery `add-egress-proxy`'s D9 contemplates for the
-proxy-only path), or simply not having the path in the sandbox's mount
-view. Measured: masking `/nix` with a tmpfs inside an unprivileged
-`unshare(CLONE_NEWUSER | CLONE_NEWNS)` turns the connect into `No such
-file or directory` — nothing to filter, because there is nothing to
-name. That is `add-linux-agent-fleet` task group 2's mount plan, which
-already exists as a task for other reasons.
-
-This entry originally said seccomp was what it needed. That was one
-answer stated as the only one.
-
-**Specified as `add-mount-isolation`**, which also carries the harder half
-this entry does not: a view narrow enough to close the gap and wide enough
-that a real compile still works. The spike that proved the mechanism
-masked all of `/nix`, which would have removed the toolchain along with
-the socket — `/nix/store` has to stay.
+**How it was closed, for the record.** Not a Landlock rule (none exists
+for AF_UNIX) and not seccomp filtering on `connect()` — a mount
+namespace, per sandbox, whose view is narrow enough to remove the socket
+and wide enough that a real compile still works
+(`/nix/store` read-only, `/nix/var` absent; measured across flox, nix,
+and devbox, zero `/nix/var` accesses in any real build). Seccomp on
+`connect()` remains a live idea for `add-egress-proxy`'s D9
+proxy-only path, independent of this.
 
 **The same property is load-bearing in the other direction**, which is
-why it is worth understanding rather than only patching: a pathname unix
-socket crosses a *network namespace* too. That is what lets a
-network-isolated sandbox reach devcroft's host-side egress proxy without
-a TUN device or a forwarding helper. One mechanism, one wanted
-consequence and one unwanted one.
+why it was worth closing this way rather than only patching the one
+instance: a pathname unix socket crosses a *network namespace* too. That
+is what lets a network-isolated sandbox reach devcroft's host-side
+egress proxy without a TUN device or a forwarding helper — and it is
+exactly why the mount view has to name that one socket back in
+explicitly (design.md M3) rather than only ever removing paths.
 
 ## No inter-sandbox process visibility separation
 
