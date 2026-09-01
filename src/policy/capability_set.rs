@@ -63,6 +63,17 @@ pub struct CapabilityPlan {
     pub signal_mode: String,
 }
 
+/// One resolved filesystem grant: a real, canonical, existing path and
+/// the access mode it was granted with. What
+/// [`CapabilityPlan::resolved_grants`] hands back — see that method's
+/// doc for why this exists as its own type rather than reusing
+/// `nono`'s.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResolvedGrant {
+    pub path: PathBuf,
+    pub mode: AccessMode,
+}
+
 impl CompiledPolicy {
     /// Drop this compiled policy's origin annotations, keeping only what
     /// the keeper needs to actually restrict itself.
@@ -187,7 +198,58 @@ impl CapabilityPlan {
         for value in &self.filesystem_read {
             caps = grant(caps, value, project_root, AccessMode::Read)?;
         }
+        self.apply_network_and_signal(caps)
+    }
 
+    /// The same filesystem grants [`Self::to_capability_set`] would hand to
+    /// Landlock, resolved to real, existing, canonicalized paths and their
+    /// access mode — but as plain data rather than a `nono::CapabilitySet`.
+    ///
+    /// This exists so `fleet::mount`'s view construction (`add-mount-
+    /// isolation` task group 2) and Landlock's own grants are computed by
+    /// the *same* resolution code, not two implementations that could
+    /// silently drift. That congruence is the whole safety property the
+    /// mount view depends on: a view narrower than what Landlock grants
+    /// breaks the sandbox at the first access outside it; a view wider
+    /// reintroduces exactly what this change removes (spec: "The view
+    /// contains what the sandbox was granted... It SHALL NOT contain
+    /// paths the manifest did not grant"). Sharing this resolver is what
+    /// makes divergence a compile-time impossibility rather than a
+    /// discipline to maintain across two call sites.
+    ///
+    /// Same tolerance as `to_capability_set`: a grant whose target does
+    /// not exist on this host is skipped, not an error (multiarch
+    /// `KEEPER_SYSTEM_READ` entries, mainly).
+    pub fn resolved_grants(
+        &self,
+        project_root: &Path,
+    ) -> Result<Vec<ResolvedGrant>, CapabilitySetError> {
+        check_no_deny_overlaps_allow(self)?;
+
+        let mut out = Vec::new();
+        for value in &self.filesystem_allow {
+            if let Some(path) = resolve_and_validate(value, project_root)? {
+                out.push(ResolvedGrant {
+                    path,
+                    mode: AccessMode::ReadWrite,
+                });
+            }
+        }
+        for value in &self.filesystem_read {
+            if let Some(path) = resolve_and_validate(value, project_root)? {
+                out.push(ResolvedGrant {
+                    path,
+                    mode: AccessMode::Read,
+                });
+            }
+        }
+        Ok(out)
+    }
+
+    fn apply_network_and_signal(
+        &self,
+        mut caps: CapabilitySet,
+    ) -> Result<CapabilitySet, CapabilitySetError> {
         // `network_proxy_port` takes precedence over the plain block/
         // allow-all binary: it is only ever `Some` when `up` has already
         // started the egress proxy for this manifest's `network.allow`,
@@ -269,14 +331,45 @@ fn grant(
     project_root: &Path,
     mode: AccessMode,
 ) -> Result<CapabilitySet, CapabilitySetError> {
+    let Some(resolved) = resolve_and_validate(value, project_root)? else {
+        return Ok(caps);
+    };
+    Ok(if resolved.is_dir() {
+        caps.allow_path(resolved, mode)?
+    } else {
+        caps.allow_file(resolved, mode)?
+    })
+}
+
+/// Resolve one `filesystem.allow`/`filesystem.read` entry to a real,
+/// canonical, existing path — or `None` if this host has nothing there
+/// (tolerated, not an error; see the module doc's multiarch
+/// `KEEPER_SYSTEM_READ` example). Shared by [`grant`] (which hands the
+/// result to `nono`) and [`CapabilityPlan::resolved_grants`] (which hands
+/// it to the mount view), so the two can never resolve the same manifest
+/// entry to two different real paths.
+///
+/// Always canonicalizes the result, not only for the project-relative
+/// symlink-escape check below — `nono::allow_path`/`allow_file` already
+/// canonicalize internally (confirmed by `capability_set.rs`'s own test
+/// comment: "`resolved` is what `allow_path` canonicalized"), and the
+/// mount view needs the same real target, not a symlink that could point
+/// somewhere the view doesn't otherwise contain.
+fn resolve_and_validate(
+    value: &str,
+    project_root: &Path,
+) -> Result<Option<PathBuf>, CapabilitySetError> {
     let (resolved, is_project_relative) = resolve(value, project_root);
     if !resolved.exists() {
-        // Tolerated, not an error — see the module doc's multiarch
-        // KEEPER_SYSTEM_READ example. A grant for a path this host simply
-        // doesn't have is a no-op, exactly like nono-cli's own profile
-        // reader treats it.
-        return Ok(caps);
+        return Ok(None);
     }
+    let canonical_target =
+        resolved
+            .canonicalize()
+            .map_err(|source| CapabilitySetError::Canonicalize {
+                value: value.to_string(),
+                source,
+            })?;
     // Symlink-escape guard (found by adversarial review, confirmed live:
     // a project-relative `credential-link -> ~/.ssh` granted the real
     // `~/.ssh` while every lexical check — the sensitive-path warning,
@@ -286,13 +379,6 @@ fn grant(
     // already names its target directly, canonicalization or not, so
     // there is no lexical/real divergence for a reviewer to be misled by.
     if is_project_relative {
-        let canonical_target =
-            resolved
-                .canonicalize()
-                .map_err(|source| CapabilitySetError::Canonicalize {
-                    value: value.to_string(),
-                    source,
-                })?;
         let canonical_root =
             project_root
                 .canonicalize()
@@ -307,11 +393,7 @@ fn grant(
             });
         }
     }
-    Ok(if resolved.is_dir() {
-        caps.allow_path(resolved, mode)?
-    } else {
-        caps.allow_file(resolved, mode)?
-    })
+    Ok(Some(canonical_target))
 }
 
 /// `~`, `~/rest`, an absolute path, or a project-relative path (`.`,
@@ -548,6 +630,79 @@ mod tests {
         assert!(
             matches!(err, CapabilitySetError::DenyOverlapsAllow { .. }),
             "expected a DenyOverlapsAllow error, got: {err}"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// `resolved_grants` is `fleet::mount`'s only window into what a
+    /// sandbox is granted — if this diverged from `to_capability_set`,
+    /// the mount view and Landlock could disagree about what a sandbox
+    /// can see versus reach, which is exactly the gap the two are
+    /// supposed to close together.
+    #[test]
+    fn resolved_grants_reports_the_project_root_read_write_and_a_read_grant() {
+        let root = project_dir();
+        std::fs::create_dir_all(root.join("data")).unwrap();
+        let (manifest, _) = parse(
+            r#"
+            [sandbox]
+            name = "capsettest"
+            [filesystem]
+            allow = ["."]
+            read = ["data"]
+            "#,
+        )
+        .unwrap();
+
+        let grants = compile(&manifest)
+            .to_capability_plan()
+            .resolved_grants(&root)
+            .unwrap();
+
+        let canonical_root = root.canonicalize().unwrap();
+        assert!(
+            grants
+                .iter()
+                .any(|g| g.path == canonical_root && g.mode == AccessMode::ReadWrite)
+        );
+        assert!(
+            grants
+                .iter()
+                .any(|g| g.path == root.join("data").canonicalize().unwrap()
+                    && g.mode == AccessMode::Read)
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// The same tolerance `to_capability_set` has: a grant this host
+    /// simply doesn't have is skipped, not an error — `resolved_grants`
+    /// must agree, or the mount view would fail closed on hosts where
+    /// Landlock itself degrades gracefully (the multiarch
+    /// `KEEPER_SYSTEM_READ` case).
+    #[test]
+    fn resolved_grants_skips_a_path_this_host_does_not_have() {
+        let root = project_dir();
+        std::fs::create_dir_all(&root).unwrap();
+        let (manifest, _) = parse(
+            r#"
+            [sandbox]
+            name = "capsettest"
+            [filesystem]
+            allow = ["."]
+            read = ["/this/path/does/not/exist/anywhere"]
+            "#,
+        )
+        .unwrap();
+
+        let grants = compile(&manifest)
+            .to_capability_plan()
+            .resolved_grants(&root)
+            .unwrap();
+
+        assert!(
+            !grants
+                .iter()
+                .any(|g| g.path == std::path::Path::new("/this/path/does/not/exist/anywhere"))
         );
         let _ = std::fs::remove_dir_all(&root);
     }

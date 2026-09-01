@@ -18,6 +18,7 @@
 
 use std::io;
 use std::io::Write;
+use std::os::unix::fs::FileTypeExt;
 
 /// Enter a fresh user + mount namespace, with an identity uid/gid mapping
 /// established so filesystem operations inside it behave normally.
@@ -131,6 +132,426 @@ pub fn make_propagation_private() -> io::Result<()> {
         "mount namespaces are Linux-only; this platform has no equivalent \
          (see docs/threat-model.md)",
     ))
+}
+
+/// Build the sandbox's filesystem view at `new_root` — already created,
+/// currently an empty directory — and `pivot_root` into it (task group
+/// 2, "The mount plan").
+///
+/// `new_root` becomes `/` for everything that runs after this returns:
+/// the keeper itself, and every session it later spawns. Contains
+/// exactly `grants` (already resolved and canonicalized by
+/// [`crate::policy::CapabilityPlan::resolved_grants`] — the same
+/// resolver Landlock's own grants come from, so the two cannot diverge),
+/// bind-mounted at the same absolute path they have on the host, plus
+/// the keeper's own unconditional system requirements this function adds
+/// regardless of what the manifest granted: `/proc`, bind-mounted from
+/// the host's own (needed for `/proc/self/*` to resolve correctly for
+/// the keeper and for every later session — see [`mount_proc`]'s own doc
+/// for why this is a bind rather than the fresh instance design.md
+/// originally called for), and a minimal `/dev`. `/tmp` is special-cased
+/// to a fresh, private `tmpfs` rather than a bind of the host's shared one
+/// (task 2.1) — but only when `grants` actually contains it, since an
+/// ungranted `/tmp` must stay absent from the view like anything else
+/// not granted (spec: "SHALL NOT contain paths the manifest did not
+/// grant").
+///
+/// **Must run after [`enter_mount_namespace`] and
+/// [`make_propagation_private`], in that order** (design.md M1): without
+/// the user+mount namespace there is no unprivileged `CAP_SYS_ADMIN` for
+/// any of these `mount()` calls, and without private propagation first,
+/// every mount here would leak into the host's own namespace instead of
+/// staying confined to this one.
+///
+/// **Fails closed by construction, not by a caller-added check.** Every
+/// step here is a plain `?` — the first `io::Error` stops the function
+/// immediately, part-built view and all, and propagates to the caller.
+/// There is no fallback path inside this function that produces a
+/// working-but-weaker view; design.md M4 ("does not fall back to the
+/// host's namespace") is enforced by this function simply having no
+/// branch that could do that, not by a flag the caller must remember to
+/// check.
+pub fn construct_view(
+    new_root: &std::path::Path,
+    grants: &[crate::policy::ResolvedGrant],
+    proxy_socket: Option<&std::path::Path>,
+) -> io::Result<()> {
+    let tmp_path = std::path::Path::new("/tmp");
+
+    mount_tmpfs(new_root)?;
+
+    for grant in grants {
+        if grant.path == tmp_path {
+            // Handled below, privately — never a bind of the host's own
+            // shared /tmp (task 2.1's own item, distinct from "mirror
+            // what was granted").
+            continue;
+        }
+        bind_mount_grant(new_root, &grant.path, grant.mode)?;
+    }
+
+    if grants.iter().any(|g| g.path == tmp_path) {
+        mount_private_tmp(new_root)?;
+    }
+
+    mount_proc(new_root)?;
+    setup_dev(new_root)?;
+    setup_merged_usr_compat(new_root)?;
+
+    // M3: the sandbox's own proxy socket, granted here explicitly and
+    // never through the generic `grants` loop above — the surrounding
+    // state directory is baseline-denied, so it never appears in
+    // `resolved_grants`, and that is exactly the case M3 exists to
+    // correct: the state dir staying masked is right, the socket inside
+    // it staying reachable is a separate, deliberate exception.
+    if let Some(sock) = proxy_socket {
+        bind_mount_grant(new_root, sock, nono::AccessMode::ReadWrite)?;
+    }
+
+    pivot_into(new_root)
+}
+
+fn path_to_cstring(path: &std::path::Path) -> io::Result<std::ffi::CString> {
+    std::ffi::CString::new(std::os::unix::ffi::OsStrExt::as_bytes(path.as_os_str()))
+        .map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))
+}
+
+fn mount_tmpfs(target: &std::path::Path) -> io::Result<()> {
+    let target_c = path_to_cstring(target)?;
+    let tmpfs = c"tmpfs";
+    // SAFETY: both C strings are valid and NUL-terminated; a `tmpfs`
+    // mount needs no extra data. `CAP_SYS_ADMIN` comes from the user
+    // namespace already entered.
+    let ret = unsafe {
+        libc::mount(
+            tmpfs.as_ptr(),
+            target_c.as_ptr(),
+            tmpfs.as_ptr(),
+            0,
+            std::ptr::null(),
+        )
+    };
+    if ret != 0 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(())
+}
+
+/// Bind-mount `source` (real, canonical, already confirmed to exist by
+/// `resolved_grants`) into `new_root` at the identical absolute path it
+/// has on the host, then remount it read-only if `mode` says so.
+///
+/// **Two `mount()` calls for a read-only bind, not one.** The kernel
+/// ignores `MS_RDONLY` on the initial `MS_BIND` mount — a documented
+/// Linux quirk, not an oversight here — so making a bind read-only is a
+/// bind followed by an `MS_REMOUNT`. `MS_REC` on both calls covers a
+/// source directory that might itself contain nested mounts (`/nix/store`
+/// measured to have none today, but nothing here should assume that
+/// stays true).
+fn bind_mount_grant(
+    new_root: &std::path::Path,
+    source: &std::path::Path,
+    mode: nono::AccessMode,
+) -> io::Result<()> {
+    let relative = source.strip_prefix("/").unwrap_or(source);
+    let target = new_root.join(relative);
+    if let Some(parent) = target.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let source_type = std::fs::metadata(source)?.file_type();
+    if source_type.is_dir() {
+        // Idempotent: a grant nested inside an already-processed one (a
+        // manifest can declare both a directory and something under it)
+        // may have already created this exact directory.
+        std::fs::create_dir_all(&target)?;
+    } else {
+        // A plain `touch` — the bind mount below is what gives it content;
+        // an existing file left by a previous grant is left alone.
+        if !target.exists() {
+            std::fs::File::create(&target)?;
+        }
+    }
+    bind_mount(source, &target, true)?;
+    // Not applied to a character/block device: the kernel refuses an
+    // unprivileged `MS_REMOUNT|MS_RDONLY` on a bind-mounted device node
+    // with `EPERM` — measured live against `/dev/urandom` (`policy/
+    // mod.rs`'s own `KEEPER_SYSTEM_READ` baseline grant), where the
+    // identical remount succeeded moments earlier for `/usr/lib` and
+    // `/etc/ld.so.cache`, so this is device-node-specific, not a general
+    // remount failure. Not a gap this leaves open: mount-level read-only
+    // is defense in depth here, not the enforcement point — Landlock
+    // still governs actual read-vs-write access once the keeper
+    // self-restricts after `pivot_root` (proposal.md: "Landlock still
+    // governs access to what is visible; this governs what is visible at
+    // all"), and a device special file's mount-level "writability" does
+    // not correspond to mutable persistent state the way a regular
+    // file's does anyway.
+    if mode == nono::AccessMode::Read
+        && !source_type.is_char_device()
+        && !source_type.is_block_device()
+    {
+        remount_readonly(&target)?;
+    }
+    Ok(())
+}
+
+fn bind_mount(
+    source: &std::path::Path,
+    target: &std::path::Path,
+    recursive: bool,
+) -> io::Result<()> {
+    let source_c = path_to_cstring(source)?;
+    let target_c = path_to_cstring(target)?;
+    let flags = libc::MS_BIND | if recursive { libc::MS_REC } else { 0 };
+    // SAFETY: both C strings are valid, NUL-terminated, and outlive this
+    // call; a plain bind mount needs no filesystem type or extra data.
+    let ret = unsafe {
+        libc::mount(
+            source_c.as_ptr(),
+            target_c.as_ptr(),
+            std::ptr::null(),
+            flags as libc::c_ulong,
+            std::ptr::null(),
+        )
+    };
+    if ret != 0 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(())
+}
+
+fn remount_readonly(target: &std::path::Path) -> io::Result<()> {
+    let target_c = path_to_cstring(target)?;
+    let flags = libc::MS_BIND | libc::MS_REMOUNT | libc::MS_RDONLY | libc::MS_REC;
+    // SAFETY: `target_c` is valid and NUL-terminated; a remount needs no
+    // source, filesystem type, or extra data.
+    let ret = unsafe {
+        libc::mount(
+            std::ptr::null(),
+            target_c.as_ptr(),
+            std::ptr::null(),
+            flags as libc::c_ulong,
+            std::ptr::null(),
+        )
+    };
+    if ret != 0 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(())
+}
+
+/// A fresh, private `tmpfs` at `<new_root>/tmp` — never a bind of the
+/// host's own shared `/tmp` (task 2.1). Conventional `1777` permissions
+/// (world-writable, sticky), matching every real `/tmp` a tool invoked
+/// inside a session would expect.
+fn mount_private_tmp(new_root: &std::path::Path) -> io::Result<()> {
+    let target = new_root.join("tmp");
+    std::fs::create_dir_all(&target)?;
+    mount_tmpfs(&target)?;
+    std::fs::set_permissions(
+        &target,
+        std::os::unix::fs::PermissionsExt::from_mode(0o1777),
+    )?;
+    Ok(())
+}
+
+/// A recursive bind mount of the host's own `/proc` at `<new_root>/proc`
+/// — corrected live from a first attempt at a *fresh* `procfs` instance,
+/// which is what design.md originally described and turned out to be
+/// wrong in a load-bearing way, not just a style choice.
+///
+/// **A fresh `mount("proc", ...)` needs `CAP_SYS_ADMIN` in the user
+/// namespace that owns the *PID* namespace being displayed — measured
+/// live: `EPERM`, on the very first real test of this code, after every
+/// preceding bind mount in the same view (including other read-only
+/// remounts) succeeded.** Task 0.4 deliberately did not take a private
+/// PID namespace, so the PID namespace here is still the host's, owned
+/// by the *initial* user namespace — not the one this process's own
+/// `enter_mount_namespace` created, which is the only one this process
+/// has real privilege in. A bind mount sidesteps this entirely: it does
+/// not create a new procfs superblock, only exposes an existing,
+/// already-mounted one at a new path, which needs nothing beyond the
+/// `CAP_SYS_ADMIN` already held for every other bind mount in this view.
+///
+/// **This still gets `/proc/self` right for every later session, not
+/// just the keeper — the property a snapshot bind of individual
+/// `/proc/self/*` entries could not have provided.** `/proc/self` is a
+/// magic symlink resolved fresh per reading process at lookup time,
+/// resolved through whichever procfs *superblock* backs the path — bind
+/// or original makes no difference, since neither creates a new
+/// superblock; the bind mount here still exposes the host's one, real,
+/// live procfs instance, scoped to the one pid namespace every process
+/// in this view — the keeper and everything it later spawns — actually
+/// runs in. A bind of individual leaves (`/proc/self/exe`, ...) would
+/// have frozen to whichever pid happened to perform the bind.
+///
+/// **The cost is larger than design.md's first pass claimed, and that
+/// claim is corrected rather than left standing.** It described the view
+/// as exposing only the handful of `/proc/self/*` entries design.md
+/// Open Question 1 measured as needed. That was never achievable without
+/// owning the PID namespace (this measurement is what proves it), so the
+/// honest statement is the one open question 2 already made about
+/// process visibility in general: without a private PID namespace, a
+/// full directory listing under this mount enumerates every host
+/// process, exactly as it would with no mount view at all. Narrower
+/// `/proc` visibility remains available only by taking PID isolation —
+/// unchanged from open question 2's own conclusion, now stated for the
+/// right reason.
+fn mount_proc(new_root: &std::path::Path) -> io::Result<()> {
+    let target = new_root.join("proc");
+    std::fs::create_dir_all(&target)?;
+    bind_mount(std::path::Path::new("/proc"), &target, true)
+}
+
+/// The minimal `/dev` design.md Open Question 1 measured: `null`,
+/// `urandom`, `tty` bind-mounted individually from the host's real device
+/// nodes (small, safe, and exactly what a bind mount is for — a device
+/// special file mounted onto an empty regular-file target behaves as
+/// that device, the same trick bubblewrap uses, cited as the reference
+/// in design.md M2); `ptmx` and `fd`/`stdin`/`stdout`/`stderr` handled
+/// separately below because neither is a plain device bind.
+///
+/// **`/dev/pts` itself is not built here.** It is a normal
+/// `KEEPER_SYSTEM_READWRITE` baseline grant (`policy/mod.rs`), so the
+/// generic `grants` loop in [`construct_view`] already bind-mounts it —
+/// this function only has to make `/dev/ptmx` resolve into that.
+///
+/// `/dev/ptmx` is host-shape-dependent, confirmed by `policy/mod.rs`'s
+/// own `KEEPER_SYSTEM_READWRITE` doc comment: on this devcontainer (and
+/// "every Linux system checked" there) it is a *symlink* to
+/// `pts/ptmx`, not a standalone device node — Landlock evaluates the
+/// resolved target, which is why granting `/dev/pts` alone is sufficient
+/// there. A mount view is a real directory tree, though, so the symlink
+/// itself must physically exist for that resolution to find anything —
+/// replicated here rather than assumed, checking which shape this host
+/// actually has instead of hard-coding one.
+fn setup_dev(new_root: &std::path::Path) -> io::Result<()> {
+    let dev = new_root.join("dev");
+    std::fs::create_dir_all(&dev)?;
+
+    for name in ["null", "urandom", "tty"] {
+        let source = std::path::Path::new("/dev").join(name);
+        if !source.exists() {
+            continue;
+        }
+        let target = dev.join(name);
+        std::fs::File::create(&target)?;
+        bind_mount(&source, &target, false)?;
+    }
+
+    let host_ptmx = std::path::Path::new("/dev/ptmx");
+    if let Ok(meta) = std::fs::symlink_metadata(host_ptmx) {
+        let target = dev.join("ptmx");
+        if meta.file_type().is_symlink() {
+            let link_target = std::fs::read_link(host_ptmx)?;
+            std::os::unix::fs::symlink(&link_target, &target)?;
+        } else {
+            std::fs::File::create(&target)?;
+            bind_mount(host_ptmx, &target, false)?;
+        }
+    }
+
+    // Dynamic, not bound, for the identical reason `/proc` itself is a
+    // live mount rather than a snapshot: correct only if resolved fresh
+    // per reading process, which a symlink into the live `/proc` mount
+    // above gives for free.
+    std::os::unix::fs::symlink("/proc/self/fd", dev.join("fd"))?;
+    for (name, fd) in [("stdin", 0), ("stdout", 1), ("stderr", 2)] {
+        std::os::unix::fs::symlink(format!("/proc/self/fd/{fd}"), dev.join(name))?;
+    }
+
+    Ok(())
+}
+
+/// Recreate the traditional top-level `/lib`, `/lib64`, `/bin`, `/sbin`
+/// symlinks inside `new_root`, on a host that has them — found live, not
+/// anticipated from design.md M2's own mention of "merged-`/usr`
+/// symlinks" as something bubblewrap's mount setup has to get right.
+///
+/// **Why this is needed even though the *targets* are already bind-mounted.**
+/// `resolved_grants` canonicalizes every entry — a granted `/lib` becomes
+/// its real target, `/usr/lib`, and only `/usr/lib` gets a directory and
+/// a bind mount in this view. That is correct for anything that opens a
+/// path *through* Landlock's own resolution, which also follows symlinks
+/// to their target. It is not correct for an ELF binary's own hard-coded
+/// interpreter path: a binary linked on this exact host names its
+/// dynamic linker `/lib/ld-linux-aarch64.so.1` — literally, not
+/// `/usr/lib/ld-linux-aarch64.so.1` — and the kernel's loader resolves
+/// that path *inside the view*, where `/lib` does not exist at all
+/// unless something creates it. Measured: `connect_probe` (this
+/// module's own live isolation check) failed with a plain `ENOENT` on
+/// exec, not a linker error, until this function existed.
+///
+/// Checks each name individually and only recreates it if the *host*
+/// itself has it as a symlink — some hosts (or some of these four names,
+/// per host) may not, and inventing one this host doesn't have would be
+/// exactly the "guessing" this project measures against rather than
+/// assumes.
+fn setup_merged_usr_compat(new_root: &std::path::Path) -> io::Result<()> {
+    for name in ["lib", "lib64", "bin", "sbin"] {
+        let host_path = std::path::Path::new("/").join(name);
+        let Ok(target) = std::fs::read_link(&host_path) else {
+            continue;
+        };
+        let view_path = new_root.join(name);
+        // `symlink_metadata`, not `exists()`: this must detect anything
+        // already at this exact path — including a broken symlink, which
+        // `exists()` (follows symlinks) would misreport as absent.
+        if std::fs::symlink_metadata(&view_path).is_ok() {
+            continue;
+        }
+        std::os::unix::fs::symlink(&target, &view_path)?;
+    }
+    Ok(())
+}
+
+/// `pivot_root` into `new_root`, then detach the old root.
+///
+/// `libc` has no safe wrapper for `pivot_root(2)` (unlike `mount`/
+/// `umount2`), so this goes through the raw syscall — same pattern this
+/// project already uses where the crate's coverage stops (`fleet::netns`'s
+/// raw `ioctl` for `SIOCSIFFLAGS`).
+///
+/// Already-open file descriptors — the inherited control/SSH listener
+/// sockets, in particular — stay valid across this regardless of what
+/// happens to the old root's mount, since an open fd does not depend on
+/// its path remaining resolvable.
+fn pivot_into(new_root: &std::path::Path) -> io::Result<()> {
+    const OLD_ROOT_NAME: &str = ".devcroft-old-root";
+    let old_root = new_root.join(OLD_ROOT_NAME);
+    std::fs::create_dir_all(&old_root)?;
+
+    let new_root_c = path_to_cstring(new_root)?;
+    let old_root_c = path_to_cstring(&old_root)?;
+    // SAFETY: both C strings are valid, NUL-terminated paths; `pivot_root`
+    // requires `new_root` to be a mount point (it is — `mount_tmpfs`
+    // above made it one) and `old_root` to be beneath it (it is, by
+    // construction).
+    let ret = unsafe {
+        libc::syscall(
+            libc::SYS_pivot_root,
+            new_root_c.as_ptr(),
+            old_root_c.as_ptr(),
+        )
+    };
+    if ret < 0 {
+        return Err(io::Error::last_os_error());
+    }
+
+    std::env::set_current_dir("/")?;
+
+    let old_root_from_new = std::path::Path::new("/").join(OLD_ROOT_NAME);
+    let old_root_from_new_c = path_to_cstring(&old_root_from_new)?;
+    // SAFETY: valid, NUL-terminated path; `MNT_DETACH` makes this succeed
+    // even though the mount is still busy (this process's own cwd was
+    // just there).
+    let ret = unsafe { libc::umount2(old_root_from_new_c.as_ptr(), libc::MNT_DETACH) };
+    if ret != 0 {
+        return Err(io::Error::last_os_error());
+    }
+    let _ = std::fs::remove_dir(&old_root_from_new);
+
+    Ok(())
 }
 
 /// Whether this host can give a sandbox its own mount namespace at all.

@@ -81,17 +81,66 @@ before the plan is written.
 
 ## 2. The mount plan
 
-- [ ] 2.1 Construct the view from the compiled policy: project root
+- [x] 2.1 Construct the view from the compiled policy: project root
       read-write, provider-resolved paths read-only, the keeper's own
-      system requirements, private `/tmp`.
-- [ ] 2.2 **Include the sandbox's own proxy socket** (design.md M3). The
+      system requirements, private `/tmp`. **`fleet::mount::construct_view`
+      + `CapabilityPlan::resolved_grants` (a new shared resolver
+      `policy/capability_set.rs` factors out of `to_capability_set`, so
+      the view and Landlock's own grants are computed by the same code
+      and cannot diverge). Live-verified via the hidden `__mount_view_probe`
+      subcommand — a real `cargo build` succeeds inside the constructed,
+      `pivot_root`ed view for all three closure-tier providers (flox,
+      nix, devbox samples). Formalized as `tests/mount_view_e2e.rs`
+      (devbox-citytime-sample: zero dependencies, no hook, so the test
+      needs no network and no hook-splitting) so this stays a regression
+      test rather than a one-off manual check.**
+
+      **Three real bugs found only by running this, not by review:**
+      an unprivileged `MS_REMOUNT|MS_RDONLY` on a bind-mounted *device
+      node* (`/dev/urandom`) fails `EPERM` even though the identical call
+      succeeds for directories and regular files moments earlier — fixed
+      by skipping the read-only remount for char/block devices, since
+      Landlock (applied after `pivot_root`) is the actual access-control
+      layer regardless; a *fresh* `procfs` mount needs `CAP_SYS_ADMIN`
+      in the user namespace that owns the **PID** namespace being shown,
+      which this process's own namespace is not (task 0.4 deliberately
+      did not take `CLONE_NEWPID`) — fixed by bind-mounting the host's
+      existing `/proc` instead, which needs no such privilege and still
+      resolves `/proc/self/*` correctly for every later session (procfs's
+      self-symlink is superblock-relative, not tied to whichever process
+      performed the bind; **this corrects design.md's original
+      description of a narrow, fresh `/proc`** — without a PID namespace,
+      `/proc` visibility is the full host list, the same as having no
+      view at all for that one axis, not the 5-entry set open question 1
+      measured as *needed*); and a dynamically-linked binary's own
+      hard-coded ELF interpreter path (`/lib/ld-linux-aarch64.so.1` on
+      this host) fails to exec with `ENOENT` because `resolved_grants`
+      canonicalizes `/lib` to its real target `/usr/lib` before the view
+      is built, so the `/lib` *symlink itself* — which the loader
+      resolves inside the view, not through Landlock — never existed
+      there. Fixed by `setup_merged_usr_compat`, recreating `/lib`,
+      `/lib64`, `/bin`, `/sbin` as symlinks whenever the host has them
+      (design.md M2 already named "merged-`/usr` symlinks" as bubblewrap
+      know-how being forfeited; this is that cost, cashed out concretely
+      rather than staying an abstract warning).
+- [x] 2.2 **Include the sandbox's own proxy socket** (design.md M3). The
       state directory is baseline-denied for filesystem access, so masking
       it is the obvious move and would silently break egress for every
       isolated sandbox — the control and SSH sockets survive because they
       are inherited fds, the proxy socket does not because it is dialled
-      by path.
-- [ ] 2.3 Fail closed if the view cannot be constructed; never fall back
-      to the host namespace (design.md M4).
+      by path. **Implemented as `construct_view`'s `proxy_socket`
+      parameter, bind-mounted outside the generic `grants` loop. Verified
+      live both ways: a real listening socket outside the project root is
+      unreachable from inside the view without `--proxy-socket`, and
+      reachable with it.**
+- [x] 2.3 Fail closed if the view cannot be constructed; never fall back
+      to the host namespace (design.md M4). **Structural, not a
+      caller-added check: every step in `construct_view` is a plain `?`,
+      so the first error stops the function and propagates — there is no
+      branch that could produce a working-but-weaker view. `up`'s own
+      call site wiring this into `pre_exec` (so a construction failure
+      aborts `up` itself) is task group 2's integration work, not yet
+      done — this task is the primitive-level guarantee only.**
 
 ## 3. Policy integration
 
