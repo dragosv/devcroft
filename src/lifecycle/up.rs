@@ -112,6 +112,26 @@ pub fn up(
     project_root: &Path,
     opts: &UpOptions,
 ) -> Result<UpOutcome, UpError> {
+    // Everything below — the compiled grant, `Meta.project_root`, and the
+    // cwd every session and hook is spawned with — has to agree on one
+    // spelling of this directory, and it has to be the one the enforcement
+    // backend sees.
+    //
+    // On macOS it is not a formality. Seatbelt matches paths as written,
+    // and `/tmp` and `/var` are symlinks, so a grant issued for one
+    // spelling does not cover the other: measured, spawning a hook with
+    // cwd `/var/folders/…/p` under a policy built from that same string
+    // fails with `Operation not permitted`, while the identical spawn at
+    // `/private/var/folders/…/p` succeeds. Linux is indifferent — Landlock
+    // works on inodes — so this costs nothing there.
+    //
+    // The CLI never hit it because `current_dir()` returns the real path
+    // already; every caller that passes a path of its own (the test suite,
+    // anything embedding devcroft) did. Resolving here rather than at each
+    // use is what makes the two paths behave the same.
+    let project_root =
+        &std::fs::canonicalize(project_root).unwrap_or_else(|_| project_root.to_path_buf());
+    let project_root = project_root.as_path();
     let paths = StatePaths::new(&manifest.sandbox.name)?;
     // Held for the rest of this function — see `acquire_lifecycle_lock`'s
     // doc for the concurrent-`up` race this closes. Every `?` and early

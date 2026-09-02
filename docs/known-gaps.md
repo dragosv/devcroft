@@ -164,6 +164,68 @@ network-isolated sandbox reach devcroft's host-side egress proxy without
 a TUN device or a forwarding helper. One mechanism, one wanted
 consequence and one unwanted one.
 
+## Exec is not mediated on macOS, so host binaries run inside the sandbox
+
+**Measured on macOS 15.** `own-policy-baseline`'s result — a build works
+from the closure while `/usr/bin/gcc` and `/bin/ls` are denied — is a
+*Linux* result. Landlock treats execution as a filesystem right
+(`FS_EXECUTE`), so a binary under no granted path is refused. Seatbelt does
+not: nono's macOS profile emits an unconditional `(allow process-exec*)`
+(nono 0.74.0, `sandbox/macos.rs`), and every host binary therefore runs
+inside a macOS sandbox regardless of the compiled policy.
+
+Reads are still mediated, which is what makes this easy to miss: inside a
+real sandbox on this host, `ls -l /usr/bin/gcc` is `Operation not
+permitted` while `/bin/ls` runs and lists the project directory. A path
+can be unreadable and executable at the same time.
+
+Two consequences worth stating plainly:
+
+- The closure-tier guarantee — "the toolchain your build uses comes from
+  the closure, not the host" — is enforced on Linux and **cooperative on
+  macOS**: a process that names an absolute host path gets the host's
+  binary. What still holds on macOS is that the *environment* is the
+  closure's, so anything resolving through `PATH` gets closure tooling.
+- `tests/devbox_provider_e2e.rs`'s host-toolchain denial probes exec
+  mediation first and self-skips where there is none, rather than
+  asserting a property the host cannot provide. It starts asserting again
+  by itself if that changes.
+
+This is nono's decision, not devcroft's, and closing it means either a
+narrower `process-exec` rule upstream or accepting that the macOS tier
+protects against accidents rather than absolute paths — which is what
+`docs/threat-model.md` already says the tier is for.
+
+## macOS grants are per-spelling, not per-directory
+
+**Measured on macOS 15.** Seatbelt matches paths as written. `/tmp` and
+`/var` are symlinks (`/private/tmp`, `/private/var`), so a grant issued for
+one spelling of a directory does not necessarily cover the other, and a
+`$TMPDIR` path is affected by default. Landlock has no equivalent problem —
+it works on inodes, so every spelling of a directory is the same object.
+
+Two distinct symptoms, both traced to it:
+
+- A sandbox whose project root was given as `/var/folders/…/p` could not
+  spawn a hook with that cwd at all (`Operation not permitted`), while the
+  identical spawn under `/private/var/folders/…/p` succeeded.
+- A hook naming an absolute path through the symlinked spelling is denied
+  even when its own project root is granted.
+
+`up` now resolves the project root once, so the compiled grant,
+`Meta.project_root`, and the cwd of every session and hook agree on the
+spelling the backend sees. The CLI never had the first symptom —
+`current_dir()` returns the resolved path already — which is why this
+surfaced only through library callers (the test suite). The second is
+inherent: a path that a project *writes down* in the symlinked form is not
+the path the policy granted. Prefer real paths in manifests and hooks on
+macOS.
+
+The library devcroft builds on emits both spellings when it is handed the
+symlinked one (nono 0.74.0, `sandbox/macos.rs`), which is a real mitigation
+but only for the spelling that reaches it; devcroft resolving first means
+it reaches the backend in the form the kernel will compare against.
+
 ## No inter-sandbox process visibility separation
 
 Landlock hides nothing: sandboxes share the host's raw process namespace.
@@ -192,8 +254,10 @@ Whether macOS Seatbelt enforces the equivalent `NetworkMode::ProxyOnly`
 gate as strictly, or only adds a permissive rule without narrowing anything
 else, is **unverified** — the pinned library's own doc comment for the
 macOS output reads as a scoped allow rule, which would argue for "enforced"
-under Seatbelt's default-deny model, but this project has no macOS host to
-measure it live on, and does not ship a security claim it hasn't measured.
+under Seatbelt's default-deny model, but that specific path has still not
+been measured live, and this project does not ship a security claim it
+hasn't measured. (The section above *is* a macOS measurement, so the
+blocker is now the measurement itself, not the absence of a host.)
 The degraded-on-macOS warning stays on until someone can check.
 
 On Linux, the original assumption was that a process could always bypass a

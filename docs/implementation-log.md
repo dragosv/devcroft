@@ -617,3 +617,55 @@ loopback address because `up_process` puts `127.0.0.1` in `NO_PROXY`, so
 it is not a detail that can be dropped — it now self-skips naming the
 `sudo ifconfig lo0 alias 127.0.0.3 up` that would enable it, like every
 other capability guard in the suite.
+
+**A denial test that failed on macOS turned out to be right about the
+sandbox and wrong about the platform.**
+`a_real_build_succeeds_from_the_devbox_closure_with_the_host_toolchain_denied`
+asserts that `/usr/bin/gcc` cannot run inside a devbox sandbox. On macOS it
+ran — and printed `gcc (GCC) 16.2.0`, which is not what `/usr/bin/gcc`
+prints on this host at all (`Apple clang version 17.0.0`). Two separate
+facts stacked into one confusing failure. First, macOS's `/usr/bin/gcc` is
+a stub that dispatches to whatever toolchain it finds, and inside the
+sandbox that is the closure's gcc — so the *output* was closure tooling
+while the *exec* was a host binary. Second, and the real finding: Seatbelt
+does not mediate exec at all. nono's macOS profile emits an unconditional
+`(allow process-exec*)`, so every host binary runs inside a macOS sandbox,
+while reads of the same path stay denied — `/bin/ls` runs and lists the
+project, `ls -l /usr/bin/gcc` is `Operation not permitted`.
+
+So `own-policy-baseline`'s measurement ("a build succeeds from the closure
+with `/usr/bin/gcc` and `/bin/ls` denied") is a Linux measurement, and the
+closure-tier guarantee is enforced on Linux and cooperative on macOS. That
+is now in `docs/known-gaps.md` rather than implied by a test that only ever
+ran on one platform. The test probes exec mediation — does `/bin/ls` run? —
+and skips where there is none, so it resumes asserting by itself if nono or
+macOS ever narrows that rule. The same session's guards say the same thing
+in three places now: gate on the capability, never on the platform or the
+binary.
+
+**Four macOS hook failures, one cause: a grant is per-spelling there, not
+per-directory.** `the_hook_runs_inside_the_sandbox_instead` failed with
+`hook \`activation\` failed: Operation not permitted`, and three
+`lifecycle_hooks` tests failed the same way. Seatbelt compares paths as
+written; `/var` and `/tmp` are symlinks; `std::env::temp_dir()` on macOS is
+`/var/folders/…`. So a sandbox built from that string could not even spawn
+a hook with that cwd, while the identical spawn at the `/private/var/…`
+spelling worked — measured both ways with a throwaway probe against the
+library directly, which is what separated "devcroft's policy is wrong" from
+"the two sides are naming the same directory differently".
+
+`up` now resolves the project root once, up front, so the grant,
+`Meta.project_root` and every spawn cwd agree on the spelling the backend
+compares against. That fixed all four. The CLI never had the bug —
+`current_dir()` hands it a resolved path — so this only ever bit callers
+that pass a root of their own, which is the whole integration suite. Worth
+noting how it was hiding: on Linux none of it exists, because Landlock
+works on inodes.
+
+The one part `up` cannot fix is a path a project *writes down*: a hook
+naming `/var/folders/…/marker` is denied under a policy granting
+`/private/var/folders/…`, because the two are different strings to
+Seatbelt. The flox test's helper now builds its project root resolved, for
+exactly the reason `tests/unix_socket_not_mediated.rs` does — third time
+this session that a macOS symlink turned a working policy into a false
+failure.

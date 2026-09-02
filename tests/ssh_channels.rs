@@ -57,6 +57,12 @@ impl Sandbox {
         ));
         let _ = std::fs::remove_dir_all(&project_root);
         std::fs::create_dir_all(&project_root).unwrap();
+        // Resolved rather than as spelled: the sandbox's policy is compiled
+        // from this path, and macOS matches paths as written — `temp_dir()`
+        // is `/var/folders/…`, a symlink, so a cwd named that way is denied
+        // under a grant built from its target. No-op on Linux, where
+        // Landlock works on inodes. See `docs/known-gaps.md`.
+        let project_root = project_root.canonicalize().unwrap_or(project_root);
         let init = Command::new("flox")
             .arg("init")
             .current_dir(&project_root)

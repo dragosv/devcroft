@@ -47,7 +47,12 @@ fn scratch(tag: &str) -> PathBuf {
     ));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
-    dir
+    // Resolved rather than as spelled: the sandbox's policy is compiled
+    // from this path, and macOS matches paths as written — `temp_dir()`
+    // is `/var/folders/…`, a symlink, so a cwd named that way is denied
+    // under a grant built from its target. No-op on Linux, where
+    // Landlock works on inodes. See `docs/known-gaps.md`.
+    dir.canonicalize().unwrap_or(dir)
 }
 
 fn nix_usable() -> bool {

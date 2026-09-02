@@ -286,8 +286,41 @@ fn status_reports_stale_after_devbox_json_changes_and_up_suggests_recreate() {
 /// provider's own resolved environment.
 #[test]
 fn a_real_build_succeeds_from_the_devbox_closure_with_the_host_toolchain_denied() {
-    if !std::path::Path::new("/usr/bin/gcc").is_file() {
+    // The guard the rest of this file does not need and this test cannot
+    // do without: every other test here asserts *provider resolution*,
+    // which is meaningful whether or not the kernel enforces anything,
+    // while this one asserts an **enforcement** property. On a host with
+    // no Landlock, `up` still succeeds (only `doctor` reports the
+    // backend), the sandbox restricts nothing, and the denial below fails
+    // as though devcroft's policy had regressed. Guard on the capability,
+    // never on the binary.
+    if !devcroft::policy::backend_supported() {
+        eprintln!(
+            "skipping: this host has no usable Landlock/Seatbelt support, so nothing \
+             is enforced and a denial here would prove nothing"
+        );
+        return;
+    }
+    let host_gcc = std::path::Path::new("/usr/bin/gcc");
+    if !host_gcc.is_file() {
         eprintln!("skipping: no host /usr/bin/gcc to assert denial against");
+        return;
+    }
+    // ...and it has to be a *host* gcc. On a host where `/usr/bin/gcc`
+    // resolves into the nix store, the closure grant covers it by design,
+    // so it runs inside the sandbox and that is `own-policy-baseline`
+    // working rather than failing: the baseline denies host toolchain
+    // paths, not every path that happens to be spelled `/usr/bin/gcc`.
+    // Landlock and Seatbelt both decide on the resolved file, so the test
+    // has to resolve it too before claiming what the answer means.
+    if let Ok(resolved) = std::fs::canonicalize(host_gcc)
+        && resolved.starts_with("/nix/store")
+    {
+        eprintln!(
+            "skipping: /usr/bin/gcc resolves to {}, inside the granted closure — \
+             its reachability is not the property this test is about",
+            resolved.display()
+        );
         return;
     }
     let Some(sandbox) = Sandbox::new("gccbuild", &["gcc@latest"], true) else {
@@ -304,6 +337,28 @@ fn a_real_build_succeeds_from_the_devbox_closure_with_the_host_toolchain_denied(
 
     assert!(sandbox.run(&["up"]).status.success());
 
+    // Does this backend mediate *exec* at all? Landlock does — `FS_EXECUTE`
+    // is a filesystem right like any other, so a binary outside every
+    // grant is refused. Seatbelt does not: nono's macOS profile emits an
+    // unconditional `(allow process-exec*)` (nono 0.74.0,
+    // `sandbox/macos.rs`), so every host binary runs inside the sandbox
+    // while *reads* of the same path stay denied — measured on macOS 15,
+    // `/bin/ls` runs and lists the project while `ls -l /usr/bin/gcc` is
+    // "Operation not permitted". See `docs/known-gaps.md`.
+    //
+    // Probed rather than branched on `target_os`, so this starts asserting
+    // again by itself the day Seatbelt or nono gains exec mediation —
+    // guard on the capability, never on the platform.
+    let exec_probe = std::path::Path::new("/bin/ls");
+    if exec_probe.is_file() && sandbox.run(&["exec", "--", "/bin/ls"]).status.success() {
+        eprintln!(
+            "skipping: this backend does not mediate exec — /bin/ls runs inside the \
+             sandbox despite no grant, so a denial of /usr/bin/gcc would be asserting \
+             something the host cannot enforce (docs/known-gaps.md)"
+        );
+        return;
+    }
+
     // The host's own gcc must be unreachable — the baseline grants no
     // host toolchain paths (own-policy-baseline). Actually invoking it,
     // not `command -v`: a bare path-existence check can succeed under
@@ -313,7 +368,9 @@ fn a_real_build_succeeds_from_the_devbox_closure_with_the_host_toolchain_denied(
     let out = sandbox.run(&["exec", "--", "/usr/bin/gcc", "--version"]);
     assert!(
         !out.status.success(),
-        "expected /usr/bin/gcc to be denied inside the sandbox, but it ran: {out:?}"
+        "expected /usr/bin/gcc to be denied inside the sandbox, but it ran. The \
+         backend probe passed and this path does not resolve into the store, so \
+         this is an enforcement gap, not a host artifact: {out:?}"
     );
 
     // The devbox-resolved gcc must compile and run a real program, with

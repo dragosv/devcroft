@@ -94,6 +94,12 @@ fn flox_project_with_python(tag: &str) -> Option<std::path::PathBuf> {
         std::env::temp_dir().join(format!("devcroft-hostreach-{tag}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&root);
     std::fs::create_dir_all(&root).ok()?;
+    // Resolved rather than as spelled: the sandbox's policy is compiled
+    // from this path, and macOS matches paths as written — `temp_dir()`
+    // is `/var/folders/…`, a symlink, so a cwd named that way is denied
+    // under a grant built from its target. No-op on Linux, where
+    // Landlock works on inodes. See `docs/known-gaps.md`.
+    let root = root.canonicalize().unwrap_or(root);
     if !Command::new("flox")
         .arg("init")
         .current_dir(&root)

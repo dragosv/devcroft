@@ -46,6 +46,16 @@ fn flox_project(tag: &str, hook_body: Option<&str>) -> Option<(PathBuf, PathBuf)
     ));
     let _ = std::fs::remove_dir_all(&root);
     std::fs::create_dir_all(&root).unwrap();
+    // The **real** path, because the hook below bakes an absolute marker
+    // path into the manifest and that path has to be one the compiled
+    // policy grants. `up` resolves the project root it is given, and on
+    // macOS `std::env::temp_dir()` is `/var/folders/…`, a symlink to
+    // `/private/var/folders/…` — Seatbelt matches paths as written, so a
+    // hook writing through the symlinked spelling is denied inside a
+    // sandbox that grants the resolved one. A real project path arrives
+    // canonical (`current_dir()` resolves it); only a path a test builds
+    // by hand does not.
+    let root = std::fs::canonicalize(&root).unwrap_or(root);
     if !Command::new("flox")
         .arg("init")
         .current_dir(&root)
