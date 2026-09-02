@@ -95,6 +95,16 @@ Measured, not inferred: `tests/unix_socket_not_mediated.rs` runs a real
 Landlock-restricted process with only its cwd granted and connects to a
 socket under `/tmp` regardless.
 
+**The same is true on macOS**, so this is not a Landlock-shaped gap with a
+Seatbelt-shaped exception: the identical ungranted probe connects under
+Seatbelt (measured, macOS 15). Worth stating precisely, because the first
+macOS run said the opposite — probing `/tmp/<dir>/p.sock` there is refused
+with `Operation not permitted`, but only because `/tmp` is a symlink to
+`/private/tmp` and Seatbelt denies the ungranted symlink traversal; the
+*same socket* named `/private/tmp/<dir>/p.sock` connects. Symlink
+traversal being mediated is not AF_UNIX being mediated, and the test now
+canonicalizes so the difference cannot be misread again.
+
 The instance that matters: `/nix/var/nix/daemon-socket/socket` is
 `srw-rw-rw-` under nix's multi-user model, and a sandbox connects to it
 with `/nix` ungranted. That hands the sandbox whatever authority the nix

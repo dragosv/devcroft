@@ -574,3 +574,46 @@ Three instances in one audit — the provider capture, the test guards, and
 Each one asked whether a tool was present and reported the answer as
 though it had asked whether the tool would work. The file already carried
 the lesson in prose, twice, next to code that did not follow it.
+
+**The first macOS CI run hung for six hours, and the test that hung was
+asserting the wrong thing about macOS.** `tests/unix_socket_not_mediated.rs`
+starts a listener thread, runs a sandboxed probe against the socket, and
+joins the thread. On Linux the probe connects, so the join returns. On
+macOS the probe was refused, nothing ever arrived, and `accept()` blocked
+forever — a *failing* assertion turned into a hung process, which no
+timeout caught because the workflow set none and GitHub's own ceiling is
+six hours. Two independent defects, and both are worth naming separately:
+a test that cannot fail is not a test, and a CI job with no
+`timeout-minutes` converts any such test into a full runner day. The
+accept is now bounded, every job carries a timeout, and the two full
+`cargo test` runs the workflow used to do — the second one only to grep
+its output for skip lines — are one run through `tee`.
+
+Then the interesting half. The obvious reading of the refusal was "Seatbelt
+mediates AF_UNIX, so the gap is Linux-only", and that reading was one
+commit away from being published in `docs/known-gaps.md`. It is wrong. The
+probe path was `/tmp/<dir>/p.sock`; `/tmp` on macOS is a symlink to
+`/private/tmp`, Seatbelt evaluates the path as written, and it was the
+ungranted symlink traversal that got `Operation not permitted`. The *same
+socket* named `/private/tmp/<dir>/p.sock` connects, with the policy
+granting only cwd. So the gap is not Linux-shaped at all: both backends
+leave AF_UNIX outside the policy, and `docs/threat-model.md` and
+`docs/known-gaps.md` now say so. The test canonicalizes its socket
+directory, which is the only reason the second measurement was possible to
+take at all.
+
+The pattern is the one this file already records twice: a probe that
+answers a *different question* than the one asked, and reads as an answer
+to the intended one. "Can the sandbox reach this socket" was measured by a
+path that first had to traverse something else the sandbox could not
+reach.
+
+**Two loopback addresses is a host capability, not a given.** The same CI
+work surfaced `tests/egress_proxy_e2e.rs` panicking on macOS at
+`TcpListener::bind("127.0.0.3:0")` with `AddrNotAvailable`. Linux assigns
+the whole of `127.0.0.0/8` to `lo`; macOS assigns `127.0.0.1` and wants an
+explicit `ifconfig lo0 alias` for anything else. The test needs a second
+loopback address because `up_process` puts `127.0.0.1` in `NO_PROXY`, so
+it is not a detail that can be dropped — it now self-skips naming the
+`sudo ifconfig lo0 alias 127.0.0.3 up` that would enable it, like every
+other capability guard in the suite.

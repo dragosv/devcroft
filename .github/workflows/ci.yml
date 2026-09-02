@@ -17,6 +17,7 @@ jobs:
   lint:
     name: fmt, clippy, rustdoc
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -45,6 +46,7 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest]
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -62,15 +64,26 @@ jobs:
       # a provider-built closure actually run here, which is the host
       # measurement the README's Status section says macOS is missing.
       # Full flox/nix/devbox coverage is `e2e-linux` below.
-      - run: cargo test
+      # One run, not two. This step used to be a plain `cargo test`
+      # followed by a second, full `cargo test -- --nocapture | grep
+      # skipping` — the whole suite twice, for a log line. The
+      # step-level timeout is the real point though: a test that hangs
+      # (rather than fails) otherwise burns GitHub's 6h job ceiling, as
+      # the macos-latest leg of run 33546435126 did at 6h5m.
+      - name: cargo test
+        timeout-minutes: 20
+        run: |
+          set -o pipefail
+          cargo test -- --nocapture 2>&1 | tee /tmp/test-output.txt
 
       - name: report what actually ran vs. self-skipped
         if: always()
-        run: cargo test -- --nocapture 2>&1 | grep -i skipping || true
+        run: grep -i skipping /tmp/test-output.txt || true
 
   packaging:
     name: cargo package
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -106,6 +119,7 @@ jobs:
   openspec:
     name: openspec validate
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -140,6 +154,7 @@ jobs:
   e2e-linux:
     name: e2e (flox + nix + devbox)
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     continue-on-error: true
     steps:
       - uses: actions/checkout@v4
@@ -201,10 +216,16 @@ jobs:
       - name: start nix-daemon
         run: sudo service nix-daemon status || sudo service nix-daemon start
 
-      - run: cargo test
+      # Same single-run shape as the `test` job above; the timeout is
+      # larger because this leg really does build closures.
+      - name: cargo test
+        timeout-minutes: 35
         env:
           DEVBOX_NO_TELEMETRY: "1"
+        run: |
+          set -o pipefail
+          cargo test -- --nocapture 2>&1 | tee /tmp/test-output.txt
 
       - name: report what actually ran vs. self-skipped
         if: always()
-        run: cargo test -- --nocapture 2>&1 | grep -i skipping || true
+        run: grep -i skipping /tmp/test-output.txt || true

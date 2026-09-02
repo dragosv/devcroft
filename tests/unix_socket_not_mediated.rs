@@ -23,6 +23,17 @@
 //!   namespace, so no TUN device or forwarding helper is needed. One
 //!   mechanism, one useful consequence and one unwanted one.
 //!
+//! **Not Linux-only.** Measured on macOS 15 (Seatbelt, via `nono`): the
+//! ungranted probe reaches the socket there too, so the gap is the
+//! backend-independent one `docs/known-gaps.md` now says it is. Getting
+//! that answer needed one correction first — Seatbelt evaluates the path
+//! as written, and `/tmp` is a symlink to `/private/tmp`, so probing
+//! `/tmp/<dir>/p.sock` is refused with `Operation not permitted` while the
+//! *same socket* at `/private/tmp/<dir>/p.sock` connects. That is
+//! symlink traversal being denied, not AF_UNIX being mediated, and reading
+//! it as the latter would have published "macOS closes this gap" off a
+//! test artifact. Hence `short_socket_dir` canonicalizes.
+//!
 //! Closing it needs a mount namespace — `add-mount-isolation`, whose task
 //! 4.1 is to invert both tests below. Measured: masking a path inside an
 //! unprivileged `unshare(CLONE_NEWUSER | CLONE_NEWNS)` turns the connect
@@ -42,8 +53,47 @@ use std::process::Command;
 /// SUN_LEN" in *both* the granted and ungranted runs, which looks exactly
 /// like "Landlock denied it" and says nothing at all. devcroft already
 /// guards this limit for service supervisor sockets (`UpError::Config`).
+///
+/// Creates the directory and returns its **canonical** path, for the
+/// second reason the module doc gives: on macOS `/tmp` is a symlink, and
+/// probing through it is denied for the symlink rather than for the
+/// socket. `/private/tmp/dcuds<pid>` is still far inside SUN_LEN.
 fn short_socket_dir() -> std::path::PathBuf {
-    std::path::PathBuf::from(format!("/tmp/dcuds{}", std::process::id()))
+    let dir = std::path::PathBuf::from(format!("/tmp/dcuds{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::canonicalize(&dir).unwrap()
+}
+
+/// Accepts one connection and reads from it, or gives up. std offers no
+/// accept timeout, hence the non-blocking poll — and the deadline is the
+/// whole point: a bare `accept()` blocks forever on any host where the
+/// probe cannot connect, which turns a *failing* assertion into a hung
+/// test process that no CI timeout below the job ceiling catches.
+fn accept_once(listener: UnixListener) -> std::thread::JoinHandle<bool> {
+    std::thread::spawn(move || {
+        if listener.set_nonblocking(true).is_err() {
+            return false;
+        }
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while std::time::Instant::now() < deadline {
+            match listener.accept() {
+                Ok((mut c, _)) => {
+                    // The accepted socket can inherit the listener's
+                    // non-blocking flag, so the read below would return
+                    // WouldBlock before the peer's bytes arrive.
+                    let _ = c.set_nonblocking(false);
+                    let mut buf = [0u8; 8];
+                    return c.read(&mut buf).is_ok();
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                    std::thread::sleep(std::time::Duration::from_millis(20));
+                }
+                Err(_) => return false,
+            }
+        }
+        false
+    })
 }
 
 #[test]
@@ -54,22 +104,15 @@ fn a_sandboxed_process_reaches_an_ungranted_unix_socket() {
     }
 
     let dir = short_socket_dir();
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).unwrap();
     let sock = dir.join("p.sock");
     let listener = UnixListener::bind(&sock).unwrap();
 
-    let accepted = std::thread::spawn(move || {
-        let mut buf = [0u8; 8];
-        match listener.accept() {
-            Ok((mut c, _)) => c.read(&mut buf).is_ok(),
-            Err(_) => false,
-        }
-    });
+    let accepted = accept_once(listener);
 
     // The probe grants only its own cwd. The socket is outside it, under
-    // /tmp, which the compiled policy does not grant — so a Landlock
-    // mediating AF_UNIX would refuse this.
+    // /tmp, which the compiled policy does not grant — so a backend
+    // mediating AF_UNIX refuses this and one that does not lets it
+    // through. That difference is the measurement.
     let cwd = std::env::temp_dir();
     let out = Command::new(env!("CARGO_BIN_EXE_devcroft"))
         .arg("__uds_probe")
@@ -85,11 +128,11 @@ fn a_sandboxed_process_reaches_an_ungranted_unix_socket() {
     assert!(
         connected,
         "expected the sandboxed probe to reach an ungranted unix socket, since \
-         Landlock's network rules cover TCP only. If this now FAILS, the gap has \
-         closed — either the kernel gained AF_UNIX mediation or devcroft added \
-         seccomp filtering. That is good news, and `docs/known-gaps.md`, \
-         `docs/threat-model.md` and `sandbox-provisioning`'s design.md all claim \
-         it is open and must be corrected together. stderr: {}",
+         neither backend's network rules cover AF_UNIX. If this now FAILS, the gap \
+         has closed — the kernel gained AF_UNIX mediation, or devcroft added \
+         seccomp filtering or a mount namespace. That is good news, and \
+         `docs/known-gaps.md`, `docs/threat-model.md` and `sandbox-provisioning`'s \
+         design.md all claim it is open and must be corrected together. stderr: {}",
         String::from_utf8_lossy(&out.stderr)
     );
 }

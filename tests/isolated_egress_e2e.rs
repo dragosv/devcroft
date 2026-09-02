@@ -44,6 +44,26 @@ fn serve_ok_responses(listener: TcpListener) {
     });
 }
 
+/// Same loopback-alias guard as `tests/egress_proxy_e2e.rs`: the whole of
+/// `127.0.0.0/8` is bindable on Linux but only `127.0.0.1` is on macOS.
+/// This test already self-skips off Linux (no unprivileged netns
+/// elsewhere), so this exists so a bind failure reads as a host
+/// capability rather than as a devcroft regression.
+fn bind_loopback_alias(addr: &str) -> Option<TcpListener> {
+    match TcpListener::bind(addr) {
+        Ok(listener) => Some(listener),
+        Err(e) if e.kind() == std::io::ErrorKind::AddrNotAvailable => {
+            let host = addr.rsplit_once(':').map(|(h, _)| h).unwrap_or(addr);
+            eprintln!(
+                "skipping: this host cannot bind the loopback alias {host} ({e}); \
+                 on macOS run `sudo ifconfig lo0 alias {host} up` first"
+            );
+            None
+        }
+        Err(e) => panic!("binding {addr} failed for an unexpected reason: {e}"),
+    }
+}
+
 #[test]
 fn an_isolated_sandbox_still_reaches_its_allowlisted_hosts() {
     if !devcroft::policy::backend_supported() {
@@ -102,11 +122,15 @@ fn an_isolated_sandbox_still_reaches_its_allowlisted_hosts() {
     // to them at all except through the proxy, which is exactly the
     // point: reaching the allowed one proves the relay works end to end,
     // and it cannot be an accident of shared loopback.
-    let allowed_listener = TcpListener::bind("127.0.0.3:0").unwrap();
+    let Some(allowed_listener) = bind_loopback_alias("127.0.0.3:0") else {
+        return;
+    };
     let allowed_port = allowed_listener.local_addr().unwrap().port();
     serve_ok_responses(allowed_listener);
 
-    let denied_listener = TcpListener::bind("127.0.0.4:0").unwrap();
+    let Some(denied_listener) = bind_loopback_alias("127.0.0.4:0") else {
+        return;
+    };
     let denied_port = denied_listener.local_addr().unwrap().port();
     serve_ok_responses(denied_listener);
 

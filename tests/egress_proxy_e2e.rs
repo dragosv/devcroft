@@ -26,6 +26,30 @@ fn serve_one_ok_response(listener: TcpListener) {
     });
 }
 
+/// Binds a mock upstream on a loopback address that is *not* `127.0.0.1`
+/// — see the `NO_PROXY` note at the call site for why the test needs
+/// one. Linux hands the whole of `127.0.0.0/8` to `lo`, so the bind just
+/// works; macOS assigns only `127.0.0.1` to `lo0` and needs an explicit
+/// `sudo ifconfig lo0 alias <addr> up` per extra address, so the bind
+/// fails there with `AddrNotAvailable`. That is a missing host
+/// capability, not a devcroft regression, so it self-skips and names the
+/// command that would enable it — same posture as the Landlock/Seatbelt
+/// and flox guards above.
+fn bind_loopback_alias(addr: &str) -> Option<TcpListener> {
+    match TcpListener::bind(addr) {
+        Ok(listener) => Some(listener),
+        Err(e) if e.kind() == std::io::ErrorKind::AddrNotAvailable => {
+            let host = addr.rsplit_once(':').map(|(h, _)| h).unwrap_or(addr);
+            eprintln!(
+                "skipping: this host cannot bind the loopback alias {host} ({e}); \
+                 on macOS run `sudo ifconfig lo0 alias {host} up` first"
+            );
+            None
+        }
+        Err(e) => panic!("binding {addr} failed for an unexpected reason: {e}"),
+    }
+}
+
 #[test]
 fn network_allow_actually_filters_by_host_through_a_real_curl() {
     if !devcroft::policy::backend_supported() {
@@ -80,11 +104,15 @@ fn network_allow_actually_filters_by_host_through_a_real_curl() {
     // Two mock upstreams on two different loopback-family addresses: the
     // manifest allows exactly one by name, so a name-based (not merely
     // reachability-based) decision is what's actually under test.
-    let allowed_listener = TcpListener::bind("127.0.0.3:0").unwrap();
+    let Some(allowed_listener) = bind_loopback_alias("127.0.0.3:0") else {
+        return;
+    };
     let allowed_port = allowed_listener.local_addr().unwrap().port();
     serve_one_ok_response(allowed_listener);
 
-    let denied_listener = TcpListener::bind("127.0.0.4:0").unwrap();
+    let Some(denied_listener) = bind_loopback_alias("127.0.0.4:0") else {
+        return;
+    };
     let denied_port = denied_listener.local_addr().unwrap().port();
     serve_one_ok_response(denied_listener);
 
