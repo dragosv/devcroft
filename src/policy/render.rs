@@ -85,25 +85,41 @@ pub fn render(compiled: &CompiledPolicy) -> String {
 /// property in spirit even if not in fact — two sections that must
 /// always agree are one invariant away from silently not agreeing.
 ///
-/// What genuinely is not in either list above, and is named here instead
-/// of being left for a reader to discover by surprise: the view also
-/// always contains a private `/tmp` (when `/tmp` is granted — never a
-/// bind of the host's shared one), the host's `/proc` (bind-mounted,
-/// not a fresh instance — design.md's Open Question 1 explains why), a
-/// minimal `/dev`, and the standard merged-`/usr` compatibility symlinks
-/// (`/lib`, `/lib64`, `/bin`, `/sbin`) where this host has them. None of
-/// these has a manifest/provider/baseline origin to attribute, because
-/// none is a policy *rule* — they are the keeper's own unconditional
-/// construction requirements, the same category `KEEPER_SYSTEM_READ`'s
-/// entries above are, just not expressed as compiled grants.
+/// **`/proc` is named as an unbounded exposure, not folded into "exactly
+/// the granted paths" — found by adversarial review, and correctly.** An
+/// earlier version of this note said the view contains "exactly" the
+/// granted paths "plus... the keeper's own /proc", which reads as a
+/// small, scoped addition. It is not: `fleet::mount::mount_proc` binds
+/// the host's *entire* procfs, so a sandbox can enumerate and read
+/// `/proc/<pid>` for every process on the host, sandboxed or not (subject
+/// to ordinary DAC — this is visibility, not access). That is
+/// deliberate and load-bearing (`mount_proc`'s own doc: a fresh instance
+/// would need PID-namespace ownership this change doesn't take), but a
+/// reader of `policy --render` — the one command that exists specifically
+/// so nothing reaches the backend unshown — deserves to be told the real
+/// shape, not a phrase that reads as bounded when it is not.
+///
+/// What else is not in either list above, named here instead of being
+/// left for a reader to discover by surprise: the view also always
+/// contains a private `/tmp` (when `/tmp` is granted — never a bind of
+/// the host's shared one), a minimal `/dev`, and the standard
+/// merged-`/usr` compatibility symlinks (`/lib`, `/lib64`, `/bin`,
+/// `/sbin`) where this host has them. None of these has a
+/// manifest/provider/baseline origin to attribute, because none is a
+/// policy *rule* — they are the keeper's own unconditional construction
+/// requirements, the same category `KEEPER_SYSTEM_READ`'s entries above
+/// are, just not expressed as compiled grants.
 fn render_filesystem_view_note(out: &mut String) {
     writeln!(
         out,
-        "filesystem.view: every sandbox's mount view (add-mount-isolation) contains exactly \
-         the paths listed under filesystem.allow/filesystem.read above, bind-mounted \
-         read-write/read-only to match, plus a private /tmp (when granted), the keeper's own \
-         /proc, /dev, and merged-/usr compatibility symlinks — none of which has a rule origin, \
-         since none is granted by the manifest or a provider"
+        "filesystem.view: every sandbox's mount view (add-mount-isolation) contains the \
+         paths listed under filesystem.allow/filesystem.read above, bind-mounted \
+         read-write/read-only to match, plus a private /tmp (when granted), a minimal /dev, \
+         and merged-/usr compatibility symlinks — none of which has a rule origin, since none \
+         is granted by the manifest or a provider. It ALSO contains the host's entire /proc \
+         (bind-mounted, not a fresh instance): every process on this host is visible and \
+         enumerable from inside the sandbox, not only the sandbox's own — a known, deliberate \
+         gap (no PID namespace is taken; see docs/known-gaps.md), not a bounded keeper need"
     )
     .unwrap();
 }

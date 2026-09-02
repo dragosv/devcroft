@@ -210,18 +210,49 @@ pub fn construct_view(
 
     mount_tmpfs(new_root)?;
 
+    // **Three phases for /tmp, in this exact order — both the ordering
+    // and the split are load-bearing, found live, not cosmetic.**
+    //
+    // 1. Mount /tmp *before* the grants loop below, writable regardless
+    //    of its eventual mode. Mounting a filesystem over a directory
+    //    hides (does not unmount) whatever was already mounted
+    //    underneath it — a project root created under /tmp
+    //    (`mktemp`-style worktrees, ephemeral CI directories) is exactly
+    //    such a case. With /tmp mounted *after* the loop instead, the
+    //    private tmpfs would land directly on top of the project root's
+    //    own bind mount at `<new_root>/tmp/<project>`, and every
+    //    session — the keeper's own `set_current_dir(project_root)`
+    //    included — would then find nothing there. Measured: `up` on a
+    //    project rooted under /tmp, with /tmp also granted, failed with
+    //    a bare `ENOENT`.
+    // 2. Run the grants loop with /tmp still writable, so a nested
+    //    grant under /tmp (the project root, again) can create its own
+    //    mount point there — `mkdir`/`touch` before `mount()` needs a
+    //    writable parent.
+    // 3. Only *after* the loop, finalize /tmp's own mode — a
+    //    non-recursive remount, so a nested grant's own, possibly more
+    //    permissive mode (the project root is `ReadWrite` even when
+    //    `/tmp` itself is granted `Read`) is not silently overridden.
+    //    Measured live: doing this *before* step 2 instead made every
+    //    nested grant under /tmp fail with `EROFS`, trying to create a
+    //    mount point under an already-read-only parent.
+    let tmp_mode = grants.iter().find(|g| g.path == tmp_path).map(|g| g.mode);
+    if tmp_mode.is_some() {
+        mount_private_tmp(new_root)?;
+    }
+
     for grant in grants {
         if grant.path == tmp_path {
-            // Handled below, privately — never a bind of the host's own
-            // shared /tmp (task 2.1's own item, distinct from "mirror
-            // what was granted").
+            // Handled by mount_private_tmp/finalize_tmp_mode, privately —
+            // never a bind of the host's own shared /tmp (task 2.1's own
+            // item, distinct from "mirror what was granted").
             continue;
         }
         bind_mount_grant(new_root, &grant.path, grant.mode)?;
     }
 
-    if grants.iter().any(|g| g.path == tmp_path) {
-        mount_private_tmp(new_root)?;
+    if let Some(mode) = tmp_mode {
+        finalize_tmp_mode(new_root, mode)?;
     }
 
     mount_proc(new_root)?;
@@ -320,7 +351,7 @@ fn bind_mount_grant(
         && !source_type.is_char_device()
         && !source_type.is_block_device()
     {
-        remount_readonly(&target)?;
+        remount_readonly(&target, true)?;
     }
     Ok(())
 }
@@ -350,9 +381,31 @@ fn bind_mount(
     Ok(())
 }
 
-fn remount_readonly(target: &std::path::Path) -> io::Result<()> {
+/// `recursive`: `true` for an ordinary granted subtree, where everything
+/// underneath belongs to the same grant and should uniformly become
+/// read-only — the common case, and what every caller except `/tmp`'s
+/// own finalization uses.
+///
+/// `false` for `/tmp` specifically, and the reasoning is narrower than
+/// it might look. **Measured with a minimal, `nono`-free reproduction
+/// (a plain `unshare` + two `mount()` calls) before relying on either
+/// answer**: recursively remounting a parent tmpfs read-only
+/// (`MS_REMOUNT|MS_BIND|MS_RDONLY|MS_REC`) did *not* observably affect
+/// an independently bind-mounted directory already nested underneath —
+/// writes into the nested mount kept succeeding, only the parent's own
+/// top-level entries became read-only. So `MS_REC` on a `remount` is not
+/// proven dangerous here the way an initial guess assumed. Kept
+/// non-recursive anyway because it is still the narrower, more
+/// literally-correct request — "make this one mount read-only", not
+/// "and whatever the kernel's `MS_REC` remount semantics happen to reach
+/// today" — and the safer choice does not depend on an undocumented
+/// behavior continuing to hold across kernel versions.
+fn remount_readonly(target: &std::path::Path, recursive: bool) -> io::Result<()> {
     let target_c = path_to_cstring(target)?;
-    let flags = libc::MS_BIND | libc::MS_REMOUNT | libc::MS_RDONLY | libc::MS_REC;
+    let mut flags = libc::MS_BIND | libc::MS_REMOUNT | libc::MS_RDONLY;
+    if recursive {
+        flags |= libc::MS_REC;
+    }
     // SAFETY: `target_c` is valid and NUL-terminated; a remount needs no
     // source, filesystem type, or extra data.
     let ret = unsafe {
@@ -374,6 +427,17 @@ fn remount_readonly(target: &std::path::Path) -> io::Result<()> {
 /// host's own shared `/tmp` (task 2.1). Conventional `1777` permissions
 /// (world-writable, sticky), matching every real `/tmp` a tool invoked
 /// inside a session would expect.
+///
+/// **Deliberately left writable here — read-only mode, if any, is
+/// finalized separately, later, by [`finalize_tmp_mode`].** A project
+/// root physically nested under `/tmp` on the host (`mktemp`-style
+/// worktrees, ephemeral CI directories) needs to create its *own* bind
+/// mount somewhere under this tmpfs later in [`construct_view`]'s grants
+/// loop, and creating a mount point — `mkdir`/`touch` on a plain path,
+/// before the `mount()` call itself — needs a writable parent. Making
+/// `/tmp` read-only here, before that loop runs, would fail every such
+/// nested grant with `EROFS`. Measured live while fixing the ordering
+/// bug this function's sibling doc already describes.
 fn mount_private_tmp(new_root: &std::path::Path) -> io::Result<()> {
     let target = new_root.join("tmp");
     std::fs::create_dir_all(&target)?;
@@ -382,6 +446,28 @@ fn mount_private_tmp(new_root: &std::path::Path) -> io::Result<()> {
         &target,
         std::os::unix::fs::PermissionsExt::from_mode(0o1777),
     )?;
+    Ok(())
+}
+
+/// The second half of `/tmp`'s handling, run *after* the grants loop —
+/// remounts `/tmp` itself read-only if that is what the manifest granted
+/// (`filesystem.read`, not `filesystem.allow`), so "the view mirrors
+/// what was granted" holds for `/tmp` too, not just for everything
+/// routed through the generic bind-mount path. Found live: an earlier
+/// version always left `/tmp` writable regardless of the grant's own
+/// mode, so `policy --render` could show `Read` while the constructed
+/// view stayed writable until Landlock's own restriction caught up.
+///
+/// **Non-recursive, deliberately** — see [`remount_readonly`]'s own doc
+/// for the measurement behind that choice: a project root nested under
+/// `/tmp` with its own, more permissive grant already has its own
+/// separate mount by the time this runs, and the narrower request is
+/// what's actually wanted regardless of how a recursive one happens to
+/// behave.
+fn finalize_tmp_mode(new_root: &std::path::Path, mode: nono::AccessMode) -> io::Result<()> {
+    if mode == nono::AccessMode::Read {
+        remount_readonly(&new_root.join("tmp"), false)?;
+    }
     Ok(())
 }
 
