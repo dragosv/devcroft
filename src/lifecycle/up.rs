@@ -401,22 +401,46 @@ fn up_process(
         .resolved_grants(project_root)
         .map_err(|e| UpError::Policy(e.to_string()))?;
 
-    // Mount isolation is unconditional — every sandbox gets its own
-    // filesystem view, unlike network isolation below, which degrades
-    // gracefully when unavailable. Probed and failed closed *here*,
-    // before any listener exists or state is written, for the identical
-    // reason the deny-overlap check above runs before anything is
-    // created: a clear `config`-adjacent failure beats an opaque one
-    // deep inside a spawned child's `pre_exec` (design.md M4: "does not
-    // fall back to the host's namespace" — there being no fallback
-    // branch at all is what that requires, not a warning).
-    if !matches!(crate::fleet::mount::probe(&exe), Ok(true)) {
-        return Err(UpError::Backend(
-            "this host cannot create unprivileged mount namespaces, which every sandbox's \
-             filesystem view now requires (see `devcroft doctor`)"
-                .to_string(),
-        ));
-    }
+    // Mount isolation fails closed on Linux (design.md M4: "does not
+    // fall back to the host's namespace") but degrades like network
+    // isolation on every other platform — the two are not the same
+    // claim, and treating them alike was a regression found by
+    // adversarial review, not a deliberate scope decision recorded
+    // anywhere. M4's own reasoning is specifically about a Linux host
+    // that *should* have unprivileged user namespaces but doesn't, for
+    // a host-specific reason (an old kernel, a restrictive container) —
+    // the same "should normally work" framing `netns`'s own degrade
+    // already uses below. macOS is a structurally different case: there
+    // is no Linux namespace primitive to fail closed *about*, Seatbelt
+    // already provided a real, working boundary before this change
+    // existed, and failing every macOS `up` outright would be removing
+    // that boundary entirely rather than tightening it. Probed and
+    // decided *here*, before any listener exists or state is written,
+    // for the identical reason the deny-overlap check above runs before
+    // anything is created.
+    let isolate_filesystem = match (
+        cfg!(target_os = "linux"),
+        matches!(crate::fleet::mount::probe(&exe), Ok(true)),
+    ) {
+        (_, true) => true,
+        (true, false) => {
+            return Err(UpError::Backend(
+                "this host cannot create unprivileged mount namespaces, which every \
+                 sandbox's filesystem view now requires (see `devcroft doctor`)"
+                    .to_string(),
+            ));
+        }
+        (false, false) => {
+            eprintln!(
+                "devcroft: warning: mount isolation is unavailable on this platform \
+                 (fallback: this sandbox is confined by Seatbelt alone, the same \
+                 boundary every sandbox had before add-mount-isolation; a world- \
+                 accessible unix socket outside the compiled policy remains reachable \
+                 — see `devcroft doctor` and docs/known-gaps.md)"
+            );
+            false
+        }
+    };
 
     // Kept for inspection/debugging parity with what `down` has always
     // promised ("down must keep compiled policy") — no longer a nono
@@ -628,6 +652,7 @@ fn up_process(
         },
         services,
         &shell.path,
+        isolate_filesystem,
         isolate_network,
         relay.clone(),
         &mount_grants,
@@ -815,6 +840,7 @@ fn spawn_keeper(
     ssh: SshHandoff,
     services: Option<&str>,
     shell: &Path,
+    isolate_filesystem: bool,
     isolate_network: bool,
     relay: Option<(u16, PathBuf)>,
     mount_grants: &[policy::ResolvedGrant],
@@ -824,9 +850,14 @@ fn spawn_keeper(
     // doc) must exist and be empty before `pre_exec` runs — created here,
     // host-side, rather than inside the forked child, so a failure to
     // create it surfaces as an ordinary `io::Error` from this function
-    // rather than as an opaque `pre_exec`/`spawn` failure.
-    let _ = std::fs::remove_dir_all(&paths.mount_root);
-    std::fs::create_dir_all(&paths.mount_root)?;
+    // rather than as an opaque `pre_exec`/`spawn` failure. Skipped
+    // entirely when mount isolation is degraded (macOS today, per
+    // `up_process`'s own platform split): nothing will ever pivot into
+    // it, so creating it would just be a stray empty directory.
+    if isolate_filesystem {
+        let _ = std::fs::remove_dir_all(&paths.mount_root);
+        std::fs::create_dir_all(&paths.mount_root)?;
+    }
     let mount_root = paths.mount_root.clone();
     let mount_grants = mount_grants.to_vec();
     let proxy_socket_for_view = proxy_socket_for_view.map(Path::to_path_buf);
@@ -965,17 +996,29 @@ fn spawn_keeper(
             if libc::setsid() < 0 {
                 return Err(io::Error::last_os_error());
             }
-            crate::fleet::mount::enter_mount_namespace_with_network(isolate_network)?;
-            if isolate_network {
-                crate::fleet::netns::bring_loopback_up()?;
+            // `isolate_network` can only be `true` here when
+            // `isolate_filesystem` is too — network namespaces are as
+            // Linux-only as mount namespaces (`fleet::netns`'s own
+            // `#[cfg(not(target_os = "linux"))]` stub), and `up_process`
+            // only ever sets it once mount isolation's own platform
+            // check already passed. So this is not two independent
+            // conditions to reconcile: when mount isolation is degraded
+            // (macOS today), nothing here runs at all, and the keeper
+            // execs under plain Landlock/Seatbelt — the exact boundary
+            // every sandbox had before `add-mount-isolation` existed.
+            if isolate_filesystem {
+                crate::fleet::mount::enter_mount_namespace_with_network(isolate_network)?;
+                if isolate_network {
+                    crate::fleet::netns::bring_loopback_up()?;
+                }
+                crate::fleet::mount::make_propagation_private()?;
+                crate::fleet::mount::construct_view(
+                    &mount_root,
+                    &mount_grants,
+                    proxy_socket_for_view.as_deref(),
+                )?;
+                std::env::set_current_dir(&project_root_owned)?;
             }
-            crate::fleet::mount::make_propagation_private()?;
-            crate::fleet::mount::construct_view(
-                &mount_root,
-                &mount_grants,
-                proxy_socket_for_view.as_deref(),
-            )?;
-            std::env::set_current_dir(&project_root_owned)?;
             Ok(())
         });
     }
