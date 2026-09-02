@@ -37,6 +37,15 @@ fn main() {
         // socket? Decides whether an isolated sandbox reaching the host
         // egress proxy over a UDS needs an explicit filesystem grant.
         Some("__uds_probe") => std::process::exit(uds_probe_main(&args[2..])),
+        // Hidden: does devcroft's default CapabilitySet (IpcMode left at
+        // its library default) actually deny connect() to an *abstract*
+        // unix socket — the AF_UNIX half a mount view cannot close, since
+        // an abstract socket has no filesystem path to remove
+        // (`add-backend-capabilities` task 1.5). Evidence for the
+        // `abstract-unix-sockets` matrix entry.
+        Some("__abstract_socket_probe") => {
+            std::process::exit(abstract_socket_probe_main(&args[2..]))
+        }
         // Hidden: simulates one fleet agent binding a service port
         // inside its own namespace, for `tests/fleet_netns.rs`. Lives in
         // the real binary rather than the test so it enters a namespace
@@ -872,6 +881,58 @@ fn uds_probe_main(args: &[String]) -> i32 {
         }
         Err(e) => {
             eprintln!("devcroft __uds_probe: connect refused: {e}");
+            1
+        }
+    }
+}
+
+/// Probe: with devcroft's *default* `CapabilitySet` applied — the same
+/// one `CapabilityPlan::to_capability_set` builds, `set_signal_mode`
+/// called and nothing else, `IpcMode` left at whatever `nono` defaults
+/// to — can this process still `connect()` to an *abstract* unix socket
+/// (`@`-prefixed, no filesystem path)?
+///
+/// No mount view involved, deliberately: an abstract socket has no path
+/// for `fleet::mount::construct_view` to remove, so this measures
+/// Landlock/Seatbelt alone, exactly like `__uds_probe` did before
+/// `add-mount-isolation` existed.
+///
+/// Argument 1 is the abstract name (no leading NUL — `SocketAddrExt`
+/// adds it). Exit 0 = connected, 1 = refused, 2 = setup failure.
+fn abstract_socket_probe_main(args: &[String]) -> i32 {
+    use std::os::linux::net::SocketAddrExt;
+    use std::os::unix::net::{SocketAddr, UnixStream};
+
+    let Some(name) = args.first() else {
+        eprintln!("devcroft __abstract_socket_probe: usage: <abstract-name>");
+        return 2;
+    };
+    let Ok(addr) = SocketAddr::from_abstract_name(name.as_bytes()) else {
+        eprintln!("devcroft __abstract_socket_probe: invalid abstract name {name}");
+        return 2;
+    };
+
+    let Ok(cwd) = std::env::current_dir() else {
+        return 2;
+    };
+    let caps = nono::CapabilitySet::new();
+    let Ok(caps) = caps.allow_path(&cwd, nono::AccessMode::ReadWrite) else {
+        return 2;
+    };
+    // The one knob devcroft's real compiled policy sets
+    // (`capability_set.rs`'s `to_capability_set`) — everything else,
+    // `IpcMode` included, stays at whatever this pinned `nono` defaults
+    // to, exactly as a real sandbox gets it.
+    let caps = caps.set_signal_mode(nono::SignalMode::Isolated);
+    if let Err(e) = nono::Sandbox::apply_auto(&caps) {
+        eprintln!("devcroft __abstract_socket_probe: apply_auto failed: {e}");
+        return 2;
+    }
+
+    match UnixStream::connect_addr(&addr) {
+        Ok(_) => 0,
+        Err(e) => {
+            eprintln!("devcroft __abstract_socket_probe: connect refused: {e}");
             1
         }
     }

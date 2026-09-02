@@ -22,22 +22,35 @@ nobody can support — that is the point, not a setback.
       `policy::degraded` currently asserts cooperative, the library's doc
       comment suggests enforced, and nobody has run it.
 - [ ] 1.4 Signal isolation — the one library knob devcroft actually sets.
-- [ ] 1.5 Process-info isolation and IPC mode: `not-adopted`. devcroft never
-      configures either and silently inherits the library's defaults.
-      **`IpcMode` turned out to be a live security gap, not an unused
-      knob.** Setting `IpcMode::SharedMemoryOnly` is what makes nono
-      request Landlock's `Scope::AbstractUnixSocket` (V6, kernel 6.12) —
-      see `sandbox/linux.rs`'s `abstract_unix_socket_requested`. Without
-      it a sandbox reaches every *abstract* unix socket on the host, which
-      on a desktop Linux means the dbus session bus, X11, PipeWire and
-      systemd-journald. This devcontainer happens to have none (`ss -xl`
-      shows zero), so it is unmeasurable here and real elsewhere.
-      This is the second half of the gap `docs/known-gaps.md` records —
-      the pathname half needs `add-mount-isolation`'s mount namespace,
-      but the abstract half needs one method call devcroft already has
-      access to. **Found by reading `sandlock`** (see `docs/prior-art.md`),
-      which uses exactly this scoping; the matrix had flagged the entry as
-      unadopted without anyone connecting it to the AF_UNIX finding.
+- [ ] 1.5 Process-info isolation: `not-adopted`. devcroft never configures
+      `ProcessInfoMode` and silently inherits the library's default.
+      **IPC mode is a separate entry, and the premise this task started
+      from was wrong — corrected here, not left standing.** This task
+      originally read "IpcMode: not-adopted... a sandbox reaches every
+      abstract unix socket... one method call devcroft already has access
+      to", reasoning from "we never call `set_ipc_mode`" without checking
+      what the *unset* default resolves to. It does not need calling:
+      `IpcMode::SharedMemoryOnly` is `nono`'s own `#[default]`
+      (`capability.rs`), and `requested_scopes()`
+      (`sandbox/linux.rs`) requests Landlock's `Scope::AbstractUnixSocket`
+      whenever `ipc_mode() == SharedMemoryOnly` — true on every devcroft
+      sandbox, today, with zero code change. **Verified live, not just
+      traced**: `__abstract_socket_probe` applies devcroft's real,
+      unmodified `CapabilitySet` against a real abstract socket and gets
+      `EPERM`. Record IPC mode's abstract-socket scoping as **`enforced`
+      on Linux with Landlock ABI V6+** (evidence:
+      `__abstract_socket_probe`, exercised by
+      `tests/abstract_socket_not_reachable.rs`), **`unsupported` on
+      older Linux kernels** (no scoping ABI to request), and
+      **`unverified` on macOS** (Seatbelt has no equivalent examined).
+      This is the second half of the gap `docs/known-gaps.md` records,
+      now corrected there to say *closed* rather than open — the pathname
+      half needed `add-mount-isolation`'s mount namespace; the abstract
+      half needed nothing, and `add-backend-capabilities` is what noticed
+      that rather than what fixed it. Originally found by reading
+      `sandlock` (see `docs/prior-art.md`), which uses the same scoping
+      deliberately; the matrix work here is what caught that the
+      "unadopted" framing was itself wrong.
 - [ ] 1.6 Resource limits: `not-adopted`. The library's `ResourceLimits` is a
       declaration only — rendering it to cgroups lived in the CLI devcroft
       stopped depending on (confirmed in `add-linux-agent-fleet` task 0).
