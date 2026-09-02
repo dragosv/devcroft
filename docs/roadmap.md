@@ -94,6 +94,15 @@ PID-namespace ownership this change deliberately doesn't take, and an
 `ENOENT` from merged-`/usr` symlinks the view didn't originally recreate
 — all fixed, all recorded in that change's design.md.
 
+A same-day adversarial review found four more issues before this landed:
+`/tmp` mounting after the grants loop shadowed a nested project root
+(`ENOENT`), `/tmp` ignoring its own grant mode, `policy --render`'s
+`/proc` wording overclaiming a bounded view, and `up` failing closed on
+every platform instead of only Linux — the last one a regression this
+branch itself introduced when mount isolation briefly became
+unconditional. All four fixed and tested before landing; none changed the
+shape of what's described above.
+
 **`add-backend-capabilities`** (26/26, done) — the offered-versus-adopted
 matrix for `nono`, now `src/backend_capabilities.rs`, surfaced live by
 `devcroft doctor`. It paid for itself twice: once in the findings the
@@ -107,6 +116,24 @@ overrides it, and that alone requests Landlock's abstract-socket scoping
 on ABI V6+. Verified live (`tests/abstract_socket_not_reachable.rs`), and
 corrected everywhere the wrong claim had already propagated
 (`docs/known-gaps.md`, `docs/threat-model.md`, the change's own design.md).
+
+**`add-macos-unix-socket-scoping`** (0/11, proposed) is the same claim's
+second half, and deliberately not one of the two items above. The mount
+namespace that closes AF_UNIX on Linux has no Seatbelt equivalent, so
+macOS was never claimed fixed by this section and does not gate
+`0.1.0`'s cut — the gap there is exactly as open as it always was, still
+correctly stated as open in `docs/known-gaps.md`. It does gate 1.0,
+though, whose own definition below requires the boundary to hold "on
+both supported platforms," which is why it is placed here rather than
+left in the unscheduled list at the bottom of this document: the
+mechanism is different (Seatbelt classifies unix-socket `connect()` as
+network-outbound activity, so `network.default = "deny"` may already
+reach it — read from `nono`'s own macOS sandbox source, not yet run),
+and task group 0 is a spike confirming that live before any of it is
+claimed anywhere. That spike does not need hardware this project lacks —
+the maintainer has direct access to a Mac, just not through this
+devcontainer — so what is missing is the run itself, not access to run
+it. Nothing downstream of task group 0 starts until it reports back.
 
 ## 0.3 — one agent, end to end
 
@@ -208,10 +235,15 @@ argument is restated here rather than left in its proposal.
 What separates 0.6 from 1.0 is evidence, not features:
 
 - **macOS.** Seatbelt is implemented and has never run on a CI host. Domain
-  filtering there is unverified, the mount-isolation equivalent is
-  unexamined, and this project does not ship a security claim it has not
-  measured. **This needs hardware the project does not have**, and is the
-  most likely thing to hold 1.0 back.
+  filtering there is unverified, and this project does not ship a security
+  claim it has not measured. The AF_UNIX half of the mount-isolation
+  equivalent has a scoped follow-up now (`add-macos-unix-socket-scoping`,
+  0.2 above) rather than sitting here unexamined; domain filtering, and
+  anything that spike turns up the proposal didn't anticipate, still need
+  a real run. **This doesn't need hardware the project lacks** — the
+  maintainer has direct access to a Mac, just not through this
+  devcontainer — so what's missing is the run happening, not access to
+  run it.
 - **Scale.** "Eight sandboxes cost one build" follows from a shared
   content-addressed store. It has been tested at two.
 - **The published gaps.** Each entry in `docs/known-gaps.md` either closes
