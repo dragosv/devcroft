@@ -26,6 +26,12 @@
 //! because it is confirmed. Revisit with an actual macOS host before
 //! either keeping or removing this warning on the strength of an
 //! argument rather than a measurement.
+//!
+//! **The authoritative status now lives in
+//! [`crate::backend_capabilities`]** (`domain-filtering` entry, surfaced
+//! by `devcroft doctor`) — `Unverified` on macOS there too, for the
+//! identical reason above. This module's own doc is the history of why;
+//! if the two ever disagree, this paragraph is the one to fix.
 
 use super::CompiledPolicy;
 use std::fmt;

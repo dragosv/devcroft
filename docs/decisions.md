@@ -656,7 +656,16 @@ is kernel-version-dependent: ABI V6's signal scoping is new enough that
 older kernels this project still supports would plausibly reproduce the
 original claim. `doctor`'s `kernel: Landlock V6` line is how to tell
 which regime a given host is in — this decision entry was wrong to state
-the gap unconditionally rather than naming that dependency.
+the gap unconditionally rather than naming that dependency. **The signal
+half of this is now the `signal-isolation` entry in
+`src/backend_capabilities.rs` (`enforced-with-named-degradation`, naming
+the same ABI dependency this paragraph found); the process-visibility
+half — no PID/mount namespace, so one sandbox can still enumerate
+another's process *list*, signal scoping notwithstanding — is
+`inter-sandbox-process-visibility` (`not-adopted`, unchanged by
+`add-mount-isolation`'s own deliberate choice not to take a PID
+namespace). Both surfaced by `devcroft doctor`; treat this paragraph as
+the history, the matrix as the current answer.**
 
 ### Cooperative network filtering
 
@@ -691,9 +700,11 @@ is no raw-socket path around it to any destination, allowlisted or not.
 The resolved-IP-scope gap this entry left open is unchanged and is
 `nono::HostFilter`'s own stated limit (link-local addresses are denied
 regardless; a same-IP different-service risk on an *allowed* domain is
-not). macOS status is unchanged from the correction above — genuinely
-unverified, not assumed either way; see the README's Status section and
-`policy::degraded`'s module doc for the same note.
+not). **Current per-platform status lives in `src/backend_capabilities.rs`
+(the `domain-filtering` entry, surfaced by `devcroft doctor`), not
+here** — this section is the history of how that status was corrected
+twice; the matrix is the one place a reader should trust for what is
+true *right now*.
 
 ### Service sidecars: delivered, with one gap named below
 

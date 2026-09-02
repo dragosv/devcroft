@@ -1365,6 +1365,8 @@ fn cli_doctor() -> i32 {
     doctor_ssh_config();
     doctor_manifest_degradation();
     doctor_service_supervisor();
+    println!();
+    doctor_backend_capabilities();
 
     println!();
     if ok {
@@ -1409,6 +1411,70 @@ fn doctor_backend() -> bool {
         );
     }
     support.is_supported
+}
+
+/// `add-backend-capabilities` task 2.1/2.2: the declared capability
+/// matrix (`backend_capabilities::capabilities()`) against what this
+/// host can actually provide.
+///
+/// **Never fails `doctor`** — a `[FAIL]` here would mean "this host
+/// cannot do something devcroft claims to enforce", which is real for
+/// `NotAdopted`/`Unsupported`/`Unverified` entries by definition, not a
+/// broken host. Reported as `[INFO]` throughout, matching
+/// `doctor_agent_namespaces`'s own reasoning for the identical choice.
+///
+/// Spec: "`doctor` SHALL NOT probe the host" for `NotAdopted` entries —
+/// enforced here by construction, not by a per-entry check: only
+/// `Enforced`/`EnforcedWithNamedDegradation` entries ever reach
+/// `probe_here()`, and `NotAdopted` entries never carry a probe function
+/// at all (asserted in `backend_capabilities`'s own
+/// `not_adopted_entries_carry_no_host_probe` test).
+fn doctor_backend_capabilities() {
+    use devcroft::backend_capabilities::{Status, capabilities};
+
+    println!("capabilities (add-backend-capabilities):");
+    for cap in capabilities() {
+        let declared = cap.status_here();
+        match declared.status {
+            Status::NotAdopted => {
+                println!("  [INFO] {:<32} not-adopted", cap.name);
+            }
+            Status::Unsupported => {
+                println!("  [INFO] {:<32} unsupported on this platform", cap.name);
+            }
+            Status::Unverified => {
+                println!(
+                    "  [INFO] {:<32} unverified — declared status is a belief, not a measurement",
+                    cap.name
+                );
+            }
+            Status::Enforced | Status::EnforcedWithNamedDegradation => {
+                let label = if declared.status == Status::Enforced {
+                    "enforced"
+                } else {
+                    "enforced (degraded)"
+                };
+                match cap.probe_here() {
+                    Some(probe) if probe() => {
+                        println!(
+                            "  [INFO] {:<32} {label}, and available on this host",
+                            cap.name
+                        );
+                    }
+                    Some(_) => {
+                        println!(
+                            "  [INFO] {:<32} {label} by devcroft, but UNAVAILABLE on this host \
+                             — see `doctor`'s namespace/backend lines above for why",
+                            cap.name
+                        );
+                    }
+                    None => {
+                        println!("  [INFO] {:<32} {label}", cap.name);
+                    }
+                }
+            }
+        }
+    }
 }
 
 /// Checks the provider **this project actually declares**, not every

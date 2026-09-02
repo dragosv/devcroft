@@ -24,6 +24,7 @@
 //! properly, which is a different thing from freezing whatever the
 //! internals happen to look like today.
 
+pub mod backend_capabilities;
 pub mod config;
 pub mod exec;
 pub mod fleet;

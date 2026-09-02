@@ -9,11 +9,21 @@
 - `remove-gvisor-backend` — **shipped.** Fleet is built against the one
   remaining sandbox boundary; nothing here branches on an isolation tier.
 - `add-backend-capabilities` — fleet declares the capabilities it requires
-  (`fleet`, `service_ports`, `resource_limits`, `process_isolation`) rather
-  than assuming a backend. **This change does not exist yet**; it is
-  `remove-gvisor-backend`'s one open task, deliberately left because a
-  capability matrix for a single backend is a design question rather than
-  cleanup. Fleet is where it stops being optional.
+  against the real matrix (`src/backend_capabilities.rs`, surfaced by
+  `devcroft doctor`), not the placeholder names first written here.
+  **Implemented; the placeholder names below are corrected against the
+  actual entries.** `service_ports` is `per-agent-network-namespace`
+  (`enforced` on Linux today — fleet's own `fleet::netns` slice already
+  shipped and is what that entry's evidence cites).
+  `resource_limits` and `process_isolation` are `resource-limits` and
+  `inter-sandbox-process-visibility` respectively — both still
+  `not-adopted`, which is exactly fleet's own remaining work (resource
+  limits via cgroup v2, §0.4 of the roadmap; process isolation via the
+  PID namespace `add-mount-isolation` deliberately left to fleet's D2).
+  There is no single `fleet` entry — it was never one capability;
+  drop the name rather than force a mapping that doesn't exist. Fleet is
+  where these two `not-adopted` entries stop being optional and become
+  the thing this change has to close.
 - `sandbox-provisioning` — **newly declared, and load-bearing.** Fleet resolves
   a provider environment per agent. If that resolution runs unconfined on the
   host, repository-controlled code executes *before* any fleet boundary exists,
