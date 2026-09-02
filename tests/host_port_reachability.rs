@@ -43,7 +43,12 @@ fn host_can_reach(port: u16) -> bool {
 /// Starts a listener *inside* the sandbox and waits for it to be
 /// reachable from inside, so the test never races the server's startup.
 /// Returns the still-running child; the caller kills it.
-fn serve_inside(devcroft_bin: &str, sandbox: &str, port: u16) -> Option<Child> {
+fn serve_inside(
+    devcroft_bin: &str,
+    sandbox: &str,
+    project_root: &std::path::Path,
+    port: u16,
+) -> Option<Child> {
     let child = Command::new(devcroft_bin)
         .arg("exec")
         .arg(sandbox)
@@ -54,6 +59,16 @@ fn serve_inside(devcroft_bin: &str, sandbox: &str, port: u16) -> Option<Child> {
         .arg(port.to_string())
         .arg("--bind")
         .arg("127.0.0.1")
+        // From inside the project, as a user runs it. `exec` maps the
+        // client's cwd straight through (exec spec, "Working directory
+        // mapping"), so running it from anywhere else hands the session a
+        // cwd the policy does not grant — harmless on Linux, fatal on
+        // macOS, where `getcwd()` walks the path and Seatbelt denies the
+        // walk: measured, `python3 -m http.server` dies at `os.getcwd()`
+        // with `PermissionError: [Errno 1] Operation not permitted`
+        // before it ever binds, and the test then reads as "the port was
+        // unreachable".
+        .current_dir(project_root)
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .spawn()
@@ -65,6 +80,7 @@ fn serve_inside(devcroft_bin: &str, sandbox: &str, port: u16) -> Option<Child> {
         let probe = Command::new(devcroft_bin)
             .arg("exec")
             .arg(sandbox)
+            .current_dir(project_root)
             .arg("--")
             .arg("python3")
             .arg("-c")
@@ -170,7 +186,7 @@ fn an_isolated_sandboxs_granted_port_is_namespace_local_not_host_visible() {
         UpOutcome::Started
     );
 
-    let server = serve_inside(devcroft_bin, &sandbox_name, PORT);
+    let server = serve_inside(devcroft_bin, &sandbox_name, &project_root, PORT);
     let reachable_from_host = host_can_reach(PORT);
 
     if let Some(mut c) = server {
@@ -242,7 +258,7 @@ fn a_non_isolated_sandboxs_granted_port_is_reachable_from_the_host() {
         UpOutcome::Started
     );
 
-    let server = serve_inside(devcroft_bin, &sandbox_name, PLAIN_PORT);
+    let server = serve_inside(devcroft_bin, &sandbox_name, &project_root, PLAIN_PORT);
     let reachable_from_host = host_can_reach(PLAIN_PORT);
 
     if let Some(mut c) = server {

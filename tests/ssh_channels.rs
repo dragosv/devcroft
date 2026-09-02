@@ -173,6 +173,37 @@ fn skip_if_no_real_rsync() -> bool {
     false
 }
 
+/// The half the host check above cannot answer: `rsync` has to be
+/// runnable *inside* the sandbox too, since that is where `rsync --server`
+/// runs. The doc comment on the test says the flox-activated `PATH` still
+/// carries the system bin dirs, which is true — and not sufficient on
+/// macOS, where a shell's `PATH` search uses `access(2)` and Seatbelt
+/// denies metadata reads under `/usr/bin`, so `command -v rsync` finds
+/// nothing while `/usr/bin/rsync` sits right there. Asking the sandbox
+/// keeps this a skip on hosts where the premise fails, and a real
+/// assertion everywhere else.
+fn sandbox_has_rsync(sandbox: &Sandbox) -> bool {
+    let probe = Command::new(env!("CARGO_BIN_EXE_devcroft"))
+        .arg("exec")
+        .arg(&sandbox.name)
+        .current_dir(&sandbox.project_root)
+        .arg("--")
+        .arg("sh")
+        .arg("-c")
+        .arg("command -v rsync")
+        .output();
+    match probe {
+        Ok(out) if out.status.success() => true,
+        _ => {
+            eprintln!(
+                "skipping: no rsync reachable inside the sandbox — `rsync --server` runs \
+                 there, so the transfer cannot be attempted"
+            );
+            false
+        }
+    }
+}
+
 #[test]
 fn exec_channel_runs_commands_and_propagates_exit_code() {
     if skip_if_no_real_ssh_tools() {
@@ -428,6 +459,9 @@ fn rsync_transfers_a_file_through_devcroft_proxy_over_a_plain_exec_channel() {
     let Some(sandbox) = Sandbox::up("rsync") else {
         return;
     };
+    if !sandbox_has_rsync(&sandbox) {
+        return;
+    }
     let (identity, _) = client_key_paths().unwrap();
     let rsh = rsync_dash_e(&identity);
 

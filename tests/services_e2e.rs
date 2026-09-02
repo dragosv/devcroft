@@ -30,6 +30,24 @@ use std::time::{Duration, Instant};
 /// the sandbox's own service.
 const PORT: u16 = 18777;
 
+/// A project root short enough for the supervisor socket that lives under
+/// it. `services::socket_path` is `<root>/.devcroft/<sandbox>/services.sock`
+/// and `sun_path` caps the whole thing at 103 bytes — a limit `up` checks
+/// host-side and fails at layer `config` on. `std::env::temp_dir()` costs
+/// ~49 of those bytes on macOS (`/var/folders/<hash>/T`, and it is the
+/// *resolved* `/private/var/…` that is measured), which left every test
+/// here failing on the path length rather than on what it was asserting.
+/// `/private/tmp/<tag><pid>` costs ~20.
+///
+/// Resolved for the same reason `up` resolves the root it is given: macOS
+/// matches paths as written and `/tmp` is a symlink (`docs/known-gaps.md`).
+fn short_project_root(tag: &str) -> std::path::PathBuf {
+    let root = std::path::PathBuf::from(format!("/tmp/dcsvc{tag}{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).unwrap();
+    root.canonicalize().unwrap_or(root)
+}
+
 fn tooling_missing() -> bool {
     !devcroft::policy::backend_supported()
         || (Command::new("flox").arg("--version").output().is_err()
@@ -77,16 +95,7 @@ fn a_declared_service_runs_inside_the_sandbox_and_is_reaped_by_down() {
     }
     let devcroft_bin = env!("CARGO_BIN_EXE_devcroft");
 
-    let project_root =
-        std::env::temp_dir().join(format!("devcroft-services-e2e-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&project_root);
-    std::fs::create_dir_all(&project_root).unwrap();
-    // Resolved rather than as spelled: the sandbox's policy is compiled
-    // from this path, and macOS matches paths as written — `temp_dir()`
-    // is `/var/folders/…`, a symlink, so a cwd named that way is denied
-    // under a grant built from its target. No-op on Linux, where
-    // Landlock works on inodes. See `docs/known-gaps.md`.
-    let project_root = project_root.canonicalize().unwrap_or(project_root);
+    let project_root = short_project_root("main");
 
     let init = Command::new("flox")
         .arg("init")
@@ -282,12 +291,7 @@ fn services_without_process_compose_fail_at_the_provider_layer() {
         std::env::set_var("DEVCROFT_KEEPER_EXE", env!("CARGO_BIN_EXE_devcroft"));
     }
 
-    let project_root =
-        std::env::temp_dir().join(format!("devcroft-services-nopc-e2e-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&project_root);
-    std::fs::create_dir_all(&project_root).unwrap();
-    // Resolved for the same reason as above (macOS path spellings).
-    let project_root = project_root.canonicalize().unwrap_or(project_root);
+    let project_root = short_project_root("nopc");
 
     let init = Command::new("flox")
         .arg("init")
@@ -371,14 +375,7 @@ fn services_declared_for_another_provider_fail_rather_than_being_ignored() {
         std::env::set_var("DEVCROFT_KEEPER_EXE", env!("CARGO_BIN_EXE_devcroft"));
     }
 
-    let project_root = std::env::temp_dir().join(format!(
-        "devcroft-services-wrongprovider-e2e-{}",
-        std::process::id()
-    ));
-    let _ = std::fs::remove_dir_all(&project_root);
-    std::fs::create_dir_all(&project_root).unwrap();
-    // Resolved for the same reason as above (macOS path spellings).
-    let project_root = project_root.canonicalize().unwrap_or(project_root);
+    let project_root = short_project_root("wrongprovider");
 
     let init = Command::new("flox")
         .arg("init")
@@ -474,14 +471,7 @@ fn skip_hooks_bypasses_the_wrong_provider_service_check() {
         std::env::set_var("DEVCROFT_KEEPER_EXE", env!("CARGO_BIN_EXE_devcroft"));
     }
 
-    let project_root = std::env::temp_dir().join(format!(
-        "devcroft-services-skiphooks-e2e-{}",
-        std::process::id()
-    ));
-    let _ = std::fs::remove_dir_all(&project_root);
-    std::fs::create_dir_all(&project_root).unwrap();
-    // Resolved for the same reason as above (macOS path spellings).
-    let project_root = project_root.canonicalize().unwrap_or(project_root);
+    let project_root = short_project_root("skiphooks");
 
     if !Command::new("flox")
         .arg("init")
@@ -547,14 +537,7 @@ fn policy_render_is_unchanged_by_declaring_services() {
         return;
     }
 
-    let project_root = std::env::temp_dir().join(format!(
-        "devcroft-services-policyparity-{}",
-        std::process::id()
-    ));
-    let _ = std::fs::remove_dir_all(&project_root);
-    std::fs::create_dir_all(&project_root).unwrap();
-    // Resolved for the same reason as above (macOS path spellings).
-    let project_root = project_root.canonicalize().unwrap_or(project_root);
+    let project_root = short_project_root("policyparity");
 
     if !Command::new("flox")
         .arg("init")
@@ -625,12 +608,7 @@ fn flox_project_declaring(tag: &str, services_toml: &str) -> Option<std::path::P
         std::env::set_var("DEVCROFT_KEEPER_EXE", env!("CARGO_BIN_EXE_devcroft"));
     }
 
-    let project_root =
-        std::env::temp_dir().join(format!("devcroft-services-{tag}-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&project_root);
-    std::fs::create_dir_all(&project_root).unwrap();
-    // Resolved for the same reason as above (macOS path spellings).
-    let project_root = project_root.canonicalize().unwrap_or(project_root);
+    let project_root = short_project_root(tag);
 
     if !Command::new("flox")
         .arg("init")

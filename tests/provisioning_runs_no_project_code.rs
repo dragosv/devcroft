@@ -106,7 +106,22 @@ fn nix_resolution_does_not_run_the_dev_shells_shell_hook() {
     }};
 }}
 "#,
-            arch = std::env::consts::ARCH.to_string() + "-linux",
+            // Nix's own system double, not just the arch: flakes are
+            // evaluated purely, so `builtins.currentSystem` is unavailable
+            // and this literal is what the flake actually uses. Hardcoding
+            // `-linux` made `print-dev-env` fail on macOS with "does not
+            // provide attribute 'devShells.aarch64-darwin.default'" — a
+            // fixture that describes another machine, reported as a
+            // provider regression.
+            arch = format!(
+                "{}-{}",
+                std::env::consts::ARCH,
+                if cfg!(target_os = "macos") {
+                    "darwin"
+                } else {
+                    "linux"
+                }
+            ),
             marker = marker.display(),
         ),
     )

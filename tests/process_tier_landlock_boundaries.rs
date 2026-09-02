@@ -217,26 +217,41 @@ fn process_tier_blocks_cross_process_signals_and_proc_reads() {
 
     // Attack 2: read the same victim's /proc entry directly (no
     // directory listing involved — Landlock mediates the path itself).
-    let out = Command::new(devcroft_bin)
-        .arg("exec")
-        .arg(&sandbox_name)
-        .arg("--")
-        .arg("sh")
-        .arg("-c")
-        .arg(format!("cat /proc/{victim_pid}/cmdline"))
-        .output()
-        .unwrap();
-    assert!(
-        !out.status.success(),
-        "expected /proc/<pid>/cmdline for a process outside the sandbox to be denied by the \
-         default-deny filesystem policy; stdout={}",
-        String::from_utf8_lossy(&out.stdout)
-    );
-    assert!(
-        String::from_utf8_lossy(&out.stderr).contains("Permission denied"),
-        "expected a permission-denied-shaped failure, got stderr={}",
-        String::from_utf8_lossy(&out.stderr)
-    );
+    //
+    // Only where there is a `/proc` to mediate. On macOS the read fails
+    // too, but with `No such file or directory`, which asserts nothing
+    // about the policy — the second assertion below is specifically that
+    // the *reason* is a denial and not an absence, so a host without
+    // procfs cannot answer the question this attack asks. Skipping the
+    // attack rather than the whole test keeps attack 1 (signal scoping,
+    // which Seatbelt does enforce) measured here.
+    if std::path::Path::new("/proc/self/cmdline").exists() {
+        let out = Command::new(devcroft_bin)
+            .arg("exec")
+            .arg(&sandbox_name)
+            .arg("--")
+            .arg("sh")
+            .arg("-c")
+            .arg(format!("cat /proc/{victim_pid}/cmdline"))
+            .output()
+            .unwrap();
+        assert!(
+            !out.status.success(),
+            "expected /proc/<pid>/cmdline for a process outside the sandbox to be denied by \
+             the default-deny filesystem policy; stdout={}",
+            String::from_utf8_lossy(&out.stdout)
+        );
+        assert!(
+            String::from_utf8_lossy(&out.stderr).contains("Permission denied"),
+            "expected a permission-denied-shaped failure, got stderr={}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    } else {
+        eprintln!(
+            "skipping attack 2: no procfs on this host, so an unreadable /proc entry \
+                   would prove nothing"
+        );
+    }
 
     down(&sandbox_name).unwrap();
     let _ = victim.kill();
