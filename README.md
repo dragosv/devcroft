@@ -290,16 +290,18 @@ back rather than skipped, until the boundary matches what this page says about i
 — see [docs/roadmap.md](docs/roadmap.md).
 
 **The boundary catches mistakes, not attacks.** The full host kernel is reachable
-from inside, so a kernel exploit escapes, and **unix sockets bypass the policy
-entirely** — Landlock mediates TCP, not AF_UNIX, so a sandbox can reach any unix
-socket the filesystem permits. For a real boundary, run devcroft inside a VM;
-that is the supported answer, and already how the macOS path works.
+from inside, so a kernel exploit escapes. For a real boundary, run devcroft inside
+a VM; that is the supported answer, and already how the macOS path works.
 [docs/threat-model.md](docs/threat-model.md) says which use case each one backs.
 
-The rest are written up rather than summarised away — no rollback, no cgroup
-limits, network isolation needing unprivileged user namespaces, macOS domain
-filtering unverified, no inter-sandbox process visibility separation, Zed's
-remote server: [docs/known-gaps.md](docs/known-gaps.md).
+**What devcroft actually enforces is declared data, not summarised here** —
+run `devcroft doctor` for the full capability matrix against your own host, or
+see [docs/known-gaps.md](docs/known-gaps.md) for the write-up behind each
+still-open entry (no rollback, no cgroup limits, macOS domain filtering
+unverified, no inter-sandbox process visibility separation, Zed's remote
+server). Treat any capability claim elsewhere on this page as a pointer to
+that matrix, not a restatement of it — if the two ever disagree, the matrix
+is right.
 
 | Platform | Mechanism | Minimum version |
 |----------|-----------|-----------------|

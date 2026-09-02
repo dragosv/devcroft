@@ -87,9 +87,12 @@ overclaiming.
 **Where the per-backend detail lives.** This document states which use case each
 tier backs. What any given backend can and cannot do — fleet, service ports,
 resource limits, egress filtering, and the platform differences — is declared
-data, not prose: see `add-backend-capabilities`. Prefer that matrix over any
+data, not prose: `src/backend_capabilities.rs`, surfaced live by `devcroft
+doctor` (`add-backend-capabilities`). The pointer above used to name a change
+that did not exist yet; it now names real code. Prefer that matrix over any
 caveat written here or in the README, and treat a discrepancy as a bug in the
-prose.
+prose — the two AF_UNIX bullets earlier in this document are the case in
+point, corrected once already by the matrix having been built.
 
 ## Credentials: capability, not custody
 
@@ -121,26 +124,19 @@ authorised to do through the tools it legitimately has.
   production, the sandbox has not solved production governance.
 - Application-level permissions, approval policies, logging and review sit
   beside the sandbox, not under it.
-- **Unix sockets were outside the policy entirely; both halves are now
-  closed, on Linux, at different strengths.** Landlock mediates TCP, not
-  AF_UNIX, so a sandboxed process used to reach any unix socket the
-  filesystem permissions allowed — pathname sockets in ungranted
-  directories (the nix daemon socket included) and abstract, `@`-prefixed
-  ones (dbus, X11, PipeWire, systemd-journald on a typical desktop)
-  alike. The pathname half needed new machinery: `add-mount-isolation`
-  gives every sandbox its own mount namespace and filesystem view, and an
-  ungranted socket's path simply does not resolve inside it. The abstract
-  half needed none — nono's own default (`IpcMode::SharedMemoryOnly`)
-  already requests Landlock's `LANDLOCK_SCOPE_ABSTRACT_UNIX_SOCKET`
-  scoping, and devcroft never overrides it, so this was closed before
-  either change touched it; `add-backend-capabilities` is what noticed
-  and recorded it rather than what caused it. Landlock still governs
-  *access* to what the mount view contains; the view governs what exists
-  to be reached at all — the two compose. **Residual: Landlock ABI V6+
-  only** — the abstract half is unenforceable on older kernels, and
-  macOS has no measured equivalent for either half. Measured in
-  `tests/unix_socket_not_mediated.rs` (pathname) and
-  `__abstract_socket_probe` (abstract); see `docs/known-gaps.md`.
+- **Unix sockets are within the threat model, not outside it — status is
+  the matrix's job, not this document's.** Landlock mediates TCP, not
+  AF_UNIX by itself; whether a given socket (pathname or abstract) is
+  actually reachable from inside a sandbox today is exactly the kind of
+  claim that drifted here in prose before `add-backend-capabilities`
+  existed, and belongs in `src/backend_capabilities.rs` /
+  `devcroft doctor` now (`pathname-unix-sockets`,
+  `abstract-unix-sockets` entries) rather than restated in this bullet.
+  What stays here, since a matrix cannot carry it: this class of
+  reachability is inside what devcroft claims to bound, so a status
+  change here is a security-relevant one, not a routine capability
+  update — treat any change to either matrix entry as threat-model-review
+  material, not a changelog line.
 
 The value is that the boundary moves out of the prompt and into infrastructure.
 That is a real gain and a bounded one.
