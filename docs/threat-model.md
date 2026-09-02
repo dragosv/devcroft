@@ -121,27 +121,29 @@ authorised to do through the tools it legitimately has.
   production, the sandbox has not solved production governance.
 - Application-level permissions, approval policies, logging and review sit
   beside the sandbox, not under it.
-- **Pathname unix sockets were outside the policy entirely; this is now
-  closed on Linux.** Landlock mediates TCP, not AF_UNIX, so a sandboxed
+- **Unix sockets were outside the policy entirely; both halves are now
+  closed on Linux, at different strengths — and the pathname half stays
+  open on macOS.** Landlock mediates TCP, not AF_UNIX, so a sandboxed
   process used to reach any unix socket the filesystem permissions
-  allowed — including ones in ungranted directories, the nix daemon
-  socket included. `add-mount-isolation` closes it there: every sandbox
-  gets its own mount namespace and filesystem view, and an ungranted
-  socket's path simply does not resolve inside it. Landlock still governs
-  *access* to what the view contains; the view governs what exists to be
-  reached at all — the two compose rather than one replacing the other.
-  Measured in `tests/unix_socket_not_mediated.rs`; see
-  `docs/known-gaps.md`. **Still open on macOS**: Seatbelt has no
-  mount-namespace primitive, so the identical ungranted socket connects
-  there unchanged (measured, macOS 15) — this is a property of the
-  mechanism, not an oversight in the policy, and closing it needs a
-  macOS-native answer rather than a port of the Linux one.
-- **Abstract unix sockets remain outside the policy.** The `@`-prefixed,
-  no-filesystem-path kind (dbus, X11, PipeWire, systemd-journald on a
-  typical desktop) has no path for a mount view to remove — Landlock V6's
-  `LANDLOCK_SCOPE_ABSTRACT_UNIX_SOCKET` is the only lever, and devcroft
-  does not set it yet. Genuinely unclosed, unlike the pathname half
-  above; see `docs/known-gaps.md`.
+  allowed — pathname sockets in ungranted directories (the nix daemon
+  socket included) and abstract, `@`-prefixed ones (dbus, X11, PipeWire,
+  systemd-journald on a typical desktop) alike. The pathname half needed
+  new machinery: `add-mount-isolation` gives every sandbox its own mount
+  namespace and filesystem view, and an ungranted socket's path simply
+  does not resolve inside it — on Linux only, since Seatbelt has no
+  mount-namespace primitive and the identical ungranted socket connects
+  there unchanged (measured, macOS 15). The abstract half needed none —
+  nono's own default (`IpcMode::SharedMemoryOnly`) already requests
+  Landlock's `LANDLOCK_SCOPE_ABSTRACT_UNIX_SOCKET` scoping, and devcroft
+  never overrides it, so this was closed before either change touched
+  it; `add-backend-capabilities` is what noticed and recorded it rather
+  than what caused it. Landlock still governs *access* to what the mount
+  view contains; the view governs what exists to be reached at all — the
+  two compose. **Residual:** the abstract half is Landlock ABI V6+ only,
+  unenforceable on older kernels; the pathname half is open on macOS
+  entirely, needing a macOS-native answer rather than a port of the
+  Linux one. Measured in `tests/unix_socket_not_mediated.rs` (pathname)
+  and `__abstract_socket_probe` (abstract); see `docs/known-gaps.md`.
 
 The value is that the boundary moves out of the prompt and into infrastructure.
 That is a real gain and a bounded one.

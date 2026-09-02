@@ -85,7 +85,7 @@ missing namespace, but the warning is about port collisions and does not
 mention this. Closing that properly needs the seccomp filter nono only
 installs on old kernels — an upstream ask, or a devcroft-side filter.
 
-## Unix sockets are not mediated by Landlock — pathname half closed by `add-mount-isolation`
+## Unix sockets are not mediated by Landlock — both halves now closed
 
 **Landlock's network rules cover TCP only.** `connect()` to a pathname
 unix socket falls through to ordinary filesystem permissions, so
@@ -119,19 +119,28 @@ so the difference cannot be misread again. A mount namespace is a Linux
 primitive; closing this on macOS needs a different mechanism, not a port
 of this one.
 
-**The gap had two halves, and only the harder one needed new machinery.**
-Unix sockets come in two kinds and Landlock treats them differently:
+**The gap had two halves; only the harder one needed new machinery, and
+the other turned out to already be closed.** Unix sockets come in two
+kinds and Landlock treats them differently:
 
 - **Abstract** sockets (`@`-prefixed, no filesystem path — dbus, X11,
-  PipeWire, systemd-journald on a typical desktop) *are* expressible.
-  Landlock V6 has `LANDLOCK_SCOPE_ABSTRACT_UNIX_SOCKET`, nono requests it
-  when `IpcMode::SharedMemoryOnly` is set, and **devcroft still does not
-  set it** — this half remains open, for no reason beyond nobody having
-  connected the two, and is unrelated to the mount view (a namespace
-  does not change which abstract sockets are visible; Landlock's own
-  scope rule is the only lever). This devcontainer has no abstract
-  sockets at all (`ss -xl` shows zero), so it stays unmeasurable here and
-  real on a normal desktop. One method call, still unclaimed.
+  PipeWire, systemd-journald on a typical desktop) *are* expressible, and
+  **this half was already closed, not open** — corrected here after
+  `add-backend-capabilities` traced it properly. Landlock V6 has
+  `LANDLOCK_SCOPE_ABSTRACT_UNIX_SOCKET`; nono requests it whenever
+  `IpcMode::SharedMemoryOnly` is set, and that is nono's own `#[default]`
+  — devcroft never calls `set_ipc_mode` at all, so every sandbox already
+  gets it, with no code change ever needed. A prior version of this entry
+  read "devcroft still does not set it", reasoning from "we never call
+  `set_ipc_mode`" without checking what the *unset* default resolves to.
+  Measured live, not just traced: a probe (`__abstract_socket_probe`)
+  applying devcroft's real, unmodified `CapabilitySet` against a real
+  abstract socket gets `EPERM`. Unrelated to the mount view either way —
+  a namespace does not change which abstract sockets are visible;
+  Landlock's own scope rule is the only lever, and it was already pulled.
+  Requires Landlock ABI V6+; older kernels get no enforcement here, which
+  `add-backend-capabilities`'s matrix records as the platform boundary
+  rather than a gap in what devcroft asks for.
 - **Pathname** sockets (`/nix/var/nix/daemon-socket/socket`) were not
   expressible at any Landlock ABI — the half `add-mount-isolation`
   closes, described above.

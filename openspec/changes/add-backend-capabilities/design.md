@@ -31,6 +31,18 @@ security-relevant default silently. `D10`'s exact-version pin in the fleet
 design exists partly for this hazard; the matrix is what would make a change in
 one visible.
 
+**"Left at its default" is not itself a status, and `IpcMode` is the entry that
+proves it — task 1.5.** Its default (`SharedMemoryOnly`) is what makes nono
+request Landlock's abstract-unix-socket scoping; devcroft gets that enforcement
+by never touching the knob, not despite never touching it. An earlier draft of
+task 1.5 read the same "left at default" fact as `not-adopted` without checking
+which way the default cuts, which is exactly the failure mode C2/C3 below exist
+to catch — reasonable, unmeasured, and wrong. `ProcessInfoMode` is the entry
+where "left at default" genuinely does mean unadopted (its default,
+`Isolated`, still isolates rather than granting anything devcroft would need to
+have chosen). The two knobs are in the same sentence above because both are
+unset, not because both cash out the same way.
+
 ## C2 — `unverified` is a first-class status, not a caveat
 
 **Decision.** A capability nobody has measured is `unverified`, distinct from
