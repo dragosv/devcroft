@@ -60,32 +60,53 @@ validated; deterministic, inspectable policy.
 
 ## 0.2 — the boundary is what the documentation says
 
-**`add-mount-isolation`** (0/21). **This is the release that gets cut as
-`0.1.0`**, per the numbering rule above: it is the first point at which
-the version stops out-claiming the boundary.
+**Status: implemented.** Both items below are done; what is left for
+`0.1.0` is the publish steps themselves (roadmap correction, archiving
+the two changes, cutting the version), not further code.
 
-First because it is the only item on this list that makes a *shipped*
+**`add-mount-isolation`** (21/21, done). **This is the release that gets
+cut as `0.1.0`**, per the numbering rule above: it is the first point at
+which the version stops out-claiming the boundary.
+
+First because it was the only item on this list that made a *shipped*
 claim true rather than adding a new one. `tests/unix_socket_not_mediated.rs`
-asserts, and passes because of, a gap: Landlock does not mediate AF_UNIX,
-so every sandbox devcroft runs reaches any world-accessible unix socket —
-the nix daemon's included, with `/nix` ungranted. Building further
-capability on a boundary known to leak is the wrong order, and this is
-also the cheapest moment to fix it, before more depends on the current
-shape.
+used to assert, and pass because of, a gap: Landlock does not mediate
+AF_UNIX, so every sandbox devcroft ran reached any world-accessible unix
+socket — the nix daemon's included, with `/nix` ungranted. That test is
+now inverted and passes because the gap is closed: every sandbox gets its
+own mount namespace and filesystem view
+(`fleet::mount::construct_view`), verified live through the real
+`up`/`status`/`exec`/`down` CLI, not only the isolated primitive.
 
-It pays a second time: fleet's task group 2 consumes the same mount plan
-rather than writing one, the same way fleet already consumes
-`fleet::netns`.
+It paid a second time, as planned: fleet's task group 2 can now consume
+the same mount plan rather than writing one, the same way fleet already
+consumes `fleet::netns` — nothing in fleet has done so yet, since fleet
+itself is still 6/62.
 
-The hard part is not the namespace, it is the *view*. The spike that
+The hard part was not the namespace, it was the *view*. The spike that
 proved the mechanism masked all of `/nix`, which closed the socket and
-would also have removed the toolchain. Task group 0 measures what a real
-build opens, per provider, before the plan is written.
+would also have removed the toolchain; task group 0's per-provider
+`strace` measurement is what the real plan (`/nix/store` read-only,
+`/nix/var` absent) was built from. Three real bugs surfaced only by
+running the constructed view, not by review: an `EPERM` remounting a
+device node read-only, an `EPERM` from a fresh `procfs` mount needing
+PID-namespace ownership this change deliberately doesn't take, and an
+`ENOENT` from merged-`/usr` symlinks the view didn't originally recreate
+— all fixed, all recorded in that change's design.md.
 
-**Also here, because it is small and unblocks judgement rather than code:**
-`add-backend-capabilities` (0/26) — the offered-versus-adopted matrix for
-`nono`. It has already paid for itself once, in findings that came from
-reading the library rather than from the prose.
+**`add-backend-capabilities`** (26/26, done) — the offered-versus-adopted
+matrix for `nono`, now `src/backend_capabilities.rs`, surfaced live by
+`devcroft doctor`. It paid for itself twice: once in the findings the
+proposal already named (credential brokering, approval hooks, audit
+integrity, the proxy's missing per-session token — closed directly), and
+again while writing task 1.5, which traced a claim inherited from an
+earlier draft — "the abstract-unix-socket half of the AF_UNIX gap is
+still open, one method call away" — and found it was already closed:
+`IpcMode::SharedMemoryOnly` is `nono`'s own default, devcroft never
+overrides it, and that alone requests Landlock's abstract-socket scoping
+on ABI V6+. Verified live (`tests/abstract_socket_not_reachable.rs`), and
+corrected everywhere the wrong claim had already propagated
+(`docs/known-gaps.md`, `docs/threat-model.md`, the change's own design.md).
 
 ## 0.3 — one agent, end to end
 
