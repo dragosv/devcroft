@@ -64,6 +64,11 @@ pub fn render(compiled: &CompiledPolicy) -> String {
         }
         None => writeln!(out, "network.proxy: not requested").unwrap(),
     }
+    // Rendered unconditionally, on both platforms, because the policy
+    // invariant is that nothing reaches the backend that `--render` cannot
+    // show — and the Linux/macOS split here is about which platform *acts*
+    // on the entry, not about which one compiles it.
+    render_section(&mut out, "unix_socket.bind", &compiled.unix_socket_bind);
     writeln!(out).unwrap();
     render_filesystem_view_note(&mut out);
     out
@@ -110,6 +115,26 @@ pub fn render(compiled: &CompiledPolicy) -> String {
 /// requirements, the same category `KEEPER_SYSTEM_READ`'s entries above
 /// are, just not expressed as compiled grants.
 fn render_filesystem_view_note(out: &mut String) {
+    // No mount namespace, no view — and saying otherwise would misdescribe
+    // the boundary on the one command that exists so nothing reaches the
+    // backend unshown. The unix-socket half is called out explicitly
+    // because it is the part a reader would otherwise assume is lost with
+    // the view: it is not, it just moves to the network axis
+    // (add-macos-unix-socket-scoping, measured — see
+    // tests/unix_socket_not_mediated.rs).
+    if !cfg!(target_os = "linux") {
+        writeln!(
+            out,
+            "filesystem.view: none — mount namespaces are Linux-only, so this platform \
+             builds no filesystem view and nothing narrows what the sandbox can see \
+             beyond the rules above. Reachability of unix sockets is unaffected by \
+             that: under `network.default = \"deny\"` this platform's sandbox denies \
+             connect() to any pathname unix socket it was not granted, on the network \
+             axis instead (see `devcroft doctor`'s pathname-unix-sockets capability)"
+        )
+        .unwrap();
+        return;
+    }
     writeln!(
         out,
         "filesystem.view: every sandbox's mount view (add-mount-isolation) contains the \
@@ -132,6 +157,14 @@ fn render_filesystem_view_note(out: &mut String) {
 /// or a provider-declared service. Only the first of those is visible in
 /// a manifest, hence the conditional wording in the middle arm.
 fn namespace_summary(compiled: &CompiledPolicy) -> &'static str {
+    // Namespaces are a Linux primitive; `fleet::netns` has no macOS
+    // equivalent and `up` degrades there. Rendering "own" off Linux
+    // described an isolation the sandbox will not get — and, worse,
+    // attributed the UDP denial to it, which is then also untrue.
+    if !cfg!(target_os = "linux") {
+        return "shared with the host (network namespaces are Linux-only; \
+                this platform has no equivalent)";
+    }
     if !compiled.network_block {
         // `default = "allow"` never isolates: an isolated namespace has
         // no route to the real network, and with no proxy there is
@@ -192,12 +225,35 @@ mod tests {
     /// sandbox's view contains." Not a separate section (see
     /// `render_filesystem_view_note`'s own doc for why) — just confirms
     /// the note is actually there rather than a stale claim in a comment.
+    ///
+    /// Asserted per-platform, because off Linux the honest answer is that
+    /// there is no view at all: claiming one would misdescribe the
+    /// boundary on the one command that exists so nothing reaches the
+    /// backend unshown. A single shared assertion here would have to be
+    /// weak enough to pass against either message, which is precisely the
+    /// vacuous-assertion trap `tests/unix_socket_not_mediated.rs`'s own
+    /// platform split exists to avoid.
     #[test]
     fn render_explains_the_filesystem_view() {
         let (manifest, _) = parse("[sandbox]\nname = \"myproj\"\n").unwrap();
         let out = render(&compile(&manifest));
         assert!(out.contains("filesystem.view:"));
-        assert!(out.contains("filesystem.allow/filesystem.read"));
+        if cfg!(target_os = "linux") {
+            assert!(out.contains("filesystem.allow/filesystem.read"));
+        } else {
+            assert!(
+                out.contains("none \u{2014} mount namespaces are Linux-only"),
+                "off Linux the note must say there is no view, not describe one: {out}"
+            );
+            // The reachability half must survive the absence of a view,
+            // and must say so here — a reader who sees "no filesystem
+            // view" would otherwise reasonably assume the unix-socket
+            // guarantee went with it.
+            assert!(
+                out.contains("pathname unix socket"),
+                "the note must still state what does hold off Linux: {out}"
+            );
+        }
     }
 
     #[test]

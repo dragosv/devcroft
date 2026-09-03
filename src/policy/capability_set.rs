@@ -56,6 +56,12 @@ pub struct CapabilityPlan {
     /// See [`CompiledPolicy::network_proxy_port`]'s doc — `Some` only when
     /// `up` actually started the egress proxy for this sandbox.
     pub network_proxy_port: Option<u16>,
+    /// See [`CompiledPolicy::unix_socket_bind`]. `#[serde(default)]` so a
+    /// `profile.json` written before this field existed still deserializes
+    /// — `down`/`status` read those back for sandboxes started by an older
+    /// build.
+    #[serde(default)]
+    pub unix_socket_bind: Vec<String>,
     pub signal_mode: String,
 }
 
@@ -93,6 +99,11 @@ impl CompiledPolicy {
             network_block: self.network_block,
             network_ports: self.network_ports.iter().map(|p| p.value).collect(),
             network_proxy_port: self.network_proxy_port,
+            unix_socket_bind: self
+                .unix_socket_bind
+                .iter()
+                .map(|a| a.value.clone())
+                .collect(),
             signal_mode: self.signal_mode.to_string(),
         }
     }
@@ -257,6 +268,35 @@ impl CapabilityPlan {
         };
         for port in &self.network_ports {
             caps = caps.allow_localhost_port(*port);
+        }
+
+        // macOS only, and not an oversight elsewhere: Seatbelt classifies
+        // AF_UNIX `bind`/`connect` as network operations, so a
+        // `network.default = "deny"` sandbox is refused its *own* control
+        // sockets without an explicit grant — measured, with the service
+        // supervisor unable to create `services.sock` inside a project
+        // root it had full read-write access to. Landlock mediates no
+        // AF_UNIX operation at all, so on Linux this would be a no-op rule
+        // rather than a missing one.
+        //
+        // `ConnectBind`, not `Connect`: the sandbox is the process that
+        // *creates* these sockets. That mode also tolerates a path that
+        // does not exist yet, which is the normal case here — `up` grants
+        // the path before anything binds it.
+        #[cfg(target_os = "macos")]
+        for value in &self.unix_socket_bind {
+            // Same tolerance as a filesystem grant whose target is
+            // missing: skipped, not fatal. `ConnectBind` needs the
+            // *parent* to exist, and a sandbox whose services were never
+            // configured has no artifact directory. Cloned rather than
+            // moved so the failing case can keep the set built so far —
+            // `allow_unix_socket` consumes `self`.
+            if let Ok(c) = caps
+                .clone()
+                .allow_unix_socket(value, nono::UnixSocketMode::ConnectBind)
+            {
+                caps = c;
+            }
         }
 
         caps = caps.set_signal_mode(match self.signal_mode.as_str() {

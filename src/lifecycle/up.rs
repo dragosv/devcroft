@@ -383,6 +383,29 @@ fn up_process(
         Some((port, _)) => compiled.with_proxy_port(port),
         None => compiled,
     };
+    // The service supervisor binds its own control socket *inside* the
+    // sandbox, and on macOS that needs an explicit grant: Seatbelt treats
+    // AF_UNIX `bind` as network activity, so `network.default = "deny"`
+    // refuses it even though the socket sits in the granted project root
+    // (`add-macos-unix-socket-scoping`; measured — every declared service
+    // died with `bind: operation not permitted` and the supervisor never
+    // started). Folded in here rather than in `prepare_services` below,
+    // because the compiled policy and its plan are built before that runs
+    // and the keeper restricts itself from the plan.
+    //
+    // The condition mirrors `prepare_services`' own gate deliberately: a
+    // sandbox that will not start services must not carry a grant for a
+    // socket nothing will create.
+    let compiled = if !opts.skip_hooks && !resolution.services.declared().is_empty() {
+        compiled.with_unix_socket_bind(
+            crate::services::socket_path(project_root, &manifest.sandbox.name)
+                .to_string_lossy()
+                .into_owned(),
+            policy::Origin::Baseline,
+        )
+    } else {
+        compiled
+    };
     let plan = compiled.to_capability_plan();
     // Validated host-side, before anything is created — the keeper (task
     // group 4) re-derives the identical `CapabilitySet` from the same
@@ -431,11 +454,30 @@ fn up_process(
             ));
         }
         (false, false) => {
+            // What the fallback actually costs depends on this sandbox's
+            // own network mode, so the warning says which case it is
+            // rather than asserting the worse one unconditionally. The
+            // unix-socket half was measured on macOS 15.7.4 against a
+            // real nix daemon socket (add-macos-unix-socket-scoping task
+            // 0): Seatbelt classifies unix-socket connect() as
+            // network-outbound, so a deny-default sandbox refuses it
+            // (EPERM) with no mount view involved. Claiming it "remains
+            // reachable" there was simply false, and this is the first
+            // thing a macOS user sees.
+            let deny_default = plan.network_block || plan.network_proxy_port.is_some();
+            let residual = if deny_default {
+                "this sandbox's `network.default = \"deny\"` still denies \
+                 connect() to any unix socket it was not granted, on the network \
+                 axis instead — but nothing narrows what the sandbox can *see*"
+            } else {
+                "and because this sandbox does not set `network.default = \
+                 \"deny\"`, a world-accessible unix socket outside the compiled \
+                 policy remains reachable"
+            };
             eprintln!(
                 "devcroft: warning: mount isolation is unavailable on this platform \
                  (fallback: this sandbox is confined by Seatbelt alone, the same \
-                 boundary every sandbox had before add-mount-isolation; a world- \
-                 accessible unix socket outside the compiled policy remains reachable \
+                 boundary every sandbox had before add-mount-isolation; {residual} \
                  — see `devcroft doctor` and docs/known-gaps.md)"
             );
             false

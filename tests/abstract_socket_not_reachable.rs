@@ -15,6 +15,19 @@
 //! how `unix_socket_not_mediated.rs` already treats the pathname half:
 //! evidence, not inference (design.md C3).
 
+//! **This whole file is Linux-only, by subject rather than by
+//! convenience.** The abstract namespace is a Linux concept — the pinned
+//! `nono`'s own `UnixSocketCapability` doc records that abstract sockets
+//! "have no analog on macOS" — so there is no equivalent property to
+//! measure elsewhere, and a port of this file would be asserting
+//! something about a socket kind the platform does not have. The
+//! `pathname` half *does* exist on both and is measured on both, through
+//! two different mechanisms (`tests/unix_socket_not_mediated.rs`).
+//!
+//! Gated at the crate level rather than per-test so the file states that
+//! once, here, instead of repeating a `cfg` on every item.
+#![cfg(target_os = "linux")]
+
 use std::os::linux::net::SocketAddrExt;
 use std::os::unix::net::{SocketAddr, UnixListener};
 use std::process::Command;

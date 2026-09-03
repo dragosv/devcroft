@@ -667,6 +667,8 @@ fn bind_probe_main(args: &[String]) -> i32 {
         network_block: true,
         network_ports: vec![port],
         network_proxy_port: None,
+        // This probe is about TCP port binding; it creates no unix sockets.
+        unix_socket_bind: Vec::new(),
         // The only value `to_capability_set` accepts; anything else
         // panics there rather than silently meaning something.
         signal_mode: "isolated".to_string(),
@@ -735,75 +737,71 @@ fn doctor_agent_namespaces() {
              `network.ports` each get their own port table, and every sandbox \
              gets its own filesystem view (mount isolation)"
         ),
-        Ok(false) | Err(_) => println!(
+        // Two different fallbacks, and which one applies is a platform
+        // question, not a host one: `up` refuses to start a Linux sandbox
+        // weaker than its rendered policy claims, but macOS has no
+        // mount-namespace primitive at all, so refusing there would remove
+        // the Seatbelt boundary rather than tighten it. Saying "fails
+        // outright" on macOS was simply untrue — `up` warns and proceeds —
+        // and this is a user-facing surface, which this capability's own
+        // "verified before claimed" requirement covers.
+        Ok(false) | Err(_) if cfg!(target_os = "linux") => println!(
             "[INFO] namespaces: unavailable on this host; qualifying sandboxes \
              fall back to the host's shared port table for network isolation \
              (and `up` warns when that happens), and `up` fails outright for \
              mount isolation rather than starting a sandbox weaker than its \
              rendered policy claims"
         ),
+        Ok(false) | Err(_) => println!(
+            "[INFO] namespaces: not available on this platform (Linux-only); \
+             sandboxes share the host's port table, and each is confined by \
+             Seatbelt alone with no filesystem view. A pathname unix socket \
+             the policy did not grant is still unreachable under \
+             `network.default = \"deny\"` — Seatbelt mediates that on the \
+             network axis instead (see the `pathname-unix-sockets` capability \
+             below)"
+        ),
     }
 }
 
-/// Two probes, deliberately separated — see the `--reachable` note.
+/// Probe: with this platform's real sandbox applied, can this process
+/// still `connect()` to a pathname unix socket it was not granted?
 ///
-/// Default (no argument): can this host create a per-agent network
-/// namespace *at all*? Nothing more. This is the **capability** gate: a
-/// container runtime's seccomp profile, an AppArmor policy restricting
-/// unprivileged user namespaces, or an exhausted `max_user_namespaces`
-/// can each deny it, and none is a devcroft bug.
+/// **The mechanism under test is platform-specific, and deliberately so**
+/// — the two platforms close the same gap on different axes, which is the
+/// whole reason `tests/unix_socket_not_mediated.rs` asserts two different
+/// failure shapes rather than one shared assertion:
 ///
-/// `--reachable`: the full thing — namespace, loopback up, bind, and a
-/// real connection. This is the **behaviour** under test.
+/// - **Linux** (`add-mount-isolation` task 4.1): the mount view is the
+///   mechanism. This probe constructs a real view before applying
+///   Landlock, so an ungranted socket's path does not resolve at all and
+///   `connect()` fails `ENOENT`. Landlock itself mediates no AF_UNIX
+///   operation, which is exactly the gap the view exists to close.
+/// - **macOS** (`add-macos-unix-socket-scoping`): there is no mount view
+///   to build, and none is needed. Seatbelt classifies a unix-socket
+///   `connect()` as `network-outbound`, so the deny-default network mode
+///   devcroft already compiles is what mediates it, and an ungranted
+///   socket fails `EPERM` against a path that still resolves. This probe
+///   therefore applies `block_network()` — the same `NetworkMode::Blocked`
+///   a `network.default = "deny"` manifest compiles to — rather than a
+///   mount view.
 ///
-/// **They must stay separate, and that was learned the hard way here.**
-/// The first version of this probe did both at once, and
-/// `tests/fleet_netns.rs` used it for its skip guard *and* its
-/// assertion. Disabling `bring_loopback_up` to check the tests had
-/// teeth, they all reported `ok` — the guard had seen the same failure
-/// and skipped every test silently. A regression in the feature was
-/// indistinguishable from a host that cannot run it, which is the
-/// failure mode this project keeps finding elsewhere (a check that
-/// cannot fail on the machine you develop on) reproduced in a brand-new
-/// test. The gate must therefore depend on strictly less than what the
-/// test asserts.
-///
-/// The reachable probe binds port 0, not a fixed number: it is
-/// demonstrating namespace setup, and a specific port could collide with
-/// something on the *host* and read as a namespace failure. Concurrent
-/// agents deliberately binding the *same* number is asserted separately,
-/// where collision is the subject rather than noise.
-/// Probe: with a Landlock policy applied, can this process still
-/// `connect()` to a pathname unix socket?
-///
-/// Argument 1 is the socket path. `--grant` additionally grants that path
-/// read-write before restricting; without it the path is ungranted and
-/// only the project root (this process's cwd) is allowed.
-///
-/// Exit 0 = connected, 1 = refused, 2 = setup failure. The two runs
-/// together answer the design question: if the ungranted run *also*
-/// connects, Landlock does not mediate AF_UNIX connect at all and no
-/// grant is needed; if it refuses and the granted run succeeds, a grant
-/// is both necessary and sufficient.
-/// Probe: with a Landlock policy applied *and this sandbox's mount view
-/// constructed* (`add-mount-isolation` task 4.1 — this probe used to
-/// apply Landlock alone, which is exactly the gap
-/// `tests/unix_socket_not_mediated.rs` was written to measure), can this
-/// process still `connect()` to a pathname unix socket?
-///
-/// Argument 1 is the socket path. `--grant` additionally grants that path
-/// read-write in *both* the mount view and the `CapabilitySet` before
-/// restricting; without it the path is ungranted in both and only the
-/// current directory is allowed. The two are built from the identical
-/// grant list, same reasoning as `up`'s own `resolved_grants`/
-/// `to_capability_set` split (`policy/capability_set.rs`): a probe that
+/// Argument 1 is the socket path. `--grant` grants that socket through
+/// whichever mechanism the platform uses: on Linux, read-write in *both*
+/// the mount view and the `CapabilitySet` (built from the identical grant
+/// list, same reasoning as `up`'s own `resolved_grants`/
+/// `to_capability_set` split in `policy/capability_set.rs` — a probe that
 /// let the two diverge would prove nothing about what a real sandbox
-/// does, only about whatever inconsistency crept into this file.
+/// does); on macOS, a `nono::UnixSocketCapability` for that path, which is
+/// the only thing that admits a socket through `(deny network*)`.
 ///
-/// Exit 0 = connected, 1 = refused, 2 = setup failure. Before this
-/// inversion, the *un*granted run connecting proved Landlock does not
-/// mediate AF_UNIX connect at all; now, with the mount view in place
-/// too, the ungranted run refusing is what proves the gap has closed.
+/// A filesystem grant is *not* the macOS analogue and is not used as one:
+/// measured live, an `FsCapability` for the socket makes `stat()` succeed
+/// and leaves `connect()` refused, because the two are orthogonal layers
+/// in the backend library (nono #696). That measurement is why the macOS
+/// branch grants a `UnixSocketCapability` and nothing else.
+///
+/// Exit 0 = connected, 1 = refused, 2 = setup failure.
 fn uds_probe_main(args: &[String]) -> i32 {
     use std::io::Write;
     use std::os::unix::net::UnixStream;
@@ -834,22 +832,25 @@ fn uds_probe_main(args: &[String]) -> i32 {
     // `pre_exec`: view constructed, then exec, then the keeper applies
     // Landlock to itself) — a `pivot_root`ed process is what then
     // self-restricts, not the other way around.
-    if let Err(e) = devcroft::fleet::mount::enter_mount_namespace() {
-        eprintln!("devcroft __uds_probe: entering mount namespace: {e}");
-        return 2;
-    }
-    if let Err(e) = devcroft::fleet::mount::make_propagation_private() {
-        eprintln!("devcroft __uds_probe: making propagation private: {e}");
-        return 2;
-    }
-    let new_root =
-        std::env::temp_dir().join(format!("devcroft-uds-probe-root-{}", std::process::id()));
-    if std::fs::create_dir_all(&new_root).is_err() {
-        return 2;
-    }
-    if let Err(e) = devcroft::fleet::mount::construct_view(&new_root, &grants, None) {
-        eprintln!("devcroft __uds_probe: constructing view: {e}");
-        return 2;
+    #[cfg(target_os = "linux")]
+    {
+        if let Err(e) = devcroft::fleet::mount::enter_mount_namespace() {
+            eprintln!("devcroft __uds_probe: entering mount namespace: {e}");
+            return 2;
+        }
+        if let Err(e) = devcroft::fleet::mount::make_propagation_private() {
+            eprintln!("devcroft __uds_probe: making propagation private: {e}");
+            return 2;
+        }
+        let new_root =
+            std::env::temp_dir().join(format!("devcroft-uds-probe-root-{}", std::process::id()));
+        if std::fs::create_dir_all(&new_root).is_err() {
+            return 2;
+        }
+        if let Err(e) = devcroft::fleet::mount::construct_view(&new_root, &grants, None) {
+            eprintln!("devcroft __uds_probe: constructing view: {e}");
+            return 2;
+        }
     }
 
     let mut caps = nono::CapabilitySet::new();
@@ -869,6 +870,27 @@ fn uds_probe_main(args: &[String]) -> i32 {
             }
         };
     }
+
+    // The macOS mechanism, per this function's own doc: the deny-default
+    // network mode is what mediates AF_UNIX here, so the probe must
+    // actually be in it for a refusal to mean anything. Without this the
+    // probe would measure an unrestricted-network sandbox, which reaches
+    // every world-accessible socket on the host — the gap itself, not the
+    // fix.
+    #[cfg(target_os = "macos")]
+    {
+        caps = caps.block_network();
+        if grant {
+            caps = match caps.allow_unix_socket(sock, nono::UnixSocketMode::Connect) {
+                Ok(c) => c,
+                Err(e) => {
+                    eprintln!("devcroft __uds_probe: granting unix socket {sock}: {e}");
+                    return 2;
+                }
+            };
+        }
+    }
+
     if let Err(e) = nono::Sandbox::apply_auto(&caps) {
         eprintln!("devcroft __uds_probe: apply_auto failed: {e}");
         return 2;
@@ -899,6 +921,7 @@ fn uds_probe_main(args: &[String]) -> i32 {
 ///
 /// Argument 1 is the abstract name (no leading NUL — `SocketAddrExt`
 /// adds it). Exit 0 = connected, 1 = refused, 2 = setup failure.
+#[cfg(target_os = "linux")]
 fn abstract_socket_probe_main(args: &[String]) -> i32 {
     use std::os::linux::net::SocketAddrExt;
     use std::os::unix::net::{SocketAddr, UnixStream};
@@ -938,6 +961,51 @@ fn abstract_socket_probe_main(args: &[String]) -> i32 {
     }
 }
 
+/// The non-Linux counterpart to [`abstract_socket_probe_main`]. The
+/// abstract namespace is a Linux concept — `nono`'s own
+/// `UnixSocketCapability` doc records that abstract sockets "have no
+/// analog on macOS" — so there is no property to measure here.
+///
+/// Exits 2 (setup failure), never 0 or 1: a probe that cannot run must
+/// not report either "reachable" or "refused", both of which would be
+/// read as a measurement of a socket kind this platform does not have.
+#[cfg(not(target_os = "linux"))]
+fn abstract_socket_probe_main(_args: &[String]) -> i32 {
+    eprintln!(
+        "devcroft __abstract_socket_probe: abstract unix sockets are Linux-only; \
+         this platform has no equivalent to measure"
+    );
+    2
+}
+
+/// Two probes, deliberately separated — see the `--reachable` note.
+///
+/// Default (no argument): can this host create a per-agent network
+/// namespace *at all*? Nothing more. This is the **capability** gate: a
+/// container runtime's seccomp profile, an AppArmor policy restricting
+/// unprivileged user namespaces, or an exhausted `max_user_namespaces`
+/// can each deny it, and none is a devcroft bug.
+///
+/// `--reachable`: the full thing — namespace, loopback up, bind, and a
+/// real connection. This is the **behaviour** under test.
+///
+/// **They must stay separate, and that was learned the hard way here.**
+/// The first version of this probe did both at once, and
+/// `tests/fleet_netns.rs` used it for its skip guard *and* its
+/// assertion. Disabling `bring_loopback_up` to check the tests had
+/// teeth, they all reported `ok` — the guard had seen the same failure
+/// and skipped every test silently. A regression in the feature was
+/// indistinguishable from a host that cannot run it, which is the
+/// failure mode this project keeps finding elsewhere (a check that
+/// cannot fail on the machine you develop on) reproduced in a brand-new
+/// test. The gate must therefore depend on strictly less than what the
+/// test asserts.
+///
+/// The reachable probe binds port 0, not a fixed number: it is
+/// demonstrating namespace setup, and a specific port could collide with
+/// something on the *host* and read as a namespace failure. Concurrent
+/// agents deliberately binding the *same* number is asserted separately,
+/// where collision is the subject rather than noise.
 fn netns_probe_main(args: &[String]) -> i32 {
     use std::io::{Read, Write};
 
@@ -1071,6 +1139,7 @@ fn mount_probe_main(_args: &[String]) -> i32 {
 /// and writes a marker file into it, then signals `READY` and blocks.
 /// The caller checks that same path from the host's own mount namespace:
 /// if propagation were not private, the marker would be visible there too.
+#[cfg(target_os = "linux")]
 fn mount_isolation_sim_main(args: &[String]) -> i32 {
     use std::io::Write;
 
@@ -1126,6 +1195,23 @@ fn mount_isolation_sim_main(args: &[String]) -> i32 {
     let _ = std::io::stdout().flush();
     std::thread::sleep(std::time::Duration::from_secs(30));
     0
+}
+
+/// The non-Linux counterpart to [`mount_isolation_sim_main`]. Mount
+/// namespaces are Linux-only, so there is no propagation property to
+/// demonstrate here.
+///
+/// Exits 2 rather than 1: `tests/fleet_mount.rs` reads a non-zero exit as
+/// "the namespace could not be created", which is a host-capability
+/// result; this is a platform that has no such namespace at all, and the
+/// two must not be reported as the same thing.
+#[cfg(not(target_os = "linux"))]
+fn mount_isolation_sim_main(_args: &[String]) -> i32 {
+    eprintln!(
+        "devcroft __mount_isolation_sim: mount namespaces are Linux-only; \
+         this platform has no equivalent"
+    );
+    2
 }
 
 /// Live verification for `fleet::mount::construct_view`, not a unit test.
@@ -2337,9 +2423,30 @@ fn compile_with_provider_grants(
     // alone has no way to know the proxy's port, since knowing it means
     // an `up` actually ran one. `meta.proxy_port` is `None` for a
     // sandbox that never wanted filtering, so this is a no-op there.
-    match meta.proxy_port {
+    let compiled = match meta.proxy_port {
         Some(port) => compiled.with_proxy_port(port),
         None => compiled,
+    };
+    // Same live-only caveat again, and required by the same invariant that
+    // motivates the two above: "nothing goes to the backend that cannot be
+    // shown via `policy --render`". `up` grants the service supervisor's
+    // own socket so it can bind it inside the sandbox
+    // (`add-macos-unix-socket-scoping`), so a running sandbox with
+    // services must render that grant rather than hide it. Reconstructed
+    // from `Meta` — the same source, and the same path function, `up`
+    // itself used.
+    if meta.declared_services.is_empty() {
+        compiled
+    } else {
+        compiled.with_unix_socket_bind(
+            devcroft::services::socket_path(
+                std::path::Path::new(&meta.project_root),
+                &manifest.sandbox.name,
+            )
+            .to_string_lossy()
+            .into_owned(),
+            devcroft::policy::Origin::Baseline,
+        )
     }
 }
 

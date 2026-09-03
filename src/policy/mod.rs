@@ -194,6 +194,28 @@ pub struct CompiledPolicy {
     /// untouched, so a sandbox with no domain filtering never spins up a
     /// proxy it doesn't need.
     pub network_proxy_port: Option<u16>,
+    /// Pathname unix sockets this sandbox must be able to **bind and
+    /// connect** itself, folded in post-hoc by [`Self::with_unix_socket_bind`]
+    /// for the same reason `network_proxy_port` is: the path depends on
+    /// where the project lives, which `compile`'s pure projection cannot
+    /// know.
+    ///
+    /// **Only macOS consumes this, and only because Seatbelt classifies
+    /// AF_UNIX as network activity** (`add-macos-unix-socket-scoping`).
+    /// A `network.default = "deny"` sandbox there gets `(deny network*)`,
+    /// which covers `bind(2)` on a unix socket as well as `connect(2)` —
+    /// so the service supervisor could not create its own control socket
+    /// even though the socket sits inside the granted project root, and
+    /// every declared service died with the supervisor never starting.
+    /// Filesystem grants do not authorize it: the two are orthogonal
+    /// layers in the backend library, measured.
+    ///
+    /// Linux needs nothing here — Landlock mediates no AF_UNIX operation
+    /// at all, and the mount view already contains the project root — so
+    /// this list is compiled on both platforms (it is rendered, and
+    /// `policy --render` must not differ from what the backend gets) but
+    /// consumed only where it means something.
+    pub unix_socket_bind: Vec<AnnotatedValue>,
     /// The backend setting `extends: "default"` used to supply implicitly
     /// under the exec-based process tier — see `SIGNAL_MODE`. Still
     /// meaningful under `use-nono-library`: `CapabilitySet::set_signal_mode`
@@ -287,6 +309,9 @@ pub fn compile(manifest: &Manifest) -> CompiledPolicy {
         network_allow_domain,
         network_ports,
         network_proxy_port: None,
+        // Empty from the manifest alone: every entry is folded in by `up`
+        // once it knows where the socket will live.
+        unix_socket_bind: Vec::new(),
         signal_mode: SIGNAL_MODE,
     }
 }
@@ -406,6 +431,15 @@ impl CompiledPolicy {
     /// `network_proxy_port`'s doc for why this isn't part of [`compile`].
     pub fn with_proxy_port(mut self, port: u16) -> Self {
         self.network_proxy_port = Some(port);
+        self
+    }
+
+    /// Record a pathname unix socket this sandbox must be able to bind and
+    /// connect itself — see [`CompiledPolicy::unix_socket_bind`] for why
+    /// this exists and why only macOS acts on it.
+    pub fn with_unix_socket_bind(mut self, path: impl Into<String>, origin: Origin) -> Self {
+        self.unix_socket_bind
+            .push(AnnotatedValue::new(path.into(), origin));
         self
     }
 
