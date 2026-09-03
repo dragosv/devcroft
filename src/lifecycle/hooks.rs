@@ -90,6 +90,36 @@ pub fn run(
     Ok(())
 }
 
+/// The absolute shell `up` resolved out of this sandbox's own closure and
+/// recorded in `meta.json` (`crate::shell`), falling back to a bare `sh`
+/// only when there is no recorded value to read.
+///
+/// **A bare `"sh"` here was a real bug, and it is the same one CLAUDE.md
+/// names as load-bearing for three other call sites** — SSH login,
+/// `devcroft shell`'s fallback, and the command process-compose runs each
+/// service through. Hooks were a fourth site that the fix missed. A bare
+/// `"sh"` is resolved by the *sandbox's* `PATH`, whose tail is the host's
+/// own directories, so it silently depends on wherever that search lands:
+/// on Linux it happened to land somewhere the policy granted, and on macOS
+/// it lands on a host path the policy denies, failing the hook with a bare
+/// `Operation not permitted` that names nothing. `own-policy-baseline`
+/// removed host toolchain access; this is one of the places that had not
+/// caught up.
+///
+/// Mirrors `exec::recorded_shell` deliberately, rather than sharing it:
+/// that one reads `Meta` for a *client* command that may run against a
+/// sandbox this process did not start, and returns an `Option` its caller
+/// turns into a `$SHELL`-aware choice. This one has no user preference to
+/// honour — a hook is unattended and must run under the closure's shell,
+/// not the operator's.
+fn hook_shell(paths: &StatePaths) -> String {
+    crate::lifecycle::read_meta(&paths.meta)
+        .ok()
+        .flatten()
+        .and_then(|m| m.shell)
+        .unwrap_or_else(|| "sh".to_string())
+}
+
 /// Spawns `cmd` as a plain `sh -c` session (no pty — hooks are
 /// unattended, like `post_create`'s canonical `cargo fetch` example) and
 /// appends its combined stdout+stderr to `paths.log` as it streams, so
@@ -106,7 +136,7 @@ fn run_one(
     protocol::write_frame(
         &mut stream,
         &Frame::Spawn(SpawnRequest {
-            cmd: "sh".to_string(),
+            cmd: hook_shell(paths),
             args: vec!["-c".to_string(), cmd.to_string()],
             cwd: project_root.to_string_lossy().into_owned(),
             env: BTreeMap::new(),
