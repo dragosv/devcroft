@@ -13,7 +13,8 @@ covering the three closure-tier providers —
 `flox-clap-sample`, `flox-rustup-sample`, `nix-flake-sample`, and
 `devbox-citytime-sample` are Rust projects with their own `Cargo.toml`
 (each has an explicit `[workspace]` table so they don't get pulled into
-this crate's workspace); `nix-go-sample` (Go), `kotlin-ktor-sample`
+this crate's workspace); `nix-go-sample` (Go),
+`nix-probe-sample` (Go), `kotlin-ktor-sample`
 (Kotlin/Gradle — was `gvisor-kotlin-sample`, renamed by
 `remove-gvisor-backend`, which also dropped the `isolation = "hardened"`
 key from its manifest that would otherwise now fail to parse), and
@@ -25,6 +26,18 @@ generates its own process-compose config and the keeper owns the
 services' lifetime. It is also the regression case for the shell
 invariant below, because its manifest declares no shell, which is what
 every real flox manifest looks like.
+`nix-probe-sample` is the runnable form of the README's boundary probe,
+and is where that front-page output is measured rather than asserted. It
+is also the sample that established three nix-provider facts the other
+two nix samples do not exercise: a `shellHook` export never arrives
+(`print-dev-env --json` treats the hook as inert data, so redirects must
+be `mkShell` *attributes*), nix reports a `TMPDIR` that no longer exists
+at session time and cannot be overridden by an attribute (`GOTMPDIR` is
+the lever), and `devcroft.toml`'s `[env.vars]` parses and validates but
+nothing consumes it — a silent no-op. Its deletion probe creates the
+file it deletes, deliberately: a demonstration of a boundary must not be
+catastrophic when the boundary is absent.
+
 `devbox-citytime-sample` documents a real constraint rather than a gap:
 devcroft's devbox provider never runs `shell.init_hook` (by design — see
 the two-phase execution invariant below), so unlike the flox and nix

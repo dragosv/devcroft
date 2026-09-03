@@ -141,8 +141,15 @@ func probe() {
 $ devcroft exec -- go run . probe
 open /home/you/.ssh/known_hosts: permission denied
 open /etc/devcroft-probe: permission denied
-remove /home/you/devcroft.tmp: permission denied
+open /home/you/devcroft.tmp: permission denied
+remove /home/you/devcroft.tmp: no such file or directory
 ```
+
+Four lines, not three: the removal reports the file *missing* because the
+creation immediately above it was already refused, so there was never a file
+to delete. [samples/nix-probe-sample](samples/nix-probe-sample/) is this exact
+program as a runnable project, and is where the output above is measured
+rather than asserted.
 
 Nothing was asked politely and nothing cooperated: an agent that decides to
 delete a file in your home directory gets `EACCES`, whatever it intended — and
