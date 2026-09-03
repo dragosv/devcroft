@@ -137,6 +137,19 @@ authorised to do through the tools it legitimately has.
   change here is a security-relevant one, not a routine capability
   update — treat any change to either matrix entry as threat-model-review
   material, not a changelog line.
+- **On macOS, that pathname-socket boundary is conditional on the
+  manifest, and that is a threat-model fact rather than a capability
+  one.** `add-macos-unix-socket-scoping` measured the mechanism live:
+  Seatbelt treats a unix-socket `connect()` as network activity, so
+  `network.default = "deny"` denies an ungranted socket there — but a
+  sandbox that does *not* set it reaches every world-accessible socket on
+  the host, including a nix daemon's. Linux does not have this
+  conditionality: a mount view removes the path whatever the network mode
+  is. So the same manifest yields a strictly weaker boundary on macOS,
+  and the difference is invisible in the manifest itself. Anyone reasoning
+  about a macOS deployment has to read the network section to know whether
+  this boundary exists at all; `devcroft doctor` names both halves of the
+  degradation, and `up` says which case a given sandbox is in.
 
 The value is that the boundary moves out of the prompt and into infrastructure.
 That is a real gain and a bounded one.

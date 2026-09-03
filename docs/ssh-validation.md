@@ -22,7 +22,7 @@ not a substitute for the first and should not be read as one.
 | `-L` local forwarding | **Validated** | `tests/ssh_channels.rs::direct_tcpip_forwarding_relays_a_real_connection` |
 | SFTP relative-path base | **Known divergence** from OpenSSH: project root, not `$HOME` | see "Zed" finding 2 |
 | `ProxyCommand`/`ssh-config` plumbing | **Validated** | `tests/proxy_up.rs`, `tests/ssh_up.rs`, `tests/ssh_config_cli.rs` |
-| rsync | **Validated** (2026-08-14, macOS/aarch64-darwin, system `openrsync`) | `tests/ssh_channels.rs::rsync_transfers_a_file_through_devcroft_proxy_over_a_plain_exec_channel` |
+| rsync | **Was validated 2026-08-14; the basis for that is gone and it now fails on macOS** — see below | `tests/ssh_channels.rs::rsync_transfers_a_file_through_devcroft_proxy_over_a_plain_exec_channel` (skipped on macOS) |
 | VS Code Remote-SSH | **Validated under three named preconditions** (2026-08-15 second retest, macOS/aarch64-darwin, VS Code 1.130.0) | live remote window, extension host connected. Does **not** work under the default policy: needs `serverInstallPath`, `network.default = "allow"`, and a `$TMPDIR` short enough for a unix socket path — see below. `network.ports` does *not* substitute for the second: VS Code's supervisor picks its port at runtime |
 | Cursor (remote-ssh) | **Validated manually 2026-08-14; not retested, treat as suspect** (Cursor 3.15.19, anysphere.remote-ssh 1.1.14) | its servers listen on ports, so the listening-socket blocker found for VS Code on 2026-08-15 very likely applies — see below |
 | Zed | **Partial — connects, transfers, does not start** (2026-08-15, macOS/aarch64-darwin, Zed 1.4.4) | auth, upload, decompress and chmod of the 31 MB server all succeed; its forked server daemon then exits silently. Needs 5 `$HOME` grants. See below |
@@ -74,6 +74,24 @@ It went unchallenged because no test asserted the exit code — the
 assertion was omitted *because* of the belief it could not pass.
 
 ## rsync
+
+> **Status corrected 2026-09-03: this row no longer holds on macOS, and the
+> reason is instructive rather than incidental.** The original validation
+> worked because the sandbox reached the *host's* `/usr/bin/rsync` through the
+> canonical system bin dirs that flox's activated `PATH` still carried. That is
+> exactly the host-toolchain access `own-policy-baseline` then removed, so the
+> mechanism the validation rested on is gone — the entry below describes a
+> configuration that no longer exists.
+>
+> Re-measured with `rsync` installed *into the closure* (so the missing-binary
+> problem is out of the way), it still fails, and not in the transport: reduced
+> to a minimal case, `rsync` copying one local file to another **inside** a
+> sandbox fails with `change_dir ... Operation not permitted`, while `cd` into
+> and `touch` inside that same directory both succeed in the same session. scp
+> and sftp round-trip over the identical exec channel and pass, so the SSH path
+> this test exercises is fine. Not attributed further — recorded the same way
+> the Zed row below is, rather than guessed at. The test skips on macOS naming
+> this; the Linux row is unaffected and still runs.
 
 Validated 2026-08-14 on macOS/aarch64-darwin, against a real `up`-started
 keeper via a real `devcroft proxy` subprocess:

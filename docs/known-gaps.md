@@ -84,7 +84,7 @@ missing namespace, but the warning is about port collisions and does not
 mention this. Closing that properly needs the seccomp filter nono only
 installs on old kernels — an upstream ask, or a devcroft-side filter.
 
-## Unix sockets are not mediated by Landlock — both halves now closed
+## Unix sockets are not mediated by Landlock — both halves now closed, on both platforms
 
 **Landlock's network rules cover TCP only.** `connect()` to a pathname
 unix socket falls through to ordinary filesystem permissions, so
@@ -148,6 +148,190 @@ is what lets a network-isolated sandbox reach devcroft's host-side
 egress proxy without a TUN device or a forwarding helper — and it is
 exactly why the mount view has to name that one socket back in
 explicitly (design.md M3) rather than only ever removing paths.
+
+### macOS closes the same gap on the other axis (`add-macos-unix-socket-scoping`)
+
+Everything above is Linux. macOS has no user/mount namespace, so for a
+while this entry recorded the pathname half as closed on Linux and simply
+open on macOS. **It is now closed there too, and it needed no new
+mechanism — only a measurement.**
+
+Seatbelt classifies a unix-socket `connect()` as `network-outbound`, not
+as filesystem access. So the `(deny network*)` rule devcroft *already*
+compiles for `network.default = "deny"` covers AF_UNIX, and always did.
+Measured live on macOS 15.7.4 (arm64) against this host's real
+`nix-daemon` socket, the same instance that mattered on Linux:
+
+- Network unrestricted: the sandbox connects to the daemon socket **even
+  though `stat()` on the same path is denied**. `connect()` is not gated
+  by the filesystem layer at all — that is the gap, reproduced.
+- `network.default = "deny"`: the same connect is refused `EPERM`, with
+  no devcroft code change. The mechanism was shipping; nobody had checked
+  it, so nothing claimed it.
+- Reachable again only via an explicit `nono::UnixSocketCapability` grant
+  for that exact path, which is what keeps a sandbox's own egress
+  reachable and admits no other socket.
+
+Asserted in `tests/unix_socket_not_mediated.rs`'s macOS half, which is
+split from the Linux half deliberately: the two platforms produce
+different failure shapes (`EPERM` from a rule, versus `ENOENT` from a
+path that no longer exists), and one shared assertion would be vacuous on
+whichever platform it was not written for.
+
+**Three residual limits, all narrower than the gap was but none of them
+nothing:**
+
+- **It is scoped to deny-default sandboxes.** An `allow`-default macOS
+  sandbox still reaches any world-accessible unix socket, where an
+  `allow`-default *Linux* sandbox does not — a mount view removes the path
+  regardless of network mode. Same manifest, weaker guarantee on macOS.
+- **Reachability only, not visibility.** macOS gets no filesystem view, so
+  nothing narrows what a sandbox can *see*; only what it can dial. The
+  broader `add-mount-isolation` claim stays Linux-only, honestly.
+- **A `filesystem.allow` grant does not open a socket on macOS, and does
+  on Linux.** The two layers are orthogonal in the backend library
+  (measured: granting the socket's path makes `stat()` succeed and leaves
+  `connect()` refused), whereas a Linux mount view includes granted paths
+  and so admits the socket. Nothing in devcroft's manifest surface can
+  express a macOS unix-socket grant today; the only one compiled is the
+  sandbox's own egress path.
+
+`devcroft doctor` reports this as `pathname-unix-sockets:
+enforced (degraded)` on macOS, with both degradations named in the entry
+itself rather than in a footnote.
+
+## Host binaries execute on macOS, even at ungranted paths
+
+**`own-policy-baseline`'s "the host toolchain is denied" property is Linux-only,
+and nothing said so until now.** It was measured on Linux, where Landlock's
+default-deny filesystem policy covers execution like any other access. macOS does
+not work that way: the backend library's Seatbelt profile carries an
+unconditional `(allow process-exec*)`, and Seatbelt treats executing a file as a
+separate operation from reading it.
+
+Measured live in a real devcroft sandbox on macOS 15.7.4, with a devbox closure
+and `network.default = "deny"`:
+
+- `/bin/echo`, `/bin/ls`, `/usr/bin/gcc` and `/usr/bin/clang` all **execute**,
+  none of them granted by the manifest, the provider, or the baseline.
+- Reading those same paths is **refused**: `ls -l /usr/bin/gcc` from inside the
+  same sandbox gets `Operation not permitted`, as does `cat /etc/hosts`,
+  `ls ~/.ssh`, and `ls /usr/bin`.
+
+So the filesystem boundary is real and enforced; it simply does not extend to
+`execve`. The practical consequence is narrower than it first looks — a host
+binary that runs still cannot *read* anything the policy denies, so it cannot
+exfiltrate project files it was not already granted — but "the sandbox runs only
+what the closure provides" is not true on macOS, and a build that silently picks
+up a host tool will succeed there and fail on Linux.
+
+`tests/devbox_provider_e2e.rs` asserts the denial on Linux and is gated off on
+macOS with a pointer here, rather than the assertion being deleted or weakened to
+pass on both.
+
+Not yet investigated: whether `nono` can be asked to scope `process-exec*`, or
+whether devcroft should refuse to claim closure-tier semantics on macOS until it
+can. Both belong to `own-policy-baseline`, which is where the property was
+established.
+
+## A C toolchain from a closure cannot link on macOS
+
+Related to the above but a separate cause, and it makes the devbox/nix closure
+tier genuinely less useful on macOS rather than merely less strict.
+
+A C compile from a nix closure fails **at link**, not at compile: the
+`cctools-binutils-darwin` linker wrapper drives `ld` through a shell process
+substitution and reads `/dev/fd/63`, which devcroft's macOS baseline does not
+grant. The baseline grants `/dev/ptmx`, `/dev/null` and `/dev/urandom` and
+nothing else under `/dev`, so the read is refused and the build stops with
+`collect2: error: ld returned 1 exit status`.
+
+Granting `/dev/fd` would fix it, and that is a real baseline widening rather than
+an oversight to patch quietly — `/dev/fd` exposes every file descriptor the
+process holds, which is exactly the kind of grant `own-policy-baseline` exists to
+make deliberately and with a measurement behind it. Left to that change.
+
+Found while making the test suite run on macOS for the first time
+(`add-macos-unix-socket-scoping`); the Linux half of the same test is unchanged
+and still asserts the full compile-link-run path.
+
+## Interactive pty sessions are refused on macOS
+
+**`devcroft shell` does not work on macOS, and neither does an SSH session that
+asks for a pty.** Both fail with `keeper refused to spawn: Operation not
+permitted`. Non-pty sessions (`devcroft exec`) are unaffected and work normally.
+
+The cause, measured from inside a real sandbox rather than inferred from the
+symptom: `openpty()` allocates a master and then `open()`s the corresponding
+**slave** (`/dev/ttysNNN`). The compiled profile grants the master — `/dev/ptmx`
+is a baseline `filesystem.allow` entry — and the backend library adds tty
+*ioctl* rules for slave paths, but nothing grants read or write on the slave
+itself. Directly confirmed in a running sandbox: `/dev/ptmx` is readable, and
+opening `/dev/ttys000` is refused.
+
+devcroft cannot close this on its own. Baseline grants are literal paths and the
+slave path is allocated per session, so expressing it needs a pattern rule; the
+backend library already emits regex-based tty rules on macOS (for `file-ioctl`)
+and would need to extend them to read/write. Granting all of `/dev` instead
+would be a far larger widening than the problem warrants. This is an upstream
+ask, in the same category as the one already drafted about gating the library's
+trust module.
+
+`tests/shell_up.rs` skips on macOS naming this entry, rather than asserting
+something weaker — so closing the gap makes the test run again by itself.
+
+## `network.ports` is all-or-nothing on macOS
+
+`network.ports` is documented as an allowlist: the sandbox may listen on the
+ports it names and no others. That holds on Linux, where Landlock's `NetPort`
+scopes `bind` per port. **It does not hold on macOS**, and the capability matrix
+claimed it did while carrying its own note that nobody had checked.
+
+Seatbelt has no per-port form of `network-bind`. Granting any port therefore
+emits a blanket `(allow network-bind)` / `(allow network-inbound)` — the backend
+library's own source says so in as many words — and every other port becomes
+bindable too. Measured: with `ports = [X]` declared and `network.default =
+"deny"`, a probe bound an *ungranted* port successfully.
+
+The outbound half is unaffected and does hold: a deny-default sandbox on macOS
+still cannot connect out to an ungranted destination (asserted by the same test,
+not gated).
+
+`up` now warns when a manifest asks for this on a host that cannot deliver it —
+`network.ports (per-port listen scoping)` — and `devcroft doctor` reports
+`network-block-and-ports` as `enforced (degraded)` on macOS with the reason
+named. Closing it properly would need something Seatbelt does not offer; the
+honest position is the declared degradation.
+
+## A grant does not cover the symlinked spelling of its own path on macOS
+
+devcroft canonicalizes every filesystem grant before handing it to the backend,
+so the compiled policy names `/private/tmp/proj` where the manifest (or the
+shell, or `$TMPDIR`) says `/tmp/proj`. On Linux that is invisible, because the
+paths involved are not symlinks. On macOS `/tmp` → `/private/tmp` and `/var` →
+`/private/var` both are, and the sandbox denies the un-canonicalized spelling of
+a path it has granted.
+
+Measured, in a sandbox whose project root was granted normally:
+
+```
+touch /var/folders/…/T/proj/FILE      -> Operation not permitted
+touch /private/var/folders/…/T/proj/FILE -> OK
+touch FILE                             -> OK   (relative, from the project root)
+```
+
+Relative paths and canonical absolute paths both work, so this mostly bites
+projects living under `/tmp` or `$TMPDIR` — which is rare for real projects and
+common for test fixtures and generated scratch directories. A flox
+`[hook].on-activate` writing to `$TMPDIR/...` is the case that actually surfaced
+it.
+
+The backend library already does dual-path emission for unix-socket grants
+(emitting both `original` and `resolved` so `/tmp/x.sock` and
+`/private/tmp/x.sock` both match); filesystem grants emit only the resolved form.
+Closing this means emitting both there too — devcroft-side when it builds the
+grant list, or upstream. Not attempted here; it belongs with
+`own-policy-baseline`, which owns what the compiled grant set contains.
 
 ## No inter-sandbox process visibility separation
 

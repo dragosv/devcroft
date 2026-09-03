@@ -34,28 +34,65 @@ deny rule is what mediates it, not a filesystem-level grant.
 
 ### Requirement: The sandbox's own egress path stays reachable
 
-Where a sandbox has an egress proxy, its compiled policy SHALL include an explicit,
-scoped grant admitting `connect()` to that proxy's own unix socket, even though the
-sandbox's own `network.default = "deny"` would otherwise deny it.
+Where a sandbox has an egress proxy, its compiled policy SHALL admit that sandbox's
+own path to that proxy, and no other sandbox's, even though the sandbox's own
+`network.default = "deny"` denies outbound connections generally.
 
-Stated as a requirement rather than left to the implementation for the identical
-reason `filesystem-view`'s M3 requirement is: the obvious hardening — denying every
-unix socket outright — would silently remove the one the sandbox itself depends on for
-filtered egress. The symptom would be a sandbox that starts, reports healthy, and has
-no network.
+Stated as an **outcome rather than a mechanism**, for the identical reason
+`filesystem-view`'s M3 requirement exists at all: the obvious hardening — denying
+everything outright — would silently remove the one path the sandbox itself depends on
+for filtered egress, and the symptom would be a sandbox that starts, reports healthy,
+and has no network. Which mechanism satisfies it is a platform question and is
+deliberately not fixed here. An earlier draft of this requirement mandated a scoped
+*unix-socket* grant; that was measured to be the wrong mechanism for macOS, where the
+proxy is reached over TCP loopback and no unix socket is dialled by path at all (see
+design.md S2). A requirement that names a mechanism can be satisfied and still be
+wrong; this one names the property that has to hold.
 
 #### Scenario: An isolated sandbox with an allowlist
 
 - **WHEN** a macOS sandbox has `network.default = "deny"` and a declared
   `network.allow`
 - **THEN** it reaches its allowlisted hosts through the proxy
-- **AND** the scoped grant admitting the proxy socket is what makes that possible, not
-  an exception to the deny-default requirement above
+- **AND** what makes that possible is an explicit grant for its own proxy endpoint,
+  not an exception to the deny-default requirement above
 
-#### Scenario: Another sandbox's proxy socket
+#### Scenario: Another sandbox's proxy
 
 - **WHEN** a sandbox's policy is compiled
-- **THEN** the scoped grant admits its own proxy socket and no other sandbox's
+- **THEN** it admits that sandbox's own proxy endpoint and no other sandbox's
+
+#### Scenario: A grant is scoped to what it names
+
+- **WHEN** the policy admits one specific pathname unix socket
+- **THEN** a different socket — including one in the same directory — remains denied
+
+### Requirement: A sandbox can create the unix sockets it is expected to run
+
+On macOS, `bind(2)` on a pathname unix socket is `network-bind` — the same
+network axis as `connect(2)` — so a `network.default = "deny"` sandbox cannot
+create a unix socket at all unless its compiled policy says so. Where devcroft
+expects a sandbox to run a component that creates its own control socket, the
+compiled policy SHALL admit that socket for both bind and connect.
+
+Stated separately from the egress requirement above because it is the same trap
+arriving from the other direction, and because a *filesystem* grant does not
+imply it: the service supervisor's socket lives inside the project root, which
+the manifest already grants read-write, and it was still refused. Filesystem and
+unix-socket authorization are orthogonal layers.
+
+#### Scenario: A sandbox with declared services
+
+- **WHEN** a macOS sandbox has `network.default = "deny"` and its provider
+  declares services
+- **THEN** the supervisor can bind its own control socket and the services start
+- **AND** the grant is present only when services will actually be started
+
+#### Scenario: The grant is inspectable
+
+- **WHEN** such a sandbox's policy is rendered
+- **THEN** the socket appears in `policy --render`, like every other compiled
+  rule — nothing reaches the backend that cannot be shown
 
 ### Requirement: The mechanism is verified before it is claimed
 

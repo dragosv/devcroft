@@ -21,11 +21,14 @@ subject of this change.
   same guarantee `add-mount-isolation`'s mount view gives on Linux, delivered instead
   through Seatbelt's own network-outbound classification.
 - **NEW**, and load-bearing before anything above is a claim rather than a proposal: a
-  spike on real macOS hardware. This repository has no macOS host — every finding this
-  change's design.md records comes from reading the pinned `nono` library's own macOS
-  sandbox source, not from running anything. Nothing here ships as an enforced
-  capability, and no document is corrected to say the gap is closed, until that spike
-  confirms it live.
+  spike on real macOS hardware. **Done — and the premise that "this repository has no
+  macOS host" was itself false.** Measured on macOS 15.7.4 (arm64) against a live
+  `nix-daemon` socket: the mechanism holds, and it required no policy-compilation code
+  because devcroft already compiled the rule that closes it. What the spike changed:
+  the proxy-socket grant below is **not** implemented (macOS reaches its proxy over
+  TCP, never over the unix socket), and a prerequisite nobody had noticed *was*
+  implemented — the crate did not compile on macOS at all, so `add-mount-isolation`'s
+  macOS degradation had never actually run.
 - **MODIFIED** `filesystem-view` (the capability `add-mount-isolation` added): its own
   spec is Linux-specific in mechanism (a mount namespace); this change does not alter
   that spec, but the proxy-socket exception it documents (M3) gets a macOS-shaped
@@ -56,12 +59,16 @@ subject of this change.
 ## Impact
 
 - Affected specs: new `macos-unix-socket-mediation`.
-- Affected code: `src/policy/capability_set.rs` (a scoped `UnixSocketCapability` grant
-  for the proxy socket, macOS-only — the `to_capability_set` sibling of what
-  `fleet::mount::construct_view`'s `proxy_socket` parameter does on Linux),
-  `tests/unix_socket_not_mediated.rs` (platform-split assertions), `docs/known-gaps.md`
-  and `docs/threat-model.md` (corrected once, and only once, the spike confirms the
-  mechanism — not before).
+- Affected code, as built (the spike moved this list): `src/fleet/mount.rs` and
+  `src/bin/devcroft.rs` (Linux-only code gated so the crate builds on macOS at all —
+  the actual prerequisite), `tests/unix_socket_not_mediated.rs` (platform-split
+  assertions), `tests/abstract_socket_not_reachable.rs` (Linux-only by subject),
+  `src/backend_capabilities.rs` (`pathname-unix-sockets` macOS status), and three
+  user-facing surfaces that described a filesystem view and a network namespace macOS
+  does not have (`doctor`, `up`'s warning, `policy --render`). **Not**
+  `src/policy/capability_set.rs`: no `UnixSocketCapability` grant is compiled, per
+  design.md S2. `docs/known-gaps.md` and `docs/threat-model.md` corrected only after
+  the measurement, as required.
 - No `fleet::mount` changes: this is deliberately not a macOS mount-view port. See
   Non-Goals.
 - Depends on nothing left unfinished by `add-mount-isolation` — that change is complete;
