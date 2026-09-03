@@ -13,6 +13,7 @@ mod why;
 pub use capability_set::{CapabilityPlan, CapabilitySetError};
 pub use degraded::{
     DegradedCapability, backend_support, backend_supported, detect as detect_degraded,
+    host_limitations,
 };
 pub use render::render;
 pub use why::{Explanation, Op, why_host, why_path};
@@ -102,8 +103,36 @@ const KEEPER_SYSTEM_READ: &[&str] = &[
 #[cfg(not(target_os = "macos"))]
 const KEEPER_SYSTEM_READWRITE: &[&str] = &["/dev/pts", "/dev/null"];
 
+/// macOS needs the whole of `/dev`, and the narrower list it used to
+/// carry (`/dev/ptmx`, `/dev/null`) was a Linux inference that does not
+/// hold — the comment above admitted as much, and measuring it on a real
+/// Mac showed why. `openpty(3)` there opens `/dev/ptmx` *and then the
+/// slave it hands back*, `/dev/ttysNNN`, whose number is not knowable
+/// before the call; with only `/dev/ptmx` granted the call fails `EPERM`
+/// and every pty session — `devcroft shell`, and the SSH shell channel
+/// every editor uses — dies with "keeper refused to spawn: Operation not
+/// permitted". Measured directly: the same `openpty` under the same
+/// policy plus a `/dev` grant succeeds.
+///
+/// Seatbelt matches paths, so there is no way to say "the pty slaves"
+/// through nono's path API: no globs, and the specific node does not
+/// exist until the kernel allocates it. nono already special-cases these
+/// devices for `file-ioctl` and emits `(allow pseudo-tty)`, so the
+/// principled fix is upstream — a read/write rule for
+/// `^/dev/ttys[0-9]+$` alongside the ioctl one. Until then this is the
+/// grant that makes the feature work, and it is a *visible* one:
+/// `policy --render` shows `/dev` under `filesystem.allow` with origin
+/// `baseline`, rather than a capability that silently isn't there.
+///
+/// What it costs is bounded by the fact that this is an unprivileged
+/// process: the device nodes worth worrying about (raw disks, `/dev/mem`)
+/// are root-gated by the OS regardless of what the profile says, and the
+/// tier is accident protection rather than a security boundary
+/// (`docs/threat-model.md`). Linux keeps the narrow list — Landlock
+/// resolves `/dev/ptmx` to `/dev/pts/ptmx` and the slave lives under the
+/// same granted `/dev/pts`, so nothing broader is needed there.
 #[cfg(target_os = "macos")]
-const KEEPER_SYSTEM_READWRITE: &[&str] = &["/dev/ptmx", "/dev/null"];
+const KEEPER_SYSTEM_READWRITE: &[&str] = &["/dev"];
 
 /// The signal isolation `extends: "default"` currently supplies as its
 /// *only* effective contribution (own-policy-baseline design.md Decision
@@ -194,6 +223,22 @@ pub struct CompiledPolicy {
     /// untouched, so a sandbox with no domain filtering never spins up a
     /// proxy it doesn't need.
     pub network_proxy_port: Option<u16>,
+    /// Pathname unix sockets the sandbox may `bind(2)` as well as
+    /// `connect(2)`.
+    ///
+    /// Empty for almost every sandbox, and non-empty for exactly one
+    /// thing: the supervisor socket process-compose binds when the
+    /// provider declares services. Landlock cannot express AF_UNIX at all
+    /// (`tests/unix_socket_not_mediated.rs`), so on Linux this changes
+    /// nothing; Seatbelt's `(deny network*)` covers unix bind, so without
+    /// it macOS services die at startup with `listen unix …: bind:
+    /// operation not permitted` and the sandbox comes up with nothing
+    /// supervising it.
+    ///
+    /// Folded in post-hoc like `network_proxy_port`, and for the same
+    /// reason: whether services run at all is a property of the resolved
+    /// environment, not of the manifest `compile` sees.
+    pub unix_socket_bind: Vec<AnnotatedValue>,
     /// The backend setting `extends: "default"` used to supply implicitly
     /// under the exec-based process tier — see `SIGNAL_MODE`. Still
     /// meaningful under `use-nono-library`: `CapabilitySet::set_signal_mode`
@@ -287,6 +332,7 @@ pub fn compile(manifest: &Manifest) -> CompiledPolicy {
         network_allow_domain,
         network_ports,
         network_proxy_port: None,
+        unix_socket_bind: Vec::new(),
         signal_mode: SIGNAL_MODE,
     }
 }
@@ -406,6 +452,28 @@ impl CompiledPolicy {
     /// `network_proxy_port`'s doc for why this isn't part of [`compile`].
     pub fn with_proxy_port(mut self, port: u16) -> Self {
         self.network_proxy_port = Some(port);
+        self
+    }
+
+    /// Fold in the supervisor socket the services supervisor binds, once
+    /// `up` knows this environment actually declares services (see
+    /// [`Self::unix_socket_bind`]).
+    ///
+    /// Attributed to the provider rather than the baseline because that
+    /// is what is true: the socket exists only because *that provider's*
+    /// manifest declared services, and a sandbox without them never gets
+    /// this rule. `policy --render` reconstructs it the same way it
+    /// reconstructs provider store grants — from `Meta`, which already
+    /// records `declared_services`.
+    pub fn with_services_socket_grant(
+        mut self,
+        provider: &'static str,
+        socket: impl Into<String>,
+    ) -> Self {
+        self.unix_socket_bind.push(AnnotatedValue::new(
+            socket.into(),
+            Origin::Provider(provider),
+        ));
         self
     }
 

@@ -257,6 +257,36 @@ fn a_declared_service_runs_inside_the_sandbox_and_is_reaped_by_down() {
          service it spawned"
     );
 
+    // The supervisor's socket is a real rule the keeper held, so
+    // `--render` must be able to show it — the policy invariant is that
+    // nothing reaches the backend that this command cannot display. It
+    // appears only for a *live* sandbox with services, which is why
+    // `policy_render_is_unchanged_by_declaring_services` (which renders
+    // before any `up`) and this assertion are both true at once.
+    // `policy --render` discovers the devcroft manifest from disk, and
+    // this test builds its own in memory (`parse` + `up`), so the file
+    // has to exist for the command to have anything to compile.
+    std::fs::write(
+        project_root.join("devcroft.toml"),
+        format!("[sandbox]\nname = {sandbox_name:?}\n"),
+    )
+    .unwrap();
+    let rendered = Command::new(devcroft_bin)
+        .args(["policy", "--render"])
+        .current_dir(&project_root)
+        .output()
+        .unwrap();
+    assert!(
+        rendered.status.success(),
+        "policy --render failed: {rendered:?}"
+    );
+    let rendered = String::from_utf8_lossy(&rendered.stdout);
+    let socket = devcroft::services::socket_path(&project_root, &sandbox_name);
+    assert!(
+        rendered.contains("unix_socket.bind:") && rendered.contains(&*socket.to_string_lossy()),
+        "the supervisor socket grant must be visible in `policy --render`, got: {rendered}"
+    );
+
     // With the supervisor now gone but the sandbox's recorded
     // declarations intact, `status` must still account for the declared
     // service rather than reporting nothing. This is the regression the
@@ -528,6 +558,17 @@ fn skip_hooks_bypasses_the_wrong_provider_service_check() {
 ///
 /// Runs before any `up`, so it needs neither `process-compose` nor a
 /// resolvable environment — `policy --render` compiles from the manifest.
+///
+/// That "before any `up`" is now load-bearing rather than incidental. A
+/// *live* sandbox with declared services does carry one extra rule: the
+/// supervisor socket process-compose binds, granted at `up` and rendered
+/// from `Meta` the same way provider store grants are (`up`'s own comment
+/// says why Seatbelt makes it necessary). The promise this test pins is
+/// the one that was actually made — service declarations do not reach
+/// `policy::compile` — not "a sandbox with services and one without are
+/// indistinguishable", which stopped being true the moment the
+/// supervisor needed a socket. The live rule is asserted in
+/// `a_declared_service_runs_inside_the_sandbox_and_is_reaped_by_down`.
 #[test]
 fn policy_render_is_unchanged_by_declaring_services() {
     if Command::new("flox").arg("--version").output().is_err()

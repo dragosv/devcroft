@@ -149,11 +149,30 @@ fn a_granted_port_binds_while_egress_stays_denied_and_other_ports_do_not() {
     // ...and it is an allowlist, not a blanket unlock. Without this the
     // test would still pass if `ports` accidentally disabled port
     // mediation altogether.
-    let ungranted = bind_probe(devcroft_bin, &sandbox_name, UNGRANTED);
-    assert!(
-        ungranted.contains("DENIED"),
-        "an ungranted port must still be denied, got: {ungranted}"
-    );
+    //
+    // Asserted only where the backend can scope bind by port at all.
+    // Landlock's `NetPort` does; Seatbelt has no port-scoped bind rule,
+    // so nono emits a blanket `(allow network-bind)` and *any* port binds
+    // — measured on macOS 15. The guard asks the same detection `up`
+    // warns from rather than checking the platform, so the day a backend
+    // gains the capability this starts asserting again on its own.
+    let port_scoping_degraded =
+        devcroft::policy::detect_degraded(&devcroft::policy::compile(&manifest))
+            .iter()
+            .any(|d| d.aspect.starts_with("network.ports"));
+    if port_scoping_degraded {
+        eprintln!(
+            "skipping the ungranted-port half: this host cannot scope bind by port, so \
+             `network.ports` is documentation of intent rather than a limit here \
+             (docs/known-gaps.md); `up` warns about exactly this"
+        );
+    } else {
+        let ungranted = bind_probe(devcroft_bin, &sandbox_name, UNGRANTED);
+        assert!(
+            ungranted.contains("DENIED"),
+            "an ungranted port must still be denied, got: {ungranted}"
+        );
+    }
 
     // Egress remains filtered: granting a local port must not have
     // widened outbound access, which is the entire reason this key

@@ -669,3 +669,49 @@ Seatbelt. The flox test's helper now builds its project root resolved, for
 exactly the reason `tests/unix_socket_not_mediated.rs` does — third time
 this session that a macOS symlink turned a working policy into a false
 failure.
+
+**Running the suite on a Mac for the first time found four platform gaps,
+not four broken tests.** Once the path-spelling failures were out of the
+way, what was left divided cleanly, and none of it was visible from
+Linux:
+
+- **Supervised services never worked on macOS.** process-compose binds a
+  unix socket inside the sandbox; Seatbelt's `(deny network*)` covers
+  AF_UNIX bind, so it failed with `listen unix …: bind: operation not
+  permitted` and the sandbox came up supervising nothing. Landlock cannot
+  express AF_UNIX at all, so on Linux there was nothing to notice. The
+  policy now carries a `unix_socket_bind` axis, folded in at `up` exactly
+  the way provider store grants and the proxy port are — and rendered,
+  because a rule the keeper holds that `policy --render` cannot show is
+  the one thing the policy invariant forbids.
+- **Every pty session failed.** `openpty` opens `/dev/ptmx` and then the
+  slave it returns, and only the former was granted. The macOS baseline
+  entry was a Linux inference — its own comment said "not independently
+  live-verified" — and the verification found it insufficient. `/dev` is
+  granted there now, which is broader than anyone would choose; the
+  narrow fix belongs upstream, since nono already special-cases the pty
+  slaves for ioctl and just needs the matching read/write rule.
+- **`network.ports` is not a bind limit there.** Landlock scopes bind by
+  port; Seatbelt has no such rule, so nono emits a blanket
+  `(allow network-bind)` and any port binds.
+- **Exec is not mediated at all**, as recorded earlier in this file.
+
+The last two are now surfaced rather than only documented, but not in the
+same place, and the difference was learned by getting it wrong first.
+`up`'s degraded warnings are all of one shape — *this manifest asked for
+something this host cannot enforce* — so the port one belongs there, gated
+on a manifest actually declaring ports. Exec mediation has no such gate:
+nothing requests it, nothing avoids it, and warning about it at `up` fired
+on every run of every project and broke the two tests that pin "an
+unremarkable manifest warns about nothing". It moved to `doctor`, whose
+whole job is reporting what this host can and cannot do. That invariant — "degraded capabilities
+are surfaced, never silent" — had exactly one instance for the whole
+project's life, which made it easy to read as a statement about one
+feature rather than a rule. It is a rule.
+
+Worth stating plainly: every one of these was a *false negative in the
+docs*, not just in the tests. `own-policy-baseline`'s measurements,
+`network.ports`' semantics and the services feature were all described in
+platform-neutral language on the strength of Linux-only measurement. The
+tests were the only reason any of it surfaced, and only because someone
+ran them somewhere new.

@@ -83,6 +83,18 @@ pub fn backend_supported() -> bool {
 
 struct HostCapabilities {
     domain_filtering: bool,
+    /// Whether the backend can hold a process to the ports the manifest
+    /// declared. Landlock's `NetPort` does; Seatbelt has no port-scoped
+    /// bind rule, so nono emits a blanket `(allow network-bind)` and any
+    /// port binds — measured on macOS 15 with a manifest granting one
+    /// port and a process binding another.
+    port_scoped_bind: bool,
+    /// Whether the backend mediates *execution* by path. Landlock treats
+    /// exec as a filesystem right (`FS_EXECUTE`), so a binary under no
+    /// granted path is refused; Seatbelt's profile carries an
+    /// unconditional `(allow process-exec*)`, so every host binary runs —
+    /// measured, and with reads of the very same path still denied.
+    exec_mediation: bool,
 }
 
 impl HostCapabilities {
@@ -90,6 +102,8 @@ impl HostCapabilities {
     fn current() -> Self {
         HostCapabilities {
             domain_filtering: false,
+            port_scoped_bind: false,
+            exec_mediation: false,
         }
     }
 
@@ -97,6 +111,8 @@ impl HostCapabilities {
     fn current() -> Self {
         HostCapabilities {
             domain_filtering: true,
+            port_scoped_bind: true,
+            exec_mediation: true,
         }
     }
 }
@@ -114,7 +130,54 @@ fn detect_for_host(compiled: &CompiledPolicy, host: HostCapabilities) -> Vec<Deg
         });
     }
 
+    // Announced whenever the manifest asked for ports at all: declaring
+    // `network.ports = [N]` reads as "N, and nothing else", and on a host
+    // that cannot scope binds it means "N, and everything else too". A
+    // manifest declaring no ports is not making the claim, so it gets no
+    // warning.
+    if !compiled.network_ports.is_empty() && !host.port_scoped_bind {
+        degraded.push(DegradedCapability {
+            aspect: "network.ports (binding is not limited to the declared ports)",
+            reason: "macOS Seatbelt has no port-scoped bind rule, so any local port can be bound",
+            fallback: "the declared ports work; treat the list as documentation of intent rather than a limit",
+        });
+    }
+
     degraded
+}
+
+/// Host properties that no manifest requests and none can avoid —
+/// reported by `doctor`, not by `up`.
+///
+/// The split matters and was learned by getting it wrong: [`detect`]
+/// answers "this manifest asked for something this host cannot enforce",
+/// which is why every warning it produces is conditional on a manifest
+/// key. Exec mediation is not like that. Nothing opts into it, nothing
+/// opts out, and it is equally true of the very first `up` of an empty
+/// manifest — so emitting it there turned `up` into a process that warns
+/// on every run about something the user cannot act on, and broke the two
+/// tests that pin the opposite promise (`up_is_silent_for_a_manifest_
+/// with_nothing_to_warn_about`, and `lifecycle_status`' "a minimal
+/// manifest requests nothing degradable").
+///
+/// `doctor` is where a permanent property of the host belongs: it is the
+/// command whose entire job is reporting what this machine can and cannot
+/// do, it is read once rather than on every `up`, and it already prints
+/// the backend's own verdict right above this.
+pub fn host_limitations() -> Vec<DegradedCapability> {
+    host_limitations_for(HostCapabilities::current())
+}
+
+fn host_limitations_for(host: HostCapabilities) -> Vec<DegradedCapability> {
+    let mut out = Vec::new();
+    if !host.exec_mediation {
+        out.push(DegradedCapability {
+            aspect: "exec is not mediated by path",
+            reason: "macOS Seatbelt allows process-exec unconditionally, so a command naming an absolute host path runs even though reads of that path are denied",
+            fallback: "anything resolved through PATH still comes from the closure; an absolute host path does not",
+        });
+    }
+    out
 }
 
 #[cfg(test)]
@@ -142,6 +205,8 @@ mod tests {
             &compiled,
             HostCapabilities {
                 domain_filtering: false,
+                port_scoped_bind: true,
+                exec_mediation: true,
             },
         );
 
@@ -156,6 +221,8 @@ mod tests {
             &compiled,
             HostCapabilities {
                 domain_filtering: true,
+                port_scoped_bind: true,
+                exec_mediation: true,
             },
         );
 
@@ -171,6 +238,8 @@ mod tests {
             &compiled,
             HostCapabilities {
                 domain_filtering: false,
+                port_scoped_bind: true,
+                exec_mediation: true,
             },
         );
         assert!(degraded.is_empty());
@@ -196,6 +265,8 @@ mod tests {
             &compiled,
             HostCapabilities {
                 domain_filtering: false,
+                port_scoped_bind: true,
+                exec_mediation: true,
             },
         );
         assert!(degraded.is_empty());

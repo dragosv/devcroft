@@ -39,7 +39,7 @@
 
 use super::CompiledPolicy;
 use crate::paths::is_within;
-use nono::{AccessMode, CapabilitySet, NetworkMode, NonoError, SignalMode};
+use nono::{AccessMode, CapabilitySet, NetworkMode, NonoError, SignalMode, UnixSocketMode};
 use serde::{Deserialize, Serialize};
 use std::io;
 use std::path::{Path, PathBuf};
@@ -56,6 +56,10 @@ pub struct CapabilityPlan {
     /// See [`CompiledPolicy::network_proxy_port`]'s doc — `Some` only when
     /// `up` actually started the egress proxy for this sandbox.
     pub network_proxy_port: Option<u16>,
+    /// See [`CompiledPolicy::unix_socket_bind`]'s doc — the services
+    /// supervisor's socket, and nothing else so far.
+    #[serde(default)]
+    pub unix_socket_bind: Vec<String>,
     pub signal_mode: String,
 }
 
@@ -82,6 +86,11 @@ impl CompiledPolicy {
             network_block: self.network_block,
             network_ports: self.network_ports.iter().map(|p| p.value).collect(),
             network_proxy_port: self.network_proxy_port,
+            unix_socket_bind: self
+                .unix_socket_bind
+                .iter()
+                .map(|a| a.value.clone())
+                .collect(),
             signal_mode: self.signal_mode.to_string(),
         }
     }
@@ -195,6 +204,14 @@ impl CapabilityPlan {
         };
         for port in &self.network_ports {
             caps = caps.allow_localhost_port(*port);
+        }
+
+        // File-scoped and `ConnectBind`: the supervisor binds this exact
+        // path, and it does not exist yet at `up` (bind creates it), which
+        // is why this is `allow_unix_socket` rather than a directory
+        // grant — the parent has to exist, the socket must not have to.
+        for socket in &self.unix_socket_bind {
+            caps = caps.allow_unix_socket(Path::new(socket), UnixSocketMode::ConnectBind)?;
         }
 
         caps = caps.set_signal_mode(match self.signal_mode.as_str() {

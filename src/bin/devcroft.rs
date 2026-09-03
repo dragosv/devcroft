@@ -644,6 +644,9 @@ fn bind_probe_main(args: &[String]) -> i32 {
         network_block: true,
         network_ports: vec![port],
         network_proxy_port: None,
+        // The probe is about TCP bind, which no unix-socket grant
+        // affects.
+        unix_socket_bind: Vec::new(),
         // The only value `to_capability_set` accepts; anything else
         // panics there rather than silently meaning something.
         signal_mode: "isolated".to_string(),
@@ -1027,6 +1030,15 @@ fn doctor_backend() -> bool {
     let support = devcroft::policy::backend_support();
     if support.is_supported {
         println!("[PASS] backend: {} — {}", support.platform, support.details);
+        // Not a failure and not a warning `up` should repeat on every
+        // run: a permanent property of this host that no manifest asks
+        // for and none can avoid. `doctor` is the command that exists to
+        // report what this machine can and cannot do, so it is where the
+        // "degraded capabilities are surfaced, never silent" rule lands
+        // for facts of this shape (`policy::host_limitations`).
+        for limitation in devcroft::policy::host_limitations() {
+            println!("[WARN] backend: {limitation}");
+        }
     } else {
         println!(
             "[FAIL] backend: {} does not support sandboxing — {}",
@@ -1908,9 +1920,26 @@ fn compile_with_provider_grants(
     // alone has no way to know the proxy's port, since knowing it means
     // an `up` actually ran one. `meta.proxy_port` is `None` for a
     // sandbox that never wanted filtering, so this is a no-op there.
-    match meta.proxy_port {
+    let compiled = match meta.proxy_port {
         Some(port) => compiled.with_proxy_port(port),
         None => compiled,
+    };
+    // Same live-only reconstruction again, from a field `Meta` already
+    // carries: services are declared by the *provider's* manifest, which
+    // `compile` never reads, so a rendered policy that stopped here would
+    // omit a rule the keeper is actually holding.
+    if meta.declared_services.is_empty() {
+        compiled
+    } else {
+        compiled.with_services_socket_grant(
+            provider_static_name(&manifest.env.provider),
+            devcroft::services::socket_path(
+                std::path::Path::new(&meta.project_root),
+                &manifest.sandbox.name,
+            )
+            .to_string_lossy()
+            .into_owned(),
+        )
     }
 }
 

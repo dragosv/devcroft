@@ -403,6 +403,35 @@ fn up_process(
         Some((port, _)) => compiled.with_proxy_port(port),
         None => compiled,
     };
+    // Services get one grant the rest of the policy cannot supply: the
+    // supervisor binds a unix socket *inside* the sandbox, and Seatbelt's
+    // `(deny network*)` covers AF_UNIX bind. Without this, macOS services
+    // die at startup with `listen unix …: bind: operation not permitted`
+    // and the sandbox comes up supervising nothing. Landlock cannot
+    // express AF_UNIX at all, so on Linux the grant is inert — which is
+    // why this went unnoticed until the suite was run on a Mac.
+    //
+    // The condition mirrors `prepare_services`' own: no services, or
+    // `--skip-hooks`, means no supervisor and so no socket to bind.
+    let compiled = if opts.skip_hooks || resolution.services.declared().is_empty() {
+        compiled
+    } else {
+        let socket = crate::services::socket_path(project_root, &manifest.sandbox.name);
+        // `nono::allow_unix_socket` resolves the path, so the parent has
+        // to exist by now — `prepare_services` creates it, but that runs
+        // later, and the host-side validation just below would fail
+        // first. Creating it here is the same directory
+        // `prepare_services` would create, one step earlier.
+        if let Some(dir) = socket.parent() {
+            std::fs::create_dir_all(dir)?;
+        }
+        compiled.with_services_socket_grant(
+            crate::provider::ProviderKind::from_name(&manifest.env.provider)
+                .map_err(UpError::Provider)?
+                .static_name(),
+            socket.to_string_lossy().into_owned(),
+        )
+    };
     let plan = compiled.to_capability_plan();
     // Validated host-side, before anything is created — the keeper (task
     // group 4) re-derives the identical `CapabilitySet` from the same

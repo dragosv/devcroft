@@ -194,7 +194,13 @@ Two consequences worth stating plainly:
 This is nono's decision, not devcroft's, and closing it means either a
 narrower `process-exec` rule upstream or accepting that the macOS tier
 protects against accidents rather than absolute paths — which is what
-`docs/threat-model.md` already says the tier is for.
+`docs/threat-model.md` already says the tier is for. **`doctor` now says so
+out loud** on macOS — a `[WARN]` line under the backend's own verdict,
+rather than leaving it to this file. Not an `up` warning: `up`'s warnings
+are all "this manifest asked for something this host cannot enforce", and
+exec mediation is asked for by nothing and avoidable by no one, so warning
+there would fire on every run of every project about something no manifest
+can change.
 
 ## macOS grants are per-spelling, not per-directory
 
@@ -225,6 +231,46 @@ The library devcroft builds on emits both spellings when it is handed the
 symlinked one (nono 0.74.0, `sandbox/macos.rs`), which is a real mitigation
 but only for the spelling that reaches it; devcroft resolving first means
 it reaches the backend in the form the kernel will compare against.
+
+## `network.ports` is not a bind limit on macOS
+
+Landlock scopes bind by port (`NetPort`), so a sandbox that declares
+`ports = [5432]` can bind 5432 and nothing else. Seatbelt has no
+port-scoped bind rule at all: nono emits a blanket `(allow network-bind)`
+whenever any local port is wanted, and a process can then bind whatever it
+likes. Measured — a manifest granting one port, a process binding a
+different one, no error.
+
+The declared ports still work, so the manifest is not *wrong* on macOS,
+only weaker than it reads: treat the list as intent rather than a limit
+there. `up` warns whenever a manifest declares ports on a host that cannot
+scope them — this one *is* manifest-requested, which is what makes it an
+`up` warning rather than a `doctor` line. `tests/network_ports_listen.rs`
+asks the same detection before asserting the ungranted half, so it starts
+asserting again by itself if a backend gains the capability.
+
+## Two macOS grants that are broader than they look
+
+Both are visible in `policy --render` rather than hidden, and both exist
+because Seatbelt's model differs from Landlock's in ways no manifest can
+express.
+
+- **`/dev`, granted read-write on macOS** (`baseline`). `openpty(3)` opens
+  `/dev/ptmx` *and* the slave it returns, `/dev/ttysNNN`, whose number is
+  unknowable before the call; nono's path API has no globs and the node
+  does not exist until the kernel makes it. With only `/dev/ptmx` granted
+  every pty session fails — `devcroft shell`, and the SSH shell channel
+  editors use, both died with "keeper refused to spawn: Operation not
+  permitted". Linux keeps the narrow `/dev/pts` grant. The narrower fix is
+  upstream: nono already special-cases `^/dev/ttys[0-9]+$` for `file-ioctl`
+  and emits `(allow pseudo-tty)`, so it needs the matching read/write rule.
+- **The services supervisor socket, granted `ConnectBind`**
+  (`provider:<name>`, only when services are declared). Seatbelt's
+  `(deny network*)` covers AF_UNIX bind, so process-compose could not bind
+  its own supervisor socket inside the sandbox and every macOS sandbox with
+  services came up supervising nothing. Landlock cannot express AF_UNIX at
+  all, which is why the grant is inert on Linux — and why this went
+  unnoticed until the suite ran on a Mac.
 
 ## No inter-sandbox process visibility separation
 

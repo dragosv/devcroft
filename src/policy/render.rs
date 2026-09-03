@@ -52,6 +52,18 @@ pub fn render(compiled: &CompiledPolicy) -> String {
     // supports namespaces at all — only a real `up` probes that, and
     // warns there when it does not.
     writeln!(out, "network.namespace: {}", namespace_summary(compiled)).unwrap();
+    // Same reason `network.ports` is here despite not being a path: a
+    // rule the backend gets that `--render` cannot show is exactly the
+    // invisible rule this command exists to prevent. Rendered only when
+    // non-empty — every sandbox without declared services has nothing to
+    // say here, and an always-present "(none)" line would change the
+    // output of every existing policy for one feature's sake.
+    if !compiled.unix_socket_bind.is_empty() {
+        writeln!(out, "unix_socket.bind:").unwrap();
+        for s in &compiled.unix_socket_bind {
+            writeln!(out, "  {:<40} {}", s.value, s.origin).unwrap();
+        }
+    }
     // `network_proxy_port` is `None` until an actual `up` starts the
     // proxy and folds it in (`CompiledPolicy::with_proxy_port`'s doc) —
     // a fresh `policy --render` against the manifest alone can only ever
