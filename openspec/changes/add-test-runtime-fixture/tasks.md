@@ -95,31 +95,59 @@
 
 ## 2. The fixture contract
 
-- [ ] 2.1 Define `ProviderFixture` — `setup` (`None` = row unavailable),
+- [x] 2.1 Define `ProviderFixture` — `setup` (`None` = row unavailable),
       `mutate_to_drift`, `name`, `capabilities` — plus `ProviderCapabilities`.
       Keep `Provider` unchanged (design.md D2).
-- [ ] 2.2 Implement `fixture_for()`: `DEVCROFT_TEST_PROVIDER` unset → Nix flake row;
+      → Done in `tests/common/mod.rs`. **`setup` is not on the trait**, unlike
+      design.md's sketch: an associated function returning `Self` is not
+      object-safe, and handing tests a `&mut dyn ProviderFixture` is the whole
+      point. Construction is `fixture_for`/`for_each_row` instead.
+- [x] 2.2 Implement `fixture_for()`: `DEVCROFT_TEST_PROVIDER` unset → Nix flake row;
       `flox|nix|devbox|test` → that row; `all` → iterate. One selection point, not
       one per test file.
-- [ ] 2.3 Implement the **no-fallback** rule: a failed setup on an explicitly
+      → Done, and **rows do not need the seam**: for flox/nix/devbox the row
+      writes a `devcroft.toml` naming that provider and the test calls the
+      ordinary public `up`. Only a synthetic row would need `ProviderEntry`
+      injection. So the real-provider matrix works with no feature flag.
+- [x] 2.3 Implement the **no-fallback** rule: a failed setup on an explicitly
       selected row fails the run, naming `DEVCROFT_TEST_PROVIDER=test` as the
       alternative. Verify by making the default row unavailable and confirming the
       run fails rather than downgrading.
-- [ ] 2.4 Implement per-row skip reporting, so `=all` ends with a legible matrix
+      → Done, and measured: an unknown row name fails naming the known rows;
+      an explicitly-selected unavailable row reports `skip(reason)` and then
+      fails the run, because nothing was asserted. See 6.2, whose original
+      wording this contradicted and which is corrected rather than the code.
+- [x] 2.4 Implement per-row skip reporting, so `=all` ends with a legible matrix
       (`test ✓, flox ✓, nix skip(no daemon), devbox skip`). Verify a run where every
       row skipped is not reported as success.
-- [ ] 2.5 Capability gating: a neutral test consults `capabilities()`, never
+      → Done. Verified live on this host: `nix ok, flox ok, devbox ok`. A
+      panicking row is caught so the matrix still prints — the first version
+      let the panic escape and `=all` reported nothing at all, telling you
+      about one row out of three. The run still fails, just legibly.
+- [x] 2.5 Capability gating: a neutral test consults `capabilities()`, never
       `name()`. Verify with a lint or a test that greps the neutral files for
       name-branching — the rule is only real if breaking it is caught.
+      → Done as a test that scans every file using the row contract.
+      Teeth-checked by planting `if fx.name() == "flox"` and confirming it
+      fails. It also caught *itself* first — its own body quotes `.name()` —
+      so it now strips string literals before matching.
 
 ## 3. The Nix flake row (the default)
 
-- [ ] 3.1 Build the row on a minimal flake — shell, coreutils, `process-compose` —
+- [x] 3.1 Build the row on a minimal flake — shell, coreutils, `process-compose` —
       reusing the inline-flake pattern `tests/provisioning_runs_no_project_code.rs`
       already uses, including its system double (`aarch64-darwin` vs `-linux`).
-- [ ] 3.2 Verify it satisfies the realism requirement: the shell resolves out of the
+      → Done: a multi-system flake with `bash` and `coreutils`. No
+      `process-compose` — the nix provider has no service concept, so that
+      row declares `services: false` rather than carrying a package it cannot
+      use.
+- [x] 3.2 Verify it satisfies the realism requirement: the shell resolves out of the
       closure and not the host, and `process-compose` comes from the environment.
       Assert this in the row itself, so a future edit cannot quietly host-source it.
+      → Asserted once for *every* row instead
+      (`every_row_resolves_its_shell_out_of_the_closure`), so it holds for
+      rows added later too — including the synthetic one, which is exactly
+      the row most tempted to reach for `/bin/sh`.
 - [ ] 3.3 Verify the row is skippable-but-loud: on a host with no usable Nix store,
       the default run fails with the remedy rather than skipping silently.
 
@@ -163,8 +191,14 @@
 - [ ] 6.1 Add the fast job: `DEVCROFT_TEST_PROVIDER=test cargo test --features
       test-support`, no Nix daemon. Only if group 5 produced a row.
 - [ ] 6.2 Add the per-provider jobs (nix, flox, devbox) as parallel required jobs, in
-      which an available-but-failing row fails the build and only an unavailable one
-      skips.
+      which an available-but-failing row fails the build.
+      → **Corrected while implementing group 2**: this originally read "and only
+      an unavailable one skips", i.e. a job selecting one row and finding it
+      absent would go green. That is the trap the contract exists to close — a
+      job named `integration-devbox` passing on a runner with no devbox has
+      tested nothing and says otherwise. A single explicitly-selected row that
+      is unavailable now **fails**; only under `=all` do individual rows skip,
+      and even there a run where every row skipped fails.
 - [ ] 6.3 Measure `=all` before putting it on any critical path (design.md Open
       Question 2): wall-time against the current 159s single-row baseline, and how
       many of the ~80 currently-skipped tests become runnable. If the answer is only
