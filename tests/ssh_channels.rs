@@ -182,6 +182,20 @@ fn skip_if_no_real_rsync() -> bool {
 /// nothing while `/usr/bin/rsync` sits right there. Asking the sandbox
 /// keeps this a skip on hosts where the premise fails, and a real
 /// assertion everywhere else.
+///
+/// **Runs `rsync --version`, not `command -v rsync`** — the difference is
+/// the whole point of this probe, and getting it wrong is what made CI's
+/// e2e job fail on Linux. `command -v` answers *presence*: it resolves
+/// the name against `PATH` and stats the hit. Landlock permits that and
+/// denies the `execve`, which are separate access rights, so on GitHub's
+/// ubuntu runners the lookup succeeded, this guard returned true, and the
+/// transfer then died with `/usr/bin/rsync: Permission denied` — a
+/// failure reported against devcroft for a host binary
+/// `own-policy-baseline` is *supposed* to deny. Seatbelt's denial happens
+/// to land on the lookup too, which is why the macOS shape was caught and
+/// this one was not. Executing the binary is the only probe that answers
+/// the question the test actually depends on, and it is the rule this
+/// repo already states: guard on the capability, never on the binary.
 fn sandbox_has_rsync(sandbox: &Sandbox) -> bool {
     let probe = Command::new(env!("CARGO_BIN_EXE_devcroft"))
         .arg("exec")
@@ -190,14 +204,16 @@ fn sandbox_has_rsync(sandbox: &Sandbox) -> bool {
         .arg("--")
         .arg("sh")
         .arg("-c")
-        .arg("command -v rsync")
+        .arg("rsync --version")
         .output();
     match probe {
         Ok(out) if out.status.success() => true,
         _ => {
             eprintln!(
-                "skipping: no rsync reachable inside the sandbox — `rsync --server` runs \
-                 there, so the transfer cannot be attempted"
+                "skipping: no rsync *runnable* inside the sandbox — `rsync --server` \
+                 runs there, so the transfer cannot be attempted. On a host whose \
+                 rsync is the system one, this is own-policy-baseline denying host \
+                 toolchain access, working as designed"
             );
             false
         }
