@@ -186,11 +186,26 @@ argument is restated here rather than left in its proposal.
 
 What separates 0.6 from 1.0 is evidence, not features:
 
-- **macOS.** Seatbelt is implemented and has never run on a CI host. Domain
-  filtering there is unverified, the mount-isolation equivalent is
-  unexamined, and this project does not ship a security claim it has not
-  measured. **This needs hardware the project does not have**, and is the
-  most likely thing to hold 1.0 back.
+- **macOS.** Half of this entry has dissolved and the other half got worse,
+  so it is restated rather than ticked off. Seatbelt now runs the full suite
+  on a `macos-latest` CI leg and on a real Mac, so "never run on a CI host"
+  and "needs hardware the project does not have" are both retired.
+
+  What the measuring produced is not a clean bill: execution is not mediated
+  at all there (`(allow process-exec*)`, so any host binary runs inside a
+  sandbox whatever the policy says), grants match paths as spelled rather
+  than per directory, `network.ports` does not limit `bind`, and `/dev` is
+  granted read-write. Domain filtering is still unverified and the
+  mount-isolation equivalent still unexamined. Each is written up in
+  `docs/known-gaps.md` and surfaced by `doctor`.
+
+  So the 1.0 question changed shape: it is no longer "can this be measured"
+  but "is a backend that does not mediate exec allowed to sit behind the
+  same sentence as one that does". Answering it means either a narrower
+  `process-exec` rule upstream in nono, or saying plainly in the claim
+  itself that macOS is a reads-and-writes boundary. `add-backend-capabilities`
+  exists to make that difference machine-readable instead of prose repeated
+  in five files, which is exactly the drift this entry was just caught in.
 - **Scale.** "Eight sandboxes cost one build" follows from a shared
   content-addressed store. It has been tested at two.
 - **The published gaps.** Each entry in `docs/known-gaps.md` either closes

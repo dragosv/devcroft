@@ -1,38 +1,44 @@
 # devcroft
 
-**Isolated, reproducible development environments in seconds, with no
-host-wide daemon to install, no image build, no container, and no VM.**
-Each one gets its toolchain from a lockfile, a boundary the kernel
-enforces, a private network namespace for anything with ports or
-services, and a real SSH server your editor connects to like any remote
-machine.
+**Give every branch its own toolchain, its own ports, and its own
+services — without a container or a VM.** Each sandbox takes its
+toolchain from a lockfile, gets a private network namespace so the same
+committed port never collides, and runs a real SSH server your editor
+connects to like any remote machine. No host-wide daemon, no image
+build; once the environment is materialized, sandboxes start in seconds.
 
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE-APACHE)
 [![Rust](https://img.shields.io/badge/Rust-edition%202024-orange.svg)](Cargo.toml)
 [![Status](https://img.shields.io/badge/release-0.0.1-yellow.svg)](#status)
 
-Built for running several coding agents, or several branches of one project, on
-a single machine at the same time.
+Built for running several branches of one project on a single machine at the
+same time. Local agent fleets are the next milestone, not a current feature —
+see [Status](#status).
+
+> **Not a security boundary.** devcroft contains accidents and keeps projects
+> out of each other's way. It does not stop code that is actively trying to
+> escape, and on macOS it does not restrict which binaries run at all. Use a
+> container or a VM for code you don't trust —
+> [docs/threat-model.md](docs/threat-model.md) says which use case each backs.
 
 ---
 
 ## The problem
 
-Git worktrees give each agent its own directory, not its own *environment*. They
-still share your installed toolchain, one `target/`, and — the part with no good
-workaround — your services and their ports.
+Git worktrees give each branch its own directory, not its own *environment*.
+They still share your installed toolchain, one `target/`, and — the part with
+no good workaround — your services and their ports.
 
 Your `compose.yaml` is committed, so every branch declares Postgres on 5432.
 Start two, and the second fails. The usual escape is one shared database with a
-schema per branch, which means a destructive migration from one agent takes out
-everybody. A container per branch really does fix it, and costs enough that
+schema per branch, which means one destructive migration takes out everybody. A container per branch really does fix it, and costs enough that
 people run four and stop.
 
 devcroft gives each sandbox **its own network namespace** whenever
 `network.default = "deny"` — the setting anything declaring ports or
 services needs anyway. The same committed port in every sandbox, no
 collision, no allocation, nothing for the service to cooperate with —
-and outbound access still works inside it, so an agent gets both its own
+and outbound access still works inside it, so each branch gets both its own
 Postgres and the registries it needs.
 
 ## Install
@@ -49,108 +55,127 @@ needs a working Nix installation underneath it. Not on crates.io yet;
 see [Status](#status). Run `devcroft doctor` to check what this host
 actually has before the first `up`.
 
+Not sure where to start?
+
+| If you want… | Go to |
+|---|---|
+| One reproducible project environment | [Run it!](#run-it) |
+| Several branches, each with its own ports and services | [Every branch gets the same port](#every-branch-gets-the-same-port) |
+| To check the sandbox actually refuses things | [Verify the boundary](#verify-the-boundary) |
+| VS Code, Cursor or plain `ssh` | [Connect your editor](#connect-your-editor) |
+| To know what it does and doesn't protect against | [Status](#status) and [docs/threat-model.md](docs/threat-model.md) |
+
 ## Run it!
 
-devcroft needs a project that already has an environment. From an empty
-Go project:
+Every sample in this repo is a working project. The smallest one needs
+nothing but a `nix` that can build:
 
 ```console
-$ flox init
-✔ Created environment 'demo-project' (aarch64-linux)
-
-$ flox install go
-✔ 'go' installed to environment 'demo-project'
-```
-
-Go's build cache has to live inside the project directory too — same
-reason the Rust sample projects redirect `CARGO_HOME`: anything outside
-the project root is refused by the kernel like any other undeclared
-path. One-time addition to `.flox/env/manifest.toml`:
-
-```toml
-[vars]
-GOCACHE = "${FLOX_ENV_PROJECT}/.gocache"
-GOTMPDIR = "${FLOX_ENV_PROJECT}/.gocache"
-```
-
-```go
-// main.go
-package main
-
-import (
-	"fmt"
-	"os"
-)
-
-func main() {
-	if len(os.Args) > 1 && os.Args[1] == "probe" {
-		probe()
-		return
-	}
-	fmt.Println("hello from inside")
-	wd, _ := os.Getwd()
-	fmt.Println(wd)
-}
-```
-
-```console
-$ devcroft init
-devcroft: wrote /home/you/demo-project/devcroft.toml
-devcroft: found an existing flox environment (.flox/); ready for `devcroft up`.
-
+$ cd samples/nix-probe-sample
 $ devcroft up
-devcroft: bringing up sandbox 'demo-project'...
-devcroft: sandbox 'demo-project' is started.
+devcroft: bringing up sandbox 'nix-probe-sample'...
+devcroft: sandbox 'nix-probe-sample' is started.
 
 $ devcroft exec -- go run .
 hello from inside
-/home/you/demo-project
+/path/to/devcroft/samples/nix-probe-sample
 ```
 
-That's it. Commands now run against the packages in that lockfile, with
-read/write access to the project directory and **nothing else** — your SSH keys,
-your cloud credentials, and the rest of your disk are refused by the kernel.
-`probe()` (added to `main.go` above) tries all three:
+That is the whole loop: `up` materializes the environment and applies the
+policy, `exec` runs a command inside it. `devcroft down` stops the sandbox;
+`devcroft ps` lists every sandbox on the host.
 
-```go
-func probe() {
-	home, _ := os.UserHomeDir()
-	if _, err := os.ReadFile(home + "/.ssh/known_hosts"); err != nil {
-		fmt.Println(err)
-	}
-	if err := os.WriteFile("/etc/devcroft-probe", []byte("x"), 0o644); err != nil {
-		fmt.Println(err)
-	}
-	// A throwaway you create yourself first (`touch ~/devcroft.tmp`),
-	// never one of your own files — so outside a sandbox, or inside one
-	// that turns out not to be enforcing, the worst case is losing a
-	// file you made to lose.
-	if err := os.Remove(home + "/devcroft.tmp"); err != nil {
-		fmt.Println(err)
-	}
-}
+To do it in your own project, you need an environment file one of the
+providers understands — a `flox` environment, a `flake.nix`, or a
+`devbox.json`. `devcroft init` writes the devcroft side of it:
+
+```sh
+cd my-project
+flox init && flox install go     # or: nix flake init / devbox init
+devcroft init
+devcroft up
+devcroft exec -- go version
 ```
+
+Caches are the one thing worth knowing up front. Anything outside the project
+root is denied, and most toolchains default their cache to `$HOME` — so Go
+wants `GOCACHE` and `GOTMPDIR` redirected, Rust wants `CARGO_HOME`. Each
+sample's own README shows the redirect for its ecosystem; `samples/` has one
+per provider.
+
+## Every branch gets the same port
+
+This is the part a container gives you and a worktree doesn't. A sandbox that
+declares `network.ports` or `[services]` gets its own network namespace, so its
+ports belong to it alone — eight checkouts of one project can all bind 5432, and
+none of them know about the others.
+
+The tradeoff is stated out loud at `up`, not discovered later:
 
 ```console
-$ touch ~/devcroft.tmp
-$ devcroft exec -- go run . probe
+$ devcroft up
+devcroft: bringing up sandbox 'my-project'...
+devcroft: note: this sandbox has its own network namespace, so its declared port(s) 5432 are reachable from inside it and through `ssh -L <local>:127.0.0.1:<port> my-project.devcroft`, but not directly on the host's own loopback
+devcroft: sandbox 'my-project' is started.
+```
+
+So reach a dev server through the tunnel:
+
+```sh
+ssh -L 3000:127.0.0.1:3000 -N my-project.devcroft   # then open localhost:3000
+```
+
+A sandbox with `network.default = "allow"` isn't isolated, and its ports stay
+directly reachable.
+
+Services declared in your environment are supervised with the sandbox — devcroft
+generates its own process-compose config from them, starts them in the keeper
+before your hooks run, reports each one's state, and reaps them at `down`:
+
+```console
+$ devcroft status
+sandbox: my-project
+keeper: healthy (uptime 0s, 1 session(s))
+env: fresh
+isolation: process
+service api: running pid=49790
+policy: no degraded capabilities on this host
+```
+
+`process-compose` has to be a member of the project's environment; devcroft
+refuses at `up` if it isn't, rather than coming up with services that silently
+never start. A shell is *not* your job: devcroft resolves one out of the
+closure itself, and `policy --render` shows the grant it added to reach it.
+
+## Verify the boundary
+
+The claim is testable, so test it. [samples/nix-probe-sample](samples/nix-probe-sample/)
+is a small Go program that asks for three things outside the project root —
+reading `~/.ssh/known_hosts`, writing `/etc/devcroft-probe`, deleting a
+throwaway file in your home directory:
+
+```console
+$ cd samples/nix-probe-sample
+$ touch ~/devcroft.tmp                      # the deletion target, yours to make
+$ devcroft exec -- go run . probe "$HOME"
+probing home: /home/you
 open /home/you/.ssh/known_hosts: permission denied
 open /etc/devcroft-probe: permission denied
 remove /home/you/devcroft.tmp: permission denied
 
-$ ls ~/devcroft.tmp
+$ ls ~/devcroft.tmp                         # still there: the refusal held
 /home/you/devcroft.tmp
 ```
 
-The last command is what makes the third line mean anything: the file is still
-there, so deletion was refused against a file that actually existed.
-[samples/nix-probe-sample](samples/nix-probe-sample/) is this exact program as
-a runnable project, and is where the output above is measured rather than
-asserted — including the control run, unconfined, where the same file is
-deleted.
+Nothing was asked politely and nothing cooperated. The sample's README has the
+control run — the same program, unconfined, deleting the same file — because a
+refusal only demonstrates a boundary if the same operation succeeds without one.
 
-Nothing was asked politely and nothing cooperated: an agent that decides to
-delete a file in your home directory gets `EACCES`, whatever it intended.
+**On macOS the third line is the only one you can rely on.** Seatbelt does not
+mediate execution, so a process naming an absolute host path gets the host's
+binary whatever the policy says; reads and writes are still refused. `devcroft
+doctor` prints this as a warning on macOS, and
+[docs/known-gaps.md](docs/known-gaps.md) has the measurement.
 
 ## Make it your own!
 
@@ -165,7 +190,7 @@ name = "my-project"
 provider = "flox"          # or "nix", "devbox"
 
 [filesystem]
-read = ["/tmp"]            # a shared scratch dir, read-only
+read = ["/tmp"]            # read-only; grant it at all only if a tool needs it
 
 [network]
 default = "deny"
@@ -218,50 +243,6 @@ denied by rule baseline
 
 Baseline denials always win, including over devcroft's own data directory.
 
-## Every branch gets the same port
-
-This is the part a container gives you and a worktree doesn't. A sandbox that
-declares `network.ports` or `[services]` gets its own network namespace, so its
-ports belong to it alone — eight checkouts of one project can all bind 5432, and
-none of them know about the others.
-
-The tradeoff is stated out loud at `up`, not discovered later:
-
-```console
-$ devcroft up
-devcroft: bringing up sandbox 'my-project'...
-devcroft: note: this sandbox has its own network namespace, so its declared port(s) 5432 are reachable from inside it and through `ssh -L <local>:127.0.0.1:<port> my-project.devcroft`, but not directly on the host's own loopback
-devcroft: sandbox 'my-project' is started.
-```
-
-So reach a dev server through the tunnel:
-
-```sh
-ssh -L 3000:127.0.0.1:3000 -N my-project.devcroft   # then open localhost:3000
-```
-
-A sandbox with `network.default = "allow"` isn't isolated, and its ports stay
-directly reachable.
-
-Services declared in your environment are supervised with the sandbox — devcroft
-generates its own process-compose config from them, starts them in the keeper
-before your hooks run, reports each one's state, and reaps them at `down`:
-
-```console
-$ devcroft status
-sandbox: my-project
-keeper: healthy (uptime 0s, 1 session(s))
-env: fresh
-isolation: process
-service api: running pid=49790
-policy: no degraded capabilities on this host
-```
-
-`process-compose` has to be a member of the project's environment; devcroft
-refuses at `up` if it isn't, rather than coming up with services that silently
-never start. A shell is *not* your job: devcroft resolves one out of the
-closure itself, and `policy --render` shows the grant it added to reach it.
-
 ## Connect your editor
 
 ```sh
@@ -307,29 +288,20 @@ ssh
 
 ## Environments
 
-Three providers are supported — **flox**, **nix flakes**, and **devbox**. Each
-builds a *closure*: a complete, self-contained package set, so what runs inside
-doesn't depend on what you happen to have installed. There is no "just use the
-host" fallback, on purpose. Eight sandboxes of one project cost one build,
+Three providers are supported — **flox**, **nix flakes**, and **devbox**.
+`flox` is the default `devcroft init` writes; pick **nix flakes** instead if
+the project already has a `flake.nix`. Each builds a *closure*: a complete,
+self-contained package set, so what runs inside doesn't depend on what you
+happen to have installed. Eight sandboxes of one project cost one build,
 because they share a single content-addressed store.
 
-**devenv is next, and only unbuilt.** It is Nix-based, so it would be a fourth
-closure provider rather than a new kind — the cheapest one left. Its one open
-question is whether its environment can be captured without running
-`enterShell`, and that is scheduled with `sandbox-provisioning`, because what
-the right answer *is* for a provider that runs a hook changes at that release.
+There is no "just use the host" fallback, on purpose. If a project has no
+environment yet, the answer is `flox init`, not a degraded mode.
 
-**mise, pixi and hermit are a different answer, and not "they failed the
-test".** mise passes devcroft's six-criterion provider test, and the shape an
-implementation would take is written down. What stops it is structural: those
-tools link against whichever libc a host happens to have, which makes them an
-*artifact* tier — identical downloaded artifacts, host-dependent behaviour —
-rather than the closure tier above, and an artifact provider has to declare its
-own host library grants instead of inheriting them. That is a second, weaker
-guarantee, so it is gated on demonstrated demand rather than shipped on spec.
-
-[docs/decisions.md](docs/decisions.md) has the test and an entry per answer,
-including the ones that are rejections rather than schedules.
+devenv is next and only unbuilt; mise, pixi and hermit are a deliberate
+"not yet", for a structural reason rather than a failed evaluation.
+[docs/decisions.md](docs/decisions.md) has the six-criterion test each
+provider is judged against and an entry per answer, including the rejections.
 
 ## How it compares
 
@@ -356,6 +328,13 @@ so nothing here promises compatibility with the next version. `0.1.0` is held
 back rather than skipped, until the boundary matches what this page says about it
 — see [docs/roadmap.md](docs/roadmap.md).
 
+**Agent fleets are not runnable end to end yet.** Several branches of one
+project, each with its own environment, ports and services, works today and is
+what this page demonstrates. Running a coding agent *inside* a sandbox needs its
+runtime and its credentials to be reachable there, which is
+`add-agent-workload` — specified, not built. Until it lands, treat the fleet
+story as the direction rather than a feature.
+
 **The boundary catches mistakes, not attacks.** The full host kernel is reachable
 from inside, so a kernel exploit escapes, and **unix sockets bypass the policy
 entirely** — Landlock mediates TCP, not AF_UNIX, so a sandbox can reach any unix
@@ -364,9 +343,9 @@ that is the supported answer, and already how the macOS path works.
 [docs/threat-model.md](docs/threat-model.md) says which use case each one backs.
 
 The rest are written up rather than summarised away — no rollback, no cgroup
-limits, network isolation needing unprivileged user namespaces, macOS domain
-filtering unverified, no inter-sandbox process visibility separation, Zed's
-remote server: [docs/known-gaps.md](docs/known-gaps.md).
+limits, network isolation needing unprivileged user namespaces, the four macOS
+gaps below, no inter-sandbox process visibility separation, Zed's remote
+server: [docs/known-gaps.md](docs/known-gaps.md).
 
 | Platform | Mechanism | Minimum version |
 |----------|-----------|-----------------|
@@ -374,8 +353,18 @@ remote server: [docs/known-gaps.md](docs/known-gaps.md).
 | macOS | Seatbelt | 10.5+ |
 
 Same floor as [nono](https://github.com/nolabs-ai/nono), the sandboxing library
-devcroft is built on. Verified end to end against real tooling in this repo's own
-Linux devcontainer; macOS is implemented but has no host measuring it yet.
+devcroft is built on. Both platforms run the full suite in CI against real
+tooling.
+
+**The two backends do not enforce the same things, and the difference is not
+small.** Measuring macOS turned up four gaps that Linux does not have: execution
+is not mediated at all, so any host binary runs inside a sandbox regardless of
+policy; grants match paths as spelled rather than per directory; `network.ports`
+does not limit what a process may bind; and `/dev` is granted read-write.
+`devcroft doctor` reports these on the host it runs on, and
+[docs/known-gaps.md](docs/known-gaps.md) has each measurement in full. On macOS,
+treat the boundary as protection against accidental *reads and writes* outside
+the project, and nothing more.
 
 ## Ready to go deep?
 
