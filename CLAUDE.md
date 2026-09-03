@@ -33,8 +33,10 @@ two nix samples do not exercise: a `shellHook` export never arrives
 (`print-dev-env --json` treats the hook as inert data, so redirects must
 be `mkShell` *attributes*), nix reports a `TMPDIR` that no longer exists
 at session time and cannot be overridden by an attribute (`GOTMPDIR` is
-the lever), and `devcroft.toml`'s `[env.vars]` parses and validates but
-nothing consumes it — a silent no-op. Its deletion probe targets a file the
+the lever), and `devcroft.toml`'s `[env.vars]` parsed and validated but
+nothing consumed it — a silent no-op, since fixed: it is now applied
+over the provider's environment in `up_process` and covered by
+`tests/env_vars_injected.rs`. Its deletion probe targets a file the
 *user* creates by hand (`touch ~/devcroft.tmp`), never one the program
 makes: a demonstration of a boundary must not be catastrophic when the
 boundary is absent, and a program that tried to create the file itself

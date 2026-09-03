@@ -168,12 +168,20 @@ overwrites that one before reporting the environment (measured:
 does not). `flake.nix` sets **`GOTMPDIR`** instead, which Go's build
 honours first and nix does not touch.
 
-**`devcroft.toml`'s `[env.vars]` is a silent no-op.** The obvious fix for
-the above was to set `TMPDIR` there. It parses, it validates — the
-validator even rejects `$` interpolation in its values — and then
-nothing consumes it: no code outside `src/config/` reads `env.vars` at
-all, so it never reaches the keeper or a session. Worth knowing before
-reaching for it; this sample deliberately does not use it.
+**`devcroft.toml`'s `[env.vars]` was a silent no-op — found here, fixed
+since.** The obvious fix for the `TMPDIR` problem above was to set it
+there. It parsed, it validated — the validator even rejects `$`
+interpolation in its values — and then nothing consumed it: no code
+outside `src/config/` read `env.vars` at all, so it never reached the
+keeper or a session, though the config spec had required it be "injected
+into every session, applied AFTER provider resolution" from the start. A
+parse-level test cannot see that, which is why it survived; the fix
+carries an end-to-end one (`tests/env_vars_injected.rs`).
+
+It works now, so `[env.vars] TMPDIR = "/tmp"` would do the job. This
+sample keeps `GOTMPDIR` in `flake.nix` anyway: it is toolchain
+configuration, and the flake is where this project's other toolchain
+settings already live. Either is correct.
 
 ## Try it
 

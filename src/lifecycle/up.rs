@@ -596,6 +596,33 @@ fn up_process(
     // interception, so `HTTPS_PROXY` names a plain-`http` CONNECT
     // endpoint, same as every other forward proxy's convention.
     let mut env = resolution.env.clone();
+    // `[env.vars]` (config spec, "Static environment variables"): a table
+    // of literal variables "injected into every session, applied AFTER
+    // provider resolution so they can override provider-set values".
+    // Values are never interpolated — `config::validate` warns on a `$`
+    // instead, because reading the host's environment here would leak
+    // exactly the non-reproducible state devcroft exists to exclude.
+    //
+    // Applied before the proxy block below rather than after, so
+    // devcroft's own variables still win: a manifest-set `HTTP_PROXY`
+    // would name an endpoint carrying no session token, which
+    // `NetworkMode::ProxyOnly` then denies at the kernel — a confusing
+    // failure to hand someone for a variable devcroft populates itself.
+    for (key, value) in &manifest.env.vars {
+        env.insert(key.clone(), value.clone());
+    }
+    // A key the manifest sets explicitly outranks the provider's request
+    // to unset it, for the same reason it outranks a provider *value*:
+    // `spawn_keeper` applies `unset` as `env_remove` after `.envs(env)`,
+    // so leaving the key in this list would delete what the manifest just
+    // asked for, and the override in the spec's own scenario would hold
+    // for a provider-set value but not a provider-unset one.
+    let unset: Vec<String> = resolution
+        .unset
+        .iter()
+        .filter(|key| !manifest.env.vars.contains_key(*key))
+        .cloned()
+        .collect();
     if let Some((port, token)) = &proxy {
         // Userinfo in the proxy URL, not a bespoke header or env var:
         // every standard HTTP client already turns `user@host` in a
@@ -626,7 +653,7 @@ fn up_process(
         paths,
         project_root,
         &env,
-        &resolution.unset,
+        &unset,
         &plan,
         SshHandoff {
             listener: &ssh_listener,
