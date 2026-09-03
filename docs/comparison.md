@@ -16,6 +16,7 @@ to run many side by side on one host.
 
 |  | devcroft | Dev Containers / Docker | flox alone | mise/asdf + manual sandboxing |
 |---|---|---|---|---|
+| What your code runs on | The host OS — on a Mac, macOS | Linux, always | The host OS | The host OS |
 | Isolation | Kernel primitives (Landlock/Seatbelt); `process` tier only in MVP — accident protection, not a security boundary (see [threat-model.md](threat-model.md)) | A container boundary, today | None | Whatever you build yourself |
 | Editor/SSH access | Native — a real SSH server per sandbox | Native, through the container | No | No |
 | Reproducibility | Mandatory — no `host`/`none` fallback (see [decisions.md](decisions.md)) | Optional | Yes | Partial, depends what's pinned |
@@ -24,6 +25,24 @@ to run many side by side on one host.
 That trade makes sense for fleets of coding agents, many parallel projects
 on one host, or local CI — not for running code you don't trust at all,
 where a real container or VM boundary is still the right call.
+
+**The first row is a category difference, not a degree.** A container
+boundary is a Linux boundary: a container runs Linux, and on a Mac it does
+so inside a virtual machine. Your code therefore never executes on macOS —
+different kernel, different libc, different syscalls, different filesystem
+semantics. Where Linux is the deployment target that is exactly right, and
+it is why Dev Containers is the correct answer for most server work. Where
+it isn't, the environment cannot represent the target at all: no macOS
+binary, no Apple framework, no codesigning, and no way to reproduce a
+macOS-only bug on the machine that has to fix it.
+
+devcroft virtualizes nothing and emulates nothing. A sandboxed process is a
+native host process with a policy attached, so the platform under it is the
+one the developer is actually on. The price is stated rather than hidden: a
+policy on a native process is a weaker boundary than a guest kernel, and
+Seatbelt enforces less of it than Landlock does (see
+[known-gaps.md](known-gaps.md)). Neither column dominates — they buy
+different things with the same money.
 
 ## devcroft vs `nono-cli`
 

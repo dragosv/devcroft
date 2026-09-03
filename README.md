@@ -4,12 +4,13 @@ Reproducible development environments sandboxed with Landlock (Linux) and
 Seatbelt (macOS), each reachable over SSH.
 
 **Give every branch its own toolchain, its own ports, and its own
-services — without a container or a VM.** Each sandbox takes its
-toolchain from a lockfile, gets a private network namespace so the same
-committed port never collides, and runs a real SSH server your editor
-connects to like any remote machine. No host-wide daemon and no image
-build: against an already-materialized environment, `up` takes about
-0.2 s and `exec` into a running sandbox about 20 ms.
+services — without a container or a VM, so your code still runs on the
+OS you are actually using.** Each sandbox takes its toolchain from a
+lockfile, gets a private network namespace so the same committed port
+never collides, and runs a real SSH server your editor connects to like
+any remote machine. No host-wide daemon and no image build: against an
+already-materialized environment, `up` takes about 0.2 s and `exec` into
+a running sandbox about 20 ms.
 
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE-APACHE)
 [![Rust](https://img.shields.io/badge/Rust-edition%202024-orange.svg)](Cargo.toml)
@@ -328,12 +329,31 @@ rather than a win:
 
 | | devcroft | Dev Containers |
 |---|---|---|
+| What your code runs on | The host OS — on a Mac, macOS | Linux, always |
 | Isolation | Kernel primitives (Landlock/Seatbelt) — accident protection, not a security boundary | A real container boundary |
 | Cost per environment | Low — shared Nix store, no rootfs or guest kernel | Image layers, plus a VM on macOS |
 | Reproducibility | Mandatory — config + lockfile, no host fallback | Optional — you write a Dockerfile and hope |
 | Editor access | A real SSH server per sandbox | Native, through the container |
 
-Run code you genuinely don't trust in a container or a VM. Run eight agents on
+**The first row is the one that decides it for a lot of people.** A container
+is a Linux container, and a VM runs whatever it boots. On a Mac, both mean your
+code never executes on macOS at all — it runs on Linux, on a virtualized kernel,
+against a Linux libc and Linux syscalls. That is fine when Linux is what you
+ship, and useless when it isn't: you cannot build or test a macOS binary, an
+Apple framework, a codesigned artifact, or anything whose behaviour differs
+between the two platforms. You also cannot reproduce a macOS-only bug, because
+the machine reporting it and the machine you are debugging on are not the same
+operating system.
+
+devcroft never virtualizes anything. Your processes are native host processes
+with a policy applied to them, so macOS stays macOS and Linux stays Linux — the
+sandbox changes what a process may touch, not what kernel it runs against. The
+cost of that choice is the whole Status section below: a native process under
+Landlock or Seatbelt is a weaker boundary than a guest kernel, and on macOS
+weaker still. It is the same trade in both directions, which is why this is a
+table and not a scoreboard.
+
+Run code you genuinely don't trust in a container or a VM. Run eight branches on
 one laptop in devcroft. [docs/comparison.md](docs/comparison.md) has that in
 full, plus `nono-cli`, flox alone, and how today's coding-agent products
 provision environments.
