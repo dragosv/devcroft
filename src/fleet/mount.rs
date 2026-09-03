@@ -17,7 +17,11 @@
 //! that later task's job, not this module's.
 
 use std::io;
+// Both are used only by the Linux-gated bodies below — `Write` by
+// `write_id_map`, `FileTypeExt` by `bind_mount_grant`'s node-type check.
+#[cfg(target_os = "linux")]
 use std::io::Write;
+#[cfg(target_os = "linux")]
 use std::os::unix::fs::FileTypeExt;
 
 /// Enter a fresh user + mount namespace, with an identity uid/gid mapping
@@ -201,6 +205,7 @@ pub fn make_propagation_private() -> io::Result<()> {
 /// host's namespace") is enforced by this function simply having no
 /// branch that could do that, not by a flag the caller must remember to
 /// check.
+#[cfg(target_os = "linux")]
 pub fn construct_view(
     new_root: &std::path::Path,
     grants: &[crate::policy::ResolvedGrant],
@@ -272,11 +277,26 @@ pub fn construct_view(
     pivot_into(new_root)
 }
 
+#[cfg(not(target_os = "linux"))]
+pub fn construct_view(
+    _new_root: &std::path::Path,
+    _grants: &[crate::policy::ResolvedGrant],
+    _proxy_socket: Option<&std::path::Path>,
+) -> io::Result<()> {
+    Err(io::Error::new(
+        io::ErrorKind::Unsupported,
+        "mount namespaces are Linux-only; this platform has no equivalent \
+         (see docs/threat-model.md)",
+    ))
+}
+
+#[cfg(target_os = "linux")]
 fn path_to_cstring(path: &std::path::Path) -> io::Result<std::ffi::CString> {
     std::ffi::CString::new(std::os::unix::ffi::OsStrExt::as_bytes(path.as_os_str()))
         .map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))
 }
 
+#[cfg(target_os = "linux")]
 fn mount_tmpfs(target: &std::path::Path) -> io::Result<()> {
     let target_c = path_to_cstring(target)?;
     let tmpfs = c"tmpfs";
@@ -309,6 +329,7 @@ fn mount_tmpfs(target: &std::path::Path) -> io::Result<()> {
 /// source directory that might itself contain nested mounts (`/nix/store`
 /// measured to have none today, but nothing here should assume that
 /// stays true).
+#[cfg(target_os = "linux")]
 fn bind_mount_grant(
     new_root: &std::path::Path,
     source: &std::path::Path,
@@ -356,6 +377,7 @@ fn bind_mount_grant(
     Ok(())
 }
 
+#[cfg(target_os = "linux")]
 fn bind_mount(
     source: &std::path::Path,
     target: &std::path::Path,
@@ -400,6 +422,7 @@ fn bind_mount(
 /// "and whatever the kernel's `MS_REC` remount semantics happen to reach
 /// today" — and the safer choice does not depend on an undocumented
 /// behavior continuing to hold across kernel versions.
+#[cfg(target_os = "linux")]
 fn remount_readonly(target: &std::path::Path, recursive: bool) -> io::Result<()> {
     let target_c = path_to_cstring(target)?;
     let mut flags = libc::MS_BIND | libc::MS_REMOUNT | libc::MS_RDONLY;
@@ -438,6 +461,7 @@ fn remount_readonly(target: &std::path::Path, recursive: bool) -> io::Result<()>
 /// `/tmp` read-only here, before that loop runs, would fail every such
 /// nested grant with `EROFS`. Measured live while fixing the ordering
 /// bug this function's sibling doc already describes.
+#[cfg(target_os = "linux")]
 fn mount_private_tmp(new_root: &std::path::Path) -> io::Result<()> {
     let target = new_root.join("tmp");
     std::fs::create_dir_all(&target)?;
@@ -464,6 +488,7 @@ fn mount_private_tmp(new_root: &std::path::Path) -> io::Result<()> {
 /// separate mount by the time this runs, and the narrower request is
 /// what's actually wanted regardless of how a recursive one happens to
 /// behave.
+#[cfg(target_os = "linux")]
 fn finalize_tmp_mode(new_root: &std::path::Path, mode: nono::AccessMode) -> io::Result<()> {
     if mode == nono::AccessMode::Read {
         remount_readonly(&new_root.join("tmp"), false)?;
@@ -513,6 +538,7 @@ fn finalize_tmp_mode(new_root: &std::path::Path, mode: nono::AccessMode) -> io::
 /// `/proc` visibility remains available only by taking PID isolation —
 /// unchanged from open question 2's own conclusion, now stated for the
 /// right reason.
+#[cfg(target_os = "linux")]
 fn mount_proc(new_root: &std::path::Path) -> io::Result<()> {
     let target = new_root.join("proc");
     std::fs::create_dir_all(&target)?;
@@ -541,6 +567,7 @@ fn mount_proc(new_root: &std::path::Path) -> io::Result<()> {
 /// itself must physically exist for that resolution to find anything —
 /// replicated here rather than assumed, checking which shape this host
 /// actually has instead of hard-coding one.
+#[cfg(target_os = "linux")]
 fn setup_dev(new_root: &std::path::Path) -> io::Result<()> {
     let dev = new_root.join("dev");
     std::fs::create_dir_all(&dev)?;
@@ -603,6 +630,7 @@ fn setup_dev(new_root: &std::path::Path) -> io::Result<()> {
 /// per host) may not, and inventing one this host doesn't have would be
 /// exactly the "guessing" this project measures against rather than
 /// assumes.
+#[cfg(target_os = "linux")]
 fn setup_merged_usr_compat(new_root: &std::path::Path) -> io::Result<()> {
     for name in ["lib", "lib64", "bin", "sbin"] {
         let host_path = std::path::Path::new("/").join(name);
@@ -632,6 +660,7 @@ fn setup_merged_usr_compat(new_root: &std::path::Path) -> io::Result<()> {
 /// sockets, in particular — stay valid across this regardless of what
 /// happens to the old root's mount, since an open fd does not depend on
 /// its path remaining resolvable.
+#[cfg(target_os = "linux")]
 fn pivot_into(new_root: &std::path::Path) -> io::Result<()> {
     const OLD_ROOT_NAME: &str = ".devcroft-old-root";
     let old_root = new_root.join(OLD_ROOT_NAME);

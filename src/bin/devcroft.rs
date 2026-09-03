@@ -902,6 +902,7 @@ fn uds_probe_main(args: &[String]) -> i32 {
 ///
 /// Argument 1 is the abstract name (no leading NUL — `SocketAddrExt`
 /// adds it). Exit 0 = connected, 1 = refused, 2 = setup failure.
+#[cfg(target_os = "linux")]
 fn abstract_socket_probe_main(args: &[String]) -> i32 {
     use std::os::linux::net::SocketAddrExt;
     use std::os::unix::net::{SocketAddr, UnixStream};
@@ -939,6 +940,20 @@ fn abstract_socket_probe_main(args: &[String]) -> i32 {
             1
         }
     }
+}
+
+/// Abstract unix sockets are a Linux-only address family, so there is no
+/// gap to measure here on any other platform — the probe reports setup
+/// failure rather than a result, which is what its caller
+/// (`tests/abstract_socket_not_reachable.rs`) already treats as "do not
+/// draw a conclusion from this host".
+#[cfg(not(target_os = "linux"))]
+fn abstract_socket_probe_main(_args: &[String]) -> i32 {
+    eprintln!(
+        "devcroft __abstract_socket_probe: abstract unix sockets are Linux-only; \
+         this platform has no equivalent"
+    );
+    2
 }
 
 fn netns_probe_main(args: &[String]) -> i32 {
@@ -1074,6 +1089,7 @@ fn mount_probe_main(_args: &[String]) -> i32 {
 /// and writes a marker file into it, then signals `READY` and blocks.
 /// The caller checks that same path from the host's own mount namespace:
 /// if propagation were not private, the marker would be visible there too.
+#[cfg(target_os = "linux")]
 fn mount_isolation_sim_main(args: &[String]) -> i32 {
     use std::io::Write;
 
@@ -1129,6 +1145,18 @@ fn mount_isolation_sim_main(args: &[String]) -> i32 {
     let _ = std::io::stdout().flush();
     std::thread::sleep(std::time::Duration::from_secs(30));
     0
+}
+
+/// No mount namespace to make private on a non-Linux host, so there is
+/// no propagation property to demonstrate — the simulation reports the
+/// same failure `fleet::mount::enter_mount_namespace`'s own stub would.
+#[cfg(not(target_os = "linux"))]
+fn mount_isolation_sim_main(_args: &[String]) -> i32 {
+    eprintln!(
+        "devcroft __mount_isolation_sim: mount namespaces are Linux-only; \
+         this platform has no equivalent"
+    );
+    1
 }
 
 /// Live verification for `fleet::mount::construct_view`, not a unit test.
