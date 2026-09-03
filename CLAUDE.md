@@ -34,9 +34,13 @@ two nix samples do not exercise: a `shellHook` export never arrives
 be `mkShell` *attributes*), nix reports a `TMPDIR` that no longer exists
 at session time and cannot be overridden by an attribute (`GOTMPDIR` is
 the lever), and `devcroft.toml`'s `[env.vars]` parses and validates but
-nothing consumes it — a silent no-op. Its deletion probe creates the
-file it deletes, deliberately: a demonstration of a boundary must not be
-catastrophic when the boundary is absent.
+nothing consumes it — a silent no-op. Its deletion probe targets a file the
+*user* creates by hand (`touch ~/devcroft.tmp`), never one the program
+makes: a demonstration of a boundary must not be catastrophic when the
+boundary is absent, and a program that tried to create the file itself
+measured nothing, since creating it in `$HOME` is refused by the same
+boundary the deletion is meant to test — the removal then returned
+`ENOENT`, which is not evidence of a refusal.
 
 `devbox-citytime-sample` documents a real constraint rather than a gap:
 devcroft's devbox provider never runs `shell.init_hook` (by design — see

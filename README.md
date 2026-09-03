@@ -121,39 +121,36 @@ func probe() {
 	if err := os.WriteFile("/etc/devcroft-probe", []byte("x"), 0o644); err != nil {
 		fmt.Println(err)
 	}
-	// Deletion is probed against a file this program owns and creates
-	// itself, never one of yours. Run outside a sandbox — or inside one
-	// that turns out not to be enforcing — the worst it can do is remove
-	// the throwaway it just made.
-	tmp := home + "/devcroft.tmp"
-	if _, err := os.Stat(tmp); os.IsNotExist(err) {
-		if err := os.WriteFile(tmp, []byte("x"), 0o644); err != nil {
-			fmt.Println(err)
-		}
-	}
-	if err := os.Remove(tmp); err != nil {
+	// A throwaway you create yourself first (`touch ~/devcroft.tmp`),
+	// never one of your own files — so outside a sandbox, or inside one
+	// that turns out not to be enforcing, the worst case is losing a
+	// file you made to lose.
+	if err := os.Remove(home + "/devcroft.tmp"); err != nil {
 		fmt.Println(err)
 	}
 }
 ```
 
 ```console
+$ touch ~/devcroft.tmp
 $ devcroft exec -- go run . probe
 open /home/you/.ssh/known_hosts: permission denied
 open /etc/devcroft-probe: permission denied
-open /home/you/devcroft.tmp: permission denied
-remove /home/you/devcroft.tmp: no such file or directory
+remove /home/you/devcroft.tmp: permission denied
+
+$ ls ~/devcroft.tmp
+/home/you/devcroft.tmp
 ```
 
-Four lines, not three: the removal reports the file *missing* because the
-creation immediately above it was already refused, so there was never a file
-to delete. [samples/nix-probe-sample](samples/nix-probe-sample/) is this exact
-program as a runnable project, and is where the output above is measured
-rather than asserted.
+The last command is what makes the third line mean anything: the file is still
+there, so deletion was refused against a file that actually existed.
+[samples/nix-probe-sample](samples/nix-probe-sample/) is this exact program as
+a runnable project, and is where the output above is measured rather than
+asserted — including the control run, unconfined, where the same file is
+deleted.
 
 Nothing was asked politely and nothing cooperated: an agent that decides to
-delete a file in your home directory gets `EACCES`, whatever it intended — and
-it never got as far as creating that file either.
+delete a file in your home directory gets `EACCES`, whatever it intended.
 
 ## Make it your own!
 

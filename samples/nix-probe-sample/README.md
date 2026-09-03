@@ -25,21 +25,73 @@ Three requests, all for things outside the project root:
 
 Every one is expected to fail. **Anything that succeeds is the finding.**
 
-## The deletion probe creates its own target
+## You create the deletion target, not the program
 
-This is the one part that is deliberately not the obvious thing. An
-earlier version of the front-page probe called `os.RemoveAll(home)`,
-which is a demonstration whose only failure mode is catastrophic: it is
-copy-pasteable code whose entire purpose is to be refused, so the one
-situation it is written for is the situation where it is *not* refused —
-run outside devcroft, or inside a sandbox that turns out not to be
-enforcing, and it deletes the reader's home directory.
+`devcroft.tmp` is a throwaway you make by hand before running the probe:
 
-So deletion is probed against `$HOME/devcroft.tmp`, a file this program
-creates itself if it is missing. A demonstration of a boundary must not
-be catastrophic when the boundary is absent, and here the worst an
-unconfined run can do is remove the throwaway it just made. Verified on
-the host, outside any sandbox:
+```sh
+touch ~/devcroft.tmp
+```
+
+The program never creates it, for two reasons — and the second is the
+one that matters.
+
+**It is safe.** The only file this can delete is one you deliberately
+made as a target. An earlier version of the front-page probe called
+`os.RemoveAll(home)`, which is a demonstration whose only failure mode is
+catastrophic: copy-pasteable code whose entire purpose is to be refused,
+so the one situation it is written for is the situation where it is *not*
+refused. Run outside devcroft, or inside a sandbox that turns out not to
+be enforcing, and it deletes the reader's home directory. A demonstration
+of a boundary must not be catastrophic when the boundary is absent.
+
+**It is honest.** The first fix here had the program create the file
+itself if missing — which cannot work, and quietly produced a
+non-result. Creating a file in `$HOME` is refused by the very boundary
+the deletion is meant to test, so the creation failed, and the removal
+then returned `ENOENT`:
+
+```
+open /Users/you/devcroft.tmp: operation not permitted
+remove /Users/you/devcroft.tmp: no such file or directory
+```
+
+`no such file or directory` is not evidence that deletion was refused.
+There was nothing there to delete. That line proved nothing about the
+boundary while looking like it did — the file has to already exist for
+the probe to measure anything at all.
+
+## Measured output
+
+Produced by running this sample on macOS 15 against
+Seatbelt, with a live nix daemon. Seatbelt reports `EPERM` (`operation
+not permitted`); Linux's Landlock reports `EACCES` (`permission denied`)
+for the same denials, which is the wording the top-level README uses.
+
+```console
+$ devcroft exec -- go run .
+hello from inside
+/Users/you/devcroft/samples/nix-probe-sample
+
+$ touch ~/devcroft.tmp
+$ devcroft exec -- go run . probe "$HOME"
+probing home: /Users/you
+open /Users/you/.ssh/known_hosts: operation not permitted
+open /etc/devcroft-probe: operation not permitted
+remove /Users/you/devcroft.tmp: operation not permitted
+
+$ ls ~/devcroft.tmp
+/Users/you/devcroft.tmp
+```
+
+The last command is the part that makes the third line mean something:
+the file is still there. Deletion was refused against a file that
+actually existed.
+
+### The control
+
+A refusal only demonstrates a boundary if the same operation succeeds
+without one. Unconfined, on the host, with the same file present:
 
 ```console
 $ go run . probe "$HOME"
@@ -50,36 +102,11 @@ $ ls ~/devcroft.tmp
 ls: /Users/you/devcroft.tmp: No such file or directory
 ```
 
-Created, deleted, nothing left behind — and `known_hosts` read fine,
-because nothing was enforcing. That is the whole point: the unsafe path
-is now boring.
-
-## Measured output
-
-Everything below was produced by running this sample, on macOS 15 against Seatbelt, with a live nix daemon. Seatbelt
-reports `EPERM` (`operation not permitted`); Linux's Landlock reports
-`EACCES` (`permission denied`) for the same denials, which is the
-wording the top-level README uses.
-
-```console
-$ devcroft exec -- go run .
-hello from inside
-/Users/you/devcroft/samples/nix-probe-sample
-
-$ devcroft exec -- go run . probe "$HOME"
-probing home: /Users/you
-open /Users/you/.ssh/known_hosts: operation not permitted
-open /etc/devcroft-probe: operation not permitted
-open /Users/you/devcroft.tmp: operation not permitted
-remove /Users/you/devcroft.tmp: no such file or directory
-```
-
-Four lines, not three, and the last one is worth reading carefully: the
-removal reports the file *missing* rather than refused, because the
-creation immediately above it was already denied. There was never a file
-to delete. Both halves of "create it if absent, then delete it" were
-refused, which is the result — the errno on the final line is a
-consequence of the boundary holding, not a hole in it.
+`known_hosts` read fine — no line for it, nothing was enforcing.
+`/etc/devcroft-probe` was refused by ordinary Unix permissions rather
+than by devcroft, which is why that line survives in both runs and is
+the weakest of the three. And `devcroft.tmp` is **gone**: an unconfined
+process deletes it, a sandboxed one cannot. That pair is the measurement.
 
 ## `$HOME` is not your home under this provider
 
@@ -93,15 +120,15 @@ $ devcroft exec -- go run . probe
 probing home: /homeless-shelter
 open /homeless-shelter/.ssh/known_hosts: no such file or directory
 open /etc/devcroft-probe: operation not permitted
-open /homeless-shelter/devcroft.tmp: no such file or directory
 remove /homeless-shelter/devcroft.tmp: no such file or directory
 ```
 
 `nix print-dev-env` exports `HOME=/homeless-shelter`, its own
 build-sandbox value, and devcroft captures the environment as the
 provider reports it. So a probe that trusts `$HOME` measures a path that
-does not exist instead of the credentials it claims to be testing — it
-prints four `no such file or directory` lines and proves nothing.
+does not exist instead of the credentials it claims to be testing — the
+same non-result as the create-it-yourself version above, arrived at from
+a different direction.
 
 That is not a devcroft denial and this sample does not present it as
 one. Passing the real path in is what makes the measurement mean what it
@@ -154,9 +181,14 @@ reaching for it; this sample deliberately does not use it.
 cd samples/nix-probe-sample
 devcroft up
 devcroft exec -- go run .                    # hello from inside
+
+touch ~/devcroft.tmp                         # the deletion target, yours to make
 devcroft exec -- go run . probe "$HOME"      # three refusals
+ls ~/devcroft.tmp                            # still there: the refusal held
+
 devcroft policy --render                     # /nix/store, origin provider:nix
 devcroft down
+rm -f ~/devcroft.tmp                         # done with it
 ```
 
 One gotcha that is nix's rather than devcroft's: a flake only sees

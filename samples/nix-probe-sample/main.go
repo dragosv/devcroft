@@ -27,7 +27,8 @@ func main() {
 // probe asks for three things outside the project root: reading a
 // credential, writing to a system path, and deleting a file in the home
 // directory. Every one is expected to fail. Anything that succeeds is
-// the finding.
+// the finding -- and for the third, the file must exist first or the
+// failure means nothing.
 //
 // The home directory to probe is an optional argument, defaulting to
 // `os.UserHomeDir()` -- which is what the README's version uses, and
@@ -52,17 +53,21 @@ func probe(args []string) {
 	if err := os.WriteFile("/etc/devcroft-probe", []byte("x"), 0o644); err != nil {
 		fmt.Println(err)
 	}
-	// Deletion is probed against a file this program owns and creates
-	// itself, never one of yours. Run outside a sandbox -- or inside one
-	// that turns out not to be enforcing -- the worst it can do is
-	// remove the throwaway it just made.
-	tmp := home + "/devcroft.tmp"
-	if _, err := os.Stat(tmp); os.IsNotExist(err) {
-		if err := os.WriteFile(tmp, []byte("x"), 0o644); err != nil {
-			fmt.Println(err)
-		}
-	}
-	if err := os.Remove(tmp); err != nil {
+	// Deletion is probed against `devcroft.tmp` -- a throwaway you
+	// create yourself, by hand, before running this (see the README).
+	// This program never creates it.
+	//
+	// Two reasons, and the second is the one that matters. It is safe:
+	// the only file this can delete is one you made as a target, so run
+	// outside a sandbox -- or inside one that turns out not to be
+	// enforcing -- the worst case is losing a file you created to lose.
+	// And it is honest: an earlier version created the file itself,
+	// which cannot work, because creating it in $HOME is refused by the
+	// same boundary the deletion is meant to test. The remove then
+	// returned ENOENT, and "no such file or directory" is not evidence
+	// that deletion was refused -- there was simply nothing there. The
+	// file has to already exist for this line to measure anything.
+	if err := os.Remove(home + "/devcroft.tmp"); err != nil {
 		fmt.Println(err)
 	}
 }
