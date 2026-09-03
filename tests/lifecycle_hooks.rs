@@ -36,6 +36,12 @@ impl Sandbox {
         ));
         let _ = std::fs::remove_dir_all(&project_root);
         std::fs::create_dir_all(&project_root).unwrap();
+        // Canonicalized for the macOS symlink reason in docs/known-gaps.md:
+        // `temp_dir()` is under `/var/folders/…` there and `/var` is a
+        // symlink, so the un-canonicalized spelling of the project root is
+        // refused even though the root itself is granted — and hooks run
+        // with it as their working directory.
+        let project_root = project_root.canonicalize().unwrap();
         let init = Command::new("flox")
             .arg("init")
             .current_dir(&project_root)

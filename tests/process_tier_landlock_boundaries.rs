@@ -211,26 +211,37 @@ fn process_tier_blocks_cross_process_signals_and_proc_reads() {
 
     // Attack 2: read the same victim's /proc entry directly (no
     // directory listing involved — Landlock mediates the path itself).
-    let out = Command::new(devcroft_bin)
-        .arg("exec")
-        .arg(&sandbox_name)
-        .arg("--")
-        .arg("sh")
-        .arg("-c")
-        .arg(format!("cat /proc/{victim_pid}/cmdline"))
-        .output()
-        .unwrap();
-    assert!(
-        !out.status.success(),
-        "expected /proc/<pid>/cmdline for a process outside the sandbox to be denied by the \
-         default-deny filesystem policy; stdout={}",
-        String::from_utf8_lossy(&out.stdout)
-    );
-    assert!(
-        String::from_utf8_lossy(&out.stderr).contains("Permission denied"),
-        "expected a permission-denied-shaped failure, got stderr={}",
-        String::from_utf8_lossy(&out.stderr)
-    );
+    //
+    // Linux-only, because the *attack* is: there is no `/proc` on macOS
+    // for a sandbox to read, so the read fails `ENOENT` rather than being
+    // refused, and asserting a denial there would be asserting the
+    // absence of a filesystem rather than the presence of a boundary.
+    // Attack 1 above (cross-process signals) is not gated and does hold on
+    // both — Seatbelt's `(allow signal (target same-sandbox))` is the
+    // macOS counterpart to Landlock V6 signal scoping.
+    #[cfg(target_os = "linux")]
+    {
+        let out = Command::new(devcroft_bin)
+            .arg("exec")
+            .arg(&sandbox_name)
+            .arg("--")
+            .arg("sh")
+            .arg("-c")
+            .arg(format!("cat /proc/{victim_pid}/cmdline"))
+            .output()
+            .unwrap();
+        assert!(
+            !out.status.success(),
+            "expected /proc/<pid>/cmdline for a process outside the sandbox to be denied by \
+             the default-deny filesystem policy; stdout={}",
+            String::from_utf8_lossy(&out.stdout)
+        );
+        assert!(
+            String::from_utf8_lossy(&out.stderr).contains("Permission denied"),
+            "expected a permission-denied-shaped failure, got stderr={}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
 
     down(&sandbox_name).unwrap();
     let _ = victim.kill();

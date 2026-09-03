@@ -43,7 +43,12 @@ fn host_can_reach(port: u16) -> bool {
 /// Starts a listener *inside* the sandbox and waits for it to be
 /// reachable from inside, so the test never races the server's startup.
 /// Returns the still-running child; the caller kills it.
-fn serve_inside(devcroft_bin: &str, sandbox: &str, port: u16) -> Option<Child> {
+fn serve_inside(
+    devcroft_bin: &str,
+    sandbox: &str,
+    project_root: &std::path::Path,
+    port: u16,
+) -> Option<Child> {
     let child = Command::new(devcroft_bin)
         .arg("exec")
         .arg(sandbox)
@@ -54,6 +59,16 @@ fn serve_inside(devcroft_bin: &str, sandbox: &str, port: u16) -> Option<Child> {
         .arg(port.to_string())
         .arg("--bind")
         .arg("127.0.0.1")
+        // Run from the project, the way a user actually invokes this.
+        // `devcroft exec` passes the caller's own cwd through to the
+        // session unchanged (exec spec, "Working directory mapping": no
+        // host/sandbox path remapping), so invoking it from the *crate*
+        // root asks the sandbox to start a process in a directory its
+        // policy does not grant. On macOS that is refused outright and the
+        // server silently never starts — which this file's own header
+        // warns about, since the isolated test asserts *un*reachability and
+        // would pass for exactly that wrong reason.
+        .current_dir(project_root)
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .spawn()
@@ -74,6 +89,7 @@ fn serve_inside(devcroft_bin: &str, sandbox: &str, port: u16) -> Option<Child> {
                  s.settimeout(0.5)\n\
                  sys.exit(0 if s.connect_ex(('127.0.0.1',{port}))==0 else 1)\n"
             ))
+            .current_dir(project_root)
             .output()
             .ok()?;
         if probe.status.success() {
@@ -94,6 +110,14 @@ fn flox_project_with_python(tag: &str) -> Option<std::path::PathBuf> {
         std::env::temp_dir().join(format!("devcroft-hostreach-{tag}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&root);
     std::fs::create_dir_all(&root).ok()?;
+    // Canonicalized for the macOS symlink reason documented in
+    // docs/known-gaps.md ("A grant does not cover the symlinked spelling of
+    // its own path on macOS"): `temp_dir()` is under `/var/folders/…` there
+    // and `/var` is a symlink, so a sandbox given the un-canonicalized form
+    // cannot even set it as a session's working directory — the server
+    // below never starts. That failure is *silent* in the isolated test,
+    // which asserts unreachability and would pass for the wrong reason.
+    let root = root.canonicalize().ok()?;
     if !Command::new("flox")
         .arg("init")
         .current_dir(&root)
@@ -164,7 +188,7 @@ fn an_isolated_sandboxs_granted_port_is_namespace_local_not_host_visible() {
         UpOutcome::Started
     );
 
-    let server = serve_inside(devcroft_bin, &sandbox_name, PORT);
+    let server = serve_inside(devcroft_bin, &sandbox_name, &project_root, PORT);
     let reachable_from_host = host_can_reach(PORT);
 
     if let Some(mut c) = server {
@@ -236,7 +260,7 @@ fn a_non_isolated_sandboxs_granted_port_is_reachable_from_the_host() {
         UpOutcome::Started
     );
 
-    let server = serve_inside(devcroft_bin, &sandbox_name, PLAIN_PORT);
+    let server = serve_inside(devcroft_bin, &sandbox_name, &project_root, PLAIN_PORT);
     let reachable_from_host = host_can_reach(PLAIN_PORT);
 
     if let Some(mut c) = server {

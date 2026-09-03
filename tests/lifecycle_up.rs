@@ -37,6 +37,10 @@ fn up_spawns_a_working_keeper_and_down_tears_it_back_down() {
         std::env::temp_dir().join(format!("devcroft-lifecycle-up-e2e-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&project_root);
     std::fs::create_dir_all(&project_root).unwrap();
+    // Canonicalized (after creation) for the macOS symlink reason in
+    // docs/known-gaps.md: `temp_dir()` sits under the `/var` symlink there,
+    // and the un-canonicalized spelling of a granted path is refused.
+    let project_root = project_root.canonicalize().unwrap();
     let init = Command::new("flox")
         .arg("init")
         .current_dir(&project_root)
@@ -87,7 +91,14 @@ fn up_spawns_a_working_keeper_and_down_tears_it_back_down() {
     protocol::write_frame(
         &mut client,
         &Frame::Spawn(SpawnRequest {
-            cmd: "sh".to_string(),
+            // The closure's own absolute shell, not a bare `"sh"` — a bare
+            // name is resolved by the *sandbox's* `PATH`, whose tail is the
+            // host's directories, so it lands on a host binary the policy
+            // denies (CLAUDE.md's shell invariant).
+            cmd: devcroft::lifecycle::read_meta(&paths.meta)
+                .unwrap()
+                .and_then(|m| m.shell)
+                .unwrap_or_else(|| "sh".to_string()),
             args: vec!["-c".to_string(), "echo hello-e2e".to_string()],
             cwd: project_root.to_str().unwrap().to_string(),
             env: BTreeMap::new(),

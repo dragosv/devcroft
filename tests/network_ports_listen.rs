@@ -116,6 +116,9 @@ fn a_granted_port_binds_while_egress_stays_denied_and_other_ports_do_not() {
     // Deliberately high and unusual, so a stray host listener is not
     // mistaken for the sandbox successfully binding.
     const GRANTED: u16 = 18123;
+    // Only the Linux branch below consumes this — macOS cannot scope
+    // listening per port at all (see that branch's comment).
+    #[cfg(target_os = "linux")]
     const UNGRANTED: u16 = 18124;
 
     let sandbox_name = format!("e2eports{}", std::process::id());
@@ -143,11 +146,25 @@ fn a_granted_port_binds_while_egress_stays_denied_and_other_ports_do_not() {
     // ...and it is an allowlist, not a blanket unlock. Without this the
     // test would still pass if `ports` accidentally disabled port
     // mediation altogether.
-    let ungranted = bind_probe(devcroft_bin, &sandbox_name, UNGRANTED);
-    assert!(
-        ungranted.contains("DENIED"),
-        "an ungranted port must still be denied, got: {ungranted}"
-    );
+    //
+    // **Linux-only, because macOS genuinely cannot do this** — a measured
+    // platform limit that is now declared rather than assumed away.
+    // Seatbelt has no per-port form of `network-bind`, so granting any
+    // port emits a blanket `(allow network-bind)` and every other port
+    // becomes bindable; `policy::degraded` warns about exactly this at
+    // `up` ("network.ports (per-port listen scoping)"), and the
+    // `network-block-and-ports` capability records it as an
+    // enforced-with-named-degradation rather than plain enforced, which is
+    // what it incorrectly claimed while nobody had measured it. The
+    // *outbound* half below is not gated and does hold on both.
+    #[cfg(target_os = "linux")]
+    {
+        let ungranted = bind_probe(devcroft_bin, &sandbox_name, UNGRANTED);
+        assert!(
+            ungranted.contains("DENIED"),
+            "an ungranted port must still be denied, got: {ungranted}"
+        );
+    }
 
     // Egress remains filtered: granting a local port must not have
     // widened outbound access, which is the entire reason this key

@@ -46,6 +46,15 @@ fn flox_project(tag: &str, hook_body: Option<&str>) -> Option<(PathBuf, PathBuf)
     ));
     let _ = std::fs::remove_dir_all(&root);
     std::fs::create_dir_all(&root).unwrap();
+    // Canonicalized, and it matters on macOS: `std::env::temp_dir()` there
+    // is under `/var/folders/…`, and `/var` is a symlink to `/private/var`.
+    // devcroft grants only the *canonical* path, so a hook writing to the
+    // un-canonicalized form is refused `Operation not permitted` even
+    // though the project root is granted — a real macOS gap
+    // (docs/known-gaps.md, "A grant does not cover the symlinked spelling
+    // of its own path on macOS"), but not the property this file tests.
+    // Using the resolved form keeps these tests measuring the hook split.
+    let root = root.canonicalize().unwrap();
     if !Command::new("flox")
         .arg("init")
         .current_dir(&root)

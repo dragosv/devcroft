@@ -80,11 +80,31 @@ fn network_allow_actually_filters_by_host_through_a_real_curl() {
     // Two mock upstreams on two different loopback-family addresses: the
     // manifest allows exactly one by name, so a name-based (not merely
     // reachability-based) decision is what's actually under test.
-    let allowed_listener = TcpListener::bind("127.0.0.3:0").unwrap();
+    //
+    // Linux gives the whole `127.0.0.0/8` block to `lo` automatically;
+    // macOS configures only `127.0.0.1` on `lo0`, so these binds fail
+    // there with `EADDRNOTAVAIL` until the aliases are added by hand.
+    // Skipped with the remedy rather than silently reshaped to use one
+    // address and two ports: `up` sets `NO_PROXY` to exempt `127.0.0.1`
+    // (see the comment below), so a single-address variant would bypass
+    // the proxy entirely and assert nothing about its host decision —
+    // the exact "passes for the wrong reason" failure this suite keeps
+    // running into.
+    let Ok(allowed_listener) = TcpListener::bind("127.0.0.3:0") else {
+        eprintln!(
+            "skipping: this host has no 127.0.0.3 loopback alias (Linux assigns all of \
+             127.0.0.0/8; macOS assigns only 127.0.0.1). Add them with \
+             `sudo ifconfig lo0 alias 127.0.0.3` and `... 127.0.0.4` to run this test."
+        );
+        return;
+    };
     let allowed_port = allowed_listener.local_addr().unwrap().port();
     serve_one_ok_response(allowed_listener);
 
-    let denied_listener = TcpListener::bind("127.0.0.4:0").unwrap();
+    let Ok(denied_listener) = TcpListener::bind("127.0.0.4:0") else {
+        eprintln!("skipping: this host has no 127.0.0.4 loopback alias (see above)");
+        return;
+    };
     let denied_port = denied_listener.local_addr().unwrap().port();
     serve_one_ok_response(denied_listener);
 

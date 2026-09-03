@@ -39,6 +39,12 @@ fn down_terminates_a_live_session_process_not_just_the_keeper() {
     ));
     let _ = std::fs::remove_dir_all(&project_root);
     std::fs::create_dir_all(&project_root).unwrap();
+    // Canonicalized for the macOS symlink reason in docs/known-gaps.md:
+    // `temp_dir()` is under `/var/folders/…` there and `/var` is a symlink,
+    // so the un-canonicalized spelling is refused even though the project
+    // root is granted — and this test hands the path straight to the keeper
+    // as a session `cwd`.
+    let project_root = project_root.canonicalize().unwrap();
     let init = Command::new("flox")
         .arg("init")
         .current_dir(&project_root)
@@ -76,11 +82,21 @@ fn down_terminates_a_live_session_process_not_just_the_keeper() {
         UpOutcome::Started
     );
 
+    // The absolute shell `up` resolved out of this sandbox's own closure,
+    // not a bare `"sh"`. A bare name is resolved by the *sandbox's* `PATH`,
+    // whose tail is the host's own directories, so it lands on a host
+    // binary the policy denies — CLAUDE.md calls this out as load-bearing
+    // for every call site, and this test was one more of them.
+    let shell = devcroft::lifecycle::read_meta(&paths.meta)
+        .unwrap()
+        .and_then(|m| m.shell)
+        .unwrap_or_else(|| "sh".to_string());
+
     let mut client = UnixStream::connect(&paths.socket).unwrap();
     protocol::write_frame(
         &mut client,
         &Frame::Spawn(SpawnRequest {
-            cmd: "sh".to_string(),
+            cmd: shell,
             // Prints its own pid first so the test can watch it directly
             // (host-visible: design.md decision 5, no pid-namespace
             // separation between sandboxes in MVP).

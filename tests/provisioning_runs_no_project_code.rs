@@ -36,6 +36,26 @@ use devcroft::provider::{Provider, ProviderError};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+/// Nix's own system double for this host.
+///
+/// Not a hardcoded `-linux`: on an Apple Silicon host nix asks for
+/// `aarch64-darwin`, and a flake declaring only `aarch64-linux` fails
+/// evaluation with "does not provide attribute
+/// devShells.aarch64-darwin.default" — a fixture bug that reads exactly
+/// like a provider regression. `builtins.currentSystem` is unavailable in
+/// pure flake evaluation, so this literal is what actually gets used.
+fn nix_system_double() -> String {
+    format!(
+        "{}-{}",
+        std::env::consts::ARCH,
+        if cfg!(target_os = "macos") {
+            "darwin"
+        } else {
+            "linux"
+        }
+    )
+}
+
 fn scratch(tag: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(format!(
         "devcroft-provisioning-hooks-{tag}-{}-{}",
@@ -101,7 +121,7 @@ fn nix_resolution_does_not_run_the_dev_shells_shell_hook() {
     }};
 }}
 "#,
-            arch = std::env::consts::ARCH.to_string() + "-linux",
+            arch = nix_system_double(),
             marker = marker.display(),
         ),
     )

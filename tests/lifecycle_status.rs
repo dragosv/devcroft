@@ -36,6 +36,12 @@ fn status_logs_and_ps_reflect_a_real_running_keeper() {
     ));
     let _ = std::fs::remove_dir_all(&project_root);
     std::fs::create_dir_all(&project_root).unwrap();
+    // Canonicalized for the macOS symlink reason in docs/known-gaps.md
+    // (`temp_dir()` sits under the `/var` symlink there, and the
+    // un-canonicalized spelling of a granted path is refused). After
+    // creation, necessarily — canonicalizing a path that does not exist
+    // yet fails and silently leaves the symlinked form in place.
+    let project_root = project_root.canonicalize().unwrap();
     let init = Command::new("flox")
         .arg("init")
         .current_dir(&project_root)
@@ -97,8 +103,17 @@ fn status_logs_and_ps_reflect_a_real_running_keeper() {
     protocol::write_frame(
         &mut session_client,
         &Frame::Spawn(SpawnRequest {
-            cmd: "sleep".to_string(),
-            args: vec!["100".to_string()],
+            // Through the closure's own absolute shell, not a bare
+            // `"sleep"`: a bare name is resolved by the *sandbox's* `PATH`,
+            // whose tail is the host's directories, so it lands on a host
+            // binary the policy denies (CLAUDE.md's shell invariant, which
+            // applies to any bare command name, not just `sh`). `sleep`
+            // itself comes from the coreutils installed above.
+            cmd: devcroft::lifecycle::read_meta(&paths.meta)
+                .unwrap()
+                .and_then(|m| m.shell)
+                .unwrap_or_else(|| "sh".to_string()),
+            args: vec!["-c".to_string(), "sleep 100".to_string()],
             cwd: project_root.to_str().unwrap().to_string(),
             env: BTreeMap::new(),
             pty: None,
