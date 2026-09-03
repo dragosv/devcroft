@@ -8,11 +8,13 @@ latter.
 ## Port collisions: fixed
 
 `CompiledPolicy::wants_network_isolation` gives a sandbox its own network
-namespace when it declares services or `network.ports`. `devcroft.toml`
-being committed is no longer a problem: every git worktree of a repo
-declares the *same* port, each sandbox has its own port table, so N of
+namespace when it declares services or `network.ports`. A committed
+`devcroft.toml` is no longer a problem *for ports*: every git worktree of a
+repo declares the *same* port, each sandbox has its own port table, so N of
 them binding the identical 5432 no longer collide — no allocation, no
-cooperation from the service, no config to write. Verified live:
+cooperation from the service, no config to write. (That same committed file
+is still a problem for `sandbox.name`, which is not a port question — see
+"Worktrees silently share one sandbox" below.) Verified live:
 `tests/network_isolation_e2e.rs` brings up two real sandboxes of one
 project, has one hold the port open, and confirms the other binds the
 identical number anyway.
@@ -330,6 +332,28 @@ that address and can send whatever `Host:` header it likes inside it. The
 proxy decides by the name in `CONNECT` and does not inspect the tunnel —
 TLS interception is an explicit non-goal. Untested, and not claimed as
 safe.
+
+## Worktrees silently share one sandbox
+
+State is keyed by `sandbox.name` alone — `StatePaths::new` joins the name
+onto the data dir and nothing else. `devcroft.toml` is committed, so every
+git worktree of a repo checks out the *same* name and resolves to the same
+state dir, control socket and keeper. The second worktree's `up` finds the
+first one's sandbox already running and serves the first one's code, with
+no warning: `up` records `Meta.project_root` but never compares it, and
+`up <name>` cannot override the manifest (it validates against it, and
+refuses a mismatch).
+
+`init` does disambiguate — `disambiguate_name` appends a hash of the
+project root when state already exists for the base name under a different
+root — but a worktree never runs `init`, which is exactly why the
+committed file is the problem. The workaround is to give each worktree its
+own `[sandbox].name`, which dirties the worktree's copy of a tracked file.
+
+This is the gap most directly under the README's own headline, since git
+worktrees are the fan-out mechanism it names. Per-worktree identity is
+`add-agent-workload`'s third item, where it was found by creating a real
+worktree rather than by reading the code.
 
 ## An agent working in your real directory cannot be rolled back
 
