@@ -1,2 +1,6 @@
 /target
 /.cargo
+# `nix build` output symlink into the nix store — see the kotlin sample's
+# .gitignore for why this is never worth committing.
+/result
+/result-*

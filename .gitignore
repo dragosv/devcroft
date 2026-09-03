@@ -19,4 +19,20 @@
 # up against this repo itself: `up` writes the process-compose config, its
 # log, and its unix socket here (see src/services/mod.rs — the project root
 # is the only place the sandbox can both write and read).
+#
+# Unanchored on purpose, unlike `/target` above: a sandbox can be brought up
+# against any sample too, and each would otherwise need its own copy of this
+# rule.
 .devcroft/
+
+# What a remote editor unpacks into whatever project it connects to
+# (docs/ssh-validation.md's matrix is exercised against the samples, not
+# against a fixed one). Global for the same reason `.devcroft/` is: it is a
+# property of connecting an editor, not of any one project.
+.vscode-server/
+
+# Everything else per-sample: each `samples/*/.gitignore` covers its own
+# toolchain's build output and the caches devcroft redirects into the
+# project root (`.cargo`, `.rustup`, `.go`, `.gocache`, `.gradle`), anchored
+# with a leading `/` so a rule cannot reach outside the sample that declares
+# it.

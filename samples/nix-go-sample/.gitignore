@@ -1,4 +1,13 @@
 /.go
 /.gocache
 /.goenv
+# What the README's `go build -o hello-server .` produces...
 /hello-server
+# ...and what a bare `go build` produces instead: Go names the binary after
+# the module path's last element (`module devcroft-nix-go-sample` in go.mod).
+# Both, because the README is a suggestion and the default is one keystroke
+# away.
+/devcroft-nix-go-sample
+# `nix build` output symlink into the nix store.
+/result
+/result-*

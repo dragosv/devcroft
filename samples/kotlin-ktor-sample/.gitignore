@@ -2,3 +2,14 @@
 /.gradle
 /build
 /.kotlin
+# Gradle's IDE-style output directory. Not produced by `gradle build` itself
+# — the Kotlin plugin's IDE integration writes it — which is why it went
+# unnoticed: it appeared only once a test actually ran this sample. It
+# duplicates tracked source (`src/main/kotlin/Main.kt` verbatim), so
+# committing it would be committing a second, silently-stale copy.
+/bin
+# `nix build` against this sample's flake.nix leaves a symlink into the nix
+# store. Committing one records this machine's store path as if it were
+# source.
+/result
+/result-*
