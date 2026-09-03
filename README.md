@@ -121,7 +121,17 @@ func probe() {
 	if err := os.WriteFile("/etc/devcroft-probe", []byte("x"), 0o644); err != nil {
 		fmt.Println(err)
 	}
-	if err := os.RemoveAll(home); err != nil {
+	// Deletion is probed against a file this program owns and creates
+	// itself, never one of yours. Run outside a sandbox — or inside one
+	// that turns out not to be enforcing — the worst it can do is remove
+	// the throwaway it just made.
+	tmp := home + "/devcroft.tmp"
+	if _, err := os.Stat(tmp); os.IsNotExist(err) {
+		if err := os.WriteFile(tmp, []byte("x"), 0o644); err != nil {
+			fmt.Println(err)
+		}
+	}
+	if err := os.Remove(tmp); err != nil {
 		fmt.Println(err)
 	}
 }
@@ -131,11 +141,12 @@ func probe() {
 $ devcroft exec -- go run . probe
 open /home/you/.ssh/known_hosts: permission denied
 open /etc/devcroft-probe: permission denied
-open /home: permission denied
+remove /home/you/devcroft.tmp: permission denied
 ```
 
 Nothing was asked politely and nothing cooperated: an agent that decides to
-delete your home directory gets `EACCES`, whatever it intended.
+delete a file in your home directory gets `EACCES`, whatever it intended — and
+it never got as far as creating that file either.
 
 ## Make it your own!
 
