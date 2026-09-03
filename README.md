@@ -1,11 +1,15 @@
 # devcroft
 
+Reproducible development environments sandboxed with Landlock (Linux) and
+Seatbelt (macOS), each reachable over SSH.
+
 **Give every branch its own toolchain, its own ports, and its own
 services — without a container or a VM.** Each sandbox takes its
 toolchain from a lockfile, gets a private network namespace so the same
 committed port never collides, and runs a real SSH server your editor
-connects to like any remote machine. No host-wide daemon, no image
-build; once the environment is materialized, sandboxes start in seconds.
+connects to like any remote machine. No host-wide daemon and no image
+build: against an already-materialized environment, `up` takes about
+0.2 s and `exec` into a running sandbox about 20 ms.
 
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE-APACHE)
 [![Rust](https://img.shields.io/badge/Rust-edition%202024-orange.svg)](Cargo.toml)
@@ -84,6 +88,20 @@ hello from inside
 That is the whole loop: `up` materializes the environment and applies the
 policy, `exec` runs a command inside it. `devcroft down` stops the sandbox;
 `devcroft ps` lists every sandbox on the host.
+
+Timed on an M4 Pro (macOS 15), best of five, with the nix store already
+populated:
+
+| | |
+|---|---|
+| `up` — including from no prior state | ~0.23 s |
+| `exec -- sh -c 'exit 0'` | ~0.02 s |
+| `exec -- go run .` | ~0.06 s |
+
+The first `up` in a project is not this: it is however long the provider needs
+to materialize the closure, which is a `nix`/`flox`/`devbox` build and can be
+minutes. Every `up` after that is the number above, because the closure is
+already in the store.
 
 To do it in your own project, you need an environment file one of the
 providers understands — a `flox` environment, a `flake.nix`, or a
