@@ -89,6 +89,16 @@ pub fn backend_supported() -> bool {
 
 struct HostCapabilities {
     domain_filtering: bool,
+    /// Whether the backend can scope *listening* to the specific ports
+    /// `network.ports` names, rather than all-or-nothing.
+    ///
+    /// False on macOS, measured rather than assumed: Seatbelt has no
+    /// per-port form of `network-bind`, so granting one port emits a
+    /// blanket `(allow network-bind)`/`(allow network-inbound)` and every
+    /// other port becomes bindable too. Landlock's `NetPort` does scope
+    /// per port, which is why this is a platform difference rather than a
+    /// devcroft one.
+    port_scoped_bind: bool,
 }
 
 impl HostCapabilities {
@@ -96,6 +106,7 @@ impl HostCapabilities {
     fn current() -> Self {
         HostCapabilities {
             domain_filtering: false,
+            port_scoped_bind: false,
         }
     }
 
@@ -103,6 +114,7 @@ impl HostCapabilities {
     fn current() -> Self {
         HostCapabilities {
             domain_filtering: true,
+            port_scoped_bind: true,
         }
     }
 }
@@ -117,6 +129,18 @@ fn detect_for_host(compiled: &CompiledPolicy, host: HostCapabilities) -> Vec<Deg
             aspect: "network.allow (domain-level filtering)",
             reason: "macOS Seatbelt cannot enforce domain-level network allowlists without a cooperative proxy",
             fallback: "network access is not filtered by domain on this host; a process that bypasses the proxy can reach any host",
+        });
+    }
+
+    // Only when the manifest actually asks for a scoped listen: a sandbox
+    // declaring no ports gets no blanket bind rule, so nothing is degraded
+    // for it. Same shape as the domain-filtering case above — the warning
+    // names an aspect the *manifest* requested and the host cannot deliver.
+    if compiled.network_block && !compiled.network_ports.is_empty() && !host.port_scoped_bind {
+        degraded.push(DegradedCapability {
+            aspect: "network.ports (per-port listen scoping)",
+            reason: "macOS Seatbelt cannot filter bind/listen by port, so granting one port grants all of them",
+            fallback: "the declared ports work, but a process in this sandbox can also listen on ports the manifest did not grant",
         });
     }
 
@@ -148,6 +172,7 @@ mod tests {
             &compiled,
             HostCapabilities {
                 domain_filtering: false,
+                port_scoped_bind: true,
             },
         );
 
@@ -162,6 +187,71 @@ mod tests {
             &compiled,
             HostCapabilities {
                 domain_filtering: true,
+                port_scoped_bind: true,
+            },
+        );
+
+        assert!(degraded.is_empty());
+    }
+
+    fn blocked_with_ports() -> CompiledPolicy {
+        let (manifest, _) = parse(
+            r#"
+            [sandbox]
+            name = "myproj"
+            [network]
+            default = "deny"
+            ports = [8080]
+            "#,
+        )
+        .unwrap();
+        super::super::compile(&manifest)
+    }
+
+    /// The measured macOS case: Seatbelt has no per-port `network-bind`,
+    /// so granting one port grants every port. Surfaced rather than left
+    /// silent, per "degraded capabilities are surfaced, never silent".
+    #[test]
+    fn port_scoping_degraded_when_host_cannot_enforce_it() {
+        let degraded = detect_for_host(
+            &blocked_with_ports(),
+            HostCapabilities {
+                domain_filtering: true,
+                port_scoped_bind: false,
+            },
+        );
+
+        assert_eq!(degraded.len(), 1);
+        assert_eq!(
+            degraded[0].aspect,
+            "network.ports (per-port listen scoping)"
+        );
+    }
+
+    #[test]
+    fn port_scoping_not_degraded_when_host_can_enforce_it() {
+        let degraded = detect_for_host(
+            &blocked_with_ports(),
+            HostCapabilities {
+                domain_filtering: true,
+                port_scoped_bind: true,
+            },
+        );
+
+        assert!(degraded.is_empty());
+    }
+
+    /// A sandbox that declares no ports gets no blanket bind rule, so
+    /// there is nothing to warn about even on a host that cannot scope.
+    #[test]
+    fn port_scoping_not_degraded_when_no_ports_are_declared() {
+        let (manifest, _) =
+            parse("[sandbox]\nname = \"myproj\"\n[network]\ndefault = \"deny\"\n").unwrap();
+        let degraded = detect_for_host(
+            &super::super::compile(&manifest),
+            HostCapabilities {
+                domain_filtering: true,
+                port_scoped_bind: false,
             },
         );
 
@@ -177,6 +267,7 @@ mod tests {
             &compiled,
             HostCapabilities {
                 domain_filtering: false,
+                port_scoped_bind: false,
             },
         );
         assert!(degraded.is_empty());
@@ -202,6 +293,7 @@ mod tests {
             &compiled,
             HostCapabilities {
                 domain_filtering: false,
+                port_scoped_bind: false,
             },
         );
         assert!(degraded.is_empty());

@@ -210,10 +210,22 @@ pub fn capabilities() -> &'static [Capability] {
                     (the TCP block/port-allow half)",
             },
             macos: PlatformStatus {
-                status: Status::Enforced,
-                evidence: "Seatbelt network deny + scoped allow rules; \
-                    not independently measured on a macOS host \u{2014} \
-                    same caveat as filesystem-policy above",
+                status: Status::EnforcedWithNamedDegradation,
+                evidence: "Seatbelt network deny + scoped allow rules. \
+                    Now measured on macOS 15.7.4, and the previous \
+                    `enforced` was half right: outbound deny IS enforced \
+                    (an ungranted destination is refused), but the \
+                    per-port half is NOT. DEGRADATION: Seatbelt has no \
+                    per-port form of `network-bind`, so granting any \
+                    `network.ports` entry emits a blanket \
+                    `(allow network-bind)`/`(allow network-inbound)` and \
+                    the sandbox can listen on ports the manifest never \
+                    granted \u{2014} measured, an ungranted port bound \
+                    successfully. Landlock's NetPort does scope per port, \
+                    so this is a platform difference. Surfaced at `up` by \
+                    policy::degraded's `network.ports (per-port listen \
+                    scoping)` warning; tests/network_ports_listen.rs \
+                    asserts the Linux half.",
             },
             linux_probe: Some(crate::policy::backend_supported),
             macos_probe: Some(crate::policy::backend_supported),
@@ -313,14 +325,26 @@ pub fn capabilities() -> &'static [Capability] {
                     daemon via the real up/status/exec/down CLI.",
             },
             macos: PlatformStatus {
-                status: Status::Unsupported,
-                evidence: "Seatbelt has no mount-namespace equivalent; \
-                    design.md Open Question 3 (add-mount-isolation), \
-                    unmeasured and explicitly deferred \u{2014} no macOS \
-                    host exists to measure it on.",
+                status: Status::EnforcedWithNamedDegradation,
+                evidence: "Seatbelt classifies unix-socket connect() as \
+                    network-outbound, so `network.default = \"deny\"` \
+                    mediates it with no mount view needed \u{2014} measured \
+                    live on macOS 15.7.4 (arm64) against a real nix daemon \
+                    socket: refused EPERM, and reachable again only via an \
+                    explicit unix-socket grant \
+                    (add-macos-unix-socket-scoping task 0; \
+                    tests/unix_socket_not_mediated.rs, macOS half). \
+                    DEGRADATION, two named parts. (1) The guarantee is \
+                    scoped to deny-default sandboxes: an `allow`-default \
+                    macOS sandbox still reaches any world-accessible \
+                    socket, where a Linux one does not, because a mount \
+                    view removes the path regardless of network mode. \
+                    (2) It is reachability only, not a filesystem view \u{2014} \
+                    macOS has no user/mount namespace, so nothing narrows \
+                    what the sandbox can see, only what it can dial.",
             },
             linux_probe: Some(mount_namespace_available),
-            macos_probe: None,
+            macos_probe: Some(crate::policy::backend_supported),
         },
         Capability {
             name: "process-info-isolation",
