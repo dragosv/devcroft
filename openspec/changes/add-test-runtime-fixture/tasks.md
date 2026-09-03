@@ -167,9 +167,42 @@
 > provider it used to hardcode. A file that passes only on the synthetic row is a
 > coverage regression shaped like a migration.
 
-- [ ] 4.1 Enumerate the neutral surface explicitly and record the list, starting from
+- [x] 4.1 Enumerate the neutral surface explicitly and record the list, starting from
       `cli_lifecycle_and_policy`, `concurrency_and_suspend`, `exec_up`, `ssh_up`,
       `lifecycle_*`, `network_isolation_e2e`. The boundary is declared, not discovered.
+      → **Enumerated. 32 files invoke a provider; 7 are testing one.**
+      
+      *Provider contract — stay hardcoded and real (7 files, 23 tests):*
+      `flox_derived_env`, `flox_env_capture_is_deterministic`,
+      `nix_provider_e2e`, `nix_env_capture_is_deterministic`,
+      `devbox_provider_e2e`, `devbox_env_capture_is_deterministic`,
+      `provisioning_runs_no_project_code`.
+      
+      *Neutral surface — migrate (22 files):* `cli_lifecycle_and_policy`,
+      `concurrency_and_suspend`, `concurrent_up`, `egress_proxy_e2e`,
+      `exec_auto_up`, `exec_up`, `host_port_reachability`,
+      `isolated_egress_e2e`, `lifecycle_down_kills_sessions`,
+      `lifecycle_hooks`, `lifecycle_recreate`, `lifecycle_status`,
+      `lifecycle_up`, `mount_view_e2e`, `network_isolation_e2e`,
+      `network_ports_listen`, `process_tier_landlock_boundaries`, `proxy_up`,
+      `shell_up`, `ssh_channels`, `ssh_up`, `symlink_escape_cli`,
+      `udp_egress_denied`.
+      
+      *Three that do not classify cleanly, named rather than filed:*
+      - `init_and_doctor_cli` (29 tests, the largest single file). `devcroft
+        init` inspects a project to decide which provider to write into the
+        manifest — that detection **is** provider-shaped behaviour, so part of
+        this file is contract and part is neutral. Split it before migrating;
+        moving it wholesale would either lose the detection coverage or drag
+        provider assertions into the neutral surface.
+      - `services_e2e` (8 tests). Neutral in shape, but services are flox-only,
+        so it gates on `capabilities().services` and runs on one row. Worth
+        migrating for the gating shape, not for matrix breadth.
+      - `mount_view_e2e` and `process_tier_landlock_boundaries`. Neutral across
+        providers but heavily platform-gated (Linux-only mechanisms). They
+        belong to the *platform* axis, which design.md D5 keeps separate — they
+        migrate, but their skips stay `cfg`-based and must not become row
+        capabilities.
 - [ ] 4.2 Migrate them to `fixture_for()`, one file at a time, each still green on its
       original provider first.
 - [ ] 4.3 Leave the 7 provider-contract files hardcoded and real:
