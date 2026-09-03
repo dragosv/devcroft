@@ -84,13 +84,32 @@ const KEEPER_SYSTEM_READ: &[&str] = &[
 /// live as an opaque "keeper refused to spawn" with nothing pointing at
 /// the real cause.
 ///
-/// - `/dev/pts` (Linux): `devcroft shell`/pty sessions
-///   (`keeper::pty::open_pty`, `libc::openpty`) — glibc's `openpty` opens
-///   `/dev/ptmx`, itself a symlink to `/dev/pts/ptmx` on this host (and
-///   every Linux system checked), and Landlock evaluates the resolved
-///   target. macOS's `/dev/ptmx` equivalent is included on the same
-///   reasoning, not independently live-verified (this devcontainer is
-///   Linux-only).
+/// - `/dev/pts` **and `/dev/ptmx`** (Linux): `devcroft shell`/pty
+///   sessions (`keeper::pty::open_pty`, `libc::openpty`) — glibc's
+///   `openpty` opens `/dev/ptmx`, and Landlock evaluates the *resolved*
+///   target, so which of the two entries carries the grant depends on
+///   what `/dev/ptmx` is on the host.
+///
+///   This listed only `/dev/pts` and justified it as "`/dev/ptmx` is
+///   itself a symlink to `/dev/pts/ptmx` on this host (and every Linux
+///   system checked)". The parenthetical was the tell: the systems
+///   checked were all this project's own devcontainer, and that shape is
+///   Docker's — Docker creates `/dev/ptmx` as a symlink into `/dev/pts`,
+///   which resolves inside the existing grant. On a systemd host with a
+///   devtmpfs `/dev` — GitHub's `ubuntu-latest` runners, and an ordinary
+///   Ubuntu install — `/dev/ptmx` is a real character device at that
+///   path, resolving to nothing under `/dev/pts`, so `openpty` was denied
+///   and every pty session died with "keeper refused to spawn:
+///   Permission denied". Non-pty sessions were unaffected, which is why
+///   `tests/exec_up.rs` passed on exactly the runs `tests/shell_up.rs`
+///   failed on.
+///
+///   Granting both covers both shapes and costs nothing on either: where
+///   `/dev/ptmx` is a symlink the rule is redundant with `/dev/pts`, and
+///   where it is a device node it is precisely the path `openpty` opens.
+///   nono adds rules through an `O_PATH` open (`sandbox/linux.rs`), so
+///   naming `/dev/ptmx` here does not itself allocate a pty. macOS takes
+///   the `/dev` grant below instead, for reasons measured separately.
 /// - `/dev/null`: every session's `Stdio::null()` redirection
 ///   (`keeper::session::spawn_piped`/`spawn_pty`) opens it for *writing*
 ///   (stdout/stderr), not just reading — confirmed with a standalone
@@ -101,7 +120,7 @@ const KEEPER_SYSTEM_READ: &[&str] = &[
 ///   in isolation first — the failure was specifically in
 ///   `std::process::Command::spawn()`'s own `Stdio::null()` handling.
 #[cfg(not(target_os = "macos"))]
-const KEEPER_SYSTEM_READWRITE: &[&str] = &["/dev/pts", "/dev/null"];
+const KEEPER_SYSTEM_READWRITE: &[&str] = &["/dev/pts", "/dev/ptmx", "/dev/null"];
 
 /// macOS needs the whole of `/dev`, and the narrower list it used to
 /// carry (`/dev/ptmx`, `/dev/null`) was a Linux inference that does not
