@@ -160,13 +160,33 @@ fn every_row_resolves_its_shell_out_of_the_closure() {
         let meta = devcroft::lifecycle::read_meta(&paths.meta)
             .unwrap()
             .expect("up records the shell it resolved");
-        let shell = meta.shell.expect("a row must resolve a shell");
+        let shell = meta.shell.clone().expect("a row must resolve a shell");
 
+        // **Inside one of the row's own declared grants, not under a
+        // hardcoded `/nix/store`.**
+        //
+        // The store prefix was the obvious spelling and the wrong one: it is
+        // a proxy for the property, which is "the shell is inside something
+        // this sandbox is granted and can execute". `shell::resolve` was
+        // generalized to exactly that in `add-test-runtime-fixture`, and a
+        // store-prefix assertion here would reject a correct store-free row
+        // — `add-nix-free-test-row` task 5.3.
+        //
+        // This is *stronger* than the old check, not weaker: it is compared
+        // against what `up` actually recorded this sandbox as being granted,
+        // so a shell resolved from anywhere the provider did not declare
+        // fails it. A host shell has no grant containing it, which is the
+        // regression this guards (`/usr/bin/dash`, every service dying with
+        // `permission denied`).
         assert!(
-            shell.starts_with("/nix/store/"),
-            "row {}: the shell must come from the closure, got {shell:?} — a row \
-             backed by host tooling does not satisfy this contract",
-            fx.name()
+            meta.read_only_grants
+                .iter()
+                .any(|g| shell.starts_with(g.as_str())),
+            "row {}: the shell must be inside a path the row declared as a grant, \
+             got {shell:?} with grants {:?} — a row backed by host tooling does not \
+             satisfy this contract",
+            fx.name(),
+            meta.read_only_grants
         );
 
         down(fx.sandbox_name()).unwrap();
