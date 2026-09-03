@@ -42,6 +42,20 @@ pub struct ProviderCapabilities {
     /// The provider runs a project-supplied activation hook that devcroft
     /// has to confine (`fix-provisioning-hooks`). Flox only.
     pub activation_hook: bool,
+    /// `status` can tell whether this row's environment drifted.
+    ///
+    /// **False for the injected row, and that is a seam limitation rather
+    /// than a property of the row** — worth stating precisely because it is
+    /// the kind of gap a capability flag can quietly bury. `up` takes its
+    /// provider through the injection seam, but `status` re-derives one from
+    /// `manifest.env.provider` (`lifecycle::status` → `provider::is_stale`),
+    /// exactly as `policy --render` re-derives rule origins. So a row with
+    /// no provider to name gets its fingerprint honoured on the way in and
+    /// ignored on the way out.
+    ///
+    /// Closing it means giving `status` an injection point too. Until then a
+    /// neutral staleness test gates on this rather than skipping by name.
+    pub staleness: bool,
 }
 
 /// One row of the matrix: a project of a given provider's shape, set up on
@@ -70,7 +84,28 @@ pub trait ProviderFixture {
     /// touch: the fingerprint comes from `manifest.toml` + lock for flox,
     /// `flake.nix` + `flake.lock` for nix, `devbox.json` + lock for devbox.
     fn mutate_to_drift(&mut self);
+
+    /// Bring this row's sandbox up.
+    ///
+    /// **On the trait because rows do not all reach `up` the same way**, and
+    /// pretending they do would push a `cfg` into every neutral test. A real
+    /// provider row names its provider in `devcroft.toml` and goes through
+    /// the ordinary public `up`; a row with no provider at all has to go
+    /// through the injection seam. Which of those a row is stays the row's
+    /// business, exactly like `setup` and `mutate_to_drift`.
+    fn bring_up(&self, opts: &devcroft::lifecycle::UpOptions) -> UpResult {
+        let manifest = self.manifest();
+        devcroft::lifecycle::up(&manifest, self.project_root(), opts)
+    }
+
+    /// The manifest this row wrote, parsed.
+    fn manifest(&self) -> devcroft::config::Manifest {
+        let text = std::fs::read_to_string(self.project_root().join("devcroft.toml")).unwrap();
+        devcroft::config::parse(&text).unwrap().0
+    }
 }
+
+type UpResult = Result<devcroft::lifecycle::UpOutcome, devcroft::lifecycle::UpError>;
 
 // ---------------------------------------------------------------------
 // Rows
@@ -124,6 +159,7 @@ impl ProviderFixture for NixRow {
         ProviderCapabilities {
             services: false,
             activation_hook: false,
+            staleness: true,
         }
     }
     fn project_root(&self) -> &Path {
@@ -156,6 +192,7 @@ impl ProviderFixture for FloxRow {
         ProviderCapabilities {
             services: true,
             activation_hook: true,
+            staleness: true,
         }
     }
     fn project_root(&self) -> &Path {
@@ -185,6 +222,7 @@ impl ProviderFixture for DevboxRow {
         ProviderCapabilities {
             services: false,
             activation_hook: false,
+            staleness: true,
         }
     }
     fn project_root(&self) -> &Path {
@@ -370,6 +408,215 @@ fn setup_devbox(tag: &str) -> Result<Box<dyn ProviderFixture>, Unavailable> {
     Ok(Box::new(DevboxRow { root, sandbox }))
 }
 
+// ---------------------------------------------------------------------
+// The Nix-free row (`add-nix-free-test-row`)
+//
+// Behind `test-support` because it drives `up` through the injection seam,
+// which only exists under that feature. A default `cargo test` therefore
+// does not have this row at all -- which is also the strongest possible
+// form of "it is not the default".
+// ---------------------------------------------------------------------
+
+/// Where this row finds its shell.
+///
+/// **Provisioning the binary is deliberately not this row's job yet.** How
+/// it gets there -- fetched and hash-pinned, vendored, or built from source
+/// -- is an open decision in `add-nix-free-test-row` with supply-chain and
+/// licence consequences, and picking one silently here would settle it by
+/// accident. So the row consumes a shell someone else put in place and
+/// reports itself unavailable, with instructions, when nobody has.
+///
+/// Measured on macOS 15.7.4: a `dash` built from source (6s with the Xcode
+/// command-line tools) works end to end -- `up` reaches `Started`, the
+/// shell resolves inside the row's own grant, and a real session returns
+/// its output. That is what this row is waiting for a supply story for, not
+/// a hypothesis.
+#[cfg(feature = "test-support")]
+const ROW_SHELL_ENV: &str = "DEVCROFT_TEST_ROW_SHELL";
+
+#[cfg(feature = "test-support")]
+pub struct NixFreeRow {
+    root: PathBuf,
+    sandbox: String,
+    dir: PathBuf,
+}
+
+#[cfg(feature = "test-support")]
+impl ProviderFixture for NixFreeRow {
+    fn name(&self) -> &'static str {
+        "test"
+    }
+    fn capabilities(&self) -> ProviderCapabilities {
+        // No `process-compose` shipped, so no services. Deciding whether to
+        // ship one is `add-nix-free-test-row` task 4.1; until then a neutral
+        // services test skips on this row by capability, never by name.
+        ProviderCapabilities {
+            services: false,
+            activation_hook: false,
+            // See the field's own doc: `status` re-derives its provider from
+            // the manifest, so this row's fingerprint is honoured by `up`
+            // and invisible to `status`.
+            staleness: false,
+        }
+    }
+    fn project_root(&self) -> &Path {
+        &self.root
+    }
+    fn sandbox_name(&self) -> &str {
+        &self.sandbox
+    }
+    fn mutate_to_drift(&mut self) {
+        // This row's "environment definition" is the directory it owns, and
+        // its fingerprint is supplied by the fixture rather than read off a
+        // provider manifest -- so drifting means changing what the row will
+        // report, which the marker file below stands in for.
+        let p = self.dir.join("fingerprint");
+        let current = std::fs::read_to_string(&p).unwrap_or_default();
+        std::fs::write(&p, format!("{current}drift\n")).unwrap();
+    }
+
+    /// Through the seam, because this row has no provider to name.
+    fn bring_up(&self, opts: &devcroft::lifecycle::UpOptions) -> UpResult {
+        let manifest = self.manifest();
+        devcroft::test_support::up_with_provider(&manifest, &self.root, opts, self)
+    }
+}
+
+/// The row is its own `ProviderEntry`: it resolves to the directory it
+/// built, fingerprints from the marker `mutate_to_drift` edits, and reports
+/// a **real provider's name** -- `static_name` becomes `Origin::Provider` in
+/// `policy --render`, and `provider-injection-seam` requires no origin token
+/// exist that a real provider could not emit.
+#[cfg(feature = "test-support")]
+impl devcroft::provider::ProviderEntry for NixFreeRow {
+    fn resolve(
+        &self,
+        _project_root: &Path,
+    ) -> Result<devcroft::provider::Resolution, devcroft::provider::ProviderError> {
+        let mut env = std::collections::BTreeMap::new();
+        env.insert(
+            "PATH".to_string(),
+            self.dir.join("bin").to_string_lossy().into_owned(),
+        );
+        Ok(devcroft::provider::Resolution {
+            env,
+            unset: Vec::new(),
+            read_only_grants: vec![self.dir.to_string_lossy().into_owned()],
+            activation_script: None,
+            services: devcroft::provider::ServiceSupport::Unsupported,
+            ran_activation_hook: false,
+        })
+    }
+
+    fn fingerprint(
+        &self,
+        _project_root: &Path,
+    ) -> Result<String, devcroft::provider::ProviderError> {
+        Ok(std::fs::read_to_string(self.dir.join("fingerprint")).unwrap_or_default())
+    }
+
+    fn static_name(&self) -> &'static str {
+        "nix"
+    }
+}
+
+/// Runs `shell -c "exit 0"` and waits at most `timeout` for it.
+///
+/// **The bounded wait is the point, not defensiveness.** A copied macOS
+/// platform binary does not fail when executed -- it hangs, measured -- and
+/// a fixture that blocks forever on setup reads as a slow test rather than
+/// a broken row. So the row proves its shell answers before handing it to
+/// `up`, and a shell that does not answer makes the row unavailable.
+///
+/// **It does not reap the process it gave up on, and that is deliberate.**
+/// Measured: a copied macOS platform binary lands in state `UE` --
+/// uninterruptible kernel wait, exiting -- where it survives `SIGKILL`.
+/// `kill()` then `wait()` therefore blocks forever, which is how the first
+/// version of this function turned a five-second bound into a ten-minute
+/// hang. The signal is still sent, on the chance the process is merely
+/// slow; nothing waits for the answer.
+///
+/// The consequence worth knowing: probing a bad candidate can leak an
+/// unkillable process for the life of the machine. So this is a last line
+/// of defence, not a licence to point the row at a copied system binary --
+/// there is no userspace way to clean that up afterwards.
+#[cfg(feature = "test-support")]
+fn shell_answers(shell: &Path, timeout: std::time::Duration) -> bool {
+    let Ok(mut child) = Command::new(shell)
+        .args(["-c", "exit 0"])
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+    else {
+        return false;
+    };
+    let deadline = std::time::Instant::now() + timeout;
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => return status.success(),
+            Ok(None) => {
+                if std::time::Instant::now() >= deadline {
+                    // Signalled but deliberately not reaped -- see the doc.
+                    let _ = child.kill();
+                    return false;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(20));
+            }
+            Err(_) => return false,
+        }
+    }
+}
+
+#[cfg(feature = "test-support")]
+fn setup_test_row(tag: &str) -> Result<Box<dyn ProviderFixture>, Unavailable> {
+    let Ok(shell) = std::env::var(ROW_SHELL_ENV) else {
+        return Err(Unavailable(format!(
+            "{ROW_SHELL_ENV} is unset; this row needs a POSIX shell that comes from \
+             neither the nix store nor the host PATH (see add-nix-free-test-row)"
+        )));
+    };
+    let shell = PathBuf::from(shell);
+    if !shell.is_file() {
+        return Err(Unavailable(format!(
+            "{ROW_SHELL_ENV}={} is not a file",
+            shell.display()
+        )));
+    }
+    if !shell_answers(&shell, std::time::Duration::from_secs(5)) {
+        return Err(Unavailable(format!(
+            "{} did not answer `-c 'exit 0'` within 5s; a copied macOS platform \
+             binary hangs exactly like this",
+            shell.display()
+        )));
+    }
+
+    let dir = fixture_root("testrow-env", tag);
+    let bin = dir.join("bin");
+    std::fs::create_dir_all(&bin).unwrap();
+    std::fs::copy(&shell, bin.join("sh"))
+        .map_err(|e| Unavailable(format!("could not place the row's shell: {e}")))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(bin.join("sh"), std::fs::Permissions::from_mode(0o755));
+    }
+    std::fs::write(dir.join("fingerprint"), "base\n").unwrap();
+
+    let root = fixture_root("testrow", tag);
+    let sandbox = format!("fxtest{tag}{}", std::process::id());
+    // No `[env] provider` line: this row drives `up` through the seam, so
+    // the manifest's provider is never consulted. It still needs a manifest
+    // for the sandbox name.
+    std::fs::write(
+        root.join("devcroft.toml"),
+        format!("[sandbox]\nname = {sandbox:?}\n"),
+    )
+    .unwrap();
+
+    Ok(Box::new(NixFreeRow { root, sandbox, dir }))
+}
+
 /// How a row is built: given a tag, either a ready fixture or the reason
 /// this host cannot provide one.
 type SetupFn = fn(&str) -> Result<Box<dyn ProviderFixture>, Unavailable>;
@@ -379,6 +626,11 @@ const ROWS: &[(&str, SetupFn)] = &[
     ("nix", setup_nix),
     ("flox", setup_flox),
     ("devbox", setup_devbox),
+    // Only under `test-support`, because it drives `up` through the
+    // injection seam. A default `cargo test` does not have this row at all,
+    // which is the strongest available form of "it is not the default".
+    #[cfg(feature = "test-support")]
+    ("test", setup_test_row),
 ];
 
 /// The default row when `DEVCROFT_TEST_PROVIDER` is unset.

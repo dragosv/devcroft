@@ -14,7 +14,7 @@ mod common;
 
 use common::for_each_row;
 use devcroft::config::parse;
-use devcroft::lifecycle::{StatePaths, UpOptions, UpOutcome, down, status, up};
+use devcroft::lifecycle::{StatePaths, UpOptions, UpOutcome, down, status};
 
 fn manifest_of(fx: &dyn common::ProviderFixture) -> devcroft::config::Manifest {
     let text = std::fs::read_to_string(fx.project_root().join("devcroft.toml")).unwrap();
@@ -41,7 +41,7 @@ fn up_reports_healthy_and_down_stops_it_on_every_row() {
         let paths = StatePaths::new(fx.sandbox_name()).unwrap();
         let _ = std::fs::remove_dir_all(&paths.root);
 
-        let outcome = up(&manifest, fx.project_root(), &UpOptions::default());
+        let outcome = fx.bring_up(&UpOptions::default());
         assert_eq!(
             outcome.expect("up must succeed on row {}"),
             UpOutcome::Started,
@@ -52,7 +52,7 @@ fn up_reports_healthy_and_down_stops_it_on_every_row() {
         // Idempotent: a second `up` against a healthy sandbox is a no-op,
         // not a second keeper.
         assert_eq!(
-            up(&manifest, fx.project_root(), &UpOptions::default()).unwrap(),
+            fx.bring_up(&UpOptions::default()).unwrap(),
             UpOutcome::AlreadyUp,
             "row {}: up must be idempotent",
             fx.name()
@@ -91,12 +91,23 @@ fn a_drifted_environment_is_reported_stale_on_every_row() {
     }
 
     for_each_row("stale", |fx| {
+        // Gated on the capability, never on the row's name. The injected row
+        // cannot express this: `up` takes its provider through the seam but
+        // `status` re-derives one from the manifest, so the row's fingerprint
+        // is honoured going in and ignored coming out.
+        if !fx.capabilities().staleness {
+            eprintln!(
+                "skipping stale on row {}: no staleness capability",
+                fx.name()
+            );
+            return;
+        }
         let manifest = manifest_of(fx);
         let paths = StatePaths::new(fx.sandbox_name()).unwrap();
         let _ = std::fs::remove_dir_all(&paths.root);
 
         assert_eq!(
-            up(&manifest, fx.project_root(), &UpOptions::default()).unwrap(),
+            fx.bring_up(&UpOptions::default()).unwrap(),
             UpOutcome::Started
         );
 
@@ -149,12 +160,11 @@ fn every_row_resolves_its_shell_out_of_the_closure() {
     }
 
     for_each_row("shell", |fx| {
-        let manifest = manifest_of(fx);
         let paths = StatePaths::new(fx.sandbox_name()).unwrap();
         let _ = std::fs::remove_dir_all(&paths.root);
 
         assert_eq!(
-            up(&manifest, fx.project_root(), &UpOptions::default()).unwrap(),
+            fx.bring_up(&UpOptions::default()).unwrap(),
             UpOutcome::Started
         );
         let meta = devcroft::lifecycle::read_meta(&paths.meta)
