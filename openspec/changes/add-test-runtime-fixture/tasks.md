@@ -37,10 +37,20 @@
       escaped. `ResolvedShell::grant` is already an `Option` for exactly this
       anticipated case. Lands in group 5 with the row that needs it; nothing
       in groups 1-4 depends on it.
-- [ ] 0.4 If 0.3 chose to generalize the guard: measure that a host shell is still
+- [x] 0.4 If 0.3 chose to generalize the guard: measure that a host shell is still
       refused afterwards, against `samples/flox-services-sample` — the case whose
       first version of this function picked `/usr/bin/dash`. A guard that admits
       the fixture *and* the host has removed the invariant rather than widened it.
+      → **Measured, both directions.** `resolve` now takes the provider's
+      declared `read_only_grants`; a `/usr/local/bin:/usr/bin:/bin` PATH stays
+      refused when the provider grants `/nix/store`, and a shell inside a
+      declared grant is accepted. The second is the control: a guard that
+      refused *everything* would pass the first on its own.
+      Not a widening for real providers, established by construction rather
+      than belief — `capture::store_grants` returns a store-rooted path in
+      every branch, so all three select identical candidates. CLAUDE.md's
+      shell invariant is updated, since it was the authority on the old
+      wording.
 
 ## 1. The seam
 
@@ -213,7 +223,7 @@
       suite exercises a real Nix environment; CI has independent provider-contract
       jobs. Place it after `add-mount-isolation`, before 0.3, and state that it is
       **not** a gate on cutting 0.1.0.
-- [ ] 7.2 If task 0 changed `shell::resolve`'s guard, update `CLAUDE.md`'s shell
+- [x] 7.2 If task 0 changed `shell::resolve`'s guard, update `CLAUDE.md`'s shell
       invariant to describe what the guard now is. That paragraph is currently the
       authority on it, and a stale invariant is worse than an unwritten one.
 - [ ] 7.3 Record the outcome in design.md's Open Questions — including, if it turns

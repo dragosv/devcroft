@@ -370,10 +370,25 @@ flox/nix/devbox manifest declares one, because under a plain
 `own-policy-baseline` removed host toolchain access without replacing it,
 so all three silently began resolving to a host path the policy denies.
 `src/shell.rs` resolves an absolute shell at `up`, from the closure: the
-resolved `PATH` **only where the hit is inside `/nix/store`** (that guard
-is the whole correctness — a provider's `PATH` ends in the host's own
-directories, and the first version of this picked `/usr/bin/dash`), else
-a `bin/sh` from the closure's requisites. The path is recorded in
+resolved `PATH` **only where the hit is inside the store or inside a path
+the provider declared in `read_only_grants`** (that guard is the whole
+correctness — a provider's `PATH` ends in the host's own directories, and
+the first version of this picked `/usr/bin/dash`), else a `bin/sh` from
+the closure's requisites.
+
+The guard used to say `/nix/store` literally; `add-test-runtime-fixture`
+generalized it to the declared grants, because the rule it actually
+enforces is "the shell is inside something the sandbox is granted and can
+execute" and the store prefix was a proxy for that. **Not a widening in
+practice, measured**: all three providers get their grants from
+`capture::store_grants`, which returns a store-rooted path in every branch,
+so the two formulations select identical candidates for flox, nix and
+devbox. What it unblocks is a provider — or a test row — whose environment
+is not store-backed; `ResolvedShell::grant` had been an `Option` for that
+anticipated case all along. Both halves are asserted
+(`a_host_shell_is_still_refused_when_the_provider_grants_the_store`, and
+its control `a_shell_inside_a_declared_grant_is_accepted`), because a guard
+that refuses everything would pass the first test alone. The path is recorded in
 `Meta.shell`, handed to the keeper as `DEVCROFT_SHELL`, and its store
 root is folded into the provider grants **in `up()`**, so `Meta` and the
 compiled profile cannot disagree — `policy --render` renders from `Meta`,

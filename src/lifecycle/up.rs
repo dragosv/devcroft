@@ -257,16 +257,17 @@ pub fn up_with_provider(
     // `Meta` with everything else the client side needs later, and so a
     // sandbox that has no shell at all fails before any state that
     // implies a working one is written.
-    let shell = crate::shell::resolve(&resolution.env).ok_or_else(|| {
-        UpError::Provider(crate::provider::ProviderError::ResolutionFailed(
-            "no POSIX shell found in this environment or its closure, and devcroft \
+    let shell =
+        crate::shell::resolve(&resolution.env, &resolution.read_only_grants).ok_or_else(|| {
+            UpError::Provider(crate::provider::ProviderError::ResolutionFailed(
+                "no POSIX shell found in this environment or its closure, and devcroft \
              needs one for `shell`, SSH login sessions and services; add one to the \
              environment manifest (e.g. `flox install bash`)\nsearched: the store \
              entries on the resolved environment's PATH, then their closure \
              requisites"
-                .to_string(),
-        ))
-    })?;
+                    .to_string(),
+            ))
+        })?;
 
     // The provider's own grants plus the store path the resolved shell
     // lives in, folded together *here* rather than at compile time so

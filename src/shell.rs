@@ -76,11 +76,49 @@ pub struct ResolvedShell {
 
 /// Resolves a shell for `env`, preferring one the project supplies.
 ///
+/// `grants` is what the provider declared in
+/// [`Resolution::read_only_grants`](crate::provider::Resolution) — the
+/// paths this sandbox will be allowed to read and execute from.
+///
 /// Returns `None` only when neither source has one, which `up` reports
 /// rather than letting the sandbox come up with `shell`, `ssh` and
 /// services all broken in ways that name nothing.
-pub fn resolve(env: &BTreeMap<String, String>) -> Option<ResolvedShell> {
-    resolve_on_path(env).or_else(|| resolve_in_closure(env))
+///
+/// **Why `grants` rather than a hardcoded `/nix/store`.** The rule this
+/// function enforces is *"the shell must be inside something the sandbox is
+/// granted and can execute"*; the store prefix was a proxy for that, tight
+/// only because every closure-tier provider grants store paths and nothing
+/// else. Measured, so this is not a widening in practice: all three
+/// providers get their grants from `capture::store_grants`, which returns a
+/// `/nix/store`-rooted path in every branch — so for flox, nix and devbox
+/// the two formulations select exactly the same candidates.
+///
+/// What it *does* unblock is a provider whose environment is not
+/// store-backed at all. `ResolvedShell::grant` has been an `Option` for
+/// precisely that anticipated case since before this change.
+///
+/// The guard protects **correctness, not a boundary**, which is what makes
+/// generalizing it the right call rather than a risk: its recorded failure
+/// was picking `/usr/bin/dash` and every service then dying with
+/// `permission denied` — a sandbox that comes up broken, not one that
+/// escapes. A host shell is still refused, because no provider declares a
+/// grant containing one.
+pub fn resolve(env: &BTreeMap<String, String>, grants: &[String]) -> Option<ResolvedShell> {
+    resolve_on_path(env, grants).or_else(|| resolve_in_closure(env))
+}
+
+/// The grant `candidate` lives under, if any — the generalized form of
+/// [`store_root`].
+///
+/// Compares canonicalized paths on both sides so a declared grant that is
+/// itself a symlink (macOS's `/tmp` → `/private/tmp` being the case this
+/// project keeps meeting) matches the resolved candidate.
+fn granted_root(candidate: &Path, grants: &[String]) -> Option<PathBuf> {
+    grants.iter().find_map(|g| {
+        let root = Path::new(g);
+        let real_root = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
+        candidate.starts_with(&real_root).then_some(real_root)
+    })
 }
 
 /// A `PATH` search for [`SHELL_NAME`] through the *resolved* environment,
@@ -102,7 +140,7 @@ pub fn resolve(env: &BTreeMap<String, String>) -> Option<ResolvedShell> {
 /// picked `/usr/bin/dash`, recorded it in `meta.json`, and every service
 /// then died with `fork/exec /usr/bin/dash: permission denied` — the
 /// original bug, moved rather than fixed.
-pub fn resolve_on_path(env: &BTreeMap<String, String>) -> Option<ResolvedShell> {
+pub fn resolve_on_path(env: &BTreeMap<String, String>, grants: &[String]) -> Option<ResolvedShell> {
     let path = env.get("PATH")?;
     for dir in path.split(':').filter(|d| !d.is_empty()) {
         let candidate = Path::new(dir).join(SHELL_NAME);
@@ -114,7 +152,10 @@ pub fn resolve_on_path(env: &BTreeMap<String, String>) -> Option<ResolvedShell> 
         // recorded in `meta.json` is the store path itself, which
         // `up --recreate` cannot repoint out from under a client.
         let real = candidate.canonicalize().unwrap_or(candidate);
-        if let Some(root) = store_root(&real) {
+        // The store first, so a store-backed shell keeps reporting its own
+        // store entry as the grant rather than the broader `/nix/store` a
+        // provider declares — narrower, and unchanged from before.
+        if let Some(root) = store_root(&real).or_else(|| granted_root(&real, grants)) {
             return Some(ResolvedShell {
                 path: real,
                 grant: Some(root.to_string_lossy().into_owned()),
@@ -242,6 +283,61 @@ mod tests {
         BTreeMap::from([("PATH".to_string(), path.to_string())])
     }
 
+    /// **The measurement that gated generalizing the guard**
+    /// (`add-test-runtime-fixture` task 0.4): a shell on the host's own
+    /// `PATH` must stay refused after the change, or the guard has been
+    /// removed rather than widened.
+    ///
+    /// The concrete case, not an abstract one: this reproduces what the
+    /// first version of `resolve_on_path` actually did against
+    /// `samples/flox-services-sample` — picked `/usr/bin/dash`, recorded it
+    /// in `meta.json`, and every service then died with
+    /// `fork/exec /usr/bin/dash: permission denied`.
+    ///
+    /// It is asserted against the grants a real provider declares
+    /// (`/nix/store`), because that is the only shape any of the three
+    /// produce — `capture::store_grants` returns a store-rooted path in
+    /// every branch.
+    #[test]
+    fn a_host_shell_is_still_refused_when_the_provider_grants_the_store() {
+        let store_grant = vec!["/nix/store".to_string()];
+        assert!(
+            resolve_on_path(&env_with_path("/usr/local/bin:/usr/bin:/bin"), &store_grant).is_none(),
+            "a host shell must not become resolvable just because the provider \
+             declared a grant; the guard would be removed, not widened"
+        );
+    }
+
+    /// The other half of the same measurement: the generalization does what
+    /// it was for. A grant that actually contains the shell admits it.
+    ///
+    /// Without this the previous test could pass for the wrong reason — a
+    /// guard that refuses *everything* also refuses host shells.
+    #[test]
+    fn a_shell_inside_a_declared_grant_is_accepted() {
+        let dir = std::env::temp_dir().join(format!("dcshellgrant{}", std::process::id()));
+        let bin = dir.join("bin");
+        std::fs::create_dir_all(&bin).unwrap();
+        let sh = bin.join(SHELL_NAME);
+        std::fs::write(&sh, "#!/bin/sh\nexit 0\n").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&sh, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        let dir = dir.canonicalize().unwrap();
+
+        let env = env_with_path(&dir.join("bin").to_string_lossy());
+        let grants = vec![dir.to_string_lossy().into_owned()];
+
+        let resolved = resolve_on_path(&env, &grants);
+        let _ = std::fs::remove_dir_all(&dir);
+
+        let resolved = resolved.expect("a shell inside a declared grant must resolve");
+        assert!(resolved.path.starts_with(&dir));
+        assert_eq!(resolved.grant, Some(dir.to_string_lossy().into_owned()));
+    }
+
     #[test]
     fn store_root_reduces_a_deep_path_to_its_store_entry() {
         assert_eq!(
@@ -269,7 +365,7 @@ mod tests {
 
     #[test]
     fn resolve_on_path_finds_nothing_without_a_path_variable() {
-        assert!(resolve_on_path(&BTreeMap::new()).is_none());
+        assert!(resolve_on_path(&BTreeMap::new(), &[]).is_none());
     }
 
     /// The regression that matters most here, because the first version
@@ -292,7 +388,7 @@ mod tests {
             std::fs::set_permissions(&sh, std::fs::Permissions::from_mode(0o755)).unwrap();
         }
 
-        assert!(resolve_on_path(&env_with_path(&dir.to_string_lossy())).is_none());
+        assert!(resolve_on_path(&env_with_path(&dir.to_string_lossy()), &[]).is_none());
 
         std::fs::remove_dir_all(&dir).ok();
     }
@@ -302,7 +398,7 @@ mod tests {
     /// nothing.
     #[test]
     fn the_hosts_own_path_yields_no_shell() {
-        assert!(resolve_on_path(&env_with_path("/usr/local/bin:/usr/bin:/bin")).is_none());
+        assert!(resolve_on_path(&env_with_path("/usr/local/bin:/usr/bin:/bin"), &[]).is_none());
     }
 
     /// A non-executable file named `sh` is not a shell — otherwise a
@@ -316,7 +412,7 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join(SHELL_NAME), "not a program").unwrap();
 
-        assert!(resolve_on_path(&env_with_path(&dir.to_string_lossy())).is_none());
+        assert!(resolve_on_path(&env_with_path(&dir.to_string_lossy()), &[]).is_none());
 
         std::fs::remove_dir_all(&dir).ok();
     }
