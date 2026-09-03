@@ -6,17 +6,37 @@
 > rather than degrading under it. Everything in group 5 waits on this answer.
 > The real-provider matrix (groups 1–4) does not, and must not be delayed by it.
 
-- [ ] 0.1 Build a fixture whose `PATH` points outside `/nix/store` and call the
+- [x] 0.1 Build a fixture whose `PATH` points outside `/nix/store` and call the
       real `up`. Confirm the failure is where design.md reads it: `shell::resolve`
       returning `None` at `up.rs:226`, not a weaker outcome. Record the exact
       error a developer would see.
-- [ ] 0.2 Confirm the second refusal independently: a row declaring services with
+      → **Confirmed.** `shell::resolve` returns `None` for `PATH=/bin:/usr/bin`
+      *and* for a real `sh` copied into a non-store directory; the control
+      (`/nix/store/…/bin`) returns `Some(bash-5.3p15)`, so the function works
+      and the refusal is the guard. `up.rs:226` turns that into
+      `ProviderError::ResolutionFailed("no POSIX shell found in this
+      environment or its closure…")`.
+- [x] 0.2 Confirm the second refusal independently: a row declaring services with
       no `process-compose` in its resolved environment fails at layer `provider`
       (`up.rs:836`), and that a host-installed `process-compose` does *not*
       satisfy it (`services::resolve_in_env` ignores the host `PATH`).
-- [ ] 0.3 Decide between D4's three options — generalize the store guard to "inside
+      → **Half wrong, and the correction matters.** `resolve_in_env` has *no
+      store check*: a `process-compose` in an ordinary non-store directory
+      resolves fine. What it ignores is `up`'s **ambient** `PATH`, not
+      non-store paths. So `process-compose` was never a blocker for the
+      synthetic row — the cost is "ship a binary", not "have a store".
+      design.md D4 is corrected rather than annotated.
+- [x] 0.3 Decide between D4's three options — generalize the store guard to "inside
       a declared provider grant", drop the synthetic row, or scope it below `up`.
       Write the measured answer into design.md before group 5 starts.
+      → **Decided: generalize the guard**, from "under `/nix/store`" to
+      "inside a path the provider declared in `read_only_grants`". The
+      reframing that settles it: the guard protects *correctness*, not a
+      boundary — its recorded failure was a sandbox that came up broken
+      (`/usr/bin/dash`, every service `permission denied`), not one that
+      escaped. `ResolvedShell::grant` is already an `Option` for exactly this
+      anticipated case. Lands in group 5 with the row that needs it; nothing
+      in groups 1-4 depends on it.
 - [ ] 0.4 If 0.3 chose to generalize the guard: measure that a host shell is still
       refused afterwards, against `samples/flox-services-sample` — the case whose
       first version of this function picked `/usr/bin/dash`. A guard that admits
@@ -24,23 +44,54 @@
 
 ## 1. The seam
 
-- [ ] 1.1 Extract `up_with_provider(...)` from `up`'s body at the provider-selection
+- [x] 1.1 Extract `up_with_provider(...)` from `up`'s body at the provider-selection
       boundary, leaving public `up()` as validate → build `ProviderKind` → delegate.
       Verify by diffing: no enforcement step moved out of the shared path.
-- [ ] 1.2 Cover all four provider entry points, not resolution alone (design.md D1's
+      → Done, with one refinement to design.md D1: `up_with_provider` holds
+      **`up`'s entire body**, not just the part after resolution. D1's wording
+      would have left the lifecycle lock and the health/recreate decision in
+      the wrapper, so an injected caller would have skipped both — the exact
+      thing `provider-injection-seam` forbids. `up()` is now selection plus
+      delegation and nothing else.
+- [x] 1.2 Cover all four provider entry points, not resolution alone (design.md D1's
       table): resolution, `manifest_fingerprint`, `static_name` for rule origins, and
       `services_declared_by_flox`. Verify each is reachable from an injected row.
-- [ ] 1.3 Add the non-default `test-support` feature and a `#[doc(hidden)] pub mod
+      → **Three entry points, not four.** `ProviderEntry` carries `resolve`,
+      `fingerprint` and `static_name`. `services_declared_by_flox` is *not*
+      dispatch: it probes the project root for a flox environment declaring
+      services regardless of which provider the manifest names — that
+      asymmetry is the check's whole purpose — so it is a property of the
+      project, and abstracting it would misdescribe it.
+      Verified end-to-end by `tests/seam_injection.rs`, which drives a real
+      `up` with a row that reports a *different* provider than the manifest,
+      and both assertions were teeth-checked by reverting each mechanism and
+      confirming the test fails.
+- [x] 1.3 Add the non-default `test-support` feature and a `#[doc(hidden)] pub mod
       test_support`. Verify the seam is absent from a default `cargo build` —
       inspect the built binary, not just the feature flag.
-- [ ] 1.4 Confirm `ProviderKind` gains no variant and `config::parse` accepts no new
+- [x] 1.4 Confirm `ProviderKind` gains no variant and `config::parse` accepts no new
       `env.provider` value. Verify with a test asserting a manifest naming a fixture
       is rejected, and that the message still distinguishes "not yet supported" from
       "out of scope by design".
-- [ ] 1.5 Add `up_with_resolution(...)` for the narrower band that never needs `up`
+      → Done: `a_fixture_name_is_not_selectable_from_a_manifest` rejects
+      `test`, `fixture` and `testprov`. The pre-existing `host` (out of scope)
+      and `mise` (not yet supported) tests already cover the distinction and
+      are untouched.
+- [~] 1.5 Add `up_with_resolution(...)` for the narrower band that never needs `up`
       (hooks, `services::render_config`, keeper-direct, `spawn_keeper`). This is the
       cheap half of design.md D1 and needs none of the above — land it first if the
       seam work stalls.
+      → **Moot, and deliberately not built.** It was the fallback for the seam
+      stalling, and the seam did not stall. The two uses it was meant to serve
+      are both already covered: a test that wants to skip provider resolution
+      but still run `up` writes a trivial `ProviderEntry`, which is what
+      `tests/seam_injection.rs` does in ~20 lines; and the band that never
+      calls `up` at all (`services::render_config`, keeper-direct,
+      `spawn_keeper`) needs no seam because those functions are directly
+      reachable already. Adding it now would be a second public entry point
+      into `up` whose only distinction is covering *less* of the real path —
+      the drift risk design.md D1 argues against, introduced voluntarily.
+      Revisit only if a concrete test wants it and cannot use a row.
 
 ## 2. The fixture contract
 

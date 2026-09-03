@@ -16,7 +16,7 @@ use std::time::{Duration, Instant};
 
 use crate::config::Manifest;
 use crate::policy;
-use crate::provider::{Provider, ProviderError, ProviderKind, Resolution, ServiceSupport};
+use crate::provider::{ProviderError, ProviderKind, Resolution, ServiceSupport};
 
 use super::hooks;
 use super::state::{self, Health, StatePaths};
@@ -112,6 +112,43 @@ pub fn up(
     project_root: &Path,
     opts: &UpOptions,
 ) -> Result<UpOutcome, UpError> {
+    // `env.provider` is already validated and normalized by `config::parse`
+    // (the only place a `Manifest` is constructed), so this only ever
+    // dispatches to a real implementation. Selecting the provider is the
+    // *whole* of what this function does that `up_with_provider` does not —
+    // see that function's doc for why the split is drawn exactly here.
+    let provider = ProviderKind::from_name(&manifest.env.provider).map_err(UpError::Provider)?;
+    up_with_provider(manifest, project_root, opts, &provider)
+}
+
+/// `up`, with the provider supplied rather than selected from the manifest.
+///
+/// **This holds `up`'s entire body, not just the part after resolution**,
+/// and that is the requirement rather than a convenience: the lifecycle
+/// lock, the health/recreate decision, the deny-overlap validation, the
+/// mount-isolation probe, listener-before-restriction ordering and hook
+/// ordering all live in here. A seam drawn *after* those would let an
+/// injected caller skip them and still call itself a test of `up`
+/// (`provider-injection-seam`: "the injected path is the enforcement
+/// path"). One function with two callers cannot drift; two functions that
+/// must be kept in step can, and this project designs that class of bug out
+/// rather than watching for it — the same reasoning that makes
+/// `resolved_grants` and `to_capability_set` share one resolver.
+///
+/// **Reachable only through the `test-support` feature.** The function is
+/// `pub` because a `pub(crate)` item cannot be re-exported, but its module
+/// is crate-private, so in a default build there is no path to it from
+/// outside — the ordinary facade pattern. `crate::test_support` re-exports
+/// it, and that module does not exist unless the feature is on. The feature
+/// carries this rather than `cfg(test)` because the integration suite
+/// compiles this crate as an ordinary dependency, where `cfg(test)` is
+/// false.
+pub fn up_with_provider(
+    manifest: &Manifest,
+    project_root: &Path,
+    opts: &UpOptions,
+    provider: &dyn crate::provider::ProviderEntry,
+) -> Result<UpOutcome, UpError> {
     let paths = StatePaths::new(&manifest.sandbox.name)?;
     // Held for the rest of this function — see `acquire_lifecycle_lock`'s
     // doc for the concurrent-`up` race this closes. Every `?` and early
@@ -158,12 +195,9 @@ pub fn up(
     // Host-side, before any restriction applies (design.md decision 2):
     // the resolved environment and its store grants are captured now,
     // once, and folded into the profile/bundle the sandbox will be
-    // confined to. `env.provider` is already validated and normalized by
-    // config::parse (the only place a Manifest is constructed), so
-    // `from_name` here only ever dispatches to a real implementation.
-    // This step is identical for both tiers — the two-phase execution
-    // model (CLAUDE.md) is backend-generic, not just process-tier.
-    let provider = ProviderKind::from_name(&manifest.env.provider).map_err(UpError::Provider)?;
+    // confined to. This step is identical for both tiers — the two-phase
+    // execution model (CLAUDE.md) is backend-generic, not just
+    // process-tier.
     let resolution = provider.resolve(project_root).map_err(UpError::Provider)?;
 
     // Recorded now so `status` (task 4.3) can later tell whether the
@@ -171,9 +205,9 @@ pub fn up(
     // backend it resolved to, without needing the manifest or project
     // root passed back in — the keeper itself is never told its own
     // state dir, so it can't answer either.
-    let env_fingerprint =
-        crate::provider::manifest_fingerprint(&manifest.env.provider, project_root)
-            .map_err(UpError::Provider)?;
+    let env_fingerprint = provider
+        .fingerprint(project_root)
+        .map_err(UpError::Provider)?;
 
     // ssh spec: "0700 state dir" — set on creation (mode only applies to
     // dirs `create_dir_all`/`DirBuilder` actually create, so an
@@ -274,6 +308,7 @@ pub fn up(
     )?;
 
     up_process(
+        provider,
         manifest,
         project_root,
         &paths,
@@ -347,6 +382,12 @@ pub const RESOLVED_BACKEND: &str = "process";
 // reason, as `spawn_keeper` below.
 #[allow(clippy::too_many_arguments)]
 fn up_process(
+    // Passed down rather than re-derived from `manifest.env.provider`: this
+    // is the third of the provider entry points `up` uses (rule
+    // attribution), and a seam that covered resolution and fingerprinting
+    // but let this one fall back to a name lookup would attribute an
+    // injected row's grants to whatever the manifest happened to say.
+    provider: &dyn crate::provider::ProviderEntry,
     manifest: &Manifest,
     project_root: &Path,
     paths: &StatePaths,
@@ -369,12 +410,7 @@ fn up_process(
         .ok_or_else(|| io::Error::other("devcroft executable path has no parent directory"))?;
     let compiled = policy::compile(manifest)
         .with_keeper_exe_grant(exe_dir.to_string_lossy().into_owned())
-        .with_provider_grants(
-            crate::provider::ProviderKind::from_name(&manifest.env.provider)
-                .map_err(UpError::Provider)?
-                .static_name(),
-            provider_grants,
-        );
+        .with_provider_grants(provider.static_name(), provider_grants);
     // `proxy_port` was already spawned/reused and recorded in `Meta` by
     // the caller (`up`), before this function ever ran — see its own
     // module-level comment for why the proxy has to exist independently

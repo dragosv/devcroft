@@ -9,7 +9,11 @@ mod hooks;
 mod state;
 mod status;
 mod terminate;
-mod up;
+// `pub(crate)` so the crate root can name the path; the module is still not
+// public API. `test_support` re-exports the single seam function out of it
+// under the `test-support` feature, and nothing else in here is reachable
+// from outside the crate.
+pub(crate) mod up;
 
 pub use hooks::HookError;
 pub use state::{Health, Meta, StatePaths, client_key_paths, health, read_meta};

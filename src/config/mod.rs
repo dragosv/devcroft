@@ -618,6 +618,31 @@ mod tests {
         ));
     }
 
+    /// `add-test-runtime-fixture` introduces an internal seam that lets
+    /// tests drive `up` with a provider of their own. This asserts the half
+    /// of that which must stay *impossible*: the seam is an internal API,
+    /// not a schema extension, so no fixture name may become selectable
+    /// from a manifest (`provider-injection-seam`: "not reachable from a
+    /// manifest or the published binary").
+    ///
+    /// Worth a test rather than a comment because the pressure to relax it
+    /// is real and arrives later — once a fixture exists, making it
+    /// nameable is a one-line change that would silently reintroduce the
+    /// passthrough provider devcroft does not have.
+    #[test]
+    fn a_fixture_name_is_not_selectable_from_a_manifest() {
+        for name in ["test", "fixture", "testprov"] {
+            let err = parse(&format!(
+                "[sandbox]\nname = \"myproj\"\n[env]\nprovider = {name:?}\n"
+            ))
+            .unwrap_err();
+            assert!(
+                matches!(err, ConfigError::InvalidProvider(_)),
+                "provider {name:?} must be rejected by the parser, got {err:?}"
+            );
+        }
+    }
+
     #[test]
     fn nix_provider_is_accepted() {
         let (m, _) = parse("[sandbox]\nname = \"myproj\"\n[env]\nprovider = \"nix\"\n").unwrap();

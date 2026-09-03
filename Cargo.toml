@@ -38,6 +38,14 @@ categories = ["command-line-utilities", "development-tools"]
 # is a design proof for this repository, not a program anyone installs.
 include = ["/src/**/*.rs", "!/src/bin/spike.rs", "/README.md", "/LICENSE-APACHE", "/NOTICE"]
 
+[features]
+# Off by default, and that is the whole point: `tests/` compiles this crate
+# as an ordinary dependency, *without* `cfg(test)`, so a test seam cannot
+# ride on `cfg(test)`. A feature can carry it — but only while it stays out
+# of a default build, so the published binary contains no way to drive `up`
+# with a provider no manifest could name.
+test-support = []
+
 [dependencies]
 base64 = "0.22.1"
 libc = "0.2.189"

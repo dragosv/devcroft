@@ -37,3 +37,24 @@ pub mod proxy;
 pub mod services;
 pub mod shell;
 pub mod ssh;
+
+/// The test-only seam, compiled only under the non-default `test-support`
+/// feature.
+///
+/// **Why a feature and not `cfg(test)`:** the integration suite in `tests/`
+/// compiles this crate as an ordinary dependency, so `cfg(test)` is false
+/// there and cannot carry a seam those tests need. A feature can — and by
+/// staying off by default it keeps the seam out of `cargo build` and out of
+/// the published binary, which is what makes "no non-reproducible mode" and
+/// "no passthrough provider" still literally true rather than nearly true.
+///
+/// Nothing here widens the product surface: `ProviderKind` gains no variant,
+/// `config::parse` accepts no new `env.provider` value, and a fixture is not
+/// nameable from a `devcroft.toml`. The seam is an internal API, not a
+/// schema extension.
+#[cfg(feature = "test-support")]
+#[doc(hidden)]
+pub mod test_support {
+    pub use crate::lifecycle::up::up_with_provider;
+    pub use crate::provider::ProviderEntry;
+}

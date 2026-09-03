@@ -12,10 +12,10 @@ green `cargo test` is not the same as a run that tested anything").
 Everything below was checked against the code rather than taken from the
 proposal's framing, and two checks changed the shape of the design.
 
-**Every claim here about `up`'s behaviour is read from the source at the
-line cited. Nothing in this document has been run yet** — Open Question 1
-is the spike that decides whether the cheap row can exist at all, and no
-task after it assumes the answer.
+**Claims about `up`'s behaviour were read from the source at the line cited,
+and Open Question 1's spike has since measured them.** The measurement
+confirmed one blocker and dissolved the other — see D4, which is corrected
+rather than merely annotated.
 
 ## Goals / Non-Goals
 
@@ -115,40 +115,63 @@ If the default row's setup fails, the run **fails loudly** with the
 fallback would rebuild the exact failure mode this change exists to remove:
 green, and nothing ran.
 
-## D4 — The synthetic row is blocked by two of `up`'s own invariants, and they refuse rather than degrade
+## D4 — One invariant blocks the synthetic row. The other one does not. (MEASURED)
 
-**This is the finding that most changes the proposal as originally argued**,
-and it is why Open Question 1 gates the whole cheap-row half.
+This section was written from a source reading that got the second half
+wrong, and the spike corrected it. Both are stated, because the difference
+changes what the cheap row costs.
 
-- **`shell::resolve` (up.rs:226).** Both halves are store-bound:
-  `resolve_on_path` accepts a `PATH` hit **only if it canonicalizes under
-  `/nix/store`** (`STORE_PREFIX`), and `resolve_in_closure` walks
-  `nix-store --query --requisites`. The result is `ok_or_else`'d into a hard
-  error. So a fixture whose shell is a static binary outside the store does
-  not weaken an invariant — **`up` fails outright**. The guard is deliberate
-  and measured: without it this function picked `/usr/bin/dash` for
-  `samples/flox-services-sample` and every service died.
-- **`prepare_services` (up.rs:836).** Fails at layer `provider` unless
-  `process-compose` resolves *from the provider's own environment*
-  (`services::resolve_in_env`, which deliberately ignores the host `PATH`).
+**Measured on macOS 15.7.4, calling the real functions:**
 
-**Three ways out, and the choice is deferred to the spike rather than
-guessed:**
+| input | `shell::resolve` | `services::resolve_in_env` |
+|---|---|---|
+| `PATH=/bin:/usr/bin` (real `/bin/sh` present) | **`None`** | `None` |
+| a real `sh` copied into a non-store dir | **`None`** | — |
+| a `process-compose` in a non-store dir | — | **`Some(...)`** |
+| a genuine `/nix/store/…/bin` | `Some(bash-5.3p15)` | — |
 
-1. **Generalize the guard from `/nix/store` to "inside a path the provider
-   declared".** Arguably closer to the invariant's actual intent — the rule
-   is "the shell comes from the environment, not the host", and the store
-   prefix is a proxy for that. Attractive, and *not* to be done casually:
-   it edits the function `CLAUDE.md` calls "the whole correctness", so it
-   needs its own measurement showing a host shell is still refused.
-2. **Ship the synthetic row a real store-shaped closure** — i.e. it stops
-   being no-Nix, which defeats its purpose.
-3. **Scope the synthetic row out of `up` entirely**, restricting it to the
-   band that never calls `up` (keeper-direct, `services::render_config`,
-   hooks, policy compilation). Honest, much cheaper, and covers less.
+**The shell is a hard blocker, exactly as read.** Both routes are
+store-bound: `resolve_on_path` accepts a `PATH` hit only if it canonicalizes
+under `/nix/store` (`STORE_PREFIX`), and `resolve_in_closure` walks store
+requisites. `up.rs:226` turns `None` into a hard error, so a fixture whose
+shell lives outside the store **cannot bring up a sandbox at all**. The
+control run confirms the function is working, not merely returning `None`.
 
-**Nothing downstream assumes which one wins.** The matrix over the three
-real providers is valuable on its own and is not blocked by any of this.
+**`process-compose` is not a blocker, and calling it one was wrong.**
+`services::resolve_in_env` has *no store check* — it takes the resolved
+env's `PATH` and returns the first `process-compose` that is a file. What it
+ignores is `up`'s **ambient** `PATH`, so a host installation cannot make a
+project look ready; but a fixture that puts a real binary on its own env's
+`PATH` satisfies it with no Nix involved. The cost for the synthetic row is
+"ship a binary", not "have a store".
+
+**Decision (task 0.3): generalize the guard, and only when the row that
+needs it is built.**
+
+The reframing that decides it: the store guard protects a *correctness*
+property, not a boundary. Its recorded failure was picking `/usr/bin/dash`
+and then every service dying with `permission denied` — a sandbox that comes
+up broken, not one that escapes. The real rule is **"the shell must be
+inside something the sandbox is granted and can execute"**, and `/nix/store`
+is a proxy for that, tight today because every closure-tier provider grants
+store paths and nothing else.
+
+So the generalization is to accept a shell inside a path the provider
+declared in `read_only_grants` — available at the call site, since
+`up.rs:226` already holds `resolution`. For flox, nix and devbox this
+changes nothing (their grants *are* store paths). The type already
+anticipates this: `ResolvedShell::grant` is an `Option` specifically because
+"a future artifact-tier provider would not be store-backed, and the grant it
+needs is its own to declare".
+
+Rejected: **ship the synthetic row a store-shaped closure** (it stops being
+no-Nix, defeating the point) and **scope the row out of `up` entirely**
+(honest and cheap, but gives up the lifecycle band, which is most of what
+the row exists for). The third stays available as the fallback if task 0.4's
+measurement shows the generalized guard admits a host shell.
+
+**Sequencing**: the guard edit lands in group 5, with the row that needs it,
+not now. Nothing in groups 1–4 depends on it.
 
 ## D5 — Two axes, not one
 
@@ -212,11 +235,11 @@ is a regression in coverage wearing the shape of a migration.
 
 ## Open Questions
 
-1. **Can the synthetic row exist at all?** (D4.) The spike: build a fixture
-   whose `PATH` points outside `/nix/store` and call the real `up`. Confirm
-   it fails at `shell::resolve` as read, then decide between generalizing
-   the guard, dropping the row, or scoping it below `up`. **Everything about
-   the cheap row waits on this; the real-provider matrix does not.**
+1. **~~Can the synthetic row exist at all?~~ ANSWERED — yes, at the cost of
+   one guard change.** Measured (D4): the shell store-guard refuses it and
+   `process-compose` does not. Decided: generalize the guard from "under
+   `/nix/store`" to "inside a path the provider declared", landing in group 5
+   with the row, gated on task 0.4 showing a host shell is still refused.
 2. **Does `=all` earn its cost?** Needs the measured delta — wall-time for
    four rows against one, and how many currently-skipped tests become
    runnable — before it goes anywhere near a required job.

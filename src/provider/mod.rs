@@ -328,6 +328,60 @@ impl Provider for ProviderKind {
     }
 }
 
+/// Everything `up` needs from a provider, in one place.
+///
+/// **Why this exists separately from [`Provider`]:** `up` reaches the
+/// provider through more than resolution. It resolves the environment, it
+/// fingerprints the environment definition for staleness, and it needs the
+/// provider's static name to attribute compiled rules with
+/// `Origin::Provider`. Only the first of those is on `Provider`; the other
+/// two are free functions that dispatch on the provider *name*, so a caller
+/// wanting to supply its own provider had to reach three different places
+/// and could quietly cover only one of them.
+///
+/// `up` therefore takes a `&dyn ProviderEntry` rather than a
+/// `ProviderKind`, and `ProviderKind`'s impl below is the one the published
+/// binary uses. A test fixture supplies its own without `up` growing a
+/// branch, and — the point — without any of `up`'s enforcement steps being
+/// bypassed to get there (`provider-injection-seam`: "the injected path is
+/// the enforcement path").
+///
+/// **Not on this trait, deliberately:** the fourth place `up` touches
+/// provider-shaped state is
+/// [`services_declared_by_flox`], and it is not dispatch. It probes the
+/// *project root* for a flox environment declaring services no matter which
+/// provider the manifest names — that asymmetry is the whole point of the
+/// check — so it is a property of the project, not of the provider, and
+/// abstracting it would misdescribe what it does.
+pub trait ProviderEntry {
+    /// Capture the activation env diff and the store paths to grant.
+    fn resolve(&self, project_root: &Path) -> Result<Resolution, ProviderError>;
+
+    /// Content fingerprint of the environment definition, for staleness.
+    fn fingerprint(&self, project_root: &Path) -> Result<String, ProviderError>;
+
+    /// The name compiled rules are attributed to (`Origin::Provider`), and
+    /// the one `status` records. `&'static str` because `Origin` carries
+    /// one and because it must be a name a real provider could produce —
+    /// see `provider-injection-seam`: no origin token may exist that a real
+    /// provider could not emit.
+    fn static_name(&self) -> &'static str;
+}
+
+impl ProviderEntry for ProviderKind {
+    fn resolve(&self, project_root: &Path) -> Result<Resolution, ProviderError> {
+        Provider::resolve(self, project_root)
+    }
+
+    fn fingerprint(&self, project_root: &Path) -> Result<String, ProviderError> {
+        manifest_fingerprint(ProviderKind::static_name(*self), project_root)
+    }
+
+    fn static_name(&self) -> &'static str {
+        ProviderKind::static_name(*self)
+    }
+}
+
 /// Service names this project's flox environment declares, regardless of
 /// which provider the manifest actually names — see
 /// `flox::declared_service_names` for why that asymmetry is deliberate.
