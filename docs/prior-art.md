@@ -248,6 +248,49 @@ Not taken, but mapped, so the next person does not start from nothing:
 | `why_runtime.rs` | devcroft's `why`, which answers a narrower question |
 | `sandbox_state.rs`, `state_paths.rs`, `session.rs` | direct analogues of devcroft's `StatePaths` and session registry |
 
+### The registry packs, and the one technique in them worth taking
+
+`nono pull <namespace>/<name>` installs a signed pack from
+`registry.nono.sh`. Read live rather than inferred — the registry is
+public, and `nolabs-ai/claude` v0.1.1 answers on
+`/api/v1/packages/nolabs-ai/claude/versions/0.1.1/pull`, sigstore-signed
+out of `nolabs-ai/nono-packs` (rekor index 2685283132).
+
+**What a pack contains, measured**: a `policy.json` profile
+(`extends`, `groups`, `filesystem`, `network`, `workdir`, `undo`), two
+shell hooks, and Claude Code plugin wiring — `.claude-plugin/plugin.json`,
+`hooks/hooks.json`, `skills/nono-sandbox/SKILL.md`. **No binaries, no
+runtime.** So a pack does not answer `add-agent-workload`'s actual problem,
+which is that an agent's runtime is *absent* inside the sandbox
+(`node → NO_NODE`); it answers the adjacent one.
+
+It is also not the architecture it first looks like. The plugin's own
+description is "teaches Claude Code how to work **inside** a nono security
+sandbox" — the same model devcroft has, agent within the boundary, not an
+agent on the host whose tool calls are mediated.
+
+**The technique worth taking: tell the agent why it was refused, at the
+moment of refusal.** The hook fires on Claude Code's `PostToolUseFailure`
+for `Read|Write|Edit|Bash`, gates on a denial signature
+(`operation not permitted|EPERM|landlock` — so ordinary failures pass
+through untouched), and injects the sandbox's own capability list plus an
+instruction: run the `why` equivalent and quote its output verbatim, and
+**do not ask the user for permission before diagnosing**.
+
+That gap exists in devcroft today and the expensive half is already built.
+An agent that hits a policy denial inside a devcroft sandbox gets a bare
+`EPERM`: it does not know it is sandboxed, what it was granted, or that
+`devcroft why --path <p> --op <read|write>` will tell it. The likely
+failure is a wrong inference — "the file does not exist", "this needs
+sudo" — and either a give-up or an absurd request. `why` answers exactly
+this question and nothing puts it in front of the thing that needs it.
+
+Taken as a technique, per this file's own rule: the mechanism is a
+denial-triggered feedback channel, not this pack, and devcroft's agent
+integration is its own to design. Recorded against `add-agent-workload`,
+whose three considered options for the runtime did not include reading
+what the ecosystem had already solved.
+
 ## bubblewrap — <https://github.com/containers/bubblewrap>
 
 Refused as a dependency, read as a reference. `add-mount-isolation` M2

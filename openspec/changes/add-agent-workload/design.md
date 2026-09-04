@@ -71,6 +71,16 @@ the trusted phase, captured as an env diff, contributing only read-only
 store grants — while separating "what the project needs" from "what I
 need in order to work on the project."
 
+**(d) Read what the ecosystem already ships.** Not an option for the
+runtime, but its absence from this list was the real gap: nono publishes
+signed packs, and `nolabs-ai/claude` exists. Read live
+(`docs/prior-art.md`): a pack carries a policy profile and Claude Code
+plugin wiring, **no binaries** — so it does not answer the runtime problem.
+What it does carry is a technique this change should adopt separately —
+a denial-triggered feedback channel that tells the agent *why* a tool call
+was refused, which devcroft has the expensive half of already (`why`) and
+exposes to nothing.
+
 **Where it is declared: the project, committed.** This is the
 uncomfortable half. The agent case genuinely wants a user-level layer —
 my machine, my agent, not my team's. But a user-level layer is
