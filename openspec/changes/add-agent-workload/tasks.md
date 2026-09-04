@@ -116,6 +116,53 @@ first so the fan-out fix is not gated on the tooling design.
       result in the change — `node` present, credential readable — so the
       before/after is evidence, not assertion
 
+## 6b. Denial feedback: the agent learns why it was refused
+
+> The technique taken from nono's registry packs (`docs/prior-art.md`).
+> An agent that hits a policy denial today gets a bare `EPERM`: it does not
+> know it is sandboxed, what it was granted, or that `why` answers exactly
+> that. The likely outcome is a wrong inference — "the file does not exist",
+> "this needs sudo" — and either a give-up or an absurd request.
+>
+> **Depends on `fix-silent-policy-degradation`.** Measured: `why` run from
+> inside a sandbox does not fail, it inverts — `~/.local/share/devcroft` is
+> baseline-denied and not overridable, so `compile_with_provider_grants`
+> silently drops the provider grants and reports `DENIED / not granted by any
+> rule` for a store path the sandbox is actually granted. Wiring an agent to
+> a confidently inverted answer is worse than leaving it with the `EPERM`.
+
+- [ ] 6b.1 Confirm `fix-silent-policy-degradation` has landed and that `why`
+      from inside a session returns the same verdict and origin as on the
+      host. Everything below is unsafe to ship before that.
+- [ ] 6b.2 Decide how the agent reaches `why`, and record the trade:
+      **(a)** a hook script that reads the policy artifact directly — no new
+      policy surface, answers "what was I granted"; **(b)** grant read+exec
+      on `current_exe()`, folded into the grants in `up()` the way the
+      resolved shell's store root already is, which buys real per-path `why`
+      but lets an agent run *every* devcroft subcommand inside the sandbox.
+      (b) needs its own audit of that surface — `rm`, `up --recreate` — and
+      is not a free consequence of (a).
+- [ ] 6b.3 Implement (a) as the shipped path: a denial-triggered hook that
+      fires on the agent's tool-failure event, gates on a denial signature so
+      ordinary failures pass through untouched, and injects the sandbox's
+      grants plus the instruction to diagnose **before** asking the user for
+      permission.
+- [ ] 6b.4 Wiring delivery: `devcroft init --agent` writes it once and the
+      user commits it. Rejected alternatives, recorded rather than
+      re-litigated: silently generating it at `up` (devcroft's requirement
+      appearing unasked in the user's tree — the same criticism
+      `decouple-service-supervisor` levelled at the process-compose
+      coupling), and requiring the user to hand-install it.
+- [ ] 6b.5 State the limitation in the change rather than discovering it
+      later: this is **agent-specific by necessity**. devcroft cannot rewrite
+      the `EPERM` a tool sees — it comes from the kernel through whatever
+      binary the agent ran — so an interception point is required, and the
+      agent's own hook system is the only one available. Per-agent wiring,
+      not a general mechanism.
+- [ ] 6b.6 Test that the gate is real: an ordinary failure (a genuinely
+      missing file) must **not** trigger the sandbox explanation. A hook that
+      fires on everything teaches the agent to ignore it.
+
 ## 7. Docs
 
 - [ ] 7.1 `docs/decisions.md`: amend the "secret injection ... never via
