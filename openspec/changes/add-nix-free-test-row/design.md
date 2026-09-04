@@ -122,6 +122,43 @@ exactly this reason — and they cannot use dev-dependencies, so a wrapper
 there would force brush into the *shipped* dependency tree. Examples can use
 dev-dependencies and are never installed.
 
+**Alternative considered and rejected: nushell.** The obvious objection to
+picking a 0.4.0 crate is that a far more mature Rust shell exists — nushell
+is at 0.111.0, is embeddable as a library (`nu-engine`, `nu-protocol`), and
+is by any normal measure the safer dependency. It is still the wrong one,
+and maturity is not what decides it.
+
+**nushell is not POSIX.** It is a structured-data language of its own.
+Measured against the constructs this fixture actually runs (nushell 0.111.0):
+
+| input | result |
+|---|---|
+| `echo NU-OK` | works |
+| `printf "a\nb\n" \| wc -l` | works |
+| `cd /tmp && pwd` | `Error: nu::parser::shell_andand` |
+| `x=5; if [ "$x" -gt 3 ]; then echo GT; fi` | `Error: nu::parser::unknown_command` |
+| `echo r > f && cat f` | `Error: nu::parser::shell_andand` |
+
+`&&` is not its syntax (it has a dedicated error for it, because people
+type POSIX at it), `[` is a list literal rather than `test`, and a POSIX
+assignment followed by `then`/`fi` does not parse. There is no compatibility
+mode in `--help`.
+
+**Why that is disqualifying rather than inconvenient.** devcroft's shell is
+not a shell *it* chooses — it is an interpreter for text *the project*
+supplies. All four call sites pass `-c` with POSIX that came from somewhere
+else: `hooks.rs` runs a flox `[hook].on-activate`, `services/mod.rs` hands
+process-compose `shell_argument: "-c"` for each service command from the
+manifest, plus SSH login sessions and `devcroft shell`'s fallback. A flox
+hook writes `mkdir -p x && cd x`; `flox-services-sample` declares
+`python3 -m http.server $API_PORT`. A row whose shell cannot parse that
+cannot run what users run, so the neutral surface would silently narrow to
+whatever the row happens to accept — the same trap that ruled out writing a
+stub of our own, arriving from the other direction.
+
+The comparison worth holding: an *incomplete* POSIX shell can be fixed or
+swapped; a *mature non-POSIX* shell cannot run the input at all.
+
 **Residual risk:** brush is a young implementation, so a compatibility gap
 would surface as a mysterious test failure rather than a clear one. That is
 real, and it is bounded by the row never being the default and by the
