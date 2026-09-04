@@ -117,8 +117,8 @@ on ABI V6+. Verified live (`tests/abstract_socket_not_reachable.rs`), and
 corrected everywhere the wrong claim had already propagated
 (`docs/known-gaps.md`, `docs/threat-model.md`, the change's own design.md).
 
-**`add-macos-unix-socket-scoping`** (0/11, proposed) is the same claim's
-second half, and deliberately not one of the two items above. The mount
+**`add-macos-unix-socket-scoping`** (11/11, done — measured on macOS
+15.7.4/arm64) is the same claim's second half, and deliberately not one of the two items above. The mount
 namespace that closes AF_UNIX on Linux has no Seatbelt equivalent, so
 macOS was never claimed fixed by this section and does not gate
 `0.1.0`'s cut — the gap there is exactly as open as it always was, still
@@ -156,7 +156,7 @@ question, and the fleet case is the hard one.
 
 ## 0.4 — N agents
 
-**`add-linux-agent-fleet`** (6/56), starting with resource control.
+**`add-linux-agent-fleet`** (6/62), starting with resource control.
 
 Resource limits first, and not because they are hardest: without cgroups a
 single runaway build starves every other agent, and no amount of isolation
@@ -234,16 +234,21 @@ argument is restated here rather than left in its proposal.
 
 What separates 0.6 from 1.0 is evidence, not features:
 
-- **macOS.** Seatbelt is implemented and has never run on a CI host. Domain
-  filtering there is unverified, and this project does not ship a security
-  claim it has not measured. The AF_UNIX half of the mount-isolation
-  equivalent has a scoped follow-up now (`add-macos-unix-socket-scoping`,
-  0.2 above) rather than sitting here unexamined; domain filtering, and
-  anything that spike turns up the proposal didn't anticipate, still need
-  a real run. **This doesn't need hardware the project lacks** — the
-  maintainer has direct access to a Mac, just not through this
-  devcontainer — so what's missing is the run happening, not access to
-  run it.
+- **macOS.** Seatbelt is implemented and has never run on a CI host, but it
+  has now been run by hand — macOS 15.7.4, arm64, 2026-09-04 — and two of
+  the three things listed here are answered. The AF_UNIX half is closed
+  (`add-macos-unix-socket-scoping`, done). **Domain filtering is measured
+  and enforced**: `NetworkMode::ProxyOnly` narrows rather than merely
+  permits, an off-host `connect()` is refused, and a declared
+  `network.ports` entry does not widen outbound
+  (`docs/known-gaps.md`, `examples/macos-egress-probe.rs`).
+  What is left is what the run turned up rather than what it set out to
+  check: **name resolution fails inside a macOS sandbox in every network
+  mode**, `network.default = "allow"` included, for a reason that is neither
+  the network policy nor DNS. That is now a published gap, and 1.0 needs it
+  either fixed or stated as permanent. The remaining unrun piece is the
+  same measurement through a real `up`/`exec` session rather than at the
+  capability-set level, plus CI on a macOS runner.
 - **Scale.** "Eight sandboxes cost one build" follows from a shared
   content-addressed store. It has been tested at two.
 - **The published gaps.** Each entry in `docs/known-gaps.md` either closes

@@ -349,7 +349,7 @@ it structurally. This is kernel-version-dependent, not a blanket guarantee:
 older kernels without ABI V6 would plausibly still allow it, and `doctor`'s
 ABI line is how to know which regime a given host is in.
 
-## Domain filtering: enforced on Linux, unverified on macOS
+## Domain filtering: enforced on Linux, and now measured on macOS
 
 `add-egress-proxy` shipped a real, enforced domain filter on Linux —
 Landlock `NetPort` gates every `connect()` except to a resident, per-session
@@ -357,13 +357,40 @@ Landlock `NetPort` gates every `connect()` except to a resident, per-session
 older framing, that domain filtering everywhere was merely cooperative, no
 longer describes Linux.
 
-Whether macOS Seatbelt enforces the equivalent `NetworkMode::ProxyOnly`
-gate as strictly, or only adds a permissive rule without narrowing anything
-else, is **unverified** — the pinned library's own doc comment for the
-macOS output reads as a scoped allow rule, which would argue for "enforced"
-under Seatbelt's default-deny model, but this project has no macOS host to
-measure it live on, and does not ship a security claim it hasn't measured.
-The degraded-on-macOS warning stays on until someone can check.
+**Measured on macOS 15.7.4 (arm64), 2026-09-04: it narrows.** The question
+this paragraph used to leave open — whether `NetworkMode::ProxyOnly` on
+Seatbelt enforces the gate or merely adds a permissive rule — is answered by
+running it (`examples/macos-egress-probe.rs`, which applies the same
+`CapabilityPlan` the keeper applies and then attempts connections):
+
+| probe | none | allow-all | blocked | proxy-only |
+|---|---|---|---|---|
+| proxy port, loopback | ok | ok | **EPERM** | ok |
+| other loopback port | ok | ok | **EPERM** | **EPERM** |
+| off-host IP, no DNS | ok | ok | **EPERM** | **EPERM** |
+
+The `none` column is the control and is the reason the rest can be believed:
+without it, a probe failing because this host has no route out would read as
+"enforced". The off-host probe dials `1.1.1.1:443` by address, so it isolates
+`connect()` from name resolution.
+
+Two things beyond the original question came out of the same run:
+
+- **A declared `network.ports` entry does not widen outbound.** nono's macOS
+  backend notes that "Seatbelt cannot filter bind/inbound by port" and emits
+  a blanket `(allow network-bind)`/`(allow network-inbound)` when any port is
+  declared. That blanket is real, but it is bind/inbound only — outbound stays
+  port-scoped, and a loopback port that was not declared is still refused.
+  Worth stating because the blanket rule reads, on its own, like a hole.
+- **`blocked` refuses loopback too**, including the proxy port. Correct — a
+  `network.default = "deny"` sandbox has no proxy — but it means loopback is
+  not implicitly exempt on macOS the way one might assume from Linux.
+
+What this does **not** yet cover, and is the remaining half of the same
+measurement: it was run at the capability-set level, not through a real
+`up`/`exec` session. The keeper applies the same plan and sessions inherit
+it, so the result should carry — but "should carry" is what this file exists
+to distrust.
 
 On Linux, the original assumption was that a process could always bypass a
 domain allowlist with a raw socket straight to an unresolved IP.
@@ -389,6 +416,53 @@ that address and can send whatever `Host:` header it likes inside it. The
 proxy decides by the name in `CONNECT` and does not inspect the tunnel —
 TLS interception is an explicit non-goal. Untested, and not claimed as
 safe.
+
+## Name resolution does not work inside a macOS sandbox, in any network mode
+
+Found while measuring the section above, and larger than the question that
+run set out to answer. On macOS 15.7.4 (arm64), `getaddrinfo` fails inside a
+devcroft sandbox in **every** mode, including `network.default = "allow"`:
+
+| resolution probe | none | allow-all | blocked | proxy-only |
+|---|---|---|---|---|
+| numeric (`127.0.0.1`, no lookup) | ok | ok | ok | ok |
+| `localhost` (from `/etc/hosts`, no DNS query) | ok | **fails** | **fails** | **fails** |
+| `example.com` (real DNS query) | ok | **fails** | **fails** | **fails** |
+
+`EAI_NONAME` ("nodename nor servname provided, or not known") in every failing
+cell.
+
+**It is not the network policy, and not DNS.** Three facts rule both out: the
+numeric row succeeds everywhere, so the resolver's own code runs; `localhost`
+needs no DNS query at all and still fails; and the `allow-all` column has
+`(allow network-outbound)` unqualified with off-host `connect()` working, so
+nothing about egress is being refused. What fails is macOS's resolver
+machinery itself — `getaddrinfo` cannot complete inside the profile. Granting
+`/etc`, `/private/etc` and both `mDNSResponder` socket paths does **not**
+restore it, so the missing piece is not one of those, and nono's profile
+already emits a blanket `(allow mach-lookup)`. The precise mechanism is
+undetermined; the observable is not.
+
+**Consequence.** Anything inside a macOS sandbox that resolves a hostname
+fails — an HTTP client, `git` over https, a package fetch — regardless of what
+`[network]` says. devcroft's own egress path is unaffected, which is why this
+was never noticed: a sandboxed client dials the proxy by IP and port on
+loopback, and the proxy resolves host-side, outside the boundary. So the
+supported path works and the unsupported one fails silently-ish, with an error
+that names DNS rather than the sandbox.
+
+**Same end state as Linux, for an entirely different reason — and the
+published justification only covers Linux.** The section above says DNS
+rebinding is closed "by construction", because "DNS is UDP and the sandbox's
+network namespace has no route out". That reasoning does not apply on macOS at
+all: there is no network namespace there. The conclusion happens to hold on
+both platforms; the argument for it holds on one.
+
+Measured at the capability-set level (`examples/macos-egress-probe.rs`), not
+yet through a real `up`/`exec` session, and unexamined on whether the
+`network.default = "allow"` case should be considered a bug to fix or a
+limitation to state. It is recorded here first because an unmeasured claim is
+what this file exists to prevent, and this one was live.
 
 ## An agent working in your real directory cannot be rolled back
 
