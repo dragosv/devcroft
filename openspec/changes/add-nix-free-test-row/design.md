@@ -107,6 +107,13 @@ axis that mattered.
   this project.
 - **The `UE` hazard disappears.** Nothing is copied from a platform path, so
   nothing can land in an unkillable state.
+- **The "no dynamic loader" limitation disappears too**, which was BusyBox's
+  main weakness and is worth correcting rather than carrying forward. A Rust
+  binary links the platform's C library dynamically: measured on macOS,
+  `otool -L` on the row's shell shows `libSystem.B.dylib`, `CoreFoundation`,
+  `IOKit` and `libiconv`. So the row *does* exercise the loader path a static
+  BusyBox never would. (Expected to hold on Linux via glibc, but not verified
+  from this machine.)
 
 **Cost, stated plainly:** 69 crates in the dev tree. This project has recorded
 objections at 141 (nono's trust tail) and 116 (nono-proxy), so the number is

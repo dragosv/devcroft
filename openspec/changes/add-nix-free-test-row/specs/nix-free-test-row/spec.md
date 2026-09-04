@@ -54,11 +54,17 @@ Documentation, `capabilities()`, and any report this row appears in SHALL
 NOT present it as evidence that a real toolchain works inside the sandbox's
 filesystem view.
 
-The row has no dynamic loader on Linux and a deliberately minimal
-environment on both platforms, so it exercises none of the `/lib` →
-`ld-linux` → merged-`/usr` path that `fleet::mount::setup_merged_usr_compat`
-exists to serve. A green board from this row alone would say something this
-row cannot know.
+The reason is not the one first written here. That said the row "has no
+dynamic loader", which was true of the static BusyBox originally planned and
+is **false** of what shipped: the row's shell is an ordinary dynamically
+linked binary (measured — `libSystem`, `CoreFoundation`, `IOKit`,
+`libiconv`), so it does exercise the loader path.
+
+What it still cannot show is that a *provider's closure* works: it is a
+single binary in a directory the row made, not a resolved environment with a
+store, its own `PATH`, its transitive requisites, or a toolchain. A green
+board from this row says devcroft's own orchestration works, which is not the
+same claim.
 
 #### Scenario: Reporting a run that used only this row
 
