@@ -55,6 +55,18 @@ pub struct ProviderCapabilities {
     /// such a test to go through `sh -c` — would change what it asserts. The
     /// point of `exec -- <cmd>` is exec'ing a command, not a shell.
     pub external_utils: bool,
+    /// A sandbox on this row can be created by shelling out to the
+    /// `devcroft` binary, not only through the in-process seam.
+    ///
+    /// False for the injected row, and this one is structural rather than a
+    /// gap to close: the CLI resolves its provider from `manifest.env.provider`,
+    /// and a row whose provider exists only as an in-process object has none
+    /// to name. Any test that runs `devcroft up` as a subprocess needs this.
+    ///
+    /// Note what it does *not* block: a CLI `up` that fails before provider
+    /// resolution still behaves correctly on this row — the project-root
+    /// identity check is deliberately early enough to be one of those.
+    pub cli_drivable: bool,
     /// `status` can tell whether this row's environment drifted.
     ///
     /// True for every row today. It was false for the injected row until
@@ -182,6 +194,7 @@ impl ProviderFixture for NixRow {
             services: false,
             activation_hook: false,
             external_utils: true,
+            cli_drivable: true,
             staleness: true,
         }
     }
@@ -216,6 +229,7 @@ impl ProviderFixture for FloxRow {
             services: true,
             activation_hook: true,
             external_utils: true,
+            cli_drivable: true,
             staleness: true,
         }
     }
@@ -247,6 +261,7 @@ impl ProviderFixture for DevboxRow {
             services: false,
             activation_hook: false,
             external_utils: true,
+            cli_drivable: true,
             staleness: true,
         }
     }
@@ -496,6 +511,9 @@ impl ProviderFixture for NixFreeRow {
             // `pwd`, `sleep` and `echo` too, so `Command::new("pwd")` finds
             // a real binary rather than needing a shell builtin.
             external_utils: true,
+            // Structural: the CLI resolves a provider from the manifest, and
+            // this row's provider exists only in-process.
+            cli_drivable: false,
             // True since `status_with_provider` landed: the row's own
             // fingerprint is now what `status` compares against.
             staleness: true,

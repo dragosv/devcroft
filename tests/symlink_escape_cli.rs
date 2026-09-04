@@ -39,7 +39,16 @@ impl EscapeProject {
         std::os::unix::fs::symlink(&outside_target, project_root.join("escape-link")).unwrap();
         std::fs::write(
             project_root.join("devcroft.toml"),
-            "[sandbox]\nname = \"symlinkescape\"\n\n[filesystem]\nallow = [\".\", \"escape-link\"]\n",
+            // Pid-scoped, like every other e2e sandbox name here. It used to
+            // be a bare literal while the project root varied by pid, so a
+            // leftover state dir from an earlier run belonged to a different
+            // root — which `up` silently adopted before
+            // `add-agent-workload`'s identity check, and now correctly
+            // refuses. The test was relying on the bug.
+            format!(
+                "[sandbox]\nname = \"symlinkescape{}\"\n\n[filesystem]\nallow = [\".\", \"escape-link\"]\n",
+                std::process::id()
+            ),
         )
         .unwrap();
         EscapeProject {

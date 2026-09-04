@@ -3,24 +3,44 @@
 Independent of everything below and the smallest real bug here — land it
 first so the fan-out fix is not gated on the tooling design.
 
-- [ ] 1.1 `up`: compare the current project root against `meta.json`'s
+- [x] 1.1 `up`: compare the current project root against `meta.json`'s
       recorded `project_root` (already stored — no new bookkeeping) and
       refuse to adopt a state dir bound to a different root
-- [ ] 1.2 Error names both roots, the sandbox name, and `--name` as the
+- [x] 1.2 Error names both roots, the sandbox name, and `--name` as the
       fix, with a stable exit code per the error contract
-- [ ] 1.3 Confirm same-root `up` stays idempotent — the check must
+- [x] 1.3 Confirm same-root `up` stays idempotent — the check must
       distinguish a different root from a repeated run, not conflate them
-- [ ] 1.4 `--name` override plumbed through the commands that resolve a
+- [x] 1.4 `--name` override plumbed through the commands that resolve a
       sandbox; when given, the discovered manifest's declared name need
       not match
-- [ ] 1.5 An overridden name is used consistently for state dir,
+- [x] 1.5 An overridden name is used consistently for state dir,
       `status`/`ps`/`logs`, and SSH host naming
-- [ ] 1.6 Integration test with a **real** `git worktree`: two worktrees
+- [x] 1.6 Integration test with a **real** `git worktree`: two worktrees
       of one repo, same committed manifest. Without `--name` the second
       `up` fails naming both roots; with distinct `--name` values both
       sandboxes run independently
 - [ ] 1.7 README known gaps / status: note the behavior change — two
       worktrees that silently shared a sandbox now fail loudly
+
+> **Landed. Two things the implementation found, both by running it:**
+>
+> - **Placement was the fix, not the comparison.** The first version put the
+>   check after the health decision, where it never fired for the case it
+>   exists to catch: a *healthy* sandbox returns `AlreadyUp` early, and
+>   adopting a healthy sandbox from the wrong root is precisely the silent
+>   failure. Caught by the worktree test, not by review. "Does this state dir
+>   belong to me" has to be answered before "should I adopt it".
+> - **A test was relying on the bug.** `symlink_escape_cli` hardcoded a
+>   sandbox name with no pid while its project root varied by pid, so a
+>   leftover state dir from an earlier run belonged to a different root — and
+>   was silently adopted. It now fails loudly, which is the change working.
+>
+> `--name` is an *override*, distinct from the positional `[name]` selector:
+> it renames this project's sandbox for one invocation, so the discovered
+> manifest deliberately need not agree. Applied to the parsed manifest rather
+> than threaded through callers, which makes 1.5 hold by construction — the
+> state dir, `status`/`ps`/`logs` and SSH naming all read
+> `manifest.sandbox.name`.
 
 ## 2. Config surface
 

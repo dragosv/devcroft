@@ -156,6 +156,37 @@ pub fn up_with_provider(
     // same as any other RAII guard.
     let _lock = state::acquire_lifecycle_lock(&paths.lifecycle_lock)?;
 
+    // **A state directory belongs to the project root it was created for.**
+    //
+    // `meta.json` has always recorded `project_root`; nothing ever compared
+    // it, so two git worktrees of one repo — which share a committed
+    // `devcroft.toml`, and therefore a sandbox *name* — silently shared one
+    // sandbox. The second `up` adopted the first's keeper, and an agent
+    // working in worktree B ran against worktree A's environment and grants.
+    // Detection of an existing bug rather than new bookkeeping
+    // (`add-agent-workload` task group 1).
+    //
+    // **Before the health decision below, and that placement is the fix.**
+    // The first version of this sat after it and never fired for the case it
+    // exists to catch: a *healthy* sandbox returns `AlreadyUp` early, and
+    // adopting a healthy sandbox from the wrong root is precisely the silent
+    // failure. Caught by the worktree test, not by review. "Does this state
+    // dir belong to me" has to be answered before "should I adopt it".
+    if let Some(meta) = state::read_meta(&paths.meta)?
+        && meta.project_root != project_root.to_string_lossy()
+    {
+        return Err(UpError::Config(format!(
+            "sandbox '{name}' already exists for a different project root\n  \
+             recorded: {recorded}\n   current: {current}\n\
+             two worktrees of one repository share a committed `devcroft.toml`, \
+             and so share a sandbox name; give this one its own with \
+             `devcroft up --name <other>`",
+            name = manifest.sandbox.name,
+            recorded = meta.project_root,
+            current = project_root.display(),
+        )));
+    }
+
     let outcome = if opts.recreate {
         // `terminate_and_wait` reads and identity-verifies each pidfile
         // itself (`is_same_process` — a resurrected unrelated process

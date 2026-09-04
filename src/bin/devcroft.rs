@@ -139,7 +139,8 @@ usage: devcroft <command> [args...]
 
 sandboxes
   init [--force]              write a devcroft.toml for this project
-  up [name] [--recreate]      build the environment, apply the policy, start the sandbox
+  up [name] [--name <n>]      build the environment, apply the policy, start the sandbox
+      [--recreate]              (--name gives this project root its own sandbox)
   down [name]                 stop a sandbox, keeping its state
   rm [name] [--yes]           stop a sandbox and delete its state
 
@@ -1883,9 +1884,61 @@ fn warn_if_activation_hook_ran(manifest: &devcroft::config::Manifest) {
     );
 }
 
+/// Extracts `--name <value>`, returning the value and the remaining args.
+///
+/// **An override, not a selector**, and the distinction is the whole point.
+/// The positional `[name]` every command already takes *selects* an existing
+/// sandbox and must match the manifest it discovers. `--name` *renames* this
+/// project's sandbox for this invocation, so the manifest deliberately does
+/// not have to agree.
+///
+/// It exists because the committed manifest is exactly what makes fan-out
+/// break: two git worktrees of one repository share a `devcroft.toml`, and
+/// therefore a sandbox name. Without a way to say otherwise, the
+/// project-root check in `up` would be a refusal with no remedy
+/// (`add-agent-workload` task group 1).
+fn take_name_override(args: &[String]) -> Result<(Option<String>, Vec<String>), String> {
+    let mut rest = Vec::new();
+    let mut name = None;
+    let mut it = args.iter();
+    while let Some(a) = it.next() {
+        if a == "--name" {
+            let Some(v) = it.next() else {
+                return Err("--name requires a value".to_string());
+            };
+            if !devcroft::config::is_valid_name(v) {
+                return Err(format!(
+                    "--name {v:?} is not a valid sandbox name; try {:?}",
+                    devcroft::config::slugify(v)
+                ));
+            }
+            name = Some(v.clone());
+        } else if let Some(v) = a.strip_prefix("--name=") {
+            if !devcroft::config::is_valid_name(v) {
+                return Err(format!(
+                    "--name {v:?} is not a valid sandbox name; try {:?}",
+                    devcroft::config::slugify(v)
+                ));
+            }
+            name = Some(v.to_string());
+        } else {
+            rest.push(a.clone());
+        }
+    }
+    Ok((name, rest))
+}
+
 fn cli_up(args: &[String]) -> i32 {
     const USAGE: &str =
-        "devcroft up: usage: devcroft up [name] [--recreate] [--yes] [--skip-hooks]";
+        "devcroft up: usage: devcroft up [name] [--name <n>] [--recreate] [--yes] [--skip-hooks]";
+    let (name_override, args) = match take_name_override(args) {
+        Ok(v) => v,
+        Err(msg) => {
+            eprintln!("devcroft up: {msg}");
+            return 2;
+        }
+    };
+    let args = &args[..];
     let recreate = args.iter().any(|a| a == "--recreate");
     let yes = args.iter().any(|a| a == "--yes");
     let skip_hooks = args.iter().any(|a| a == "--skip-hooks");
@@ -1909,6 +1962,18 @@ fn cli_up(args: &[String]) -> i32 {
     {
         Ok(m) => m,
         Err(code) => return code,
+    };
+    // Applied to the parsed manifest rather than threaded through every
+    // caller: the sandbox name is read from `manifest.sandbox.name` by the
+    // state dir, `status`/`ps`/`logs` and SSH host naming alike, so
+    // overriding it here makes the override consistent by construction
+    // rather than by remembering to pass it on (task 1.5).
+    let manifest = match name_override {
+        Some(name) => devcroft::config::Manifest {
+            sandbox: devcroft::config::Sandbox { name },
+            ..manifest
+        },
+        None => manifest,
     };
     // config spec: "validation succeeds but a warning is printed at
     // `up`, once". Printed before the sandbox comes up, so a grant of
