@@ -76,6 +76,12 @@
       `up` with a row that reports a *different* provider than the manifest,
       and both assertions were teeth-checked by reverting each mechanism and
       confirming the test fails.
+      **Extended later**: the seam covered `up` but not `status`, which
+      re-derived a provider from the manifest — so an injected row's
+      fingerprint was honoured going in and ignored coming out, and staleness
+      was unassertable for it. `status_with_provider` closes that; every row
+      now answers staleness, teeth-checked by disabling the row's drift and
+      confirming the test fails.
 - [x] 1.3 Add the non-default `test-support` feature and a `#[doc(hidden)] pub mod
       test_support`. Verify the seam is absent from a default `cargo build` —
       inspect the built binary, not just the feature flag.

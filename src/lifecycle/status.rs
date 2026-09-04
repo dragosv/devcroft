@@ -93,18 +93,45 @@ impl std::error::Error for StatusError {}
 /// degraded capabilities for one sandbox (lifecycle spec: "Status and
 /// logs").
 pub fn status(manifest: &Manifest) -> Result<SandboxStatus, StatusError> {
+    // An unknown provider is deliberately not a `status` failure -- it only
+    // makes staleness unknowable, which is what `None` means below. That was
+    // already the behaviour (`is_stale(..).ok()` swallowed the error); it is
+    // now explicit rather than incidental.
+    let provider = provider::ProviderKind::from_name(&manifest.env.provider).ok();
+    status_with_provider(
+        manifest,
+        provider.as_ref().map(|p| p as &dyn provider::ProviderEntry),
+    )
+}
+
+/// `status`, with the provider supplied rather than looked up from the
+/// manifest.
+///
+/// The `status` counterpart to `up_with_provider`, and it exists because the
+/// seam was asymmetric without it: a test could inject a provider into `up`,
+/// have its fingerprint recorded in `meta.json`, and then watch `status`
+/// re-derive a *different* provider from `manifest.env.provider` and compare
+/// against that instead. The row's own fingerprint was honoured going in and
+/// ignored coming out, so staleness could not be asserted for any injected
+/// row at all.
+///
+/// `None` means "no provider to ask", which yields `env_stale: None` --
+/// unknown, as distinct from fresh or stale.
+pub fn status_with_provider(
+    manifest: &Manifest,
+    provider: Option<&dyn provider::ProviderEntry>,
+) -> Result<SandboxStatus, StatusError> {
     let paths = StatePaths::new(&manifest.sandbox.name)?;
 
     let keeper = keeper_status(&paths).map_err(|e| StatusError::Keeper(e.to_string()))?;
 
     let meta = state::read_meta(&paths.meta)?;
     let env_stale = meta.as_ref().and_then(|meta| {
-        provider::is_stale(
-            &manifest.env.provider,
-            Path::new(&meta.project_root),
-            &meta.env_fingerprint,
-        )
-        .ok()
+        let provider = provider?;
+        provider
+            .fingerprint(Path::new(&meta.project_root))
+            .ok()
+            .map(|current| current != meta.env_fingerprint)
     });
     // Queried before `meta` is consumed below, since the socket lives
     // under the project root `meta` records — the sandbox's own state

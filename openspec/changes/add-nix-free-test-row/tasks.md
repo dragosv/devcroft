@@ -113,8 +113,13 @@
       half of this change has been run on Linux**, and the two platforms
       share no artifact.
 
-> **A limitation the row surfaced, recorded rather than worked around.** The
-> row cannot express staleness: `up` takes its provider through the seam, but
+> **A limitation the row surfaced — since closed.** `status_with_provider`
+> gives `status` the injection point `up` already had, so the row now answers
+> staleness like every other row and `capabilities().staleness` is true for
+> all four. The original text is kept below because the *shape* of the
+> problem recurs: the seam is only as wide as the entry points it covers.
+>
+> ~~The row cannot express staleness:~~ `up` takes its provider through the seam, but
 > `status` re-derives one from `manifest.env.provider`
 > (`lifecycle::status` → `provider::is_stale`), exactly as `policy --render`
 > re-derives rule origins. So the row's fingerprint is honoured going in and

@@ -57,17 +57,14 @@ pub struct ProviderCapabilities {
     pub external_utils: bool,
     /// `status` can tell whether this row's environment drifted.
     ///
-    /// **False for the injected row, and that is a seam limitation rather
-    /// than a property of the row** — worth stating precisely because it is
-    /// the kind of gap a capability flag can quietly bury. `up` takes its
-    /// provider through the injection seam, but `status` re-derives one from
-    /// `manifest.env.provider` (`lifecycle::status` → `provider::is_stale`),
-    /// exactly as `policy --render` re-derives rule origins. So a row with
-    /// no provider to name gets its fingerprint honoured on the way in and
-    /// ignored on the way out.
+    /// True for every row today. It was false for the injected row until
+    /// `status_with_provider` existed: `up` took its provider through the
+    /// seam while `status` re-derived one from `manifest.env.provider`, so a
+    /// row's fingerprint was honoured going in and ignored coming out.
     ///
-    /// Closing it means giving `status` an injection point too. Until then a
-    /// neutral staleness test gates on this rather than skipping by name.
+    /// Kept as a capability rather than deleted now that all rows have it —
+    /// a future row that cannot fingerprint its own environment is exactly
+    /// the case this describes, and the gate costs nothing.
     pub staleness: bool,
 }
 
@@ -109,6 +106,18 @@ pub trait ProviderFixture {
     fn bring_up(&self, opts: &devcroft::lifecycle::UpOptions) -> UpResult {
         let manifest = self.manifest();
         devcroft::lifecycle::up(&manifest, self.project_root(), opts)
+    }
+
+    /// This row's sandbox status.
+    ///
+    /// On the trait for the same reason `bring_up` is: a row with no
+    /// provider to name has to go through the injection seam, and pushing
+    /// that difference into every neutral test as a `cfg` was the
+    /// alternative.
+    fn status(
+        &self,
+    ) -> Result<devcroft::lifecycle::SandboxStatus, devcroft::lifecycle::StatusError> {
+        devcroft::lifecycle::status(&self.manifest())
     }
 
     /// The manifest this row wrote, parsed.
@@ -487,10 +496,9 @@ impl ProviderFixture for NixFreeRow {
             // `pwd`, `sleep` and `echo` too, so `Command::new("pwd")` finds
             // a real binary rather than needing a shell builtin.
             external_utils: true,
-            // See the field's own doc: `status` re-derives its provider from
-            // the manifest, so this row's fingerprint is honoured by `up`
-            // and invisible to `status`.
-            staleness: false,
+            // True since `status_with_provider` landed: the row's own
+            // fingerprint is now what `status` compares against.
+            staleness: true,
         }
     }
     fn project_root(&self) -> &Path {
@@ -513,6 +521,17 @@ impl ProviderFixture for NixFreeRow {
     fn bring_up(&self, opts: &devcroft::lifecycle::UpOptions) -> UpResult {
         let manifest = self.manifest();
         devcroft::test_support::up_with_provider(&manifest, &self.root, opts, self)
+    }
+
+    /// Also through the seam: without it, `status` would re-derive a
+    /// provider from the manifest and compare this row's recorded
+    /// fingerprint against a different provider's — which is precisely why
+    /// staleness was unassertable for injected rows before
+    /// `status_with_provider` existed.
+    fn status(
+        &self,
+    ) -> Result<devcroft::lifecycle::SandboxStatus, devcroft::lifecycle::StatusError> {
+        devcroft::test_support::status_with_provider(&self.manifest(), Some(self))
     }
 }
 

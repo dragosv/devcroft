@@ -102,7 +102,6 @@ fn a_drifted_environment_is_reported_stale_on_every_row() {
             );
             return;
         }
-        let manifest = manifest_of(fx);
         let paths = StatePaths::new(fx.sandbox_name()).unwrap();
         let _ = std::fs::remove_dir_all(&paths.root);
 
@@ -114,7 +113,7 @@ fn a_drifted_environment_is_reported_stale_on_every_row() {
         // `Option<bool>`: `None` means staleness could not be determined
         // (the provider could not be asked), which is neither fresh nor
         // stale and must not be read as either.
-        let fresh = status(&manifest).unwrap();
+        let fresh = fx.status().unwrap();
         assert_eq!(
             fresh.env_stale,
             Some(false),
@@ -124,7 +123,7 @@ fn a_drifted_environment_is_reported_stale_on_every_row() {
 
         fx.mutate_to_drift();
 
-        let drifted = status(&manifest).unwrap();
+        let drifted = fx.status().unwrap();
         assert_eq!(
             drifted.env_stale,
             Some(true),

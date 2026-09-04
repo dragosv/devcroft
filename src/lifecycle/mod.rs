@@ -7,7 +7,9 @@
 
 mod hooks;
 mod state;
-mod status;
+// `pub(crate)` for the same reason `up` is: `test_support` re-exports one
+// seam function out of it under the `test-support` feature.
+pub(crate) mod status;
 mod terminate;
 // `pub(crate)` so the crate root can name the path; the module is still not
 // public API. `test_support` re-exports the single seam function out of it

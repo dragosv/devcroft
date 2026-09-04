@@ -12,7 +12,7 @@ mod common;
 
 use common::for_each_row;
 use devcroft::keeper::protocol::{self, Frame, SpawnRequest};
-use devcroft::lifecycle::{KeeperStatus, StatePaths, UpOptions, UpOutcome, down, logs, ps, status};
+use devcroft::lifecycle::{KeeperStatus, StatePaths, UpOptions, UpOutcome, down, logs, ps};
 use std::collections::BTreeMap;
 use std::os::unix::net::UnixStream;
 
@@ -28,7 +28,6 @@ fn status_logs_and_ps_reflect_a_real_running_keeper() {
     }
 
     for_each_row("status", |fx| {
-        let manifest = fx.manifest();
         let sandbox_name = fx.sandbox_name().to_string();
         let project_root = fx.project_root().to_path_buf();
         let paths = StatePaths::new(&sandbox_name).unwrap();
@@ -39,7 +38,7 @@ fn status_logs_and_ps_reflect_a_real_running_keeper() {
             UpOutcome::Started
         );
 
-        let before = status(&manifest).unwrap_or_else(|e| panic!("status failed: {e}"));
+        let before = fx.status().unwrap_or_else(|e| panic!("status failed: {e}"));
         assert_eq!(
             before.keeper,
             KeeperStatus::Healthy {
@@ -90,7 +89,7 @@ fn status_logs_and_ps_reflect_a_real_running_keeper() {
             other => panic!("expected SpawnOk, got {other:?}"),
         }
 
-        let during = status(&manifest).unwrap();
+        let during = fx.status().unwrap();
         assert_eq!(
             during.keeper,
             KeeperStatus::Healthy {
@@ -124,7 +123,7 @@ fn status_logs_and_ps_reflect_a_real_running_keeper() {
 
         drop(session_client);
         down(&sandbox_name).unwrap();
-        let after = status(&manifest).unwrap();
+        let after = fx.status().unwrap();
         assert_eq!(after.keeper, KeeperStatus::None);
 
         let _ = std::fs::remove_dir_all(&paths.root);

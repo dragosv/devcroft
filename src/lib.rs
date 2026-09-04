@@ -55,6 +55,7 @@ pub mod ssh;
 #[cfg(feature = "test-support")]
 #[doc(hidden)]
 pub mod test_support {
+    pub use crate::lifecycle::status::status_with_provider;
     pub use crate::lifecycle::up::up_with_provider;
     pub use crate::provider::ProviderEntry;
 }
