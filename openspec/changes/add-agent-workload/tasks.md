@@ -159,6 +159,14 @@ first so the fan-out fix is not gated on the tooling design.
       binary the agent ran — so an interception point is required, and the
       agent's own hook system is the only one available. Per-agent wiring,
       not a general mechanism.
+- [ ] 6b.7 Adopt ArcBox's credential-forwarding shape, which is better than
+      this change's current plan and costs nothing to copy: forward only
+      `ANTHROPIC_*`/`CLAUDE_*`, for that session only, never written into any
+      image or sandbox record, every other host variable left behind
+      (`docs/prior-art.md`). Independent evidence for 7.1's premise arrives
+      with it: a project with a real microVM boundary states that OAuth
+      credentials are *deliberately not copied in*, so subscription auth is
+      unsolved there too, not merely unsolved here.
 - [ ] 6b.6 Test that the gate is real: an ordinary failure (a genuinely
       missing file) must **not** trigger the sandbox explanation. A hook that
       fires on everything teaches the agent to ignore it.

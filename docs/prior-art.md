@@ -298,3 +298,55 @@ records both halves of that: what refusing it costs (its mount setup
 encapsulates real knowledge about what breaks without a complete-enough
 `/dev`), and why it is refused anyway (the two standing requirements at
 the top of this file).
+
+## ArcBox — <https://github.com/arcboxlabs/arcbox>
+
+A macOS container and VM runtime (Rust, Apache-2.0 + MIT), whose `abctl claude`
+puts Claude Code in a disposable Firecracker microVM. Whether devcroft should
+follow it into a VM tier is answered in `docs/decisions.md`; what follows is
+what was taken instead, per this file's rule — techniques, not tools.
+
+**The layering is the clever part, and it is not the VM.** Firecracker is
+Linux/KVM-only, so on macOS it runs *nested* inside a Virtualization.framework
+Linux guest — which ArcBox needs anyway for its Docker-compatible engine. They
+did not add a VM layer for agents; they reused the one already paid for and put
+a cheap VMM inside it. Firecracker rather than a second VZ VM per agent is what
+makes N agents affordable: no BIOS, no PCI, virtio only, ~100ms boot. That
+arithmetic is fleet's problem too, solved by choosing the VMM rather than by
+optimising.
+
+Four things worth having, **none of which needs a VM**:
+
+| Taken | Where it lands |
+|---|---|
+| `Prepare` — warm pools that spawn a VMM ahead of a boot | devcroft's equivalent cost is provider resolution at `up`, paid per sandbox, every time |
+| `Checkpoint` — pause → snapshot → resume, so a booted idle sandbox skips the cold path | no devcroft analogue at all; the closest thing is `up --recreate` doing strictly more work |
+| `Adopt`/`discover` — rediscovering a VM that outlived its booter | devcroft solves this with a pidfile plus a health probe. ArcBox validates harder: recorded pid **and** `/proc` candidates, each held to an `--id`/`--api-sock`/jail-root test. A pidfile alone cannot tell a reused pid from the real thing |
+| An **id-length budget** derived from `sun_path` | devcroft hit the identical limit (`services::MAX_SOCKET_PATH`, 103 bytes) and turned it into a check that fails at layer `config`. ArcBox turned it into a budget: `/var/jail` is short *on purpose*, because "every byte of the base is a byte AF_UNIX leaves the id" |
+
+The last one is the same discovery arrived at independently, which is the most
+useful kind of corroboration — and their handling is the better ergonomics for
+the same constraint.
+
+**Two conclusions reached independently, worth recording as confirmation rather
+than as ideas:** one sandbox per agent id, surviving TUI exit so `claude
+--continue` works because the agent's state lives inside — the shape devcroft's
+keeper already has; and a create-time TTL, which `docs/roadmap.md` already
+calls "the cheapest bound on an unattended agent" for fleet.
+
+**A third instance of a rule this project keeps rediscovering.**
+`arcbox-fc-driver`'s README: *"Nothing above this crate names Firecracker
+except the composition root that picks it."* That is the argument for keeping
+`SessionBackend` after `remove-gvisor-backend` deleted its only second
+implementation, and the argument `decouple-service-supervisor` made for the
+supervisor seam. Three independent arrivals at the same conclusion.
+
+**And one thing deliberately not taken: their credential handling is better
+than devcroft's plan and should be copied nearly verbatim.** `ANTHROPIC_*` and
+`CLAUDE_*` forwarded for that session only, never written into the image or the
+sandbox record, every other host variable left behind. Recorded against
+`add-agent-workload`'s credentials group. Note also what they could not solve:
+*"OAuth credentials from `~/.claude` are deliberately not copied in"* — a
+project with a real VM boundary has no answer for subscription auth either,
+which is independent evidence for that change's task 7.1 premise rather than
+devcroft's own observation about itself.

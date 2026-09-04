@@ -619,6 +619,109 @@ sufficient; the measurement above is the cost to argue against. Recorded
 as a real option in
 `add-gvisor-backend`'s own Open Questions, not chosen there either.
 
+### Rejected (for now): a libkrun-backed VM tier
+
+**Property that fails: the boundary it adds does not cover the thing devcroft
+is for.** A microVM hardens the host *kernel* surface. It does not harden the
+shared filesystem, and the shared filesystem is devcroft's entire proposition.
+
+This entry exists because the question is a fair one and the obvious rebuttal
+is wrong. "We already removed a second tier" does not answer it: two of the
+three reasons `remove-gvisor-backend` gave **do not apply here**, and pretending
+otherwise would be defending a decision instead of revisiting it, which this
+file forbids.
+
+**The prompt.** [ArcBox](https://github.com/arcboxlabs/arcbox) (Rust,
+Apache-2.0) ships `abctl claude`: Claude Code in a disposable Firecracker
+microVM, permission prompts off *"because the microVM — not the prompt — is the
+isolation boundary."* That is devcroft's flagship use case with a stronger
+boundary underneath it, working today.
+
+**Firecracker itself is not available to devcroft, for a structural reason.**
+It is a binary with a REST API over a unix socket — the `firecracker` crate on
+crates.io is a *client SDK for that API*, not the VMM. ArcBox spawns
+`/usr/bin/firecracker` and `jailer`. devcroft's standing requirement is that
+the keeper "SHALL NOT be executed as a child of a separate sandboxing binary",
+so this is out before any trade is weighed.
+
+**[libkrun](https://github.com/containers/libkrun) is the version that fits
+the architecture.** Apache-2.0, Rust, a *dynamic library*: the calling process
+becomes the VMM. KVM on Linux, Hypervisor.framework on macOS/ARM64 — natively
+on both platforms, macOS 14+, **no nested virtualisation**, unlike ArcBox's
+M3-or-newer requirement, which exists only because Firecracker must run inside
+a Linux guest. `libkrun-sys` publishes FFI bindings. Structurally it is the
+same shape as `nono::Sandbox::apply_auto`: link it, and restrict yourself.
+
+#### Against `remove-gvisor-backend`'s three reasons
+
+1. **"Cannot compose with the sandboxing core" — does not apply.** That reason
+   was specific: `runsc` issues `mount()`, and Landlock cannot mediate
+   `mount()` at any ABI, so `EPERM` under any ruleset. libkrun needs no host
+   `mount()` — virtio-fs is served by the VMM in userspace, and the guest's own
+   mounts happen inside the guest kernel where host Landlock never sees them.
+   The composition is also the *better* direction: the VMM is devcroft's own
+   process, so it self-restricts first and the VM inherits whatever the process
+   tier granted. The one ordering constraint is the trick devcroft already
+   uses — `/dev/kvm` must be opened before restriction, exactly as the listener
+   sockets are.
+2. **"Cannot support fleet" — does not apply.** Rootless `runsc` shares the
+   host network namespace and rejects sandboxed-network mode, so instances
+   collided on ports. Each libkrun microVM has its own guest kernel and its own
+   network stack by construction.
+3. **"Occupies a squeezed middle" — transforms rather than disappears, and this
+   is the reason that survives.** The gVisor tier was more complicated than the
+   process tier and weaker than a VM. libkrun is not in that middle: it *is*
+   the "above" option. So the argument changes shape — from "why this tier"
+   to "what does devcroft-embeds-a-VM buy over devcroft-inside-a-VM, which is
+   already the supported answer and already how macOS works?" The honest answer
+   is per-sandbox granularity: N agents, N kernels, one host, instead of one VM
+   around everything. That is exactly fleet's claim, and exactly where the
+   objection below lands.
+
+#### What actually fails
+
+**libkrun's own README, on virtio-fs:** *"libkrun does not provide any
+protection against the guest attempting to access other directories in the same
+filesystem, or even other filesystems in the host. A mount point isolation
+mechanism from the host should be used in combination with virtio-fs."*
+
+So the VM boundary has a hole precisely where devcroft lives. On Linux that
+composes — `add-mount-isolation` shipped exactly such a mechanism. On macOS
+devcroft has no mount-namespace equivalent, so a VM tier there would inherit
+the gap that is already published, while advertising a stronger boundary. That
+is the combination this project must never ship.
+
+Note the contrast with gVisor, which had the opposite shape: `runsc` built the
+entire root filesystem, which is why Landlock *inside* it was judged near-zero
+marginal value. libkrun shares a host directory, so the marginal value of the
+host-side mechanism is not near zero — it is load-bearing.
+
+**And on TSI:** *"the VMM and the guest should be considered to be running in
+the network context. As such, you should apply on the VMM whatever restrictions
+you want to apply on the guest."* The egress proxy and the `NetPort` gate stay,
+unchanged and still necessary. A VM tier adds a kernel boundary and removes no
+existing mechanism.
+
+**Cost, named rather than gestured at.** `libkrunfw` — the guest payload, i.e.
+the kernel — is GPL-2.0-only and LGPL-2.1-only. devcroft is Apache-2.0.
+Dynamic linking against LGPL is ordinarily fine, but "ordinarily" is not an
+answer this project accepts on a licensing question, and
+`THIRD-PARTY-LICENSES.md` exists because §4(a) obligations are taken
+literally here. Beyond that: two shared libraries at runtime rather than a
+cargo-only dependency, so `cargo install devcroft` stops being sufficient; and
+a guest root filesystem to provision, which the closure-tier providers would
+have to materialise inside the guest or reach through virtio-fs — reopening
+the objection above.
+
+**Revisit if:** (a) devcroft grows a macOS filesystem-view mechanism, which
+would remove the asymmetry that makes this unshippable on one platform; or
+(b) the use case changes from "code the user controls, in many instances" to
+"unreviewed code", which is `docs/threat-model.md`'s use case B and is
+currently, deliberately, not served. Under (b) the trade inverts: a boundary
+that covers the kernel but not the shared directory is still worth more than
+one that covers neither, and the answer would be to stop sharing the
+directory — which is ArcBox's answer, and a different product.
+
 ### No resource limits (yet)
 
 Landlock and Seatbelt constrain access, not consumption. A session can
