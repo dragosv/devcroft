@@ -25,6 +25,104 @@ use std::path::{Path, PathBuf};
 
 use crate::provider::ServiceDecl;
 
+/// Everything specific to one service supervisor, in one place.
+///
+/// **Why this exists.** devcroft does not use the provider's supervisor —
+/// `add-flox-services` decision 1 rejected both `flox services start` and
+/// flox's generated `service-config.yaml`. It picks its own and generates
+/// its own config, which means the resulting requirement is devcroft's:
+/// a project wanting services must put that executable in its environment
+/// manifest, or `up` refuses. That requirement leaking into a user's project
+/// is the coupling this trait names.
+///
+/// Only four things are supervisor-specific, measured: the executable, the
+/// configuration written for it, how it is launched, and how it is asked
+/// what is running. Everything else in this module — [`socket_path`],
+/// [`config_path`], [`log_path`], [`artifact_dir`], [`reconcile`],
+/// [`ServiceState`] — is devcroft's own and stays outside. A supervisor
+/// answers *in* devcroft's vocabulary; it does not define it, and it cannot
+/// suppress [`reconcile`]'s check by reporting differently.
+pub trait Supervisor {
+    /// The executable that must be present in the resolved environment.
+    fn binary(&self) -> &'static str;
+
+    /// The configuration devcroft writes for it, from its own declarations.
+    fn render_config(&self, services: &[ServiceDecl], shell: &Path) -> String;
+
+    /// Arguments after the binary, to launch it against `config`, serving on
+    /// `socket` and logging to `log`.
+    fn spawn_args(&self, config: &Path, socket: &Path, log: &Path) -> Vec<String>;
+
+    /// Ask it what is running.
+    fn query(&self, socket: &Path) -> Result<Vec<ServiceState>, Unreachable>;
+}
+
+/// The supervisor devcroft ships.
+///
+/// A function rather than configuration, deliberately: there is one
+/// implementation, and a selection mechanism with one option is easier to
+/// add later than to remove once something depends on it. A second
+/// supervisor is what makes the selection question worth answering.
+pub fn supervisor() -> &'static dyn Supervisor {
+    &ProcessCompose
+}
+
+/// process-compose: the supervisor devcroft ships.
+///
+/// Chosen because restart policy, service dependencies and daemon handling
+/// come with it rather than being reimplemented (`add-flox-services`
+/// decision 1). That flox and devenv also use it internally is a
+/// coincidence devcroft does not rely on — it never touches their instance.
+pub struct ProcessCompose;
+
+impl Supervisor for ProcessCompose {
+    fn binary(&self) -> &'static str {
+        "process-compose"
+    }
+
+    fn render_config(&self, services: &[ServiceDecl], shell: &Path) -> String {
+        render_config(services, shell)
+    }
+
+    fn spawn_args(&self, config: &Path, socket: &Path, log: &Path) -> Vec<String> {
+        vec![
+            "up".to_string(),
+            "-f".to_string(),
+            config.to_string_lossy().into_owned(),
+            // No TUI: this has no terminal attached.
+            "-t=false".to_string(),
+            "-L".to_string(),
+            log.to_string_lossy().into_owned(),
+            // A unix socket for its own API, not the default TCP listener.
+            // Found the hard way: process-compose binds localhost:8080 by
+            // default and treats failure as fatal, so inside a sandbox that
+            // has not granted 8080 it exited immediately — killing services
+            // it had already started. `--no-server` would also avoid the
+            // bind, but a socket keeps the API reachable for `ps`/`status`
+            // to query later, and costs nothing: the project root is
+            // writable.
+            "-u".to_string(),
+            socket.to_string_lossy().into_owned(),
+            // Without this, process-compose exits once every service has
+            // finished — taking its API socket, and therefore the only
+            // record of *why* a service died, with it. Found by killing a
+            // service and watching `status` go from reporting it to
+            // reporting nothing at all: the failure became invisible, which
+            // is the exact outcome the `services` spec forbids.
+            //
+            // This is also what flox's own generated config is doing with
+            // its `flox_never_exit` sleep-infinity entry — a sentinel
+            // process solving the same problem. `--keep-project` is the
+            // supported flag for it, so no sentinel is needed here.
+            "--keep-project".to_string(),
+        ]
+    }
+
+    fn query(&self, socket: &Path) -> Result<Vec<ServiceState>, Unreachable> {
+        query(socket)
+    }
+}
+
 /// Where the generated config and process-compose's own runtime files
 /// live, relative to the project root.
 ///
@@ -549,7 +647,7 @@ pub fn reconcile(
 pub fn resolve_in_env(env: &BTreeMap<String, String>) -> Option<PathBuf> {
     let path = env.get("PATH")?;
     for dir in path.split(':').filter(|d| !d.is_empty()) {
-        let candidate = Path::new(dir).join("process-compose");
+        let candidate = Path::new(dir).join(supervisor().binary());
         if candidate.is_file() {
             return Some(candidate);
         }
@@ -560,6 +658,53 @@ pub fn resolve_in_env(env: &BTreeMap<String, String>) -> Option<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The exact invocation, asserted rather than trusted.
+    ///
+    /// `decouple-service-supervisor` moved these flags out of the keeper and
+    /// behind the seam. They are the arguments a third-party binary parses,
+    /// so a reordering or a dropped flag fails at runtime rather than at
+    /// compile time — and the e2e tests that would catch it skip on hosts
+    /// without a usable environment, which makes green weaker evidence than
+    /// it looks. Hence a unit test that runs everywhere.
+    ///
+    /// Each flag's *reason* lives on the implementation; this only pins the
+    /// shape.
+    #[test]
+    fn the_process_compose_invocation_is_exactly_what_it_was() {
+        let args = ProcessCompose.spawn_args(
+            Path::new("/p/.devcroft/s/services.yaml"),
+            Path::new("/p/.devcroft/s/services.sock"),
+            Path::new("/p/.devcroft/s/services.log"),
+        );
+        assert_eq!(
+            args,
+            vec![
+                "up",
+                "-f",
+                "/p/.devcroft/s/services.yaml",
+                "-t=false",
+                "-L",
+                "/p/.devcroft/s/services.log",
+                "-u",
+                "/p/.devcroft/s/services.sock",
+                "--keep-project",
+            ]
+        );
+    }
+
+    /// The seam must not have changed what devcroft writes for the
+    /// supervisor to parse — the other half of "nothing a user can observe
+    /// moved".
+    #[test]
+    fn the_seam_renders_the_same_config_as_the_free_function() {
+        let decls = [decl("api", "serve")];
+        let shell = Path::new(TEST_SHELL_PATH);
+        assert_eq!(
+            ProcessCompose.render_config(&decls, shell),
+            render_config(&decls, shell)
+        );
+    }
 
     /// A stand-in for the shell `up` resolves out of the real closure.
     /// These tests assert the *shape* of the generated config, so the

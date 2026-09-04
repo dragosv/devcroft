@@ -148,7 +148,10 @@ pub fn status_with_provider(
         .map(|meta| {
             let socket =
                 crate::services::socket_path(Path::new(&meta.project_root), &manifest.sandbox.name);
-            crate::services::reconcile(&meta.declared_services, crate::services::query(&socket))
+            crate::services::reconcile(
+                &meta.declared_services,
+                crate::services::supervisor().query(&socket),
+            )
         })
         .filter(|r| !r.is_empty());
 

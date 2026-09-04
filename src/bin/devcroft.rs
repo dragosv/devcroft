@@ -2230,7 +2230,7 @@ fn cli_ps() -> i32 {
                     // omitted.
                     let report = devcroft::services::reconcile(
                         &s.declared_services,
-                        devcroft::services::query(&socket),
+                        devcroft::services::supervisor().query(&socket),
                     );
                     for svc in &report.states {
                         println!("  service:{}\t{}", svc.name, svc.health.label());
@@ -3025,38 +3025,24 @@ fn start_services_if_requested(registry: Arc<Registry>, backend: Arc<dyn Session
         .into_owned();
 
     let req = devcroft::keeper::protocol::SpawnRequest {
-        cmd: "process-compose".to_string(),
-        args: vec![
-            "up".to_string(),
-            "-f".to_string(),
-            config,
-            // No TUI: this has no terminal attached.
-            "-t=false".to_string(),
-            "-L".to_string(),
-            log,
-            // A unix socket for its own API, not the default TCP
-            // listener. Found the hard way: process-compose binds
-            // localhost:8080 by default and treats failure as fatal, so
-            // inside a sandbox that has not granted 8080 it exited
-            // immediately — killing services it had already started.
-            // `--no-server` would also avoid the bind, but a socket keeps
-            // the API reachable for `ps`/`status` to query later, and
-            // costs nothing: the project root is writable.
-            "-u".to_string(),
-            sock,
-            // Without this, process-compose exits once every service has
-            // finished — taking its API socket, and therefore the only
-            // record of *why* a service died, with it. Found by killing a
-            // service and watching `status` go from reporting it to
-            // reporting nothing at all: the failure became invisible,
-            // which is the exact outcome the `services` spec forbids.
-            //
-            // This is also what flox's own generated config is doing with
-            // its `flox_never_exit` sleep-infinity entry — a sentinel
-            // process solving the same problem. `--keep-project` is the
-            // supported flag for it, so no sentinel is needed here.
-            "--keep-project".to_string(),
-        ],
+        // Both the executable and its arguments come from the seam
+        // (`decouple-service-supervisor`), not from literals here. The flags
+        // and the reasoning behind each now live with the implementation.
+        //
+        // **What a second supervisor would additionally need here**, noted
+        // because this is the least obvious of the four call sites: this
+        // code runs in the *keeper*, across an exec boundary from `up`, and
+        // takes its instructions from environment variables. With one
+        // supervisor it can simply ask the seam and get the same answer `up`
+        // would have. With two it would have to be *told* which — a name
+        // carried across that boundary and resolved back to an
+        // implementation on this side.
+        cmd: devcroft::services::supervisor().binary().to_string(),
+        args: devcroft::services::supervisor().spawn_args(
+            std::path::Path::new(&config),
+            std::path::Path::new(&sock),
+            std::path::Path::new(&log),
+        ),
         cwd: root.to_string_lossy().into_owned(),
         env: std::collections::BTreeMap::new(),
         pty: None,
@@ -3126,7 +3112,7 @@ fn service_process_groups() -> Vec<libc::pid_t> {
     let name = std::env::var("DEVCROFT_SANDBOX_NAME").unwrap_or_default();
     let socket = devcroft::services::socket_path(&root, &name);
 
-    let Ok(states) = devcroft::services::query(&socket) else {
+    let Ok(states) = devcroft::services::supervisor().query(&socket) else {
         return Vec::new();
     };
     states

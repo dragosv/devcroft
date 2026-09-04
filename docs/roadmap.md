@@ -261,6 +261,25 @@ What separates 0.6 from 1.0 is evidence, not features:
 
 ## Open, and deliberately unscheduled
 
+- **A devcroft-owned service supervisor** (`decouple-service-supervisor`
+  built the seam; the second implementation is unscheduled). Today a project
+  that wants services must add `process-compose` to its own environment
+  manifest — devcroft's requirement, leaking into the user's project. The
+  choice is devcroft's alone: `add-flox-services` decision 1 rejected both
+  `flox services start` and consuming flox's generated config, so devcroft
+  runs its own supervisor. That flox and devenv also use process-compose
+  internally is a coincidence devcroft does not rely on.
+  **The trade that decides when this is worth doing**: process-compose was
+  chosen *because* restart policy, service dependencies and daemon handling
+  come with it. A devcroft-owned supervisor either reimplements them — a
+  project, not a task — or offers less, in which case it is an option a
+  project opts into rather than a default. Measured while asking: no crate
+  supplies supervision with a status API (`duct`, `subprocess`,
+  `command-group` are building blocks; `supervisor` 0.1.0 is a placeholder),
+  so a minimal one is devcroft's own ~150 lines on `std` — no dependency,
+  and no prebuilt-binary supply chain. Worth doing when "no third-party
+  binary in the manifest" is worth more than what it gives up, which is not
+  yet.
 - **`nono-proxy` adoption** (`add-egress-proxy` 4b). Proposed, not taken.
   The gap that motivated it — an unauthenticated loopback proxy — was
   closed directly. What remains is a trade for credential brokering,

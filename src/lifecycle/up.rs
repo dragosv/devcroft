@@ -873,10 +873,11 @@ fn prepare_services(
     if crate::services::resolve_in_env(&resolution.env).is_none() {
         return Err(UpError::Provider(
             crate::provider::ProviderError::ResolutionFailed(format!(
-                "{} service(s) are declared but `process-compose` is not in the \
+                "{} service(s) are declared but `{binary}` is not in the \
                  resolved environment; add it to the environment manifest \
-                 (e.g. `flox install process-compose`)",
-                services.len()
+                 (e.g. `flox install {binary}`)",
+                services.len(),
+                binary = crate::services::supervisor().binary()
             )),
         ));
     }
@@ -886,7 +887,7 @@ fn prepare_services(
     }
     std::fs::write(
         &config_path,
-        crate::services::render_config(services, shell),
+        crate::services::supervisor().render_config(services, shell),
     )?;
     Ok(true)
 }
