@@ -11,7 +11,7 @@ group 0.
 > `nix`'s `TMPDIR` and flox's `--mode run` — and both assumptions were
 > wrong. Measure, then write.
 
-- [ ] 0.1 Determine whether SwiftPM honours **environment variables** for
+- [x] 0.1 Determine whether SwiftPM honours **environment variables** for
       cache, scratch and configuration paths, or only the `--cache-path`
       and `--scratch-path` flags (design.md D3, open question 1). devcroft
       injects an environment; it does not wrap commands. If only flags
@@ -30,7 +30,7 @@ group 0.
       `/Library/Developer/CommandLineTools` on a CLT-only host and
       `/Applications/Xcode.app/Contents/Developer` on an Xcode host; the
       SDK sits at a different relative path in each.
-- [ ] 0.5 Determine how an unaccepted licence actually presents — exit
+- [x] 0.5 Determine how an unaccepted licence actually presents — exit
       code and stderr of `xcrun` and `swift --version` — so 3.3 can
       distinguish it from a missing toolchain rather than guessing.
 

@@ -162,18 +162,41 @@ project code a write into the user's home directory for the lifetime of
 the sandbox, and granting all three is close enough to granting `$HOME`
 that the distinction stops being meaningful.
 
-SwiftPM exposes `--cache-path` and `--scratch-path`, so the lever exists.
+**Measured, task 0.1 — the lever exists for one half and not the other.**
+
+| state | default location | env var | flag |
+|---|---|---|---|
+| scratch (`.build`) | project root | **`SWIFTPM_BUILD_DIR` works** | `--scratch-path` |
+| cache (repositories, manifests) | `~/Library/Caches/org.swift.swiftpm` | **none found** | `--cache-path` works |
+
+`--cache-path` was verified to redirect completely: after a build with it,
+the real home cache's mtime was byte-identical to before, and the
+redirected directory held the `repositories/` and `manifests/` trees. But
+no environment variable for it exists — `strings` over `swift-package`
+yields `SWIFTPM_BUILD_DIR` and no cache equivalent.
+
+**So the fallback in this decision is now the live path, not a
+contingency**, and D3 resolves to: `SWIFTPM_BUILD_DIR` for scratch, and
+for the cache either a `swift` shim on the sandbox `PATH` that appends
+`--cache-path`, or a devcroft-owned granted directory. Task 1.3 chooses
+between those two; both are strictly more work than the env var this
+design originally assumed.
+
 This mirrors the `GOTMPDIR` finding recorded for `nix-probe-sample`: the
 provider's environment names a location the policy denies, and the fix is
 the tool's own override rather than a widened policy.
 
-**Open sub-question flagged for task group 1:** flags are not environment
-variables, and devcroft injects an environment rather than wrapping
-commands. If SwiftPM honours no environment variable for these paths, the
-options are a `swift` shim on the sandbox `PATH`, or granting a
-devcroft-owned directory. **This must be measured before the mount plan of
-this provider is written**, in the same spirit as `add-mount-isolation`'s
-task group 0. Do not assume an env var exists.
+**A measurement hazard found the hard way, recorded so it is not repeated.**
+The first probe of this question set `HOME` to an empty directory and ran a
+build, including one with a real remote dependency. Nothing appeared under
+that directory, and the obvious reading — "SwiftPM needs no home-directory
+access" — is **wrong**. The real home cache had been written the whole
+time: `~/Library/Caches/org.swift.swiftpm/repositories/swift-argument-parser-*`
+carried the build's own timestamp. macOS resolves the home directory from
+the password database, not from `$HOME`, so **`HOME=` is not a valid way to
+test home-directory writes on macOS**, and any test in task group 6 that
+tries it will pass while measuring nothing. Compare mtimes, or run as a
+different user.
 
 ### D4. The tier is stated in terms of what does not hold
 
@@ -251,9 +274,9 @@ against.
 
 ## Open Questions
 
-1. **Does SwiftPM honour environment variables for cache and scratch
-   paths, or only flags?** D3 depends on it. Must be measured before
-   implementation, not assumed.
+1. ~~**Does SwiftPM honour environment variables for cache and scratch
+   paths, or only flags?**~~ **Resolved, task 0.1**: scratch yes
+   (`SWIFTPM_BUILD_DIR`), cache no. See D3 for what that costs.
 2. **Should `up` refuse a project whose `Package.resolved` is absent while
    `Package.swift` declares dependencies?** The devbox provider refuses
    when a declared package has no lockfile key, on the principle that
@@ -267,3 +290,55 @@ against.
    Every existing sample demonstrates a closure-tier property. A sample
    whose point is a guarantee that does *not* hold is a new kind, and
    `nix-probe-sample` is the nearest precedent.
+
+## Task group 0 results
+
+Recorded here rather than lost in a terminal, since three of these change
+what the implementation has to do.
+
+**0.1 — resolved.** See D3.
+
+**0.5 — resolved.** Every unhealthy state exits 1 and is distinguishable
+by its message, so task 3.3 can tell them apart without guessing:
+
+| state | exit | first line |
+|---|---|---|
+| stale selection (`DEVELOPER_DIR` absent) | 1 | `xcrun: error: missing DEVELOPER_DIR path: …` |
+| CLT-only host, Xcode-only tool | 1 | `xcode-select: error: tool 'xcodebuild' requires Xcode, but active developer directory … is a command line tools instance` |
+| healthy | 0 | the answer |
+
+The second row is the more useful one, and it is the presence-versus-capability
+rule in miniature: `/usr/bin/xcodebuild` **exists** on a Command Line Tools
+host, so `command -v xcodebuild` succeeds and running it fails. Task 3.1's
+probe must execute, exactly as `provider::host_can_build_nix_closures` does.
+
+**0.2, 0.3, 0.4 — not resolved, and all three are blocked on the same
+thing.** This host has the Command Line Tools and no `Xcode.app`, so the
+second layout cannot be measured here at all:
+
+- **0.2** — the CLT half is partly known (build writes go to the project's
+  `.build` and to the home cache; reads come from the developer directory),
+  but a full file trace needs `fs_usage`, which needs root. Not taken.
+- **0.4** — CLT layout confirmed: `xcode-select -p` gives
+  `/Library/Developer/CommandLineTools`, with `usr/bin/swift` and
+  `SDKs/MacOSX.sdk` beneath it. The Xcode layout's
+  `Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk` is confirmed
+  **absent** here, which is evidence the two layouts differ but not
+  evidence of what the second one is.
+- **0.3** — the path is now certain: the shared cache lives at
+  `/System/Volumes/Preboot/Cryptexes/OS/System/Library/dyld/`
+  (`dyld_shared_cache_arm64e`), and `/System/Library/dyld/` **does not
+  exist** on macOS 15. `DYLD_PRINT_LIBRARIES` confirms the mechanism —
+  the binary loads `/usr/lib/libSystem.B.dylib` and a dozen
+  `/usr/lib/system/*.dylib` that are all absent from the filesystem.
+
+  What could not be confirmed is the runtime half of D2, and the reason is
+  worth recording: **a `(deny default)` Seatbelt profile makes the process
+  hang rather than fail.** `sandbox-exec` with `(allow default)` runs the
+  binary and exits 0; the same binary under a deny-default profile granting
+  only the shared cache blocked indefinitely, surviving both a `kill -9`
+  watchdog and a `perl alarm` exec wrapper. A probe that cannot distinguish
+  "denied" from "stuck" measures nothing, so this is deferred to task 6.4,
+  which runs under devcroft's own compiled policy rather than a hand-written
+  profile. Anyone tempted to re-attempt it with `sandbox-exec` should expect
+  the hang, not a denial message.
