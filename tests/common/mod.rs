@@ -434,6 +434,20 @@ fn setup_devbox(tag: &str) -> Result<Box<dyn ProviderFixture>, Unavailable> {
 #[cfg(feature = "test-support")]
 const ROW_SHELL_ENV: &str = "DEVCROFT_TEST_ROW_SHELL";
 
+/// The shell this row uses by default: devcroft's own `examples/test-row-sh`,
+/// a one-line wrapper around the `brush` crate.
+///
+/// Located relative to the running test binary rather than built here, so a
+/// fixture never shells out to cargo mid-suite. `cargo build --example
+/// test-row-sh` puts it there; the row reports itself unavailable, with that
+/// command, when it is missing.
+fn bundled_row_shell() -> Option<PathBuf> {
+    // .../target/<profile>/deps/<test binary>  ->  .../target/<profile>/examples/
+    let exe = std::env::current_exe().ok()?;
+    let candidate = exe.parent()?.parent()?.join("examples").join("test-row-sh");
+    candidate.is_file().then_some(candidate)
+}
+
 #[cfg(feature = "test-support")]
 pub struct NixFreeRow {
     root: PathBuf,
@@ -570,13 +584,22 @@ fn shell_answers(shell: &Path, timeout: std::time::Duration) -> bool {
 
 #[cfg(feature = "test-support")]
 fn setup_test_row(tag: &str) -> Result<Box<dyn ProviderFixture>, Unavailable> {
-    let Ok(shell) = std::env::var(ROW_SHELL_ENV) else {
-        return Err(Unavailable(format!(
-            "{ROW_SHELL_ENV} is unset; this row needs a POSIX shell that comes from \
-             neither the nix store nor the host PATH (see add-nix-free-test-row)"
-        )));
+    // The bundled shell by default; the env var stays as an override for
+    // trying a different one without editing code.
+    let shell = match std::env::var(ROW_SHELL_ENV) {
+        Ok(p) => PathBuf::from(p),
+        Err(_) => match bundled_row_shell() {
+            Some(p) => p,
+            None => {
+                return Err(Unavailable(
+                    "the row's shell is not built; run `cargo build --example \
+                     test-row-sh` (or set DEVCROFT_TEST_ROW_SHELL to another \
+                     POSIX shell that is not from the nix store or the host)"
+                        .to_string(),
+                ));
+            }
+        },
     };
-    let shell = PathBuf::from(shell);
     if !shell.is_file() {
         return Err(Unavailable(format!(
             "{ROW_SHELL_ENV}={} is not a file",

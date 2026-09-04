@@ -80,24 +80,35 @@
       binary is obtained (fetch + pin, vendor, or build) is task 3.1's open
       supply-chain decision and hard-coding one here would settle it by
       accident.
-- [ ] 2.3 Decide whether the built shell is cached across test runs. Building
+- [x] 2.3 Decide whether the built shell is cached across test runs. Building
       it per fixture is simple and possibly too slow; caching it is faster
       and introduces a staleness question. Measure before choosing.
+      → **Dissolved**: cargo caches the build like any other target. The row
+      locates `target/<profile>/examples/test-row-sh` and never shells out to
+      cargo mid-suite.
 
 ## 3. Linux: static BusyBox
 
-- [ ] 3.1 Resolve design.md Open Question 2 — fetch at setup versus vendor in
+- [x] 3.1 Resolve design.md Open Question 2 — fetch at setup versus vendor in
       the repo — and record the reasoning. Both need a per-architecture hash
       pin; vendoring additionally needs a decision about `Cargo.toml`'s
       anchored `include` allowlist so the binary never ships in the published
       crate.
-- [ ] 3.2 Pin by hash per architecture, and fail the row loudly on a
+      → **Dissolved by design.md N6**: neither. `brush` is a dev-dependency,
+      so `Cargo.lock` pins it like everything else and it never reaches the
+      published crate. Measured: adding it changes devcroft's *shipped*
+      dependency tree by **zero** crates.
+- [x] 3.2 Pin by hash per architecture, and fail the row loudly on a
       mismatch. An unpinned or silently-updated binary in the test path is a
       supply-chain hole in a project that generates and audits
       `THIRD-PARTY-LICENSES.md`.
-- [ ] 3.3 Add the licence attribution BusyBox requires (GPL-2.0) wherever the
+      → **Dissolved**: Cargo.lock is the pin.
+- [x] 3.3 Add the licence attribution BusyBox requires (GPL-2.0) wherever the
       binary is obtained from, and confirm it does not contaminate the
       published crate's own licensing — it is a test artifact, never linked.
+      → **Dissolved**: `brush` is MIT, not GPL-2.0, and the generator scopes
+      itself to `cargo tree -e normal`, so a dev-dependency never enters the
+      attribution file. Verified in the script and by regenerating.
 - [ ] 3.4 Verify 1.1 and 1.2 on Linux, not by analogy with macOS. **Neither
       half of this change has been run on Linux**, and the two platforms
       share no artifact.
@@ -128,9 +139,11 @@
       `up` through the injection seam. A default `cargo test` does not have
       this row at all — the strongest available form of "not the default",
       stronger than 5.2's proposed assertion.
-- [ ] 5.2 Assert the row does not become the default: a test that fails if
+- [x] 5.2 Assert the row does not become the default: a test that fails if
       the default selection resolves to it. The spec requirement exists
       because this is the change that creates the temptation.
+      → Stronger than an assertion: the row is compiled only under
+      `test-support`, so a default `cargo test` does not contain it at all.
 - [x] 5.3 Verify it satisfies the shared realism check already in
       `tests/matrix_lifecycle.rs`
       (`every_row_resolves_its_shell_out_of_the_closure`) — which today

@@ -97,6 +97,16 @@ which is most of the interesting ones.
 python3 scripts/gen-third-party-licenses.py   # rewrites THIRD-PARTY-LICENSES.md
 ```
 
+**Regenerate it on Linux, not macOS.** The generator reads `cargo tree -e
+normal`, which resolves for the *host* target — so running it on a Mac
+silently drops every Linux-only dependency from a file that exists for
+Apache-2.0 §4(a) compliance. Measured: the committed file lists 335
+dependencies; regenerating it on macOS produces 287, quietly losing the
+Linux keyring/dbus tail (`aes`, `async-io`, `async-broadcast`, and 45
+others). Nothing errors, and the diff looks like a legitimate shrink.
+Adding `--target x86_64-unknown-linux-gnu` reproduces the committed set from
+a Mac if you have to.
+
 devcroft is **Apache-2.0** (`LICENSE-APACHE` + `NOTICE`), matching nono
 and the sigstore crates it links rather than the Rust-conventional dual
 `MIT OR Apache-2.0` — a dual license would let a user take MIT and no

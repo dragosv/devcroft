@@ -69,10 +69,76 @@ weak on taste — `test-runtime-fixture` requires that no row satisfy the
 contract by resolving its shell from the host — but "it does not work" is a
 shorter conversation than "it should not".
 
-## N3 — Freshly built binaries do run (MEASURED), so macOS builds from source
+## N6 — A Rust shell as a dev-dependency, which supersedes N3 and N4 (MEASURED)
 
-**Decision.** On macOS, the row's shell is **compiled from source** at
-fixture-setup time.
+**Decision.** The row's shell is `brush` — a Rust implementation of a
+POSIX/bash-compatible shell — taken as a **dev-dependency** and built by
+devcroft's own `cargo build` through a one-line `examples/` wrapper.
+
+This supersedes N3 (build dash from source on macOS) and N4 (static BusyBox
+on Linux). Both stay below for the reasoning, which was sound for the
+options known at the time; this one was not considered and is better on every
+axis that mattered.
+
+**Measured, all of it:**
+
+| | value |
+|---|---|
+| crate | `brush-shell` 0.4.0 / `brush-core` 0.5.0, updated 2026-05-03 |
+| licence | **MIT** |
+| the wrapper | `fn main() { brush_shell::entry::run() }` — one line |
+| behaviour | `-c`, `cd &&`, pipelines, `[ ]` tests, redirection: all work |
+| new crates | **69** not already in devcroft's tree |
+| binary | 34M debug (10.6M via `cargo install`) |
+
+**What it dissolves, rather than solves:**
+
+- **The platform split (N4) disappears.** One artifact, both platforms. There
+  is no longer a Linux row and a macOS row that share no artifact and must be
+  kept working separately.
+- **Fetch-vs-vendor and hash pinning (tasks 3.1, 3.2) dissolve.** `Cargo.lock`
+  already pins it, with the same discipline every other dependency gets.
+- **The GPL attribution burden (task 3.3) disappears.** BusyBox is GPL-2.0 and
+  the *binary* carries it. brush is MIT — and, decisively, the licence
+  generator scopes itself to `cargo tree -e normal`, so a dev-dependency does
+  not enter `THIRD-PARTY-LICENSES.md` at all. Verified in the script.
+- **The macOS toolchain requirement (tasks 2.1-2.3) disappears.** No C
+  compiler, no `configure`, no build caching question. Cargo already builds
+  this project.
+- **The `UE` hazard disappears.** Nothing is copied from a platform path, so
+  nothing can land in an unkillable state.
+
+**Cost, stated plainly:** 69 crates in the dev tree. This project has recorded
+objections at 141 (nono's trust tail) and 116 (nono-proxy), so the number is
+not nothing — but both of those were *runtime* dependencies that ship, link,
+and carry Apache-2.0 §4(a) obligations to recipients. This one ships nothing,
+links nothing, and is invisible to the attribution file. Different calculus,
+same care.
+
+**Placement matters and is not obvious.** The wrapper goes in `examples/`,
+not `src/bin/`. `src/bin/` targets are auto-discovered — CLAUDE.md records
+that `!/src/bin/spike.rs` in the packaging allowlist is load-bearing for
+exactly this reason — and they cannot use dev-dependencies, so a wrapper
+there would force brush into the *shipped* dependency tree. Examples can use
+dev-dependencies and are never installed.
+
+**Residual risk:** brush is a young implementation, so a compatibility gap
+would surface as a mysterious test failure rather than a clear one. That is
+real, and it is bounded by the row never being the default and by the
+real-provider rows staying required. It is a genuine shell rather than a
+stub, so the objection that ruled out writing our own does not apply.
+
+## N3 — Freshly built binaries do run (MEASURED) — SUPERSEDED by N6
+
+> Kept for the measurement, which stands: a freshly compiled binary runs from
+> an arbitrary directory where a copied platform binary does not. The
+> *decision* it justified — compile dash at fixture setup — is superseded by
+> N6, which needs no C toolchain at all. dash 0.5.12 built in 6s, for the
+> record, and is BSD-3-Clause apart from a GPL build-time generator
+> (`mksignames.c`) that is not linked into the shipped binary.
+
+**Decision (superseded).** On macOS, the row's shell is **compiled from
+source** at fixture-setup time.
 
 **Measured.** A trivial C program compiled with the host `clang` and run
 from a scratch directory printed and exited 0. So the platform has no
@@ -92,10 +158,15 @@ architecture, and licence attribution in `THIRD-PARTY-LICENSES.md`, for a
 row that is not the default. Reconsider if setup-time compilation proves
 slow enough to matter.
 
-## N4 — Linux is a different row, and says so
+## N4 — Linux is a different row, and says so — SUPERSEDED by N6
 
-**Decision.** On Linux the row uses a **static BusyBox**, pinned by hash per
-architecture. It is not the same artifact as macOS's, and the two are
+> Superseded: N6 uses one artifact on both platforms, so there is no longer a
+> different row to describe. The cost this decision accepted — GPL-2.0
+> attribution, per-architecture hash pinning, a fetch-or-vendor decision — is
+> the cost N6 avoids entirely.
+
+**Decision (superseded).** On Linux the row uses a **static BusyBox**, pinned
+by hash per architecture. It is not the same artifact as macOS's, and the two are
 documented as one row with two platform implementations rather than as a
 uniform "test provider".
 
@@ -151,15 +222,13 @@ turns daemon-less hosts red, which is the sequencing that change recorded.
 
 ## Open Questions
 
-1. **Does the macOS row compile a shell, or is there a better source?**
-   N3 says compile, on the strength of "fresh binaries run". Not yet
-   measured: *which* shell (dash is the obvious candidate — small, POSIX,
-   no dependencies), how long it takes, and whether it needs anything
-   beyond the Xcode command-line tools this project already assumes.
-2. **BusyBox: fetched or vendored?** Fetch needs network at setup and a
-   per-architecture hash pin; vendor needs repo size and the same pin, plus
-   a decision about `Cargo.toml`'s anchored `include` allowlist so it does
-   not ship in the published crate. Both need licence attribution.
+1. **~~Does the macOS row compile a shell?~~ ANSWERED — it does not need to.**
+   N6 takes a Rust shell as a dev-dependency, so there is no host toolchain
+   step on either platform. (dash was measured at 6s if that path is ever
+   revisited.)
+2. **~~BusyBox: fetched or vendored?~~ DISSOLVED by N6** — neither. Cargo.lock
+   pins it, and a dev-dependency never reaches the published crate or the
+   attribution file.
 3. **Does the row actually run the neutral surface?** N1 proved `up`
    reaches `Started`; it did **not** prove a session runs, because the
    shell available at the time was the copied one that hangs. The first
