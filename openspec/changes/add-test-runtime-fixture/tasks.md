@@ -203,8 +203,20 @@
         belong to the *platform* axis, which design.md D5 keeps separate — they
         migrate, but their skips stay `cfg`-based and must not become row
         capabilities.
-- [ ] 4.2 Migrate them to `fixture_for()`, one file at a time, each still green on its
+- [~] 4.2 Migrate them to `fixture_for()`, one file at a time, each still green on its
       original provider first.
+      → **4 of 22 done**, each following the rule: verified green on the flox
+      it used to hardcode *before* being allowed onto another row.
+      `lifecycle_up`, `lifecycle_recreate`, `lifecycle_status`,
+      `lifecycle_down_kills_sessions`. All four now pass on **all four rows**
+      — nix, flox, devbox, and the Nix-free `test` row — which is the payoff:
+      they run on a host with no Nix daemon at all.
+      Two things the migration surfaced, both handled by capability rather
+      than by name: `lifecycle_status` asserts `env_stale`, which the injected
+      row cannot express, so that one assertion is gated on
+      `capabilities().staleness`; and the per-test cost went *down* rather
+      than up (measured: `lifecycle_up` 11s hardcoded-flox → 6.8s on flox via
+      the fixture, 6.5s on nix).
 - [ ] 4.3 Leave the 7 provider-contract files hardcoded and real:
       `flox_derived_env`, `flox_env_capture_is_deterministic`, `nix_provider_e2e`,
       `nix_env_capture_is_deterministic`, `devbox_provider_e2e`,
