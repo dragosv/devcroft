@@ -125,9 +125,19 @@
 
 ## 4. Services, if the row is to have them
 
-- [ ] 4.1 Decide whether this row ships `process-compose`. It is not needed
+- [x] 4.1 Decide whether this row ships `process-compose`. It is not needed
       for the lifecycle/exec/SSH band, which is most of the neutral surface,
       and it costs a second pinned binary per platform.
+      → **No process-compose, but the row did gain a userland**, which is the
+      cheaper half of the same question. `exec -- pwd` needs a `pwd` *binary*
+      (a shell builtin does not satisfy `Command::new("pwd")`), so the
+      wrapper became a busybox-style multi-call binary dispatching on
+      `argv[0]`, and the row symlinks `pwd`, `sleep` and `echo` at it.
+      Cost measured: **4 crates** (`uu_pwd`, `uu_sleep`, `uu_echo`, `glob`) —
+      cheap only because `brush` already pulls the shared `uucore` layer.
+      `capabilities().external_utils` is now true for this row, and
+      `tests/exec_up.rs` runs on it. Services remain out: process-compose has
+      no Rust reimplementation to take the same route.
 - [ ] 4.2 If it does: `capabilities().services` reports it, so a neutral
       services test gates on the capability and not on the row's name.
 

@@ -483,8 +483,10 @@ impl ProviderFixture for NixFreeRow {
         ProviderCapabilities {
             services: false,
             activation_hook: false,
-            // A shell and nothing else — see the field's doc.
-            external_utils: false,
+            // The row's shell binary is multi-call: it is symlinked as
+            // `pwd`, `sleep` and `echo` too, so `Command::new("pwd")` finds
+            // a real binary rather than needing a shell builtin.
+            external_utils: true,
             // See the field's own doc: `status` re-derives its provider from
             // the manifest, so this row's fingerprint is honoured by `up`
             // and invisible to `status`.
@@ -641,6 +643,20 @@ fn setup_test_row(tag: &str) -> Result<Box<dyn ProviderFixture>, Unavailable> {
     {
         use std::os::unix::fs::PermissionsExt;
         let _ = std::fs::set_permissions(bin.join("sh"), std::fs::Permissions::from_mode(0o755));
+    }
+    // The same binary under the names devcroft's keeper will `Command::new`.
+    // It dispatches on `argv[0]`, busybox-style, so one file is the row's
+    // whole userland — a shell builtin cannot satisfy `Command::new("pwd")`,
+    // which is what an `exec -- pwd` actually reaches.
+    for util in ["pwd", "sleep", "echo"] {
+        let link = bin.join(util);
+        let _ = std::fs::remove_file(&link);
+        #[cfg(unix)]
+        if std::os::unix::fs::symlink("sh", &link).is_err() {
+            // A filesystem without symlinks: copy instead, so the row still
+            // works rather than losing the capability silently.
+            let _ = std::fs::copy(bin.join("sh"), &link);
+        }
     }
     std::fs::write(dir.join("fingerprint"), "base\n").unwrap();
 

@@ -54,6 +54,13 @@ fn exec_propagates_exit_code_maps_cwd_and_forwards_sigint() {
         );
 
         // Exit-code propagation (exec spec scenario).
+        //
+        // Run from the project, as a user would: `devcroft exec` passes the
+        // caller's own cwd through to the session unchanged (exec spec,
+        // "Working directory mapping"), so invoking it from the *crate* root
+        // asks the sandbox to start a process in a directory its policy does
+        // not grant. It happened to work on some rows and not others, which
+        // is the signature of testing an accident.
         let out = Command::new(devcroft_bin)
             .arg("exec")
             .arg(&sandbox_name)
@@ -61,6 +68,7 @@ fn exec_propagates_exit_code_maps_cwd_and_forwards_sigint() {
             .arg("sh")
             .arg("-c")
             .arg("echo hi; exit 42")
+            .current_dir(&project_root)
             .output()
             .unwrap();
         assert_eq!(String::from_utf8_lossy(&out.stdout), "hi\n");
@@ -95,6 +103,7 @@ fn exec_propagates_exit_code_maps_cwd_and_forwards_sigint() {
             .arg("--")
             .arg("sleep")
             .arg("100")
+            .current_dir(&project_root)
             .stdout(Stdio::null())
             .spawn()
             .unwrap();

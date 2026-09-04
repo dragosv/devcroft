@@ -60,3 +60,6 @@ toml = "1.1.4"
 
 [dev-dependencies]
 brush-shell = "0.4.0"
+uu_echo = "0.6.0"
+uu_pwd = "0.6.0"
+uu_sleep = "0.6.0"

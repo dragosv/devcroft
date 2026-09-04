@@ -20,6 +20,30 @@
 //! installed. Measured: adding this changes devcroft's shipped dependency
 //! tree by zero crates.
 
+/// Dispatch on `argv[0]`, busybox-style, so one binary can be the row's
+/// whole userland.
+///
+/// The row symlinks `pwd`, `sleep` and `echo` at this same file. Without
+/// that, a row backed only by a shell cannot run `exec -- pwd`: a shell
+/// builtin does not satisfy `Command::new("pwd")`, which is what devcroft's
+/// keeper actually calls. The utilities are `uutils` reimplementations, and
+/// cost 4 crates on top of `brush` because the shared `uucore` layer is
+/// already in the tree.
 fn main() {
-    brush_shell::entry::run()
+    let arg0 = std::env::args_os().next().unwrap_or_default();
+    let name = std::path::Path::new(&arg0)
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
+
+    // `uumain` returns the exit code directly here (the crates wrap their
+    // own `UResult` before returning).
+    let code = match name.as_str() {
+        "pwd" => uu_pwd::uumain(std::env::args_os()),
+        "sleep" => uu_sleep::uumain(std::env::args_os()),
+        "echo" => uu_echo::uumain(std::env::args_os()),
+        // Anything else — `sh` included — is the shell.
+        _ => return brush_shell::entry::run(),
+    };
+    std::process::exit(code);
 }
