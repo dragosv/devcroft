@@ -205,10 +205,10 @@
         capabilities.
 - [~] 4.2 Migrate them to `fixture_for()`, one file at a time, each still green on its
       original provider first.
-      → **4 of 22 done**, each following the rule: verified green on the flox
+      → **5 of 22 done**, each following the rule: verified green on the flox
       it used to hardcode *before* being allowed onto another row.
       `lifecycle_up`, `lifecycle_recreate`, `lifecycle_status`,
-      `lifecycle_down_kills_sessions`. All four now pass on **all four rows**
+      `lifecycle_down_kills_sessions`, `exec_up`. All now pass on **all four rows**
       — nix, flox, devbox, and the Nix-free `test` row — which is the payoff:
       they run on a host with no Nix daemon at all.
       Two things the migration surfaced, both handled by capability rather
@@ -217,6 +217,11 @@
       `capabilities().staleness`; and the per-test cost went *down* rather
       than up (measured: `lifecycle_up` 11s hardcoded-flox → 6.8s on flox via
       the fixture, 6.5s on nix).
+      A third capability fell out of `exec_up`: it exec's *external commands*
+      (`pwd`, `sleep`), and the Nix-free row supplies a shell and nothing
+      else — a builtin does not satisfy `Command::new("pwd")`. Declared as
+      `capabilities().external_utils` rather than rewritten through `sh -c`,
+      which would have changed what the test asserts.
 - [ ] 4.3 Leave the 7 provider-contract files hardcoded and real:
       `flox_derived_env`, `flox_env_capture_is_deterministic`, `nix_provider_e2e`,
       `nix_env_capture_is_deterministic`, `devbox_provider_e2e`,

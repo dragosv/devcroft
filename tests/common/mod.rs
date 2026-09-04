@@ -42,6 +42,19 @@ pub struct ProviderCapabilities {
     /// The provider runs a project-supplied activation hook that devcroft
     /// has to confine (`fix-provisioning-hooks`). Flox only.
     pub activation_hook: bool,
+    /// The row's environment provides ordinary external utilities —
+    /// `pwd`, `sleep`, `wc` and friends — as *binaries*, not just as shell
+    /// builtins.
+    ///
+    /// True for every real provider row, which installs coreutils. False for
+    /// the Nix-free row, which supplies a POSIX shell and nothing else: a
+    /// test that runs `exec -- pwd` needs a `pwd` binary on the sandbox's
+    /// `PATH`, and a shell builtin does not satisfy `Command::new("pwd")`.
+    ///
+    /// Declared rather than papered over, because the alternative — rewriting
+    /// such a test to go through `sh -c` — would change what it asserts. The
+    /// point of `exec -- <cmd>` is exec'ing a command, not a shell.
+    pub external_utils: bool,
     /// `status` can tell whether this row's environment drifted.
     ///
     /// **False for the injected row, and that is a seam limitation rather
@@ -159,6 +172,7 @@ impl ProviderFixture for NixRow {
         ProviderCapabilities {
             services: false,
             activation_hook: false,
+            external_utils: true,
             staleness: true,
         }
     }
@@ -192,6 +206,7 @@ impl ProviderFixture for FloxRow {
         ProviderCapabilities {
             services: true,
             activation_hook: true,
+            external_utils: true,
             staleness: true,
         }
     }
@@ -222,6 +237,7 @@ impl ProviderFixture for DevboxRow {
         ProviderCapabilities {
             services: false,
             activation_hook: false,
+            external_utils: true,
             staleness: true,
         }
     }
@@ -467,6 +483,8 @@ impl ProviderFixture for NixFreeRow {
         ProviderCapabilities {
             services: false,
             activation_hook: false,
+            // A shell and nothing else — see the field's doc.
+            external_utils: false,
             // See the field's own doc: `status` re-derives its provider from
             // the manifest, so this row's fingerprint is honoured by `up`
             // and invisible to `status`.
