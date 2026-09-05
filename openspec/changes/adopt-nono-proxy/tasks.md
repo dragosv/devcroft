@@ -5,12 +5,29 @@
 - [x] 0.1 Bump `nono` 0.74.0 → 0.75.0 and confirm devcroft still compiles.
       → **Clean**: `cargo check --all-targets`, zero warnings, no source change,
       31s. macOS 15.7.4/arm64.
-- [ ] 0.2 Run the full test suite on 0.75.0 before adding the proxy crate, so a
+- [x] 0.2 Run the full test suite on 0.75.0 before adding the proxy crate, so a
       regression from the bump is distinguishable from one from the adoption.
       A clean `cargo check` is not a clean test run.
-- [ ] 0.3 Add `nono-proxy = { version = "0.75.0", default-features = false }`.
+      → **416 passed, 0 failed, 49 test binaries.** 19 skips, every one with a
+      named reason and every one pre-existing: 14 Linux-namespace (net, mount),
+      2 macOS pty, 1 loopback alias, 1 rsync-under-Seatbelt, 1 netns
+      enforcement.
+      **The check that makes this meaningful**: not one skip came from
+      `backend_supported()`. A nono release that broke capability detection
+      would empty this suite silently — every e2e test guards on that probe and
+      a skip reads as a pass — so its absence, not the exit code, is what says
+      0.75 is safe. No 0.74 baseline needed as a result.
+      macOS 15.7.4/arm64 only; Linux unverified.
+- [x] 0.3 Add `nono-proxy = { version = "0.75.0", default-features = false }`.
       `system-keyring` is redundant — devcroft does not use the keystore path
       and D4 does not adopt one.
+      → Compiles clean, all targets. **The cost for devcroft is 66 crates, not
+      75**: measured `cargo tree -e normal` on this manifest, Linux target,
+      with and without the dependency (303 → 369). The 75 figure is a bare
+      consumer's; devcroft already shares 9 of them, mostly the rustls tail it
+      pulls through sigstore. **31 of the 66 — 47% — still serve the three
+      refused capabilities** (18 AWS, 6 SPIFFE/gRPC, 7 TLS/certificate), which
+      is what task 2.3's upstream request asks to make optional.
 - [ ] 0.4 Regenerate `THIRD-PARTY-LICENSES.md` **on Linux**. On macOS the
       generator resolves for the host target and silently drops the Linux-only
       tail from a §4(a) compliance artifact.

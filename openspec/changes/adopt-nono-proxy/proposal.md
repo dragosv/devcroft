@@ -8,7 +8,10 @@ E6 recorded "116 additional crates, measured", the same order as the 141-crate
 trust tail `use-nono-library` accepted reluctantly. Re-measured against
 `nono-proxy` **0.75.0** with `default-features = false`
 (`system-keyring` is redundant — devcroft does not use the keystore path, and
-`nono` already carries its own): **75 crates**, not 116.
+`nono` already carries its own): **75 crates** for a bare consumer, and
+**66 for devcroft**, which already shares nine of them — mostly the rustls tail
+it pulls through sigstore. Measured on this manifest, `cargo tree -e normal`
+against the Linux target, with and without the dependency: 303 → 369.
 
 The composition matters more than the total:
 
@@ -19,8 +22,8 @@ The composition matters more than the total:
 | TLS / certificate (`rcgen`, `rustls`, `tokio-rustls`, `hyper-rustls`, `x509`…) | 7 | TLS interception — **an explicit non-goal** |
 | everything else | 42 | what devcroft actually wants |
 
-**33 of 75 — 44% — exist solely to serve the three capabilities devcroft
-refuses.** E6 said they are "present in the dependency, unused by devcroft, and
+**33 of 75 — 31 of devcroft's own 66, 47% — exist solely to serve the three
+capabilities devcroft refuses.** E6 said they are "present in the dependency, unused by devcroft, and
 not to be enabled silently". True, and incomplete: `system-keyring` is the
 crate's *only* feature, so none of them can be compiled out. devcroft would
 ship an X.509 certificate generator for a feature its own threat model calls an

@@ -50,6 +50,7 @@ test-support = []
 base64 = "0.22.1"
 libc = "0.2.189"
 nono = "0.75.0"
+nono-proxy = { version = "0.75.0", default-features = false }
 rand = "0.10.2"
 russh = "0.62.5"
 russh-sftp = "2.4.0"

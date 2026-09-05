@@ -222,10 +222,13 @@ the same project, `nono-proxy`. The owner accepted the trade;
 `adopt-nono-proxy` is that work.** Before touching code it re-measured the
 objection, and both of E6's stated numbers moved:
 
-- **75 crates, not 116** — `nono-proxy` 0.75.0 with
-  `default-features = false` (`system-keyring` is redundant: devcroft uses
-  no keystore path and `nono` carries its own), resolved for
-  `x86_64-unknown-linux-gnu`.
+- **66 crates, not 116** — measured on devcroft's own manifest,
+  `cargo tree -e normal` against `x86_64-unknown-linux-gnu`, with and
+  without the dependency (303 → 369). `nono-proxy` 0.75.0 with
+  `default-features = false`; `system-keyring` is redundant, since devcroft
+  uses no keystore path and `nono` carries its own. A *bare* consumer pays
+  75 — devcroft already shares nine, mostly the rustls tail it pulls
+  through sigstore.
 - **`nono` must move 0.74.0 → 0.75.0.** E6 says "pinned to the same
   0.74.0"; that is no longer possible, since `nono-proxy` 0.75.0 requires
   the matching `nono`. Measured: devcroft compiles clean on 0.75.0, all
@@ -246,14 +249,14 @@ configuration tweak.
 
 **But "off by decision" is not "absent", and the distinction is load-bearing
 here.** `system-keyring` is the crate's *only* feature, so none of the
-three can be compiled out: **33 of the 75 crates — 20 AWS, 6 SPIFFE/gRPC,
+three can be compiled out: **31 of devcroft's 66 — 47%: 18 AWS, 6 SPIFFE/gRPC,
 7 TLS/certificate — exist solely to serve them.** devcroft ships an X.509
 certificate generator for a feature its own threat model calls a non-goal.
 The mitigation is a test asserting all three are off in the `ProxyConfig`
 devcroft builds (a comment cannot survive an upstream default changing in
 a minor release), plus an upstream request to gate them behind features —
 the same ask, to the same maintainer, as `use-nono-library` task 6.4. If
-accepted, 75 drops to roughly 42.
+accepted, 66 drops to roughly 35.
 
 Skills `/opsx:propose`, `/opsx:update`, `/opsx:apply`, `/opsx:archive`,
 `/opsx:sync`, and `/opsx:explore` drive the workflow.
