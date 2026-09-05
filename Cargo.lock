@@ -3045,9 +3045,9 @@ dependencies = [
 
 [[package]]
 name = "nono"
-version = "0.74.0"
+version = "0.75.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "14d8733fba69f455f1a0aacb77e4df46862d7b80fc4d42b81a77a820f008b0e5"
+checksum = "00cc4e5d8ef7dcba99c9f05495d4ee9afe1eb73cec4c97411d06e2e985ddfaaa"
 dependencies = [
  "der 0.8.1",
  "getrandom 0.4.3",
