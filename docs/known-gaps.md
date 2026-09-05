@@ -390,6 +390,43 @@ proxy decides by the name in `CONNECT` and does not inspect the tunnel —
 TLS interception is an explicit non-goal. Untested, and not claimed as
 safe.
 
+## A brokered credential can be spent, and a bypassed route cannot be blocked
+
+Two limits of `[[broker]]` (`adopt-nono-proxy`), both narrower than the feature
+sounds and both easy to overstate.
+
+**Brokering protects the secret from the sandbox, not the sandbox from itself.**
+The credential lives in the proxy process on the host and never enters the
+sandbox — not its environment, not its filesystem, not its process table. What
+the sandbox gets is a local route and a phantom token. So code inside cannot
+*exfiltrate* the key, and **can** spend it: anything that can reach the route
+can make requests the credential pays for, up to whatever the upstream allows.
+Brokering is a containment property, not a rate limit and not an authorisation
+model.
+
+It also protects nothing from the host user. The secret sits in the proxy
+process's environment, readable by anything running as that user — the same
+exposure `DEVCROFT_EGRESS_TOKEN` already has. This is not a defence against
+your own account.
+
+**A client that ignores the route cannot be stopped, only reported.** A broker
+requires its upstream in `network.allow`, because the proxy dials it and the
+compiled policy must show that. The consequence is that a client which ignores
+`{PREFIX}_BASE_URL` and dials the upstream directly is *allowed through* — and
+arrives unauthenticated, collecting a `401` that reads like a bad key rather
+than like an unused route.
+
+Denying that path is not available: `nono-proxy` checks the **same** host filter
+on its reverse path as on CONNECT, so refusing the direct route refuses the
+brokered one with it. Separating them requires TLS interception, an explicit
+non-goal.
+
+What devcroft does instead is name it. A `Connect` to a brokered host is a
+bypass by construction — the correct path arrives as a `Reverse` request — so
+the proxy log records `bypass ... reason=brokered-route-not-used`, saying which
+route went unused and that no credential was injected. The failure is still the
+upstream's `401`; what changes is that the log says why.
+
 ## An agent working in your real directory cannot be rolled back
 
 devcroft confines *where* a sandbox can write — the project root and

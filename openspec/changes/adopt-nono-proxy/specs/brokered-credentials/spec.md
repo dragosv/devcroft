@@ -85,14 +85,23 @@ The route SHALL be declared by upstream provider, not by agent, and the
 environment variable that points a client at it SHALL be overridable, since no
 single naming convention covers every SDK.
 
-#### Scenario: A client that ignores the route is refused, legibly
+**Corrected against the implementation, which falsified the first version of
+this scenario.** It said such a request SHALL *fail*. It does not, and cannot:
+`nono-proxy`'s reverse path checks the **same** host filter as its CONNECT path,
+so denying the direct route denies the brokered one with it, and separating them
+requires TLS interception — an explicit non-goal. What is achievable, and what
+this requirement now demands, is that the bypass be *detected and named* rather
+than left to surface as an upstream `401` that reads like a bad key.
+
+#### Scenario: A client that ignores the route is reported, by name
 
 - **GIVEN** a sandbox with a brokered route, and a client that dials the real
   upstream directly
 - **WHEN** the request is attempted
-- **THEN** it SHALL fail
-- **AND** the failure SHALL say the upstream is brokered and the route was not
-  used, rather than reporting only that egress was denied
+- **THEN** the proxy log SHALL record it distinctly from an ordinary allowed
+  request, naming the route that was not used
+- **AND** the record SHALL say no credential was injected, so the upstream's
+  own authentication failure is not mistaken for a bad credential
 
 #### Scenario: The route serves any client following the provider's convention
 

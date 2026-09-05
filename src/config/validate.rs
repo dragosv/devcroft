@@ -104,7 +104,7 @@ pub fn check_brokers(brokers: &[Broker], network: &Network) -> Result<(), Config
                 detail: "may contain only letters, digits, '-' and '_' — it becomes both a URL path segment and an environment-variable stem".to_string(),
             });
         }
-        let Some(host) = upstream_host(&b.upstream) else {
+        let Some(host) = crate::proxy::backend::upstream_host(&b.upstream) else {
             return Err(ConfigError::InvalidBroker {
                 provider: b.provider.clone(),
                 field: "upstream",
@@ -119,21 +119,6 @@ pub fn check_brokers(brokers: &[Broker], network: &Network) -> Result<(), Config
         }
     }
     Ok(())
-}
-
-/// The host of an absolute `http`/`https` URL, without port or path.
-fn upstream_host(upstream: &str) -> Option<String> {
-    let rest = upstream
-        .strip_prefix("https://")
-        .or_else(|| upstream.strip_prefix("http://"))?;
-    let host = rest
-        .split('/')
-        .next()?
-        .split('@')
-        .next_back()?
-        .split(':')
-        .next()?;
-    (!host.is_empty()).then(|| host.to_ascii_lowercase())
 }
 
 /// `network.allow`'s own matching: exact, or a leading `*.` wildcard.

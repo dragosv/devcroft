@@ -189,9 +189,20 @@
       check.
       → Done in the same block. The SDK receives the *session token* as its
       API key and the proxy swaps it upstream.
-- [ ] 3.4 Make the bypass failure legible (D5): a client that dials the real
+- [x] 3.4 Make the bypass failure legible (D5): a client that dials the real
       upstream must be told the upstream is **brokered and the route was not
       used**, not merely that egress was denied.
+      → **The task as written asked for something the architecture forbids, and
+      the spec is corrected rather than the code bent to it.** `nono-proxy`'s
+      reverse path checks the *same* host filter as CONNECT
+      (`reverse.rs:514/807/1468`), so `denied_hosts` on a brokered upstream
+      would deny the brokered route itself. Separating the two needs TLS
+      interception, a non-goal.
+      What is achievable is detection: a `Connect` audit event whose target is
+      a brokered host **is** a bypass by construction, since the correct path
+      arrives as `Reverse`. `drain_into_log` now emits a `bypass` line naming
+      the route and stating that no credential was injected — so the upstream's
+      `401` is not mistaken for a bad key.
 - [ ] 3.4b Establish which class a project's client falls in, and refuse to
       degrade. A client honouring only `HTTPS_PROXY` speaks end-to-end TLS to
       the real host and **cannot** be brokered without interception, which is a

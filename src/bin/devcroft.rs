@@ -3012,6 +3012,7 @@ fn egress_proxy_main(fd: RawFd, unix_fd: RawFd) -> ! {
             .ok()
             .and_then(|s| serde_json::from_str(&s).ok())
             .unwrap_or_default();
+    let routes_for_log = routes.clone();
     let (nono_port, handle) = match devcroft::proxy::backend::start(allow, &token, routes) {
         Ok(started) => started,
         Err(e) => {
@@ -3028,8 +3029,14 @@ fn egress_proxy_main(fd: RawFd, unix_fd: RawFd) -> ! {
     // The proxy log is a devcroft interface (`logs` surfaces it,
     // `tests/egress_proxy_e2e.rs` asserts its shape), so nono-proxy's audit
     // events are rendered into it rather than left to the crate's own tracing.
+    let brokered: std::collections::BTreeMap<String, String> = routes_for_log
+        .iter()
+        .filter_map(|r| {
+            devcroft::proxy::backend::upstream_host(&r.upstream).map(|h| (h, r.prefix.clone()))
+        })
+        .collect();
     std::thread::spawn(move || {
-        devcroft::proxy::backend::drain_into_log(handle, log_path);
+        devcroft::proxy::backend::drain_into_log(handle, log_path, brokered);
     });
 
     devcroft::proxy::server::bridge_tcp_to_tcp(listener, nono_port);

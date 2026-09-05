@@ -34,6 +34,23 @@ pub struct BrokerRoute {
     pub secret_var: String,
 }
 
+/// The host of an absolute `http(s)` URL, without port or path. Shared with
+/// `config::validate` so the manifest check and the bypass detection can never
+/// disagree about what a route's upstream *is*.
+pub fn upstream_host(upstream: &str) -> Option<String> {
+    let rest = upstream
+        .strip_prefix("https://")
+        .or_else(|| upstream.strip_prefix("http://"))?;
+    let host = rest
+        .split('/')
+        .next()?
+        .split('@')
+        .next_back()?
+        .split(':')
+        .next()?;
+    (!host.is_empty()).then(|| host.to_ascii_lowercase())
+}
+
 /// The configuration devcroft hands `nono-proxy`.
 ///
 /// A pure function on purpose: `tests/proxy_refused_capabilities.rs` asserts
@@ -145,7 +162,14 @@ pub fn start(
 /// Polled rather than pushed because `drain_audit_events` is the only
 /// interface offered, and buffered upstream to 4096 events — so the interval
 /// is a liveness choice, not a correctness one.
-pub fn drain_into_log(handle: &'static nono_proxy::ProxyHandle, log: std::path::PathBuf) -> ! {
+/// `brokered` maps an upstream host to the route prefix that brokers it, so a
+/// `Connect` to one can be reported as the bypass it is — see the `bypass`
+/// arm below.
+pub fn drain_into_log(
+    handle: &'static nono_proxy::ProxyHandle,
+    log: std::path::PathBuf,
+    brokered: std::collections::BTreeMap<String, String>,
+) -> ! {
     use std::io::Write;
     loop {
         std::thread::sleep(std::time::Duration::from_millis(250));
@@ -161,6 +185,33 @@ pub fn drain_into_log(handle: &'static nono_proxy::ProxyHandle, log: std::path::
                 .port
                 .map(|p| p.to_string())
                 .unwrap_or_else(|| "-".to_string());
+            // A `Connect` to a host this manifest brokers is, by construction,
+            // a client that ignored `{PREFIX}_BASE_URL` and dialled the real
+            // upstream — the correct path is a plaintext request to the local
+            // route, which arrives as `Reverse`.
+            //
+            // **Reported, not prevented, and that is a limitation rather than a
+            // choice.** The crate's reverse path checks the *same* host filter
+            // as CONNECT does (`reverse.rs`), so denying the direct route would
+            // deny the brokered one with it. Preventing this needs TLS
+            // interception, which is an explicit non-goal. Without this line
+            // the bypass surfaces only as a `401` from the upstream, which
+            // reads as a bad key rather than as an unused route.
+            let bypassed = matches!(ev.mode, nono::undo::NetworkAuditMode::Connect)
+                .then(|| brokered.get(&ev.target.to_ascii_lowercase()))
+                .flatten();
+            if let Some(prefix) = bypassed {
+                let _ = writeln!(
+                    f,
+                    "bypass host={} port={port} route={prefix} \
+                     reason=brokered-route-not-used \
+                     detail=the client dialled the upstream directly instead of \
+                     ${}_BASE_URL, so no credential was injected",
+                    ev.target,
+                    prefix.to_uppercase()
+                );
+            }
+
             let line = match ev.decision {
                 nono::undo::NetworkAuditDecision::Allow => {
                     format!("allow host={} port={port}", ev.target)
