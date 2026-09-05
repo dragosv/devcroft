@@ -36,14 +36,30 @@
 
 ## 1. Swap the loop, keep the process
 
-- [ ] 1.1 Replace `proxy::server`'s accept loop with
-      `nono_proxy::start(ProxyConfig)`, leaving `proxy::spawn`, the pidfile,
-      `up`/`down`/`rm` ownership, `network_proxy_port` and the `ProxyOnly` gate
-      untouched (D1).
-- [ ] 1.2 Resolve Open Question 1 before wiring auth: devcroft's per-session
-      token and the crate's `require_auth` do the same job. Decide which
-      survives, and make the refusal code deliberate — `407` today, and a
-      user-visible change if it moves.
+- [x] 1.2 Resolve Open Question 1 before wiring auth.
+      → **D6.** devcroft keeps minting the token; the crate checks it
+      (`require_auth: true`, `session_token: Some(..)`); both answer `407`.
+      **And `strict_connect_auth` is forced `true`, against the crate's
+      default** — its default rests on undici not echoing URL userinfo as
+      `Proxy-Authorization` on CONNECT, which does not reproduce: measured
+      `yes` for both curl 8.7.1 and undici 8.10.2 on Node 22.22.3. Taking the
+      default would have silently reopened the open-relay hole task group 4a
+      closed.
+- [ ] 1.1 **Reshaped by D7 — this is not a drop-in.** `nono_proxy::start` binds
+      its own TCP listener and accepts neither a pre-bound fd nor a unix
+      socket, and devcroft's netns path reaches the proxy over
+      `StatePaths::proxy_socket` because a loopback-only namespace cannot see
+      the host's `127.0.0.1`. Keep devcroft's unix acceptor in the same
+      process, splicing to a loopback `nono-proxy` it starts itself; leave
+      `proxy::spawn`, the pidfile, `up`/`down`/`rm`, `network_proxy_port` and
+      the `ProxyOnly` gate untouched.
+- [ ] 1.1b Measure the extra hop's cost on the namespaced path before accepting
+      it. That path is the fleet path, so "negligible" is a claim, not a given.
+- [ ] 1.1c Consider asking upstream for `start_on_listener` (a pre-bound
+      `TcpListener`/`UnixListener`), which would remove both the hop and the
+      relay. Deliberately **not** folded into
+      `docs/nono-feature-gating-issue.md` — that ask is nearly free to grant,
+      and bundling an API change would weaken it.
 - [ ] 1.3 Verify every property `add-egress-proxy` shipped still holds:
       fail-closed with no listener, per-session auth, allowlist decisions,
       `policy --render` output. These are the regression surface.

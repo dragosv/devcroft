@@ -99,6 +99,77 @@ That is the right failure, and it must be legible: the refusal has to say the
 upstream was not reachable because it is brokered, not merely that egress was
 denied.
 
+## D6 — Keep devcroft's per-session token, and set `strict_connect_auth: true`
+against the crate's default
+
+**Decision.** `require_auth: true`, `session_token: Some(devcroft's token)` —
+devcroft keeps minting it in `proxy::spawn` and delivering it as
+`DEVCROFT_EGRESS_TOKEN`, so the lifecycle stays devcroft's and only the checking
+moves. And `strict_connect_auth: true`, which is **not** the crate's default.
+
+**Why the default is wrong here, measured rather than argued.** The crate
+defaults `strict_connect_auth` to `false`, and its own doc gives the reason:
+*"Node.js undici does not echo URL-userinfo credentials as `Proxy-Authorization`
+on CONNECT, and the sandbox itself is the trust boundary there."* devcroft's
+proxy refuses unauthenticated CONNECT with `407`, and `authorized()`'s doc names
+`curl`, `git` and `npm` as clients that work unmodified — so if that claim held,
+devcroft would already be broken for every Node-based agent, which is the exact
+workload `add-agent-workload` targets.
+
+It does not hold on the current stack. Measured against a listener that prints
+the CONNECT request headers, Node 22.22.3 with undici 8.10.2:
+
+| client | `Proxy-Authorization` on CONNECT |
+|---|---|
+| `curl` 8.7.1 | yes |
+| `undici` 8.10.2 via `ProxyAgent(url-with-userinfo)` | **yes** |
+
+So devcroft's existing strict behaviour is correct and stays. **Taking the
+crate's default would have been a silent security regression** — CONNECT
+tunnelling without authentication, reopening precisely the open-relay hole
+`add-egress-proxy` task group 4a closed. That is D3's hypothetical risk turning
+out to be concrete on the very first config field, which is the argument for
+D3's assertion rather than a comment.
+
+**Scope of the measurement, stated so it is not over-read**: one client stack,
+configured with an explicit `ProxyAgent` over a userinfo URL. A proxy configured
+some other way — Node 24's env-driven `fetch`, a different agent's HTTP
+library — may behave differently, and the upstream comment may simply predate
+undici 8. This decision rests on devcroft's own behaviour being preserved, not
+on undici being universally well-behaved.
+
+## D7 — `nono_proxy::start` cannot serve devcroft's unix-socket path
+
+**The blocker, found while scoping D1's swap.** devcroft's proxy is reachable
+two ways, and only one of them is TCP:
+
+1. a loopback `TcpListener`, bound in `proxy::spawn` and fd-passed to the child;
+2. a **unix socket** (`StatePaths::proxy_socket`, 0600), because a
+   network-isolated sandbox has a loopback-only namespace and cannot reach the
+   host's `127.0.0.1` at all. Egress there is a unix-socket relay.
+
+`nono_proxy::start(ProxyConfig)` binds its own TCP listener from
+`bind_addr`/`bind_port`. It accepts neither a pre-bound fd nor a unix socket.
+So D1's "replace the loop" is **not a drop-in**, and task 1.1 as originally
+written is wrong.
+
+**Decision: keep devcroft's unix-socket acceptor in the same process, splicing
+to a loopback `nono-proxy` it starts itself.** The relay stays devcroft's — it
+is the netns design, not proxy behaviour — and everything the relay carries
+still passes through the crate's auth, filtering, brokering and audit.
+
+**Rejected: keep devcroft's loop for the unix path and use the crate for TCP.**
+Two implementations of the same policy decisions, diverging on the first
+upstream change, and the unix path is the one fleet actually uses.
+
+**Cost:** one extra in-process hop for the namespaced path. Worth measuring
+rather than assuming negligible, since that path is the fleet path.
+
+**Also worth asking upstream** — a `start_on_listener` taking a pre-bound
+`TcpListener` or `UnixListener` would remove the hop and the relay. Not folded
+into `docs/nono-feature-gating-issue.md`: that one asks for feature gates and
+is nearly free to grant, and bundling an API request would weaken it.
+
 ## Risks / Trade-offs
 
 - **[Risk] Risk concentration.** After this, devcroft's boundary, egress filter
@@ -118,11 +189,9 @@ denied.
 
 ## Open Questions
 
-1. **Does the per-session token survive the swap?** devcroft added it in task
-   group 4a; `nono-proxy` has `require_auth` for the same purpose. If both are
-   present, one is redundant, and which one wins should be decided rather than
-   discovered — the two failure codes (`407` vs whatever the crate returns) are
-   user-visible.
+1. ~~Does the per-session token survive the swap?~~ **Resolved in D6**: devcroft
+   keeps minting it, the crate checks it, both return `407`, and
+   `strict_connect_auth` is forced on against the crate's default.
 2. **What happens to `why --host`?** It answers from devcroft's compiled policy
    today. Once the L7 endpoint policy exists, a host can be allowed while a
    *method and path* on it are not, and `why` would be answering a coarser
