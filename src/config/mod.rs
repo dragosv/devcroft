@@ -21,6 +21,31 @@ pub struct Manifest {
     pub network: Network,
     pub ssh: Ssh,
     pub hooks: Hooks,
+    /// `[[broker]]` entries, in declaration order.
+    pub brokers: Vec<Broker>,
+}
+
+/// One brokered upstream: the sandbox reaches it through a local route the
+/// proxy owns, and the credential stays on the host (`adopt-nono-proxy`,
+/// `brokered-credentials`).
+///
+/// Declared by **provider**, not by agent (design D5): `provider` becomes the
+/// route prefix, from which the client-facing variables are derived
+/// (`anthropic` → `ANTHROPIC_BASE_URL`), so any client following that
+/// provider's SDK convention is brokered without devcroft naming it.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct Broker {
+    /// Route prefix, naming the upstream API rather than the client.
+    pub provider: String,
+    /// Where the proxy forwards to, e.g. `https://api.anthropic.com`.
+    pub upstream: String,
+    /// An **indirection** to the secret, never the secret itself — a manifest
+    /// is committed. Resolved host-side at `up`, in the trusted phase (D4).
+    pub secret: String,
+    /// Overrides the variable name derived from `provider`, for an SDK that
+    /// does not follow the `{PREFIX}_API_KEY` convention (D5).
+    #[serde(default)]
+    pub env_var: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -143,6 +168,8 @@ struct RawManifest {
     network: Network,
     ssh: Ssh,
     hooks: Hooks,
+    #[serde(default, rename = "broker")]
+    brokers: Vec<Broker>,
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
@@ -164,6 +191,20 @@ pub enum ConfigError {
         suggestion: Option<String>,
     },
     MissingName,
+    /// A `[[broker]]` entry names an upstream the manifest has not allowed.
+    /// Refused rather than implicitly granted: a route that widened
+    /// `network.allow` on its own would break "nothing goes to the backend
+    /// that cannot be shown via `policy --render`".
+    BrokerUpstreamNotAllowed {
+        provider: String,
+        host: String,
+    },
+    /// A `[[broker]]` field is empty or malformed.
+    InvalidBroker {
+        provider: String,
+        field: &'static str,
+        detail: String,
+    },
     InvalidName {
         name: String,
         suggestion: String,
@@ -197,6 +238,18 @@ impl fmt::Display for ConfigError {
                 "no {MANIFEST_FILE_NAME} found in this directory or its ancestors; run `devcroft init`"
             ),
             ConfigError::Io(e) => write!(f, "reading manifest: {e}"),
+            ConfigError::BrokerUpstreamNotAllowed { provider, host } => write!(
+                f,
+                "broker `{provider}` forwards to `{host}`, which `network.allow` does not permit\n\
+                 \x20 add it: network.allow = [\"{host}\"]\n\
+                 \x20 the proxy dials the upstream for the sandbox, so a route cannot reach further \
+                 than the manifest already allows"
+            ),
+            ConfigError::InvalidBroker {
+                provider,
+                field,
+                detail,
+            } => write!(f, "broker `{provider}`: `{field}` {detail}"),
             ConfigError::Parse(e) => write!(f, "invalid TOML: {e}"),
             ConfigError::UnknownKey { path, suggestion } => {
                 write!(f, "unknown key `{path}`")?;
@@ -307,6 +360,7 @@ pub fn parse(text: &str) -> Result<(Manifest, Vec<Warning>), ConfigError> {
     }
 
     validate::check_filesystem(&raw.filesystem)?;
+    validate::check_brokers(&raw.brokers, &raw.network)?;
 
     let mut warnings = Vec::new();
     validate::collect_warnings(&raw.env, &raw.filesystem, &mut warnings);
@@ -325,6 +379,7 @@ pub fn parse(text: &str) -> Result<(Manifest, Vec<Warning>), ConfigError> {
             network: raw.network,
             ssh: raw.ssh,
             hooks: raw.hooks,
+            brokers: raw.brokers,
         },
         warnings,
     ))
@@ -333,6 +388,153 @@ pub fn parse(text: &str) -> Result<(Manifest, Vec<Warning>), ConfigError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A brokered route parses, and is declared by *provider* rather than by
+    /// agent — `adopt-nono-proxy` D5. `anthropic` here is the upstream API's
+    /// name, not Claude Code's.
+    #[test]
+    fn a_broker_route_parses_and_is_keyed_by_provider() {
+        let (m, _) = parse(
+            r#"
+            [sandbox]
+            name = "myproj"
+            [network]
+            allow = ["api.anthropic.com"]
+            [[broker]]
+            provider = "anthropic"
+            upstream = "https://api.anthropic.com"
+            secret = "env:ANTHROPIC_API_KEY"
+            "#,
+        )
+        .unwrap();
+        assert_eq!(m.brokers.len(), 1);
+        assert_eq!(m.brokers[0].provider, "anthropic");
+        assert_eq!(m.brokers[0].env_var, None);
+    }
+
+    /// The rule that keeps a route from widening the policy behind the
+    /// reader's back: the proxy dials the upstream on the sandbox's behalf, so
+    /// an unallowed host would be egress `policy --render` never shows.
+    #[test]
+    fn a_broker_upstream_outside_network_allow_is_refused() {
+        let err = parse(
+            r#"
+            [sandbox]
+            name = "myproj"
+            [network]
+            allow = ["crates.io"]
+            [[broker]]
+            provider = "anthropic"
+            upstream = "https://api.anthropic.com"
+            secret = "env:ANTHROPIC_API_KEY"
+            "#,
+        )
+        .unwrap_err();
+        match err {
+            ConfigError::BrokerUpstreamNotAllowed { provider, host } => {
+                assert_eq!(provider, "anthropic");
+                assert_eq!(host, "api.anthropic.com");
+            }
+            other => panic!("expected BrokerUpstreamNotAllowed, got {other:?}"),
+        }
+    }
+
+    /// The control for the test above — without it, a check that refused
+    /// *everything* would pass it.
+    #[test]
+    fn a_wildcard_allow_covers_its_broker_upstream() {
+        let (m, _) = parse(
+            r#"
+            [sandbox]
+            name = "myproj"
+            [network]
+            allow = ["*.anthropic.com"]
+            [[broker]]
+            provider = "anthropic"
+            upstream = "https://api.anthropic.com/v1"
+            secret = "env:ANTHROPIC_API_KEY"
+            "#,
+        )
+        .unwrap();
+        assert_eq!(m.brokers.len(), 1);
+    }
+
+    /// `[[broker]]` is the schema's only array of tables, so it is the one
+    /// shape where an unchecked field would be silently accepted.
+    #[test]
+    fn an_unknown_broker_field_is_reported_with_its_index() {
+        let err = parse(
+            r#"
+            [sandbox]
+            name = "myproj"
+            [network]
+            allow = ["api.anthropic.com"]
+            [[broker]]
+            provider = "anthropic"
+            upstream = "https://api.anthropic.com"
+            secret = "env:K"
+            upstrem = "typo"
+            "#,
+        )
+        .unwrap_err();
+        match err {
+            ConfigError::UnknownKey { path, suggestion } => {
+                assert_eq!(path, "broker[0].upstrem");
+                assert_eq!(suggestion.as_deref(), Some("upstream"));
+            }
+            other => panic!("expected UnknownKey, got {other:?}"),
+        }
+    }
+
+    /// The prefix becomes both a URL path segment and an environment-variable
+    /// stem, so it cannot be arbitrary text.
+    #[test]
+    fn a_broker_provider_name_is_constrained() {
+        let err = parse(
+            r#"
+            [sandbox]
+            name = "myproj"
+            [network]
+            allow = ["api.anthropic.com"]
+            [[broker]]
+            provider = "anthropic/v1"
+            upstream = "https://api.anthropic.com"
+            secret = "env:K"
+            "#,
+        )
+        .unwrap_err();
+        assert!(matches!(
+            err,
+            ConfigError::InvalidBroker {
+                field: "provider",
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn a_broker_upstream_must_be_an_absolute_http_url() {
+        let err = parse(
+            r#"
+            [sandbox]
+            name = "myproj"
+            [network]
+            allow = ["api.anthropic.com"]
+            [[broker]]
+            provider = "anthropic"
+            upstream = "api.anthropic.com"
+            secret = "env:K"
+            "#,
+        )
+        .unwrap_err();
+        assert!(matches!(
+            err,
+            ConfigError::InvalidBroker {
+                field: "upstream",
+                ..
+            }
+        ));
+    }
 
     #[test]
     fn minimal_manifest_gets_defaults() {

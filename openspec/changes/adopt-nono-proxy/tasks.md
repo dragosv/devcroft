@@ -120,9 +120,25 @@
 
 ## 3. Brokered credentials
 
-- [ ] 3.1 Manifest surface: a route names an upstream and an indirection to a
+- [~] 3.1 Manifest surface: a route names an upstream and an indirection to a
       secret, never the secret (D4). Compile it into the policy with an origin,
       so `policy --render` shows the route and never the value.
+      → **Manifest half done**: `[[broker]]` with `provider` (the route prefix,
+      naming the upstream API rather than any agent — D5), `upstream`, `secret`
+      as an indirection, and an optional `env_var` override. Six unit tests.
+      **The rule that carries the policy invariant**: a broker's upstream host
+      must already be in `network.allow`, refused by name if not. The proxy
+      dials upstream for the sandbox, so a route to an unallowed host would be
+      egress `policy --render` never shows — the invariant broken in the one
+      place a reader is least likely to look.
+      Two things worth knowing about the tests: the wildcard case is the
+      *control*, since a check that refused everything would pass the refusal
+      test on its own; and `[[broker]]` is the schema's only array of tables,
+      so `check_unknown_keys` saw `None` from `as_table()` and left every field
+      unchecked — the one shape where a typo was silently accepted. Now
+      reported as `broker[0].upstrem` with a suggestion.
+      **Still open**: compiling the route into `CompiledPolicy` with an origin
+      so `policy --render` shows it.
 - [ ] 3.2 Resolve the secret host-side at `up`, in the trusted phase, and fail
       there when it is absent — naming the route and leaving no sandbox running.
 - [ ] 3.3 Point the client at the route from the **provider prefix**, not from

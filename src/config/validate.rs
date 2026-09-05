@@ -1,4 +1,4 @@
-use super::{ConfigError, Env, Filesystem, Warning};
+use super::{Broker, ConfigError, Env, Filesystem, Network, Warning};
 use crate::paths::{SENSITIVE_PATHS, has_traversal, is_within};
 
 /// Known sections and, for each, its known field names. `env.vars` is
@@ -11,6 +11,7 @@ const SECTIONS: &[(&str, &[&str])] = &[
     ("network", &["default", "allow", "ports"]),
     ("ssh", &["forward_agent"]),
     ("hooks", &["post_create", "post_start"]),
+    ("broker", &["provider", "upstream", "secret", "env_var"]),
 ];
 
 pub fn check_unknown_keys(table: &toml::Table) -> Result<(), ConfigError> {
@@ -40,9 +41,105 @@ pub fn check_unknown_keys(table: &toml::Table) -> Result<(), ConfigError> {
                 }
             }
         }
+
+        // `[[broker]]` is an array of tables, so `as_table` above sees
+        // nothing and every field would go unchecked — the one shape in this
+        // schema where a typo would otherwise be silently accepted.
+        if let Some(entries) = value.as_array() {
+            for (i, entry) in entries.iter().enumerate() {
+                let Some(sub) = entry.as_table() else {
+                    continue;
+                };
+                for sub_key in sub.keys() {
+                    if !fields.contains(&sub_key.as_str()) {
+                        return Err(ConfigError::UnknownKey {
+                            path: format!("{key}[{i}].{sub_key}"),
+                            suggestion: closest(sub_key, fields),
+                        });
+                    }
+                }
+            }
+        }
     }
 
     Ok(())
+}
+
+/// A brokered route may not reach further than the manifest already allows.
+///
+/// The proxy dials the upstream on the sandbox's behalf, so a route whose host
+/// is absent from `network.allow` would be egress the compiled policy never
+/// shows — breaking "nothing goes to the backend that cannot be shown via
+/// `policy --render`", and doing it in the one place a reader is least likely
+/// to look. Refused, naming the host, rather than granted implicitly.
+pub fn check_brokers(brokers: &[Broker], network: &Network) -> Result<(), ConfigError> {
+    for b in brokers {
+        for (field, value) in [
+            ("provider", &b.provider),
+            ("upstream", &b.upstream),
+            ("secret", &b.secret),
+        ] {
+            if value.trim().is_empty() {
+                return Err(ConfigError::InvalidBroker {
+                    provider: b.provider.clone(),
+                    field,
+                    detail: "must not be empty".to_string(),
+                });
+            }
+        }
+        // The prefix becomes an env-var stem and a URL path segment, so it is
+        // held to the same shape a sandbox name is rather than anything
+        // looser.
+        if !b
+            .provider
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+        {
+            return Err(ConfigError::InvalidBroker {
+                provider: b.provider.clone(),
+                field: "provider",
+                detail: "may contain only letters, digits, '-' and '_' — it becomes both a URL path segment and an environment-variable stem".to_string(),
+            });
+        }
+        let Some(host) = upstream_host(&b.upstream) else {
+            return Err(ConfigError::InvalidBroker {
+                provider: b.provider.clone(),
+                field: "upstream",
+                detail: format!("{:?} is not an absolute http(s) URL", b.upstream),
+            });
+        };
+        if !network.allow.iter().any(|a| host_matches(&host, a)) {
+            return Err(ConfigError::BrokerUpstreamNotAllowed {
+                provider: b.provider.clone(),
+                host,
+            });
+        }
+    }
+    Ok(())
+}
+
+/// The host of an absolute `http`/`https` URL, without port or path.
+fn upstream_host(upstream: &str) -> Option<String> {
+    let rest = upstream
+        .strip_prefix("https://")
+        .or_else(|| upstream.strip_prefix("http://"))?;
+    let host = rest
+        .split('/')
+        .next()?
+        .split('@')
+        .next_back()?
+        .split(':')
+        .next()?;
+    (!host.is_empty()).then(|| host.to_ascii_lowercase())
+}
+
+/// `network.allow`'s own matching: exact, or a leading `*.` wildcard.
+fn host_matches(host: &str, pattern: &str) -> bool {
+    let pattern = pattern.to_ascii_lowercase();
+    match pattern.strip_prefix("*.") {
+        Some(suffix) => host == suffix || host.ends_with(&format!(".{suffix}")),
+        None => host == pattern,
+    }
 }
 
 pub fn check_filesystem(fs: &Filesystem) -> Result<(), ConfigError> {
