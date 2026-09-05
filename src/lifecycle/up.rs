@@ -777,35 +777,23 @@ fn up_process(
             env.insert(key.to_string(), "localhost,127.0.0.1,::1".to_string());
         }
 
-        // Brokered routes (`brokered-credentials`). Two variables per route,
-        // both derived from the *provider* prefix rather than from any agent's
-        // name, so whichever client follows that provider's SDK convention is
-        // brokered without devcroft naming it (design D5).
+        // Brokered routes (`brokered-credentials`). The builder is given the
+        // manifest's routes, the port and the *session* token — never the
+        // resolved secret — so "the credential never enters the sandbox" is a
+        // property of the signature rather than of this call site.
         //
         // `127.0.0.1:{port}` is correct in both topologies, which is why there
-        // is no isolated/unisolated branch here: an unisolated sandbox reaches
-        // the host proxy on that port directly, and an isolated one has the
+        // is no isolated/unisolated branch: an unisolated sandbox reaches the
+        // host proxy on that port directly, and an isolated one has the
         // in-namespace relay bound to *the same port number*
         // (`DEVCROFT_PROXY_RELAY_PORT`). `NO_PROXY` above already covers
         // loopback, so the SDK dials this endpoint straight rather than
         // tunnelling its own base URL through the forward proxy.
-        // `manifest.brokers` rather than the resolved pairs: every route here
-        // resolved successfully or `up` already refused, and the value is not
-        // needed — the phantom token is the session token, and the secret is
-        // deliberately absent from this environment.
-        for b in &manifest.brokers {
-            env.insert(
-                b.base_url_var(),
-                format!("http://127.0.0.1:{port}/{}", b.provider),
-            );
-            // The phantom token: the SDK is given the *session token* as its
-            // API key, and the proxy swaps it for the real credential
-            // upstream. Without it, an SDK that refuses to start without a key
-            // would fail its own precondition even though the route resolves
-            // perfectly — the credential is deliberately absent from this
-            // environment, which is the whole point.
-            env.insert(b.key_var(), token.clone());
-        }
+        env.extend(crate::proxy::backend::broker_env(
+            &manifest.brokers,
+            *port,
+            token,
+        ));
     }
 
     // The relay is only needed when the sandbox is *both* isolated (no

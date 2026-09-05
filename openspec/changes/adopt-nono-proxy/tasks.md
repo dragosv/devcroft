@@ -203,13 +203,29 @@
       arrives as `Reverse`. `drain_into_log` now emits a `bypass` line naming
       the route and stating that no credential was injected — so the upstream's
       `401` is not mistaken for a bad key.
-- [ ] 3.4b Establish which class a project's client falls in, and refuse to
+- [x] 3.4b Establish which class a project's client falls in, and refuse to
       degrade. A client honouring only `HTTPS_PROXY` speaks end-to-end TLS to
       the real host and **cannot** be brokered without interception, which is a
       non-goal. devcroft must not answer that by letting the client carry its
       own credential — that is exactly what the route was declared to prevent.
-- [ ] 3.5 Confirm no interception: the proxy opens its own upstream connection
+      → **Made structural rather than tested.** `backend::broker_env` builds
+      every variable a brokered sandbox receives and is *never given the
+      resolved secret* — its inputs are the manifest's routes, the port and the
+      session token. So "the credential never enters the sandbox" is a property
+      of the signature, not something a test has to keep watching, and there is
+      no code path that could degrade to handing the real key over.
+      The client's class is still not knowable ahead of time; what 3.4 added is
+      that a bypass is *named* after the fact.
+- [x] 3.5 Confirm no interception: the proxy opens its own upstream connection
       and installs no CA into the sandbox.
+      → **The assertion failed when first written, which is why it is worth
+      having.** `intercept_ca_env_vars` defaults to five names —
+      `SSL_CERT_FILE`, `REQUESTS_CA_BUNDLE`, `NODE_EXTRA_CA_CERTS`,
+      `CURL_CA_BUNDLE`, `GIT_SSL_CAINFO`. Inert while `intercept_ca_dir` is
+      `None`, so nothing leaked; pinned empty anyway, because leaving it
+      defaulted makes devcroft's refusal depend on a *second* field staying
+      unset, and the second switch is the one an upstream release moves
+      quietly.
 
 ## 4. Tests
 

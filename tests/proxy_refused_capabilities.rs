@@ -128,3 +128,69 @@ fn an_empty_allowlist_denies_rather_than_allowing_everything() {
          forgets to check `wants_egress_proxy()` first"
     );
 }
+
+/// No certificate authority reaches the sandbox (task 3.5).
+///
+/// **This assertion failed when first written**, and that is the point of it.
+/// The crate defaults `intercept_ca_env_vars` to five names —
+/// `SSL_CERT_FILE`, `REQUESTS_CA_BUNDLE`, `NODE_EXTRA_CA_CERTS`,
+/// `CURL_CA_BUNDLE`, `GIT_SSL_CAINFO`. They are inert while
+/// `intercept_ca_dir` is `None`, so nothing leaked; but leaving them defaulted
+/// would make devcroft's refusal depend on a *second* field staying unset, and
+/// the second switch is the one an upstream release moves quietly. Pinned
+/// empty, so devcroft states what it wants instead of inheriting what it gets.
+#[test]
+fn no_certificate_authority_is_exported_to_the_sandbox() {
+    assert!(
+        config().intercept_ca_env_vars.is_empty(),
+        "devcroft installs no CA into the sandbox; exporting CA variables would \
+         advertise an interception it does not perform"
+    );
+}
+
+/// **The credential-absence guarantee, checked where it is actually made.**
+///
+/// `broker_env` builds every variable a brokered sandbox receives, and it is
+/// never given the resolved secret — the guarantee is in the signature. This
+/// test pins the *shape* so the two derived names, and the phantom token's
+/// value, cannot drift into something that would carry one.
+#[test]
+fn the_sandbox_environment_carries_a_phantom_token_and_no_credential() {
+    let manifest = r#"
+[sandbox]
+name = "p"
+[network]
+allow = ["api.anthropic.com"]
+[[broker]]
+provider = "anthropic"
+upstream = "https://api.anthropic.com"
+secret = "env:SOME_REAL_KEY"
+"#;
+    let (m, _) = devcroft::config::parse(manifest).unwrap();
+    let vars = devcroft::proxy::backend::broker_env(&m.brokers, 4711, "session-token-abc");
+
+    assert_eq!(
+        vars,
+        vec![
+            (
+                "ANTHROPIC_BASE_URL".to_string(),
+                "http://127.0.0.1:4711/anthropic".to_string()
+            ),
+            (
+                "ANTHROPIC_API_KEY".to_string(),
+                "session-token-abc".to_string()
+            ),
+        ],
+        "both names derive from the provider prefix, and the key is the session \
+         token — an SDK that requires a key finds one, and it is worthless \
+         outside this proxy"
+    );
+
+    // The manifest named where the real secret lives; nothing here may echo it.
+    assert!(
+        !vars
+            .iter()
+            .any(|(k, v)| k.contains("SOME_REAL_KEY") || v.contains("SOME_REAL_KEY")),
+        "the sandbox is told nothing about where the credential came from"
+    );
+}

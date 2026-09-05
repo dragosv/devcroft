@@ -51,6 +51,36 @@ pub fn upstream_host(upstream: &str) -> Option<String> {
     (!host.is_empty()).then(|| host.to_ascii_lowercase())
 }
 
+/// The variables a brokered sandbox's environment gains, for one proxy.
+///
+/// **The guarantee is in the signature.** This function cannot leak a
+/// credential into the sandbox because it is never given one: its inputs are
+/// the manifest's routes, the proxy port, and the *session* token. The secret
+/// resolved at `up` does not reach here, and `brokered-credentials`' first
+/// requirement — that the credential never enters the sandbox — is therefore
+/// structural rather than something a test has to keep watching.
+///
+/// Both names derive from the route's **provider prefix** rather than from any
+/// agent (design D5), so whichever client follows that provider's SDK
+/// convention is brokered without devcroft naming it.
+pub fn broker_env(
+    brokers: &[crate::config::Broker],
+    port: u16,
+    session_token: &str,
+) -> Vec<(String, String)> {
+    let mut out = Vec::with_capacity(brokers.len() * 2);
+    for b in brokers {
+        out.push((
+            b.base_url_var(),
+            format!("http://127.0.0.1:{port}/{}", b.provider),
+        ));
+        // The phantom token. An SDK that refuses to start without an API key
+        // finds one; the proxy swaps it for the real credential upstream.
+        out.push((b.key_var(), session_token.to_string()));
+    }
+    out
+}
+
 /// The configuration devcroft hands `nono-proxy`.
 ///
 /// A pure function on purpose: `tests/proxy_refused_capabilities.rs` asserts
@@ -117,6 +147,17 @@ pub fn proxy_config(
         intercept_ca_dir: None,
         intercept_parent_ca_pems: None,
         preloaded_ca: None,
+        // Explicitly empty, against a default of
+        // `["SSL_CERT_FILE", "REQUESTS_CA_BUNDLE", "NODE_EXTRA_CA_CERTS",
+        //   "CURL_CA_BUNDLE", "GIT_SSL_CAINFO"]`.
+        //
+        // **Inert today** — those names are only exported when interception is
+        // active, and `intercept_ca_dir: None` disables it. Pinned anyway,
+        // because leaving it defaulted makes devcroft's refusal depend on one
+        // other field staying `None`, and the second of two switches is the one
+        // an upstream release moves without anyone noticing. Empty here says
+        // what devcroft wants rather than inheriting what it happens to get.
+        intercept_ca_env_vars: Vec::new(),
 
         ..Default::default()
     }
