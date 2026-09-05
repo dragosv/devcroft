@@ -72,6 +72,36 @@ into an agent's runtime, where it surfaces as a confusing upstream failure.
 - **THEN** it SHALL fail, naming the route and the missing credential
 - **AND** no sandbox SHALL be left running
 
+### Requirement: A client that cannot use the route SHALL be told, not silently degraded
+
+Brokering requires the client to speak plaintext HTTP to a local endpoint. A
+client that honours only a proxy variable issues CONNECT to the real upstream
+and speaks end-to-end TLS, which cannot be injected into without interception —
+an explicit non-goal. devcroft SHALL NOT respond to that by letting the client
+carry its own credential instead: the route was declared precisely to prevent
+that.
+
+The route SHALL be declared by upstream provider, not by agent, and the
+environment variable that points a client at it SHALL be overridable, since no
+single naming convention covers every SDK.
+
+#### Scenario: A client that ignores the route is refused, legibly
+
+- **GIVEN** a sandbox with a brokered route, and a client that dials the real
+  upstream directly
+- **WHEN** the request is attempted
+- **THEN** it SHALL fail
+- **AND** the failure SHALL say the upstream is brokered and the route was not
+  used, rather than reporting only that egress was denied
+
+#### Scenario: The route serves any client following the provider's convention
+
+- **GIVEN** a brokered route declared for an upstream provider
+- **WHEN** any client using that provider's standard SDK runs in the sandbox
+- **THEN** it SHALL be brokered without devcroft naming that client
+- **AND** where the SDK does not follow the convention, the manifest SHALL be
+  able to name the variable explicitly
+
 ### Requirement: Refused capabilities SHALL remain unreachable
 
 `nono-proxy` compiles in TLS interception, SPIFFE and AWS routing. devcroft

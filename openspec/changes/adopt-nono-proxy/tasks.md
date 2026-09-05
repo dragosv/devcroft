@@ -125,11 +125,23 @@
       so `policy --render` shows the route and never the value.
 - [ ] 3.2 Resolve the secret host-side at `up`, in the trusted phase, and fail
       there when it is absent — naming the route and leaving no sandbox running.
-- [ ] 3.3 Point the client at the route: set `ANTHROPIC_BASE_URL` (and the
-      equivalent for any other declared upstream) in the resolved environment.
-- [ ] 3.4 Make the bypass failure legible (D5): a client that ignores the
-      variable and dials the real upstream must be told the upstream is
-      brokered, not merely that egress was denied.
+- [ ] 3.3 Point the client at the route from the **provider prefix**, not from
+      any agent's name (D5): `ProxyHandle::credential_env_vars` derives
+      `{PREFIX}_BASE_URL`, and the manifest can override it where an SDK does
+      not follow that convention. devcroft hardcodes no agent's variable.
+- [ ] 3.3b Carry the phantom token too, and understand why before doing it:
+      many SDKs refuse to start without an API key present, so `{KEY}_API_KEY`
+      is set to the *session token* and the proxy swaps it upstream. Without
+      this the route resolves correctly and the SDK still fails a missing-key
+      check.
+- [ ] 3.4 Make the bypass failure legible (D5): a client that dials the real
+      upstream must be told the upstream is **brokered and the route was not
+      used**, not merely that egress was denied.
+- [ ] 3.4b Establish which class a project's client falls in, and refuse to
+      degrade. A client honouring only `HTTPS_PROXY` speaks end-to-end TLS to
+      the real host and **cannot** be brokered without interception, which is a
+      non-goal. devcroft must not answer that by letting the client carry its
+      own credential — that is exactly what the route was declared to prevent.
 - [ ] 3.5 Confirm no interception: the proxy opens its own upstream connection
       and installs no CA into the sandbox.
 

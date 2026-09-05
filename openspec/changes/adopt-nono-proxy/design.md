@@ -86,18 +86,54 @@ devcroft, held in the proxy process, and never handed down. That is strictly
 better than an environment variable in the sandbox, and strictly weaker than a
 hardware-backed store. Say the true thing.
 
-## D5 — The agent has to be *pointed* at the route, and that is a real edge
+## D5 — Brokering is provider-shaped, not agent-shaped — and it has a hard
+boundary that is not about which agent
 
-Brokering only works if the client calls the local route. For Claude Code that
-is `ANTHROPIC_BASE_URL`; for others it is some equivalent. devcroft sets it in
-the resolved environment.
+**The question that corrected this decision:** what happens when the agent is
+not Claude Code? The first version of D5 said devcroft sets
+`ANTHROPIC_BASE_URL`, which built a Claude-specific assumption into a
+general mechanism.
 
-**The failure mode worth designing for:** a client that ignores the variable, or
-a user who overrides it, reaches the real upstream directly — where the
-allowlist and the kernel gate still apply, so it *fails* rather than leaking.
-That is the right failure, and it must be legible: the refusal has to say the
-upstream was not reachable because it is brokered, not merely that egress was
-denied.
+**It is not agent-specific.** The crate derives the env vars from the route's
+*prefix*, which names the upstream API rather than the client:
+`ProxyHandle::credential_env_vars` emits `{PREFIX}_BASE_URL` —
+`anthropic` → `ANTHROPIC_BASE_URL`, `openai` → `OPENAI_BASE_URL` — matching
+each provider's own SDK convention. So **any** agent using the standard SDK for
+a declared provider is brokered, whichever agent it is. `RouteConfig::env_var`
+overrides the derived name where a provider's convention does not fit that
+shape.
+
+**And the phantom-token half is what makes it actually work.** Many SDKs refuse
+to start without an API key present. The crate sets `{KEY}_API_KEY` to the
+*session token*, so the SDK finds a key, sends it, and the proxy swaps it for
+the real credential upstream. Without that, class 1 below would route correctly
+and still fail on a missing-key check.
+
+**Three classes, and devcroft must distinguish them rather than assume:**
+
+| the client honours | outcome |
+|---|---|
+| a `{PROVIDER}_BASE_URL` override | **brokered.** The credential never enters the sandbox. |
+| only a proxy variable (`HTTPS_PROXY`) | **not brokerable.** It issues CONNECT to the real upstream and speaks end-to-end TLS; injecting into that requires interception, which is an explicit non-goal. Such a client must hold its own credential. |
+| neither | **fails**, at the kernel gate, which is the right failure. |
+
+**The middle row is the important one, and it is a property of the client's
+configuration surface rather than of any agent's identity.** Brokering
+fundamentally requires the client to speak plaintext HTTP to a local endpoint.
+A client that insists on TLS to the real host can only be brokered by
+intercepting it, and devcroft refuses that. So "which agent" is the wrong
+question; "can this client be pointed at a local base URL" is the right one.
+
+**Consequence for the manifest:** the route is declared by *provider prefix*,
+and the derived variable name is overridable, because a project may run an
+agent whose SDK does not follow the `{PREFIX}_BASE_URL` convention. devcroft
+hardcodes no agent's variable.
+
+**Consequence for the error path:** when a project declares a brokered route
+and its client falls in the second or third row, the failure must say the
+upstream is brokered and the client did not use the route — not merely that
+egress was denied. Silently degrading to "the agent holds its own key" would
+defeat the guarantee the route was declared for.
 
 ## D6 — Keep devcroft's per-session token, and set `strict_connect_auth: true`
 against the crate's default
