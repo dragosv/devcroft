@@ -139,8 +139,27 @@
       reported as `broker[0].upstrem` with a suggestion.
       **Still open**: compiling the route into `CompiledPolicy` with an origin
       so `policy --render` shows it.
-- [ ] 3.2 Resolve the secret host-side at `up`, in the trusted phase, and fail
+- [~] 3.2 Resolve the secret host-side at `up`, in the trusted phase, and fail
       there when it is absent — naming the route and leaving no sandbox running.
+      → `proxy::secret::resolve` (one scheme, `env:NAME`, per D4) and
+      `up::resolve_brokers`, placed **before the identity check and before
+      provider resolution** so a refusal starts nothing. Fails at layer
+      `provider` (exit 3), naming both the route and the missing variable.
+      Two decisions inside it worth keeping: an env var set to `""` counts as
+      **missing**, because an empty value is far more often an unset variable
+      that went through a shell than a deliberate empty credential — and
+      treating it as present defers the failure to first use, which is what
+      this task exists to prevent. And a bare `secret = "ANTHROPIC_API_KEY"` is
+      *rejected* rather than assumed to mean `env:`: an unschemed value is
+      likelier to be someone pasting the credential itself into a committed
+      file.
+      Layer choice is deliberate: `provider`, not `config`. A missing host
+      credential is an environment precondition, not a malformed manifest, and
+      a `config` exit would send the user to edit the wrong thing —
+      `tests/broker_missing_credential.rs` asserts the exact code for that
+      reason rather than merely "non-zero". Teeth-checked: stubbing
+      `resolve_brokers` fails that test and leaves its control passing.
+      **Still open**: the resolved value is not yet handed to the proxy (3.3).
 - [ ] 3.3 Point the client at the route from the **provider prefix**, not from
       any agent's name (D5): `ProxyHandle::credential_env_vars` derives
       `{PREFIX}_BASE_URL`, and the manifest can override it where an SDK does

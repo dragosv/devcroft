@@ -25,6 +25,7 @@
 //! decision can take effect at all.
 
 pub mod backend;
+pub mod secret;
 pub mod server;
 
 use std::io;

@@ -172,6 +172,14 @@ pub fn up_with_provider(
     // adopting a healthy sandbox from the wrong root is precisely the silent
     // failure. Caught by the worktree test, not by review. "Does this state
     // dir belong to me" has to be answered before "should I adopt it".
+    // Brokered credentials resolve here — the earliest point at which the
+    // manifest is known and nothing has been started (`adopt-nono-proxy` task
+    // 3.2). A route whose secret is absent must fail *now*, not at the agent's
+    // first request: deferred, it surfaces as an upstream authentication error
+    // inside a sandbox, which is the least diagnosable place it could appear
+    // and looks like the agent's fault rather than a missing export.
+    let _brokered = resolve_brokers(&manifest.brokers)?;
+
     if let Some(meta) = state::read_meta(&paths.meta)?
         && meta.project_root != project_root.to_string_lossy()
     {
@@ -364,6 +372,38 @@ pub fn up_with_provider(
 /// eligible for reuse — it predates a token entirely, so there is
 /// nothing correct to authenticate against, and it is replaced rather
 /// than trusted.
+/// Resolves every `[[broker]]`'s secret, or fails naming the route.
+///
+/// Layer `provider`, matching the error contract: this is an environment
+/// precondition devcroft could not satisfy, the same class as a provider whose
+/// tooling is missing — not a malformed manifest (`config`) and not a runtime
+/// fault (`keeper`).
+///
+/// The value is carried as `Zeroizing` from here on, so a failure between this
+/// point and the proxy handing it upstream does not leave it in a dropped
+/// buffer.
+fn resolve_brokers(
+    brokers: &[crate::config::Broker],
+) -> Result<Vec<(String, zeroize::Zeroizing<String>)>, UpError> {
+    let mut out = Vec::with_capacity(brokers.len());
+    for b in brokers {
+        match crate::proxy::secret::resolve(&b.secret) {
+            Ok(value) => out.push((b.provider.clone(), zeroize::Zeroizing::new(value))),
+            Err(e) => {
+                return Err(UpError::Provider(
+                    crate::provider::ProviderError::ResolutionFailed(format!(
+                        "broker `{}` cannot be brokered: {e}\n  \
+                     the credential stays on the host and never enters the sandbox, so `up` \
+                     refuses rather than starting a sandbox that would fail at its first request",
+                        b.provider
+                    )),
+                ));
+            }
+        }
+    }
+    Ok(out)
+}
+
 fn ensure_egress_proxy(paths: &StatePaths, allow: &[String]) -> Result<(u16, String), UpError> {
     // `is_same_process`, not `is_process_alive`: a resurrected unrelated
     // process at a reused pid would otherwise pass as "our proxy is
