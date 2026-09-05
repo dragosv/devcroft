@@ -45,7 +45,7 @@
       `yes` for both curl 8.7.1 and undici 8.10.2 on Node 22.22.3. Taking the
       default would have silently reopened the open-relay hole task group 4a
       closed.
-- [ ] 1.1 **Reshaped by D7 — this is not a drop-in.** `nono_proxy::start` binds
+- [x] 1.1 **Reshaped by D7 — this is not a drop-in.** `nono_proxy::start` binds
       its own TCP listener and accepts neither a pre-bound fd nor a unix
       socket, and devcroft's netns path reaches the proxy over
       `StatePaths::proxy_socket` because a loopback-only namespace cannot see
@@ -53,6 +53,24 @@
       process, splicing to a loopback `nono-proxy` it starts itself; leave
       `proxy::spawn`, the pidfile, `up`/`down`/`rm`, `network_proxy_port` and
       the `ProxyOnly` gate untouched.
+      → Done: `src/proxy/backend.rs` (config + start + audit drain),
+      `server::bridge_tcp_to_tcp` as the TCP twin of the unix bridge that
+      already existed, wired in `egress_proxy_main`. Compiles clean, clippy and
+      fmt clean, and the full suite is **416 passed / 0 failed — identical to
+      the pre-swap baseline**.
+      **That identical count is not evidence the swap works.** It is evidence
+      nothing else broke: `tests/egress_proxy_e2e.rs`, the one test that
+      exercises this path, skips on macOS for want of `127.0.0.3`/`127.0.0.4`
+      loopback aliases. See 1.4.
+      One thing this nearly missed: the proxy log is a devcroft *interface* —
+      `logs` surfaces it and the e2e asserts its shape — so nono-proxy's audit
+      events are rendered into it (`backend::drain_into_log`). Swapping without
+      that would have kept every kernel property and silently emptied the one
+      file a user reads to see what the proxy decided.
+      `server::run` and its 13 unit tests are **kept, not deleted**: it is
+      `pub` in a `pub` module so it raises no dead-code warning, and removing a
+      working, tested, security-sensitive loop in the same commit that
+      introduces an unverified replacement would leave no fallback.
 - [ ] 1.1b Measure the extra hop's cost on the namespaced path before accepting
       it. That path is the fleet path, so "negligible" is a claim, not a given.
 - [ ] 1.1c Consider asking upstream for `start_on_listener` (a pre-bound
@@ -65,14 +83,31 @@
       `policy --render` output. These are the regression surface.
 - [ ] 1.4 Confirm the egress e2e suite passes unchanged, or that each
       difference is intended and recorded.
+      **Blocked on this host, and it is the gating verification for the whole
+      of group 1.** `tests/egress_proxy_e2e.rs` needs `127.0.0.3` and
+      `127.0.0.4`; macOS assigns only `127.0.0.1`. Unblocked by
+      `sudo ifconfig lo0 alias 127.0.0.3` and `... 127.0.0.4`, or by running on
+      Linux. Not run here: adding a host network alias needs root and is not an
+      agent's call to make unprompted.
+      **`server::run` is not deleted until this passes.**
 
 ## 2. Keep the refused capabilities unreachable
 
-- [ ] 2.1 Assert, in a test, that the `ProxyConfig` devcroft constructs has TLS
+- [x] 2.1 Assert, in a test, that the `ProxyConfig` devcroft constructs has TLS
       interception, SPIFFE and AWS routing off — for an arbitrary manifest, not
       just a minimal one (D3).
-- [ ] 2.2 Teeth-check it: flip one on in the constructor and confirm the test
+      → `tests/proxy_refused_capabilities.rs`, 4 tests. Built on a realistic
+      allowlist rather than an empty one, because a guard that only holds for
+      the empty case is not a guard. Covers the three CA fields, empty
+      credential routes, `require_auth` + `session_token`, `strict_filter`, and
+      `strict_connect_auth`.
+- [x] 2.2 Teeth-check it: flip one on in the constructor and confirm the test
       fails. A guard that cannot fail is not a guard.
+      → Both directions checked. `strict_connect_auth: false` (the crate's own
+      default) fails `authentication_is_required_including_on_connect`;
+      `intercept_ca_dir: Some(..)` fails `tls_interception_is_off`. Each flip
+      failed **only** its own test — a flip that reddened everything would mean
+      a broken harness rather than a working guard.
 - [x] 2.3 Draft the upstream request to gate AWS and SPIFFE behind features,
       alongside `use-nono-library` 6.4's trust-module ask. **Left for the owner
       to send** — an agent does not open issues on third-party repositories.

@@ -24,6 +24,7 @@
 //! destinations — so this process is the only place a per-hostname
 //! decision can take effect at all.
 
+pub mod backend;
 pub mod server;
 
 use std::io;

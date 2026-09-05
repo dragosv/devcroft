@@ -3000,18 +3000,32 @@ fn egress_proxy_main(fd: RawFd, unix_fd: RawFd) -> ! {
     // SAFETY: `crate::proxy::spawn` bound this listener before exec and
     // cleared its FD_CLOEXEC, same contract as the TCP listener above.
     let unix_listener = unsafe { std::os::unix::net::UnixListener::from_raw_fd(unix_fd) };
-    let tcp_port = match listener.local_addr() {
-        Ok(addr) => addr.port(),
+    // `adopt-nono-proxy` D1/D7: the decisions — authentication, host
+    // filtering, and the credential brokering this change exists for — move
+    // into `nono-proxy`, which binds an ephemeral loopback port of its own
+    // because it accepts neither a pre-bound fd nor a unix socket. devcroft
+    // keeps the process, both acceptors, and the port the policy names.
+    let (nono_port, handle) = match devcroft::proxy::backend::start(allow, &token) {
+        Ok(started) => started,
         Err(e) => {
-            eprintln!("devcroft __egress_proxy: reading own port: {e}");
+            eprintln!("devcroft __egress_proxy: {e}");
             std::process::exit(1);
         }
     };
+
+    // The unix listener bridges on its own thread — a network-isolated sandbox
+    // has no route to host loopback, so this is its only path to the proxy.
     std::thread::spawn(move || {
-        devcroft::proxy::server::bridge_unix_to_tcp(unix_listener, tcp_port);
+        devcroft::proxy::server::bridge_unix_to_tcp(unix_listener, nono_port);
+    });
+    // The proxy log is a devcroft interface (`logs` surfaces it,
+    // `tests/egress_proxy_e2e.rs` asserts its shape), so nono-proxy's audit
+    // events are rendered into it rather than left to the crate's own tracing.
+    std::thread::spawn(move || {
+        devcroft::proxy::backend::drain_into_log(handle, log_path);
     });
 
-    devcroft::proxy::server::run(listener, allow, log_path, token);
+    devcroft::proxy::server::bridge_tcp_to_tcp(listener, nono_port);
     std::process::exit(0);
 }
 

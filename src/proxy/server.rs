@@ -115,6 +115,27 @@ pub fn bridge_unix_to_tcp(unix: std::os::unix::net::UnixListener, tcp_port: u16)
     }
 }
 
+/// The TCP twin of [`bridge_unix_to_tcp`], added by `adopt-nono-proxy`.
+///
+/// `nono_proxy::start` binds its own listener and accepts neither a pre-bound
+/// fd nor a unix socket, while devcroft needs both: the fd-passed TCP listener
+/// is how [`crate::proxy::spawn`] learns the port *before* the policy is
+/// compiled, and the unix socket is the only path for a sandbox whose
+/// loopback-only namespace cannot see the host's `127.0.0.1`. So both of
+/// devcroft's acceptors splice into the ephemeral port nono-proxy chose, and
+/// the port the policy names stays the one `spawn` bound.
+pub fn bridge_tcp_to_tcp(tcp: TcpListener, port: u16) {
+    for stream in tcp.incoming() {
+        let Ok(client) = stream else { continue };
+        thread::spawn(move || {
+            let Ok(upstream) = TcpStream::connect(("127.0.0.1", port)) else {
+                return;
+            };
+            splice(client, upstream);
+        });
+    }
+}
+
 /// [`splice`]'s shape for a unix client, kept separate rather than made
 /// generic for the same reason [`bridge_unix_to_tcp`] exists.
 fn splice_unix(client: std::os::unix::net::UnixStream, upstream: TcpStream) {
