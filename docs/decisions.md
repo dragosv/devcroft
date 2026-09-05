@@ -685,16 +685,40 @@ protection against the guest attempting to access other directories in the same
 filesystem, or even other filesystems in the host. A mount point isolation
 mechanism from the host should be used in combination with virtio-fs."*
 
-So the VM boundary has a hole precisely where devcroft lives. On Linux that
-composes — `add-mount-isolation` shipped exactly such a mechanism. On macOS
-devcroft has no mount-namespace equivalent, so a VM tier there would inherit
-the gap that is already published, while advertising a stronger boundary. That
-is the combination this project must never ship.
+**Corrected on re-reading, the day after this entry was first written.** The
+first version said macOS fails here for lack of a mount-namespace equivalent.
+That conflated *no mount namespace* with *no filesystem confinement*, and they
+are not the same thing. What libkrun asks for is "a mount point isolation
+mechanism"; what it needs is a bound on **what the VMM process can reach**,
+because virtio-fs is served by the VMM in userspace and every guest file
+request becomes an ordinary host syscall from that process. Seatbelt and
+Landlock both do exactly that, and devcroft self-restricts before doing
+anything else. The mechanism exists, on both platforms.
+
+The macOS filesystem gap that *is* published points the other way, too: a grant
+does not cover the symlinked spelling of its own path — **over**-restriction. It
+cannot widen anything.
+
+What survives is narrower, and is a design constraint rather than a blocker:
+
+- **The VMM's own grants become guest-reachable.** Whatever the VMM needs for
+  itself — kernel image, disk images, snapshots — is inside its own policy, so
+  the guest can traverse to it through virtio-fs. The mitigation is the one
+  devcroft already uses for listener sockets: open them before restriction and
+  hold fds, so they need no standing path grant.
+- **Policy, not structure.** A mount namespace makes other paths *not exist*;
+  Landlock and Seatbelt make them *denied*. For virtio-fs, denied is sufficient
+  — the VMM's syscall fails and the guest gets an error. This is a robustness
+  preference, not a hole.
+
+So the filesystem objection does not carry the weight first placed on it. What
+still decides this entry is reason 3 above, plus the costs below.
 
 Note the contrast with gVisor, which had the opposite shape: `runsc` built the
 entire root filesystem, which is why Landlock *inside* it was judged near-zero
-marginal value. libkrun shares a host directory, so the marginal value of the
-host-side mechanism is not near zero — it is load-bearing.
+marginal value. libkrun shares a host directory, so the host-side mechanism is
+load-bearing rather than near-zero — which is an argument *for* devcroft's
+existing tier being kept underneath a VM, not against the VM.
 
 **And on TSI:** *"the VMM and the guest should be considered to be running in
 the network context. As such, you should apply on the VMM whatever restrictions
@@ -713,11 +737,27 @@ a guest root filesystem to provision, which the closure-tier providers would
 have to materialise inside the guest or reach through virtio-fs — reopening
 the objection above.
 
-**Revisit if:** (a) devcroft grows a macOS filesystem-view mechanism, which
-would remove the asymmetry that makes this unshippable on one platform; or
-(b) the use case changes from "code the user controls, in many instances" to
+#### Why not pair Firecracker with something on macOS
+
+The obvious alternative is to keep Firecracker on Linux and use a macOS-native
+VMM beside it. Both candidates cost more than not using Firecracker at all:
+
+| | platform | shape | fit |
+|---|---|---|---|
+| Firecracker | Linux/KVM only; on macOS only *nested* in a Linux VZ guest | binary + REST over UDS | fails the no-external-binary requirement; nesting costs M3-or-newer and macOS 15+ |
+| Apple `container` / Containerization | **macOS 26 only** | Swift framework + CLI, Apache-2.0, VM-per-container over Virtualization.framework | external binary or Swift FFI, and macOS-only, so a Linux answer is still needed |
+| Virtualization.framework directly | macOS only | ObjC/Swift framework | second VMM to write and maintain; heavier per VM than a microVM |
+| libkrun | Linux (KVM) **and** macOS/ARM64 (HVF), macOS 14+ | dynamic library | one API, both platforms, no nesting |
+
+The pairing options all produce **two backends, two guest models and two
+provisioning paths**, on top of a macOS floor of 26 (Apple) or M3-plus-15
+(nesting). libkrun's appeal is precisely that it removes the need for a
+combination: the reason to prefer it is not that it is a better VMM, it is that
+there is only one of it.
+
+**Revisit if:** the use case changes from "code the user controls, in many instances" to
 "unreviewed code", which is `docs/threat-model.md`'s use case B and is
-currently, deliberately, not served. Under (b) the trade inverts: a boundary
+currently, deliberately, not served. Under that change the trade inverts: a boundary
 that covers the kernel but not the shared directory is still worth more than
 one that covers neither, and the answer would be to stop sharing the
 directory — which is ArcBox's answer, and a different product.
