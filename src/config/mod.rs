@@ -90,6 +90,20 @@ impl Broker {
         format!("{}_BASE_URL", self.provider.to_uppercase())
     }
 
+    /// The host variable this route's secret is read *from*, when `secret`
+    /// uses the `env:` scheme.
+    ///
+    /// Needed for one reason, found by `tests/broker_credential_injection.rs`
+    /// rather than by review: the user must have the credential exported for
+    /// `env:NAME` to resolve at all, and a provider's activated environment
+    /// carries devcroft's own ambient variables through to the sandbox. So the
+    /// secret arrived inside by plain inheritance, on a path that has nothing
+    /// to do with the route — defeating brokering with its own precondition.
+    /// `up` scrubs this name before handing the environment to the keeper.
+    pub fn source_var(&self) -> Option<&str> {
+        self.secret.strip_prefix("env:")
+    }
+
     /// The env var the proxy process reads this route's secret from. Namespaced
     /// so devcroft's own resolution (and its empty-value rule) stays the single
     /// path, rather than the manifest's `env:` name becoming an implicit

@@ -229,18 +229,36 @@
 
 ## 4. Tests
 
-- [ ] 4.1 **The one that matters**: from inside a real session, the credential
+- [x] 4.1 **The one that matters**: from inside a real session, the credential
       is absent from the environment, from every granted path, and from the
       process table — while a request through the route reaches the upstream
       authenticated.
+      → `tests/broker_credential_injection.rs`, both halves from inside a real
+      flox session. **It found a real bug on its first run**, which is the
+      whole argument for writing it: the secret was reaching the sandbox by
+      plain environment inheritance. `env:NAME` requires the user to have the
+      credential exported, and a provider's activated environment carries
+      devcroft's ambient variables through — so brokering was defeated by its
+      own precondition, on a path having nothing to do with the route.
+      The first fix, removing it from the env map, did nothing: `spawn_keeper`
+      uses `.envs()`, which can only add or override. The existing `unset`
+      channel is what expresses removal, and its own comment already described
+      this exact failure for provider-unset keys.
+      **Needs no loopback aliases**, unlike `egress_proxy_e2e`: that test needs
+      two distinguishable hosts to assert a *host* decision, this one asserts
+      injection, so one address and two ports suffice.
 - [ ] 4.2 An undeclared upstream is refused, distinguishably from an upstream
       error.
 - [ ] 4.3 A missing credential fails `up`, not first use, and leaves nothing
       running.
-- [ ] 4.4 Skip-guard audit: 4.1 needs a live sandbox and a reachable upstream.
+- [x] 4.4 Skip-guard audit: 4.1 needs a live sandbox and a reachable upstream.
       Guard on the capability and say what was skipped — a green run that
       tested nothing is this project's recurring failure, and a credential test
       that silently skips is the worst instance of it.
+      → 4.1 guards on `backend_supported()` and on a usable flox with a
+      reachable Nix store, and prints the reason. It also treats a failed `up`
+      as a skip rather than a failure, since a host without a working provider
+      cannot answer the question either way.
 
 ## 5. Record what changed, including the retraction that is now withdrawn
 

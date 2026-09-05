@@ -819,7 +819,29 @@ fn up_process(
         paths,
         project_root,
         &env,
-        &resolution.unset,
+        // **The secret must not arrive by inheritance**, and a map cannot
+        // express that: `.envs()` in `spawn_keeper` can only add or override.
+        // `env:NAME` requires the user to have the credential exported, and a
+        // provider's activated environment carries devcroft's own ambient
+        // variables through — so without this every brokered credential also
+        // sat in plain sight inside the sandbox, on a path unrelated to the
+        // route, defeating brokering with its own precondition.
+        //
+        // Found by `tests/broker_credential_injection.rs`, not by review. The
+        // structural guarantee in `backend::broker_env` — that it cannot leak
+        // the secret because it is never given it — was necessary and not
+        // sufficient.
+        &resolution
+            .unset
+            .iter()
+            .cloned()
+            .chain(
+                manifest
+                    .brokers
+                    .iter()
+                    .filter_map(|b| b.source_var().map(str::to_string)),
+            )
+            .collect::<Vec<_>>(),
         &plan,
         SshHandoff {
             listener: &ssh_listener,
