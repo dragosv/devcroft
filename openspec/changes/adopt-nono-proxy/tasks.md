@@ -40,9 +40,15 @@
       just a minimal one (D3).
 - [ ] 2.2 Teeth-check it: flip one on in the constructor and confirm the test
       fails. A guard that cannot fail is not a guard.
-- [ ] 2.3 Draft the upstream request to gate AWS and SPIFFE behind features,
+- [x] 2.3 Draft the upstream request to gate AWS and SPIFFE behind features,
       alongside `use-nono-library` 6.4's trust-module ask. **Left for the owner
       to send** — an agent does not open issues on third-party repositories.
+      → `docs/nono-feature-gating-issue.md`. Combines both asks into one, since
+      they go to the same maintainer and share a rationale, and supersedes
+      6.4's separate draft. Raises TLS-interception gating as a *question*
+      rather than part of the ask: unlike AWS and SPIFFE it is plausibly
+      load-bearing for the proxy's own architecture, and asking for something
+      that cannot be given weakens the two asks that can.
 
 ## 3. Brokered credentials
 

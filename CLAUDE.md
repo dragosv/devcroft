@@ -217,26 +217,43 @@ nono gate its trust module behind a Cargo feature; it is deliberately
 left for the owner to send, since filing an issue on a third-party repo
 is an external action an agent should not take unprompted.
 
-**`add-egress-proxy`'s design.md E6 proposes adopting a second crate from
-the same project, `nono-proxy` 0.74.0**, and the same objection applies
-again with a measured number: **116 additional crates**, the same order as
-the trust tail above — **not yet taken**, and not urgent, for a reason
-worth recording precisely because it changes the calculus stated when this
-was first written. Reading that crate's config surfaced a real defect in
-devcroft's own proxy — no authentication on a loopback listener, which
-makes it an open relay lending its sandbox's allowlist to any local
-process — and the defect was **fixed directly in devcroft's own proxy**
-(task group 4a: a per-session token as proxy-URL userinfo, checked before
-the allowlist decision), rather than by importing the crate. Adopting
-`nono-proxy` remains open as a *separate* decision for what else it
-brings — credential brokering, approval hooks, audit integrity — and
-should be judged on that trade alone, not as the fix for a gap that no
-longer exists.
+**`add-egress-proxy`'s design.md E6 proposed adopting a second crate from
+the same project, `nono-proxy`. The owner accepted the trade;
+`adopt-nono-proxy` is that work.** Before touching code it re-measured the
+objection, and both of E6's stated numbers moved:
 
-Three of that crate's capabilities, if it is ever adopted, are **off by
-decision, not by omission** — TLS interception (an explicit non-goal),
-SPIFFE, and AWS routing. Enabling any of them is a change to what devcroft
-claims, not a configuration tweak.
+- **75 crates, not 116** — `nono-proxy` 0.75.0 with
+  `default-features = false` (`system-keyring` is redundant: devcroft uses
+  no keystore path and `nono` carries its own), resolved for
+  `x86_64-unknown-linux-gnu`.
+- **`nono` must move 0.74.0 → 0.75.0.** E6 says "pinned to the same
+  0.74.0"; that is no longer possible, since `nono-proxy` 0.75.0 requires
+  the matching `nono`. Measured: devcroft compiles clean on 0.75.0, all
+  targets, zero warnings, no source change.
+
+Note what E6 is still right about, and do not re-fix it: reading that
+crate's config surfaced a real defect in devcroft's own proxy — no
+authentication on a loopback listener, an open relay lending its sandbox's
+allowlist to any local process. That was **fixed directly in devcroft's own
+proxy** (task group 4a) rather than by importing the crate, so the adoption
+is judged on credential brokering, approval hooks and audit integrity
+alone.
+
+Three of that crate's capabilities are **off by decision, not by
+omission** — TLS interception (an explicit non-goal), SPIFFE, and AWS
+routing. Enabling any of them is a change to what devcroft claims, not a
+configuration tweak.
+
+**But "off by decision" is not "absent", and the distinction is load-bearing
+here.** `system-keyring` is the crate's *only* feature, so none of the
+three can be compiled out: **33 of the 75 crates — 20 AWS, 6 SPIFFE/gRPC,
+7 TLS/certificate — exist solely to serve them.** devcroft ships an X.509
+certificate generator for a feature its own threat model calls a non-goal.
+The mitigation is a test asserting all three are off in the `ProxyConfig`
+devcroft builds (a comment cannot survive an upstream default changing in
+a minor release), plus an upstream request to gate them behind features —
+the same ask, to the same maintainer, as `use-nono-library` task 6.4. If
+accepted, 75 drops to roughly 42.
 
 Skills `/opsx:propose`, `/opsx:update`, `/opsx:apply`, `/opsx:archive`,
 `/opsx:sync`, and `/opsx:explore` drive the workflow.
