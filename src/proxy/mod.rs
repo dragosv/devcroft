@@ -73,6 +73,7 @@ pub fn spawn(
     exe: &Path,
     paths: &StatePaths,
     allow: &[String],
+    brokers: &[(crate::config::Broker, zeroize::Zeroizing<String>)],
 ) -> io::Result<(libc::pid_t, u16, String)> {
     let listener = std::net::TcpListener::bind(("127.0.0.1", 0))?;
     let port = listener.local_addr()?.port();
@@ -109,6 +110,30 @@ pub fn spawn(
             serde_json::to_string(allow).expect("Vec<String> serialization is infallible"),
         )
         .env("DEVCROFT_EGRESS_TOKEN", &token)
+        // Routes and secrets travel separately and deliberately: the JSON
+        // names each secret's variable rather than carrying its value, so a
+        // spawn error, a truncated log line or a `ps` listing of this argument
+        // can never contain a credential.
+        .env(
+            "DEVCROFT_EGRESS_ROUTES",
+            serde_json::to_string(
+                &brokers
+                    .iter()
+                    .map(|(b, _)| backend::BrokerRoute {
+                        prefix: b.provider.clone(),
+                        upstream: b.upstream.clone(),
+                        header: b.inject_header(),
+                        secret_var: b.secret_var(),
+                    })
+                    .collect::<Vec<_>>(),
+            )
+            .expect("BrokerRoute serialization is infallible"),
+        )
+        .envs(
+            brokers
+                .iter()
+                .map(|(b, secret)| (b.secret_var(), secret.to_string())),
+        )
         // `server::run` opens this itself for structured allow/refuse
         // records (one write per record, same discipline
         // `keeper::connection::log_record` established) — a separate fd

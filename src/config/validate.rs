@@ -11,7 +11,10 @@ const SECTIONS: &[(&str, &[&str])] = &[
     ("network", &["default", "allow", "ports"]),
     ("ssh", &["forward_agent"]),
     ("hooks", &["post_create", "post_start"]),
-    ("broker", &["provider", "upstream", "secret", "env_var"]),
+    (
+        "broker",
+        &["provider", "upstream", "secret", "env_var", "header"],
+    ),
 ];
 
 pub fn check_unknown_keys(table: &toml::Table) -> Result<(), ConfigError> {

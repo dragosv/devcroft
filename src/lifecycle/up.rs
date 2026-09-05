@@ -178,7 +178,7 @@ pub fn up_with_provider(
     // first request: deferred, it surfaces as an upstream authentication error
     // inside a sandbox, which is the least diagnosable place it could appear
     // and looks like the agent's fault rather than a missing export.
-    let _brokered = resolve_brokers(&manifest.brokers)?;
+    let brokered = resolve_brokers(&manifest.brokers)?;
 
     if let Some(meta) = state::read_meta(&paths.meta)?
         && meta.project_root != project_root.to_string_lossy()
@@ -279,7 +279,11 @@ pub fn up_with_provider(
     // authentication entirely, so the pair is one `Option`, not two, all
     // the way to where each half is consumed.
     let proxy = if policy::compile(manifest).wants_egress_proxy() {
-        Some(ensure_egress_proxy(&paths, &manifest.network.allow)?)
+        Some(ensure_egress_proxy(
+            &paths,
+            &manifest.network.allow,
+            &brokered,
+        )?)
     } else {
         // A manifest that no longer wants filtering (`network.allow` was
         // emptied, or `network.default` changed to `"allow"`) leaves a
@@ -382,13 +386,13 @@ pub fn up_with_provider(
 /// The value is carried as `Zeroizing` from here on, so a failure between this
 /// point and the proxy handing it upstream does not leave it in a dropped
 /// buffer.
-fn resolve_brokers(
-    brokers: &[crate::config::Broker],
-) -> Result<Vec<(String, zeroize::Zeroizing<String>)>, UpError> {
+type ResolvedBroker = (crate::config::Broker, zeroize::Zeroizing<String>);
+
+fn resolve_brokers(brokers: &[crate::config::Broker]) -> Result<Vec<ResolvedBroker>, UpError> {
     let mut out = Vec::with_capacity(brokers.len());
     for b in brokers {
         match crate::proxy::secret::resolve(&b.secret) {
-            Ok(value) => out.push((b.provider.clone(), zeroize::Zeroizing::new(value))),
+            Ok(value) => out.push((b.clone(), zeroize::Zeroizing::new(value))),
             Err(e) => {
                 return Err(UpError::Provider(
                     crate::provider::ProviderError::ResolutionFailed(format!(
@@ -404,7 +408,11 @@ fn resolve_brokers(
     Ok(out)
 }
 
-fn ensure_egress_proxy(paths: &StatePaths, allow: &[String]) -> Result<(u16, String), UpError> {
+fn ensure_egress_proxy(
+    paths: &StatePaths,
+    allow: &[String],
+    brokers: &[ResolvedBroker],
+) -> Result<(u16, String), UpError> {
     // `is_same_process`, not `is_process_alive`: a resurrected unrelated
     // process at a reused pid would otherwise pass as "our proxy is
     // still running", skip spawning a real one, and leave egress
@@ -419,7 +427,7 @@ fn ensure_egress_proxy(paths: &StatePaths, allow: &[String]) -> Result<(u16, Str
         return Ok((port, token));
     }
     let exe = keeper_exe()?;
-    let (pid, port, token) = crate::proxy::spawn(&exe, paths, allow)
+    let (pid, port, token) = crate::proxy::spawn(&exe, paths, allow, brokers)
         .map_err(|e| UpError::Keeper(format!("starting egress proxy: {e}")))?;
     state::write_pidfile(&paths.proxy_pidfile, pid)?;
     Ok((port, token))
@@ -767,6 +775,36 @@ fn up_process(
         // proxy convention, not a devcroft invention.
         for key in ["NO_PROXY", "no_proxy"] {
             env.insert(key.to_string(), "localhost,127.0.0.1,::1".to_string());
+        }
+
+        // Brokered routes (`brokered-credentials`). Two variables per route,
+        // both derived from the *provider* prefix rather than from any agent's
+        // name, so whichever client follows that provider's SDK convention is
+        // brokered without devcroft naming it (design D5).
+        //
+        // `127.0.0.1:{port}` is correct in both topologies, which is why there
+        // is no isolated/unisolated branch here: an unisolated sandbox reaches
+        // the host proxy on that port directly, and an isolated one has the
+        // in-namespace relay bound to *the same port number*
+        // (`DEVCROFT_PROXY_RELAY_PORT`). `NO_PROXY` above already covers
+        // loopback, so the SDK dials this endpoint straight rather than
+        // tunnelling its own base URL through the forward proxy.
+        // `manifest.brokers` rather than the resolved pairs: every route here
+        // resolved successfully or `up` already refused, and the value is not
+        // needed — the phantom token is the session token, and the secret is
+        // deliberately absent from this environment.
+        for b in &manifest.brokers {
+            env.insert(
+                b.base_url_var(),
+                format!("http://127.0.0.1:{port}/{}", b.provider),
+            );
+            // The phantom token: the SDK is given the *session token* as its
+            // API key, and the proxy swaps it for the real credential
+            // upstream. Without it, an SDK that refuses to start without a key
+            // would fail its own precondition even though the route resolves
+            // perfectly — the credential is deliberately absent from this
+            // environment, which is the whole point.
+            env.insert(b.key_var(), token.clone());
         }
     }
 

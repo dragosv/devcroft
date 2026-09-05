@@ -46,6 +46,57 @@ pub struct Broker {
     /// does not follow the `{PREFIX}_API_KEY` convention (D5).
     #[serde(default)]
     pub env_var: Option<String>,
+    /// The header the credential is injected into upstream.
+    ///
+    /// Defaults per provider — see [`Broker::inject_header`] — because the two
+    /// large providers disagree: Anthropic reads `x-api-key`, OpenAI reads
+    /// `Authorization`. Overridable because devcroft cannot know every API's
+    /// convention and guessing wrong would be unfixable from a manifest.
+    #[serde(default)]
+    pub header: Option<String>,
+}
+
+impl Broker {
+    /// The header this route injects into.
+    ///
+    /// The table is deliberately tiny and covers only what devcroft can be
+    /// sure of. Everything else falls through to `Authorization`, for which
+    /// `nono-proxy` builds `Bearer {}` — any other header name gets the bare
+    /// secret, which is what `x-api-key` wants. So the header name is the only
+    /// per-provider fact devcroft has to carry.
+    ///
+    /// **Revisit if** this table grows past a handful of entries: at that
+    /// point it is provider data, not a default, and belongs somewhere a user
+    /// can extend without a devcroft release.
+    pub fn inject_header(&self) -> String {
+        if let Some(h) = &self.header {
+            return h.clone();
+        }
+        match self.provider.as_str() {
+            "anthropic" => "x-api-key".to_string(),
+            _ => "Authorization".to_string(),
+        }
+    }
+
+    /// The variable an SDK reads its key from — the phantom token goes here.
+    pub fn key_var(&self) -> String {
+        self.env_var
+            .clone()
+            .unwrap_or_else(|| format!("{}_API_KEY", self.provider.to_uppercase()))
+    }
+
+    /// The variable an SDK reads its base URL from.
+    pub fn base_url_var(&self) -> String {
+        format!("{}_BASE_URL", self.provider.to_uppercase())
+    }
+
+    /// The env var the proxy process reads this route's secret from. Namespaced
+    /// so devcroft's own resolution (and its empty-value rule) stays the single
+    /// path, rather than the manifest's `env:` name becoming an implicit
+    /// contract with the child's inherited environment.
+    pub fn secret_var(&self) -> String {
+        format!("DEVCROFT_BROKER_SECRET_{}", self.provider.to_uppercase())
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]

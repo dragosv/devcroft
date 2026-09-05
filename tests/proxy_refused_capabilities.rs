@@ -31,6 +31,7 @@ fn config() -> nono_proxy::ProxyConfig {
             "crates.io".to_string(),
         ],
         "0123456789abcdef0123456789abcdef",
+        Vec::new(),
     )
 }
 
@@ -52,15 +53,49 @@ fn tls_interception_is_off() {
     );
 }
 
+/// A route exists only when the manifest declared one. The empty case is the
+/// one that matters: a route appearing without a `[[broker]]` entry behind it
+/// would be exactly the silent widening the `brokered-credentials` spec
+/// forbids.
 #[test]
-fn no_credential_routes_are_configured_yet() {
-    // Brokering is task group 3 and is not built. Asserting it *empty* now is
-    // what makes the later addition deliberate: a route appearing without a
-    // manifest key to declare it would be exactly the silent widening the
-    // `brokered-credentials` spec forbids.
+fn no_route_appears_without_a_manifest_declaring_it() {
     assert!(
         config().routes.is_empty(),
-        "no brokered route exists until the manifest can declare one"
+        "no brokered route exists unless the manifest declares one"
+    );
+}
+
+/// And when one *is* declared, the secret is referenced rather than carried.
+#[test]
+fn a_declared_route_names_its_secret_instead_of_holding_it() {
+    let c = proxy_config(
+        vec!["api.anthropic.com".to_string()],
+        "0123456789abcdef0123456789abcdef",
+        vec![devcroft::proxy::backend::BrokerRoute {
+            prefix: "anthropic".to_string(),
+            upstream: "https://api.anthropic.com".to_string(),
+            header: "x-api-key".to_string(),
+            secret_var: "DEVCROFT_BROKER_SECRET_ANTHROPIC".to_string(),
+        }],
+    );
+    assert_eq!(c.routes.len(), 1);
+    let r = &c.routes[0];
+    assert_eq!(
+        r.credential_key.as_deref(),
+        Some("env://DEVCROFT_BROKER_SECRET_ANTHROPIC"),
+        "the route must reference the secret by variable, never embed its value"
+    );
+    assert_eq!(
+        r.inject_header, "x-api-key",
+        "Anthropic reads x-api-key; injecting into Authorization would send \
+         `Bearer <key>` to an API that ignores it, and the failure would look \
+         like a bad key rather than a bad header"
+    );
+    assert!(
+        r.credential_format.is_none(),
+        "left to the crate deliberately: it builds `Bearer {{}}` for an \
+         Authorization header and the bare secret for any other, which is \
+         exactly what x-api-key wants"
     );
 }
 
@@ -87,7 +122,7 @@ fn authentication_is_required_including_on_connect() {
 #[test]
 fn an_empty_allowlist_denies_rather_than_allowing_everything() {
     assert!(
-        proxy_config(Vec::new(), "t").strict_filter,
+        proxy_config(Vec::new(), "t", Vec::new()).strict_filter,
         "`HostFilter::new_strict`'s rule: an empty allowlist denies. A proxy \
          that failed open on one would be a silent footgun for any caller that \
          forgets to check `wants_egress_proxy()` first"

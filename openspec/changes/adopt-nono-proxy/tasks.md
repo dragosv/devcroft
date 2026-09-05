@@ -159,16 +159,36 @@
       `tests/broker_missing_credential.rs` asserts the exact code for that
       reason rather than merely "non-zero". Teeth-checked: stubbing
       `resolve_brokers` fails that test and leaves its control passing.
-      **Still open**: the resolved value is not yet handed to the proxy (3.3).
-- [ ] 3.3 Point the client at the route from the **provider prefix**, not from
+      Closed by 3.3: the resolved value now reaches the proxy.
+- [x] 3.3 Point the client at the route from the **provider prefix**, not from
       any agent's name (D5): `ProxyHandle::credential_env_vars` derives
       `{PREFIX}_BASE_URL`, and the manifest can override it where an SDK does
       not follow that convention. devcroft hardcodes no agent's variable.
-- [ ] 3.3b Carry the phantom token too, and understand why before doing it:
+      → `up` derives both variables itself rather than asking the proxy child,
+      because it already knows the port and the token. **No isolated/unisolated
+      branch is needed and that is not luck**: the in-namespace relay binds
+      *the same port number* as the host proxy, so `127.0.0.1:{port}` is
+      correct in both topologies. `NO_PROXY` already covers loopback, so the
+      SDK dials the base URL directly instead of tunnelling it through the
+      forward proxy.
+      Secrets cross the exec boundary as their **own** environment variables,
+      with the route JSON naming them by `env://` reference rather than
+      carrying values — so a spawn error, a truncated log line or a `ps`
+      listing can never contain a credential.
+      One per-provider fact turned out to be unavoidable: Anthropic reads
+      `x-api-key`, OpenAI reads `Authorization`. Only the *header name* is
+      carried, because the crate already builds `Bearer {}` for Authorization
+      and the bare secret for anything else — so `credential_format` stays
+      `None` deliberately. Overridable via `header` in the manifest, with a
+      two-entry default table and a recorded reversal condition: if that table
+      grows past a handful it is provider data, not a default.
+- [x] 3.3b Carry the phantom token too, and understand why before doing it:
       many SDKs refuse to start without an API key present, so `{KEY}_API_KEY`
       is set to the *session token* and the proxy swaps it upstream. Without
       this the route resolves correctly and the SDK still fails a missing-key
       check.
+      → Done in the same block. The SDK receives the *session token* as its
+      API key and the proxy swaps it upstream.
 - [ ] 3.4 Make the bypass failure legible (D5): a client that dials the real
       upstream must be told the upstream is **brokered and the route was not
       used**, not merely that egress was denied.

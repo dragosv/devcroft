@@ -3005,7 +3005,14 @@ fn egress_proxy_main(fd: RawFd, unix_fd: RawFd) -> ! {
     // into `nono-proxy`, which binds an ephemeral loopback port of its own
     // because it accepts neither a pre-bound fd nor a unix socket. devcroft
     // keeps the process, both acceptors, and the port the policy names.
-    let (nono_port, handle) = match devcroft::proxy::backend::start(allow, &token) {
+    // Routes carry no secret: each names an env var in *this* process that
+    // `proxy::spawn` set from the value resolved host-side at `up`.
+    let routes: Vec<devcroft::proxy::backend::BrokerRoute> =
+        std::env::var("DEVCROFT_EGRESS_ROUTES")
+            .ok()
+            .and_then(|s| serde_json::from_str(&s).ok())
+            .unwrap_or_default();
+    let (nono_port, handle) = match devcroft::proxy::backend::start(allow, &token, routes) {
         Ok(started) => started,
         Err(e) => {
             eprintln!("devcroft __egress_proxy: {e}");

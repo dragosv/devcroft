@@ -19,6 +19,21 @@
 
 use std::io;
 
+/// One brokered route as it crosses the exec boundary into the proxy process.
+///
+/// **The secret is not in here.** It travels as its own environment variable
+/// (`Broker::secret_var`) and the route names it by `env://` reference, so the
+/// value never sits inside a JSON blob that gets logged, truncated, or printed
+/// in a spawn error.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct BrokerRoute {
+    pub prefix: String,
+    pub upstream: String,
+    pub header: String,
+    /// The environment variable in *this* process holding the secret.
+    pub secret_var: String,
+}
+
 /// The configuration devcroft hands `nono-proxy`.
 ///
 /// A pure function on purpose: `tests/proxy_refused_capabilities.rs` asserts
@@ -27,7 +42,11 @@ use std::io;
 /// is the change's D3 — the failure mode is not someone enabling TLS
 /// interception, it is an upstream default moving in a minor release and
 /// devcroft inheriting a capability its threat model denies having.
-pub fn proxy_config(allow: Vec<String>, token: &str) -> nono_proxy::ProxyConfig {
+pub fn proxy_config(
+    allow: Vec<String>,
+    token: &str,
+    routes: Vec<BrokerRoute>,
+) -> nono_proxy::ProxyConfig {
     nono_proxy::ProxyConfig {
         // Ephemeral: the port the *policy* names is the one `spawn` bound and
         // fd-passed, which this instance never sees. Nothing outside this
@@ -55,13 +74,32 @@ pub fn proxy_config(allow: Vec<String>, token: &str) -> nono_proxy::ProxyConfig 
         // task group 4a closed.
         strict_connect_auth: true,
 
+        // Brokered credentials (`brokered-credentials`). `credential_key` is an
+        // `env://` reference the crate resolves from this process's own
+        // environment — the value was resolved host-side at `up`, in the
+        // trusted phase, and put there by `proxy::spawn`.
+        //
+        // `credential_format` is left `None` on purpose: the crate builds
+        // `Bearer {}` for an `Authorization` header and the bare secret for any
+        // other, which is exactly right for `x-api-key`. Setting it would mean
+        // devcroft carrying a second per-provider fact it does not need.
+        routes: routes
+            .into_iter()
+            .map(|r| nono_proxy::config::RouteConfig {
+                prefix: r.prefix,
+                upstream: r.upstream,
+                credential_key: Some(format!("env://{}", r.secret_var)),
+                inject_header: r.header,
+                ..Default::default()
+            })
+            .collect(),
+
         // The three devcroft refuses. Compiled into the dependency graph and
         // unreachable here; see `docs/nono-feature-gating-issue.md` for the
         // upstream request that would let them be compiled out instead.
         intercept_ca_dir: None,
         intercept_parent_ca_pems: None,
         preloaded_ca: None,
-        routes: Vec::new(),
 
         ..Default::default()
     }
@@ -78,8 +116,9 @@ pub fn proxy_config(allow: Vec<String>, token: &str) -> nono_proxy::ProxyConfig 
 pub fn start(
     allow: Vec<String>,
     token: &str,
+    routes: Vec<BrokerRoute>,
 ) -> io::Result<(u16, &'static nono_proxy::ProxyHandle)> {
-    let config = proxy_config(allow, token);
+    let config = proxy_config(allow, token, routes);
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()?;
