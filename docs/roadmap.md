@@ -185,6 +185,14 @@ Three things make fleet cheaper than 6/56 suggests:
   if it holds, fleet's hardest phase-0 item disappears, and `sandlock`
   shows a working handoff sequence if it does not.
 
+**Two cheap items land here too, and they are not isolation work.** Warm
+keepers and a reusable resolution (fleet's group 2b, taken from ArcBox's
+`Prepare`/`Checkpoint` — see `docs/prior-art.md`) amortise the per-sandbox
+startup cost, which is an annoyance at N=1 and the binding constraint at N≥3.
+Neither needs a VM. Group 2b opens with a measurement that can close it: if
+provider resolution is not the dominant term in an `up`, both ideas are solving
+the wrong problem and should be dropped rather than built.
+
 **`add-port-allocation`** (3/32) resolves here rather than shipping: two
 corrections in one day reduced it to hosts without user namespaces, the
 host-side port mapping (which is fleet's D8), and a rare proxy-port clash.

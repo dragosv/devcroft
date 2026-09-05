@@ -193,6 +193,44 @@ the implementation before it resolves.
       unprivileged user namespaces by default.
 - [ ] Test: agent cannot see or signal another agent's processes.
 
+## 2b. Making N sandboxes affordable
+
+> Taken from ArcBox's `VmDriver` port (`docs/prior-art.md`), which serves
+> `Prepare` and `Checkpoint` alongside plain boot. **None of it needs a VM** —
+> the ideas are about amortising a per-sandbox startup cost, and devcroft's is
+> provider resolution at `up`, paid in full every time.
+>
+> This group is here because fleet is where the cost stops being an annoyance
+> and starts being the constraint: at N ≥ 3, per-sandbox startup is what a user
+> actually experiences, and no amount of isolation elsewhere compensates.
+> Recorded as tasks rather than left in `prior-art.md`, where a technique with
+> no task is a note, not a plan.
+
+- [ ] 2b.1 Measure first, and be willing to close this group. What does an
+      `up` actually cost, broken down — provider resolution, closure
+      materialisation, keeper spawn, restriction? If resolution is not the
+      dominant term, the two ideas below are solving the wrong problem and
+      should be dropped rather than built.
+- [ ] 2b.2 A warm keeper: spawn ahead of the request, so a sandbox that is
+      *about* to be asked for is already past the expensive part. ArcBox's
+      `Prepare` spawns a VMM that then receives its spec; devcroft's analogue
+      spawns a keeper that then receives its plan — the fd-passing shape it
+      already uses.
+- [ ] 2b.3 Establish what must *not* be shared across a warm instance before
+      building it: the compiled policy, the project root, the resolved
+      environment and the proxy token are all per-sandbox, so anything
+      pre-spawned must be genuinely blank. A warm pool that leaks one
+      sandbox's grants into another is worse than a slow `up`.
+- [ ] 2b.4 A reusable resolution: the closest devcroft has to a checkpoint is
+      that a resolved environment for one project root is the same for the
+      next sandbox on it. Establish whether that is cacheable given
+      `env_fingerprint`, and what invalidates it — this is not
+      pause/snapshot/resume, and calling it "checkpoint" would overclaim.
+- [ ] 2b.5 Whatever lands, `status`/`doctor` say when an instance came from a
+      warm path rather than a cold one. A performance mechanism that cannot be
+      observed cannot be debugged, and a warm instance carrying stale state is
+      exactly the bug this would introduce.
+
 ## 3. Networking
 
 - [ ] **Spike:** pasta vs slirp4netns — forwarding semantics, throughput, flag
@@ -304,5 +342,17 @@ the implementation before it resolves.
       **Struck:** `remove-gvisor-backend` deleted the second tier, so the axis
       collapsed on its own. The remaining axis is single-environment versus
       fleet, which is this change's subject.
+- [ ] **Harden keeper rediscovery beyond the pidfile.** devcroft decides a
+      keeper is alive from a pidfile plus a health probe; a pidfile alone
+      cannot distinguish a reused pid from the real process. ArcBox's `Adopt`
+      holds every candidate — the recorded pid *and* `/proc` matches — to an
+      identity test (`--id`, API socket, jail root) before adopting it
+      (`docs/prior-art.md`). devcroft has the materials for the same check:
+      `Meta` records `project_root`, and the control socket path is
+      per-sandbox. Not fleet-specific, but it matters most at N, where pid
+      reuse stops being hypothetical.
+- [ ] Test the above against the case that motivates it: a pidfile naming a
+      live pid that is *not* this sandbox's keeper must read as dead, not as
+      healthy. A check that cannot fail is the one being replaced.
 - [ ] Document the macOS-to-fleet path via a Linux VM, including where the
       worktree lives.
