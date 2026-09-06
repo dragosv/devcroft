@@ -333,6 +333,31 @@ Closing this means emitting both there too — devcroft-side when it builds the
 grant list, or upstream. Not attempted here; it belongs with
 `own-policy-baseline`, which owns what the compiled grant set contains.
 
+## A home-relative `filesystem` grant has no effect on macOS
+
+`filesystem.read = ["~/.config/example"]` compiles into the policy — it is
+visible in `policy --render` with its `manifest:filesystem.read` origin — and
+the sandbox still cannot read the path:
+
+```
+$ devcroft exec -- cat /Users/me/.config/example/marker
+cat: …: Operation not permitted
+```
+
+Found while checking something else, and confirmed against an **unmodified**
+tree, so it is not a regression from `own-sandbox-environment` — that change
+only made it worth looking at, because the `HOME`-ordering it depends on is the
+kind of thing this would have masked.
+
+Distinct from the symlinked-spelling gap above: `/Users/<me>` is not a symlink,
+and the query used the same canonical spelling the grant resolves to. The
+mechanism is undetermined; only the observable is established.
+
+**Consequence**: a project that grants a path under `$HOME` gets a policy that
+*renders* correctly and *enforces* nothing, which is the worst combination —
+`policy --render` is the tool a user would reach for to check, and it agrees
+with them. Whether the same holds on Linux is unmeasured.
+
 ## No inter-sandbox process visibility separation
 
 Landlock hides nothing: sandboxes share the host's raw process namespace.

@@ -131,6 +131,47 @@ fn the_invoking_shell_does_not_reach_the_sandbox() {
         .unwrap();
     let env_dump = String::from_utf8_lossy(&out.stdout).into_owned();
 
+    // `HOME` is the sandbox's own, and writable — the state a tool or an
+    // agent's installer actually needs.
+    let wrote = Command::new(bin)
+        .args([
+            "exec",
+            "--",
+            "sh",
+            "-c",
+            "echo written > \"$HOME/probe\" && cat \"$HOME/probe\"",
+        ])
+        .current_dir(&root)
+        .output()
+        .unwrap();
+    let wrote_out = String::from_utf8_lossy(&wrote.stdout).into_owned();
+
+    // The host's home stays unreachable. **Weaker than it looks, and said so
+    // deliberately**: this does *not* prove the `HOME`-after-`self_restrict`
+    // ordering, which was checked by moving the assignment earlier and finding
+    // this assertion still passes. Re-pointing the baseline denials leaves the
+    // real `~/.ssh` merely *ungranted*, and the filesystem policy is
+    // deny-by-default, so it is refused either way.
+    //
+    // The ordering is still right — a manifest that grants a home-relative
+    // path needs `~` to mean the host's home — but the case that would
+    // demonstrate it cannot run here: home-relative grants do not take effect
+    // on macOS at all, confirmed against an unmodified tree, which is its own
+    // defect and recorded in `docs/known-gaps.md`.
+    let host_home = std::env::var("HOME").unwrap();
+    let host_ssh = Command::new(bin)
+        .args(["exec", "--", "ls", &format!("{host_home}/.ssh")])
+        .current_dir(&root)
+        .output()
+        .unwrap();
+    let host_ssh_err = String::from_utf8_lossy(&host_ssh.stderr).into_owned();
+
+    let home_line = env_dump
+        .lines()
+        .find(|l| l.starts_with("HOME="))
+        .unwrap_or_default()
+        .to_string();
+
     let _ = Command::new(bin).arg("down").current_dir(&root).output();
     let paths = devcroft::lifecycle::StatePaths::new(&name).unwrap();
     let _ = std::fs::remove_dir_all(&paths.root);
@@ -188,5 +229,21 @@ fn the_invoking_shell_does_not_reach_the_sandbox() {
     assert!(
         !env_dump.contains("DEVCROFT_FORWARD_UNSET="),
         "and must not be invented as an empty value; env was:\n{env_dump}"
+    );
+
+    assert!(
+        home_line.contains(".devcroft/") && home_line.ends_with("/home"),
+        "HOME must be the sandbox's own, inside the artifact directory; \
+         got: {home_line}"
+    );
+    assert_eq!(
+        wrote_out.trim(),
+        "written",
+        "a tool must be able to write under $HOME — the whole reason it moved, \
+         and what an agent's own installer needs"
+    );
+    assert!(
+        host_ssh_err.contains("not permitted"),
+        "the host's ~/.ssh must stay unreachable from inside; got: {host_ssh_err:?}"
     );
 }

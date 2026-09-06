@@ -149,14 +149,42 @@
 
 ## 3. `HOME`
 
-- [ ] 3.1 `HOME=<project>/.devcroft/<name>/home`, created at `up`.
-- [ ] 3.2 Confirm the artifact directory's existing lifetime is right for this:
+- [x] 3.1 `HOME=<project>/.devcroft/<name>/home`, created at `up`.
+      → Applied in the keeper, **after `self_restrict`**, which is the whole
+      trick: `self_restrict` resolves the policy's `~/...` entries against
+      `HOME`, and that has to be the *host's* home for the baseline credential
+      denials to mean what they say. Afterwards the keeper never reads `HOME`
+      again and sessions inherit it — the one moment the two requirements do
+      not conflict.
+      Applied there rather than at the six `SpawnRequest` construction sites,
+      which would have missed one.
+- [x] 3.2 Confirm the artifact directory's existing lifetime is right for this:
       ignored by `init`, removed by `rm`, surviving `down`.
-- [ ] 3.3 Check what assumes the old `HOME`. `policy::compile` writes
+      → Verified live: a write under `$HOME` lands in
+      `.devcroft/<name>/home/`, nothing appears in the host's home.
+- [x] 3.3 Check what assumes the old `HOME`. `policy::compile` writes
       credential denials in `~/...` shorthand and `normalize_path_for_policy`
       rewrites `$HOME`-relative paths — if either now resolves against the
       sandbox-local home, the baseline denials it produces are nonsense.
       **This is the most likely place this change breaks something quietly.**
+      → It was, and the check produced two corrections worth more than the
+      feature.
+      **My teeth-check for the ordering does not fire.** Moving `HOME` before
+      `self_restrict` still passes the assertion: a re-pointed denial leaves the
+      real `~/.ssh` merely *ungranted*, and the filesystem policy is
+      deny-by-default, so it is refused either way. The test comment now says
+      that instead of claiming a guard it does not provide. The ordering is
+      still correct — a manifest granting a home-relative path needs `~` to
+      mean the host's home — but it is unproven here.
+      **And the case that would prove it cannot run**: a home-relative
+      `filesystem.read` grant has *no effect at all* on macOS. It compiles,
+      `policy --render` shows it with its origin, and the path stays
+      unreachable. Confirmed against an **unmodified tree**, so it is not a
+      regression from this change — published in `docs/known-gaps.md` as its
+      own defect, with the mechanism undetermined and Linux unmeasured.
+      That is the worst shape a policy bug can take: it renders correctly and
+      enforces nothing, and `policy --render` is exactly the tool a user would
+      check with.
 
 ## 4. `ssh.forward_agent`
 

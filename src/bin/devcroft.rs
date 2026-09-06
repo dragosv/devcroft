@@ -2923,6 +2923,8 @@ fn keeper_main(fd: RawFd, ssh_fd: RawFd) -> ! {
     // because `remove_var` is only sound while this process is
     // single-threaded — which it is until the relay spawn below, and nowhere
     // after.
+    // Read here with the other internals, for the same single-threaded reason.
+    let sandbox_home = std::env::var("DEVCROFT_SANDBOX_HOME").ok();
     let ssh_keys = std::env::var("DEVCROFT_SSH_HOST_KEY")
         .ok()
         .zip(std::env::var("DEVCROFT_SSH_AUTHORIZED_KEY").ok());
@@ -2931,9 +2933,32 @@ fn keeper_main(fd: RawFd, ssh_fd: RawFd) -> ! {
     unsafe {
         std::env::remove_var("DEVCROFT_SSH_HOST_KEY");
         std::env::remove_var("DEVCROFT_SSH_AUTHORIZED_KEY");
+        std::env::remove_var("DEVCROFT_SANDBOX_HOME");
     }
 
     self_restrict();
+
+    // **`HOME` moves only now, and the ordering is the whole trick.**
+    //
+    // `self_restrict` above resolved the compiled policy's `~/...` entries —
+    // the baseline denials for `~/.ssh`, `~/.aws`, devcroft's own data dir —
+    // against `std::env::var("HOME")`, which had to be the *host's* home for
+    // any of them to mean what they say. Changing `HOME` before that point
+    // would have re-pointed every one of them at a directory inside the
+    // project, quietly turning the credential denials into nonsense.
+    //
+    // Afterwards the keeper never reads `HOME` again, and sessions inherit
+    // this environment — so this is the one moment where the two requirements
+    // do not conflict. Every session path funnels through here, which the six
+    // separate `SpawnRequest` construction sites would not have.
+    //
+    // SAFETY: still single-threaded — the relay spawn below is the first
+    // thread, and `self_restrict` spawns none.
+    if let Some(home) = &sandbox_home {
+        unsafe {
+            std::env::set_var("HOME", home);
+        }
+    }
 
     if let Some((listener, socket_path)) = relay {
         std::thread::spawn(move || {

@@ -785,6 +785,15 @@ fn up_process(
         })
         .flatten();
 
+    // The sandbox's own home (D4). Inside the project's artifact directory:
+    // the one place the sandbox both reads and writes, already ignored by
+    // `init`, already removed by `rm`. `HOME` currently names the *host's*
+    // home, which the baseline denies — so every tool that writes there fails,
+    // and an agent's own installer cannot run at all.
+    let sandbox_home =
+        crate::services::artifact_dir(project_root, &manifest.sandbox.name).join("home");
+    std::fs::create_dir_all(&sandbox_home).map_err(UpError::State)?;
+
     let keeper_pid = spawn_keeper(
         &exe,
         &listener,
@@ -792,6 +801,7 @@ fn up_process(
         project_root,
         &env,
         &resolution.unset,
+        &sandbox_home,
         &plan,
         SshHandoff {
             listener: &ssh_listener,
@@ -985,6 +995,7 @@ fn spawn_keeper(
     project_root: &Path,
     env: &std::collections::BTreeMap<String, String>,
     unset: &[String],
+    sandbox_home: &Path,
     plan: &policy::CapabilityPlan,
     ssh: SshHandoff,
     services: Option<&str>,
@@ -1097,6 +1108,11 @@ fn spawn_keeper(
         // --cwd`, which needs an absolute path. Same value here keeps
         // one code path in `start_services_if_requested`.
         .env("DEVCROFT_SERVICES_ROOT", project_root)
+        // The sandbox's own `HOME` (`own-sandbox-environment` D4). Read and
+        // removed in the keeper's prologue, then applied to its environment
+        // *after* `self_restrict` — see `keeper_main` for why the ordering is
+        // the whole trick.
+        .env("DEVCROFT_SANDBOX_HOME", sandbox_home)
         // Set together or not at all — `keeper_main` reads them as a
         // pair, so a half-configured relay is not representable.
         .envs(
