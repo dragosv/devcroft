@@ -14,11 +14,15 @@ Measured before designing, on a real flox session (macOS 15.7.4):
 So the shell contributes a clear majority, and it does so *verbatim* — which is
 what makes the fix precise rather than heuristic.
 
-`spawn_keeper` already has the right channel. It calls `.envs(env)`, which can
-only add or override, and then `env_remove` for each entry in
-`Resolution::unset`. That mechanism exists because provider activation can
-*unset* a key, and its own comment states the general problem: "a plain map has
-no way to represent 'unset' at all."
+**And the environment devcroft *wants* was already being computed.** Every
+provider runs activation under `capture::canonical_base_env()` — the real `HOME`
+and a canonical `PATH`, nothing else — with `.env_clear()`. That guarantee is
+explicitly about reproducibility: the same manifest must resolve the same way
+whoever runs `up`.
+
+`spawn_keeper` then built its `Command` without clearing, so the operator's
+shell was layered back on top of that result. The 101 variables are not a
+missing filter; they are a discarded guarantee.
 
 ## Goals / Non-Goals
 
@@ -33,42 +37,56 @@ no way to represent 'unset' at all."
 
 ## Decisions
 
-## D1 — Subtract the ambient, do not allowlist the wanted
+## D1 — Do not inherit at all. The clean environment was already being computed
+and then discarded
 
-**Decision.** Remove every variable whose **name and value both** match
-devcroft's own ambient environment, minus an essential set (D2). Keep everything
-else.
+**Corrected during implementation, and the correction is the whole change.** The
+first version of this decision proposed subtracting the ambient environment by
+comparing names and values. That was solving a problem devcroft had already
+solved one layer down and then thrown away.
 
-**Why not an allowlist.** It would have to enumerate what a provider's
-activation produces — 74 names here, different per provider, per project and per
-lockfile. Any list would be wrong on the next `flox install`.
+**Every provider already runs activation under a fixed environment.**
+`capture::canonical_base_env()` returns exactly two variables — the real `HOME`
+and a canonical `PATH` — and `flox.rs`, `nix.rs` and `devbox.rs` each invoke
+activation with `.env_clear().envs(base)`. Its doc comment says why, and it is
+this change's argument almost verbatim: a `PATH` full of one operator's tools
+"leaking into either side means the exact same manifest can resolve a different
+activation diff depending on who ran `up` and from which shell".
 
-**Why not a denylist of sensitive names.** It is a guess about what secrets are
-called. `CLAUDE_CODE_MESSAGING_TOKEN` would not have been on anyone's list; nor
-would the next tool's.
+So `resolution.env` **is** the authoritative environment: derived from the
+manifest and lockfile, not from a shell. The 101 leaked variables never came
+through it. They came from `spawn_keeper` building a `Command` and letting it
+inherit, which put the operator's shell back on top of a result that had been
+carefully computed without it.
 
-**Why the value comparison and not the name alone.** `PATH` is in both, and the
-provider rewrote it — matching on name would delete the closure from the
-sandbox's `PATH` and break everything. Comparing values keeps exactly what
-activation changed.
+**Decision.** `cmd.env_clear()` before `.envs(env)`. The keeper starts from
+nothing and receives exactly what the provider resolved plus what devcroft sets
+explicitly.
 
-**The residual false positive, stated:** a variable the provider sets to
-*coincidentally* the same value the shell had is removed. D2's essential set
-covers the cases where that matters; beyond it, a project declares the variable
-(D3). This is a real if narrow cost, and it is preferred to the alternative,
-where a missed name is a leaked credential rather than a missing convenience.
+**Why this is better than subtraction, not merely simpler.** Subtraction is a
+*comparison* and therefore has false positives and false negatives: a provider
+variable coincidentally equal to an ambient one is wrongly removed, and a
+variable the shell exported that activation also happens to set is wrongly kept.
+`env_clear` has neither, because it is not deciding anything — it is declining
+to add a source that was never wanted.
 
-## D2 — The essential set is small, enumerated, and justified per entry
+**What it costs.** Nothing the keeper reads is left to inheritance: everything
+devcroft-internal is set explicitly on the same `Command`, and `HOME` arrives
+through `resolution.env` because `canonical_base_env` puts it there. The risk is
+not in the mechanism but in what *sessions* turn out to depend on, which is why
+task 0.3 enumerates the breakage before any of it is fixed.
 
-Variables a POSIX session cannot function without, kept even when they match the
-ambient environment exactly: `TERM`, `LANG`, `LC_*`, `TZ`, `USER`, `LOGNAME`,
-`SHELL`. `HOME` is not on the list because D4 replaces it outright, and `PATH`
-is not because the provider always rewrites it and D1 therefore keeps it
-already.
+## D2 — There is no essential set
 
-**Enumerated in one constant, not decided per call site** — the spec's third
-scenario asks for exactly that, because a set that grows by convenience is how
-this becomes a denylist again by accident.
+**Superseded by D1.** An essential set existed to protect variables that
+subtraction would wrongly delete. `env_clear` deletes nothing that was wanted:
+what a session needs comes from the provider's activation, which is the thing
+the project actually declared.
+
+If a session turns out to need something no provider supplies — a terminal type,
+a locale — that is a gap in what devcroft passes down, to be added explicitly
+and named, not a list of shell variables to preserve by accident. Task 0.3 is
+what turns that from a guess into a list.
 
 ## D3 — `[env] forward` is the declared exception, and the simple credential path
 

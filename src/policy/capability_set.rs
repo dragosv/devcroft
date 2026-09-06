@@ -446,14 +446,26 @@ mod tests {
     use crate::config::parse;
     use crate::policy::compile;
 
+    /// A directory no other test in this binary can be handed.
+    ///
+    /// This used to key on the wall clock's nanoseconds, which is not the same
+    /// as being unique: macOS's `SystemTime` granularity is coarser than a
+    /// nanosecond, so two tests starting in the same tick got the *same*
+    /// directory, and whichever finished first deleted the other's fixture
+    /// mid-run. That produced an intermittent
+    /// `Canonicalize { source: NotFound }` in whichever test was unlucky —
+    /// reproduced here as one failure in roughly two runs at the default
+    /// thread count, and invisible at `--test-threads=4`.
+    ///
+    /// A counter is collision-free by construction rather than by hoping the
+    /// clock is fine-grained enough.
     fn project_dir() -> std::path::PathBuf {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static NEXT: AtomicU64 = AtomicU64::new(0);
         std::env::temp_dir().join(format!(
             "devcroft-capset-test-{}-{}",
             std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
+            NEXT.fetch_add(1, Ordering::Relaxed)
         ))
     }
 

@@ -6,29 +6,69 @@
 > provider, one shell. Before removing 101 variables from every sandbox, know
 > whether that number is representative.
 
-- [ ] 0.1 Record what reaches a sandbox on each provider row (flox, nix,
-      devbox), not just flox: how many variables, how many are byte-identical to
-      the invoking shell, and what the provider genuinely contributes.
-- [ ] 0.2 Do the same from a *clean* shell — `env -i` plus the minimum — so the
-      101 is separated into "what any shell leaks" and "what this developer's
-      shell happens to hold". The first number is the one that generalises.
-- [ ] 0.3 Enumerate what breaks. Run the existing suite with the subtraction
-      applied and record every failure **before** fixing any of them; the list
-      is the migration story, and discovering it one test at a time turns a
-      design question into a series of patches.
+- [~] 0.1 Record what reaches a sandbox on each provider row (flox, nix,
+      devbox), not just flox.
+      → **Moot, and the reason matters.** This existed to validate the
+      *subtraction* approach's numbers, and D1's correction removed subtraction
+      entirely. `env_clear` does not compare anything, so no per-provider
+      distribution changes what it does. Left recorded rather than deleted:
+      the number was load-bearing for a design that no longer exists.
+- [~] 0.2 Do the same from a clean shell, separating "what any shell leaks"
+      from "what this developer's shell happens to hold".
+      → Moot for the same reason. The distinction mattered only for deciding
+      what to subtract.
+- [x] 0.3 Enumerate what breaks. Run the existing suite with the change applied
+      and record every failure **before** fixing any of them.
+      → **Nothing breaks: 416 passed, 0 failed**, at the default 12 threads,
+      clippy and fmt clean.
+      Two things this run cost before it could be believed. The first attempt
+      **timed out at ten minutes**, which looked like the change hanging a
+      keeper; a re-run at `--test-threads=4` passed, which would have been a
+      comfortable and wrong place to stop. The difference was a **pre-existing
+      flaky test**, confirmed by running the unmodified tree under `git stash`:
+      FAILED / ok / FAILED across three runs. Fixed here rather than routed
+      around — see 0.4 — because a suite that fails intermittently teaches
+      people to re-run instead of investigate, and this change's whole claim
+      rests on a red test meaning something.
+      **Three limits on "nothing breaks", stated rather than implied**: ~19
+      tests skip on macOS, so Linux-only paths are unverified; this covers
+      group 1 alone, with `forward`, `HOME` and `forward_agent` not yet built;
+      and the suite tests what it tests — a real project relying on an
+      undeclared variable *will* feel this, which is the point of the change.
+- [x] 0.4 Fix the flake found by 0.3, since it blocks trusting any result here.
+      → `capability_set`'s test fixture keyed its directory on pid plus wall
+      clock **nanoseconds**, which is not the same as unique: macOS's
+      `SystemTime` granularity is coarser than a nanosecond, so two tests
+      starting in one tick got the same directory and the first to finish
+      deleted the other's fixture mid-run. An atomic counter is collision-free
+      by construction rather than by hoping the clock is fine-grained enough.
+      Five consecutive clean runs.
 
-## 1. Subtract the ambient environment
+## 1. Do not inherit the ambient environment
 
-- [ ] 1.1 Capture devcroft's own ambient environment at `up`, before provider
-      resolution, so the comparison is against what devcroft actually inherited
-      rather than against whatever the process has by then.
-- [ ] 1.2 Remove every variable matching that ambient set by **name and value**
-      (D1), through the existing `Resolution::unset` channel — `.envs()` can
-      only add or override, which is the mistake `adopt-nono-proxy` already made
-      once and had to correct.
-- [ ] 1.3 Keep the essential set (D2) as one constant with a comment per entry
-      saying what breaks without it. A set that grows by convenience is how this
-      becomes a denylist again.
+- [x] 1.1 `cmd.env_clear()` before `.envs(env)` in `spawn_keeper` (D1).
+      → **The whole of group 1, and the design's own correction.** The first
+      plan was to capture devcroft's ambient environment and subtract it by
+      name and value. That was re-solving a problem devcroft had already solved
+      one layer down: every provider runs activation under
+      `capture::canonical_base_env()` — the real `HOME` and a canonical `PATH`,
+      nothing else — with `.env_clear()`, explicitly so the result depends on
+      the manifest and lockfile rather than the operator.
+      So `resolution.env` *is* the authoritative environment, and the 101
+      leaked variables never came through it. They came from `spawn_keeper`
+      letting a `Command` inherit, putting the operator's shell back on top of
+      a result computed without it. **Not a missing filter — a discarded
+      guarantee.**
+- [~] 1.2 ~~Remove matching variables through the `unset` channel.~~
+      **Superseded by 1.1.** `unset` remains what it was for: keys a provider's
+      activation explicitly removed. Nothing about this change needs it.
+- [~] 1.3 ~~Keep an essential set.~~ **Superseded by 1.1.** An essential set
+      existed to protect what subtraction would wrongly delete. `env_clear`
+      deletes nothing that was wanted: what a session needs comes from the
+      provider's activation, which is what the project declared. If something a
+      session needs turns out to have no provider supplying it, that is a gap
+      to add explicitly and name — not a list of shell variables preserved by
+      accident.
 - [ ] 1.4 Confirm the provider's own contribution is untouched: a variable
       activation *set*, one it *modified*, and one it *unset* must each behave
       as before.

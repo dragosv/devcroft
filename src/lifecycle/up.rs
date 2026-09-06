@@ -989,6 +989,22 @@ fn spawn_keeper(
         .arg(listener.as_raw_fd().to_string())
         .arg(ssh.listener.as_raw_fd().to_string())
         .current_dir(project_root)
+        // **The keeper starts from nothing.** Without this it inherits the
+        // environment of whoever's shell ran `up` — measured at 180 variables
+        // reaching a sandbox, 101 of them byte-identical to that shell,
+        // including live tokens and socket paths belonging to unrelated tools
+        // (`own-sandbox-environment`).
+        //
+        // The right environment was already being computed and then buried:
+        // every provider runs activation under `capture::canonical_base_env`
+        // with `.env_clear()`, precisely so the result depends on the manifest
+        // and lockfile rather than on the operator. `resolution.env` is that
+        // result. Inheriting on top of it discarded the guarantee one layer
+        // below.
+        //
+        // Everything the keeper itself reads is set explicitly below or comes
+        // from `env`; nothing is left to inheritance.
+        .env_clear()
         .envs(env);
     for key in unset {
         // provider::Resolution's "unset" gap: without this, a key
