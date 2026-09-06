@@ -122,8 +122,12 @@ context: |
   - From the devcontainer feature triage:
     - Resource limits (cpu/mem) via cgroup v2 scope units on Linux — a real
       class gap vs containers, stated honestly in the README until then
-    - Secret injection delegated to the backend's credential proxy (nono
-      phantom tokens), never via mounted files or plain env vars
+    - Secret brokering via a credential proxy (nono phantom tokens), so a
+      key-shaped credential never enters the sandbox at all. This is the
+      strong answer, not the only one: `[env] forward` is the shipped
+      simple answer, and "never via mounted files or plain env vars" — as
+      this line used to read — is a rule neither half of which survived
+      examination. See `docs/decisions.md` §3, "Secrets".
     - `init` templates; optional keeper idle auto-stop
     - Docs note: `remote.SSH.defaultExtensions` covers VS Code extension
       auto-install for all devcroft hosts

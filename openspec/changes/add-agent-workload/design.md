@@ -51,7 +51,11 @@ Constraints that shape everything below:
 
 ### 1. The tooling layer is a declarative environment, declared in the project
 
-Three options were considered for getting an agent runtime inside:
+Options for getting an agent runtime inside. Three were considered when
+this was written; (d) was added on reading what the ecosystem ships, and
+(e) only became possible later — the count is left visible rather than
+smoothed over, because which options existed *when* is the reason (c) was
+chosen:
 
 **(a) Tell users to add it to the project's environment manifest.**
 Rejected: it versions a personal tool as a project dependency, and
@@ -80,6 +84,25 @@ What it does carry is a technique this change should adopt separately —
 a denial-triggered feedback channel that tells the agent *why* a tool call
 was refused, which devcroft has the expensive half of already (`why`) and
 exposes to nothing.
+
+**(e) Run the vendor's own installer in `[hooks] post_create`.** Not
+available when this list was written, and now the cheapest thing on it.
+`own-sandbox-environment` gave every sandbox a writable `HOME` of its own
+(`<project>/.devcroft/<name>/home`), which is precisely what an official
+install script wants and what the old `HOME` — the host user's, denied by
+the baseline — refused. So the agent installs the way its vendor documents,
+into a directory `rm` already owns the lifetime of, and devcroft
+reimplements no part of that path.
+
+It does **not** replace (c), and the difference is the tier, not the
+convenience: an installer fetches a host-linked artifact, so what it
+produces is `artifact` tier at best and unpinned in practice. A hook also
+runs *inside* the boundary by the two-phase rule, so it needs its own
+`network.allow` entry for the vendor's domain and cannot reach for host
+tooling. (c) remains the answer for a team that wants the agent
+reproducible; (e) is the answer for one developer who wants it working
+this afternoon, and it should be documented as exactly that rather than
+sold as equivalent.
 
 **Where it is declared: the project, committed.** This is the
 uncomfortable half. The agent case genuinely wants a user-level layer —

@@ -229,39 +229,126 @@
 
 ## 5. Make the removal diagnosable
 
-- [ ] 5.1 Report the removed set somewhere a user hits at the moment they need
+- [x] 5.1 Report the removed set somewhere a user hits at the moment they need
       it (design Open Question 1 — `status` risks burying it).
-- [ ] 5.2 The report names the manifest key that restores a variable. A
+      → **The open question resolves against reporting a set at all.** There is
+      no removed set to report: `env_clear` subtracts nothing (D1's
+      correction), so the only honest report would be "everything your shell
+      has, minus what you declared" — which is the rule, not a diagnosis, and
+      printing it at `up` puts it in output nobody reads at a moment nobody is
+      confused.
+      Answered as a question instead: `devcroft why --env <NAME>`, the same
+      shape as the `--path` and `--host` questions `why` already answers,
+      reached at the moment of confusion. It distinguishes four cases —
+      forwarded and set, forwarded and unset, set by `[env.vars]`, and the one
+      it exists for: present in the shell, undeclared, therefore absent inside.
+      Deliberately answerable **without a running sandbox**:
+      `compile_with_provider_grants` reads `Meta` off disk and never resolves
+      the provider, so it works for a project whose `up` has never succeeded —
+      which is often the state a user debugging a missing variable is in.
+- [x] 5.2 The report names the manifest key that restores a variable. A
       diagnosis without a remedy just relocates the confusion.
+      → Prints the literal line to paste:
+      `add it: [env] forward = ["GH_TOKEN"]`. Asserted as its own
+      assertion in `why_env_names_the_remedy_for_a_variable_the_shell_has`,
+      separate from the `ABSENT` check, so an implementation that diagnosed
+      correctly and said nothing useful would fail.
 
 ## 6. Tests
 
-- [ ] 6.1 A shell variable no provider sets does not reach the sandbox.
-- [ ] 6.2 The control: a variable the provider *does* set arrives with the
+> **Written with the features, not after them.** Each of these was the
+> acceptance criterion for the group that built it, which is why the pointers
+> below lead to two files rather than a new one. Recorded as pointers rather
+> than re-implemented: a second test asserting the same property through the
+> same binary would add a maintenance cost and no evidence.
+
+- [x] 6.1 A shell variable no provider sets does not reach the sandbox.
+      → `the_invoking_shell_does_not_reach_the_sandbox`, the `DECOY`
+      assertion. The name is one no provider, shell profile or tool would set,
+      so its presence inside can only mean inheritance.
+- [x] 6.2 The control: a variable the provider *does* set arrives with the
       provider's value. Without this, an implementation that removed everything
       would pass 6.1.
-- [ ] 6.3 `PATH` still contains the closure — the specific case a name-only
+      → Same test, `DEVCROFT_PROVIDER_SET=from-the-manifest`, injected into the
+      `[vars]` table flox itself generates. Appending a *second* `[vars]` table
+      is how this fixture first failed while reporting success — devcroft
+      refuses the duplicate key, `up` failed, and the failure was being
+      swallowed as an unsupported host. The skip guard is now narrow for that
+      reason.
+- [x] 6.3 `PATH` still contains the closure — the specific case a name-only
       comparison would have broken.
-- [ ] 6.4 A `forward`ed variable arrives; an unset one warns without failing.
-- [ ] 6.5 A session writes under `$HOME`, the write succeeds, and nothing
+      → Same test. Asserted against the environment's own `.flox/run/` bin
+      rather than a `/nix/store` prefix: flox puts a symlink farm on `PATH`,
+      not a store path, so the obvious assertion would fail for a sandbox whose
+      toolchain is perfectly present.
+- [x] 6.4 A `forward`ed variable arrives; an unset one warns without failing.
+      → Same test, three assertions: the forwarded value arrives, the unset
+      name appears in `up`'s warning, and it is **not** invented as an empty
+      value — a silently-empty variable is worse than an absent one for
+      anything that tests presence.
+- [x] 6.5 A session writes under `$HOME`, the write succeeds, and nothing
       appears in the host user's home.
-- [ ] 6.6 Teeth-check the subtraction: disable it and confirm 6.1 fails.
+      → Same test. The second half is **weaker than it looks and says so in
+      place**: it does not prove the `HOME`-after-`self_restrict` ordering,
+      because a re-pointed denial leaves the real `~/.ssh` merely *ungranted*
+      and deny-by-default refuses it either way. The case that would prove the
+      ordering cannot run — home-relative grants have no effect on macOS at
+      all, confirmed against an unmodified tree and published as its own gap.
+- [x] 6.6 Teeth-check the subtraction: disable it and confirm 6.1 fails.
+      → Done by hand at each step, since a teeth-check cannot be a standing
+      test: removing `env_clear` fails the decoy assertion, stubbing out the
+      forward loop and stubbing out `env.vars` each fail 6.4 independently, and
+      removing the `unix_socket_bind` grant fails the agent-forwarding on-case
+      while leaving the off-case passing.
+      **Full suite green after every group: 422 passed, 0 failed** (51 suites,
+      183s), clippy and
+      fmt clean. Same three limits as task 0.3, restated because they did not
+      go away: ~19 tests skip on macOS so Linux paths are unverified; the suite
+      tests what it tests; and a real project relying on an undeclared variable
+      *will* feel this, which is the point of the change rather than a defect
+      in it.
 
 ## 7. Say what changed
 
-- [ ] 7.1 `docs/known-gaps.md`: the gap this closes, stated as it was —
+- [x] 7.1 `docs/known-gaps.md`: the gap this closes, stated as it was —
       **no environment filtering existed at all**, so every exported credential
       was inside every sandbox while the baseline denied the directories those
       same credentials live in. A closed gap is still worth publishing when it
       was open in a shipped version.
-- [ ] 7.2 README/migration: a project may need one `forward` line. The failure
+      → Published with the number (180 variables reached a sandbox, 101
+      byte-identical to the invoking shell) and with the two internals findings
+      that came out of the same audit: the SSH host private key readable
+      inside every sandbox, and `HOME` pointing at a directory the baseline
+      denies.
+- [x] 7.2 README/migration: a project may need one `forward` line. The failure
       is a tool not finding a variable, far from its cause.
-- [ ] 7.3 `docs/decisions.md`: the secret-injection position no longer needs the
+      → `forward` added to the README's own example manifest with the reason
+      inline, plus a short block giving the actual `why --env` output — copied
+      from the code, not paraphrased — and the `vars`/`forward` split, since
+      that is what stops someone putting a secret in a committed file.
+- [x] 7.3 `docs/decisions.md`: the secret-injection position no longer needs the
       retraction `add-agent-workload` task 7.1 drafted. `forward` is the honest
       simple answer and brokering is the strong one; neither is "never via env
       vars", and the entry should say what is true rather than what was hoped.
-- [ ] 7.4 Record in `add-agent-workload` that `[hooks] post_create` running an
+      → §3, "Secrets → `[env] forward` now, brokering later". **Neither half of
+      the old rule survived**: "never via plain env vars" described an
+      aspiration while the shipped binary inherited the whole shell, and "never
+      via mounted files" cannot hold for subscription auth, which has no
+      env-var form. Both answers are now named as answers to different
+      problems, with the residual risk — in-sandbox code can read what the
+      sandbox was given — stated once and attached to both.
+      The source line in `openspec/config.yaml` was corrected too, not just
+      the doc: it is the project context fed to agents, so leaving the old rule
+      there means the next one re-derives it.
+- [x] 7.4 Record in `add-agent-workload` that `[hooks] post_create` running an
       agent's **official installer** is now possible, since `HOME` is writable —
       a much cheaper answer to its tooling problem than devcroft shipping
       runtimes, and one that keeps the vendor's own install path rather than
       devcroft reimplementing it.
+      → Added as option (e) in that change's Decision 1, with the boundary it
+      does *not* cross: an installer fetches a host-linked artifact, so it is
+      `artifact` tier at best, and a hook runs inside the sandbox by the
+      two-phase rule, so it needs its own `network.allow` entry. (c) stays the
+      answer for a team that wants the agent reproducible. The stale "three
+      options" count in that section is now corrected to show when each option
+      appeared, since that ordering is the reason (c) was chosen.

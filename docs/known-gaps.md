@@ -5,6 +5,54 @@ these is a gap in what's actually built, not a design decision —
 `docs/decisions.md` has the falsifiable "why not X" reasoning for the
 latter.
 
+## Every sandbox inherited the operator's shell — fixed
+
+Until `own-sandbox-environment`, **no environment filtering existed at
+all.** `up` computed the sandbox's environment carefully — every provider
+runs activation under `capture::canonical_base_env()`, `.env_clear()` plus
+a real `HOME` and a canonical `PATH`, explicitly so the result depends on
+the manifest and lockfile rather than on whoever ran the command — and
+then `spawn_keeper` let its `Command` inherit, layering the operator's
+shell straight back on top of the result computed without it.
+
+Measured on one host, one project: **180 variables reached a sandbox, 101
+byte-identical to the invoking shell**, including live API tokens
+belonging to tools with nothing to do with the project. Not a missing
+filter — a discarded guarantee.
+
+The sharp edge is that the policy already knew better. The baseline denies
+`~/.aws`, `~/.ssh`, `~/.config/gh` and the rest, so a sandbox could not
+read the file a credential lives in while holding that same credential in
+its own environment. Both halves shipped in the same binary.
+
+Two smaller findings from auditing what devcroft's own internals left
+behind, fixed with it:
+
+- `DEVCROFT_SSH_HOST_KEY` was readable inside every sandbox, containing
+  `BEGIN OPENSSH PRIVATE KEY`. The keeper needs it — it cannot read keys
+  off disk once restricted — but sessions inherit the keeper's
+  environment, so the control plane's private key was handed to the
+  workload the sandbox exists to confine. `keeper_main` now takes both
+  keys out of its own environment in its prologue, before the first
+  `thread::spawn`, since `remove_var` is only sound single-threaded.
+- `HOME` pointed at the host user's home, which the baseline denies. It is
+  now `<project>/.devcroft/<name>/home`, writable, and assigned *after*
+  `self_restrict` so the policy's `~/…` denials still resolve against the
+  host's home when they are compiled.
+
+**What a user may have to do.** A project relying on a variable that was
+arriving by inheritance now needs one line naming it:
+
+```toml
+[env]
+forward = ["GH_TOKEN"]
+```
+
+The failure mode is a tool that worked yesterday not finding a variable,
+surfacing inside the sandbox and far from its cause, so
+`devcroft why --env GH_TOKEN` answers it directly and prints the line
+above when that is the answer.
+
 ## Port collisions: fixed
 
 `CompiledPolicy::wants_network_isolation` gives a sandbox its own network

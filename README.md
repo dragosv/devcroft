@@ -96,6 +96,7 @@ name = "my-project"
 
 [env]
 provider = "flox"          # or "nix", "devbox"
+forward = ["GH_TOKEN"]     # the sandbox does not inherit your shell
 
 [filesystem]
 read = ["/tmp"]            # a shared scratch dir, read-only
@@ -150,6 +151,27 @@ denied by rule baseline
 ```
 
 Baseline denials always win, including over devcroft's own data directory.
+
+**Your shell is not part of the environment.** A sandbox gets what the provider's
+activation resolved, plus what the manifest names — and nothing else. That is the
+point: the baseline denies `~/.aws` and `~/.ssh`, so a sandbox holding those same
+credentials as environment variables because your shell exported them would be
+undoing its own policy.
+
+So a project may need one `forward` line. The failure mode is a tool that worked
+yesterday not finding a variable, and it surfaces inside the sandbox, far from
+its cause — ask directly:
+
+```console
+$ devcroft why --env GH_TOKEN
+ABSENT
+it is set in your shell and the sandbox does not inherit your shell
+  add it: [env] forward = ["GH_TOKEN"]
+```
+
+Use `forward` for values that live on your host, and `[env.vars]` for values that
+belong in the committed manifest — which is why a name in both is refused rather
+than resolved by precedence.
 
 ## Every branch gets the same port
 

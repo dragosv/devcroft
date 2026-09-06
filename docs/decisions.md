@@ -427,6 +427,47 @@ advantage, not an unimplemented feature.
 No virtualization layer sits between the session and the device. `/dev`
 access is native, subject to filesystem policy.
 
+### Secrets → `[env] forward` now, brokering later
+
+The position originally recorded in `openspec/config.yaml` — "secret
+injection delegated to the backend's credential proxy, never via mounted
+files or plain env vars" — was written before either half had been
+examined, and **neither half survived contact.**
+
+- **"Never via plain env vars" was never achievable, and was not even the
+  status quo.** Until `own-sandbox-environment`, every sandbox inherited
+  the operator's entire shell: 101 variables measured, live tokens
+  included. The position described an aspiration while the binary shipped
+  the opposite by accident. What is true now is stricter *and* less
+  absolute: a sandbox inherits nothing, and a value that has to come from
+  the host arrives only because the manifest named it in `[env] forward`.
+- **"Never via mounted files" cannot hold either**, for a reason
+  `add-agent-workload` established separately: subscription/OAuth auth is
+  file-based (`~/.claude/.credentials.json`) and has no env-var form.
+  Refusing files would support API-key users only — exactly the users who
+  need this least.
+
+So there are two answers, and calling either one *the* answer is what
+produced the bad rule:
+
+- **`[env] forward` is the honest simple answer.** Names only, in a
+  committed manifest, resolved from the invoking shell at `up`. It is
+  auditable — the manifest says which host values a sandbox may see — and
+  it makes no claim beyond that. `[env.vars]` is its committed-value
+  sibling and must never hold a secret, which is why a name appearing in
+  both is refused rather than resolved by precedence.
+- **Brokering is the strong answer, and is still unbuilt.** A credential
+  proxy that hands out phantom tokens is strictly better where the
+  credential is key-shaped, because the sandbox never holds the real one.
+  That remains the target; it is not a reason to pretend the simple answer
+  does not exist in the meantime.
+
+**The residual risk is the same under both, and is not solved by either:**
+any process in the sandbox can read a credential the sandbox was given,
+including the project code an agent is editing. Narrowness and disclosure
+are the mitigations. Isolation from the code under edit is not available
+when the agent must run in the same boundary as that code.
+
 ---
 
 ## 4. Known gaps (containers are better here)
