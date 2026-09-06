@@ -69,9 +69,49 @@
       session needs turns out to have no provider supplying it, that is a gap
       to add explicitly and name — not a list of shell variables preserved by
       accident.
-- [ ] 1.4 Confirm the provider's own contribution is untouched: a variable
+- [x] 1.4 Confirm the provider's own contribution is untouched: a variable
       activation *set*, one it *modified*, and one it *unset* must each behave
       as before.
+      → `tests/sandbox_environment.rs`, the sibling of
+      `flox_env_capture_is_deterministic` one layer up: that test closed this
+      gap at *resolution*, this one closes it at *session*. Same decoy idea.
+      Asserts the decoy absent, a `[vars]`-set variable present with the
+      provider's value, and `PATH` still leading with the environment's own
+      `bin`. Teeth-checked by removing `env_clear`.
+      **The `unset` case is not covered and should not be faked**: only `HOME`
+      and `PATH` are in `canonical_base_env`, so an activation would have to
+      remove one of those to exercise it. Left to `Resolution::unset`'s own
+      tests, which is where that mechanism lives.
+      Two mistakes this file made before it was honest. It appended a second
+      `[vars]` table to flox's manifest, which devcroft refuses as a duplicate
+      key — and then **reported success**, because a failed `up` was being
+      treated as an unsupported host. The guard is now narrow: with flox
+      present and a Nix store reachable, a failed `up` is a failure. And its
+      `PATH` assertion looked for a `/nix/store` prefix, which flox does not
+      put there — it puts a symlink farm under `.flox/run/` — so the assertion
+      was wrong rather than the code.
+- [x] 1.5 **Audit what devcroft's own internals leave in a session.** Found by
+      doing it: `DEVCROFT_SSH_HOST_KEY` was readable inside every sandbox,
+      containing `BEGIN OPENSSH PRIVATE KEY`.
+      The keeper needs both keys — it cannot read them off disk once
+      restricted, which is why they travel as environment variables — but
+      *sessions inherit the keeper's environment*, so a control-plane private
+      key was being handed to the workload the sandbox exists to confine.
+      Direct exploitation is limited: the control socket lives in a 0700
+      baseline-denied directory, so nothing inside can bind a fake server. That
+      is a separate control this one should not lean on.
+      Fixed with an ordering constraint worth keeping: `remove_var` is sound
+      only while the process is single-threaded, so `keeper_main` reads and
+      removes both in its prologue — before the first `thread::spawn` — and
+      passes them by value. `ssh::start_from_env` became
+      `ssh::start(listener, backend, host_key, authorized_key)`; removing them
+      inside the ssh function would have been too late.
+      `DEVCROFT_CAPABILITY_PLAN` removed too — not a secret, since it is the
+      sandbox's own policy, but this change's rule is that what the sandbox
+      sees is decided rather than left over.
+      Verified: no private key material inside, and the SSH e2e suite
+      (`ssh_server_authenticates_the_real_client_key_and_binds_no_tcp`,
+      pty channel, rsync) passes.
 
 ## 2. `[env] forward`
 

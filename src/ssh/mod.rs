@@ -34,24 +34,18 @@ use crate::keeper::session::SessionBackend;
 /// rather than propagated, so a broken ssh handoff degrades to "no ssh
 /// for this sandbox" instead of taking the whole keeper down — exec/shell
 /// must keep working regardless.
-pub fn start_from_env(
+/// The key material is taken by value rather than read here, because the
+/// keeper must remove both variables from its own environment *before* it
+/// spawns a single thread — sessions inherit that environment, so a host
+/// private key left in it is readable by the very workload the sandbox
+/// confines (`own-sandbox-environment`). `keeper_main` does the reading and
+/// the removal in its single-threaded prologue and hands the values down.
+pub fn start(
     listener: std::os::unix::net::UnixListener,
     backend: Arc<dyn SessionBackend>,
+    host_key_pem: String,
+    authorized_key_pem: String,
 ) {
-    let host_key_pem = match std::env::var("DEVCROFT_SSH_HOST_KEY") {
-        Ok(v) => v,
-        Err(_) => {
-            eprintln!("devcroft: ssh: DEVCROFT_SSH_HOST_KEY not set; ssh server disabled");
-            return;
-        }
-    };
-    let authorized_key_pem = match std::env::var("DEVCROFT_SSH_AUTHORIZED_KEY") {
-        Ok(v) => v,
-        Err(_) => {
-            eprintln!("devcroft: ssh: DEVCROFT_SSH_AUTHORIZED_KEY not set; ssh server disabled");
-            return;
-        }
-    };
     let host_key = match PrivateKey::from_openssh(&host_key_pem) {
         Ok(k) => k,
         Err(e) => {

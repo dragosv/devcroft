@@ -2913,6 +2913,26 @@ fn keeper_main(fd: RawFd, ssh_fd: RawFd) -> ! {
     // Landlock/Seatbelt restrictions apply to the calling process and are
     // inherited by every child it spawns afterward — hooks, services,
     // sessions — so nothing project-supplied can start before this runs.
+    // **Read the secrets and remove them before anything spawns a thread.**
+    // Sessions inherit the keeper's environment, so a host *private* key left
+    // there is readable by the workload this sandbox exists to confine —
+    // measured: `env` inside a sandbox printed `DEVCROFT_SSH_HOST_KEY`
+    // containing `BEGIN OPENSSH PRIVATE KEY` (`own-sandbox-environment`).
+    //
+    // Here rather than in `ssh::start`, and by value rather than by lookup,
+    // because `remove_var` is only sound while this process is
+    // single-threaded — which it is until the relay spawn below, and nowhere
+    // after.
+    let ssh_keys = std::env::var("DEVCROFT_SSH_HOST_KEY")
+        .ok()
+        .zip(std::env::var("DEVCROFT_SSH_AUTHORIZED_KEY").ok());
+    // SAFETY: no thread has been spawned yet in this process — the relay
+    // spawn below is the first, and `self_restrict` spawns none.
+    unsafe {
+        std::env::remove_var("DEVCROFT_SSH_HOST_KEY");
+        std::env::remove_var("DEVCROFT_SSH_AUTHORIZED_KEY");
+    }
+
     self_restrict();
 
     if let Some((listener, socket_path)) = relay {
@@ -2960,7 +2980,17 @@ fn keeper_main(fd: RawFd, ssh_fd: RawFd) -> ! {
     // own stderr (redirected by `up` to `<state>/<name>/keeper.log`) and
     // leaves ssh unavailable for this sandbox rather than taking the
     // whole keeper down — exec/shell must keep working regardless.
-    devcroft::ssh::start_from_env(ssh_listener, Arc::new(LocalSessionBackend));
+    match ssh_keys {
+        Some((host_key_pem, authorized_key_pem)) => devcroft::ssh::start(
+            ssh_listener,
+            Arc::new(LocalSessionBackend),
+            host_key_pem,
+            authorized_key_pem,
+        ),
+        // Same degradation as before: no ssh for this sandbox rather than no
+        // sandbox, since exec/shell must keep working regardless.
+        None => eprintln!("devcroft: ssh: key material not provided; ssh server disabled"),
+    }
 
     let _ = keeper.serve();
     std::process::exit(0);
@@ -3035,6 +3065,15 @@ fn self_restrict() {
             eprintln!("devcroft keeper: parsing DEVCROFT_CAPABILITY_PLAN: {e}");
             std::process::exit(1);
         });
+    // Not a secret — it is this sandbox's own policy, which its occupant could
+    // enumerate by trying — but it has no business in a session's environment
+    // either, and `own-sandbox-environment`'s rule is that what the sandbox
+    // sees is decided rather than left over.
+    // SAFETY: called from `keeper_main`'s single-threaded prologue; the first
+    // thread spawn happens after it returns.
+    unsafe {
+        std::env::remove_var("DEVCROFT_CAPABILITY_PLAN");
+    }
     let project_root = std::env::current_dir().unwrap_or_else(|e| {
         eprintln!("devcroft keeper: determining project root: {e}");
         std::process::exit(1);
