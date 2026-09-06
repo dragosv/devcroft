@@ -115,13 +115,37 @@
 
 ## 2. `[env] forward`
 
-- [ ] 2.1 Manifest key, names only, schema-checked.
-- [ ] 2.2 A forwarded variable the host does not set **warns and continues**
+- [x] 2.1 Manifest key, names only, schema-checked.
+      → `[env] forward = ["NAME", …]`. A name appearing in **both**
+      `[env.vars]` and `forward` is **refused**, not resolved by precedence:
+      the two say opposite things about where a value comes from, and which
+      wins is not something the reader of a committed manifest should have to
+      guess.
+- [x] 2.1b **`[env.vars]` was a dead key and is now implemented.** Found while
+      building `forward`: it parsed, was schema-exempted, and warned about `$`
+      interpolation — and **nothing in `lifecycle/` ever applied it**. A user
+      could write `[env.vars] RUST_LOG = "debug"`, get a clean validation, and
+      have it reach nothing. The same shape of defect as `ssh.forward_agent`,
+      and the third dead manifest key this change has turned up.
+      Applied *after* the provider, so a project can override what activation
+      set — the only ordering that makes the key useful.
+      The split between the two keys is the security-relevant one: a manifest
+      is committed, so `vars` are configuration and never secrets, and anything
+      whose value lives on the host goes through `forward`.
+- [x] 2.2 A forwarded variable the host does not set **warns and continues**
       (D3) — deliberately unlike a brokered route's missing credential, which
       fails `up`. Record the contrast where the code is, since two adjacent
       features answering the same question differently is exactly what gets
       "fixed" into consistency later.
-- [ ] 2.3 Forwarded variables survive the subtraction, whatever their value.
+      → Warned with the variable named, and *not* invented as an empty value —
+      asserted both ways, since a silently-empty variable is worse than an
+      absent one for anything that tests presence.
+- [x] 2.3 Forwarded variables survive the subtraction, whatever their value.
+      → Trivially true under D1's correction: `env_clear` subtracts nothing, so
+      a forwarded value is simply inserted afterwards. Asserted anyway, because
+      the property matters regardless of which mechanism provides it.
+      Teeth-checked: stubbing out the forward loop and stubbing out
+      `env.vars` each fail the test independently.
 
 ## 3. `HOME`
 

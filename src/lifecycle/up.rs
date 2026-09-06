@@ -706,6 +706,44 @@ fn up_process(
     // interception, so `HTTPS_PROXY` names a plain-`http` CONNECT
     // endpoint, same as every other forward proxy's convention.
     let mut env = resolution.env.clone();
+
+    // `[env.vars]`: literals the manifest sets. **This key parsed, validated
+    // and warned about `$` interpolation for the whole of the project's life
+    // without ever being applied** — found while implementing `forward`
+    // (`own-sandbox-environment`), the same shape of defect as
+    // `ssh.forward_agent`.
+    //
+    // A manifest is committed, so these are configuration and never secrets;
+    // anything whose value lives on the host goes through `forward` below.
+    // Applied *after* the provider so a project can override what activation
+    // set, which is the only ordering that makes the key useful.
+    env.extend(manifest.env.vars.clone());
+
+    // `[env] forward`: names here, values from devcroft's own environment.
+    //
+    // The declared exception to this change's rule that the invoking shell
+    // does not reach the sandbox — and the simple credential path: a key
+    // arrives because the project asked for it in a reviewable file, not
+    // because someone's shell happened to hold it.
+    //
+    // **A missing variable warns rather than fails**, deliberately unlike a
+    // brokered route's missing credential, which fails `up`. The difference is
+    // what the sandbox depends on: a brokered route *is* the mechanism the
+    // workload uses, so starting without it guarantees a confusing failure
+    // later, whereas a forwarded variable is a convenience whose absence is
+    // often correct on a different machine. Failing here would make an
+    // unrelated project unbuildable for want of a variable it never needed.
+    for name in &manifest.env.forward {
+        match std::env::var(name) {
+            Ok(value) => {
+                env.insert(name.clone(), value);
+            }
+            Err(_) => eprintln!(
+                "devcroft: warning: `{name}` is listed in [env] forward but is not set in this \
+                 shell (fallback: the sandbox runs without it)"
+            ),
+        }
+    }
     if let Some((port, token)) = &proxy {
         // Userinfo in the proxy URL, not a bespoke header or env var:
         // every standard HTTP client already turns `user@host` in a

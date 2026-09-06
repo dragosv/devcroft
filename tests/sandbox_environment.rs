@@ -22,6 +22,10 @@ use std::process::Command;
 /// inside can only mean inheritance.
 const DECOY: &str = "DEVCROFT_DECOY_MUST_NOT_LEAK";
 
+/// Stands in for a credential: present on the host, wanted inside, and only
+/// there because the manifest asks for it.
+const FORWARDED: &str = "DEVCROFT_FORWARD_ME";
+
 #[test]
 fn the_invoking_shell_does_not_reach_the_sandbox() {
     if !devcroft::policy::backend_supported() {
@@ -38,6 +42,7 @@ fn the_invoking_shell_does_not_reach_the_sandbox() {
     unsafe {
         std::env::set_var("DEVCROFT_KEEPER_EXE", env!("CARGO_BIN_EXE_devcroft"));
         std::env::set_var(DECOY, "leaked");
+        std::env::set_var(FORWARDED, "from-the-host");
     }
     let bin = env!("CARGO_BIN_EXE_devcroft");
 
@@ -91,7 +96,13 @@ fn the_invoking_shell_does_not_reach_the_sandbox() {
     let name = format!("sandboxenv{}", std::process::id());
     std::fs::write(
         root.join("devcroft.toml"),
-        format!("[sandbox]\nname = \"{name}\"\n"),
+        format!(
+            "[sandbox]\nname = \"{name}\"\n\
+             [env]\n\
+             forward = [\"{FORWARDED}\", \"DEVCROFT_FORWARD_UNSET\"]\n\
+             [env.vars]\n\
+             DEVCROFT_LITERAL = \"from-the-manifest-vars\"\n"
+        ),
     )
     .unwrap();
 
@@ -100,6 +111,7 @@ fn the_invoking_shell_does_not_reach_the_sandbox() {
         .current_dir(&root)
         .output()
         .unwrap();
+    let up_stderr = String::from_utf8_lossy(&up.stderr).into_owned();
     // **Not a skip.** A failed `up` here is a failure: every precondition this
     // test needs was checked above, so the only remaining explanations are a
     // devcroft bug or a broken fixture — and treating either as "unsupported
@@ -150,5 +162,31 @@ fn the_invoking_shell_does_not_reach_the_sandbox() {
         path_line.contains(".flox/run/"),
         "PATH must still lead with the resolved environment's own bin; \
          got: {path_line}"
+    );
+
+    // The declared exception: same shell, same mechanism as the decoy, and it
+    // arrives only because the manifest named it.
+    assert!(
+        env_dump.contains(&format!("{FORWARDED}=from-the-host")),
+        "a variable named in [env] forward must arrive with the host's value; \
+         env was:\n{env_dump}"
+    );
+    // `[env.vars]` — a key that parsed and validated for the whole of this
+    // project's life without ever being applied.
+    assert!(
+        env_dump.contains("DEVCROFT_LITERAL=from-the-manifest-vars"),
+        "[env.vars] must actually set variables; env was:\n{env_dump}"
+    );
+    // A forwarded name the host does not set warns and does not fail. The
+    // deliberate contrast with a brokered route, whose missing credential
+    // fails `up`: that route *is* the mechanism the workload uses, this is a
+    // convenience whose absence is often correct elsewhere.
+    assert!(
+        up_stderr.contains("DEVCROFT_FORWARD_UNSET"),
+        "an unset forwarded variable must be named in a warning; up said:\n{up_stderr}"
+    );
+    assert!(
+        !env_dump.contains("DEVCROFT_FORWARD_UNSET="),
+        "and must not be invented as an empty value; env was:\n{env_dump}"
     );
 }

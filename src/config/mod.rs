@@ -44,7 +44,19 @@ pub const ISOLATION_TIER: &str = "process";
 #[serde(default)]
 pub struct Env {
     pub provider: String,
+    /// Literal values set in the sandbox, from the manifest.
+    ///
+    /// A manifest is committed, so these are configuration and never secrets —
+    /// `forward` is the key for anything whose value lives on the host.
     pub vars: BTreeMap<String, String>,
+    /// Names whose **values come from the host**, forwarded into the sandbox.
+    ///
+    /// The declared exception to `own-sandbox-environment`'s rule that the
+    /// invoking shell does not reach the sandbox, and the simple answer to
+    /// giving an agent a credential: it arrives because the project said so,
+    /// in a file a reviewer reads, rather than because someone's shell
+    /// happened to hold it.
+    pub forward: Vec<String>,
 }
 
 impl Default for Env {
@@ -52,6 +64,7 @@ impl Default for Env {
         Env {
             provider: "flox".to_string(),
             vars: BTreeMap::new(),
+            forward: Vec::new(),
         }
     }
 }
@@ -164,6 +177,12 @@ pub enum ConfigError {
         suggestion: Option<String>,
     },
     MissingName,
+    /// A name appears in both `[env.vars]` and `[env] forward` — one sets a
+    /// literal, the other takes the host's value, and which wins is not
+    /// something a reader should have to guess.
+    EnvVarBothSetAndForwarded {
+        name: String,
+    },
     InvalidName {
         name: String,
         suggestion: String,
@@ -197,6 +216,12 @@ impl fmt::Display for ConfigError {
                 "no {MANIFEST_FILE_NAME} found in this directory or its ancestors; run `devcroft init`"
             ),
             ConfigError::Io(e) => write!(f, "reading manifest: {e}"),
+            ConfigError::EnvVarBothSetAndForwarded { name } => write!(
+                f,
+                "`{name}` is both set in [env.vars] and listed in [env] forward; \
+                 one gives it a literal value and the other takes the host's — \
+                 remove it from whichever you did not mean"
+            ),
             ConfigError::Parse(e) => write!(f, "invalid TOML: {e}"),
             ConfigError::UnknownKey { path, suggestion } => {
                 write!(f, "unknown key `{path}`")?;
@@ -307,6 +332,7 @@ pub fn parse(text: &str) -> Result<(Manifest, Vec<Warning>), ConfigError> {
     }
 
     validate::check_filesystem(&raw.filesystem)?;
+    validate::check_env(&raw.env)?;
 
     let mut warnings = Vec::new();
     validate::collect_warnings(&raw.env, &raw.filesystem, &mut warnings);
@@ -333,6 +359,50 @@ pub fn parse(text: &str) -> Result<(Manifest, Vec<Warning>), ConfigError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// One name cannot both be given a literal and take the host's value.
+    /// Refused rather than resolved by precedence: which wins is not something
+    /// a reader of a committed manifest should have to guess, and the two mean
+    /// opposite things about where a value comes from.
+    #[test]
+    fn a_name_cannot_be_both_set_and_forwarded() {
+        let err = parse(
+            r#"
+            [sandbox]
+            name = "myproj"
+            [env]
+            forward = ["TOKEN"]
+            [env.vars]
+            TOKEN = "literal"
+            "#,
+        )
+        .unwrap_err();
+        match err {
+            ConfigError::EnvVarBothSetAndForwarded { name } => assert_eq!(name, "TOKEN"),
+            other => panic!("expected EnvVarBothSetAndForwarded, got {other:?}"),
+        }
+    }
+
+    /// The control: the two keys are fine side by side on different names.
+    #[test]
+    fn set_and_forwarded_names_coexist_when_distinct() {
+        let (m, _) = parse(
+            r#"
+            [sandbox]
+            name = "myproj"
+            [env]
+            forward = ["ANTHROPIC_API_KEY"]
+            [env.vars]
+            RUST_LOG = "debug"
+            "#,
+        )
+        .unwrap();
+        assert_eq!(m.env.forward, vec!["ANTHROPIC_API_KEY".to_string()]);
+        assert_eq!(
+            m.env.vars.get("RUST_LOG").map(String::as_str),
+            Some("debug")
+        );
+    }
 
     #[test]
     fn minimal_manifest_gets_defaults() {

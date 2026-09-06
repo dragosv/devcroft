@@ -6,7 +6,7 @@ use crate::paths::{SENSITIVE_PATHS, has_traversal, is_within};
 /// of user-chosen names and is never schema-checked.
 const SECTIONS: &[(&str, &[&str])] = &[
     ("sandbox", &["name", "isolation"]),
-    ("env", &["provider", "vars"]),
+    ("env", &["provider", "vars", "forward"]),
     ("filesystem", &["allow", "read", "deny"]),
     ("network", &["default", "allow", "ports"]),
     ("ssh", &["forward_agent"]),
@@ -83,6 +83,16 @@ pub fn collect_warnings(env: &Env, filesystem: &Filesystem, warnings: &mut Vec<W
     if env.vars.values().any(|v| v.contains('$')) {
         warnings.push(Warning::NoInterpolation);
     }
+}
+
+/// One name cannot both be given a literal and take the host's value.
+pub fn check_env(env: &Env) -> Result<(), ConfigError> {
+    for name in &env.forward {
+        if env.vars.contains_key(name) {
+            return Err(ConfigError::EnvVarBothSetAndForwarded { name: name.clone() });
+        }
+    }
+    Ok(())
 }
 
 fn closest(key: &str, candidates: &[&str]) -> Option<String> {
