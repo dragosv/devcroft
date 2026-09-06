@@ -247,3 +247,71 @@ fn the_invoking_shell_does_not_reach_the_sandbox() {
         "the host's ~/.ssh must stay unreachable from inside; got: {host_ssh_err:?}"
     );
 }
+
+/// **`why --env` answers the question this change creates.**
+///
+/// The failure introduced by not inheriting the shell is a tool that worked
+/// yesterday no longer finding a variable — and it surfaces *inside* the
+/// sandbox, far from its cause. `why` is where that gets asked: the same shape
+/// as the path and host questions it already answers, reached at the moment of
+/// confusion rather than buried in output nobody reads.
+///
+/// Needs no sandbox and no provider: a user debugging a missing variable may
+/// have neither, which is exactly when the answer matters.
+#[test]
+fn why_env_names_the_remedy_for_a_variable_the_shell_has() {
+    let root = std::env::temp_dir().join(format!("devcroft-whyenv-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::write(
+        root.join("devcroft.toml"),
+        "[sandbox]\nname = \"whyenvtest\"\n[env]\nforward = [\"DEVCROFT_WHYENV_FWD\"]\n",
+    )
+    .unwrap();
+
+    let why = |args: &[&str], env: &[(&str, &str)]| -> String {
+        let mut c = Command::new(env!("CARGO_BIN_EXE_devcroft"));
+        c.arg("why").args(args).current_dir(&root);
+        for (k, v) in env {
+            c.env(k, v);
+        }
+        String::from_utf8_lossy(&c.output().unwrap().stdout).into_owned()
+    };
+
+    // The case it exists for: present in the shell, absent from the sandbox,
+    // and the user has no idea why.
+    let undeclared = why(
+        &["--env", "DEVCROFT_WHYENV_SHELL"],
+        &[("DEVCROFT_WHYENV_SHELL", "set-on-host")],
+    );
+    assert!(
+        undeclared.contains("ABSENT"),
+        "an undeclared shell variable is absent from the sandbox; got: {undeclared}"
+    );
+    assert!(
+        undeclared.contains("[env] forward = [\"DEVCROFT_WHYENV_SHELL\"]"),
+        "and the answer must name the remedy — a diagnosis without one just \
+         relocates the confusion. got: {undeclared}"
+    );
+
+    // The control: a declared variable reads differently, so "ABSENT" is a
+    // decision rather than the only thing this command knows how to say.
+    let forwarded = why(
+        &["--env", "DEVCROFT_WHYENV_FWD"],
+        &[("DEVCROFT_WHYENV_FWD", "set-on-host")],
+    );
+    assert!(
+        forwarded.contains("PRESENT") && forwarded.contains("forward"),
+        "a forwarded variable that is set must read as present; got: {forwarded}"
+    );
+
+    // Declared but missing on this host — the warn-not-fail case, which a user
+    // meets as a warning at `up` and may want explained afterwards.
+    let unset = why(&["--env", "DEVCROFT_WHYENV_FWD"], &[]);
+    assert!(
+        unset.contains("ABSENT") && unset.contains("not set in this shell"),
+        "a forwarded-but-unset variable must say which half is missing; got: {unset}"
+    );
+
+    let _ = std::fs::remove_dir_all(&root);
+}

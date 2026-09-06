@@ -155,6 +155,7 @@ inspecting
   policy --render [name]      the compiled profile, every rule with its origin
   why --path P --op <mode>    whether one operation is allowed, and which rule decides
   why --host <domain>         the same question for an outbound host
+  why --env <NAME>            why a variable is or is not in the sandbox
   doctor                      check this host for what devcroft needs
 
 ssh
@@ -2529,10 +2530,11 @@ fn provider_static_name(name: &str) -> &'static str {
 /// `devcroft why --host <domain> [name]` (policy spec's "Explainable
 /// decisions" requirement).
 fn cli_why(args: &[String]) -> i32 {
-    const USAGE: &str = "devcroft why: usage: devcroft why --path <p> --op <read|write|readwrite> [name] | devcroft why --host <domain> [name]";
+    const USAGE: &str = "devcroft why: usage: devcroft why --path <p> --op <read|write|readwrite> [name] | devcroft why --host <domain> [name] | devcroft why --env <NAME> [name]";
     let mut path: Option<String> = None;
     let mut op: Option<String> = None;
     let mut host: Option<String> = None;
+    let mut env_name: Option<String> = None;
     let mut name_arg: Option<String> = None;
     let mut it = args.iter();
     while let Some(a) = it.next() {
@@ -2540,6 +2542,7 @@ fn cli_why(args: &[String]) -> i32 {
             "--path" => path = it.next().cloned(),
             "--op" => op = it.next().cloned(),
             "--host" => host = it.next().cloned(),
+            "--env" => env_name = it.next().cloned(),
             _ if name_arg.is_none() => name_arg = Some(a.clone()),
             _ => {
                 eprintln!("{USAGE}");
@@ -2563,6 +2566,54 @@ fn cli_why(args: &[String]) -> i32 {
 
     if let Some(host) = host {
         print_explanation(&devcroft::policy::why_host(&compiled, &host));
+        return 0;
+    }
+
+    // `own-sandbox-environment`: the failure this change introduces is a tool
+    // that worked yesterday not finding a variable — surfacing *inside* the
+    // sandbox, far from its cause. `why` is where that question gets asked,
+    // because it is the same shape as the ones already answered here and it is
+    // reached at the moment of confusion rather than in output nobody reads.
+    //
+    // Answerable without resolving the provider, which matters: resolution is
+    // slow and needs a working environment, and a user debugging a missing
+    // variable may have neither.
+    if let Some(name) = env_name {
+        let declared_forward = manifest.env.forward.contains(&name);
+        let declared_literal = manifest.env.vars.get(&name);
+        let on_host = std::env::var(&name).ok();
+        match (declared_forward, declared_literal, &on_host) {
+            (true, _, Some(_)) => {
+                println!("PRESENT");
+                println!("forwarded from your shell by `[env] forward`");
+            }
+            (true, _, None) => {
+                println!("ABSENT");
+                println!(
+                    "`[env] forward` asks for it, but it is not set in this shell — \
+                     `up` warns and continues"
+                );
+            }
+            (false, Some(value), _) => {
+                println!("PRESENT");
+                println!("set by `[env.vars]` to {value:?}");
+            }
+            // The case this exists for.
+            (false, None, Some(_)) => {
+                println!("ABSENT");
+                println!(
+                    "it is set in your shell and the sandbox does not inherit your shell\n  \
+                     add it: [env] forward = [\"{name}\"]"
+                );
+            }
+            (false, None, None) => {
+                println!("UNKNOWN");
+                println!(
+                    "not set in this shell and not declared in the manifest; if the sandbox \
+                     has it, it came from the provider's activation"
+                );
+            }
+        }
         return 0;
     }
 
