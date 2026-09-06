@@ -188,15 +188,44 @@
 
 ## 4. `ssh.forward_agent`
 
-- [ ] 4.1 **Measure first**: with `SSH_AUTH_SOCK` present and the socket path
+- [x] 4.1 **Measure first**: with `SSH_AUTH_SOCK` present and the socket path
       granted, is the host agent actually reachable from inside? macOS treats
       unix-socket `connect` as a network operation, so `network.default = "deny"`
       may refuse it regardless. The answer decides whether 4.2 is implementable.
-- [ ] 4.2 If reachable: implement the key — variable plus socket grant, in one
+      → **Reachable, but only on an axis the obvious grants do not touch.**
+      With `SSH_AUTH_SOCK` forwarded *and* the socket's directory granted
+      read-write, `ssh-add -l` still answered `Operation not permitted`. The
+      identical probe under `network.default = "allow"` listed the host's key.
+      That pair identifies the axis rather than guessing at it: macOS
+      classifies the AF_UNIX `connect` as network activity, so the manifest's
+      default deny refuses it regardless of the filesystem grant.
+- [x] 4.2 If reachable: implement the key — variable plus socket grant, in one
       place. If not: remove the key and the `add-mvp-core` scenario together,
       and say so in `docs/known-gaps.md`.
-- [ ] 4.3 Either way, assert the *off* case, which is the one that is a security
+      → Implemented. **Three grants, not two**: the forwarded variable, a
+      `filesystem.read` on the socket, and — the one 4.1 found —
+      `unix_socket_bind`, the mechanism `add-macos-unix-socket-scoping` built
+      for the services socket, which is what opens the network axis without
+      opening the network. All three carry origin `manifest:ssh.forward_agent`,
+      so `policy --render` shows why they are there.
+      Teeth-checked: removing the `unix_socket_bind` grant fails the on-case
+      and leaves the off-case passing.
+      **Linux unverified**, and said in the code: Landlock mediates no AF_UNIX
+      operation so the grant should be inert there, but a sandbox with a mount
+      view also needs the path to exist inside it.
+- [x] 4.3 Either way, assert the *off* case, which is the one that is a security
       property rather than a feature.
+      → `tests/ssh_agent_forwarding.rs`. The off case needs nothing installed,
+      so it runs wherever a sandbox starts; it is what makes
+      `add-mvp-core`'s "no agent socket exists inside the sandbox" scenario
+      actually true, having been satisfied at best by accident while
+      `SSH_AUTH_SOCK` arrived by inheritance whatever the key said.
+      The on case carries the guard that matters: it **skips when the host
+      agent holds no identities**, because `ssh-add -l` would then succeed
+      listing nothing — indistinguishable from a sandbox that reached some
+      other agent, and an assertion that means nothing. It compares the
+      listing inside against the host's own rather than checking an exit
+      code.
 
 ## 5. Make the removal diagnosable
 

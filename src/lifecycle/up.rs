@@ -474,6 +474,35 @@ fn up_process(
     } else {
         compiled
     };
+    // `ssh.forward_agent` (`own-sandbox-environment` D5). The key parsed and
+    // validated since the MVP, has a scenario in `add-mvp-core`'s ssh spec, and
+    // **nothing implemented it** — while `SSH_AUTH_SOCK` reached the sandbox
+    // anyway, by inheritance, whatever the key said. Closing the environment
+    // made both halves fixable in one place.
+    //
+    // Three grants, and the third is the one that is not obvious. Measured on
+    // macOS: with the variable forwarded *and* the socket's directory granted
+    // read-write, `ssh-add -l` still answered `Operation not permitted` —
+    // Seatbelt classifies the AF_UNIX `connect` as network activity, so
+    // `network.default = "deny"` refuses it on an axis the filesystem grant
+    // never touches. The same probe under `default = "allow"` succeeded, which
+    // is what identifies the axis rather than guessing at it.
+    //
+    // Linux is unverified: Landlock mediates no AF_UNIX operation, so the
+    // socket grant should be inert there, but a sandbox with a mount view also
+    // needs the path to exist inside it.
+    let agent_socket = manifest
+        .ssh
+        .forward_agent
+        .then(|| std::env::var("SSH_AUTH_SOCK").ok())
+        .flatten();
+    let compiled = match &agent_socket {
+        Some(sock) => compiled
+            .with_unix_socket_bind(sock.clone(), policy::Origin::Manifest("ssh.forward_agent"))
+            .with_read(sock.clone(), policy::Origin::Manifest("ssh.forward_agent")),
+        None => compiled,
+    };
+
     let plan = compiled.to_capability_plan();
     // Validated host-side, before anything is created — the keeper (task
     // group 4) re-derives the identical `CapabilitySet` from the same
@@ -733,6 +762,15 @@ fn up_process(
     // later, whereas a forwarded variable is a convenience whose absence is
     // often correct on a different machine. Failing here would make an
     // unrelated project unbuildable for want of a variable it never needed.
+    // The other half of `ssh.forward_agent`: the variable itself. Without the
+    // grants folded into the policy above this would be a path the sandbox can
+    // name and not reach — the confusing failure the key existed to avoid.
+    if manifest.ssh.forward_agent
+        && let Ok(sock) = std::env::var("SSH_AUTH_SOCK")
+    {
+        env.insert("SSH_AUTH_SOCK".to_string(), sock);
+    }
+
     for name in &manifest.env.forward {
         match std::env::var(name) {
             Ok(value) => {

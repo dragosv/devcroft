@@ -437,6 +437,15 @@ impl CompiledPolicy {
     /// Record a pathname unix socket this sandbox must be able to bind and
     /// connect itself — see [`CompiledPolicy::unix_socket_bind`] for why
     /// this exists and why only macOS acts on it.
+    /// Adds one `filesystem.read` grant post-hoc, for the same reason
+    /// [`Self::with_unix_socket_bind`] exists: a path known only at `up` and
+    /// therefore absent from the manifest the policy compiled from.
+    pub fn with_read(mut self, path: impl Into<String>, origin: Origin) -> Self {
+        self.filesystem_read
+            .push(AnnotatedValue::new(path.into(), origin));
+        self
+    }
+
     pub fn with_unix_socket_bind(mut self, path: impl Into<String>, origin: Origin) -> Self {
         self.unix_socket_bind
             .push(AnnotatedValue::new(path.into(), origin));
