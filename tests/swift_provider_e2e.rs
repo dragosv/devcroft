@@ -6,10 +6,10 @@
 //!
 //! - it is **artifact** tier, so `up` and `status` must say so, and say
 //!   what the tier costs rather than printing a bare word;
-//! - resolving it **executes the project's own code**, so the disclosure
-//!   warning must fire — and must *not* fire for a closure provider,
-//!   which is the control that makes the first assertion a decision
-//!   rather than the only thing devcroft knows how to print;
+//! - resolving it opens **no project file at all** — the toolchain comes
+//!   from `xcode-select`/`xcrun` — so the execution disclosure must stay
+//!   silent, which is the opposite of what an earlier version of this
+//!   provider did and the reason that version was wrong;
 //! - every host path it depends on must appear in `policy --render` with
 //!   a `provider:swift` origin, because "the artifact tier declares its
 //!   host grants" is only true if you can see them.
@@ -60,7 +60,7 @@ fn write_fixture(root: &std::path::Path, name: &str) {
 }
 
 #[test]
-fn swift_resolves_as_artifact_tier_and_discloses_that_it_ran_project_code() {
+fn swift_resolves_as_artifact_tier_without_reading_the_package_graph() {
     if !devcroft::policy::backend_supported() {
         eprintln!("skipping: this host has no usable Landlock/Seatbelt support");
         return;
@@ -135,16 +135,22 @@ fn swift_resolves_as_artifact_tier_and_discloses_that_it_ran_project_code() {
         );
     }
 
-    // The disclosure. This is the security-relevant assertion in the file:
-    // resolving this provider ran `Package.swift`, which is project code.
+    // **Inverted, and this is the security-relevant assertion in the
+    // file.** An earlier version of this provider ran
+    // `swift package dump-package` — which compiles and executes
+    // `Package.swift` — to decide whether a lockfile was required, and
+    // disclosed that faithfully. The disclosure was honest and the
+    // execution was avoidable: resolving the *toolchain* needs no project
+    // file, and dependency resolution belongs inside the sandbox.
+    //
+    // So the property is now the absence. If this assertion ever starts
+    // failing, the provider has begun reading the package graph again and
+    // has silently given up the cleanest criterion-4 position devcroft
+    // has.
     assert!(
-        up_stderr.contains("ran this project's activation hook"),
-        "resolving a swift environment executes Package.swift, and `up` must \
-         say so; stderr was:\n{up_stderr}"
-    );
-    assert!(
-        up_stderr.contains("swift"),
-        "the disclosure must name the provider responsible; got:\n{up_stderr}"
+        !up_stderr.contains("ran this project's activation hook"),
+        "the swift provider must open no project file, so nothing should be \
+         disclosed; stderr was:\n{up_stderr}"
     );
 
     // The artifact tier's host grants are visible, with their origin.

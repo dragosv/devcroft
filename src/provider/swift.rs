@@ -49,6 +49,7 @@ impl Provider for SwiftProvider {
     /// `"name": "LEAK[HOME=/Users/…][SSH=id_ed25519,known_hosts,…]"`.
     /// On Linux there is no Seatbelt and no manifest sandbox at all.
     fn resolve(&self, project_root: &Path) -> Result<Resolution, ProviderError> {
+        ensure_macos_host()?;
         ensure_package_present(project_root)?;
         let swift_bin = resolve_on_path("swift").ok_or(ProviderError::MissingBinary {
             provider: "swift",
@@ -58,19 +59,13 @@ impl Provider for SwiftProvider {
         // Data only: no project file is evaluated to answer this.
         let toolchain = probe_toolchain(&swift_bin)?;
 
-        // The one call that runs project code. Two things are read out
-        // of it: whether the package declares dependencies, and whether
-        // it links any Apple framework.
-        let description = describe_package(&swift_bin, project_root)?;
-
-        // Before anything else this provider could do for the project:
-        // is this provider even the right answer for it?
-        ensure_macos_dependent(project_root, &description)?;
-        ensure_lock_present(project_root, description.declares_dependencies)?;
+        // Is this provider even the right answer for this project?
+        // Answered from the filesystem — no project file is evaluated.
+        ensure_macos_dependent(project_root)?;
 
         let baseline = capture::canonical_base_env()?;
-        let tmpdir = project_tmpdir(project_root)?;
-        let activated = activated_env(&baseline, &swift_bin, &toolchain, Some(&tmpdir));
+        let scratch = project_scratch_dir(project_root)?;
+        let activated = activated_env(&baseline, &swift_bin, &toolchain, Some(&scratch));
 
         Ok(Resolution {
             env: capture::changed_env(&baseline, &activated),
@@ -81,18 +76,30 @@ impl Provider for SwiftProvider {
             // able to tell "cannot do services" from "can, none
             // declared", so a project asking for them fails loudly.
             services: super::ServiceSupport::Unsupported,
-            // **Unconditional, and that is the design.** The provider
-            // cannot inspect `Package.swift` to decide whether this
-            // particular one was dangerous — deciding that would mean
-            // running it, which is the thing being disclosed. A warning
-            // that is sometimes suppressed teaches people to expect
-            // silence.
-            ran_activation_hook: true,
-            // Nothing is deferred into the sandbox: unlike flox's
-            // `[hook].on-activate`, the code here is not a separable
-            // hook that could be run later under policy. It *is* the
-            // manifest, it has already run, and pretending otherwise by
-            // handing back a script would misrepresent what happened.
+            // **False, and getting here took a correction worth
+            // recording.** An earlier version of this provider called
+            // `swift package dump-package` to learn whether the package
+            // declared dependencies, so it could require
+            // `Package.resolved` — and `dump-package` compiles and runs
+            // `Package.swift`. It disclosed that faithfully and shipped
+            // the violation.
+            //
+            // The violation was avoidable, and the fix was to do less.
+            // devcroft resolves the *toolchain*, which comes entirely
+            // from `xcode-select`/`xcrun` with no project file involved.
+            // Dependency resolution belongs *inside* the sandbox, at
+            // `swift build` time, where a hostile manifest is confined by
+            // the policy the project declared. Once devcroft stops
+            // materializing dependencies host-side it has no reason to
+            // read the package graph at all, which retires the execution
+            // and the lockfile precondition together.
+            //
+            // The result is the **cleanest criterion-4 pass of any
+            // provider devcroft has**: not "a hook-free entry point was
+            // found", but "no project file is opened".
+            ran_activation_hook: false,
+            // Nothing to defer: no project script is captured, because
+            // none is read.
             activation_script: None,
         })
     }
@@ -158,6 +165,33 @@ impl Toolchain {
     }
 }
 
+/// Refuse this provider anywhere but macOS.
+///
+/// **Swift exists on Linux; an Xcode-backed provider does not.** Every
+/// path this module takes — `xcode-select`, `xcrun --show-sdk-path`, the
+/// SDK, the framework evidence the gate looks for — is Apple-specific.
+/// Running under the same provider name on Linux would silently resolve a
+/// different toolchain with a different guarantee, which is the worst
+/// available outcome: the manifest would say `swift` on both machines and
+/// mean two different things.
+///
+/// Fails closed, at layer `provider`, naming the platform. On Linux the
+/// answer is a closure provider, which is also where a Swift toolchain
+/// there actually comes from.
+fn ensure_macos_host() -> Result<(), ProviderError> {
+    if cfg!(target_os = "macos") {
+        return Ok(());
+    }
+    Err(ProviderError::CoveredByQualifiedProvider {
+        provider: "swift",
+        reason: "this provider resolves an Xcode or Command Line Tools toolchain and runs \
+                 only on macOS. Swift itself exists on this platform, but it comes from a \
+                 package set — use `provider = \"nix\"` or `provider = \"flox\"` with the \
+                 swift package, which also gives you the closure tier"
+            .to_string(),
+    })
+}
+
 /// `up` fails at layer `provider` with the `swift package init` hint
 /// (spec: "Missing environment, not missing feature") rather than letting
 /// SwiftPM produce its own, less specific error.
@@ -172,159 +206,6 @@ fn ensure_package_present(project_root: &Path) -> Result<(), ProviderError> {
     }
 }
 
-/// A package with dependencies but no `Package.resolved` has nothing
-/// pinning them — resolving it would mean the same manifest can produce a
-/// different dependency set depending on when `up` ran.
-///
-/// **Conditional on purpose.** SwiftPM does not create `Package.resolved`
-/// for a package with no external dependencies, so requiring it
-/// unconditionally would refuse valid projects — a rejection with no
-/// remedy, which `docs/decisions.md` calls out as worse than a missing
-/// feature.
-fn ensure_lock_present(
-    project_root: &Path,
-    declares_dependencies: bool,
-) -> Result<(), ProviderError> {
-    if !declares_dependencies || project_root.join("Package.resolved").is_file() {
-        return Ok(());
-    }
-    Err(ProviderError::MissingLock {
-        provider: "swift",
-        hint: "swift package resolve",
-    })
-}
-
-/// Ask SwiftPM for the package description, and read two things out of
-/// it.
-///
-/// **This is the criterion-4 violation, confined to one call.** It is
-/// kept because the alternative is worse: skipping it would leave
-/// `Package.resolved` unenforced, dropping criterion 2 (restorable
-/// lockfile) as well as 4, and leaving the provider with no
-/// reproducibility claim at all. If project code is going to run, it
-/// should at least buy something.
-///
-/// `--disable-sandbox` is deliberately **not** passed. SwiftPM's own
-/// manifest sandbox blocks writes on macOS, which is a partial mitigation
-/// devcroft has no reason to switch off, and passing the flag would make
-/// devcroft responsible for a weakening it did not need.
-fn describe_package(
-    swift_bin: &Path,
-    project_root: &Path,
-) -> Result<PackageDescription, ProviderError> {
-    let output = Command::new(swift_bin)
-        .arg("package")
-        .arg("dump-package")
-        .current_dir(project_root)
-        .output()
-        .map_err(|e| {
-            ProviderError::ResolutionFailed(format!("running `swift package dump-package`: {e}"))
-        })?;
-
-    if !output.status.success() {
-        return Err(ProviderError::ResolutionFailed(format!(
-            "`swift package dump-package` exited with {}: {}",
-            output.status,
-            String::from_utf8_lossy(&output.stderr).trim()
-        )));
-    }
-
-    parse_package_description(&output.stdout)
-}
-
-/// The two fields consumed from `dump-package`'s output.
-///
-/// Deliberately narrow. The full description carries targets, products,
-/// platforms and more, and every one of them is a thing this provider
-/// would then have to keep working across SwiftPM schema versions.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub(super) struct PackageDescription {
-    pub(super) declares_dependencies: bool,
-    /// Apple frameworks the package links. A framework is an Apple-only
-    /// linkage concept, so any entry here is conclusive evidence that no
-    /// Linux closure can build this package.
-    pub(super) linked_frameworks: Vec<String>,
-}
-
-pub(super) fn parse_package_description(raw: &[u8]) -> Result<PackageDescription, ProviderError> {
-    let parsed: serde_json::Value = serde_json::from_slice(raw).map_err(|e| {
-        ProviderError::ResolutionFailed(format!("parsing `swift package dump-package` output: {e}"))
-    })?;
-
-    let declares_dependencies = match parsed.get("dependencies") {
-        Some(serde_json::Value::Array(deps)) => !deps.is_empty(),
-        // A description with no `dependencies` key at all is a schema
-        // devcroft does not recognize. Treated as "no dependencies"
-        // would silently drop the lockfile requirement, so it fails
-        // instead — the same rule `nix.rs` follows for an unparseable
-        // `print-dev-env`.
-        _ => {
-            return Err(ProviderError::ResolutionFailed(
-                "`swift package dump-package` output has no `dependencies` array; \
-                 this SwiftPM version is not one devcroft can read"
-                    .to_string(),
-            ));
-        }
-    };
-
-    // Measured shape (Swift 6.1.2):
-    //   "settings": [{"kind": {"linkedFramework": {"_0": "AppKit"}},
-    //                 "tool": "linker"}]
-    // Read defensively rather than with a typed struct: unlike
-    // `dependencies` above, a schema change here must not fail `up` — a
-    // missing framework signal falls through to the source scan, which
-    // is the more general evidence anyway.
-    let mut linked_frameworks = Vec::new();
-    if let Some(targets) = parsed.get("targets").and_then(|t| t.as_array()) {
-        for target in targets {
-            let Some(settings) = target.get("settings").and_then(|s| s.as_array()) else {
-                continue;
-            };
-            for setting in settings {
-                let Some(kind) = setting.get("kind") else {
-                    continue;
-                };
-                if let Some(name) = kind
-                    .get("linkedFramework")
-                    .and_then(|f| f.get("_0"))
-                    .and_then(|n| n.as_str())
-                {
-                    linked_frameworks.push(name.to_string());
-                }
-                // `.unsafeFlags(["-framework", "Security"])` is the same
-                // evidence spelled differently, and packages reaching a
-                // non-GUI Apple framework use it often — `.linkedFramework`
-                // is the tidy spelling, not the only one. Measured shape:
-                //   {"kind": {"unsafeFlags": {"_0": ["-framework", "Security"]}}}
-                if let Some(flags) = kind
-                    .get("unsafeFlags")
-                    .and_then(|f| f.get("_0"))
-                    .and_then(|a| a.as_array())
-                {
-                    let mut it = flags.iter().filter_map(|v| v.as_str());
-                    while let Some(flag) = it.next() {
-                        if flag == "-framework" {
-                            if let Some(name) = it.next() {
-                                linked_frameworks.push(name.to_string());
-                            }
-                        } else if let Some(name) = flag.strip_prefix("-framework=") {
-                            linked_frameworks.push(name.to_string());
-                        }
-                    }
-                }
-            }
-        }
-    }
-    linked_frameworks.sort();
-    linked_frameworks.dedup();
-
-    Ok(PackageDescription {
-        declares_dependencies,
-        linked_frameworks,
-    })
-}
-
-/// Read the toolchain's own paths from `swift -print-target-info`.
 /// Read the toolchain's own paths from `swift -print-target-info`.
 ///
 /// Runs with a fixed environment for the same reason
@@ -530,13 +411,14 @@ fn probe_sdk_path() -> Option<String> {
 ///   consulting `xcrun` — which is a host tool the sandbox is not granted.
 /// - `DEVELOPER_DIR`, so the toolchain shims skip a host symlink the
 ///   sandbox cannot read — see [`probe_developer_dir`].
-/// - `TMPDIR`, pointed **inside the project root** — see
-///   [`project_tmpdir`], which is where the reasoning lives.
+/// - `SWIFTPM_BUILD_DIR` and `TMPDIR`, both pointed **inside the project
+///   root** — see [`project_scratch_dir`], where the reasoning and the
+///   measured limits live.
 fn activated_env(
     baseline: &BTreeMap<String, String>,
     swift_bin: &Path,
     toolchain: &Toolchain,
-    tmpdir: Option<&Path>,
+    scratch_dir: Option<&Path>,
 ) -> BTreeMap<String, String> {
     let mut activated = baseline.clone();
     if let Some(bin_dir) = swift_bin.parent().map(Path::to_string_lossy) {
@@ -549,8 +431,16 @@ fn activated_env(
     if let Some(dev) = &toolchain.developer_dir {
         activated.insert("DEVELOPER_DIR".to_string(), dev.clone());
     }
-    if let Some(tmp) = tmpdir {
-        activated.insert("TMPDIR".to_string(), tmp.to_string_lossy().into_owned());
+    if let Some(scratch) = scratch_dir {
+        let scratch = scratch.to_string_lossy().into_owned();
+        // The measured lever: SwiftPM honours this for its scratch
+        // directory, verified by moving `.build` out of the project
+        // entirely. `TMPDIR` is set alongside it for everything else that
+        // reads it — the two are not interchangeable, and neither
+        // redirects SwiftPM's *cache*, which has no environment lever at
+        // all (see `project_scratch_dir`).
+        activated.insert("SWIFTPM_BUILD_DIR".to_string(), scratch.clone());
+        activated.insert("TMPDIR".to_string(), scratch);
     }
     activated
 }
@@ -647,11 +537,25 @@ pub(super) struct AppleEvidence {
     /// Apple project artifacts — the *deliverable* needs Apple, even where
     /// the source would compile anywhere.
     pub(super) artifacts: Vec<String>,
+    /// Apple frameworks named in `Package.swift`.
+    ///
+    /// **Read as text, never by evaluating the manifest.** An earlier
+    /// version took these from `swift package dump-package`, which is
+    /// authoritative — and which compiles and runs `Package.swift`. The
+    /// authority was not worth the execution: this provider's whole
+    /// criterion-4 position is that it opens no project file, and a
+    /// signal costing that position costs more than it gives.
+    ///
+    /// The trade is bounded and stated: a framework name computed during
+    /// manifest evaluation is missed. That is a false negative in a gate
+    /// whose false negatives send the user to a *better* provider, and it
+    /// is one of three independent signals rather than the only one.
+    pub(super) frameworks: Vec<String>,
 }
 
 impl AppleEvidence {
     pub(super) fn is_empty(&self) -> bool {
-        self.imports.is_empty() && self.artifacts.is_empty()
+        self.imports.is_empty() && self.artifacts.is_empty() && self.frameworks.is_empty()
     }
 }
 
@@ -714,11 +618,17 @@ pub(super) fn scan_apple_evidence(project_root: &Path) -> AppleEvidence {
                 stack.push(path);
             } else if path.extension().is_some_and(|e| e == "swift") {
                 if let Ok(text) = std::fs::read_to_string(&path) {
-                    collect_unguarded_imports(
-                        &text,
-                        &path.display().to_string(),
-                        &mut evidence.imports,
-                    );
+                    if name == "Package.swift" {
+                        evidence
+                            .frameworks
+                            .extend(frameworks_named_in_manifest(&text));
+                    } else {
+                        collect_unguarded_imports(
+                            &text,
+                            &path.display().to_string(),
+                            &mut evidence.imports,
+                        );
+                    }
                 }
             }
         }
@@ -729,7 +639,38 @@ pub(super) fn scan_apple_evidence(project_root: &Path) -> AppleEvidence {
     evidence.imports.dedup();
     evidence.artifacts.sort();
     evidence.artifacts.dedup();
+    evidence.frameworks.sort();
+    evidence.frameworks.dedup();
     evidence
+}
+
+/// Apple frameworks named in a `Package.swift`, read as text.
+///
+/// Covers the two spellings that appear in real manifests:
+/// `.linkedFramework("AppKit")`, and `-framework` followed by a name
+/// inside `.unsafeFlags([...])`. Both are string literals in the source,
+/// so reading them requires no evaluation.
+pub(super) fn frameworks_named_in_manifest(text: &str) -> Vec<String> {
+    fn literal_after(haystack: &str, at: usize) -> Option<String> {
+        let rest = haystack.get(at..)?;
+        let open = rest.find('"')? + 1;
+        let close = rest.get(open..)?.find('"')? + open;
+        let name = rest.get(open..close)?;
+        (!name.is_empty()).then(|| name.to_string())
+    }
+
+    let mut out = Vec::new();
+    for needle in [".linkedFramework(", "\"-framework\""] {
+        let mut from = 0usize;
+        while let Some(idx) = text.get(from..).and_then(|t| t.find(needle)) {
+            let at = from + idx + needle.len();
+            if let Some(name) = literal_after(text, at) {
+                out.push(name);
+            }
+            from = at;
+        }
+    }
+    out
 }
 
 /// The line-by-line half of [`scan_apple_evidence`], separated so it
@@ -799,7 +740,7 @@ pub(super) fn collect_unguarded_imports(text: &str, file: &str, out: &mut Vec<Ap
 /// So the provider is accepted only on positive evidence that no closure
 /// can serve the project:
 ///
-/// - a linked Apple framework, which is conclusive; or
+/// - an Apple framework named in `Package.swift`, which is conclusive; or
 /// - an unguarded import of an Apple-only module, which cannot compile on
 ///   Linux; or
 /// - an Apple project artifact — `Info.plist`, `.entitlements`,
@@ -829,13 +770,7 @@ pub(super) fn collect_unguarded_imports(text: &str, file: &str, out: &mut Vec<Ap
 /// asymmetry is deliberate — a wrong refusal sends someone to a *better*
 /// provider, while a wrong acceptance silently downgrades their guarantee
 /// and runs their code on the host.
-fn ensure_macos_dependent(
-    project_root: &Path,
-    description: &PackageDescription,
-) -> Result<(), ProviderError> {
-    if !description.linked_frameworks.is_empty() {
-        return Ok(());
-    }
+fn ensure_macos_dependent(project_root: &Path) -> Result<(), ProviderError> {
     if !scan_apple_evidence(project_root).is_empty() {
         return Ok(());
     }
@@ -858,8 +793,8 @@ fn ensure_macos_dependent(
     })
 }
 
-/// A temporary directory **inside the project root**, for SwiftPM to
-/// write its caches into.
+/// A scratch directory **inside the project root**, for SwiftPM to build
+/// and write temporary state in.
 ///
 /// **Found by running the build, and the constraint it satisfies is a
 /// standing invariant rather than a preference.** With the toolchain
@@ -887,10 +822,27 @@ fn ensure_macos_dependent(
 /// already covers it, and `swift package clean` disposes of it — devcroft
 /// introduces no new path a user has to know about or clean up.
 ///
-/// Created host-side at `up` rather than left to the sandbox: SwiftPM
-/// wants `TMPDIR` to exist before it starts, and a provider materializing
-/// something inside the project root is ordinary provisioning.
-fn project_tmpdir(project_root: &Path) -> Result<PathBuf, ProviderError> {
+/// Created host-side at `up` rather than left to the sandbox: the
+/// variables below want it to exist before anything starts, and a
+/// provider materializing a directory inside the project root is ordinary
+/// provisioning.
+///
+/// **What this does and does not fix, measured.** `SWIFTPM_BUILD_DIR` is
+/// a real lever — SwiftPM honours it for the scratch directory, verified
+/// by moving `.build` out of the project entirely. There is **no
+/// environment lever for SwiftPM's cache**: `strings` over `swift-package`
+/// yields no cache equivalent and only `--cache-path` works, verified by
+/// the real home cache's mtime being unchanged after a build that
+/// populated a redirected one. devcroft injects an environment rather
+/// than wrapping commands, so the cache stays unredirected and this is a
+/// known gap rather than a solved problem.
+///
+/// A related measurement hazard, recorded because it produces a confident
+/// wrong answer: **macOS resolves the home directory from the password
+/// database, not from `$HOME`**, so testing cache behaviour by pointing
+/// `HOME` at an empty directory shows nothing written there and means
+/// nothing. Compare mtimes instead.
+fn project_scratch_dir(project_root: &Path) -> Result<PathBuf, ProviderError> {
     let dir = project_root.join(".build").join("devcroft-tmp");
     std::fs::create_dir_all(&dir).map_err(|e| {
         ProviderError::ResolutionFailed(format!(
@@ -1018,127 +970,6 @@ mod tests {
     }
 
     #[test]
-    fn a_package_with_dependencies_is_detected() {
-        let raw = br#"{"name": "x", "dependencies": [{"sourceControl": []}]}"#;
-        assert!(
-            parse_package_description(raw)
-                .unwrap()
-                .declares_dependencies
-        );
-    }
-
-    #[test]
-    fn a_package_without_dependencies_is_detected() {
-        let raw = br#"{"name": "x", "dependencies": []}"#;
-        assert!(
-            !parse_package_description(raw)
-                .unwrap()
-                .declares_dependencies
-        );
-    }
-
-    /// The measured shape, kept verbatim so a SwiftPM schema change fails
-    /// here rather than silently emptying the strongest signal the gate
-    /// has.
-    #[test]
-    fn linked_frameworks_are_read_from_target_settings() {
-        let raw = br#"{"dependencies": [], "targets": [
-            {"name": "app", "settings": [
-              {"kind": {"linkedFramework": {"_0": "AppKit"}}, "tool": "linker"},
-              {"kind": {"linkedFramework": {"_0": "Metal"}}, "tool": "linker"}
-            ]}]}"#;
-        let d = parse_package_description(raw).unwrap();
-        assert_eq!(d.linked_frameworks, vec!["AppKit", "Metal"]);
-    }
-
-    /// `-framework X` through `unsafeFlags` is the same evidence as
-    /// `.linkedFramework`, and packages reaching a non-GUI Apple framework
-    /// use it often enough that missing it would refuse real Mac projects.
-    #[test]
-    fn frameworks_linked_through_unsafe_flags_are_read_too() {
-        let raw = br#"{"dependencies": [], "targets": [{"name": "a", "settings": [
-            {"kind": {"unsafeFlags": {"_0": ["-framework", "Security", "-lz"]}}, "tool": "linker"}
-        ]}]}"#;
-        assert_eq!(
-            parse_package_description(raw).unwrap().linked_frameworks,
-            vec!["Security"]
-        );
-    }
-
-    /// A trailing `-framework` with nothing after it must not panic or
-    /// invent an empty framework name.
-    #[test]
-    fn a_dangling_framework_flag_is_ignored() {
-        let raw = br#"{"dependencies": [], "targets": [{"name": "a", "settings": [
-            {"kind": {"unsafeFlags": {"_0": ["-framework"]}}, "tool": "linker"}
-        ]}]}"#;
-        assert!(
-            parse_package_description(raw)
-                .unwrap()
-                .linked_frameworks
-                .is_empty()
-        );
-    }
-
-    /// A schema change in `settings` must not fail `up` — unlike
-    /// `dependencies`, this signal has a fallback (the source scan), so
-    /// failing closed here would refuse projects over a field devcroft
-    /// merely stopped recognizing.
-    #[test]
-    fn an_unreadable_settings_shape_yields_no_frameworks_rather_than_failing() {
-        let raw = br#"{"dependencies": [], "targets": [{"name": "a", "settings": "surprise"}]}"#;
-        let d = parse_package_description(raw).unwrap();
-        assert!(d.linked_frameworks.is_empty());
-    }
-
-    /// A schema with no `dependencies` key must fail rather than read as
-    /// "no dependencies": that reading silently drops the lockfile
-    /// requirement, which is the one guarantee this provider buys with
-    /// the project-code execution it performs.
-    #[test]
-    fn a_description_without_a_dependencies_array_is_refused() {
-        match parse_package_description(br#"{"name": "x"}"#) {
-            Err(ProviderError::ResolutionFailed(msg)) => assert!(msg.contains("dependencies")),
-            other => panic!("expected ResolutionFailed, got {other:?}"),
-        }
-    }
-
-    /// Both directions of the conditional lockfile rule, in one place,
-    /// because either half alone is satisfied by a wrong implementation:
-    /// "always require" passes the first, "never require" passes the
-    /// second.
-    #[test]
-    fn the_lockfile_is_required_only_when_dependencies_exist() {
-        let dir = std::env::temp_dir().join(format!(
-            "devcroft-swift-lock-{}-{}",
-            std::process::id(),
-            line!()
-        ));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
-
-        // Dependencies, no lockfile: refused, with the remedy named.
-        match ensure_lock_present(&dir, true) {
-            Err(ProviderError::MissingLock { provider, hint }) => {
-                assert_eq!(provider, "swift");
-                assert_eq!(hint, "swift package resolve");
-            }
-            other => panic!("expected MissingLock, got {other:?}"),
-        }
-
-        // No dependencies, no lockfile: accepted. SwiftPM does not write
-        // `Package.resolved` for such a package, so refusing here would
-        // be a rejection with no remedy.
-        assert!(ensure_lock_present(&dir, false).is_ok());
-
-        // Dependencies with a lockfile: accepted.
-        std::fs::write(dir.join("Package.resolved"), b"{}").unwrap();
-        assert!(ensure_lock_present(&dir, true).is_ok());
-
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    #[test]
     fn a_missing_package_manifest_names_its_own_remedy() {
         let dir = std::env::temp_dir().join(format!(
             "devcroft-swift-nopkg-{}-{}",
@@ -1254,6 +1085,86 @@ mod tests {
         );
     }
 
+    /// Frameworks are read out of `Package.swift` as text, in both
+    /// spellings that appear in real manifests. The point is not that
+    /// text parsing is better than `dump-package` — it is worse — but
+    /// that `dump-package` costs the provider its criterion-4 position,
+    /// and this signal is not worth that.
+    #[test]
+    fn frameworks_are_read_from_the_manifest_without_evaluating_it() {
+        let text = r#"
+            targets: [.executableTarget(name: "a",
+                linkerSettings: [.linkedFramework("AppKit"),
+                                 .unsafeFlags(["-framework", "Security"])])]
+        "#;
+        let mut got = frameworks_named_in_manifest(text);
+        got.sort();
+        assert_eq!(got, vec!["AppKit", "Security"]);
+    }
+
+    #[test]
+    fn a_manifest_naming_no_framework_yields_none() {
+        assert!(frameworks_named_in_manifest("let package = Package(name: \"x\")").is_empty());
+    }
+
+    /// A truncated manifest must not panic the scanner — it is reading
+    /// arbitrary project text, so malformed input is expected input.
+    #[test]
+    fn a_truncated_framework_call_does_not_panic() {
+        for text in [
+            ".linkedFramework(",
+            ".linkedFramework(\"",
+            "\"-framework\"",
+            "\"-framework\", \"",
+        ] {
+            let _ = frameworks_named_in_manifest(text);
+        }
+    }
+
+    /// **The provider is macOS-only, and fails closed elsewhere.** Swift
+    /// exists on Linux; an Xcode-backed provider does not, so resolving
+    /// silently under the same name would make one manifest mean two
+    /// different guarantees on two machines.
+    #[test]
+    fn the_provider_is_refused_off_macos() {
+        let result = ensure_macos_host();
+        if cfg!(target_os = "macos") {
+            assert!(result.is_ok(), "must resolve on its own platform");
+        } else {
+            match result {
+                Err(ProviderError::CoveredByQualifiedProvider { provider, reason }) => {
+                    assert_eq!(provider, "swift");
+                    assert!(reason.contains("macOS"));
+                    assert!(reason.contains("nix") || reason.contains("flox"));
+                }
+                other => panic!("expected a platform refusal, got {other:?}"),
+            }
+        }
+    }
+
+    /// The scratch directory carries the lever SwiftPM actually honours.
+    /// `TMPDIR` alone was measured not to move SwiftPM's build directory.
+    #[test]
+    fn the_scratch_directory_sets_the_lever_swiftpm_honours() {
+        let baseline = BTreeMap::from([("PATH".to_string(), "/usr/bin".to_string())]);
+        let toolchain = parse_target_info(REAL_TARGET_INFO.as_bytes()).unwrap();
+        let scratch = Path::new("/p/.build/devcroft-tmp");
+        let env = activated_env(
+            &baseline,
+            Path::new("/usr/bin/swift"),
+            &toolchain,
+            Some(scratch),
+        );
+        assert_eq!(
+            env.get("SWIFTPM_BUILD_DIR"),
+            Some(&"/p/.build/devcroft-tmp".to_string())
+        );
+        assert_eq!(
+            env.get("TMPDIR"),
+            Some(&"/p/.build/devcroft-tmp".to_string())
+        );
+    }
+
     /// The gate, end to end, on a real file tree. Both directions, since
     /// "always accept" and "always refuse" each pass one half alone.
     #[test]
@@ -1273,8 +1184,7 @@ mod tests {
             "import Foundation\nprint(1)\n",
         )
         .unwrap();
-        let portable = PackageDescription::default();
-        match ensure_macos_dependent(&dir, &portable) {
+        match ensure_macos_dependent(&dir) {
             Err(ProviderError::CoveredByQualifiedProvider { provider, reason }) => {
                 assert_eq!(provider, "swift");
                 assert!(reason.contains("nix") && reason.contains("flox"));
@@ -1287,12 +1197,15 @@ mod tests {
             other => panic!("a portable package must be refused, got {other:?}"),
         }
 
-        // A linked framework alone is conclusive, with no Apple import.
-        let framework = PackageDescription {
-            declares_dependencies: false,
-            linked_frameworks: vec!["AppKit".to_string()],
-        };
-        assert!(ensure_macos_dependent(&dir, &framework).is_ok());
+        // A framework named in Package.swift alone is conclusive, with
+        // no Apple import anywhere in the sources.
+        std::fs::write(
+            dir.join("Package.swift"),
+            "// swift-tools-version:5.9\nlinkerSettings: [.linkedFramework(\"AppKit\")]\n",
+        )
+        .unwrap();
+        assert!(ensure_macos_dependent(&dir).is_ok());
+        std::fs::remove_file(dir.join("Package.swift")).unwrap();
 
         // An unguarded Apple import alone is conclusive, with no
         // framework.
@@ -1301,7 +1214,7 @@ mod tests {
             "import AppKit\nprint(1)\n",
         )
         .unwrap();
-        assert!(ensure_macos_dependent(&dir, &portable).is_ok());
+        assert!(ensure_macos_dependent(&dir).is_ok());
 
         // Guarded again: back to refused, so the guard test is live
         // through the real file scan and not only in `imports()`.
@@ -1311,7 +1224,7 @@ mod tests {
         )
         .unwrap();
         assert!(
-            ensure_macos_dependent(&dir, &portable).is_err(),
+            ensure_macos_dependent(&dir).is_err(),
             "a package whose only Apple import is guarded is portable"
         );
 
@@ -1376,13 +1289,13 @@ mod tests {
 
             // Portable sources alone: refused.
             assert!(
-                ensure_macos_dependent(&dir, &PackageDescription::default()).is_err(),
+                ensure_macos_dependent(&dir).is_err(),
                 "control: Foundation-only with no artifact must be refused"
             );
 
             std::fs::write(dir.join(artifact), b"x").unwrap();
             assert!(
-                ensure_macos_dependent(&dir, &PackageDescription::default()).is_ok(),
+                ensure_macos_dependent(&dir).is_ok(),
                 "{artifact} must count as evidence"
             );
 
@@ -1413,7 +1326,7 @@ mod tests {
             "got {:?}",
             evidence.artifacts
         );
-        assert!(ensure_macos_dependent(&dir, &PackageDescription::default()).is_ok());
+        assert!(ensure_macos_dependent(&dir).is_ok());
 
         let _ = std::fs::remove_dir_all(&dir);
     }
