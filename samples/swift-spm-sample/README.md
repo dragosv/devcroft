@@ -3,6 +3,22 @@
 A minimal SwiftPM executable, used as devcroft's `env.provider = "swift"`
 sample.
 
+## Why this sample imports AppKit
+
+devcroft's `swift` provider **refuses a package that a closure-tier
+provider could serve**. A portable Swift package builds fine from nix or
+flox, where it gets reproducibility, a hook-free activation, and no
+host-side execution of `Package.swift` — so offering it the weaker
+provider would buy nothing and cost all three.
+
+The provider is only justified where no closure can serve the project, so
+this sample has to be genuinely macOS-only. The unguarded `import AppKit`
+in `Sources/citytime/main.swift` is that: it cannot compile on Linux.
+
+Replace it with `import Foundation` and `devcroft up` will refuse the
+sandbox and point you at `provider = "nix"` or `provider = "flox"`. That
+is the gate working, not a bug.
+
 ## What this sample demonstrates
 
 - The `swift` provider resolving a real package host-side at `up`.

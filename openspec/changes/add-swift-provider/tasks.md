@@ -162,9 +162,65 @@
       names that `up` will run `Package.swift`, and names `flox init` as the
       way to avoid both. Both lines are asserted.
 
-## 6. What is left open
+## 6. Scope the provider to projects nothing else can serve
 
-- [ ] 6.1 **Linux is unmeasured**, and it is the platform where this provider
+> Raised in review after the provider was working: if a Swift package can
+> build on Linux, flox or nix should have it — so `swift` should be refused
+> there rather than merely available. The provider's justification in §1 is
+> "Swift users otherwise get nothing", and that is only true for packages
+> that need Apple frameworks. This narrows the provider to exactly that
+> claim.
+
+- [x] 6.1 Refuse `swift` for a package showing no Apple-platform dependency,
+      at layer `provider`, naming `nix`/`flox` as the alternative.
+      → New `ProviderError::CoveredByQualifiedProvider`. Distinct from every
+      other rejection, which are about the provider alone: this one is about
+      the provider **and this project together**, so the same name is correct
+      one directory over.
+- [x] 6.2 Accept only on positive evidence: a linked Apple framework, or an
+      unguarded import of an Apple-only module.
+      → Frameworks come from the `dump-package` call that already runs;
+      imports come from a source scan that executes nothing.
+- [x] 6.3 **Two traps that would have made the gate useless, in opposite
+      directions.** Both measured, both asserted.
+      `platforms: [.macOS(.v13)]` is **not** evidence — it sets minimum
+      versions for Apple platforms and SwiftPM ignores it on Linux, so
+      thousands of portable packages declare it; accepting on it would narrow
+      nothing. And `Foundation`/`Dispatch` are **not** Apple-only — both ship
+      on Linux via swift-corelibs, and counting them would qualify essentially
+      every Swift package.
+- [x] 6.4 A guarded import (`#if canImport(AppKit)`) is not evidence: that is
+      a *portable* package with an Apple branch, which is the case the closure
+      tier should get. Nesting tracked properly, so an `#if DEBUG` inside an
+      `#if canImport` does not end the guard early — asserted, because the
+      naive single-flag version gets this wrong.
+- [x] 6.5 `.build/` excluded from the scan: a dependency's `import AppKit`
+      says nothing about what *this* package needs, and without the exclusion
+      every project that had ever run `swift build` would qualify.
+- [x] 6.6 `init` applies the same gate, using the scan only.
+      → It must not generate a manifest `up` then refuses. It deliberately
+      does **not** run `dump-package`: `init` runs on a repository the user
+      may have just cloned and has no business executing its code. The two
+      checks therefore disagree in one direction — a framework-linking package
+      with no Apple import gets `flox` from `init` and would be accepted by
+      `up` — which is the safe direction, since `init` suggests the *stronger*
+      provider.
+- [x] 6.7 The sample had to change: it was portable, so the gate correctly
+      refused it. `samples/swift-spm-sample` now uses an unguarded
+      `import AppKit` and a real `NSWorkspace` call, with its README stating
+      that swapping it for `Foundation` makes `up` refuse — the gate working,
+      not a bug. The e2e fixture changed for the same reason, and gained a
+      refusal test asserting exit 3 and the named alternative.
+- [x] 6.8 Record that this is a heuristic and which way it fails.
+      → Criterion 6 is hostile to heuristics, so the asymmetry is stated
+      rather than glossed: a wrong refusal sends someone to a *better*
+      provider and names what was searched for; a wrong acceptance silently
+      downgrades their guarantee and runs their code on the host. Only the
+      second is invisible to the user.
+
+## 7. What is left open
+
+- [ ] 7.1 **Linux is unmeasured**, and it is the platform where this provider
       is most likely to fully work: no `/var/folders`, no `xcrun`, no
       `/var` → `/private/var` symlink. Until someone runs it there, the
       honest claim is "brings a sandbox up on macOS, does not build in it".

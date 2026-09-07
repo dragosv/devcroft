@@ -42,7 +42,16 @@ fn write_fixture(root: &std::path::Path, name: &str) {
          targets: [.executableTarget(name: \"app\", path: \"Sources/app\")])\n",
     )
     .unwrap();
-    std::fs::write(root.join("Sources/app/main.swift"), "print(\"hi\")\n").unwrap();
+    // **Unguarded `import AppKit`, and it is load-bearing.** The provider
+    // refuses a package a closure-tier provider could serve, so a fixture
+    // importing only Foundation would be refused — correctly — and this
+    // test would be asserting the wrong thing. The gate's own unit tests
+    // cover the refusal; this fixture is the accepted side of it.
+    std::fs::write(
+        root.join("Sources/app/main.swift"),
+        "import AppKit\nprint(\"hi\")\n",
+    )
+    .unwrap();
     std::fs::write(
         root.join("devcroft.toml"),
         format!("[sandbox]\nname = \"{name}\"\n[env]\nprovider = \"swift\"\n"),
@@ -250,5 +259,57 @@ fn a_closure_provider_makes_no_such_disclosure() {
     assert!(
         up_stdout.contains("closure"),
         "and it must report the closure tier; stdout was:\n{up_stdout}"
+    );
+}
+
+/// **The refusal, end to end through the real CLI.** The unit tests cover
+/// the decision; this covers that it reaches the user as a `provider`-layer
+/// failure with the alternative named, rather than as a sandbox that comes
+/// up with a weaker guarantee nobody asked for.
+#[test]
+fn a_portable_swift_package_is_refused_and_pointed_at_a_closure_provider() {
+    if !swift_available() {
+        eprintln!("skipping: no usable Swift toolchain on this host");
+        return;
+    }
+    let bin = env!("CARGO_BIN_EXE_devcroft");
+    let name = format!("swiftport{}", std::process::id());
+    let root = std::env::temp_dir().join(format!("devcroft-swift-portable-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).unwrap();
+    write_fixture(&root, &name);
+    // The one difference from the accepted fixture: nothing Apple-only.
+    std::fs::write(
+        root.join("Sources/app/main.swift"),
+        "import Foundation\nprint(\"hi\")\n",
+    )
+    .unwrap();
+
+    let up = Command::new(bin)
+        .arg("up")
+        .current_dir(&root)
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&up.stderr).into_owned();
+
+    let _ = Command::new(bin).arg("down").current_dir(&root).output();
+    if let Ok(paths) = devcroft::lifecycle::StatePaths::new(&name) {
+        let _ = std::fs::remove_dir_all(&paths.root);
+    }
+    let _ = std::fs::remove_dir_all(&root);
+
+    assert!(!up.status.success(), "a portable package must not come up");
+    assert_eq!(
+        up.status.code(),
+        Some(3),
+        "a provider-layer refusal is exit 3 (error contract); stderr was:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("provider:"),
+        "the failure must name its layer; got:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("nix") && stderr.contains("flox"),
+        "a refusal must name the providers that serve this project better; got:\n{stderr}"
     );
 }

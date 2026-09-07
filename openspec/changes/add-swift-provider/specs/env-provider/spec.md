@@ -59,6 +59,41 @@ on inspection of the manifest's contents.
 - **WHEN** a `flox`, `nix`, or `devbox` environment is resolved
 - **THEN** no such disclosure is recorded, exactly as before this change
 
+### Requirement: swift is refused where a qualifying provider serves the project
+The system SHALL refuse `env.provider = "swift"` for a package that shows
+no dependency on Apple platforms, because a closure-tier provider serves
+such a package and serves it better — reproducibly, without executing
+`Package.swift` on the host.
+
+Acceptance SHALL require positive evidence: a linked Apple framework, or
+an `import` of an Apple-only module that is not inside a
+conditional-compilation guard. A declared `platforms:` entry SHALL NOT be
+treated as evidence, since it constrains only Apple platform minimums and
+is ignored on Linux.
+
+The refusal SHALL name the providers that serve the project instead, and
+SHALL state what evidence was searched for.
+
+#### Scenario: A portable package is refused
+- **WHEN** a package imports only modules available on Linux
+- **THEN** `up` fails at layer `provider` naming `nix` and `flox`
+
+#### Scenario: A linked Apple framework is accepted
+- **WHEN** a target declares a linked Apple framework
+- **THEN** resolution proceeds
+
+#### Scenario: An unguarded Apple-only import is accepted
+- **WHEN** a source file imports an Apple-only module at top level
+- **THEN** resolution proceeds
+
+#### Scenario: A guarded Apple-only import is not evidence
+- **WHEN** the only Apple-only import is inside `#if canImport(...)`
+- **THEN** the package is treated as portable and refused
+
+#### Scenario: A dependency's imports are not evidence
+- **WHEN** an Apple-only import appears only under `.build/`
+- **THEN** the package is treated as portable and refused
+
 ### Requirement: swift lockfile precondition
 The system SHALL require `Package.resolved` when, and only when, the
 package declares external dependencies, since SwiftPM does not create the
