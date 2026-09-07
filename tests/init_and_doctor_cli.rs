@@ -946,3 +946,91 @@ fn the_top_level_command_surface_stays_closed() {
 
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// `init` selects `swift` for a SwiftPM package with nothing else present.
+///
+/// The alternative here is not a better provider — it is a `devcroft.toml`
+/// naming `flox` for a project that has no flox environment, which fails
+/// on the first `up`.
+#[test]
+fn init_detects_a_swiftpm_package() {
+    let dir = scratch_project("swiftpkg");
+    std::fs::write(
+        dir.join("Package.swift"),
+        "// swift-tools-version:5.9\nimport PackageDescription\n\
+         let package = Package(name: \"x\")\n",
+    )
+    .unwrap();
+
+    let out = run(&dir, &["init"]);
+    assert!(out.status.success(), "{out:?}");
+    let (manifest, _) =
+        devcroft::config::parse(&std::fs::read_to_string(dir.join("devcroft.toml")).unwrap())
+            .unwrap();
+    assert_eq!(manifest.env.provider, "swift");
+
+    // Selecting the one provider that fails the qualification test is a
+    // trade, and `init` is the moment the user is opted into it. Both
+    // costs must be named right there — not left to documentation nobody
+    // reads at this point.
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("artifact-tier"),
+        "init must name the tier it selected; got {stdout:?}"
+    );
+    assert!(
+        stdout.contains("runs Package.swift"),
+        "init must say that `up` will run the project's own code; got {stdout:?}"
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// **The ordering assertion, and the one that matters.** `swift` ranks
+/// below every closure provider, so a Swift project that also has a real
+/// environment keeps the stronger guarantee. Without this, "swift is
+/// selected last" is an unverified claim in a comment.
+#[test]
+fn init_prefers_every_closure_provider_over_a_swift_package() {
+    for (label, setup) in [
+        (
+            "flox",
+            &(|d: &std::path::Path| {
+                std::fs::create_dir_all(d.join(".flox")).unwrap();
+            }) as &dyn Fn(&std::path::Path),
+        ),
+        ("devbox", &|d: &std::path::Path| {
+            std::fs::write(d.join("devbox.json"), "{}").unwrap();
+            std::fs::write(d.join("devbox.lock"), "{}").unwrap();
+        }),
+        ("nix", &|d: &std::path::Path| {
+            std::fs::write(
+                d.join("flake.nix"),
+                "{ description = \"x\"; outputs = { self }: {}; }",
+            )
+            .unwrap();
+            std::fs::write(d.join("flake.lock"), "{}").unwrap();
+        }),
+    ] {
+        let dir = scratch_project(&format!("swiftvs{label}"));
+        std::fs::write(
+            dir.join("Package.swift"),
+            "// swift-tools-version:5.9\nlet package = 0\n",
+        )
+        .unwrap();
+        setup(&dir);
+
+        let out = run(&dir, &["init"]);
+        assert!(out.status.success(), "{out:?}");
+        let (manifest, _) =
+            devcroft::config::parse(&std::fs::read_to_string(dir.join("devcroft.toml")).unwrap())
+                .unwrap();
+        assert_eq!(
+            manifest.env.provider, label,
+            "a closure provider must win over a SwiftPM package; \
+             {label} lost to swift"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}

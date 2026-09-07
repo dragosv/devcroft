@@ -528,24 +528,40 @@ fn cli_init(args: &[String]) -> i32 {
     let base_name = devcroft::config::slugify(&dir_name);
     let name = disambiguate_name(&base_name, &cwd);
 
-    // cli spec's init scenarios: flox, then devbox, then a bare flake — a
-    // deterministic tiebreak, not a judgement that the losers are derived
-    // artifacts (an earlier draft justified ranking devbox above a flake
-    // by claiming a root flake.nix in a devbox project is usually
-    // generated from devbox.json; devbox writes its generated flake under
-    // .devbox/gen/flake/, never to the project root, so that reasoning is
-    // false and is not restated — only the ordering survives). Any one of
-    // the three supersedes advice about a toolchain pin it would
-    // otherwise just be a fallback for.
+    // cli spec's init scenarios: flox, then devbox, then a bare flake,
+    // then a SwiftPM package — a deterministic tiebreak, not a judgement
+    // that the losers are derived artifacts (an earlier draft justified
+    // ranking devbox above a flake by claiming a root flake.nix in a
+    // devbox project is usually generated from devbox.json; devbox writes
+    // its generated flake under .devbox/gen/flake/, never to the project
+    // root, so that reasoning is false and is not restated — only the
+    // ordering survives). Any one of them supersedes advice about a
+    // toolchain pin it would otherwise just be a fallback for.
+    //
+    // **`swift` ranks last among the four, and the ordering is the whole
+    // of the care taken here.** It is the one provider devcroft ships
+    // that fails the qualification test (`docs/decisions.md` §1), so a
+    // project that has *any* closure environment keeps it: a Swift
+    // package with a `.flox/` beside it still gets `flox`. Only a project
+    // with nothing else gets `swift`, where the alternative is not a
+    // better provider but no working `devcroft init` at all.
+    //
+    // Selecting it is a real trade and `init` says so rather than writing
+    // the line quietly — see the advice branch below, which names both
+    // costs (host-linked toolchain, and `up` running `Package.swift`) at
+    // the moment the manifest is generated.
     let has_flox = cwd.join(".flox").is_dir();
     let has_devbox = cwd.join("devbox.json").is_file();
     let has_flake = cwd.join("flake.nix").is_file();
+    let has_swift_package = cwd.join("Package.swift").is_file();
     let provider = if has_flox {
         "flox"
     } else if has_devbox {
         "devbox"
     } else if has_flake {
         "nix"
+    } else if has_swift_package {
+        "swift"
     } else {
         "flox"
     };
@@ -617,24 +633,29 @@ fn cli_init(args: &[String]) -> i32 {
             println!("devcroft: found flake.nix but no flake.lock.");
             println!("devcroft: run `nix flake lock` before `devcroft up`.");
         }
-    } else if cwd.join("Package.swift").is_file() {
-        // **Mentioned, never auto-selected**, unlike the three closure
-        // providers above. `swift` is the one provider devcroft ships that
-        // fails the qualification test (`docs/decisions.md` §1), so a
-        // generated manifest naming it would opt a user into a weaker
-        // guarantee and a host-side execution of their own repository's
-        // code without either being a decision they made. The generated
-        // manifest keeps the `flox` default; this only says the option
-        // exists, and what it costs.
-        println!("devcroft: found a SwiftPM package (Package.swift) but no .flox/ environment.");
+    } else if has_swift_package {
+        // Selected, and therefore disclosed *more* loudly rather than
+        // less. Every other branch here reports a discovery; this one
+        // reports a trade the user is being opted into, so it states both
+        // costs and the alternative that avoids them. The `[FAIL]`-free
+        // wording is deliberate — this is a working configuration, not an
+        // error — but it must not read as a clean bill of health either.
         println!(
-            "devcroft: `provider = \"swift\"` is available, at the artifact tier — the toolchain \
-             comes from this host, so behavior is not reproducible across machines, and resolving \
-             it runs Package.swift (a Swift program) on the host at every `up`."
+            "devcroft: found a SwiftPM package (Package.swift); wrote `provider = \"swift\"`."
         );
         println!(
-            "devcroft: for a reproducible Swift environment instead, run `flox init` and add the \
-             swift package."
+            "devcroft: note: swift is devcroft's only artifact-tier provider — the toolchain \
+             comes from this host, so the same Package.swift can behave differently on another \
+             machine."
+        );
+        println!(
+            "devcroft: note: resolving it runs Package.swift, which is a Swift program, on the \
+             host at every `up`. Treat `devcroft up` on a repository you have not read as \
+             running its code."
+        );
+        println!(
+            "devcroft: for a reproducible Swift environment instead, run `flox init`, add the \
+             swift package, and change provider back to \"flox\"."
         );
     } else if cwd.join("rust-toolchain.toml").exists() {
         println!("devcroft: found rust-toolchain.toml but no .flox/ environment.");
