@@ -1,0 +1,8 @@
+[sandbox]
+name = "swift-spm-sample"
+
+[env]
+provider = "swift"
+
+[network]
+default = "deny"

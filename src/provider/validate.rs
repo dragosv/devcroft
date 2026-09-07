@@ -24,7 +24,11 @@ const VERSION_MANAGERS: &[&str] = &[
 /// and policy rule origins. `devbox` and `devenv` have exactly one name
 /// each — unlike `nix`, no alias is invented for either (config spec:
 /// "devbox provider value", "devenv provider value").
-const SUPPORTED: &[&str] = &["flox", "nix", "flake", "flakes", "devbox", "devenv"];
+/// `swift` has exactly one name. No `swiftpm`/`spm` aliases are invented:
+/// it is the one provider devcroft ships that *fails* the qualification
+/// test in `docs/decisions.md` §1, and a reader auditing which projects
+/// took that trade should be able to grep for a single string.
+const SUPPORTED: &[&str] = &["flox", "nix", "flake", "flakes", "devbox", "devenv", "swift"];
 
 const NOT_YET_SUPPORTED: &[(&str, &str)] = &[
     (
@@ -107,6 +111,28 @@ mod tests {
     #[test]
     fn flox_name_is_unaffected_by_normalization() {
         assert_eq!(normalize_provider_name("flox"), "flox");
+    }
+
+    #[test]
+    fn swift_is_accepted() {
+        assert!(validate_provider("swift").is_ok());
+    }
+
+    /// The aliases a reader would guess must stay unknown, so the
+    /// grep-for-one-string property `SUPPORTED` documents actually holds.
+    #[test]
+    fn swift_has_no_aliases() {
+        for name in ["swiftpm", "spm", "swift-package-manager"] {
+            match validate_provider(name) {
+                Err(ProviderError::Unknown { name: got }) => assert_eq!(got, name),
+                other => panic!("expected Unknown for {name}, got {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn swift_name_is_unaffected_by_normalization() {
+        assert_eq!(normalize_provider_name("swift"), "swift");
     }
 
     #[test]
