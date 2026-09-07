@@ -53,17 +53,45 @@ surfacing inside the sandbox and far from its cause, so
 `devcroft why --env GH_TOKEN` answers it directly and prints the line
 above when that is the answer.
 
-## Port collisions: fixed
+## Port collisions: fixed on Linux, still real on macOS
 
-`CompiledPolicy::wants_network_isolation` gives a sandbox its own network
-namespace when it declares services or `network.ports`. `devcroft.toml`
-being committed is no longer a problem: every git worktree of a repo
-declares the *same* port, each sandbox has its own port table, so N of
-them binding the identical 5432 no longer collide — no allocation, no
-cooperation from the service, no config to write. Verified live:
+**The platform split is stated first because this entry used to bury it.**
+The fix is a network namespace, namespaces are Linux-only, and a reader on
+a Mac who stopped at the old "Port collisions: fixed" heading got the
+opposite of the truth. The macOS caveat was present, forty lines down,
+phrased as "a host that cannot create unprivileged network namespaces" —
+which never names the platform every Mac user is on.
+
+**On Linux**, `CompiledPolicy::wants_network_isolation` gives a sandbox its
+own network namespace when it declares services or `network.ports`.
+`devcroft.toml` being committed is no longer a problem: every git worktree
+of a repo declares the *same* port, each sandbox has its own port table,
+so N of them binding the identical 5432 no longer collide — no allocation,
+no cooperation from the service, no config to write. Verified live:
 `tests/network_isolation_e2e.rs` brings up two real sandboxes of one
 project, has one hold the port open, and confirms the other binds the
 identical number anyway.
+
+**On macOS they collide, measured.** Two git worktrees of one repository,
+brought up as separate sandboxes with `--name`, both declaring
+`ports = [17777]`:
+
+```
+wta: python3 hold.py            -> HELD
+wtb: python3 probe.py           -> BIND-FAILED errno=48 Address already in use
+host: python3 probe.py          -> BIND-FAILED errno=48 Address already in use
+```
+
+The host's own `lsof` shows the listener the sandbox created, which is the
+same fact from the other side: there is nothing separating the two
+sandboxes' loopback, so the second one is refused exactly as any third
+process on the machine would be. `up` warns about this every time
+(`network isolation is degraded on this host`), and `doctor` reports
+`per-agent-network-namespace: unsupported on this platform`.
+
+So on a Mac the answer to "can two worktrees run the same service in
+parallel" is **no**, and the remedy is the ordinary one: give the second
+worktree a different port, or run them under Linux.
 
 **Egress works inside that namespace too**, which was not true when this
 section was first written. The original scope excluded any sandbox
@@ -96,8 +124,9 @@ Two further limits worth knowing:
   `network.ports`, isolation is skipped with a warning rather than
   breaking egress — the proxy port is OS-assigned from the ephemeral
   range, so this is rare rather than theoretical.
-- A host that cannot create unprivileged network namespaces degrades to
-  the shared host port table, with one warning at `up`.
+- A host that cannot create unprivileged network namespaces — every macOS
+  host, and some hardened Linux ones — degrades to the shared host port
+  table, with one warning at `up`. See the macOS measurement above.
 
 Fleet (`add-linux-agent-fleet`) is a second, harder consumer of the same
 primitive — N agents under one supervisor, plus an optional host-side

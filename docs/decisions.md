@@ -929,8 +929,23 @@ for 5432 collide with `EADDRINUSE`. At the `process` tier there is no
 PID/mount/net namespace separation between sandboxes (`add-mvp-core`
 design.md Decision 5), so both are binding the same host loopback.
 
-**With one tier, the collision is unconditional**: at `process` it is real at
-any N > 1, and there is no longer a second tier to qualify that with.
+**No longer unconditional, and this entry said it was.** When it was
+written there was one tier and no namespace, so the collision was real at
+any N > 1. `add-mount-isolation` and the network-isolation work changed
+that on Linux: a sandbox declaring services or `network.ports` gets its own
+network namespace and its own port table, so N worktrees binding the same
+port no longer collide there.
+
+**On macOS it remains exactly as described above**, because namespaces are
+Linux-only and nothing replaces them. Measured on macOS 15: two worktrees
+of one repository, each brought up as its own sandbox, both declaring the
+same port — the second `bind()` fails with `EADDRINUSE`, the same failure a
+third process on the host would get, and the host's `lsof` sees the
+sandbox's listener. `docs/known-gaps.md` carries the measurement.
+
+So the honest one-line answer is platform-dependent, and stating it
+without the platform — in either direction — is how this entry and the
+`known-gaps` entry came to contradict each other.
 
 The tier-dependence this entry used to describe is worth keeping as history,
 because getting it wrong cost a correction once. The hardened tier's port
