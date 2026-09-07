@@ -252,6 +252,7 @@ inspecting
   policy --render [name]      the compiled profile, every rule with its origin
   why --path P --op <mode>    whether one operation is allowed, and which rule decides
   why --host <domain>         the same question for an outbound host
+  why --env <NAME>            why a variable is or is not in the sandbox
   doctor                      check this host for what devcroft needs
 
 ssh
@@ -262,11 +263,21 @@ ssh
 
 ## Environments
 
-Three providers are supported — **flox**, **nix flakes**, and **devbox**. Each
-builds a *closure*: a complete, self-contained package set, so what runs inside
-doesn't depend on what you happen to have installed. There is no "just use the
-host" fallback, on purpose. Eight sandboxes of one project cost one build,
-because they share a single content-addressed store.
+Three providers build a *closure* — **flox**, **nix flakes**, and **devbox**: a
+complete, self-contained package set, so what runs inside doesn't depend on what
+you happen to have installed. There is no "just use the host" fallback, on
+purpose. Eight sandboxes of one project cost one build, because they share a
+single content-addressed store.
+
+A fourth, **swift**, is *artifact* tier and is the one exception to all of that.
+It resolves a SwiftPM project against the host's own toolchain, so two machines
+can behave differently from the same `Package.swift`, and resolving it **runs the
+project's code** — `Package.swift` is a Swift program SwiftPM compiles and
+executes, with no data-only entry point. `devcroft up` prints both facts every
+time: the tier, and a warning to treat `up` on a repository you have not read as
+running its code. It is the only provider that fails devcroft's own six-criterion
+test; `docs/decisions.md` §1 records why it ships anyway, and
+`docs/known-gaps.md` records what it cannot do yet.
 
 **devenv is next, and only unbuilt.** It is Nix-based, so it would be a fourth
 closure provider rather than a new kind — the cheapest one left. Its one open

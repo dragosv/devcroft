@@ -278,6 +278,59 @@ The same reasoning applies to any single-ecosystem toolchain manager —
 nvm, pyenv, rbenv, sdkman, ghcup. mise qualifies where they do not
 precisely because it spans ecosystems and can deliver utilities too.
 
+### Shipped despite failing the test: swift (SwiftPM)
+
+**Properties that fail:** 4 (capturable activation without executing
+project code) and 5 (completeness).
+
+This is the only provider devcroft ships that does not pass the six
+criteria, and it is recorded here rather than under a rejection heading so
+the test keeps meaning something. It was adopted by the project owner over
+a stated objection (`add-swift-provider`'s proposal.md).
+
+**Criterion 4, measured on Swift 6.1.2 / macOS 15.** `Package.swift` is
+not a manifest, it is a Swift program: SwiftPM compiles it with `swiftc`
+and runs the resulting binary to obtain the package description. Every
+entry point that yields the package graph — `dump-package`, `resolve`,
+`describe`, `build` — evaluates it. There is no counterpart to nix's
+`print-dev-env --json` or devbox's `shellenv --pure`.
+
+SwiftPM sandboxes that evaluation on macOS, which is worth less than it
+sounds: it blocks **writes** and not **reads**. Manifest code exfiltrates
+host state through the package data itself. With the sandbox on, a plain
+`swift package dump-package` returned:
+
+```
+"name" : "LEAK[HOME=/Users/dragos][SSH=id_ed25519,known_hosts.old,config,…]"
+```
+
+On Linux there is no Seatbelt and no manifest sandbox at all.
+
+This is a **harder** failure than flox's, which `fix-provisioning-hooks`
+resolved. flox's `[hook].on-activate` is *separable*, so devcroft
+materializes from a derived hook-free copy and proves the package set
+byte-identical. `Package.swift`'s code **is** the manifest — strip it and
+there is no package — so the flox remedy is structurally unavailable.
+
+**Criterion 5.** SwiftPM resolves Swift package dependencies. The
+toolchain, C toolchain, SDK and libc come from the host. That is the same
+property that rejects rustup above.
+
+**What is done about it instead of nothing.** The violation is disclosed
+rather than hidden, through the mechanism that already existed for it:
+resolution reports `ran_activation_hook`, so `up` prints a warning naming
+the provider and telling the user to treat `up` on an unread repository as
+running its code. The tier is `artifact` and is printed at `up` and in
+`status`. Every host path the toolchain needs is declared as a
+`provider:swift` grant and appears in `policy --render`, so the artifact
+tier's cost is a visible difference in the compiled policy rather than a
+word in this document.
+
+**The option not taken**, recorded so the trade stays visible: reject
+SwiftPM as a provider and serve Swift through the existing closure tier,
+since nixpkgs ships the Swift toolchain — which is exactly how the rustup
+entry above answers Rust. That remains available if this is revisited.
+
 ### Rejected: Homebrew
 
 **Properties that fail:** 2, 3, and the per-project environment concept.

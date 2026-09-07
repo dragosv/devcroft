@@ -33,7 +33,7 @@
 
 use devcroft::config::parse;
 use devcroft::lifecycle::{StatePaths, UpOptions, UpOutcome, down};
-use devcroft::provider::{ProviderEntry, ProviderError, Resolution, ServiceSupport};
+use devcroft::provider::{ProviderEntry, ProviderError, Resolution, ServiceSupport, Tier};
 use devcroft::test_support::up_with_provider;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -94,6 +94,10 @@ impl ProviderEntry for BorrowedStoreRow {
 
     fn static_name(&self) -> &'static str {
         ROW_NAME
+    }
+
+    fn tier(&self) -> Tier {
+        Tier::Closure
     }
 }
 

@@ -13,11 +13,13 @@ mod capture;
 mod devbox;
 mod flox;
 mod nix;
+mod swift;
 mod validate;
 
 pub use devbox::DevboxProvider;
 pub use flox::FloxProvider;
 pub use nix::NixProvider;
+pub use swift::SwiftProvider;
 pub use validate::{normalize_provider_name, validate_provider};
 
 use std::collections::BTreeMap;
@@ -249,7 +251,7 @@ impl fmt::Display for ProviderError {
             ProviderError::Unknown { name } => {
                 write!(
                     f,
-                    "unknown provider `{name}`; devcroft supports `flox`, `nix`, and `devbox` in this release"
+                    "unknown provider `{name}`; devcroft supports `flox`, `nix`, `devbox`, and `swift` in this release"
                 )
             }
             ProviderError::MissingBinary { provider, hint } => write!(
@@ -271,6 +273,53 @@ impl fmt::Display for ProviderError {
 
 impl std::error::Error for ProviderError {}
 
+/// The guarantee a provider's resolved environment carries.
+///
+/// `docs/decisions.md` §1 has described these two tiers since before any
+/// provider existed, with the standing rule that "the tier is always
+/// visible in `status` and once at `up`" and that devcroft "does not
+/// market two different guarantees under one word". It was never a value
+/// in the code because flox, nix and devbox are all `Closure` and the
+/// distinction had nothing to distinguish. `add-swift-provider` is the
+/// first `Artifact` provider, which is what gave the sentence content.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Tier {
+    /// Identical behavior, transitive: the store hashes the entire
+    /// dependency graph including libc (flox, nix, devbox).
+    Closure,
+    /// Identical downloaded artifacts, host-linked runtime. Integrity of
+    /// what was fetched is guaranteed; behavior still depends on host
+    /// libraries, which such a provider must declare as its own grants
+    /// (`own-policy-baseline` — the baseline grants no host library
+    /// paths).
+    Artifact,
+}
+
+impl Tier {
+    /// The word `status` and `up` print.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Tier::Closure => "closure",
+            Tier::Artifact => "artifact",
+        }
+    }
+
+    /// The user-facing line. The artifact tier never prints as a bare
+    /// word: "artifact" names the tier without saying what it costs, and
+    /// the cost — a runtime linked against host libraries, so behavior
+    /// depends on the host — is the entire reason the two tiers are
+    /// distinguished at all.
+    pub fn describe(self) -> &'static str {
+        match self {
+            Tier::Closure => "closure (identical behavior, transitive)",
+            Tier::Artifact => {
+                "artifact (identical downloaded artifacts; runtime links against host \
+libraries, so behavior depends on this host)"
+            }
+        }
+    }
+}
+
 /// The validated, canonical provider names devcroft can actually resolve.
 /// Everything downstream that needs to run *a* provider (as opposed to
 /// merely validating the manifest's `env.provider` string) goes through
@@ -282,6 +331,7 @@ pub enum ProviderKind {
     Flox,
     Nix,
     Devbox,
+    Swift,
 }
 
 impl ProviderKind {
@@ -297,6 +347,7 @@ impl ProviderKind {
             "flox" => Ok(ProviderKind::Flox),
             "nix" => Ok(ProviderKind::Nix),
             "devbox" => Ok(ProviderKind::Devbox),
+            "swift" => Ok(ProviderKind::Swift),
             other => Err(ProviderError::Unknown {
                 name: other.to_string(),
             }),
@@ -314,6 +365,23 @@ impl ProviderKind {
             ProviderKind::Flox => "flox",
             ProviderKind::Nix => "nix",
             ProviderKind::Devbox => "devbox",
+            ProviderKind::Swift => "swift",
+        }
+    }
+
+    /// The guarantee tier this provider delivers.
+    ///
+    /// **A value the provider supplies, never inferred.** The obvious
+    /// shortcut — decide from whether `read_only_grants` contains a store
+    /// path — is a heuristic standing in for a fact the provider already
+    /// knows, and it would silently reclassify a closure provider whose
+    /// store lives somewhere unusual. `docs/decisions.md` §1 requires the
+    /// tier to be user-visible; that is only honest if it is also
+    /// authoritative.
+    pub fn tier(self) -> Tier {
+        match self {
+            ProviderKind::Flox | ProviderKind::Nix | ProviderKind::Devbox => Tier::Closure,
+            ProviderKind::Swift => Tier::Artifact,
         }
     }
 }
@@ -324,6 +392,7 @@ impl Provider for ProviderKind {
             ProviderKind::Flox => FloxProvider.resolve(project_root),
             ProviderKind::Nix => NixProvider.resolve(project_root),
             ProviderKind::Devbox => DevboxProvider.resolve(project_root),
+            ProviderKind::Swift => SwiftProvider.resolve(project_root),
         }
     }
 }
@@ -360,6 +429,11 @@ pub trait ProviderEntry {
     /// Content fingerprint of the environment definition, for staleness.
     fn fingerprint(&self, project_root: &Path) -> Result<String, ProviderError>;
 
+    /// The guarantee tier this provider delivers, so an injected
+    /// provider must answer it too rather than letting `up` re-derive it
+    /// from a name the seam exists to bypass.
+    fn tier(&self) -> Tier;
+
     /// The name compiled rules are attributed to (`Origin::Provider`), and
     /// the one `status` records. `&'static str` because `Origin` carries
     /// one and because it must be a name a real provider could produce —
@@ -379,6 +453,10 @@ impl ProviderEntry for ProviderKind {
 
     fn static_name(&self) -> &'static str {
         ProviderKind::static_name(*self)
+    }
+
+    fn tier(&self) -> Tier {
+        ProviderKind::tier(*self)
     }
 }
 
@@ -402,6 +480,7 @@ pub fn manifest_fingerprint(provider: &str, project_root: &Path) -> Result<Strin
         ProviderKind::Flox => flox::manifest_fingerprint(project_root),
         ProviderKind::Nix => nix::flake_fingerprint(project_root),
         ProviderKind::Devbox => devbox::devbox_fingerprint(project_root),
+        ProviderKind::Swift => swift::package_fingerprint(project_root),
     }
 }
 
@@ -413,4 +492,52 @@ pub fn is_stale(
     recorded: &str,
 ) -> Result<bool, ProviderError> {
     Ok(manifest_fingerprint(provider, project_root)? != recorded)
+}
+
+#[cfg(test)]
+mod tier_tests {
+    use super::*;
+
+    /// The tier is a fact each provider states, so the test states it
+    /// per provider rather than asserting a rule that would pass a
+    /// wrong implementation. `swift` being the only `Artifact` is the
+    /// whole content of the distinction today.
+    #[test]
+    fn every_provider_reports_its_tier() {
+        assert_eq!(ProviderKind::Flox.tier(), Tier::Closure);
+        assert_eq!(ProviderKind::Nix.tier(), Tier::Closure);
+        assert_eq!(ProviderKind::Devbox.tier(), Tier::Closure);
+        assert_eq!(ProviderKind::Swift.tier(), Tier::Artifact);
+    }
+
+    #[test]
+    fn swift_dispatches_by_name_and_keeps_its_own_origin_token() {
+        assert_eq!(
+            ProviderKind::from_name("swift").unwrap(),
+            ProviderKind::Swift
+        );
+        assert_eq!(ProviderKind::Swift.static_name(), "swift");
+    }
+
+    /// The artifact tier must never render as the bare word: "artifact"
+    /// names the tier without saying what it costs, and the cost — a
+    /// host-linked runtime — is the only reason the two tiers are
+    /// distinguished. A user comparing two sandboxes has to be able to
+    /// read the difference, not look it up.
+    #[test]
+    fn the_artifact_tier_names_its_cost_rather_than_only_itself() {
+        let described = Tier::Artifact.describe();
+        assert!(described.contains("artifact"));
+        assert!(
+            described.contains("host"),
+            "the artifact line must say the runtime is host-linked; got: {described}"
+        );
+        assert!(
+            !described.contains('\n'),
+            "the tier is one line; got: {described:?}"
+        );
+        assert!(Tier::Closure.describe().contains("closure"));
+        assert_eq!(Tier::Artifact.as_str(), "artifact");
+        assert_eq!(Tier::Closure.as_str(), "closure");
+    }
 }

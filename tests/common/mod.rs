@@ -589,6 +589,15 @@ impl devcroft::provider::ProviderEntry for NixFreeRow {
     fn static_name(&self) -> &'static str {
         "nix"
     }
+
+    /// The row stands in for a store-backed closure provider, so it
+    /// reports the tier such a provider reports. Answering it is not
+    /// optional: `ProviderEntry` requires it precisely so an injected
+    /// provider cannot leave `up` to re-derive a tier from a name the
+    /// seam exists to bypass.
+    fn tier(&self) -> devcroft::provider::Tier {
+        devcroft::provider::Tier::Closure
+    }
 }
 
 /// Runs `shell -c "exit 0"` and waits at most `timeout` for it.

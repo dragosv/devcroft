@@ -53,6 +53,70 @@ surfacing inside the sandbox and far from its cause, so
 `devcroft why --env GH_TOKEN` answers it directly and prints the line
 above when that is the answer.
 
+## Provisioning executes project code under the `swift` provider
+
+devcroft's two-phase rule trusts provisioning because it runs "pinned
+tooling from a lockfile, not project code". **For `env.provider = "swift"`
+that is false**, and unlike the flox case (`fix-provisioning-hooks`) it
+cannot be fixed by devcroft.
+
+`Package.swift` is a Swift program. SwiftPM compiles it with `swiftc` and
+runs the resulting binary to obtain the package description, and every
+entry point that yields the package graph does so. devcroft needs that
+description for exactly one decision — whether the package declares
+dependencies, and therefore whether `Package.resolved` is required — but
+one call is enough: the code runs host-side, before any restriction, with
+the invoking user's own network and filesystem access.
+
+SwiftPM sandboxes manifest evaluation on macOS and that blocks **writes,
+not reads**. Measured, with the sandbox on:
+
+```
+$ swift package dump-package
+  "name" : "LEAK[HOME=/Users/dragos][SSH=id_ed25519,known_hosts.old,config,…]"
+```
+
+On Linux there is no Seatbelt and no manifest sandbox at all.
+
+**Surfaced, not silent**: `up` prints a warning naming the provider and
+saying to treat `devcroft up` on a repository you have not read as running
+its code. `docs/decisions.md` §1 records why the provider ships anyway.
+The other three providers are unaffected and make no such disclosure —
+asserted by a control test, so the warning stays a decision rather than
+something devcroft prints unconditionally.
+
+## `swift build` cannot run inside a sandbox on macOS
+
+The `swift` provider resolves, compiles a correct policy, and injects
+`DEVELOPER_DIR`, `SDKROOT` and `TMPDIR` so nothing inside the sandbox has
+to perform a host lookup. The build then fails anyway:
+
+```
+swift: error: couldn't create cache file
+  '/var/folders/__/…/T/xcrun_db-…' (errno=Operation not permitted)
+```
+
+The Swift driver derives that path from `_CS_DARWIN_USER_TEMP_DIR` rather
+than `TMPDIR`, so injection does not move it, and the path **cannot be
+granted** — it is an instance of the symlinked-spelling defect below.
+`/var` is a symlink to `/private/var`; granting `/var/folders/…/T` renders
+correctly and enforces nothing, and granting the canonical
+`/private/var/folders/…/T` does not help because the toolchain opens the
+`/var/…` spelling. devcroft's own baseline shows the same thing:
+`/var/db/dyld` is granted in both spellings and `ls /var/db/dyld` is still
+refused inside.
+
+Writing to a project-local `TMPDIR` was implemented and kept — it is the
+correct behaviour regardless, since granting the host's per-user temp
+directory read-write would be provider resolution widening the policy
+outside the project root, which the architecture forbids. It simply is not
+sufficient on macOS.
+
+**Linux is unmeasured** and has neither `/var/folders` nor `xcrun`, so it
+is the more likely platform for this to work on. Until it is measured, the
+`swift` provider should be treated as bringing a sandbox *up* on macOS but
+not building in it.
+
 ## Port collisions: fixed
 
 `CompiledPolicy::wants_network_isolation` gives a sandbox its own network

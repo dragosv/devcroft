@@ -617,6 +617,25 @@ fn cli_init(args: &[String]) -> i32 {
             println!("devcroft: found flake.nix but no flake.lock.");
             println!("devcroft: run `nix flake lock` before `devcroft up`.");
         }
+    } else if cwd.join("Package.swift").is_file() {
+        // **Mentioned, never auto-selected**, unlike the three closure
+        // providers above. `swift` is the one provider devcroft ships that
+        // fails the qualification test (`docs/decisions.md` §1), so a
+        // generated manifest naming it would opt a user into a weaker
+        // guarantee and a host-side execution of their own repository's
+        // code without either being a decision they made. The generated
+        // manifest keeps the `flox` default; this only says the option
+        // exists, and what it costs.
+        println!("devcroft: found a SwiftPM package (Package.swift) but no .flox/ environment.");
+        println!(
+            "devcroft: `provider = \"swift\"` is available, at the artifact tier — the toolchain \
+             comes from this host, so behavior is not reproducible across machines, and resolving \
+             it runs Package.swift (a Swift program) on the host at every `up`."
+        );
+        println!(
+            "devcroft: for a reproducible Swift environment instead, run `flox init` and add the \
+             swift package."
+        );
     } else if cwd.join("rust-toolchain.toml").exists() {
         println!("devcroft: found rust-toolchain.toml but no .flox/ environment.");
         println!(
@@ -1885,6 +1904,23 @@ fn warn_if_activation_hook_ran(manifest: &devcroft::config::Manifest) {
     );
 }
 
+/// The guarantee tier, printed once at `up` and on every `status`
+/// (`docs/decisions.md` §1: "the tier is always visible in `status` and
+/// once at `up`", and devcroft "does not market two different guarantees
+/// under one word").
+///
+/// Unlike [`warn_if_activation_hook_ran`], this prints for every provider
+/// including the closure ones. The rule it serves is comparison — two
+/// sandboxes should be tellable apart without reading documentation — and
+/// a line that appeared only for the weaker tier would make its absence
+/// the signal, which is exactly the thing that goes unnoticed.
+fn print_tier(provider: &str) {
+    let Ok(kind) = devcroft::provider::ProviderKind::from_name(provider) else {
+        return;
+    };
+    println!("devcroft: guarantee: {}", kind.tier().describe());
+}
+
 /// Extracts `--name <value>`, returning the value and the remaining args.
 ///
 /// **An override, not a selector**, and the distinction is the whole point.
@@ -2012,6 +2048,7 @@ fn cli_up(args: &[String]) -> i32 {
                 devcroft::lifecycle::UpOutcome::Recreated => "recreated",
             };
             println!("devcroft: sandbox '{}' is {msg}.", manifest.sandbox.name);
+            print_tier(&manifest.env.provider);
             warn_if_activation_hook_ran(&manifest);
             0
         }
@@ -2121,6 +2158,9 @@ fn cli_status(args: &[String]) -> i32 {
 
 fn print_status(s: &devcroft::lifecycle::SandboxStatus, provider: &str) {
     println!("sandbox: {}", s.name);
+    if let Ok(kind) = devcroft::provider::ProviderKind::from_name(provider) {
+        println!("guarantee: {}", kind.tier().describe());
+    }
     match &s.keeper {
         devcroft::lifecycle::KeeperStatus::None => println!("keeper: not running"),
         devcroft::lifecycle::KeeperStatus::Stale => {

@@ -78,7 +78,18 @@ context: |
     evaluated by being built, and removed; LiteBox and a cross-platform
     sandbox SDK were both evaluated against the criteria and cleared
     neither.
-  - No artifact-tier provider is scheduled, and that is now a recorded
+  - **An artifact-tier provider now exists: `swift` (add-swift-provider).**
+    It is also the only provider devcroft ships that *fails* the six
+    criteria — 4 (activation cannot be captured without executing
+    `Package.swift`, which is a Swift program) and 5 (SwiftPM leaves the
+    toolchain, SDK and libc to the host). Shipped by owner decision over a
+    recorded objection; the violation is disclosed at every `up`, the tier
+    is printed at `up` and in `status`, and every host path it needs
+    renders with a `provider:swift` origin. See `docs/decisions.md` §1,
+    "Shipped despite failing the test". The paragraph below is the
+    reasoning that held before it, and is kept because it still governs
+    every *other* artifact-tier candidate:
+  - No other artifact-tier provider is scheduled, and that is a recorded
     decision rather than a scheduling accident: devcroft's product
     guarantee is the closure tier, the `Provider` seam stays generic,
     and an artifact provider must re-qualify under demonstrated demand
