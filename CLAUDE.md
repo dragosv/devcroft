@@ -9,7 +9,7 @@ tasks**, the last one being the publish itself. `src/` has real modules for `con
 `keeper`, `lifecycle`, `ssh`, `services`, plus the `devcroft` and `spike`
 binaries under `src/bin/`, backed by an integration `tests/` suite. Stack
 is Rust stable, edition 2024. `samples/` holds standalone example projects
-covering the four closure-tier providers —
+covering every implemented provider —
 `flox-clap-sample`, `flox-rustup-sample`, `nix-flake-sample`, and
 `devbox-citytime-sample` are Rust projects with their own `Cargo.toml`
 (each has an explicit `[workspace]` table so they don't get pulled into
@@ -65,6 +65,30 @@ that exposes *both* a hook-free way to get the environment
 runs it **inside** the sandbox rather than engineering around its
 absence the way `flox::derive_hook_free_env` does. The sample's
 `enterShell` writes a marker you can look for after `up`.
+
+`swift-spm-sample` (Swift/SwiftPM) is the odd one out on every axis, and
+each difference is deliberate rather than incidental — read its README
+before copying anything from it:
+
+- It is the only **artifact-tier** sample, and the only one whose
+  provider fails devcroft's own six-criterion test (criterion 3, no
+  content-addressed shared store). `up` and `status` print the guarantee.
+- It is **macOS-only**, because the provider is: `swift` resolves an
+  Xcode / Command Line Tools toolchain and fails closed elsewhere.
+- Its unguarded `import AppKit` is **load-bearing, not decoration.** The
+  provider refuses a package a closure provider could serve, so a
+  Foundation-only version of this sample would be correctly refused and
+  pointed at flox — swapping the import is the fastest way to see the
+  gate work.
+- Its `devcroft.toml` is the only sample manifest carrying
+  **machine-specific paths**: the two Darwin per-user directories from
+  `getconf DARWIN_USER_TEMP_DIR` / `DARWIN_USER_CACHE_DIR`. They are
+  declared rather than granted by the provider because they sit outside
+  the project root and need write access, and provider resolution must
+  not widen the policy.
+- Building it needs `swift build --disable-sandbox`, because SwiftPM
+  sandboxes its own manifest evaluation and Seatbelt does not nest.
+  Nothing is lost: devcroft's sandbox is already the stronger one.
 
 Remaining work (see `openspec/changes/add-mvp-core/tasks.md`): task 7.5,
 and only its last step — running `cargo publish` and reserving the npm
