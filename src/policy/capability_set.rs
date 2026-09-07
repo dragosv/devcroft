@@ -354,13 +354,53 @@ fn grant(
     project_root: &Path,
     mode: AccessMode,
 ) -> Result<CapabilitySet, CapabilitySetError> {
-    let Some(resolved) = resolve_and_validate(value, project_root)? else {
+    let Some(paths) = resolve_both(value, project_root)? else {
         return Ok(caps);
     };
-    Ok(if resolved.is_dir() {
-        caps.allow_path(resolved, mode)?
+
+    // The canonical spelling always gets a rule — this is what every
+    // grant has produced since the beginning, and nothing may regress.
+    let mut caps = allow_one(caps, &paths.canonical, mode)?;
+
+    // **And the literal spelling too, when they differ.** Additive on
+    // purpose: the canonical rule above is unchanged, and this only adds
+    // the path a process actually opens.
+    //
+    // Without it, a grant whose path crosses a symlink is unreachable by
+    // the name everything uses. Measured on macOS, where `/var` is a
+    // symlink to `/private/var`: with `/var/folders/…/T` granted,
+    // `ls /private/var/folders/…/T` succeeded and
+    // `ls /var/folders/…/T` was refused, and so was `ls -ld /var` —
+    // the symlink component itself could not even be stat'd, because
+    // canonicalizing the grant meant nothing ever named it.
+    //
+    // That is what broke `swift build` inside a sandbox: the Swift driver
+    // derives its temp directory from `_CS_DARWIN_USER_TEMP_DIR`, which
+    // is spelled `/var/folders/…`, and no grant devcroft could compile
+    // was reachable under that name.
+    //
+    // This is the fix `docs/known-gaps.md` already named — "closing this
+    // means emitting both there too — devcroft-side when it builds the
+    // grant list" — implemented rather than newly diagnosed. nono does
+    // the same for unix-socket grants and keys its macOS dedup on
+    // `original` for exactly this reason; devcroft canonicalizing first
+    // meant nono only ever saw one spelling.
+    if paths.literal != paths.canonical {
+        caps = allow_one(caps, &paths.literal, mode)?;
+    }
+    Ok(caps)
+}
+
+/// One `nono` grant, dispatched on what the path actually is.
+fn allow_one(
+    caps: CapabilitySet,
+    path: &Path,
+    mode: AccessMode,
+) -> Result<CapabilitySet, CapabilitySetError> {
+    Ok(if path.is_dir() {
+        caps.allow_path(path, mode)?
     } else {
-        caps.allow_file(resolved, mode)?
+        caps.allow_file(path, mode)?
     })
 }
 
@@ -382,6 +422,36 @@ fn resolve_and_validate(
     value: &str,
     project_root: &Path,
 ) -> Result<Option<PathBuf>, CapabilitySetError> {
+    Ok(resolve_both(value, project_root)?.map(|paths| paths.canonical))
+}
+
+/// A grant's path in both spellings: as the manifest (or baseline) wrote
+/// it, and as the filesystem resolves it.
+///
+/// **The two are not interchangeable on macOS, and collapsing them was a
+/// live defect.** nono keys its macOS dedup on the *original* path
+/// precisely because "Seatbelt matches rules against the literal path the
+/// process presents to the kernel, before symlink resolution. Two
+/// distinct symlinks that resolve to the same canonical target therefore
+/// each need their own allow rule and must not be collapsed."
+///
+/// devcroft used to canonicalize before handing the path to nono, which
+/// destroyed exactly the distinction nono preserves: nono only ever saw
+/// the canonical spelling, so only the canonical spelling got a rule.
+#[derive(Debug, Clone)]
+struct ResolvedPaths {
+    /// As written, after `~` and project-relative expansion — still
+    /// containing any symlink components.
+    literal: PathBuf,
+    /// Fully resolved. What the Linux mount view needs, and what the
+    /// symlink-escape guard judges.
+    canonical: PathBuf,
+}
+
+fn resolve_both(
+    value: &str,
+    project_root: &Path,
+) -> Result<Option<ResolvedPaths>, CapabilitySetError> {
     let (resolved, is_project_relative) = resolve(value, project_root);
     if !resolved.exists() {
         return Ok(None);
@@ -416,7 +486,10 @@ fn resolve_and_validate(
             });
         }
     }
-    Ok(Some(canonical_target))
+    Ok(Some(ResolvedPaths {
+        literal: resolved,
+        canonical: canonical_target,
+    }))
 }
 
 /// `~`, `~/rest`, an absolute path, or a project-relative path (`.`,
@@ -437,6 +510,84 @@ fn resolve(value: &str, project_root: &Path) -> (PathBuf, bool) {
             None if v.starts_with('/') => (PathBuf::from(v), false),
             None => (project_root.join(v), true),
         },
+    }
+}
+
+#[cfg(test)]
+mod symlink_spelling_tests {
+    use super::*;
+
+    /// **A grant whose path crosses a symlink must reach the sandbox in
+    /// both spellings.**
+    ///
+    /// devcroft canonicalizes grants, and used to hand only the canonical
+    /// form to nono — so on macOS, where `/tmp` and `/var` are symlinks, a
+    /// process opening the name everyone actually uses was refused by a
+    /// policy that displayed the grant as present. That is what stopped
+    /// `swift build` running in a sandbox: the Swift driver's scratch
+    /// directory is spelled `/var/folders/…`.
+    ///
+    /// Asserted on the grant list rather than through a live sandbox so it
+    /// runs everywhere, including Linux, where the two spellings simply
+    /// coincide and the extra rule is never emitted.
+    #[test]
+    fn a_grant_through_a_symlink_is_emitted_in_both_spellings() {
+        let dir = std::env::temp_dir().join(format!(
+            "devcroft-symlink-grant-{}-{}",
+            std::process::id(),
+            line!()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("real")).unwrap();
+        let link = dir.join("link");
+        let _ = std::fs::remove_file(&link);
+        std::os::unix::fs::symlink(dir.join("real"), &link).unwrap();
+
+        let via_link = resolve_both(&link.to_string_lossy(), &dir)
+            .unwrap()
+            .expect("the link resolves to an existing directory");
+
+        assert_eq!(
+            via_link.canonical,
+            dir.join("real").canonicalize().unwrap(),
+            "the canonical form must still be the real target"
+        );
+        assert_eq!(
+            via_link.literal,
+            link,
+            "and the literal form must survive as written — collapsing the two \
+             is exactly the defect this guards"
+        );
+        assert_ne!(
+            via_link.literal, via_link.canonical,
+            "fixture is not exercising anything if the two coincide"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The control: a path with no symlink in it yields one spelling, so
+    /// the fix adds no duplicate rules for the ordinary case.
+    #[test]
+    fn an_ordinary_grant_yields_a_single_spelling() {
+        let dir = std::env::temp_dir().join(format!(
+            "devcroft-plain-grant-{}-{}",
+            std::process::id(),
+            line!()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("plain")).unwrap();
+        let canonical_dir = dir.canonicalize().unwrap();
+
+        let paths = resolve_both(&canonical_dir.join("plain").to_string_lossy(), &canonical_dir)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            paths.literal, paths.canonical,
+            "no symlink means no second rule"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
 

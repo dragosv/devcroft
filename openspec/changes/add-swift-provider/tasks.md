@@ -295,12 +295,38 @@
 
 ## 8. What is left open
 
-- [ ] 8.1 **`swift build` does not yet work inside the sandbox.** Blocked on
-      the `/var` symlinked-spelling defect, which is devcroft's own and not
-      Apple's: the Swift driver opens `/var/folders/…/T` and a grant does not
-      cover the symlinked spelling of its own path on macOS. Closing that
-      defect closes this. There is no other platform to fall back to, since
-      the provider is macOS-only by design.
+- [x] 8.1 **`swift build` now works inside the sandbox.** Closed by fixing the
+      defect it was blocked on, which turned out to be devcroft's own and
+      general rather than Swift-specific.
+      → `policy::capability_set` canonicalized every grant before handing it to
+      nono, so on macOS — where `/tmp` and `/var` are symlinks — only the
+      canonical spelling ever got a rule. nono keys its macOS dedup on
+      `original` precisely so both survive; devcroft had removed the
+      distinction one layer earlier. Grants now emit the literal spelling too
+      when it differs, additively, so nothing that worked before can regress.
+      This is the fix `docs/known-gaps.md` already named ("emitting both there
+      too — devcroft-side when it builds the grant list"), implemented rather
+      than newly diagnosed. **I described it to the user as a misdiagnosis
+      before reading the entry's body; that was wrong, and the entry was
+      right.**
+      Two measurements kept: **Seatbelt does resolve symlinks when matching**
+      (a `deny` on the canonical path refuses the symlinked spelling too), so
+      the failure was never literal matching — it was that the symlink
+      component itself was ungranted, and `ls -ld /var` returned
+      `Operation not permitted`. And **`sandbox-exec` cannot probe this**: a
+      `(deny default)` profile hangs the process rather than failing it,
+      surviving `kill -9`, so the instrument has to be devcroft's own policy.
+      Three further requirements found by the build failing, now in the
+      sample's manifest and in `known-gaps`: the two Darwin per-user
+      directories granted read-write (no environment lever exists for either,
+      and the provider must not grant them itself — outside the project root,
+      write access, so it is the project's declaration to make);
+      `swift build --disable-sandbox`, because Seatbelt does not nest and
+      devcroft's sandbox is already the stronger one; and `/usr/share` +
+      `/var/db/timezone`, without which every formatted date is silently
+      empty.
+      Verified live: `Build complete!`, and `swift run` prints the AppKit
+      query from inside the sandbox.
 - [ ] 8.2 Reconcile the two branches' remaining artifacts. This branch now
       carries the corrected analysis and a working implementation;
       `origin/add-swift-provider` carries a `policy` delta spec, a `doctor`

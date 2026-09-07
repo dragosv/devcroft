@@ -4,5 +4,33 @@ name = "swift-spm-sample"
 [env]
 provider = "swift"
 
+[filesystem]
+# The Apple toolchain needs four things beyond the project root, and each
+# one is here because a build failed without it — not by guesswork.
+#
+# The two `/var/folders/...` paths are this user's Darwin per-user scratch
+# and cache directories. The Swift driver derives them from
+# `_CS_DARWIN_USER_TEMP_DIR` / `_CS_DARWIN_USER_CACHE_DIR`, which no
+# environment variable overrides, so they cannot be redirected into the
+# project the way `SWIFTPM_BUILD_DIR` can. clang's module cache lives in
+# the second one.
+#
+# **They are machine-specific**, which is why this file is a sample rather
+# than a template: the hash is derived from your uid. Get yours with
+#   getconf DARWIN_USER_TEMP_DIR
+#   getconf DARWIN_USER_CACHE_DIR
+#
+# They are declared here rather than granted by the provider on purpose:
+# they are outside the project root and need write access, and devcroft's
+# rule is that provider resolution must not widen the policy — a host
+# path like this is the project's decision to make, in a file its
+# reviewers can see.
+allow = [".", "/var/folders/__/fq4k19ks7t386s9tt8v6mpsc0000gn/T", "/var/folders/__/fq4k19ks7t386s9tt8v6mpsc0000gn/C"]
+
+# Foundation's DateFormatter reads locale and timezone data from these.
+# Without them the build and run both succeed and every formatted date
+# comes out empty, which is the kind of failure worth a grant.
+read = ["/usr/share", "/var/db/timezone"]
+
 [network]
 default = "deny"

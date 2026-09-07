@@ -79,44 +79,6 @@ observing that nothing was written there reads as "SwiftPM needs no home
 access" and is false — the real cache was written throughout. Compare
 mtimes instead.
 
-## `swift build` cannot run inside a sandbox on macOS
-
-The `swift` provider resolves, compiles a correct policy, and injects
-`DEVELOPER_DIR`, `SDKROOT`, `SWIFTPM_BUILD_DIR` and `TMPDIR` so nothing
-inside the sandbox has to perform a host lookup. The build then fails
-anyway:
-
-```
-swift: error: couldn't create cache file
-  '/var/folders/__/…/T/xcrun_db-…' (errno=Operation not permitted)
-```
-
-The Swift driver derives that path from `_CS_DARWIN_USER_TEMP_DIR` rather
-than `TMPDIR`, so injection does not move it, and the path **cannot be
-granted** — it is an instance of the symlinked-spelling defect below.
-`/var` is a symlink to `/private/var`; granting `/var/folders/…/T` renders
-correctly and enforces nothing, and granting the canonical
-`/private/var/folders/…/T` does not help because the toolchain opens the
-`/var/…` spelling. devcroft's own baseline shows the same thing:
-`/var/db/dyld` is granted in both spellings and `ls /var/db/dyld` is still
-refused inside.
-
-A project-local scratch directory was implemented and kept — it is correct
-regardless, since granting the host's per-user temp directory read-write
-would be provider resolution widening the policy outside the project root,
-which the architecture forbids. It simply is not sufficient here.
-
-**There is no other platform to fall back to.** The provider is macOS-only
-by design — it resolves an Xcode or Command Line Tools toolchain, and
-`provider = "swift"` fails closed elsewhere rather than silently resolving
-a different toolchain under the same name. So this gap is not "unmeasured
-on Linux", it is the provider's live limitation on the only platform it
-runs on: **`swift` brings a sandbox up, and does not build in it yet.**
-
-The remedy is a devcroft-side one and is not blocked on Apple: the
-toolchain needs the `/var/…` spelling to be reachable, which is the
-symlinked-spelling defect below. Closing that closes this.
-
 ## Port collisions: fixed
 
 `CompiledPolicy::wants_network_isolation` gives a sandbox its own network
@@ -415,35 +377,70 @@ not gated).
 named. Closing it properly would need something Seatbelt does not offer; the
 honest position is the declared degradation.
 
-## A grant does not cover the symlinked spelling of its own path on macOS
+## A grant did not cover the symlinked spelling of its own path on macOS — fixed
 
-devcroft canonicalizes every filesystem grant before handing it to the backend,
-so the compiled policy names `/private/tmp/proj` where the manifest (or the
-shell, or `$TMPDIR`) says `/tmp/proj`. On Linux that is invisible, because the
+devcroft canonicalized every filesystem grant before handing it to the backend,
+so the compiled policy named `/private/tmp/proj` where the manifest (or the
+shell, or `$TMPDIR`) said `/tmp/proj`. On Linux that is invisible, because the
 paths involved are not symlinks. On macOS `/tmp` → `/private/tmp` and `/var` →
-`/private/var` both are, and the sandbox denies the un-canonicalized spelling of
-a path it has granted.
+`/private/var` both are, and the sandbox denied the un-canonicalized spelling of
+a path it had granted.
 
-Measured, in a sandbox whose project root was granted normally:
+**Fixed by emitting both spellings**, which is exactly what this entry already
+proposed: `policy::capability_set`'s grant path now hands nono the literal path
+as well as the canonical one whenever they differ. The canonical rule is
+unchanged, so nothing that worked before can regress; the literal rule is
+additive. nono keys its macOS dedup on `original` precisely so the two survive
+as separate rules — devcroft canonicalizing first meant nono only ever saw one
+spelling, and the distinction it preserves had nothing to preserve.
 
-```
-touch /var/folders/…/T/proj/FILE      -> Operation not permitted
-touch /private/var/folders/…/T/proj/FILE -> OK
-touch FILE                             -> OK   (relative, from the project root)
-```
+Two measurements from the fix, worth keeping because one of them corrects a
+natural reading of the old title:
 
-Relative paths and canonical absolute paths both work, so this mostly bites
-projects living under `/tmp` or `$TMPDIR` — which is rare for real projects and
-common for test fixtures and generated scratch directories. A flox
-`[hook].on-activate` writing to `$TMPDIR/...` is the case that actually surfaced
-it.
+- **Seatbelt does resolve symlinks when matching.** A `deny` on the canonical
+  path refuses the symlinked spelling too. So the problem was never that
+  Seatbelt matches literally — it was that the *symlink component itself* was
+  never granted. With `/var/folders/…/T` granted and canonicalized away,
+  `ls -ld /var` returned `Operation not permitted`: nothing named `/var`, so it
+  could not even be stat'd, and no path through it could be resolved.
+- **`sandbox-exec` cannot be used to probe this.** A `(deny default)` profile
+  makes the process hang rather than fail, surviving a `kill -9` watchdog, so
+  hand-written probe profiles report nothing. The instrument has to be
+  devcroft's own compiled policy.
 
-The backend library already does dual-path emission for unix-socket grants
-(emitting both `original` and `resolved` so `/tmp/x.sock` and
-`/private/tmp/x.sock` both match); filesystem grants emit only the resolved form.
-Closing this means emitting both there too — devcroft-side when it builds the
-grant list, or upstream. Not attempted here; it belongs with
-`own-policy-baseline`, which owns what the compiled grant set contains.
+What it unblocked: `swift build` inside a sandbox on macOS, which failed because
+the Swift driver derives its scratch directory from `_CS_DARWIN_USER_TEMP_DIR`
+— spelled `/var/folders/…` — and no grant devcroft could compile was reachable
+under that name.
+
+## `swift build` in a sandbox needs three things the manifest must declare
+
+With the symlink fix above, `env.provider = "swift"` builds and runs on macOS.
+It is not automatic, and the three requirements are recorded here because each
+one was found by a build failing, not by reading documentation.
+
+**Two Darwin per-user directories, granted read-write in the manifest.** The
+Swift driver and clang derive them from `_CS_DARWIN_USER_TEMP_DIR` and
+`_CS_DARWIN_USER_CACHE_DIR`; no environment variable overrides either, so unlike
+`SWIFTPM_BUILD_DIR` they cannot be redirected into the project. They are
+machine-specific (`getconf DARWIN_USER_TEMP_DIR`, `getconf DARWIN_USER_CACHE_DIR`).
+
+devcroft deliberately does **not** grant them from the provider: they are outside
+the project root and need write access, and provider resolution must not widen
+the policy. A host-global scratch directory is the project's decision, declared
+in a file its reviewers can see.
+
+**`swift build --disable-sandbox`.** SwiftPM sandboxes its own manifest
+evaluation with `sandbox-exec`, and Seatbelt does not nest — inside devcroft that
+fails with `sandbox-exec: sandbox_apply: Operation not permitted`. Disabling it
+loses nothing: devcroft's sandbox is already applied and is strictly stronger
+than the write-and-network profile SwiftPM would have added.
+
+**`/usr/share` and `/var/db/timezone`, read-only**, if the project formats dates.
+Without them everything succeeds and every formatted date comes out empty —
+a silent wrong answer rather than an error.
+
+`samples/swift-spm-sample` carries all of this in a commented manifest.
 
 ## A home-relative `filesystem` grant has no effect on macOS
 

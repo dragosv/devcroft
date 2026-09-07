@@ -66,30 +66,34 @@ devcroft policy --render     # every host path shows a provider:swift origin
 devcroft status              # names the artifact tier
 ```
 
-## `swift build` does not work inside the sandbox on macOS
+## Building it
 
-Stated plainly because it is measured, and because a sample that quietly
-does not do what it shows is worse than one that says so.
-
-`devcroft up` works: the environment resolves, the policy compiles, and
-`DEVELOPER_DIR`, `SDKROOT` and `TMPDIR` are injected so nothing inside has
-to look them up. The **build** then fails:
-
-```
-swift: error: couldn't create cache file
-  '/var/folders/__/…/T/xcrun_db-…' (errno=Operation not permitted)
+```sh
+devcroft up
+devcroft exec -- swift build --disable-sandbox
+devcroft exec -- swift run --disable-sandbox citytime
 ```
 
-The Swift driver derives that path from `_CS_DARWIN_USER_TEMP_DIR`, not
-from `TMPDIR`, so injecting `TMPDIR` does not move it — and the path
-cannot be granted, because `/var` is a symlink to `/private/var` and **a
-grant does not cover the symlinked spelling of its own path on macOS**.
-That is a pre-existing published defect, not something this provider
-introduced: devcroft's own baseline grants `/var/db/dyld` in both
-spellings and `ls /var/db/dyld` is still refused inside a sandbox.
-Granting the canonical `/private/var/folders/…/T` does not help either,
-since the toolchain opens the `/var/…` spelling.
+**`--disable-sandbox` is required, and loses nothing.** SwiftPM sandboxes
+its own manifest evaluation with `sandbox-exec`, and Seatbelt does not
+nest — inside devcroft that fails with `sandbox-exec: sandbox_apply:
+Operation not permitted`. devcroft's sandbox is already applied and is
+strictly stronger than the write-and-network profile SwiftPM would have
+added, so turning SwiftPM's off removes a redundant inner layer rather
+than a protection.
 
-See `docs/known-gaps.md`. **Linux is unmeasured**, and has neither
-`/var/folders` nor `xcrun`, so it is the more likely platform for this to
-work on.
+**The two `/var/folders/...` grants in `devcroft.toml` are specific to
+this machine.** They are the Darwin per-user scratch and cache
+directories, derived from your uid; the Swift driver and clang find them
+through `_CS_DARWIN_USER_TEMP_DIR` / `_CS_DARWIN_USER_CACHE_DIR`, which no
+environment variable overrides. Replace them with your own:
+
+```sh
+getconf DARWIN_USER_TEMP_DIR
+getconf DARWIN_USER_CACHE_DIR
+```
+
+devcroft does not grant them from the provider on purpose: they are
+outside the project root and need write access, and provider resolution
+must not widen the policy. A host-global scratch directory is the
+project's decision, declared where its reviewers can see it.
