@@ -278,100 +278,94 @@ The same reasoning applies to any single-ecosystem toolchain manager —
 nvm, pyenv, rbenv, sdkman, ghcup. mise qualifies where they do not
 precisely because it spans ecosystems and can deliver utilities too.
 
-### Shipped despite failing the test: swift (SwiftPM)
+### Shipped despite failing the test: swift (Xcode / Command Line Tools)
 
-**Properties that fail:** 4 (capturable activation without executing
-project code) and 5 (completeness).
+**Property that fails:** 3 (immutable-capable shared store).
 
-This is the only provider devcroft ships that does not pass the six
-criteria, and it is recorded here rather than under a rejection heading so
-the test keeps meaning something. It was adopted by the project owner over
-a stated objection (`add-swift-provider`'s proposal.md).
+The only provider devcroft ships that does not pass all six criteria,
+recorded here rather than under a rejection so the test keeps meaning
+something. Adopted by owner decision.
 
-**Criterion 4, measured on Swift 6.1.2 / macOS 15.** `Package.swift` is
-not a manifest, it is a Swift program: SwiftPM compiles it with `swiftc`
-and runs the resulting binary to obtain the package description. Every
-entry point that yields the package graph — `dump-package`, `resolve`,
-`describe`, `build` — evaluates it. There is no counterpart to nix's
-`print-dev-env --json` or devbox's `shellenv --pure`.
+**Read the name carefully: this provider resolves a *toolchain*, not a
+package manager.** It is backed by Xcode or the Command Line Tools, and
+that distinction decides every verdict below. An earlier draft of this
+entry treated it as a SwiftPM provider and got two criteria wrong in
+opposite directions — worth recording, because the SwiftPM framing is the
+one that suggests itself first.
 
-SwiftPM sandboxes that evaluation on macOS, which is worth less than it
-sounds: it blocks **writes** and not **reads**. Manifest code exfiltrates
-host state through the package data itself. With the sandbox on, a plain
-`swift package dump-package` returned:
+| # | Criterion | Verdict |
+|---|---|---|
+| 1 | Declarative manifest | Pass, with a caveat — `Package.swift` is a file, but it is *executable Swift*. devcroft never opens it; see 4. |
+| 2 | Restorable lockfile | Pass — `Package.resolved` pins revisions by commit SHA. |
+| 3 | Immutable-capable shared store | **Fail** — see below. |
+| 4 | Capturable activation without executing project code | **Pass, and the cleanest of any provider** — see below. |
+| 5 | Completeness | Pass, unusually well — the CLT tree ships clang, the linker, the macOS SDK, system headers and the Swift runtime. It is *the* C toolchain on macOS, not one ecosystem's slice. Weakness: pinned by whatever the host installed, not by hash. |
+| 6 | Verifiable preconditions | Pass — `xcode-select -p`, `xcrun --show-sdk-path` and `swift -print-target-info` are all cheap and checkable at `up`. |
 
-```
-"name" : "LEAK[HOME=/Users/dragos][SSH=id_ed25519,known_hosts.old,config,…]"
-```
+**Criterion 4 passes because devcroft does less, not because SwiftPM
+offers more.** SwiftPM has no hook-free entry point: `swift package
+dump-package` looks like nix's `print-dev-env --json` and is not — it
+compiles and runs `Package.swift`, measured with a manifest carrying a
+side effect. Unlike flox there is nothing to strip, because
+`Package.swift` *is* the manifest.
 
-On Linux there is no Seatbelt and no manifest sandbox at all.
+And the sandbox SwiftPM applies to that evaluation does not help where it
+matters. Probed from inside a manifest: reads of `~/.ssh` and
+`/etc/passwd` **allowed**, exec **allowed**, writes and network denied. It
+is a write-and-network sandbox, not a read or exec sandbox.
 
-This is a **harder** failure than flox's, which `fix-provisioning-hooks`
-resolved. flox's `[hook].on-activate` is *separable*, so devcroft
-materializes from a derived hook-free copy and proves the package set
-byte-identical. `Package.swift`'s code **is** the manifest — strip it and
-there is no package — so the flox remedy is structurally unavailable.
+So devcroft does not evaluate the manifest at all. It resolves
+`DEVELOPER_DIR`, `SDKROOT` and the toolchain's `PATH` entry from
+`xcode-select` and `xcrun` — no project file is opened — and dependency
+resolution happens *inside* the sandbox at `swift build` time, confined by
+the policy the project declared. That is a stronger criterion-4 position
+than any other provider has: not "a hook-free entry point was found", but
+"no project file is read".
 
-**Criterion 5.** SwiftPM resolves Swift package dependencies. The
-toolchain, C toolchain, SDK and libc come from the host. That is the same
-property that rejects rustup above.
+**Criterion 3 is what it pays.** SwiftPM has no content-addressed shared
+store, so each sandbox resolves and builds its own `.build/checkouts`.
+"Eight sandboxes cost one build" — the closure tier's headline property —
+is false here: eight Swift sandboxes cost eight fetches and eight builds.
+Published in `docs/known-gaps.md` rather than buried.
 
-**What is done about it instead of nothing.** The violation is disclosed
-rather than hidden, through the mechanism that already existed for it:
-resolution reports `ran_activation_hook`, so `up` prints a warning naming
-the provider and telling the user to treat `up` on an unread repository as
-running its code. The tier is `artifact` and is printed at `up` and in
-`status`. Every host path the toolchain needs is declared as a
-`provider:swift` grant and appears in `policy --render`, so the artifact
-tier's cost is a visible difference in the compiled policy rather than a
-word in this document.
+**The tier is `artifact`, and it is visible in the linkage**: a trivial
+SwiftPM executable links `/usr/lib/libSystem.B.dylib`,
+`/usr/lib/libc++.1.dylib` and `/usr/lib/swift/libswiftCore.dylib` — host
+libraries, which per `own-policy-baseline` the baseline grants none of, so
+this provider declares them as `provider:swift` grants.
 
-**The option not taken as a blanket rule**, recorded so the trade stays
-visible: reject SwiftPM outright and serve all Swift through the closure
-tier, since nixpkgs ships the Swift toolchain — which is exactly how the
-rustup entry above answers Rust.
+**Scoped twice, because a failing-the-test provider is only justified
+where the alternative is nothing:**
 
-**It is now the rule for every project the closure tier can serve.** The
-provider refuses a package showing no Apple-platform dependency and names
-`nix`/`flox` instead, because for a portable package the weaker provider
-buys nothing and costs reproducibility, a hook-free activation, and the
-host-side execution above. `swift` is therefore scoped to the only case
-where the alternative is genuinely nothing: a package that cannot build
-without Apple frameworks.
+- **macOS only.** Swift exists on Linux; an Xcode-backed provider does
+  not, so `provider = "swift"` fails closed off macOS rather than silently
+  resolving a different toolchain under the same name.
+- **Only for projects a closure cannot serve.** A portable Swift package
+  builds fine from nix or flox, where it gets the closure tier and a
+  shared store. devcroft refuses `swift` for such a package and names the
+  alternative. Acceptance needs positive evidence: an Apple framework named
+  in `Package.swift`, an unguarded import of an Apple-only module, or an
+  Apple project artifact (`Info.plist`, entitlements, `.xcodeproj`, an
+  asset catalog). The third concerns the *deliverable* — a Mac app whose
+  Swift is entirely `Foundation` still cannot be produced by a Linux
+  closure.
 
-Acceptance requires positive evidence of one of three kinds: a linked Apple
-framework (including `-framework` passed through unsafe linker flags), an
-unguarded import of an Apple-only module, or an Apple project artifact —
-`Info.plist`, entitlements, `.xcodeproj`, an asset catalog.
+Three traps in that evidence, all measured, each of which would have made
+the gate useless:
 
-**The third is about the deliverable, not the source**, and it was added
-after the first two gave a wrong answer for a real class of project. A Mac
-application whose Swift is entirely `Foundation` still cannot be produced by
-a Linux closure: the app bundle, entitlements, code signature and
-`xcodebuild` are all Apple-side. Judging it by imports refused it and sent
-the user to flox, which can do none of those — a wrong refusal with no
-remedy, which is worse than the wrong acceptance this gate exists to
-prevent.
+- **`platforms: [.macOS(...)]` is not evidence.** It sets minimum versions
+  for Apple platforms and SwiftPM ignores it on Linux, so portable packages
+  declare it freely.
+- **`Foundation` and `Dispatch` are not Apple-only.** Both ship on Linux
+  via swift-corelibs; counting them qualifies every Swift package.
+- **A guarded import is not evidence.** `#if canImport(AppKit)` marks a
+  *portable* package with an Apple branch — exactly the closure tier's case.
 
-Two traps this had to avoid, both of which would have made the gate useless
-in opposite directions:
-
-- **`platforms: [.macOS(.v13)]` is not evidence.** It sets minimum versions
-  for Apple platforms and is ignored by SwiftPM on Linux, so thousands of
-  portable packages declare it. Accepting on it would narrow nothing.
-- **`Foundation` and `Dispatch` are not Apple-only.** Both ship on Linux via
-  swift-corelibs. Counting them would qualify essentially every Swift
-  package.
-
-An import inside `#if canImport(...)` is likewise not evidence: that is a
-*portable* package with an Apple branch, which is precisely the case the
-closure tier should get.
-
-**This is a heuristic, and criterion 6 is hostile to heuristics** — so the
-asymmetry is deliberate. A wrong refusal sends someone to a *better*
-provider and says exactly what it searched for; a wrong acceptance silently
-downgrades their guarantee and runs their code on the host. Only the second
-is a failure the user cannot see.
+**The gate is a heuristic and criterion 6 is hostile to heuristics**, so
+the asymmetry is deliberate: a wrong refusal sends someone to a *better*
+provider and names what was searched for, while a wrong acceptance
+silently downgrades their guarantee. Only the second is invisible to the
+user.
 
 ### Rejected: Homebrew
 

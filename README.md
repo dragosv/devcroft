@@ -269,10 +269,16 @@ you happen to have installed. There is no "just use the host" fallback, on
 purpose. Eight sandboxes of one project cost one build, because they share a
 single content-addressed store.
 
-A fourth, **swift**, is *artifact* tier and is the one exception to all of that.
-It is also **scoped to packages the other three cannot serve**: devcroft refuses
-it for a portable Swift package and points you at nix or flox, since those give
-you reproducibility and a hook-free `up` that this one cannot.
+A fourth, **swift**, is *artifact* tier and is the one exception. It resolves the
+Mac's own Xcode or Command Line Tools toolchain, so it runs **only on macOS** and
+what it builds depends on what that host installed. It is also **scoped to
+projects the other three cannot serve**: devcroft refuses it for a portable Swift
+package and points you at nix or flox.
+
+It buys that with a real cost, stated plainly: SwiftPM has no shared store, so
+eight Swift sandboxes cost eight builds rather than one. What it does *not* cost
+is your secrets — devcroft never evaluates `Package.swift`, which is a program,
+so `up` opens no project file at all.
 It resolves a SwiftPM project against the host's own toolchain, so two machines
 can behave differently from the same `Package.swift`, and resolving it **runs the
 project's code** — `Package.swift` is a Swift program SwiftPM compiles and

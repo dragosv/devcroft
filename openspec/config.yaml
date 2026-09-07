@@ -79,16 +79,18 @@ context: |
     sandbox SDK were both evaluated against the criteria and cleared
     neither.
   - **An artifact-tier provider now exists: `swift` (add-swift-provider).**
-    It is also the only provider devcroft ships that *fails* the six
-    criteria — 4 (activation cannot be captured without executing
-    `Package.swift`, which is a Swift program) and 5 (SwiftPM leaves the
-    toolchain, SDK and libc to the host). Shipped by owner decision over a
-    recorded objection; the violation is disclosed at every `up`, the tier
-    is printed at `up` and in `status`, and every host path it needs
-    renders with a `provider:swift` origin. See `docs/decisions.md` §1,
-    "Shipped despite failing the test". The paragraph below is the
-    reasoning that held before it, and is kept because it still governs
-    every *other* artifact-tier candidate:
+    Backed by Xcode / the Command Line Tools, not by SwiftPM — the
+    distinction decides its verdicts. macOS-only, fails closed elsewhere.
+    It is the only provider devcroft ships that fails the six criteria,
+    and it fails exactly one: **3, no content-addressed shared store**, so
+    eight Swift sandboxes cost eight builds. It passes 4 more cleanly than
+    any other provider, by opening no project file at all — `Package.swift`
+    is a program and devcroft never evaluates it. Scoped further to
+    projects a closure cannot serve, since a portable Swift package is
+    better off on nix or flox. See `docs/decisions.md` §1, "Shipped
+    despite failing the test". The paragraph below is the reasoning that
+    held before it, and is kept because it still governs every *other*
+    artifact-tier candidate:
   - No other artifact-tier provider is scheduled, and that is a recorded
     decision rather than a scheduling accident: devcroft's product
     guarantee is the closure tier, the `Provider` seam stays generic,

@@ -41,23 +41,38 @@ resolve dependency versions, or contact a package index.
 - **THEN** `up` fails at layer `provider` naming `swift package init` as
   the fix, distinct from a missing-toolchain failure
 
-### Requirement: swift resolution discloses that it executes project code
-The system SHALL report that resolving a `swift` environment executed the
-project's own code, because `Package.swift` is a program that SwiftPM
-compiles and runs to produce the package description, and no entry point
-exists that returns the package graph without doing so.
+### Requirement: swift resolution opens no project file
+The system SHALL resolve a `swift` environment from the host toolchain
+alone — `xcode-select`, `xcrun`, `swift -print-target-info` — and SHALL
+NOT read, open or evaluate `Package.swift` or any other project file
+during resolution.
 
-The report SHALL be unconditional for this provider and SHALL NOT depend
-on inspection of the manifest's contents.
+`Package.swift` is a Swift program that SwiftPM compiles and executes to
+produce the package description, and SwiftPM's own sandbox around that
+evaluation permits reads and exec. Dependency resolution therefore belongs
+inside the sandbox, at build time, under the policy the project declared.
 
-#### Scenario: The disclosure fires on every swift resolution
+#### Scenario: No execution disclosure is recorded
 - **WHEN** a `swift` environment is resolved
-- **THEN** the resolution records that project code ran during
-  provisioning, and `up` prints the warning naming the provider
+- **THEN** the resolution does not record that project code ran, and `up`
+  prints no execution warning
 
-#### Scenario: Other providers are unaffected
-- **WHEN** a `flox`, `nix`, or `devbox` environment is resolved
-- **THEN** no such disclosure is recorded, exactly as before this change
+#### Scenario: Resolution succeeds without a readable package graph
+- **WHEN** `Package.swift` declares dependencies with no `Package.resolved`
+- **THEN** resolution still succeeds, because devcroft materializes no
+  dependencies host-side
+
+### Requirement: swift runs only on macOS
+The system SHALL refuse `env.provider = "swift"` on any platform other
+than macOS, at layer `provider`, naming the platform. The provider
+resolves an Xcode or Command Line Tools toolchain; resolving a different
+toolchain under the same provider name would make one manifest mean two
+different guarantees on two machines.
+
+#### Scenario: Refused off macOS
+- **WHEN** a manifest declares `provider = "swift"` on Linux
+- **THEN** `up` fails at layer `provider` naming macOS and pointing at a
+  closure provider
 
 ### Requirement: swift is refused where a qualifying provider serves the project
 The system SHALL refuse `env.provider = "swift"` for a package that shows
@@ -109,22 +124,6 @@ SHALL state what evidence was searched for.
 - **WHEN** an Apple-only import or an Apple project artifact appears only
   under `.build/`
 - **THEN** the package is treated as portable and refused
-
-### Requirement: swift lockfile precondition
-The system SHALL require `Package.resolved` when, and only when, the
-package declares external dependencies, since SwiftPM does not create the
-file for a package that has none.
-
-#### Scenario: Dependencies without a lockfile are refused
-- **WHEN** `Package.swift` declares at least one dependency and
-  `Package.resolved` is absent
-- **THEN** `up` fails at layer `provider` naming `swift package resolve`
-  as the fix
-
-#### Scenario: A dependency-free package needs no lockfile
-- **WHEN** `Package.swift` declares no dependencies and
-  `Package.resolved` is absent
-- **THEN** resolution proceeds
 
 ### Requirement: swift declares no services
 The system SHALL report the `swift` provider as having no service

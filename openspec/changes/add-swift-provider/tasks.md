@@ -242,9 +242,71 @@
       Mac projects. A dangling `-framework` with no name after it is ignored
       rather than recorded as an empty framework.
 
-## 7. What is left open
+## 7. Reconcile with the prior analysis on `add-swift-provider`
 
-- [ ] 7.1 **Linux is unmeasured**, and it is the platform where this provider
-      is most likely to fully work: no `/var/folders`, no `xcrun`, no
-      `/var` → `/private/var` symlink. Until someone runs it there, the
-      honest claim is "brings a sandbox up on macOS, does not build in it".
+> Found only when the Swift work was being moved to its own branch:
+> `origin/add-swift-provider` already carried an analysis from 3-4 Sept,
+> with independent measurements of the same facts and a **different, better
+> conclusion**. Reconciled here rather than either branch silently winning.
+
+- [x] 7.1 Adopt the correct framing: the provider is **Xcode/CLT-backed, not
+      SwiftPM-backed**. Everything below follows from that one correction.
+- [x] 7.2 Correct the criteria verdicts. This work had claimed failures on 4
+      and 5; both were wrong.
+      → **5 passes, unusually well**: the CLT tree ships clang, the linker,
+      the macOS SDK, system headers and the Swift runtime — it is *the* C
+      toolchain on macOS, not one ecosystem's slice. **4 passes, and more
+      cleanly than any other provider.** The real failure is **3**, which this
+      work had not evaluated at all: SwiftPM has no content-addressed shared
+      store, so eight Swift sandboxes cost eight builds.
+- [x] 7.3 **Stop evaluating `Package.swift`.** The violation this change had
+      disclosed so carefully was avoidable, and the fix was to do less.
+      → `dump-package` is gone. It existed to learn whether the package
+      declared dependencies, so a lockfile could be required — but devcroft
+      materializes no dependencies host-side, so it never needed the package
+      graph. Removing it retires the execution *and* the lockfile precondition
+      together, and turns `ran_activation_hook` from `true` to `false`.
+      The e2e assertion is inverted rather than deleted: the disclosure's
+      **absence** is now the property, so a future change that starts reading
+      the package graph again fails a test instead of quietly giving up the
+      position.
+- [x] 7.4 Keep the framework signal without the execution: read
+      `.linkedFramework("X")` and `-framework` out of `Package.swift` **as
+      text**. Bounded and stated — a framework name computed during manifest
+      evaluation is missed, which is a false negative in a gate whose false
+      negatives send the user to a better provider.
+- [x] 7.5 Add platform gating: `swift` fails closed off macOS. Swift exists on
+      Linux; an Xcode-backed provider does not, and resolving silently under
+      the same name would make one manifest mean two guarantees.
+- [x] 7.6 Adopt the measured scratch lever. `SWIFTPM_BUILD_DIR` is honoured
+      for the scratch directory (verified by moving `.build` out of the
+      project); **nothing** is honoured for the cache — only `--cache-path`,
+      which devcroft cannot use because it injects an environment rather than
+      wrapping commands. Recorded as a gap rather than papered over.
+      Also recorded: **macOS resolves the home directory from the password
+      database, not `$HOME`**, so testing cache behaviour by redirecting
+      `HOME` measures nothing. That one produced a confident wrong answer
+      before it was caught.
+- [x] 7.7 Republish the docs against the corrected analysis: `decisions.md`
+      §1 rewritten around criterion 3, the "provisioning executes project
+      code" gap **removed from `known-gaps.md` because it is no longer true**,
+      and the no-shared-store cost published in its place. The macOS build gap
+      no longer claims Linux as a fallback, since the provider refuses Linux.
+
+## 8. What is left open
+
+- [ ] 8.1 **`swift build` does not yet work inside the sandbox.** Blocked on
+      the `/var` symlinked-spelling defect, which is devcroft's own and not
+      Apple's: the Swift driver opens `/var/folders/…/T` and a grant does not
+      cover the symlinked spelling of its own path on macOS. Closing that
+      defect closes this. There is no other platform to fall back to, since
+      the provider is macOS-only by design.
+- [ ] 8.2 Reconcile the two branches' remaining artifacts. This branch now
+      carries the corrected analysis and a working implementation;
+      `origin/add-swift-provider` carries a `policy` delta spec, a `doctor`
+      arm, and a dyld-shared-cache grant finding this branch has not adopted —
+      **`/usr/lib/libSystem.B.dylib` and friends do not exist as files** and
+      are served from the shared cache at
+      `/System/Volumes/Preboot/Cryptexes/OS/System/Library/dyld/`, so a grant
+      naming them grants nothing and fails silently. Worth taking before this
+      is called done.

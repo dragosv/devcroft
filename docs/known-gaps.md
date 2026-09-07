@@ -53,43 +53,38 @@ surfacing inside the sandbox and far from its cause, so
 `devcroft why --env GH_TOKEN` answers it directly and prints the line
 above when that is the answer.
 
-## Provisioning executes project code under the `swift` provider
+## Eight Swift sandboxes cost eight builds
 
-devcroft's two-phase rule trusts provisioning because it runs "pinned
-tooling from a lockfile, not project code". **For `env.provider = "swift"`
-that is false**, and unlike the flox case (`fix-provisioning-hooks`) it
-cannot be fixed by devcroft.
+The closure tier's headline property — "eight sandboxes of one project
+cost one build, because they share a content-addressed store" — is **false
+for `env.provider = "swift"`**.
 
-`Package.swift` is a Swift program. SwiftPM compiles it with `swiftc` and
-runs the resulting binary to obtain the package description, and every
-entry point that yields the package graph does so. devcroft needs that
-description for exactly one decision — whether the package declares
-dependencies, and therefore whether `Package.resolved` is required — but
-one call is enough: the code runs host-side, before any restriction, with
-the invoking user's own network and filesystem access.
+SwiftPM has no shared store. Each sandbox resolves and builds its own
+`.build/checkouts`, so N sandboxes of one Swift project cost N fetches and
+N builds. This is criterion 3 of `docs/decisions.md` §1 failing, and it is
+the price that entry records the provider paying in exchange for criterion
+4 — devcroft never evaluating `Package.swift`.
 
-SwiftPM sandboxes manifest evaluation on macOS and that blocks **writes,
-not reads**. Measured, with the sandbox on:
+There is no partial mitigation available through environment injection.
+Measured: SwiftPM honours `SWIFTPM_BUILD_DIR` for the scratch directory
+(verified by moving `.build` out of the project entirely), but honours
+**nothing** for the cache — `strings` over `swift-package` yields no cache
+equivalent, and only `--cache-path` works. devcroft injects an environment
+rather than wrapping commands, so the cache stays where SwiftPM puts it.
 
-```
-$ swift package dump-package
-  "name" : "LEAK[HOME=/Users/dragos][SSH=id_ed25519,known_hosts.old,config,…]"
-```
-
-On Linux there is no Seatbelt and no manifest sandbox at all.
-
-**Surfaced, not silent**: `up` prints a warning naming the provider and
-saying to treat `devcroft up` on a repository you have not read as running
-its code. `docs/decisions.md` §1 records why the provider ships anyway.
-The other three providers are unaffected and make no such disclosure —
-asserted by a control test, so the warning stays a decision rather than
-something devcroft prints unconditionally.
+A measurement hazard worth repeating, because it produces a confident
+wrong answer: **macOS resolves the home directory from the password
+database, not from `$HOME`**. Pointing `HOME` at an empty directory and
+observing that nothing was written there reads as "SwiftPM needs no home
+access" and is false — the real cache was written throughout. Compare
+mtimes instead.
 
 ## `swift build` cannot run inside a sandbox on macOS
 
 The `swift` provider resolves, compiles a correct policy, and injects
-`DEVELOPER_DIR`, `SDKROOT` and `TMPDIR` so nothing inside the sandbox has
-to perform a host lookup. The build then fails anyway:
+`DEVELOPER_DIR`, `SDKROOT`, `SWIFTPM_BUILD_DIR` and `TMPDIR` so nothing
+inside the sandbox has to perform a host lookup. The build then fails
+anyway:
 
 ```
 swift: error: couldn't create cache file
@@ -106,16 +101,21 @@ correctly and enforces nothing, and granting the canonical
 `/var/db/dyld` is granted in both spellings and `ls /var/db/dyld` is still
 refused inside.
 
-Writing to a project-local `TMPDIR` was implemented and kept — it is the
-correct behaviour regardless, since granting the host's per-user temp
-directory read-write would be provider resolution widening the policy
-outside the project root, which the architecture forbids. It simply is not
-sufficient on macOS.
+A project-local scratch directory was implemented and kept — it is correct
+regardless, since granting the host's per-user temp directory read-write
+would be provider resolution widening the policy outside the project root,
+which the architecture forbids. It simply is not sufficient here.
 
-**Linux is unmeasured** and has neither `/var/folders` nor `xcrun`, so it
-is the more likely platform for this to work on. Until it is measured, the
-`swift` provider should be treated as bringing a sandbox *up* on macOS but
-not building in it.
+**There is no other platform to fall back to.** The provider is macOS-only
+by design — it resolves an Xcode or Command Line Tools toolchain, and
+`provider = "swift"` fails closed elsewhere rather than silently resolving
+a different toolchain under the same name. So this gap is not "unmeasured
+on Linux", it is the provider's live limitation on the only platform it
+runs on: **`swift` brings a sandbox up, and does not build in it yet.**
+
+The remedy is a devcroft-side one and is not blocked on Apple: the
+toolchain needs the `/var/…` spelling to be reachable, which is the
+symlinked-spelling defect below. Closing that closes this.
 
 ## Port collisions: fixed
 

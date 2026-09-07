@@ -21,14 +21,14 @@ is the gate working, not a bug.
 
 ## What this sample demonstrates
 
-- The `swift` provider resolving a real package host-side at `up`.
+- The `swift` provider resolving the host's Xcode / Command Line Tools
+  toolchain at `up`, without opening any file in this package.
 - The **artifact** tier: `devcroft up` and `devcroft status` both print
   the guarantee, and it is not the same guarantee the flox, nix and
   devbox samples get.
-- The conditional lockfile rule: this package declares no dependencies,
-  so it has no `Package.resolved`, and devcroft accepts that. Add a
-  dependency without running `swift package resolve` and `up` refuses,
-  naming that command.
+- Every host path the toolchain needs rendered with a `provider:swift`
+  origin in `devcroft policy --render` — the artifact tier's cost made
+  visible in the compiled policy rather than described in prose.
 
 ## What this sample does *not* demonstrate, deliberately
 
@@ -38,12 +38,25 @@ comes from the host, so two machines with different toolchains produce
 different behavior from the same `Package.swift` — that is what the
 artifact tier means, and why `up` says so.
 
-**A safe `up`.** `Package.swift` is a Swift program. SwiftPM compiles and
-runs it to produce the package description, and devcroft must do that to
-know whether a lockfile is required. `devcroft up` therefore prints a
-warning naming this provider, and you should treat `up` on a Swift
-repository you have not read as running its code. See
-`docs/known-gaps.md`.
+**A shared store.** SwiftPM has no content-addressed store, so eight
+sandboxes of this project cost eight fetches and eight builds — not the
+one build the flox, nix and devbox samples get. That is criterion 3 of
+`docs/decisions.md` §1 failing, and it is what this provider pays in
+exchange for never evaluating `Package.swift`.
+
+## What it does *not* cost: your secrets
+
+Worth stating because the obvious implementation gets it wrong.
+`Package.swift` is a Swift program — SwiftPM compiles and runs it to
+produce the package description, and its own sandbox around that
+evaluation allows reads and exec, denying only writes and network. A
+provider that called `swift package dump-package` at `up` would run this
+repository's code on your host with your full read access.
+
+devcroft does not. It resolves the *toolchain* (`xcode-select`, `xcrun`)
+and opens no project file at all; dependency resolution happens inside the
+sandbox when you run `swift build`. `up` on a Swift repository you have
+not read does not execute it.
 
 ## Running it
 
