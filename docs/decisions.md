@@ -997,6 +997,44 @@ proposed again:
   separation ever becomes the deciding requirement, that entry is where
   the argument reopens, not this one.
 
+  **Do not reject it for the wrong reason.** The obvious objection is
+  that Apple's hypervisor APIs need a signing entitlement and devcroft
+  ships an unsigned binary. Measured on macOS 15 / arm64, and it is not
+  true as stated:
+
+  ```
+  hv_vm_create() unsigned                       -> 0xfae94007 FAIL
+  hv_vm_create() + com.apple.security.hypervisor
+                 signed ad-hoc (codesign -s -)  -> 0x0 SUCCESS
+  ```
+
+  `com.apple.security.hypervisor` is honoured under an **ad-hoc**
+  signature, with no Apple developer account. What it does require is a
+  post-build `codesign` step, which `cargo install` does not run — so the
+  real constraint is *distribution*, not capability, and it is answerable
+  by a Homebrew formula or an npm postinstall. (Only the Hypervisor
+  entitlement was measured; `com.apple.security.virtualization`, which
+  the higher-level Virtualization.framework needs, was not.)
+
+  Three reasons that do hold, and they are about fit rather than
+  permission:
+
+  - **`Hypervisor.framework` "directly" means writing a VMM.**
+    `hv_vm_create` gives a CPU and memory: no devices, no virtio, no
+    block device, no network, no filesystem sharing, no bootloader.
+    libkrun *is* that layer, which is why it is what this document
+    evaluated rather than the raw framework.
+  - **The guest would be Linux, and that removes the toolchain on the
+    platform that needs it most.** Xcode, `swift`, `codesign` and the
+    macOS SDK do not run in a Linux VM, so the `swift` provider — the one
+    provider that exists *because* it is macOS-native — could not run
+    inside one. Port separation would be bought by giving up the thing
+    being sandboxed.
+  - **The shared filesystem becomes virtiofs.** devcroft's proposition is
+    the project's real directory on the real filesystem; a VM makes it a
+    share, with different semantics and a performance cost. That is the
+    same objection the libkrun entry above already records.
+
 The tier-dependence this entry used to describe is worth keeping as history,
 because getting it wrong cost a correction once. The hardened tier's port
 separation never came from gVisor's netstack — it came from the network
