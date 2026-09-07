@@ -1069,7 +1069,7 @@ fn init_keeps_flox_for_a_portable_swift_package() {
 
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(
-        stdout.contains("nothing Apple-only"),
+        stdout.contains("no sign that it needs"),
         "init must say why it did not pick swift; got {stdout:?}"
     );
 
@@ -1100,6 +1100,34 @@ fn init_keeps_flox_when_the_apple_import_is_guarded() {
         devcroft::config::parse(&std::fs::read_to_string(dir.join("devcroft.toml")).unwrap())
             .unwrap();
     assert_eq!(manifest.env.provider, "flox");
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A Mac app whose Swift is entirely portable still needs Apple platforms
+/// to be *produced*, so `init` selects `swift` on the project artifact —
+/// the case that a source-only rule got wrong.
+#[test]
+fn init_selects_swift_for_an_apple_deliverable_with_portable_sources() {
+    let dir = scratch_project("swiftbundle");
+    std::fs::write(
+        dir.join("Package.swift"),
+        "// swift-tools-version:5.9\nlet package = 0\n",
+    )
+    .unwrap();
+    std::fs::create_dir_all(dir.join("Sources/x")).unwrap();
+    std::fs::write(dir.join("Sources/x/main.swift"), "import Foundation\n").unwrap();
+    std::fs::write(dir.join("Info.plist"), "<plist/>").unwrap();
+
+    let out = run(&dir, &["init"]);
+    assert!(out.status.success(), "{out:?}");
+    let (manifest, _) =
+        devcroft::config::parse(&std::fs::read_to_string(dir.join("devcroft.toml")).unwrap())
+            .unwrap();
+    assert_eq!(
+        manifest.env.provider, "swift",
+        "an Info.plist means the deliverable is an Apple bundle, which no closure builds"
+    );
 
     let _ = std::fs::remove_dir_all(&dir);
 }

@@ -339,9 +339,22 @@ host-side execution above. `swift` is therefore scoped to the only case
 where the alternative is genuinely nothing: a package that cannot build
 without Apple frameworks.
 
-Acceptance requires positive evidence — a linked Apple framework, or an
-unguarded import of an Apple-only module. Two traps this had to avoid, both
-of which would have made the gate useless in opposite directions:
+Acceptance requires positive evidence of one of three kinds: a linked Apple
+framework (including `-framework` passed through unsafe linker flags), an
+unguarded import of an Apple-only module, or an Apple project artifact —
+`Info.plist`, entitlements, `.xcodeproj`, an asset catalog.
+
+**The third is about the deliverable, not the source**, and it was added
+after the first two gave a wrong answer for a real class of project. A Mac
+application whose Swift is entirely `Foundation` still cannot be produced by
+a Linux closure: the app bundle, entitlements, code signature and
+`xcodebuild` are all Apple-side. Judging it by imports refused it and sent
+the user to flox, which can do none of those — a wrong refusal with no
+remedy, which is worse than the wrong acceptance this gate exists to
+prevent.
+
+Two traps this had to avoid, both of which would have made the gate useless
+in opposite directions:
 
 - **`platforms: [.macOS(.v13)]` is not evidence.** It sets minimum versions
   for Apple platforms and is ignored by SwiftPM on Linux, so thousands of

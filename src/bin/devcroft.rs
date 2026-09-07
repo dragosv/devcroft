@@ -646,8 +646,9 @@ fn cli_init(args: &[String]) -> i32 {
         // is correct, but meeting it after `init` reported success is a
         // worse way to learn it.
         println!(
-            "devcroft: found a SwiftPM package (Package.swift) that imports nothing \
-             Apple-only."
+            "devcroft: found a SwiftPM package (Package.swift) with no sign that it needs \
+             Apple platforms — no Apple-only import, no Info.plist, entitlements, \
+             .xcodeproj or asset catalog."
         );
         println!(
             "devcroft: a closure provider serves it better (reproducible across machines, \
@@ -655,8 +656,8 @@ fn cli_init(args: &[String]) -> i32 {
              `provider = \"flox\"` — run `flox init` and add the swift package."
         );
         println!(
-            "devcroft: `provider = \"swift\"` is for packages that cannot build without \
-             Apple frameworks; devcroft refuses it for this one."
+            "devcroft: `provider = \"swift\"` is for projects that cannot be built or \
+             produced without Apple platforms; devcroft refuses it for this one."
         );
     } else if has_swift_package {
         // Selected, and therefore disclosed *more* loudly rather than

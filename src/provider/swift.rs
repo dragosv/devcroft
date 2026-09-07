@@ -281,13 +281,36 @@ pub(super) fn parse_package_description(raw: &[u8]) -> Result<PackageDescription
                 continue;
             };
             for setting in settings {
-                if let Some(name) = setting
-                    .get("kind")
-                    .and_then(|k| k.get("linkedFramework"))
+                let Some(kind) = setting.get("kind") else {
+                    continue;
+                };
+                if let Some(name) = kind
+                    .get("linkedFramework")
                     .and_then(|f| f.get("_0"))
                     .and_then(|n| n.as_str())
                 {
                     linked_frameworks.push(name.to_string());
+                }
+                // `.unsafeFlags(["-framework", "Security"])` is the same
+                // evidence spelled differently, and packages reaching a
+                // non-GUI Apple framework use it often — `.linkedFramework`
+                // is the tidy spelling, not the only one. Measured shape:
+                //   {"kind": {"unsafeFlags": {"_0": ["-framework", "Security"]}}}
+                if let Some(flags) = kind
+                    .get("unsafeFlags")
+                    .and_then(|f| f.get("_0"))
+                    .and_then(|a| a.as_array())
+                {
+                    let mut it = flags.iter().filter_map(|v| v.as_str());
+                    while let Some(flag) = it.next() {
+                        if flag == "-framework" {
+                            if let Some(name) = it.next() {
+                                linked_frameworks.push(name.to_string());
+                            }
+                        } else if let Some(name) = flag.strip_prefix("-framework=") {
+                            linked_frameworks.push(name.to_string());
+                        }
+                    }
                 }
             }
         }
@@ -584,8 +607,57 @@ pub(super) struct AppleImport {
     pub(super) file: String,
 }
 
-/// Scan the package's Swift sources for imports of Apple-only modules
-/// that are **not** inside a conditional-compilation block.
+/// Files that only exist in a project building an Apple deliverable.
+///
+/// **These are evidence about the *product*, not the source**, and that
+/// distinction is why they were added. A Mac application whose Swift is
+/// entirely `Foundation` still cannot be produced by a Linux closure: the
+/// app bundle, the entitlements, the code signature and `xcodebuild` are
+/// all Apple-side. Judging such a project only by its imports refused it
+/// and sent the user to flox, which cannot sign code or build a bundle —
+/// a wrong refusal with no remedy.
+///
+/// Matched by file name or extension, so this stays a filesystem check:
+/// no parsing, no execution, cheap enough for `init` to run.
+fn is_apple_project_artifact(name: &str) -> bool {
+    const APPLE_EXTENSIONS: &[&str] = &[
+        ".entitlements",
+        ".xcodeproj",
+        ".xcworkspace",
+        ".xcassets",
+        ".storyboard",
+        ".xib",
+        ".xcconfig",
+        ".appex",
+    ];
+    name == "Info.plist"
+        || name == "PrivacyInfo.xcprivacy"
+        || APPLE_EXTENSIONS.iter().any(|e| name.ends_with(e))
+}
+
+/// Everything the filesystem says about whether this package needs Apple
+/// platforms.
+///
+/// Collected in one walk because both halves answer the same question and
+/// both are needed by the same two callers (`up`'s gate, and `init`).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(super) struct AppleEvidence {
+    /// Unguarded imports of Apple-only modules — the source needs Apple.
+    pub(super) imports: Vec<AppleImport>,
+    /// Apple project artifacts — the *deliverable* needs Apple, even where
+    /// the source would compile anywhere.
+    pub(super) artifacts: Vec<String>,
+}
+
+impl AppleEvidence {
+    pub(super) fn is_empty(&self) -> bool {
+        self.imports.is_empty() && self.artifacts.is_empty()
+    }
+}
+
+/// Scan the package for evidence that it needs Apple platforms: imports
+/// of Apple-only modules that are **not** inside a conditional-compilation
+/// block, and Apple project artifacts.
 ///
 /// **The guard test is the difference between "needs macOS" and "supports
 /// macOS"**, and getting it wrong in either direction breaks the gate.
@@ -612,8 +684,8 @@ pub(super) struct AppleImport {
 /// Reads no more than the package's own sources, executes nothing, and is
 /// bounded by the file tree — so unlike the `dump-package` call above it
 /// adds no new exposure.
-pub(super) fn scan_apple_only_imports(project_root: &Path) -> Vec<AppleImport> {
-    let mut found = Vec::new();
+pub(super) fn scan_apple_evidence(project_root: &Path) -> AppleEvidence {
+    let mut evidence = AppleEvidence::default();
     let mut stack = vec![project_root.to_path_buf()];
     while let Some(dir) = stack.pop() {
         let Ok(entries) = std::fs::read_dir(&dir) else {
@@ -623,6 +695,14 @@ pub(super) fn scan_apple_only_imports(project_root: &Path) -> Vec<AppleImport> {
             let path = entry.path();
             let name = entry.file_name();
             let name = name.to_string_lossy();
+            if is_apple_project_artifact(&name) {
+                evidence.artifacts.push(path.display().to_string());
+                // An `.xcodeproj` is a directory; recording it is enough,
+                // and descending into it would add nothing but noise.
+                if path.is_dir() {
+                    continue;
+                }
+            }
             if path.is_dir() {
                 // `.build` holds checked-out dependency sources, whose
                 // imports say nothing about *this* package's platform
@@ -634,17 +714,25 @@ pub(super) fn scan_apple_only_imports(project_root: &Path) -> Vec<AppleImport> {
                 stack.push(path);
             } else if path.extension().is_some_and(|e| e == "swift") {
                 if let Ok(text) = std::fs::read_to_string(&path) {
-                    collect_unguarded_imports(&text, &path.display().to_string(), &mut found);
+                    collect_unguarded_imports(
+                        &text,
+                        &path.display().to_string(),
+                        &mut evidence.imports,
+                    );
                 }
             }
         }
     }
-    found.sort_by(|a, b| (&a.module, &a.file).cmp(&(&b.module, &b.file)));
-    found.dedup();
-    found
+    evidence
+        .imports
+        .sort_by(|a, b| (&a.module, &a.file).cmp(&(&b.module, &b.file)));
+    evidence.imports.dedup();
+    evidence.artifacts.sort();
+    evidence.artifacts.dedup();
+    evidence
 }
 
-/// The line-by-line half of [`scan_apple_only_imports`], separated so it
+/// The line-by-line half of [`scan_apple_evidence`], separated so it
 /// can be tested on text without a file tree.
 pub(super) fn collect_unguarded_imports(text: &str, file: &str, out: &mut Vec<AppleImport>) {
     let mut guard_depth = 0usize;
@@ -713,7 +801,18 @@ pub(super) fn collect_unguarded_imports(text: &str, file: &str, out: &mut Vec<Ap
 ///
 /// - a linked Apple framework, which is conclusive; or
 /// - an unguarded import of an Apple-only module, which cannot compile on
-///   Linux.
+///   Linux; or
+/// - an Apple project artifact — `Info.plist`, `.entitlements`,
+///   `.xcodeproj`, an asset catalog.
+///
+/// **The third is about the deliverable rather than the source**, and it
+/// was added because the first two alone gave a wrong answer for a real
+/// class of project: a Mac application whose Swift is entirely
+/// `Foundation` still cannot be produced by a Linux closure, because the
+/// app bundle, entitlements, code signature and `xcodebuild` are all
+/// Apple-side. Judging it by imports refused it and sent the user to flox,
+/// which cannot sign code or build a bundle — a wrong refusal with no
+/// remedy, which is the worst kind.
 ///
 /// **`platforms:` is deliberately not evidence**, and this is the subtlety
 /// that would otherwise make the gate useless. `platforms: [.macOS(.v13)]`
@@ -737,24 +836,24 @@ fn ensure_macos_dependent(
     if !description.linked_frameworks.is_empty() {
         return Ok(());
     }
-    let imports = scan_apple_only_imports(project_root);
-    if !imports.is_empty() {
+    if !scan_apple_evidence(project_root).is_empty() {
         return Ok(());
     }
     Err(ProviderError::CoveredByQualifiedProvider {
         provider: "swift",
         reason: format!(
-            "nothing in this package requires Apple platforms, so a closure-tier provider \
+            "nothing in this project requires Apple platforms, so a closure-tier provider \
              covers it — and covers it better (reproducible across machines, and `up` does \
-             not run Package.swift on the host). devcroft looked for a linked Apple \
-             framework and for an unguarded `import` of an Apple-only module ({} of them, \
-             including AppKit, UIKit, SwiftUI and Metal) under {}, and found neither; note \
-             that `platforms: [.macOS(...)]` is not evidence, since SwiftPM ignores it on \
-             Linux. Use `provider = \"nix\"` or `provider = \"flox\"` with the swift \
-             package. If this project really is macOS-only, that is a gap in this check \
+             not run Package.swift on the host). devcroft looked under {} for a linked Apple \
+             framework, an unguarded `import` of an Apple-only module ({} of them, including \
+             AppKit, SwiftUI, Metal and Security), and Apple project artifacts (Info.plist, \
+             .entitlements, .xcodeproj, .xcassets), and found none; note that \
+             `platforms: [.macOS(...)]` is not evidence, since SwiftPM ignores it on Linux. \
+             Use `provider = \"nix\"` or `provider = \"flox\"` with the swift package. If \
+             this project really does need Apple platforms, that is a gap in this check \
              worth reporting rather than working around",
-            APPLE_ONLY_MODULES.len(),
-            project_root.display()
+            project_root.display(),
+            APPLE_ONLY_MODULES.len()
         ),
     })
 }
@@ -950,6 +1049,35 @@ mod tests {
             ]}]}"#;
         let d = parse_package_description(raw).unwrap();
         assert_eq!(d.linked_frameworks, vec!["AppKit", "Metal"]);
+    }
+
+    /// `-framework X` through `unsafeFlags` is the same evidence as
+    /// `.linkedFramework`, and packages reaching a non-GUI Apple framework
+    /// use it often enough that missing it would refuse real Mac projects.
+    #[test]
+    fn frameworks_linked_through_unsafe_flags_are_read_too() {
+        let raw = br#"{"dependencies": [], "targets": [{"name": "a", "settings": [
+            {"kind": {"unsafeFlags": {"_0": ["-framework", "Security", "-lz"]}}, "tool": "linker"}
+        ]}]}"#;
+        assert_eq!(
+            parse_package_description(raw).unwrap().linked_frameworks,
+            vec!["Security"]
+        );
+    }
+
+    /// A trailing `-framework` with nothing after it must not panic or
+    /// invent an empty framework name.
+    #[test]
+    fn a_dangling_framework_flag_is_ignored() {
+        let raw = br#"{"dependencies": [], "targets": [{"name": "a", "settings": [
+            {"kind": {"unsafeFlags": {"_0": ["-framework"]}}, "tool": "linker"}
+        ]}]}"#;
+        assert!(
+            parse_package_description(raw)
+                .unwrap()
+                .linked_frameworks
+                .is_empty()
+        );
     }
 
     /// A schema change in `settings` must not fail `up` — unlike
@@ -1212,8 +1340,103 @@ mod tests {
         .unwrap();
 
         assert!(
-            scan_apple_only_imports(&dir).is_empty(),
+            scan_apple_evidence(&dir).is_empty(),
             "a dependency's AppKit import must not qualify this package"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// **The deliverable, not the source.** A Mac app whose Swift is
+    /// entirely Foundation still cannot be produced by a Linux closure —
+    /// bundle, entitlements, code signature and `xcodebuild` are all
+    /// Apple-side. Before this, such a project was refused and sent to
+    /// flox, which can do none of those: a wrong refusal with no remedy.
+    #[test]
+    fn an_apple_project_artifact_is_evidence_even_with_portable_sources() {
+        for artifact in [
+            "Info.plist",
+            "App.entitlements",
+            "Assets.xcassets",
+            "Main.storyboard",
+        ] {
+            let dir = std::env::temp_dir().join(format!(
+                "devcroft-swift-artifact-{}-{}-{}",
+                std::process::id(),
+                line!(),
+                artifact.replace('.', "_")
+            ));
+            let _ = std::fs::remove_dir_all(&dir);
+            std::fs::create_dir_all(dir.join("Sources/app")).unwrap();
+            std::fs::write(
+                dir.join("Sources/app/main.swift"),
+                "import Foundation\nprint(1)\n",
+            )
+            .unwrap();
+
+            // Portable sources alone: refused.
+            assert!(
+                ensure_macos_dependent(&dir, &PackageDescription::default()).is_err(),
+                "control: Foundation-only with no artifact must be refused"
+            );
+
+            std::fs::write(dir.join(artifact), b"x").unwrap();
+            assert!(
+                ensure_macos_dependent(&dir, &PackageDescription::default()).is_ok(),
+                "{artifact} must count as evidence"
+            );
+
+            let _ = std::fs::remove_dir_all(&dir);
+        }
+    }
+
+    /// An `.xcodeproj` is a directory, so it has to be recognised as one
+    /// rather than only as a file name.
+    #[test]
+    fn an_xcodeproj_directory_is_evidence() {
+        let dir = std::env::temp_dir().join(format!(
+            "devcroft-swift-xcodeproj-{}-{}",
+            std::process::id(),
+            line!()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("App.xcodeproj")).unwrap();
+        std::fs::create_dir_all(dir.join("Sources/app")).unwrap();
+        std::fs::write(dir.join("Sources/app/main.swift"), "import Foundation\n").unwrap();
+
+        let evidence = scan_apple_evidence(&dir);
+        assert!(
+            evidence
+                .artifacts
+                .iter()
+                .any(|a| a.ends_with("App.xcodeproj")),
+            "got {:?}",
+            evidence.artifacts
+        );
+        assert!(ensure_macos_dependent(&dir, &PackageDescription::default()).is_ok());
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A dependency's `Info.plist` is no more evidence about this package
+    /// than a dependency's import was — `.build` stays excluded for both
+    /// halves of the evidence, not just the imports half.
+    #[test]
+    fn an_artifact_under_build_is_not_evidence() {
+        let dir = std::env::temp_dir().join(format!(
+            "devcroft-swift-artifactdep-{}-{}",
+            std::process::id(),
+            line!()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join(".build/checkouts/other")).unwrap();
+        std::fs::create_dir_all(dir.join("Sources/app")).unwrap();
+        std::fs::write(dir.join("Sources/app/main.swift"), "import Foundation\n").unwrap();
+        std::fs::write(dir.join(".build/checkouts/other/Info.plist"), b"x").unwrap();
+
+        assert!(
+            scan_apple_evidence(&dir).is_empty(),
+            "a dependency's Info.plist must not qualify this package"
         );
 
         let _ = std::fs::remove_dir_all(&dir);

@@ -218,6 +218,30 @@
       downgrades their guarantee and runs their code on the host. Only the
       second is invisible to the user.
 
+- [x] 6.9 **Widen the evidence to the deliverable, not only the source.**
+      Raised in review: "so a Mac desktop project is mandatory? that is the
+      target in principle." The gate never required *desktop* — the module
+      list carries non-GUI frameworks (`Security`, `IOKit`,
+      `ServiceManagement`) — but it did require the **source** to touch Apple,
+      and that is a real gap: a Mac application whose Swift is entirely
+      `Foundation` still cannot be produced by a Linux closure, because the
+      app bundle, entitlements, code signature and `xcodebuild` are Apple-side.
+      It was being refused and sent to flox, which can do none of those — a
+      wrong refusal with **no remedy**, which is worse than the wrong
+      acceptance the gate exists to prevent.
+      Apple project artifacts are now evidence: `Info.plist`,
+      `*.entitlements`, `.xcodeproj`/`.xcworkspace`, `.xcassets`,
+      `.storyboard`, `.xib`, `.xcconfig`, `PrivacyInfo.xcprivacy`. All are
+      filesystem checks — no parsing, no execution — so `init` runs them too.
+      `.build/` stays excluded for artifacts as well as imports, or one
+      dependency's `Info.plist` would qualify every project.
+- [x] 6.10 Read `-framework X` from `unsafeFlags`, not only `.linkedFramework`.
+      → Found while answering 6.9 and fixed regardless of it: `.linkedFramework`
+      is the tidy spelling, not the only one, and packages reaching a non-GUI
+      Apple framework often use the unsafe-flags form. Missing it refused real
+      Mac projects. A dangling `-framework` with no name after it is ignored
+      rather than recorded as an empty framework.
+
 ## 7. What is left open
 
 - [ ] 7.1 **Linux is unmeasured**, and it is the platform where this provider

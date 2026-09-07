@@ -45,10 +45,10 @@ only provider that fails the qualification test in `docs/decisions.md` §1
 and a project holding any closure environment SHALL keep the stronger
 guarantee.
 
-`init` SHALL select `swift` only for a package that imports an Apple-only
-module without a conditional-compilation guard, so that it never generates
-a manifest the provider would refuse at `up`. Detection SHALL NOT execute
-the package's own code.
+`init` SHALL select `swift` only for a project showing filesystem evidence
+that it needs Apple platforms — an unguarded Apple-only import, or an Apple
+project artifact — so that it never generates a manifest the provider would
+refuse at `up`. Detection SHALL NOT execute the package's own code.
 
 Where `swift` is selected, `init` SHALL name both of the tier's costs at
 the point of selection: that the toolchain comes from the host, and that
@@ -76,3 +76,8 @@ resolving the environment executes `Package.swift` on the host at every
   sources import nothing Apple-only
 - **THEN** the generated manifest declares `provider = "flox"` and the
   output states why `swift` was not selected
+
+#### Scenario: An Apple deliverable with portable sources selects swift
+- **WHEN** `init` runs in a directory holding `Package.swift`, sources that
+  import nothing Apple-only, and an `Info.plist`
+- **THEN** the generated manifest declares `provider = "swift"`

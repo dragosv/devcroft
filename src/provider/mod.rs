@@ -487,9 +487,10 @@ pub fn services_declared_by_flox(project_root: &Path) -> Vec<String> {
     flox::declared_service_names(project_root)
 }
 
-/// Whether a SwiftPM package at `project_root` imports an Apple-only
-/// module without a conditional-compilation guard — i.e. whether it is a
-/// package no Linux closure could build.
+/// Whether a SwiftPM package at `project_root` shows filesystem evidence
+/// that it needs Apple platforms — an unguarded import of an Apple-only
+/// module, or an Apple project artifact (`Info.plist`, `.entitlements`,
+/// `.xcodeproj`, an asset catalog).
 ///
 /// Exposed for `init`, which must not generate a manifest naming `swift`
 /// for a project the provider would then refuse at `up`
@@ -508,7 +509,7 @@ pub fn services_declared_by_flox(project_root: &Path) -> Vec<String> {
 /// suggests the *stronger* provider, and the user can still choose
 /// `swift` themselves.
 pub fn swift_package_needs_apple_platforms(project_root: &Path) -> bool {
-    !swift::scan_apple_only_imports(project_root).is_empty()
+    !swift::scan_apple_evidence(project_root).is_empty()
 }
 
 /// Content fingerprint of the environment definition `provider` names, for
