@@ -947,6 +947,32 @@ So the honest one-line answer is platform-dependent, and stating it
 without the platform — in either direction — is how this entry and the
 `known-gaps` entry came to contradict each other.
 
+**What a macOS user does instead is not "wait for a namespace".** The
+common case is two worktrees on two branches running dev servers, and it
+works today with one committed manifest: declare `forward = ["PORT"]` and
+let each worktree's shell supply the value. Measured, both listening at
+once. The mechanism is that `[env] forward` reads the invoking shell, and
+two worktrees differ there even though they share the manifest — the same
+asymmetry `--name` exploits for sandbox identity. `docs/known-gaps.md`
+carries the recipe and its three limits, the main one being that the
+service must read the variable.
+
+Options that were weighed and are *not* the answer, so they are not
+proposed again:
+
+- **Loopback aliases** (`sudo ifconfig lo0 alias 127.0.0.2 up`) — needs
+  root, and only helps a service that binds that specific address.
+  Measured: a `bind("0.0.0.0")` still collides with a `bind("127.0.0.1")`
+  on the same port, and `0.0.0.0` is the common default.
+- **`SO_REUSEPORT`** — a trap rather than a solution. Measured: both
+  sockets bind successfully and the kernel then **load-balances
+  connections between them**, so each worktree would serve a random half
+  of the other's traffic. It fails by working.
+- **A microVM per sandbox** — the only mechanism that gives real
+  separation on macOS, and rejected above on a different axis. If port
+  separation ever becomes the deciding requirement, that entry is where
+  the argument reopens, not this one.
+
 The tier-dependence this entry used to describe is worth keeping as history,
 because getting it wrong cost a correction once. The hardened tier's port
 separation never came from gVisor's netstack — it came from the network

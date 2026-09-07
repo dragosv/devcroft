@@ -89,9 +89,59 @@ process on the machine would be. `up` warns about this every time
 (`network isolation is degraded on this host`), and `doctor` reports
 `per-agent-network-namespace: unsupported on this platform`.
 
-So on a Mac the answer to "can two worktrees run the same service in
-parallel" is **no**, and the remedy is the ordinary one: give the second
-worktree a different port, or run them under Linux.
+So on a Mac the answer to "can two worktrees bind the *same* port in
+parallel" is **no**. But that is not the question a developer actually
+has, and the useful answer is better than it sounds.
+
+### What to do on macOS, measured end to end
+
+Two worktrees, **one committed manifest**, both dev servers running at
+once. The manifest forwards the variable rather than fixing it:
+
+```toml
+[env]
+provider = "nix"
+forward = ["PORT"]      # value comes from the shell that runs `up`
+
+[network]
+default = "deny"
+ports = [17777]
+```
+
+```sh
+# worktree A
+devcroft up --name wta            # service takes its own default
+
+# worktree B — same file, different shell
+PORT=17778 devcroft up --name wtb
+```
+
+Measured on macOS 15, both listening simultaneously:
+
+```
+A: LISTENING 17777
+B: LISTENING 17778
+host lsof: python3 5685 127.0.0.1:17777
+           python3 5724 127.0.0.1:17778
+```
+
+This works because `[env] forward` reads the invoking shell, and the two
+worktrees have different shells even though they share the committed
+manifest — which is exactly the asymmetry the collision needs. `--name`
+does the same job for the sandbox identity.
+
+**Three honest limits**, because this is coordination, not isolation:
+
+- **The service has to read the variable.** Most dev servers do (`PORT` is
+  honoured by Vite, Next, CRA, Rails, `manage.py runserver`); a database
+  declared in a flox `[services]` block generally does not, and there the
+  answer is still a different port written into that service's own config.
+- **Nothing is isolated.** Both ports live in the host's table and are
+  visible to the host and to each other. This avoids the collision; it
+  does not separate the sandboxes.
+- **Only the macOS story needs this.** On Linux both worktrees keep the
+  identical port and the namespace separates them, so the recipe above is
+  a macOS workaround rather than the general answer.
 
 **Egress works inside that namespace too**, which was not true when this
 section was first written. The original scope excluded any sandbox
