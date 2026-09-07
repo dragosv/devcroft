@@ -553,14 +553,20 @@ fn cli_init(args: &[String]) -> i32 {
     let has_flox = cwd.join(".flox").is_dir();
     let has_devbox = cwd.join("devbox.json").is_file();
     let has_flake = cwd.join("flake.nix").is_file();
+    // Only a SwiftPM package that a closure provider *cannot* serve, so
+    // `init` never writes a manifest `up` would then refuse
+    // (`provider::swift`'s gate). The scan executes nothing, which is the
+    // reason `init` uses it rather than the fuller `dump-package` check.
     let has_swift_package = cwd.join("Package.swift").is_file();
+    let swift_needs_apple =
+        has_swift_package && devcroft::provider::swift_package_needs_apple_platforms(&cwd);
     let provider = if has_flox {
         "flox"
     } else if has_devbox {
         "devbox"
     } else if has_flake {
         "nix"
-    } else if has_swift_package {
+    } else if swift_needs_apple {
         "swift"
     } else {
         "flox"
@@ -633,6 +639,25 @@ fn cli_init(args: &[String]) -> i32 {
             println!("devcroft: found flake.nix but no flake.lock.");
             println!("devcroft: run `nix flake lock` before `devcroft up`.");
         }
+    } else if has_swift_package && !swift_needs_apple {
+        // A portable Swift package: a closure provider serves it, and
+        // serves it better. `init` says so rather than writing a
+        // `provider = "swift"` line that `up` would refuse — the refusal
+        // is correct, but meeting it after `init` reported success is a
+        // worse way to learn it.
+        println!(
+            "devcroft: found a SwiftPM package (Package.swift) that imports nothing \
+             Apple-only."
+        );
+        println!(
+            "devcroft: a closure provider serves it better (reproducible across machines, \
+             and `up` does not run Package.swift on the host), so the manifest keeps \
+             `provider = \"flox\"` — run `flox init` and add the swift package."
+        );
+        println!(
+            "devcroft: `provider = \"swift\"` is for packages that cannot build without \
+             Apple frameworks; devcroft refuses it for this one."
+        );
     } else if has_swift_package {
         // Selected, and therefore disclosed *more* loudly rather than
         // less. Every other branch here reports a discovery; this one

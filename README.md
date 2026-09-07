@@ -270,6 +270,9 @@ purpose. Eight sandboxes of one project cost one build, because they share a
 single content-addressed store.
 
 A fourth, **swift**, is *artifact* tier and is the one exception to all of that.
+It is also **scoped to packages the other three cannot serve**: devcroft refuses
+it for a portable Swift package and points you at nix or flox, since those give
+you reproducibility and a hook-free `up` that this one cannot.
 It resolves a SwiftPM project against the host's own toolchain, so two machines
 can behave differently from the same `Package.swift`, and resolving it **runs the
 project's code** — `Package.swift` is a Swift program SwiftPM compiles and

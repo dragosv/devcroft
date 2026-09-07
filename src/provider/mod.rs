@@ -231,6 +231,18 @@ pub enum ProviderError {
         provider: &'static str,
         hint: &'static str,
     },
+    /// `env.provider` names a provider that fails the qualification test
+    /// (`docs/decisions.md` §1) for a project a *qualifying* provider
+    /// already covers — so the weaker guarantee buys nothing.
+    ///
+    /// Distinct from every rejection above, which are about the provider
+    /// alone. This one is about the provider **and this project
+    /// together**: the same name is correct for a different project in
+    /// the next directory.
+    CoveredByQualifiedProvider {
+        provider: &'static str,
+        reason: String,
+    },
     /// The provider's own resolution failed (activation error, unreadable
     /// manifest, etc).
     ResolutionFailed(String),
@@ -254,6 +266,10 @@ impl fmt::Display for ProviderError {
                     "unknown provider `{name}`; devcroft supports `flox`, `nix`, `devbox`, and `swift` in this release"
                 )
             }
+            ProviderError::CoveredByQualifiedProvider { provider, reason } => write!(
+                f,
+                "provider `{provider}` is refused for this project: {reason}"
+            ),
             ProviderError::MissingBinary { provider, hint } => write!(
                 f,
                 "`{provider}` is not installed or not on PATH; run `{hint}`"
@@ -469,6 +485,30 @@ impl ProviderEntry for ProviderKind {
 /// other cross-module provider call is routed.
 pub fn services_declared_by_flox(project_root: &Path) -> Vec<String> {
     flox::declared_service_names(project_root)
+}
+
+/// Whether a SwiftPM package at `project_root` imports an Apple-only
+/// module without a conditional-compilation guard — i.e. whether it is a
+/// package no Linux closure could build.
+///
+/// Exposed for `init`, which must not generate a manifest naming `swift`
+/// for a project the provider would then refuse at `up`
+/// (`swift::ensure_macos_dependent`).
+///
+/// **A subset of the provider's own gate, and deliberately the cheap
+/// half.** The full check also accepts a linked Apple framework, but
+/// reading that means `swift package dump-package`, which compiles and
+/// runs `Package.swift`. `init` runs on a repository the user may have
+/// just cloned and has no business executing its code — so it uses the
+/// scan, which reads files and executes nothing.
+///
+/// The two therefore disagree in exactly one direction: a package that
+/// links a framework but imports no Apple module gets `flox` from `init`
+/// and would be accepted by `up`. That is the safe direction — `init`
+/// suggests the *stronger* provider, and the user can still choose
+/// `swift` themselves.
+pub fn swift_package_needs_apple_platforms(project_root: &Path) -> bool {
+    !swift::scan_apple_only_imports(project_root).is_empty()
 }
 
 /// Content fingerprint of the environment definition `provider` names, for

@@ -326,10 +326,39 @@ running its code. The tier is `artifact` and is printed at `up` and in
 tier's cost is a visible difference in the compiled policy rather than a
 word in this document.
 
-**The option not taken**, recorded so the trade stays visible: reject
-SwiftPM as a provider and serve Swift through the existing closure tier,
-since nixpkgs ships the Swift toolchain — which is exactly how the rustup
-entry above answers Rust. That remains available if this is revisited.
+**The option not taken as a blanket rule**, recorded so the trade stays
+visible: reject SwiftPM outright and serve all Swift through the closure
+tier, since nixpkgs ships the Swift toolchain — which is exactly how the
+rustup entry above answers Rust.
+
+**It is now the rule for every project the closure tier can serve.** The
+provider refuses a package showing no Apple-platform dependency and names
+`nix`/`flox` instead, because for a portable package the weaker provider
+buys nothing and costs reproducibility, a hook-free activation, and the
+host-side execution above. `swift` is therefore scoped to the only case
+where the alternative is genuinely nothing: a package that cannot build
+without Apple frameworks.
+
+Acceptance requires positive evidence — a linked Apple framework, or an
+unguarded import of an Apple-only module. Two traps this had to avoid, both
+of which would have made the gate useless in opposite directions:
+
+- **`platforms: [.macOS(.v13)]` is not evidence.** It sets minimum versions
+  for Apple platforms and is ignored by SwiftPM on Linux, so thousands of
+  portable packages declare it. Accepting on it would narrow nothing.
+- **`Foundation` and `Dispatch` are not Apple-only.** Both ship on Linux via
+  swift-corelibs. Counting them would qualify essentially every Swift
+  package.
+
+An import inside `#if canImport(...)` is likewise not evidence: that is a
+*portable* package with an Apple branch, which is precisely the case the
+closure tier should get.
+
+**This is a heuristic, and criterion 6 is hostile to heuristics** — so the
+asymmetry is deliberate. A wrong refusal sends someone to a *better*
+provider and says exactly what it searched for; a wrong acceptance silently
+downgrades their guarantee and runs their code on the host. Only the second
+is a failure the user cannot see.
 
 ### Rejected: Homebrew
 

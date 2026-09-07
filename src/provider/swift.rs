@@ -58,10 +58,15 @@ impl Provider for SwiftProvider {
         // Data only: no project file is evaluated to answer this.
         let toolchain = probe_toolchain(&swift_bin)?;
 
-        // The one call that runs project code, and the only thing read
-        // out of it is whether the package declares dependencies.
-        let declares_dependencies = package_declares_dependencies(&swift_bin, project_root)?;
-        ensure_lock_present(project_root, declares_dependencies)?;
+        // The one call that runs project code. Two things are read out
+        // of it: whether the package declares dependencies, and whether
+        // it links any Apple framework.
+        let description = describe_package(&swift_bin, project_root)?;
+
+        // Before anything else this provider could do for the project:
+        // is this provider even the right answer for it?
+        ensure_macos_dependent(project_root, &description)?;
+        ensure_lock_present(project_root, description.declares_dependencies)?;
 
         let baseline = capture::canonical_base_env()?;
         let tmpdir = project_tmpdir(project_root)?;
@@ -189,24 +194,24 @@ fn ensure_lock_present(
     })
 }
 
-/// Ask SwiftPM for the package description and read one thing out of it:
-/// whether any dependency is declared.
+/// Ask SwiftPM for the package description, and read two things out of
+/// it.
 ///
 /// **This is the criterion-4 violation, confined to one call.** It is
 /// kept because the alternative is worse: skipping it would leave
 /// `Package.resolved` unenforced, dropping criterion 2 (restorable
 /// lockfile) as well as 4, and leaving the provider with no
 /// reproducibility claim at all. If project code is going to run, it
-/// should at least buy the lockfile guarantee.
+/// should at least buy something.
 ///
 /// `--disable-sandbox` is deliberately **not** passed. SwiftPM's own
 /// manifest sandbox blocks writes on macOS, which is a partial mitigation
 /// devcroft has no reason to switch off, and passing the flag would make
 /// devcroft responsible for a weakening it did not need.
-fn package_declares_dependencies(
+fn describe_package(
     swift_bin: &Path,
     project_root: &Path,
-) -> Result<bool, ProviderError> {
+) -> Result<PackageDescription, ProviderError> {
     let output = Command::new(swift_bin)
         .arg("package")
         .arg("dump-package")
@@ -224,35 +229,79 @@ fn package_declares_dependencies(
         )));
     }
 
-    parse_declares_dependencies(&output.stdout)
+    parse_package_description(&output.stdout)
 }
 
-/// The one field consumed from `dump-package`'s output.
+/// The two fields consumed from `dump-package`'s output.
 ///
-/// Deliberately narrow. The full package description carries targets,
-/// products, platforms and more, and every one of them is a thing this
-/// provider would then have to keep working across SwiftPM schema
-/// versions. Reading only `dependencies` keeps the blast radius of a
-/// schema change to the single decision it feeds.
-pub(super) fn parse_declares_dependencies(raw: &[u8]) -> Result<bool, ProviderError> {
+/// Deliberately narrow. The full description carries targets, products,
+/// platforms and more, and every one of them is a thing this provider
+/// would then have to keep working across SwiftPM schema versions.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(super) struct PackageDescription {
+    pub(super) declares_dependencies: bool,
+    /// Apple frameworks the package links. A framework is an Apple-only
+    /// linkage concept, so any entry here is conclusive evidence that no
+    /// Linux closure can build this package.
+    pub(super) linked_frameworks: Vec<String>,
+}
+
+pub(super) fn parse_package_description(raw: &[u8]) -> Result<PackageDescription, ProviderError> {
     let parsed: serde_json::Value = serde_json::from_slice(raw).map_err(|e| {
         ProviderError::ResolutionFailed(format!("parsing `swift package dump-package` output: {e}"))
     })?;
-    match parsed.get("dependencies") {
-        Some(serde_json::Value::Array(deps)) => Ok(!deps.is_empty()),
+
+    let declares_dependencies = match parsed.get("dependencies") {
+        Some(serde_json::Value::Array(deps)) => !deps.is_empty(),
         // A description with no `dependencies` key at all is a schema
         // devcroft does not recognize. Treated as "no dependencies"
         // would silently drop the lockfile requirement, so it fails
         // instead — the same rule `nix.rs` follows for an unparseable
         // `print-dev-env`.
-        _ => Err(ProviderError::ResolutionFailed(
-            "`swift package dump-package` output has no `dependencies` array; \
-             this SwiftPM version is not one devcroft can read"
-                .to_string(),
-        )),
+        _ => {
+            return Err(ProviderError::ResolutionFailed(
+                "`swift package dump-package` output has no `dependencies` array; \
+                 this SwiftPM version is not one devcroft can read"
+                    .to_string(),
+            ));
+        }
+    };
+
+    // Measured shape (Swift 6.1.2):
+    //   "settings": [{"kind": {"linkedFramework": {"_0": "AppKit"}},
+    //                 "tool": "linker"}]
+    // Read defensively rather than with a typed struct: unlike
+    // `dependencies` above, a schema change here must not fail `up` — a
+    // missing framework signal falls through to the source scan, which
+    // is the more general evidence anyway.
+    let mut linked_frameworks = Vec::new();
+    if let Some(targets) = parsed.get("targets").and_then(|t| t.as_array()) {
+        for target in targets {
+            let Some(settings) = target.get("settings").and_then(|s| s.as_array()) else {
+                continue;
+            };
+            for setting in settings {
+                if let Some(name) = setting
+                    .get("kind")
+                    .and_then(|k| k.get("linkedFramework"))
+                    .and_then(|f| f.get("_0"))
+                    .and_then(|n| n.as_str())
+                {
+                    linked_frameworks.push(name.to_string());
+                }
+            }
+        }
     }
+    linked_frameworks.sort();
+    linked_frameworks.dedup();
+
+    Ok(PackageDescription {
+        declares_dependencies,
+        linked_frameworks,
+    })
 }
 
+/// Read the toolchain's own paths from `swift -print-target-info`.
 /// Read the toolchain's own paths from `swift -print-target-info`.
 ///
 /// Runs with a fixed environment for the same reason
@@ -483,6 +532,233 @@ fn activated_env(
     activated
 }
 
+/// Modules that exist only on Apple platforms, so an unguarded import of
+/// one is conclusive evidence that no Linux closure can build the package.
+///
+/// **`Foundation` and `Dispatch` are deliberately absent**, and that
+/// omission is the whole accuracy of this list. Both ship on Linux via
+/// swift-corelibs, so treating them as Apple-only — the obvious mistake —
+/// would classify essentially every Swift package as macOS-dependent and
+/// turn the gate below into a rubber stamp.
+const APPLE_ONLY_MODULES: &[&str] = &[
+    "AppKit",
+    "UIKit",
+    "SwiftUI",
+    "Cocoa",
+    "CoreGraphics",
+    "CoreData",
+    "CoreML",
+    "CoreImage",
+    "CoreAudio",
+    "CoreBluetooth",
+    "CoreLocation",
+    "AVFoundation",
+    "Metal",
+    "MetalKit",
+    "QuartzCore",
+    "WebKit",
+    "ObjectiveC",
+    "Security",
+    "IOKit",
+    "Carbon",
+    "ServiceManagement",
+    "UserNotifications",
+    "StoreKit",
+    "CloudKit",
+    "GameKit",
+    "SpriteKit",
+    "SceneKit",
+    "ARKit",
+    "HealthKit",
+    "MapKit",
+    "PhotosUI",
+    "Vision",
+    "NaturalLanguage",
+    "Combine",
+];
+
+/// An unguarded import of an Apple-only module, with where it was found.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct AppleImport {
+    pub(super) module: String,
+    pub(super) file: String,
+}
+
+/// Scan the package's Swift sources for imports of Apple-only modules
+/// that are **not** inside a conditional-compilation block.
+///
+/// **The guard test is the difference between "needs macOS" and "supports
+/// macOS"**, and getting it wrong in either direction breaks the gate.
+/// A package that writes
+///
+/// ```swift
+/// #if canImport(AppKit)
+/// import AppKit
+/// #endif
+/// ```
+///
+/// is *portable* — it has an Apple branch and a non-Apple one — so it is
+/// exactly the case that should go to flox or nix, and counting that
+/// import would send it to `swift` instead. An import at top level with
+/// no `#if` around it cannot compile on Linux at all.
+///
+/// Tracks nesting rather than matching the nearest `#if`, because a
+/// conditional import inside an outer conditional block is still
+/// conditional. Only `#if` conditions that actually test availability
+/// (`canImport(...)`, `os(...)`, `targetEnvironment(...)`) open a guarded
+/// region; an `#if DEBUG` around an import guards nothing about the
+/// platform.
+///
+/// Reads no more than the package's own sources, executes nothing, and is
+/// bounded by the file tree — so unlike the `dump-package` call above it
+/// adds no new exposure.
+pub(super) fn scan_apple_only_imports(project_root: &Path) -> Vec<AppleImport> {
+    let mut found = Vec::new();
+    let mut stack = vec![project_root.to_path_buf()];
+    while let Some(dir) = stack.pop() {
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let name = entry.file_name();
+            let name = name.to_string_lossy();
+            if path.is_dir() {
+                // `.build` holds checked-out dependency sources, whose
+                // imports say nothing about *this* package's platform
+                // needs. Hidden directories are skipped for the same
+                // reason `.git` is uninteresting.
+                if name == ".build" || name.starts_with('.') {
+                    continue;
+                }
+                stack.push(path);
+            } else if path.extension().is_some_and(|e| e == "swift") {
+                if let Ok(text) = std::fs::read_to_string(&path) {
+                    collect_unguarded_imports(&text, &path.display().to_string(), &mut found);
+                }
+            }
+        }
+    }
+    found.sort_by(|a, b| (&a.module, &a.file).cmp(&(&b.module, &b.file)));
+    found.dedup();
+    found
+}
+
+/// The line-by-line half of [`scan_apple_only_imports`], separated so it
+/// can be tested on text without a file tree.
+pub(super) fn collect_unguarded_imports(text: &str, file: &str, out: &mut Vec<AppleImport>) {
+    let mut guard_depth = 0usize;
+    let mut conditional_depth = 0usize;
+    for raw in text.lines() {
+        let line = raw.trim();
+        if let Some(condition) = line.strip_prefix("#if") {
+            conditional_depth += 1;
+            if condition.contains("canImport(")
+                || condition.contains("os(")
+                || condition.contains("targetEnvironment(")
+            {
+                guard_depth += 1;
+            }
+            continue;
+        }
+        if line.starts_with("#endif") {
+            conditional_depth = conditional_depth.saturating_sub(1);
+            // Only close a guarded region when the block being closed
+            // opened one. Tracking both depths is what keeps an
+            // `#if DEBUG` nested inside an `#if canImport(...)` from
+            // ending the guard early.
+            if guard_depth > conditional_depth {
+                guard_depth = conditional_depth;
+            }
+            continue;
+        }
+        if guard_depth > 0 {
+            continue;
+        }
+        let Some(rest) = line.strip_prefix("import ") else {
+            continue;
+        };
+        // `import struct Foundation.Data` — take the module, which is the
+        // last dotted path's first component after any declaration kind.
+        let module = rest
+            .split_whitespace()
+            .last()
+            .unwrap_or("")
+            .split('.')
+            .next()
+            .unwrap_or("")
+            .trim_end_matches(';');
+        if APPLE_ONLY_MODULES.contains(&module) {
+            out.push(AppleImport {
+                module: module.to_string(),
+                file: file.to_string(),
+            });
+        }
+    }
+}
+
+/// Refuse `swift` for a package a qualifying provider already covers.
+///
+/// **This is the narrowing that makes shipping a test-failing provider
+/// defensible at all.** `docs/decisions.md` §1 justifies `swift` on the
+/// grounds that Swift users otherwise get nothing — but that is only true
+/// for packages depending on Apple frameworks. A portable Swift package
+/// builds perfectly well from a nix or flox closure, where it gets the
+/// closure tier, a hook-free activation, and no host-side execution of
+/// `Package.swift`. Offering it the weaker provider buys the user nothing
+/// and costs them all three.
+///
+/// So the provider is accepted only on positive evidence that no closure
+/// can serve the project:
+///
+/// - a linked Apple framework, which is conclusive; or
+/// - an unguarded import of an Apple-only module, which cannot compile on
+///   Linux.
+///
+/// **`platforms:` is deliberately not evidence**, and this is the subtlety
+/// that would otherwise make the gate useless. `platforms: [.macOS(.v13)]`
+/// only sets minimum versions for Apple platforms — SwiftPM on Linux
+/// ignores it entirely — so thousands of portable packages declare it.
+/// Using it here would accept nearly everything and narrow nothing.
+///
+/// **A heuristic, and it says so when it refuses.** `docs/decisions.md`
+/// §1's criterion 6 is hostile to preconditions that cannot be checked
+/// cleanly, and this one can be wrong: a macOS-only package that reaches
+/// Apple APIs some other way is refused despite having no alternative.
+/// The refusal therefore names exactly what was searched for, so a user
+/// who is on the wrong side of it can see why rather than guess. The
+/// asymmetry is deliberate — a wrong refusal sends someone to a *better*
+/// provider, while a wrong acceptance silently downgrades their guarantee
+/// and runs their code on the host.
+fn ensure_macos_dependent(
+    project_root: &Path,
+    description: &PackageDescription,
+) -> Result<(), ProviderError> {
+    if !description.linked_frameworks.is_empty() {
+        return Ok(());
+    }
+    let imports = scan_apple_only_imports(project_root);
+    if !imports.is_empty() {
+        return Ok(());
+    }
+    Err(ProviderError::CoveredByQualifiedProvider {
+        provider: "swift",
+        reason: format!(
+            "nothing in this package requires Apple platforms, so a closure-tier provider \
+             covers it — and covers it better (reproducible across machines, and `up` does \
+             not run Package.swift on the host). devcroft looked for a linked Apple \
+             framework and for an unguarded `import` of an Apple-only module ({} of them, \
+             including AppKit, UIKit, SwiftUI and Metal) under {}, and found neither; note \
+             that `platforms: [.macOS(...)]` is not evidence, since SwiftPM ignores it on \
+             Linux. Use `provider = \"nix\"` or `provider = \"flox\"` with the swift \
+             package. If this project really is macOS-only, that is a gap in this check \
+             worth reporting rather than working around",
+            APPLE_ONLY_MODULES.len(),
+            project_root.display()
+        ),
+    })
+}
+
 /// A temporary directory **inside the project root**, for SwiftPM to
 /// write its caches into.
 ///
@@ -645,13 +921,46 @@ mod tests {
     #[test]
     fn a_package_with_dependencies_is_detected() {
         let raw = br#"{"name": "x", "dependencies": [{"sourceControl": []}]}"#;
-        assert!(parse_declares_dependencies(raw).unwrap());
+        assert!(
+            parse_package_description(raw)
+                .unwrap()
+                .declares_dependencies
+        );
     }
 
     #[test]
     fn a_package_without_dependencies_is_detected() {
         let raw = br#"{"name": "x", "dependencies": []}"#;
-        assert!(!parse_declares_dependencies(raw).unwrap());
+        assert!(
+            !parse_package_description(raw)
+                .unwrap()
+                .declares_dependencies
+        );
+    }
+
+    /// The measured shape, kept verbatim so a SwiftPM schema change fails
+    /// here rather than silently emptying the strongest signal the gate
+    /// has.
+    #[test]
+    fn linked_frameworks_are_read_from_target_settings() {
+        let raw = br#"{"dependencies": [], "targets": [
+            {"name": "app", "settings": [
+              {"kind": {"linkedFramework": {"_0": "AppKit"}}, "tool": "linker"},
+              {"kind": {"linkedFramework": {"_0": "Metal"}}, "tool": "linker"}
+            ]}]}"#;
+        let d = parse_package_description(raw).unwrap();
+        assert_eq!(d.linked_frameworks, vec!["AppKit", "Metal"]);
+    }
+
+    /// A schema change in `settings` must not fail `up` — unlike
+    /// `dependencies`, this signal has a fallback (the source scan), so
+    /// failing closed here would refuse projects over a field devcroft
+    /// merely stopped recognizing.
+    #[test]
+    fn an_unreadable_settings_shape_yields_no_frameworks_rather_than_failing() {
+        let raw = br#"{"dependencies": [], "targets": [{"name": "a", "settings": "surprise"}]}"#;
+        let d = parse_package_description(raw).unwrap();
+        assert!(d.linked_frameworks.is_empty());
     }
 
     /// A schema with no `dependencies` key must fail rather than read as
@@ -660,7 +969,7 @@ mod tests {
     /// the project-code execution it performs.
     #[test]
     fn a_description_without_a_dependencies_array_is_refused() {
-        match parse_declares_dependencies(br#"{"name": "x"}"#) {
+        match parse_package_description(br#"{"name": "x"}"#) {
             Err(ProviderError::ResolutionFailed(msg)) => assert!(msg.contains("dependencies")),
             other => panic!("expected ResolutionFailed, got {other:?}"),
         }
@@ -752,6 +1061,164 @@ mod tests {
     /// merely contain it — otherwise a `swift` earlier on the sandbox's
     /// `PATH` would win and the grants would describe a different
     /// toolchain than the one that runs.
+    fn imports(text: &str) -> Vec<String> {
+        let mut out = Vec::new();
+        collect_unguarded_imports(text, "t.swift", &mut out);
+        out.into_iter().map(|i| i.module).collect()
+    }
+
+    /// A top-level Apple import cannot compile on Linux, so it is
+    /// conclusive evidence the project needs this provider.
+    #[test]
+    fn an_unguarded_apple_import_counts() {
+        assert_eq!(imports("import AppKit\nprint(1)\n"), vec!["AppKit"]);
+        assert_eq!(imports("import SwiftUI\n"), vec!["SwiftUI"]);
+    }
+
+    /// **The distinction the whole gate rests on.** A `canImport` guard
+    /// means the package is *portable* with an Apple branch — exactly the
+    /// case that should go to a closure provider — so counting it would
+    /// send portable packages to the weaker provider, which is the thing
+    /// this gate exists to prevent.
+    #[test]
+    fn a_guarded_apple_import_does_not_count() {
+        assert!(imports("#if canImport(AppKit)\nimport AppKit\n#endif\n").is_empty());
+        assert!(imports("#if os(macOS)\nimport Cocoa\n#endif\n").is_empty());
+    }
+
+    /// `#if DEBUG` guards nothing about the platform, so an import inside
+    /// one is still unguarded for this purpose. Without this the gate
+    /// would accept a portable package that happens to wrap an import in
+    /// any conditional at all.
+    #[test]
+    fn a_non_platform_conditional_is_not_a_guard() {
+        assert_eq!(
+            imports("#if DEBUG\nimport AppKit\n#endif\n"),
+            vec!["AppKit"]
+        );
+    }
+
+    /// Nesting: an inner non-platform block must not end the outer
+    /// platform guard when it closes.
+    #[test]
+    fn an_inner_conditional_does_not_end_an_outer_platform_guard() {
+        let text = "#if canImport(UIKit)\n#if DEBUG\nimport UIKit\n#endif\nimport UIKit\n#endif\n";
+        assert!(
+            imports(text).is_empty(),
+            "both imports are inside the canImport guard; got {:?}",
+            imports(text)
+        );
+    }
+
+    /// Foundation and Dispatch ship on Linux via swift-corelibs. Treating
+    /// them as Apple-only is the mistake that would turn this gate into a
+    /// rubber stamp, since nearly every Swift file imports Foundation.
+    #[test]
+    fn linux_available_modules_are_not_apple_signals() {
+        assert!(imports("import Foundation\nimport Dispatch\n").is_empty());
+    }
+
+    #[test]
+    fn a_submodule_import_is_matched_on_its_module() {
+        assert_eq!(
+            imports("import struct CoreData.NSManagedObject\n"),
+            vec!["CoreData"]
+        );
+    }
+
+    /// The gate, end to end, on a real file tree. Both directions, since
+    /// "always accept" and "always refuse" each pass one half alone.
+    #[test]
+    fn the_gate_accepts_only_packages_a_closure_cannot_serve() {
+        let dir = std::env::temp_dir().join(format!(
+            "devcroft-swift-gate-{}-{}",
+            std::process::id(),
+            line!()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("Sources/app")).unwrap();
+
+        // Portable: refused, and the refusal must point at the providers
+        // that serve it better.
+        std::fs::write(
+            dir.join("Sources/app/main.swift"),
+            "import Foundation\nprint(1)\n",
+        )
+        .unwrap();
+        let portable = PackageDescription::default();
+        match ensure_macos_dependent(&dir, &portable) {
+            Err(ProviderError::CoveredByQualifiedProvider { provider, reason }) => {
+                assert_eq!(provider, "swift");
+                assert!(reason.contains("nix") && reason.contains("flox"));
+                assert!(
+                    reason.contains("platforms"),
+                    "the refusal must pre-empt the obvious objection — that the package \
+                     declares a macOS platform — since that is not evidence; got: {reason}"
+                );
+            }
+            other => panic!("a portable package must be refused, got {other:?}"),
+        }
+
+        // A linked framework alone is conclusive, with no Apple import.
+        let framework = PackageDescription {
+            declares_dependencies: false,
+            linked_frameworks: vec!["AppKit".to_string()],
+        };
+        assert!(ensure_macos_dependent(&dir, &framework).is_ok());
+
+        // An unguarded Apple import alone is conclusive, with no
+        // framework.
+        std::fs::write(
+            dir.join("Sources/app/main.swift"),
+            "import AppKit\nprint(1)\n",
+        )
+        .unwrap();
+        assert!(ensure_macos_dependent(&dir, &portable).is_ok());
+
+        // Guarded again: back to refused, so the guard test is live
+        // through the real file scan and not only in `imports()`.
+        std::fs::write(
+            dir.join("Sources/app/main.swift"),
+            "#if canImport(AppKit)\nimport AppKit\n#endif\n",
+        )
+        .unwrap();
+        assert!(
+            ensure_macos_dependent(&dir, &portable).is_err(),
+            "a package whose only Apple import is guarded is portable"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Dependency sources under `.build` are other people's packages, and
+    /// their imports say nothing about what *this* package needs. Without
+    /// this exclusion, one dependency importing AppKit would qualify
+    /// every project that had ever run `swift build`.
+    #[test]
+    fn imports_from_checked_out_dependencies_are_ignored() {
+        let dir = std::env::temp_dir().join(format!(
+            "devcroft-swift-gatedeps-{}-{}",
+            std::process::id(),
+            line!()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("Sources/app")).unwrap();
+        std::fs::create_dir_all(dir.join(".build/checkouts/other/Sources")).unwrap();
+        std::fs::write(dir.join("Sources/app/main.swift"), "import Foundation\n").unwrap();
+        std::fs::write(
+            dir.join(".build/checkouts/other/Sources/x.swift"),
+            "import AppKit\n",
+        )
+        .unwrap();
+
+        assert!(
+            scan_apple_only_imports(&dir).is_empty(),
+            "a dependency's AppKit import must not qualify this package"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     #[test]
     fn activated_path_leads_with_the_probed_toolchain() {
         let baseline = BTreeMap::from([("PATH".to_string(), "/usr/bin:/bin".to_string())]);

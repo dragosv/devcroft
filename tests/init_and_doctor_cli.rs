@@ -961,6 +961,10 @@ fn init_detects_a_swiftpm_package() {
          let package = Package(name: \"x\")\n",
     )
     .unwrap();
+    // Unguarded and Apple-only, so no closure provider can serve it —
+    // which is the only case `init` selects `swift` for.
+    std::fs::create_dir_all(dir.join("Sources/x")).unwrap();
+    std::fs::write(dir.join("Sources/x/main.swift"), "import AppKit\n").unwrap();
 
     let out = run(&dir, &["init"]);
     assert!(out.status.success(), "{out:?}");
@@ -1018,6 +1022,8 @@ fn init_prefers_every_closure_provider_over_a_swift_package() {
             "// swift-tools-version:5.9\nlet package = 0\n",
         )
         .unwrap();
+        std::fs::create_dir_all(dir.join("Sources/x")).unwrap();
+        std::fs::write(dir.join("Sources/x/main.swift"), "import AppKit\n").unwrap();
         setup(&dir);
 
         let out = run(&dir, &["init"]);
@@ -1033,4 +1039,67 @@ fn init_prefers_every_closure_provider_over_a_swift_package() {
 
         let _ = std::fs::remove_dir_all(&dir);
     }
+}
+
+/// **`init` applies the provider's own gate.** A portable Swift package
+/// keeps `flox`, because writing `provider = "swift"` here would generate
+/// a manifest that `up` then refuses — the refusal is correct, but meeting
+/// it after `init` reported success is a worse way to learn it.
+#[test]
+fn init_keeps_flox_for_a_portable_swift_package() {
+    let dir = scratch_project("swiftportable");
+    std::fs::write(
+        dir.join("Package.swift"),
+        "// swift-tools-version:5.9\nlet package = 0\n",
+    )
+    .unwrap();
+    std::fs::create_dir_all(dir.join("Sources/x")).unwrap();
+    // The only difference from `init_detects_a_swiftpm_package`.
+    std::fs::write(dir.join("Sources/x/main.swift"), "import Foundation\n").unwrap();
+
+    let out = run(&dir, &["init"]);
+    assert!(out.status.success(), "{out:?}");
+    let (manifest, _) =
+        devcroft::config::parse(&std::fs::read_to_string(dir.join("devcroft.toml")).unwrap())
+            .unwrap();
+    assert_eq!(
+        manifest.env.provider, "flox",
+        "a portable Swift package is served better by a closure provider"
+    );
+
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("nothing Apple-only"),
+        "init must say why it did not pick swift; got {stdout:?}"
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// The guard distinction reaches `init` too: an Apple import behind
+/// `#if canImport` means the package is portable with an Apple branch, so
+/// it keeps the closure provider.
+#[test]
+fn init_keeps_flox_when_the_apple_import_is_guarded() {
+    let dir = scratch_project("swiftguarded");
+    std::fs::write(
+        dir.join("Package.swift"),
+        "// swift-tools-version:5.9\nlet package = 0\n",
+    )
+    .unwrap();
+    std::fs::create_dir_all(dir.join("Sources/x")).unwrap();
+    std::fs::write(
+        dir.join("Sources/x/main.swift"),
+        "#if canImport(AppKit)\nimport AppKit\n#endif\n",
+    )
+    .unwrap();
+
+    let out = run(&dir, &["init"]);
+    assert!(out.status.success(), "{out:?}");
+    let (manifest, _) =
+        devcroft::config::parse(&std::fs::read_to_string(dir.join("devcroft.toml")).unwrap())
+            .unwrap();
+    assert_eq!(manifest.env.provider, "flox");
+
+    let _ = std::fs::remove_dir_all(&dir);
 }
