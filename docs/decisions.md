@@ -960,10 +960,34 @@ service must read the variable.
 Options that were weighed and are *not* the answer, so they are not
 proposed again:
 
-- **Loopback aliases** (`sudo ifconfig lo0 alias 127.0.0.2 up`) — needs
-  root, and only helps a service that binds that specific address.
-  Measured: a `bind("0.0.0.0")` still collides with a `bind("127.0.0.1")`
-  on the same port, and `0.0.0.0` is the common default.
+- **A separate subnet or address per sandbox** — loopback aliases
+  (`sudo ifconfig lo0 alias 127.0.0.2 up`), or a virtual interface with
+  its own subnet. This is the idea that suggests itself first, and the
+  reason it does not work is worth stating precisely, because "give each
+  sandbox its own network" sounds like the right shape.
+
+  **The machine already has more than one subnet, and it already works —
+  for the case that was never the problem.** Measured on a Mac with
+  `127.0.0.1` and `192.168.1.159`:
+
+  | bind A | bind B, same port | result |
+  |---|---|---|
+  | `127.0.0.1` | `192.168.1.159` | **both succeed** |
+  | `0.0.0.0` | `192.168.1.159` | `EADDRINUSE` |
+  | `0.0.0.0` | `0.0.0.0` | `EADDRINUSE` |
+
+  So separate addresses do separate ports — and adding more of them
+  changes nothing, because `0.0.0.0` means *every address on every
+  subnet, including ones created later*. A wildcard bind reserves the
+  port across the whole stack, and the wildcard is the common default.
+
+  The distinction that matters: **a subnet gives you more addresses in one
+  shared binding table; the collision is a property of the table, not of
+  the address space.** What separates two sandboxes is a second binding
+  table — a network namespace on Linux, or a VM. Creating subnets is
+  strictly worse than the `forward = ["PORT"]` recipe above: it needs
+  root, and it still depends on the service binding a specific address,
+  which is the same cooperation the recipe needs without the root.
 - **`SO_REUSEPORT`** — a trap rather than a solution. Measured: both
   sockets bind successfully and the kernel then **load-balances
   connections between them**, so each worktree would serve a random half
