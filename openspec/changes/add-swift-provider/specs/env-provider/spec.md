@@ -65,11 +65,20 @@ no dependency on Apple platforms, because a closure-tier provider serves
 such a package and serves it better — reproducibly, without executing
 `Package.swift` on the host.
 
-Acceptance SHALL require positive evidence: a linked Apple framework, or
-an `import` of an Apple-only module that is not inside a
-conditional-compilation guard. A declared `platforms:` entry SHALL NOT be
-treated as evidence, since it constrains only Apple platform minimums and
-is ignored on Linux.
+Acceptance SHALL require positive evidence of one of three kinds: a
+linked Apple framework (however spelled, including `-framework` passed
+through unsafe linker flags); an `import` of an Apple-only module that is
+not inside a conditional-compilation guard; or an Apple project artifact
+such as `Info.plist`, an entitlements file, an `.xcodeproj`, or an asset
+catalog.
+
+The third kind concerns the *deliverable* rather than the source: a
+project whose Swift is portable may still be impossible for a closure to
+produce, because app bundles, entitlements and code signing are
+Apple-side.
+
+A declared `platforms:` entry SHALL NOT be treated as evidence, since it
+constrains only Apple platform minimums and is ignored on Linux.
 
 The refusal SHALL name the providers that serve the project instead, and
 SHALL state what evidence was searched for.
@@ -90,8 +99,15 @@ SHALL state what evidence was searched for.
 - **WHEN** the only Apple-only import is inside `#if canImport(...)`
 - **THEN** the package is treated as portable and refused
 
-#### Scenario: A dependency's imports are not evidence
-- **WHEN** an Apple-only import appears only under `.build/`
+#### Scenario: An Apple project artifact is accepted with portable sources
+- **WHEN** the sources import only modules available on Linux but the
+  project holds an `Info.plist`, entitlements file, `.xcodeproj`, or asset
+  catalog
+- **THEN** resolution proceeds
+
+#### Scenario: A dependency's evidence is not this project's evidence
+- **WHEN** an Apple-only import or an Apple project artifact appears only
+  under `.build/`
 - **THEN** the package is treated as portable and refused
 
 ### Requirement: swift lockfile precondition
