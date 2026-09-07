@@ -291,6 +291,58 @@ integration is its own to design. Recorded against `add-agent-workload`,
 whose three considered options for the runtime did not include reading
 what the ecosystem had already solved.
 
+## apple/container + apple/containerization — <https://github.com/apple/container>
+
+Read while answering "has nobody made Linux's port isolation work on a
+Mac?" — a fair question, since devcroft's own answer had been "not
+without a VM".
+
+**The answer is that Apple did, and by the VM route.** `container` runs a
+**separate lightweight VM per container** on Virtualization.framework, and
+gives each one **its own IP address** from a network helper, explicitly so
+that reaching a container's service "removes the need to map individual
+ports". Two containers each binding 5432 do not collide, because they are
+two network stacks reached at two addresses — not two subnets in one
+stack.
+
+That is the same conclusion `docs/decisions.md` reaches from the other
+direction: the collision is a property of the binding table, so what
+separates two workloads is a second table, and on macOS that means a VM.
+Apple shipping exactly this is the strongest available confirmation that
+there is no lighter mechanism hiding — if one existed, this is the team
+that would have used it.
+
+**Two version-dependent limits worth knowing before quoting it**, from the
+project's own technical overview: on **macOS 26+** there is full support
+for multiple networks and container-to-container communication; on
+**macOS 15** the `vmnet` framework can only provide networks whose
+containers are isolated *from each other*, all containers attach to one
+default network, and the `container network` commands do not exist.
+
+**Nothing is taken, for the reasons already recorded** — and the reasons
+are about fit, not quality:
+
+- The guest is Linux. devcroft's `swift` provider exists *because* it is
+  macOS-native; Xcode, `swift` and `codesign` do not run in a Linux VM, so
+  a VM tier would remove the toolchain on the platform that motivated it.
+- The shared filesystem becomes a share, which is the objection
+  `docs/decisions.md`'s libkrun entry already carries: a microVM hardens
+  the kernel surface, and the shared filesystem is devcroft's proposition.
+- Containerization is a **Swift** package. Using the `container` CLI would
+  breach the standing requirement that the keeper "SHALL NOT be executed
+  as a child of a separate sandboxing binary"; using the framework as a
+  library from Rust is an FFI question nobody has priced.
+
+What this *does* settle: if devcroft ever needs real port separation on
+macOS, the mechanism is a VM, the API is Virtualization.framework, and
+there is a working open-source reference for both. That belongs in the
+libkrun entry's reopening argument, not in a search for something lighter.
+
+**Also read and not applicable**: `runnet`
+(<https://github.com/imlk0/runnet>), which turns up first when searching
+for this and is Linux-only — network namespaces plus `socat` port
+mapping, requiring Linux >= 2.6.24.
+
 ## bubblewrap — <https://github.com/containers/bubblewrap>
 
 Refused as a dependency, read as a reference. `add-mount-isolation` M2
