@@ -140,12 +140,27 @@
       provider that exists *and* fails the test. The pre-existing "no
       artifact-tier provider is scheduled" reasoning is kept rather than
       deleted, rescoped to every other candidate, since it still governs them.
-- [x] 5.5 `init` mentions `Package.swift` but **never auto-selects** `swift`,
-      unlike the three closure providers it does select. A generated manifest
-      naming it would opt a user into a weaker guarantee and into host-side
-      execution of their own repository without either being a decision they
-      made. The advice names both costs and points at `flox init` for a
-      reproducible Swift environment.
+- [x] 5.5 `init` detects `Package.swift` and selects `swift`, **ranked below
+      all three closure providers**.
+      → Reversed during review, at the owner's direction. The first
+      implementation mentioned the provider but kept writing `flox`, on the
+      reasoning that a generated manifest naming the one test-failing provider
+      opts a user into a weaker guarantee they did not choose. The objection
+      that carried: for a project with *only* a `Package.swift`, the
+      alternative to selecting `swift` is not a better provider — it is a
+      `devcroft.toml` naming `flox` for a project that has no flox
+      environment, which fails on the first `up`. `init`'s job is to produce
+      a manifest that works.
+      What survives from the original concern is the **ordering**, which is
+      where the care actually belongs: `flox`, then `devbox`, then a bare
+      flake, then `swift`. A Swift package sitting beside any real closure
+      environment keeps the stronger guarantee. Asserted for all three, in
+      `init_prefers_every_closure_provider_over_a_swift_package` — without it,
+      "swift ranks last" is an unverified claim in a comment.
+      And the disclosure got *louder* rather than quieter, since this branch
+      now reports a trade rather than a discovery: it names the artifact tier,
+      names that `up` will run `Package.swift`, and names `flox init` as the
+      way to avoid both. Both lines are asserted.
 
 ## 6. What is left open
 
