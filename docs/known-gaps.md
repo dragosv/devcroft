@@ -178,6 +178,19 @@ Two further limits worth knowing:
   host, and some hardened Linux ones — degrades to the shared host port
   table, with one warning at `up`. See the macOS measurement above.
 
+  **That warning now fires only when the sandbox has something to lose.**
+  It used to fire for every deny-network sandbox, which on macOS is every
+  sandbox, and its text described a port collision most of them could not
+  have — a desktop application declares no services and no ports. Isolation
+  is still *requested* for every deny-network sandbox, because Landlock is
+  TCP-only and on Linux the namespace is the only thing closing UDP; but on
+  macOS that is not a loss. Measured: a full DNS round-trip to 8.8.8.8 from
+  inside a sandbox with `network.default = "deny"` fails with
+  `Operation not permitted`, while the same probe on the host returns 61
+  bytes. Seatbelt's outbound deny covers UDP where Landlock's does not, so a
+  macOS sandbox with no ports and no services loses nothing by having no
+  namespace, and is no longer told otherwise.
+
 Fleet (`add-linux-agent-fleet`) is a second, harder consumer of the same
 primitive — N agents under one supervisor, plus an optional host-side
 mapping for reaching one from outside — not yet built.

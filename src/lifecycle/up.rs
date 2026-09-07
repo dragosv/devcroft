@@ -353,6 +353,57 @@ pub fn up_with_provider(
     )
 }
 
+/// The "network isolation is degraded" warning, emitted only when this
+/// sandbox actually loses something by not getting a namespace.
+///
+/// **It used to fire for every deny-network sandbox on macOS, which is
+/// every macOS sandbox**, and its text described a port collision the
+/// sandbox often could not have. A desktop application declares no
+/// services and no ports; telling its author that "another sandbox
+/// binding the same port will collide" is noise, and this file's own
+/// `warn_if_activation_hook_ran` already states the rule it broke — a
+/// warning that always fires is one people stop reading.
+///
+/// Isolation is requested for every deny-network sandbox
+/// (`wants_network_isolation` returns `network_block`), and deliberately
+/// so: **Landlock's network rules are TCP-only**, so on Linux a namespace
+/// is the only thing closing UDP. That is a real loss when it is
+/// unavailable, and it is worth a warning even with no ports declared.
+///
+/// **On macOS it is not a loss, measured.** Seatbelt's outbound deny
+/// covers UDP: a full DNS round-trip to 8.8.8.8 from inside a sandbox
+/// with `network.default = "deny"` fails with `Operation not permitted`,
+/// while the same probe on the host returns 61 bytes. So a macOS sandbox
+/// with no ports and no services loses nothing at all by having no
+/// namespace, and has nothing to be warned about.
+///
+/// What remains platform-independent is the port table: if the manifest
+/// declares ports or services, sharing the host's table is a real
+/// consequence anywhere, and that is what the message now says.
+fn warn_network_isolation_degraded(compiled: &crate::policy::CompiledPolicy, has_services: bool) {
+    let shares_ports = has_services || !compiled.network_ports.is_empty();
+    if shares_ports {
+        eprintln!(
+            "devcroft: warning: network isolation is degraded on this host: \
+             unprivileged network namespaces are unavailable (fallback: this \
+             sandbox's ports share the host's port table, and another sandbox \
+             binding the same port will collide)"
+        );
+        return;
+    }
+    // No ports and no services: the only thing the namespace was buying
+    // is the UDP closure, which matters only where the backend does not
+    // already cover it.
+    if !cfg!(target_os = "macos") {
+        eprintln!(
+            "devcroft: warning: network isolation is degraded on this host: \
+             unprivileged network namespaces are unavailable (fallback: this \
+             sandbox's `network.default = \"deny\"` is enforced for TCP but not \
+             for UDP, which Landlock does not mediate)"
+        );
+    }
+}
+
 /// Starts the egress proxy if none from a previous `up` is still alive,
 /// or reuses the live one's already-recorded port and token. Reuse only
 /// ever applies across a `Health::Stale` recovery — `--recreate` already
@@ -687,12 +738,7 @@ fn up_process(
         && match crate::fleet::netns::probe(&exe) {
             Ok(true) => true,
             Ok(false) | Err(_) => {
-                eprintln!(
-                    "devcroft: warning: network isolation is degraded on this host: \
-                     unprivileged network namespaces are unavailable (fallback: this \
-                     sandbox's ports share the host's port table, and another sandbox \
-                     binding the same port will collide)"
-                );
+                warn_network_isolation_degraded(&compiled, services.is_some());
                 false
             }
         };
