@@ -553,8 +553,7 @@ mod symlink_spelling_tests {
             "the canonical form must still be the real target"
         );
         assert_eq!(
-            via_link.literal,
-            link,
+            via_link.literal, link,
             "and the literal form must survive as written — collapsing the two \
              is exactly the defect this guards"
         );
@@ -579,9 +578,12 @@ mod symlink_spelling_tests {
         std::fs::create_dir_all(dir.join("plain")).unwrap();
         let canonical_dir = dir.canonicalize().unwrap();
 
-        let paths = resolve_both(&canonical_dir.join("plain").to_string_lossy(), &canonical_dir)
-            .unwrap()
-            .unwrap();
+        let paths = resolve_both(
+            &canonical_dir.join("plain").to_string_lossy(),
+            &canonical_dir,
+        )
+        .unwrap()
+        .unwrap();
         assert_eq!(
             paths.literal, paths.canonical,
             "no symlink means no second rule"
