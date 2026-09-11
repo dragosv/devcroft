@@ -470,32 +470,41 @@ does not work today: devenv computes `/tmp/devenv-<hash>` from the
 project path at evaluation time and ignores `TMPDIR`. Narrowing this
 belongs to `own-policy-baseline` and needs the providers to cooperate.
 
-## PostgreSQL cannot start in a sandbox on macOS
+## PostgreSQL cannot start in a sandbox on macOS — cause NOT isolated
 
-Its postmaster creates a System V shared memory segment as an interlock
-against duplicate instances — a 56-byte one — and Seatbelt denies it:
+Its postmaster fails during `initdb`'s bootstrap:
 
 ```
 FATAL:  could not create shared memory segment: Operation not permitted
-DETAIL:  Failed system call was shmget(key=…, size=56, 03600).
+DETAIL:  Failed system call was shmget(key=..., size=56, 03600).
 ```
 
-This is not a filesystem grant. The backend library exposes an `IpcMode`,
-but it governs **POSIX** IPC (`ipc-posix-shm`, POSIX semaphores); SysV
-shared memory is a different mechanism and has no knob. Landlock does not
-mediate SysV IPC at all, so the same project is expected to work on
-Linux — unverified there, and worth verifying before the asymmetry is
-relied on.
+**A first version of this entry blamed Seatbelt for denying System V
+shared memory. That is measured to be false**, and the correction is kept
+because a wrong explanation is the kind of thing that gets repeated:
 
-Found by building the obvious demo: a devenv project with
-`services.postgres.enable`, a table, and a Go server reading it.
-Everything devcroft owns worked — the integration's postgres was captured
-as a service, its readiness probe carried, the dependent emitted as
-`process_healthy`, the failure reported rather than hidden. The database
-itself could not start.
+- `shmget` succeeds under **every** Seatbelt profile tried, including a
+  minimal `(deny default)` one and one that explicitly denies
+  `ipc-sysv*`. Seatbelt does not appear to gate it at all.
+- Inside a real devcroft sandbox, `shmget` succeeds with every flag
+  combination postgres uses — `IPC_CREAT|0600`,
+  `IPC_CREAT|IPC_EXCL|0600`, postgres's exact `03600`, and
+  `IPC_PRIVATE` — against fresh keys.
+- The key is not colliding: a fresh data directory yields a fresh key and
+  fails identically.
+- It is not the resource limit: at `kern.sysv.shmseg` (8 per process)
+  macOS returns **ENOSPC**, not EPERM.
 
-Adjacent, non-fatal, and noted because it will surface again:
-`/private/var/select/sh` is also denied during `initdb`.
+So the sandbox permits what postgres asks for, and postgres is refused
+anyway. The cause is not known. What differs between the working probe
+and the failing call — same user, same flags, same sandbox — has not been
+found.
+
+Worth knowing while investigating: failed attempts **leak** their
+segments. `ipcs -m` showed 24 of a system maximum of 32 after a day of
+them, all with `NATTCH=0`. That does not cause this failure (the errno
+would be ENOSPC) but it will eventually cause a different one, and
+`ipcrm` is the cleanup.
 
 ## A grant does not cover the symlinked spelling of its own path on macOS — half fixed
 
