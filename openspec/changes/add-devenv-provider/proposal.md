@@ -13,6 +13,14 @@ entry point does what is measured, not read from documentation. That
 matters here more than usual, because the measurement changed the
 answer.
 
+**Task group 0 has since re-measured all of it on devenv 2.2.2,
+aarch64-darwin, and the gate passed — with three corrections recorded
+inline below rather than quietly folded in.** The entry-point table held.
+What did not hold was the assumption in this proposal's Open Questions
+that the hook-free environment would turn out identical to the real one
+minus the hook: it is not, in either direction, and design.md decision 8
+is the answer. See design.md — Measured (group 0) for the numbers.
+
 ## Why
 
 devenv is the largest population of declarative Nix environments devcroft
@@ -46,7 +54,7 @@ file:
 | `devenv direnv-export` | **yes** | yes (74,959 bytes) |
 | `devenv info` | no | no — a summary, not an environment |
 | `devenv eval env` | no | no — only the *declared* `env` attribute |
-| `devenv build shell` | **no** | **yes** — an 11,147-byte `declare -x` dump |
+| `devenv build shell` | **no** | **yes** — an 11,147-byte `declare -x` dump (16,062 on darwin) |
 | `devenv tasks run devenv:enterShell` | yes, on demand | n/a |
 
 Two findings follow, and together they are the case for this change:
@@ -92,7 +100,13 @@ absence.
 - **Store grants** come from the resolved closure's `/nix/store` paths by
   the same mechanism the other three closure providers use, annotated
   `provider:devenv`.
-- **Preconditions, checked at `up`, layer `provider`, exit code 3:**
+- **Preconditions, checked at `up`, layer `provider`, exit code 3.**
+  Group 0 turned the lockfile one from a tidiness argument into a
+  correctness one: `devenv build shell` on a project with no
+  `devenv.lock` **writes one**, so without an up-front refusal the very
+  first `up` of an unlocked project resolves inputs at `up` and mutates
+  the tree — the two failures this change is required not to have,
+  reached through the route it chose. The full list:
   `devenv` usable and `nix` usable (devenv is a frontend over it) —
   probed as a **capability**, never as a binary on `PATH`, since both
   `devenv --version` and `nix flake --help` succeed against an

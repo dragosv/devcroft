@@ -108,10 +108,53 @@ one that runs project code, and SHALL NOT report the fallback as success.
 - **THEN** `up` fails at layer `provider` naming the reason, rather than
   capturing through an entry point that runs `enterShell`
 
+### Requirement: The Nix builder's own variables do not reach the sandbox
+The hook-free capture route returns the environment of the derivation
+that *builds* the dev shell, which is a superset of the environment a
+developer gets. The system SHALL NOT inject the builder's own variables
+into the keeper.
+
+Measured on devenv 2.2.2: the capture carries `HOME=/homeless-shelter`,
+`SSL_CERT_FILE` and `NIX_SSL_CERT_FILE` set to `/no-cert-file.crt`,
+`TMP`/`TMPDIR`/`TEMP`/`TEMPDIR` pointing into a build directory that no
+longer exists, and 30 further build-time names (`out`, `stdenv`,
+`buildInputs`, `phases`, `shellHook`, …). Injecting them is not untidy,
+it is broken: a sandbox with a `HOME` that does not exist and TLS
+pointed at a missing certificate file, failing in ways that read as
+devcroft bugs.
+
+devenv unsets most of them at the top of `enterShell`. The system SHALL
+NOT rely on that: the hook runs in its own shell inside the sandbox, so
+its `unset` never reaches the environment sessions inherit, and its list
+omits `HOME` and the certificate paths.
+
+#### Scenario: A builder variable is not injected
+- **WHEN** a devenv environment is captured through the hook-free route
+- **THEN** the resolved environment contains no `HOME` pointing at the
+  builder's sentinel home, no certificate path pointing at a file that
+  does not exist, and no temp directory pointing into a Nix build
+  directory
+
+#### Scenario: The filter is pinned against the real environment
+- **WHEN** a host can run both the hook-free route and the hook-running
+  one
+- **THEN** the filtered capture, plus what the hook exports when the
+  sandbox runs it, matches the environment the hook-running route
+  produces, apart from an enumerated set recorded in the test
+- **AND** a variable belonging to neither side fails the test rather
+  than being captured or dropped silently
+
 ### Requirement: devenv's enterShell runs inside the sandbox
 Where a project defines `enterShell`, the system SHALL capture it as data
 during resolution and run it **inside** the sandbox, after restriction,
 through the same mechanism that carries flox's `[hook].on-activate`.
+
+What devenv hands back under that name is the project's block wrapped in
+devenv's own generated preamble — temp-directory fixups, `MANPATH`, a
+profile symlink, the builder-variable `unset` above. The system SHALL run
+the whole of it: the preamble is part of what makes a devenv shell a
+devenv shell, and two of the variables the hook-free capture lacks
+(`IN_NIX_SHELL`, `MANPATH`) are exported by it.
 
 The system SHALL report `ran_activation_hook` as false for devenv,
 because nothing project-defined executes host-side. A devenv project with

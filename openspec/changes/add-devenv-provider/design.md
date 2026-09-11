@@ -23,6 +23,38 @@ Three measured facts about devenv 2.2.2 constrain everything below:
    407-byte executable script), addressable as the task
    `devenv:enterShell`.
 
+## Measured (group 0)
+
+devenv 2.2.2, aarch64-darwin, against a project declaring one package,
+one `env` entry and an `enterShell` appending to a sentinel outside the
+project root. Sentinel counts are hook executions.
+
+| entry point | exit | hook runs | yields |
+|---|---|---|---|
+| `devenv build shell` | 0 | **0** | `{"shell": "/nix/store/…-devenv-shell"}` → a 16,062-byte `declare -x` dump |
+| `devenv info` | 0 | 0 | 1,356 bytes of summary |
+| `devenv eval env` | 0 | 0 | 724 bytes — the declared `env` only |
+| `devenv eval enterShell` | 0 | **0** | 3,896 bytes of JSON: the hook's full text |
+| `devenv direnv-export` | 0 | **1** | 80,256 bytes |
+| `devenv shell -- env -0` | 0 | **2** | the real environment |
+| `devenv update` | 0 | 0 | writes `devenv.lock` |
+
+Four results the proposal did not have:
+
+1. **`devenv build shell` writes `devenv.lock` when the project has
+   none** — it resolves and locks rather than refusing. The up-front
+   lockfile precondition is therefore load-bearing, not symmetry with
+   devbox.
+2. **With the lock present, capture touches exactly one path in the
+   project tree**: `.devenv/nix-eval-cache.db`. Decision 6's confinement
+   claim is measured, and the precondition in (1) is what keeps it true.
+3. **`devenv eval enterShell` returns the hook's text without running
+   it**, which settles design.md's open question on where to read it
+   from: no store-path archaeology, and `devenv eval` is a documented
+   command where the derivation path is not.
+4. **The completeness diff is not empty in either direction** — the
+   assumption this design rested on. Decision 8.
+
 ## Goals / Non-Goals
 
 **Goals:**
@@ -96,11 +128,21 @@ copy of the environment — because no flox mode suppresses the hook.
 devenv's hook is already separate, so devcroft reads it rather than
 engineering around its absence.
 
-**How to obtain the script text** is deliberately left to task-group
-measurement rather than decided here: the `devenv:enterShell` derivation
-is a readable file, and `devenv eval` may expose the source, but which is
-stable across versions has not been measured. Either satisfies the spec,
-which is written as a property of the result.
+**How to obtain the script text: `devenv eval enterShell`.** Measured in
+group 0 — it returns the hook's full text as JSON and does not run it
+(0 sentinel appends, 3,896 bytes). The alternative, reading the
+`…-devenv-enterShell` derivation out of the closure, works too and is
+rejected: it means locating a store path by name pattern, where
+`devenv eval` is a documented command taking a documented attribute.
+
+Worth knowing before reading the result: what comes back is **not only
+the project's `enterShell`**. devenv wraps it in a generated preamble —
+temp-directory fixups, `MANPATH`, a profile symlink, a direnv-version
+warning, and the `unset` of builder variables decision 8 covers — with
+the project's own text at the end. devcroft runs the whole thing, which
+is correct (that preamble is part of what makes a devenv shell a devenv
+shell) and is why the captured script is larger than the project's
+`enterShell` block.
 
 **Consequence, and it is a behaviour difference worth stating.** An
 `enterShell` reaching for host tooling is denied inside the sandbox. This
@@ -171,6 +213,63 @@ asserted end to end. A failure here does not look like a capture error:
 it looks like `up` succeeding and `devcroft shell`, SSH login, and every
 service command failing later.
 
+### Decision 8: the hook-free capture needs a filter, and the hook restores the rest
+
+`devenv build shell` does not emit the environment a developer gets. It
+emits the environment of the *derivation that builds* it, and the two
+differ in both directions. Measured against `devenv shell -- env -0`
+under the canonical baseline — 103 keys versus 69:
+
+**Present only in the hook-free capture (38 keys).** The Nix builder's
+own variables: `out`, `outputs`, `stdenv`, `builder`, `buildInputs`,
+`nativeBuildInputs`, every `deps*`, `phases`, `buildPhase`, `patches`,
+`doCheck`, `doInstallCheck`, `preferLocalBuild`, `strictDeps`,
+`__structuredAttrs`, `shell`, `shellHook`, `HOST_PATH`, `NIX_BUILD_CORES`,
+`NIX_BUILD_TOP`, `NIX_ENFORCE_PURITY`, `NIX_LOG_FD`, `GZIP_NO_TIMESTAMPS`,
+`TZ`, `TERM`, and `TMP`/`TMPDIR`/`TEMP`/`TEMPDIR` all pointing at
+`/nix/var/nix/builds/nix-…`. Three of these are not noise but active
+harm if injected into a sandbox:
+
+- `HOME=/homeless-shelter` — the builder's sentinel home. Every session
+  would get a `HOME` that does not exist.
+- `SSL_CERT_FILE` and `NIX_SSL_CERT_FILE` set to `/no-cert-file.crt` —
+  TLS broken for everything in the sandbox, in a way that looks like a
+  devcroft network bug.
+- `TMPDIR` and friends pointing into a build directory that is gone by
+  the time the sandbox runs.
+
+**Present only after the hook (6 keys).** `IN_NIX_SHELL`, `MANPATH`,
+`DEVENV_CMDLINE`, plus `OLDPWD`, `SHLVL`-adjacent shell bookkeeping and
+`__CF_USER_TEXT_ENCODING`. Of these, `MANPATH` and `IN_NIX_SHELL` are
+exported **by `enterShell` itself** — so running the captured hook inside
+the sandbox restores them. That is the result that keeps this design
+whole: the hole in the hook-free route is exactly the part the hook
+fills, which is the part devcroft was already going to run.
+
+**Where the deny list comes from, and why not devenv's own.** devenv's
+`enterShell` opens by unsetting 26 of those variables by name and
+rewriting `TMP`/`TMPDIR`/`TEMP`/`TEMPDIR` — devenv knows the problem and
+solves it *inside the hook*. devcroft cannot inherit that: the hook runs
+in its own shell inside the sandbox, so its `unset` never reaches the
+environment the keeper injects into every session. And the list is not
+sufficient anyway — it omits `HOME`, `SSL_CERT_FILE`, `NIX_ENFORCE_PURITY`
+and the temp directories, which the surrounding shell code handles
+separately.
+
+So the filter is devcroft's, stated as a rule rather than a list where
+possible — drop what the Nix builder sets, keep what the environment
+declares — and pinned by a test that, on a host that can run both routes,
+asserts the filtered hook-free capture plus the hook's own exports equals
+the truth, modulo an enumerated set. A key appearing on neither side of
+that comparison breaks CI, which is the only way a list like this stays
+correct across devenv versions.
+
+**Why this does not reopen the gate.** Task 0.9 stops the change if the
+hook-free route yields an *incomplete* environment and no complete
+hook-free route exists. The route is not incomplete — it is a superset
+with a different `HOME` — and nothing that is missing is missing after
+the hook devcroft already runs. Criterion 4 holds.
+
 ## Risks / Trade-offs
 
 - **`devenv build shell`'s format changes upstream** → A format test
@@ -209,12 +308,12 @@ not name `devenv` is byte-identical, which the config delta asserts.
 
 ## Open Questions
 
-- Which artifact to read `enterShell`'s text from (the derivation file or
-  `devenv eval`). Both satisfy the spec; the choice is a stability
-  question the first task group answers.
+- ~~Which artifact to read `enterShell`'s text from.~~ Answered in group
+  0: `devenv eval enterShell`, which does not run it. See decision 3.
 - Whether `devenv.yaml` inputs can float in a way `devenv.lock` does not
   pin, the way devbox's base nixpkgs entry did. Affects one precondition
   test, not the approach.
-- Which devenv command creates a missing `devenv.lock`. `devenv update`
-  is the candidate `init`'s advice would name; it is measured in group 0
-  rather than inferred, and the spec states the property until it is.
+- ~~Which devenv command creates a missing `devenv.lock`.~~ Answered in
+  group 0: `devenv update` writes it, runs no hook, and is what `init`
+  advises. (`devenv build shell` also writes it, which is why the
+  up-front precondition exists rather than being symmetry with devbox.)

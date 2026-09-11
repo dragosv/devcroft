@@ -15,52 +15,45 @@ is the shared probe.
 
 ## 0. Measurement gate — no code until these are answered
 
-- [ ] 0.1 Re-confirm the proposal's entry-point table against a fresh
-      devenv project, using the sentinel method (an `enterShell` that
-      appends to a file outside the project root, counted before and
-      after each invocation). Record the devenv version measured.
-- [ ] 0.2 **Diff the captured environment against the truth.** Capture
-      via `devenv build shell`, capture via `devenv shell -- env -0` (the
-      hook-running route), and diff. Any variable present in the second
-      and absent from the first is a hole in the chosen route. Record the
-      diff verbatim — an empty diff is the result this change assumes,
-      and it has not been verified.
-- [ ] 0.3 Decide where `enterShell`'s text comes from: the
-      `…-devenv-enterShell` derivation file, or `devenv eval`. Measure
-      both across at least two devenv versions if reachable; pick on
-      stability, record the loser and why (design.md Open Questions).
-- [ ] 0.4 Check whether `devenv.yaml` inputs can resolve at `up` without
-      `devenv.lock` changing — the failure devbox's base nixpkgs entry
-      turned out to have. If they can, the byte-comparison precondition
-      is necessary but insufficient and the spec needs amending before
-      implementation, not after.
-- [ ] 0.5 **Does the captured environment carry a shell devcroft can
-      resolve?** Run `src/shell.rs`'s rule against the captured env by
-      hand: is there a `sh`/`bash` on the captured `PATH` whose real path
-      lies under a store path `capture::store_grants` would return, or is
-      the requisites fallback the only route? Record which, because a
-      capture that passes every other check and has no resolvable shell
-      produces a working `exec` and a broken login session (design.md
-      decision 7).
-- [ ] 0.6 **What does capture write into the project tree?** Snapshot the
-      project before and after `devenv build shell`, on a fresh project
-      and on an interrupted run. Confirm every created or modified path
-      is under `.devenv/` — decision 6 bounds devcroft to that, and the
-      spec scenario asserts it, so a write anywhere else is a finding
-      that changes the decision rather than a detail to absorb.
-- [ ] 0.7 **Which command creates a missing `devenv.lock`?** Measure on a
-      project with none; `devenv update` is the candidate `init` would
-      advise and is not to be asserted from its name (the cli spec states
-      the property and this task supplies the command).
-- [ ] 0.8 Investigate why `devenv shell -- <cmd>` runs `enterShell`
-      twice. Not on the chosen path, so this does not block; record the
-      finding either way, since an unexplained doubling at the hook
-      boundary is the kind of detail that matters later.
-- [ ] 0.9 If 0.2 shows the hook-free route is incomplete and no other
-      hook-free route is complete, **stop and report**. That outcome
-      means devenv fails criterion 4 as measured, which is a
-      qualification finding for `docs/decisions.md`, not a problem to
-      engineer around.
+- [x] 0.1 Entry-point table re-confirmed on **devenv 2.2.2,
+      aarch64-darwin**, sentinel method, clean canonical baseline. Holds:
+      `build shell`, `info`, `eval <attr>` run the hook 0 times;
+      `direnv-export` once (80,256 bytes); `shell -- <cmd>` twice. Full
+      table in design.md — Measured (group 0).
+- [x] 0.2 **Completeness diff taken, and it is not empty in either
+      direction** — 103 keys from `build shell` against 69 from
+      `devenv shell -- env -0`. 38 extra (the Nix builder's own
+      variables, including `HOME=/homeless-shelter` and
+      `SSL_CERT_FILE=/no-cert-file.crt`), 6 missing, of which the two
+      that matter (`IN_NIX_SHELL`, `MANPATH`) are exported by
+      `enterShell` itself and so come back when the sandbox runs it.
+      Recorded verbatim in design.md decision 8, which is the answer.
+- [x] 0.3 `enterShell`'s text comes from **`devenv eval enterShell`** —
+      returns it as JSON, runs it 0 times, 3,896 bytes. The
+      `…-devenv-enterShell` derivation exists and is readable; rejected
+      because it means finding a store path by name pattern where a
+      documented command exists (design.md decision 3).
+- [x] 0.4 **`devenv build shell` writes `devenv.lock` when the project
+      has none** — it resolves and locks rather than refusing. So the
+      byte comparison after capture is necessary but not sufficient: the
+      up-front precondition is what stops the first `up` of an unlocked
+      project from resolving inputs at `up`.
+- [x] 0.5 The captured `PATH` carries a store-backed shell —
+      `…-bash-interactive-5.3p15/bin/{sh,bash}` and `…-bash-5.3p15/bin/…`,
+      all resolving inside `/nix/store`. `src/shell.rs`'s rule is
+      satisfiable for devenv without the requisites fallback.
+- [x] 0.6 With `devenv.lock` present, a second capture modifies exactly
+      one path in the project tree: `.devenv/nix-eval-cache.db`. Nothing
+      outside `.devenv/`, and no declaration file. Decision 6 measured.
+- [x] 0.7 **`devenv update`** creates a missing `devenv.lock`, runs no
+      hook, and is what `init` advises.
+- [x] 0.8 `devenv shell -- <cmd>` runs `enterShell` twice under a clean
+      environment too, so it is not an artifact of the measuring shell.
+      Still unexplained; not on the chosen path. Recorded.
+- [x] 0.9 Gate passed. The hook-free route is not incomplete — it is a
+      superset with a different `HOME`, and what it lacks is restored by
+      the hook devcroft already runs inside the sandbox. Criterion 4
+      holds; the change proceeds with decision 8 added.
 
 ## 1. Provider skeleton
 
@@ -82,7 +75,7 @@ is the shared probe.
       hint, and `devenv.lock` present **before** capture with the lock
       command from 0.7 as the hint — all at layer `provider`, exit 3.
       The last one mirrors devbox's `ensure_everything_locked`: without
-      it an unlocked project fails through 2.5's after-the-fact byte
+      it an unlocked project fails through 2.7's after-the-fact byte
       comparison, whose message is about capture resolving rather than
       about the project never having been locked.
 - [ ] 2.2 Capture through the hook-free route chosen in group 0, diffed
@@ -94,29 +87,44 @@ is the shared probe.
       unrecognized** rather than skipping it — a partial environment that
       looks like a whole one is the failure mode design.md decision 2
       accepts the internal-artifact risk to avoid.
-- [ ] 2.4 Store grants from the resolved closure, annotated
+- [ ] 2.4 **Filter the Nix builder's own variables out of the capture**
+      (design.md decision 8). `HOME=/homeless-shelter`,
+      `SSL_CERT_FILE=/no-cert-file.crt`, the `TMP*` quartet pointing into
+      a build directory, `out`/`stdenv`/`buildInputs`/`shellHook` and the
+      rest. Not devenv's own `unset` list: it runs inside the hook's own
+      shell and never reaches the environment the keeper injects, and it
+      omits `HOME` and the certificate paths anyway.
+- [ ] 2.5 Equivalence test for that filter, on a host that can run both
+      routes: filtered hook-free capture, plus what the hook exports,
+      equals `devenv shell -- env -0` modulo an enumerated set written
+      into the test. A key on neither side of that comparison fails CI —
+      the only way the list stays correct across devenv versions.
+- [ ] 2.6 Store grants from the resolved closure, annotated
       `provider:devenv`; assert provider resolution adds no write grants.
-- [ ] 2.5 Lockfile precondition: byte-compare `devenv.lock` after
+- [ ] 2.7 Lockfile precondition: byte-compare `devenv.lock` after
       capture; on mismatch restore the original (or delete one capture
       created), then fail at layer `provider`, exit 3.
-- [ ] 2.6 `ServiceSupport::Unsupported`, declared explicitly with the
+- [ ] 2.8 `ServiceSupport::Unsupported`, declared explicitly with the
       reasoning inline, the way `nix.rs` does — so a devenv project
       declaring services fails distinguishably rather than silently
       starting nothing.
-- [ ] 2.7 Working-tree test (design.md decision 6): after a capture —
+- [ ] 2.9 Working-tree test (design.md decision 6): after a capture —
       successful and refused — every created or modified path in the
       project tree is under `.devenv/`, and `devenv.nix`, `devenv.yaml`
       and `devenv.lock` are byte-identical to their pre-`up` content.
       devcroft does not delete `.devenv/`; it is devenv's own cache and
       GC roots.
-- [ ] 2.8 Determinism test: capture twice from shells with different
+- [ ] 2.10 Determinism test: capture twice from shells with different
       `PATH`/environment, assert byte-identical diffs
       (`tests/flox_env_capture_is_deterministic.rs` has the shape).
 
 ## 3. The hook
 
-- [ ] 3.1 Populate `Resolution::activation_script` from `enterShell`,
-      via the source chosen in 0.3.
+- [ ] 3.1 Populate `Resolution::activation_script` from
+      `devenv eval enterShell` (0.3). What comes back wraps the project's
+      block in devenv's own preamble; devcroft runs the whole thing, and
+      the test asserts the project's own text is present in it rather
+      than assuming the two are equal.
 - [ ] 3.2 `ran_activation_hook` stays false, and `up` prints no
       host-side-hook warning for a devenv project that defines one
       (env-provider spec). Test asserts the absence, not just the
