@@ -23,7 +23,7 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use crate::provider::{RestartPolicy as ServiceRestart, ServiceDecl, Shutdown};
+use crate::provider::{Probe, RestartPolicy as ServiceRestart, ServiceDecl, Shutdown};
 
 /// Everything specific to one service supervisor, in one place.
 ///
@@ -225,18 +225,80 @@ pub fn render_config(services: &[ServiceDecl], shell: &Path) -> String {
             );
         }
 
+        if let Some(ready) = &svc.readiness {
+            let mut probe = serde_json::Map::new();
+            match &ready.probe {
+                Probe::Command(cmd) => {
+                    probe.insert("exec".to_string(), serde_json::json!({ "command": cmd }));
+                }
+                Probe::Http {
+                    host,
+                    port,
+                    path,
+                    scheme,
+                } => {
+                    probe.insert(
+                        "http_get".to_string(),
+                        serde_json::json!({
+                            "host": host,
+                            "port": port,
+                            "path": path,
+                            "scheme": scheme,
+                        }),
+                    );
+                }
+            }
+            probe.insert(
+                "initial_delay_seconds".to_string(),
+                serde_json::Value::Number(ready.initial_delay.into()),
+            );
+            probe.insert(
+                "period_seconds".to_string(),
+                serde_json::Value::Number(ready.period.into()),
+            );
+            probe.insert(
+                "timeout_seconds".to_string(),
+                serde_json::Value::Number(ready.probe_timeout.into()),
+            );
+            probe.insert(
+                "success_threshold".to_string(),
+                serde_json::Value::Number(ready.success_threshold.into()),
+            );
+            probe.insert(
+                "failure_threshold".to_string(),
+                serde_json::Value::Number(ready.failure_threshold.into()),
+            );
+            proc.insert(
+                "readiness_probe".to_string(),
+                serde_json::Value::Object(probe),
+            );
+        }
+
         if !svc.depends_on.is_empty() {
-            // process-compose keys dependencies by name with a condition.
-            // `process_started` rather than `process_healthy`: a
-            // readiness probe is refused at translation today
-            // (`add-devenv-services` design.md decision 3), so waiting on
-            // health would wait on a condition nothing establishes.
+            // process-compose keys dependencies by name with a
+            // condition, and which condition depends on the *target*
+            // (`add-service-readiness` design.md decision 3).
+            //
+            // `process_healthy` where the target declares readiness —
+            // that is what the declaration was for, and waiting on
+            // "started" against a service that declared a probe honours
+            // the dependency in name while defeating its purpose.
+            //
+            // `process_started` where it does not, because
+            // `process_healthy` against a target with no probe waits on
+            // something the supervisor never reports, which is a hang
+            // rather than an ordering.
+            let declares_readiness: BTreeMap<&str, bool> = services
+                .iter()
+                .map(|s| (s.name.as_str(), s.readiness.is_some()))
+                .collect();
             let mut deps = serde_json::Map::new();
             for name in &svc.depends_on {
-                deps.insert(
-                    name.clone(),
-                    serde_json::json!({ "condition": "process_started" }),
-                );
+                let condition = match declares_readiness.get(name.as_str()) {
+                    Some(true) => "process_healthy",
+                    _ => "process_started",
+                };
+                deps.insert(name.clone(), serde_json::json!({ "condition": condition }));
             }
             proc.insert("depends_on".to_string(), serde_json::Value::Object(deps));
         }
@@ -803,6 +865,7 @@ mod tests {
             depends_on: Vec::new(),
             restart: ServiceRestart::Never,
             shutdown: Shutdown::Default,
+            readiness: None,
         };
         let rendered = render_config(std::slice::from_ref(&svc), Path::new(TEST_SHELL_PATH));
         let parsed: serde_json::Value = serde_json::from_str(&rendered).unwrap();
@@ -826,6 +889,7 @@ mod tests {
             depends_on: Vec::new(),
             restart: ServiceRestart::Never,
             shutdown: Shutdown::Command("stop-db".into()),
+            readiness: None,
         };
         let rendered = render_config(std::slice::from_ref(&svc), Path::new(TEST_SHELL_PATH));
         let parsed: serde_json::Value = serde_json::from_str(&rendered).unwrap();
@@ -846,6 +910,7 @@ mod tests {
             depends_on: Vec::new(),
             restart: ServiceRestart::Never,
             shutdown: Shutdown::Default,
+            readiness: None,
         }
     }
 
@@ -882,6 +947,80 @@ mod tests {
         // Sorted, because determinism is part of the contract.
         assert_eq!(env[0], "PGDATA=./pgdata");
         assert_eq!(env[1], "PGPORT=5433");
+    }
+
+    /// `add-service-readiness` design.md decision 3, and the reason the
+    /// feature is worth having: carrying a probe that nothing consults
+    /// would be bookkeeping.
+    ///
+    /// `process_healthy` only where the *target* declares readiness.
+    /// Everywhere else `process_started`, because `process_healthy`
+    /// against a target with no probe waits on something the supervisor
+    /// never reports — a hang, not an ordering.
+    #[test]
+    fn a_dependency_waits_for_health_only_when_its_target_declares_readiness() {
+        use crate::provider::{Probe, Readiness};
+
+        let ready = Readiness {
+            probe: Probe::Command("true".into()),
+            initial_delay: 0,
+            period: 10,
+            probe_timeout: 1,
+            success_threshold: 1,
+            failure_threshold: 3,
+        };
+        let mut probed = decl("probed", "true");
+        probed.readiness = Some(ready);
+        let bare = decl("bare", "true");
+        let mut dependent = decl("dependent", "true");
+        dependent.depends_on = vec!["probed".into(), "bare".into()];
+
+        let rendered = render_config(&[probed, bare, dependent], Path::new(TEST_SHELL_PATH));
+        let doc: serde_json::Value = serde_json::from_str(&rendered).unwrap();
+        let deps = &doc["processes"]["dependent"]["depends_on"];
+
+        assert_eq!(
+            deps["probed"]["condition"], "process_healthy",
+            "a target that declared a probe is waited on for ready"
+        );
+        assert_eq!(
+            deps["bare"]["condition"], "process_started",
+            "a target with no probe has no health to wait for"
+        );
+    }
+
+    /// The probe itself reaches the supervisor whole — every field, not
+    /// just the command.
+    #[test]
+    fn a_readiness_probe_is_rendered_with_its_timing() {
+        use crate::provider::{Probe, Readiness};
+
+        let mut s = decl("web", "true");
+        s.readiness = Some(Readiness {
+            probe: Probe::Http {
+                host: "127.0.0.1".into(),
+                port: 8730,
+                path: "/health".into(),
+                scheme: "http".into(),
+            },
+            initial_delay: 2,
+            period: 5,
+            probe_timeout: 3,
+            success_threshold: 2,
+            failure_threshold: 4,
+        });
+
+        let rendered = render_config(&[s], Path::new(TEST_SHELL_PATH));
+        let doc: serde_json::Value = serde_json::from_str(&rendered).unwrap();
+        let probe = &doc["processes"]["web"]["readiness_probe"];
+
+        assert_eq!(probe["http_get"]["port"], 8730);
+        assert_eq!(probe["http_get"]["path"], "/health");
+        assert_eq!(probe["initial_delay_seconds"], 2);
+        assert_eq!(probe["period_seconds"], 5);
+        assert_eq!(probe["timeout_seconds"], 3);
+        assert_eq!(probe["success_threshold"], 2);
+        assert_eq!(probe["failure_threshold"], 4);
     }
 
     #[test]

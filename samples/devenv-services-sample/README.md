@@ -24,7 +24,43 @@ processes.api = {
 The port comes through `env` rather than being hardcoded in the command,
 which is the same shape flox's sample uses for `vars`. devcroft reads
 `exec`, `env`, `cwd`, the restart policy, the shutdown signal and grace
-period, and ordering.
+period, ordering, and — see below — readiness.
+
+## Ready is not the same as started
+
+`api` declares when it counts as ready:
+
+```nix
+ready = {
+  http.get = { host = "127.0.0.1"; port = 8730; path = "/"; };
+  period = 1;
+};
+```
+
+and `probe`, which declares `after = [ "devenv:processes:api" ]`, now
+waits for that rather than for `api` having been spawned. Without the
+probe there is nothing to wait for: a process that exists is not a
+process that has bound its port, and a dependent started at that moment
+races the server it depends on.
+
+devcroft carries the probe to its supervisor and emits the dependency as
+`process_healthy` — but only because the target declares one. A
+dependency on a service with no probe stays `process_started`, since
+waiting for health that nothing reports is a hang rather than an
+ordering.
+
+**A probe that never passes does not block `up`.** The sandbox comes up,
+the service is reported started-but-not-ready, and its dependents keep
+waiting. The alternative — `up` blocking until every probe passes — turns
+one mistyped health path into a sandbox that never starts, and hides the
+diagnosis behind a hang.
+
+Two of devenv's readiness fields are refused by name rather than
+approximated: `notify` asks for systemd's `READY=1` protocol, which
+devcroft's supervisor does not speak, and a simulated probe would be one
+whose result devcroft invented; `timeout` is an overall deadline, where
+process-compose bounds probe *attempts* instead, and approximating one
+with the other gives a different guarantee under the same name.
 
 `devcroft.toml` grants that one loopback port while keeping egress
 denied:
@@ -130,13 +166,15 @@ to be wrong in.
 
 ## What is refused, and why refusing beats dropping
 
-`ready`, `watch`, `proxy`, `ports`, `listen`, `linux.capabilities`,
+`watch`, `proxy`, `ports`, `listen`, `linux.capabilities`,
 `start.enable = false`, and devenv's `process-compose` passthrough block
 all fail `up` at layer `provider`, naming the process and the field.
 
-A project that declares a readiness probe and gets a service without one
-has been lied to: it would report healthy on a condition nobody checked.
-A refusal you can act on beats a silence you cannot see.
+`ready` used to be on that list, and the reason it came off first is the
+reason the others stay on it: a project that declares a readiness probe
+and gets a service without one has been *lied to* — it would report
+healthy on a condition nobody checked. A refusal you can act on beats a
+silence you cannot see, and carrying the declaration beats both.
 
 The `process-compose` block is the one that costs something real.
 Expressing a dependency through it is common in devenv projects, and it

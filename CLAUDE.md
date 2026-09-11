@@ -509,6 +509,14 @@ mechanism exists — the decision should be **revisited, not defended**.
   drops; the ordering case is the subtle one, since devenv's
   `before`/`after` are task-graph edges and a bare process name is a
   silent no-op in devenv itself.
+- **Readiness is carried, and a dependency waits for it**
+  (`add-service-readiness`). A service that declares a probe is reported
+  ready only once it passes, and a dependent on such a target is emitted
+  as `process_healthy` rather than `process_started` — but only where the
+  target declares one, since waiting for health nothing reports is a hang
+  rather than an ordering. `ready.notify` and `ready.timeout` stay
+  refused: devcroft will not simulate systemd's READY protocol, and will
+  not approximate a wall-clock deadline with attempt thresholds.
 - Known limitations are published, not hidden: no inter-sandbox process
   visibility separation in MVP, cooperative/platform-dependent network
   filtering, no cgroup resource limits.

@@ -13,6 +13,16 @@
   processes.api = {
     exec = "python3 -m http.server $API_PORT --bind 127.0.0.1";
     env.API_PORT = "8730";
+
+    # When this counts as *ready*, which is not the same as started.
+    # devcroft carries this to its supervisor, and — the part that makes
+    # it worth declaring — `probe` below waits for ready rather than for
+    # spawned. Without it, a dependent starts against a server that has
+    # not bound its port yet.
+    ready = {
+      http.get = { host = "127.0.0.1"; port = 8730; path = "/"; };
+      period = 1;
+    };
   };
 
   # A second process, ordered after the first.

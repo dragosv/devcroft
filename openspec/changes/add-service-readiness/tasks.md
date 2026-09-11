@@ -2,67 +2,70 @@
 
 ## 0. Measurement gate
 
-- [ ] 0.1 Confirm devenv's schema against a project that sets every
-      field, reading back `devenv eval processes` — the shape in
-      design.md comes from devenv's source, and source and behaviour are
-      not the same evidence.
-- [ ] 0.2 Confirm process-compose accepts the `readiness_probe` shape
-      devcroft will emit, against the real binary rather than its docs.
-- [ ] 0.3 **Does `http.get` work from inside a sandbox?** A loopback
-      probe from the supervisor to a port the service binds. If it needs
-      a grant the manifest does not already have, that changes what this
-      change must document.
-- [ ] 0.4 Measure what process-compose reports for a probe that never
-      passes, since decision 4 rests on it being visible rather than
-      fatal.
+- [x] 0.1 Schema confirmed against a project setting every field:
+      behaviour matches the source exactly, including that `ready` is
+      non-null whenever *any* readiness field is set and `http.get` is
+      null when unused. Source and behaviour agreed, which is worth
+      recording precisely because it is not guaranteed.
+- [x] 0.2 Confirmed end to end rather than by inspection: a devenv
+      project with a real probe comes up and its dependent waits, which
+      the supervisor could not do if it had rejected the shape.
+- [x] 0.3 The sample's `api` probes itself over loopback on the port its
+      own manifest grants, and comes up ready — so the existing grant
+      covers the probe. Measured on macOS, where the port grant is
+      degraded anyway; the Linux case is 5.4's.
+- [x] 0.4 A never-passing probe leaves `up` successful and the sandbox
+      usable — asserted by `a_probe_that_never_passes_leaves_the_sandbox_usable`
+      rather than by reading process-compose's behaviour. Decision 4
+      holds.
 
 ## 1. `ServiceDecl` gains readiness
 
-- [ ] 1.1 `Readiness` with a `Probe` enum (design.md decision 1),
+- [x] 1.1 `Readiness` with a `Probe` enum (design.md decision 1),
       supervisor-neutral.
-- [ ] 1.2 `render_config` emits `readiness_probe`.
-- [ ] 1.3 **The dependency condition becomes conditional** (decision 3):
+- [x] 1.2 `render_config` emits `readiness_probe`.
+- [x] 1.3 **The dependency condition becomes conditional** (decision 3):
       `process_healthy` where the target declares readiness,
       `process_started` where it does not. Remove the comment that says
       readiness is refused — it stops being true here.
-- [ ] 1.4 A service declaring no readiness renders byte-identically:
+- [x] 1.4 A service declaring no readiness renders byte-identically:
       extend the existing flox golden rather than adding a parallel one.
 
 ## 2. devenv maps instead of refusing
 
-- [ ] 2.1 Map `exec` and `http.get`, with `initial_delay`, `period`,
+- [x] 2.1 Map `exec` and `http.get`, with `initial_delay`, `period`,
       `probe_timeout`, `success_threshold`, `failure_threshold`.
-- [ ] 2.2 Refuse `notify` and the overall `timeout` by name, saying what
+- [x] 2.2 Refuse `notify` and the overall `timeout` by name, saying what
       each would have meant (decision 2).
-- [ ] 2.3 Remove `ready` from the refused-fields list, leaving the other
+- [x] 2.3 Remove `ready` from the refused-fields list, leaving the other
       seven intact — a test asserts the rest still refuse, so this does
       not quietly widen what is accepted.
 
 ## 3. Tests
 
-- [ ] 3.1 Unit: both probe forms map; `notify` and `timeout` refuse by
+- [x] 3.1 Unit: both probe forms map; `notify` and `timeout` refuse by
       name.
-- [ ] 3.2 Unit: the dependency condition is `process_healthy` only when
+- [x] 3.2 Unit: the dependency condition is `process_healthy` only when
       the target declares readiness.
-- [ ] 3.3 E2E: a service with a slow probe is reported started-then-ready,
+- [x] 3.3 E2E: a service with a slow probe is reported started-then-ready,
       and a dependent starts **after** ready — observed by order, not by
       reading the config.
-- [ ] 3.4 E2E: a probe that never passes leaves `up` successful and the
+- [x] 3.4 E2E: a probe that never passes leaves `up` successful and the
       service visibly not ready (decision 4).
-- [ ] 3.5 Regression: flox services unchanged.
+- [x] 3.5 Regression: flox services unchanged.
 
 ## 4. Sample and documentation
 
-- [ ] 4.1 `samples/devenv-services-sample`: the api process gets a real
+- [x] 4.1 `samples/devenv-services-sample`: the api process gets a real
       probe, and the README explains why its dependent now waits.
-- [ ] 4.2 `docs/decisions.md`: devbox's entry loses readiness as a listed
+- [x] 4.2 `docs/decisions.md`: devbox's entry loses readiness as a listed
       cost, since it now exists. The contract question is untouched and
       stays the deciding one.
-- [ ] 4.3 `docs/implementation-log.md`: what group 0 measured.
+- [x] 4.3 `docs/implementation-log.md`: what group 0 measured.
 
 ## 5. Verification
 
-- [ ] 5.1 build, clippy, fmt, doc clean.
-- [ ] 5.2 Full suite, skips reviewed.
-- [ ] 5.3 `openspec validate --all`.
+- [x] 5.1 build, clippy, fmt, doc clean.
+- [x] 5.2 Full suite with devenv on PATH: **497 passed, 0 failed**.
+- [x] 5.3 `openspec validate --all`: 31 passed, 0 failed.
 - [ ] 5.4 Re-run on Linux.

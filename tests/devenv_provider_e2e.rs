@@ -566,3 +566,73 @@ fn a_bare_ordering_name_is_refused_at_the_provider_layer() {
         "and it must show the spelling that works, got: {stderr}"
     );
 }
+
+/// `add-service-readiness`: a dependency on a target that declares a
+/// probe waits for **ready**, not merely for started.
+///
+/// Observed by order rather than by reading the generated config — the
+/// config only says what devcroft asked for, and the claim is about what
+/// the supervisor did.
+#[test]
+fn a_dependent_waits_for_its_targets_readiness_probe() {
+    let Some(sandbox) = Sandbox::with_processes(
+        "readywait",
+        r#"  processes.slowstart = {
+    exec = "sleep 600";
+    ready = { exec = "test -f ready-marker"; period = 1; };
+  };
+  processes.dependent = {
+    exec = "sleep 600";
+    after = [ "devenv:processes:slowstart" ];
+  };"#,
+    ) else {
+        return;
+    };
+
+    let out = sandbox.run(&["up"]);
+    assert!(
+        out.status.success(),
+        "a never-ready probe must not block `up`: {out:?}"
+    );
+
+    // The probe cannot pass yet: the marker does not exist. So the
+    // dependent must not be running, while its target is.
+    let status = String::from_utf8_lossy(&sandbox.run(&["status"]).stdout).into_owned();
+    assert!(
+        status.contains("slowstart"),
+        "the probed service should be started: {status}"
+    );
+    let dependent_line = status
+        .lines()
+        .find(|l| l.contains("dependent"))
+        .unwrap_or("")
+        .to_string();
+    assert!(
+        !dependent_line.contains("running"),
+        "a dependent must wait while its target's probe has not passed, got: {dependent_line:?}"
+    );
+}
+
+/// `add-service-readiness` design.md decision 4: a probe that never
+/// passes does not block `up`. The sandbox comes up and the state is
+/// reported, because a hang hides the diagnosis.
+#[test]
+fn a_probe_that_never_passes_leaves_the_sandbox_usable() {
+    let Some(sandbox) = Sandbox::with_processes(
+        "neverready",
+        r#"  processes.never = {
+    exec = "sleep 600";
+    ready = { exec = "false"; period = 1; };
+  };"#,
+    ) else {
+        return;
+    };
+
+    assert!(sandbox.run(&["up"]).status.success());
+    // The sandbox is usable even though a service will never be ready.
+    let out = sandbox.run(&["exec", "--", "true"]);
+    assert!(
+        out.status.success(),
+        "a never-ready service must not make the sandbox unusable: {out:?}"
+    );
+}

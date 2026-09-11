@@ -228,6 +228,53 @@ pub struct ServiceDecl {
     pub restart: RestartPolicy,
     /// How to stop the service.
     pub shutdown: Shutdown,
+    /// How to tell the service is ready to serve, where the provider
+    /// says.
+    ///
+    /// `None` means the only condition available is "started", and a
+    /// dependent service waits for that. It is not the same as "ready
+    /// immediately" — it is the absence of any way to know.
+    pub readiness: Option<Readiness>,
+}
+
+/// When a service is ready to serve, as opposed to merely started.
+///
+/// The distinction is the whole reason this exists: a spawned process is
+/// not a process that can answer, and the gap between the two is where a
+/// dependent service fails — against a database whose socket is not open
+/// yet, most often.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Readiness {
+    pub probe: Probe,
+    /// Seconds before the first probe.
+    pub initial_delay: u32,
+    /// Seconds between probes.
+    pub period: u32,
+    /// Seconds before one probe is given up on.
+    pub probe_timeout: u32,
+    /// Consecutive successes needed before the service counts as ready.
+    pub success_threshold: u32,
+    /// Consecutive failures before it counts as unhealthy.
+    pub failure_threshold: u32,
+}
+
+/// How readiness is tested.
+///
+/// An enum because a service is ready by **one** means; the timing in
+/// [`Readiness`] applies whichever it is. Two optional probe fields would
+/// permit both set and neither meaningful — the same reasoning that made
+/// [`Shutdown`] an enum.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Probe {
+    /// Ready when this command exits zero.
+    Command(String),
+    /// Ready when this endpoint answers.
+    Http {
+        host: String,
+        port: u16,
+        path: String,
+        scheme: String,
+    },
 }
 
 /// What the supervisor does when a service exits.

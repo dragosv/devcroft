@@ -285,21 +285,22 @@ against numbers rather than against a summary:
   tokio, toml`. devcroft emits JSON precisely to avoid a YAML serializer;
   reading these files means parsing YAML someone else wrote, and
   `serde_yaml` is unmaintained.
-- **Readiness probes would have to exist first.** Measured across two
-  plugins: `postgresql` declares a `readiness_probe`, `redis` does not.
-  devcroft refuses readiness probes today (`add-devenv-services` design
-  decision 3), so the most common devbox service would fail on day one.
+- ~~Readiness probes would have to exist first.~~ **Built**
+  (`add-service-readiness`). They were the reason `postgresql` — the most
+  common devbox service, which declares one where `redis` does not —
+  would have failed on day one. That cost is gone.
 - **The environment is not a problem.** `shellenv --pure` — the route
   devcroft's capture already uses — carries `PGDATA`, `PGHOST`,
   `REDIS_CONF` and `REDIS_PORT`, which the plugins' commands reference.
   This was the most plausible practical blocker and it is not one.
 
-**Readiness probes are the shared prerequisite**, and that is the useful
-sequencing point: they are also the field most likely to be wanted next
-for devenv, and process-compose supports them natively, so the work is
-translation rather than mechanism. Built for devenv, devbox becomes a
-much smaller step — at which point the question is no longer "can it be
-done" but "do we call a plugin's services the project's declarations".
+**The shared prerequisite has been built**, so the sequencing argument
+has been spent: `add-service-readiness` carried readiness for devenv, and
+devbox's plugin files are already written in the supervisor's own shape.
+What is left is a YAML dependency and the mapping — and the question that
+was always the real one: **do we call a plugin's services the project's
+declarations?** That is what a future reader should argue about, not
+whether it can be done.
 
 **Not measured, and it should be before any implementation:** how many
 devbox plugins exist, and whether any use forms devcroft cannot carry at

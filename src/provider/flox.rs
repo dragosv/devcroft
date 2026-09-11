@@ -198,6 +198,10 @@ fn read_service_declarations(project_root: &Path) -> Result<ServiceSupport, Prov
                 Some(cmd) => Shutdown::Command(cmd),
                 None => Shutdown::Default,
             },
+            // flox's `[services]` schema has no readiness concept, so a
+            // dependent waits for started — the only condition flox makes
+            // available.
+            readiness: None,
         });
     }
     // BTreeMap iteration order from toml's table is already sorted by

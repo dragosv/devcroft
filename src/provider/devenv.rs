@@ -611,9 +611,9 @@ struct DevenvProcess {
     start: Option<DevenvStart>,
     #[serde(rename = "supervisionMode", default)]
     supervision_mode: Option<String>,
-    // Refused, not carried — see `refuse_unsupported`.
     #[serde(default)]
-    ready: Option<serde_json::Value>,
+    ready: Option<DevenvReady>,
+    // Refused, not carried — see `refuse_unsupported`.
     #[serde(default)]
     listen: Vec<serde_json::Value>,
     #[serde(default)]
@@ -626,6 +626,45 @@ struct DevenvProcess {
     linux: Option<DevenvLinux>,
     #[serde(rename = "process-compose", default)]
     process_compose: BTreeMap<String, serde_json::Value>,
+}
+
+/// devenv's `ready`, from its own `src/modules/lib/ready.nix`.
+#[derive(serde::Deserialize)]
+struct DevenvReady {
+    #[serde(default)]
+    exec: Option<String>,
+    #[serde(default)]
+    http: Option<DevenvReadyHttp>,
+    #[serde(default)]
+    notify: bool,
+    /// An overall deadline for becoming ready. Refused — process-compose
+    /// bounds *attempts*, not wall-clock.
+    #[serde(default)]
+    timeout: Option<u32>,
+    #[serde(default)]
+    initial_delay: u32,
+    #[serde(default)]
+    period: u32,
+    #[serde(default)]
+    probe_timeout: u32,
+    #[serde(default)]
+    success_threshold: u32,
+    #[serde(default)]
+    failure_threshold: u32,
+}
+
+#[derive(serde::Deserialize)]
+struct DevenvReadyHttp {
+    #[serde(default)]
+    get: Option<DevenvReadyHttpGet>,
+}
+
+#[derive(serde::Deserialize)]
+struct DevenvReadyHttpGet {
+    host: String,
+    port: u16,
+    path: String,
+    scheme: String,
 }
 
 #[derive(serde::Deserialize)]
@@ -712,6 +751,7 @@ fn translate_process(
         working_dir: process.cwd.clone(),
         depends_on: ordering_dependencies(name, process, declared_names)?,
         restart: restart_policy(name, process)?,
+        readiness: readiness(name, process)?,
         shutdown: match &process.shutdown {
             Some(DevenvShutdown {
                 signal: Some(signal),
@@ -723,6 +763,91 @@ fn translate_process(
             _ => super::Shutdown::Default,
         },
     })
+}
+
+/// devenv's `ready`, translated (`add-service-readiness`).
+///
+/// Carried rather than refused, because readiness is the one refused
+/// field whose absence is a *lie* rather than a gap: a service with a
+/// probe reports healthy when the probe passes, and the same service
+/// without one reports healthy the moment it is spawned. A dependent
+/// then starts against a database that is still opening its socket.
+///
+/// Two of devenv's fields stay refused, each for a stated reason rather
+/// than for convenience — see [`refuse_unsupported_readiness`].
+fn readiness(
+    name: &str,
+    process: &DevenvProcess,
+) -> Result<Option<super::Readiness>, ProviderError> {
+    let Some(ready) = &process.ready else {
+        return Ok(None);
+    };
+    refuse_unsupported_readiness(name, ready)?;
+
+    let http = ready.http.as_ref().and_then(|h| h.get.as_ref());
+    let probe = match (&ready.exec, http) {
+        (Some(_), Some(_)) => {
+            return Err(unsupported(
+                name,
+                "ready",
+                "it declares both a command and an HTTP probe, and a service is ready by one \
+                 means — devcroft will not pick for you",
+            ));
+        }
+        (Some(cmd), None) => super::Probe::Command(cmd.clone()),
+        (None, Some(get)) => super::Probe::Http {
+            host: get.host.clone(),
+            port: get.port,
+            path: get.path.clone(),
+            scheme: get.scheme.clone(),
+        },
+        (None, None) => {
+            // Reachable: `ready.period = 5` alone leaves a `ready` block
+            // with timing and no probe. devcroft cannot express "wait
+            // five seconds and then be ready", and inventing a probe
+            // would invent its result.
+            return Err(unsupported(
+                name,
+                "ready",
+                "it sets readiness timing but declares no probe — neither `ready.exec` nor \
+                 `ready.http.get` — so there is nothing to test",
+            ));
+        }
+    };
+
+    Ok(Some(super::Readiness {
+        probe,
+        initial_delay: ready.initial_delay,
+        period: ready.period,
+        probe_timeout: ready.probe_timeout,
+        success_threshold: ready.success_threshold,
+        failure_threshold: ready.failure_threshold,
+    }))
+}
+
+/// The two readiness fields devcroft will not carry
+/// (`add-service-readiness` design.md decision 2).
+fn refuse_unsupported_readiness(name: &str, ready: &DevenvReady) -> Result<(), ProviderError> {
+    if ready.notify {
+        return Err(unsupported(
+            name,
+            "ready.notify",
+            "it asks for systemd's READY=1 protocol over NOTIFY_SOCKET, which devcroft's \
+             supervisor does not implement — and a probe devcroft simulated would be a probe \
+             whose result devcroft invented",
+        ));
+    }
+    if ready.timeout.is_some() {
+        return Err(unsupported(
+            name,
+            "ready.timeout",
+            "it is an overall deadline for becoming ready, and the supervisor bounds probe \
+             *attempts* (`failure_threshold` × `period`) rather than wall-clock; \
+             approximating one with the other would give a different guarantee under the \
+             same name",
+        ));
+    }
+    Ok(())
 }
 
 /// devenv's `before`/`after`, reduced to service dependencies — or
@@ -828,13 +953,6 @@ fn restart_policy(
 /// A refusal is recoverable — remove the field, or wait for support. A
 /// silent drop is not, because nothing surfaces it.
 fn refuse_unsupported(name: &str, process: &DevenvProcess) -> Result<(), ProviderError> {
-    if process.ready.is_some() {
-        return Err(unsupported(
-            name,
-            "ready",
-            "devcroft does not yet translate readiness probes, and will not report a service              healthy on a condition it never checked",
-        ));
-    }
     if !process.listen.is_empty() {
         return Err(unsupported(
             name,
@@ -1394,7 +1512,6 @@ mod tests {
     #[test]
     fn every_unsupported_field_is_refused_by_name() {
         for (field, extra) in [
-            ("ready", r#""ready": {"http": {"path": "/"}}"#),
             ("listen", r#""listen": ["tcp://127.0.0.1:8080"]"#),
             ("ports", r#""ports": {"http": 8080}"#),
             ("watch", r#""watch": {"paths": ["src"], "extensions": []}"#),
@@ -1420,6 +1537,85 @@ mod tests {
                 "it must also name the process, got: {msg}"
             );
         }
+    }
+
+    /// `add-service-readiness`: readiness is carried, not refused. Both
+    /// probe forms, with the timing beside them.
+    #[test]
+    fn both_readiness_probe_forms_are_carried() {
+        use crate::provider::{Probe, Readiness};
+
+        let cmd = translate("db", r#""ready": {"exec": "pg_isready"}"#, &[]).unwrap();
+        assert_eq!(
+            cmd.readiness.map(|r| r.probe),
+            Some(Probe::Command("pg_isready".to_string()))
+        );
+
+        let web = translate(
+            "web",
+            r#""ready": {"http": {"get": {"host": "127.0.0.1", "port": 8730,
+               "path": "/health", "scheme": "http"}},
+               "initial_delay": 2, "period": 5, "probe_timeout": 3,
+               "success_threshold": 2, "failure_threshold": 4}"#,
+            &[],
+        )
+        .unwrap();
+        assert_eq!(
+            web.readiness,
+            Some(Readiness {
+                probe: Probe::Http {
+                    host: "127.0.0.1".to_string(),
+                    port: 8730,
+                    path: "/health".to_string(),
+                    scheme: "http".to_string(),
+                },
+                initial_delay: 2,
+                period: 5,
+                probe_timeout: 3,
+                success_threshold: 2,
+                failure_threshold: 4,
+            })
+        );
+    }
+
+    #[test]
+    fn a_process_declaring_no_readiness_has_none() {
+        assert_eq!(translate("web", "", &[]).unwrap().readiness, None);
+    }
+
+    /// design.md decision 2. Each names what it would have meant, since
+    /// "cannot carry" alone leaves the user guessing which half to drop.
+    #[test]
+    fn the_two_unsupported_readiness_fields_are_refused_by_name() {
+        let notify = refusal("web", r#""ready": {"exec": "true", "notify": true}"#);
+        assert!(notify.contains("ready.notify"), "got: {notify}");
+        assert!(notify.contains("NOTIFY_SOCKET"), "got: {notify}");
+
+        let timeout = refusal("web", r#""ready": {"exec": "true", "timeout": 30}"#);
+        assert!(timeout.contains("ready.timeout"), "got: {timeout}");
+        assert!(
+            timeout.contains("attempts") || timeout.contains("wall-clock"),
+            "the message must say why a deadline is not a threshold, got: {timeout}"
+        );
+    }
+
+    /// Reachable from a normal declaration: `ready.period = 5` alone
+    /// leaves timing with nothing to test. Inventing a probe would invent
+    /// its result.
+    #[test]
+    fn readiness_timing_without_a_probe_is_refused() {
+        let msg = refusal("web", r#""ready": {"period": 5}"#);
+        assert!(msg.contains("no probe"), "got: {msg}");
+    }
+
+    #[test]
+    fn declaring_both_probe_forms_is_refused_rather_than_picked_between() {
+        let msg = refusal(
+            "web",
+            r#""ready": {"exec": "true", "http": {"get": {"host": "h", "port": 1,
+               "path": "/", "scheme": "http"}}}"#,
+        );
+        assert!(msg.contains("one means"), "got: {msg}");
     }
 
     /// Measured (task 0.3): the option is read-only upstream, so a user

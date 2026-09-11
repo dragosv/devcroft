@@ -784,3 +784,49 @@ it resolves to itself — and failed, because on macOS the scratch root is
 *itself* under `/var/folders` → `/private/var`. Every grant diverges
 there. The control had to be rebuilt against a canonicalized root to
 assert anything, and the failure was the useful part.
+
+---
+
+**Readiness probes, and the refusal that came off the list first
+(`add-service-readiness`).** `add-devenv-services` refused eight of
+devenv's process fields. Seven of them fail honestly — the user asked for
+something devcroft does not do and is told so. Readiness was different in
+kind, and that is why it was the first to be built: a service with a
+probe reports healthy when the probe passes, and the same service without
+one reports healthy the moment it is spawned. Carry the declaration
+wrongly and a dependent starts against a database still opening its
+socket.
+
+devenv's schema was read from its own `src/modules/lib/ready.nix` after
+an earlier guess got it wrong in both spelling and shape
+(`failureThreshold` for `failure_threshold`, `ready.http.path` for
+`ready.http.get`). The trial-and-error route — feeding devenv wrong
+attribute names and reading its "did you mean" hints — worked but was
+slower than opening the module, which is the lesson worth keeping.
+
+Everything but two fields maps onto process-compose. `notify` asks for
+systemd's `READY=1` over `NOTIFY_SOCKET`, which the supervisor does not
+speak; simulating it would mean devcroft inventing a probe's result.
+`timeout` is an overall deadline where process-compose bounds *attempts*,
+and approximating one with the other gives a different guarantee under
+the same name — the failure mode every refusal in this area exists to
+avoid.
+
+The payoff is not carrying the probe, it is consulting it: `depends_on`
+now emits `process_healthy` where the target declares readiness and stays
+`process_started` where it does not. Not `process_healthy` everywhere —
+against a target with no probe that waits on something the supervisor
+never reports, which is a hang rather than an ordering. Carrying a
+declaration nothing consults would have been bookkeeping.
+
+A probe that never passes does not block `up`, which the `services`
+capability already required of services generally. The alternative turns
+one mistyped health path into a sandbox that never comes up and hides the
+diagnosis behind a hang; reported state is the better failure.
+
+This also spends the sequencing argument in devbox's entry.
+`postgresql` — the most common devbox service — declares a readiness
+probe where `redis` does not, so devbox support was gated on this
+existing. It exists. What remains for devbox is a YAML dependency and the
+question that was always the real one: whether a plugin author's service
+definitions are the project's declarations.

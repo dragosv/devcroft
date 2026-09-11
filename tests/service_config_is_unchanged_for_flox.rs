@@ -30,6 +30,7 @@ fn flox_declarations() -> Vec<ServiceDecl> {
             depends_on: Vec::new(),
             restart: RestartPolicy::Never,
             shutdown: Shutdown::Default,
+            readiness: None,
         },
         ServiceDecl {
             name: "db".to_string(),
@@ -40,6 +41,7 @@ fn flox_declarations() -> Vec<ServiceDecl> {
             depends_on: Vec::new(),
             restart: RestartPolicy::Never,
             shutdown: Shutdown::Command("pg_ctl stop".to_string()),
+            readiness: None,
         },
     ]
 }
