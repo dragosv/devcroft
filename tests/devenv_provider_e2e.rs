@@ -61,10 +61,18 @@ impl Sandbox {
             std::env::set_var("DEVCROFT_KEEPER_EXE", devcroft_bin());
         }
 
+        // `/tmp` rather than `std::env::temp_dir()`, and short on
+        // purpose. macOS hands back a `/var/folders/…` path deep enough
+        // that the service supervisor's unix socket under it exceeds the
+        // OS `sun_path` limit — `up` refuses with exactly that message,
+        // which is correct behaviour and a useless test failure.
+        // Canonicalized because `/tmp` is itself a symlink there, and a
+        // grant is compiled from the canonical path.
         let project_root =
-            std::env::temp_dir().join(format!("devcroft-devenv-e2e-{tag}-{}", std::process::id()));
+            std::path::PathBuf::from(format!("/tmp/dce-{tag}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&project_root);
         std::fs::create_dir_all(&project_root).unwrap();
+        let project_root = project_root.canonicalize().unwrap();
         let marker = project_root.join("hook-ran");
 
         let package_list = packages
@@ -121,6 +129,26 @@ impl Sandbox {
             project_root,
             marker,
         })
+    }
+
+    /// A project whose `devenv.nix` body is supplied verbatim, for the
+    /// service tests — `new` builds a fixed shape, and these need
+    /// arbitrary `processes` blocks.
+    fn with_processes(tag: &str, processes: &str) -> Option<Self> {
+        let sandbox = Self::new(tag, &[], "", true)?;
+        std::fs::write(
+            sandbox.project_root.join("devenv.nix"),
+            // `process-compose` comes from the project's own closure,
+            // never the host — `services::resolve_in_env`. Any project
+            // declaring services must supply it, the same requirement a
+            // flox project has, and `decouple-service-supervisor` is the
+            // change that exists to remove it.
+            format!(
+                "{{ pkgs, ... }}: {{\n  packages = [ pkgs.process-compose ];\n{processes}\n}}\n"
+            ),
+        )
+        .unwrap();
+        Some(sandbox)
     }
 
     fn run(&self, args: &[&str]) -> std::process::Output {
@@ -472,5 +500,69 @@ fn a_compile_inside_the_sandbox_uses_the_closures_toolchain_and_not_the_hosts() 
         !host.status.success(),
         "the host's toolchain must be denied — a closure-tier provider that falls back to \
          host libraries has smuggled `host` passthrough back in: {host:?}"
+    );
+}
+
+/// `services` spec, asserted for devenv: declared processes are
+/// supervised inside the boundary, enumerable while the sandbox is up,
+/// and reaped at teardown.
+#[test]
+fn declared_processes_run_as_supervised_services() {
+    let Some(sandbox) = Sandbox::with_processes(
+        "services",
+        r#"  processes.slow.exec = "sleep 600";
+  processes.alsoslow = { exec = "sleep 600"; after = [ "devenv:processes:slow" ]; };"#,
+    ) else {
+        return;
+    };
+
+    let out = sandbox.run(&["up"]);
+    assert!(out.status.success(), "{out:?}");
+
+    let ps = sandbox.run(&["ps"]);
+    assert!(ps.status.success(), "{ps:?}");
+    let listing = String::from_utf8_lossy(&ps.stdout);
+    assert!(
+        listing.contains("slow") && listing.contains("alsoslow"),
+        "both declared processes must be enumerable while the sandbox is up, got: {listing}"
+    );
+
+    assert!(sandbox.run(&["down"]).status.success());
+    // The `services` spec's own wording: verified by observing process
+    // absence rather than by a stop command's exit status.
+    let survivors = Command::new("pgrep")
+        .args(["-f", "sleep 600"])
+        .output()
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        .unwrap_or_default();
+    assert!(
+        survivors.is_empty(),
+        "no service process may outlive the sandbox, but these did: {survivors}"
+    );
+}
+
+/// `add-devenv-services` design.md decision 2a, end to end: the spelling
+/// devenv itself ignores is refused rather than being honoured, so
+/// devcroft and devenv cannot disagree about what the same project does.
+#[test]
+fn a_bare_ordering_name_is_refused_at_the_provider_layer() {
+    let Some(sandbox) = Sandbox::with_processes(
+        "bareorder",
+        r#"  processes.web.exec = "sleep 600";
+  processes.worker = { exec = "sleep 600"; after = [ "web" ]; };"#,
+    ) else {
+        return;
+    };
+
+    let out = sandbox.run(&["up"]);
+    assert_eq!(out.status.code(), Some(3), "{out:?}");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("worker") && stderr.contains("after"),
+        "the refusal must name the process and the field, got: {stderr}"
+    );
+    assert!(
+        stderr.contains("devenv:processes:web"),
+        "and it must show the spelling that works, got: {stderr}"
     );
 }

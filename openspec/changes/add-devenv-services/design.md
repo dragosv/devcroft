@@ -152,6 +152,39 @@ The alternative — carry `before`/`after` verbatim and let the supervisor
 sort it out — was rejected for the reason above: it invents a meaning
 the provider does not give them.
 
+### Decision 2b: a declared restart policy is honoured, and that is not a reversal of `add-flox-services` decision 3
+
+`render_config` currently writes `availability.restart = "no"` for every
+service, unconditionally, and that was a considered choice: *"a flapping
+database is worse than a visibly dead one for the agent-fleet case this
+exists to serve."*
+
+devenv declares a restart policy, and its default is
+`on_failure` with `max = 5` — so carrying it changes behaviour that an
+earlier change deliberately chose. Recorded rather than quietly done.
+
+The two are compatible once the earlier decision is read for what it
+actually settled. It was made when **no supported provider declared a
+restart policy at all** — flox's `[services]` schema has no such field —
+so it chose devcroft's default in the absence of a declaration. It did
+not choose to override a declaration, because there were none to
+override. So:
+
+- A provider that declares nothing still gets `no`. flox is unaffected,
+  asserted by a byte-identical rendered config.
+- A provider that declares one gets what it declared, bounded by the
+  `max` it declared.
+
+**The visible consequence, which belongs in the docs rather than in a
+surprise:** most devenv services will restart on failure where flox
+services do not, because that is devenv's default and not usually an
+explicit user choice. devcroft cannot distinguish "declared
+`on_failure`" from "inherited devenv's default" — the evaluation
+normalizes both — so it cannot treat them differently without guessing.
+Honouring the value is the option that never lies about what the project
+says; the alternative silently discards an explicit `restart.on =
+"always"`, which is exactly the silence this change exists to remove.
+
 ### Decision 3: everything else is refused by name, not ignored
 
 `ready`, `watch`, `proxy`, `ports`, `listen`, `linux.capabilities` and

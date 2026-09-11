@@ -692,6 +692,7 @@ fn up_process(
     let services = prepare_services(
         project_root,
         &manifest.sandbox.name,
+        &manifest.env.provider,
         resolution,
         &shell.path,
         opts,
@@ -973,6 +974,7 @@ fn up_process(
 /// project for anything service-shaped.
 fn ensure_no_services_declared_for_another_provider(
     project_root: &Path,
+    provider: &str,
     opts: &UpOptions,
 ) -> Result<(), UpError> {
     // `--skip-hooks` promises nothing project-supplied runs; refusing to
@@ -987,10 +989,15 @@ fn ensure_no_services_declared_for_another_provider(
     }
     Err(UpError::Provider(
         crate::provider::ProviderError::ResolutionFailed(format!(
+            // The provider is named rather than assumed. This said
+            // `nix` unconditionally, which was already wrong for devbox
+            // and became wronger as providers were added — a message
+            // telling a devbox user their provider is nix sends them
+            // looking for a setting that is not what they wrote.
             "this project's flox environment declares {} service(s) ({}), but \
-             `env.provider` is `nix`, which has no service concept — they would \
-             be silently ignored; set `provider = \"flox\"` to run them, or \
-             remove them from the flox manifest",
+             `env.provider` is `{provider}`, which has no service concept here — \
+             they would be silently ignored; set `provider = \"flox\"` to run \
+             them, or remove them from the flox manifest",
             declared.len(),
             declared.join(", ")
         )),
@@ -1000,12 +1007,13 @@ fn ensure_no_services_declared_for_another_provider(
 fn prepare_services(
     project_root: &Path,
     sandbox_name: &str,
+    provider: &str,
     resolution: &Resolution,
     shell: &Path,
     opts: &UpOptions,
 ) -> Result<bool, UpError> {
     if let ServiceSupport::Unsupported = resolution.services {
-        ensure_no_services_declared_for_another_provider(project_root, opts)?;
+        ensure_no_services_declared_for_another_provider(project_root, provider, opts)?;
     }
     let services = resolution.services.declared();
     if opts.skip_hooks || services.is_empty() {
@@ -1034,13 +1042,23 @@ fn prepare_services(
     // beats starting a sandbox whose declared services silently never
     // come up.
     if crate::services::resolve_in_env(&resolution.env).is_none() {
+        let binary = crate::services::supervisor().binary();
+        // The example names the provider the manifest actually declares.
+        // It said `flox install` unconditionally, which sent a devenv
+        // user to a command for a tool their project does not use — the
+        // same defect the wrong-provider refusal above had.
+        let hint = match provider {
+            "devenv" => format!("`packages = [ pkgs.{binary} ];` in devenv.nix"),
+            "devbox" => format!("`devbox add {binary}`"),
+            "nix" => format!("add `pkgs.{binary}` to the dev shell's inputs"),
+            _ => format!("e.g. `flox install {binary}`"),
+        };
         return Err(UpError::Provider(
             crate::provider::ProviderError::ResolutionFailed(format!(
                 "{} service(s) are declared but `{binary}` is not in the \
                  resolved environment; add it to the environment manifest \
-                 (e.g. `flox install {binary}`)",
-                services.len(),
-                binary = crate::services::supervisor().binary()
+                 ({hint})",
+                services.len()
             )),
         ));
     }
@@ -1341,4 +1359,93 @@ pub(crate) fn clear_cloexec(fd: RawFd) -> io::Result<()> {
         return Err(io::Error::last_os_error());
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A flox environment declaring services, with no flox installed —
+    /// the declarations are read from the manifest file, so this needs no
+    /// tooling and can never self-skip. That matters here: every other
+    /// test of this behaviour needs flox *and* nix *and* a reachable
+    /// store, so on most hosts the refusal went unasserted.
+    fn project_with_flox_services(tag: &str) -> PathBuf {
+        let root =
+            std::env::temp_dir().join(format!("devcroft-up-services-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join(".flox/env")).unwrap();
+        std::fs::write(
+            root.join(".flox/env/manifest.toml"),
+            "[services]\nweb.command = \"true\"\n",
+        )
+        .unwrap();
+        root
+    }
+
+    /// `add-devbox-provider` task 3.6 / `add-devenv-services` task 3.3:
+    /// a project whose services cannot run under the provider it names
+    /// fails distinguishably, rather than coming up reporting none —
+    /// which is indistinguishable from a project declaring none, the
+    /// silent failure the `services` spec is written against.
+    #[test]
+    fn services_under_a_provider_that_cannot_run_them_fail_naming_that_provider() {
+        for provider in ["nix", "devbox"] {
+            let root = project_with_flox_services(provider);
+            let err = ensure_no_services_declared_for_another_provider(
+                &root,
+                provider,
+                &UpOptions::default(),
+            )
+            .expect_err("declared services under a provider without them must refuse");
+
+            let UpError::Provider(crate::provider::ProviderError::ResolutionFailed(msg)) = err
+            else {
+                panic!("expected a provider-layer refusal, got {err:?}");
+            };
+            // The regression this pins: the message named `nix`
+            // unconditionally, so a devbox user was told their provider
+            // was one they had not written.
+            assert!(
+                msg.contains(&format!("`{provider}`")),
+                "the refusal must name the provider the manifest declares, got: {msg}"
+            );
+            assert!(msg.contains("web"), "it must name the services, got: {msg}");
+            let _ = std::fs::remove_dir_all(&root);
+        }
+    }
+
+    /// `--skip-hooks` promises nothing project-supplied runs, so refusing
+    /// to start over services that would not have started anyway would
+    /// make the escape hatch useless for debugging.
+    #[test]
+    fn skip_hooks_suppresses_the_refusal() {
+        let root = project_with_flox_services("skiphooks");
+        let opts = UpOptions {
+            skip_hooks: true,
+            ..UpOptions::default()
+        };
+        assert!(ensure_no_services_declared_for_another_provider(&root, "devbox", &opts).is_ok());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// The control: a project with no flox environment declares nothing,
+    /// so the refusal must not fire. Without this, a version that refused
+    /// unconditionally would pass the test above.
+    #[test]
+    fn a_project_declaring_no_services_is_not_refused() {
+        let root =
+            std::env::temp_dir().join(format!("devcroft-up-services-none-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        assert!(
+            ensure_no_services_declared_for_another_provider(
+                &root,
+                "devbox",
+                &UpOptions::default()
+            )
+            .is_ok()
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
 }

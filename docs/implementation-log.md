@@ -640,3 +640,65 @@ symlinked spelling of a path the policy granted canonically.
 Worth separating, because the two look alike in a failure log: the
 fixture's use was a test bug and was fixed; devenv's is a real gap and
 was recorded, not worked around.
+
+---
+
+**Services for devenv, and a measured "no" for devbox
+(`add-devenv-services`).** Two changes had been sitting on the same
+deferred question — are a provider's service declarations a *contract*,
+or only generated output? `add-flox-services` had refused flox's own
+generated `service-config.yaml` on exactly that ground, so the question
+was not rhetorical. Measured for both providers at once. They came back
+opposite.
+
+devenv passes: `devenv eval processes` returns every declared process as
+normalized JSON and runs `enterShell` zero times, and the declarations
+come from a documented option in `devenv.nix`.
+
+devbox fails three ways, and the third is the one that settles it.
+`devbox.json` has no service schema at all; plugin services arrive as
+generated per-plugin `process-compose.yaml` files under a cache
+directory; and **`devbox services ls` executes `shell.init_hook`** —
+measured with a sentinel, against `devbox install` and `shellenv --pure`
+as zero-execution controls. Enumerating devbox's services host-side runs
+project code, on the one path support would need. That is not "not yet
+supported"; it fails the qualification test, and it is recorded in
+decisions.md as such.
+
+**The measurement gate caught a design error again, and it was the
+interesting kind.** The design mapped devenv's `before`/`after` onto
+service dependencies — the obvious reading of the field names. They are
+not process references: they are edges in devenv's *task* graph, whose
+nodes are things like `devenv:enterShell` and `devenv:processes:<name>`.
+And devenv validates neither. Measured both spellings: `after = [ "web" ]`
+evaluates without error and produces **no edge at all**, while
+`after = [ "devenv:processes:web" ]` produces it, visible in
+`devenv tasks list`.
+
+So the obvious mapping would have had devcroft honour an ordering devenv
+ignores — the same project behaving differently under the two tools,
+with devcroft the *more* featureful of the pair. For a tool whose job is
+to run the project's own environment faithfully, that is the wrong
+direction to be wrong in. Only the qualified spelling is carried; the
+bare name is refused with a message saying devenv creates no ordering
+from it.
+
+**A decision that looked like a reversal and was not.** `render_config`
+wrote `availability.restart = "no"` unconditionally, from
+`add-flox-services`: a flapping database is worse than a visibly dead
+one. devenv declares a restart policy, defaulting to `on_failure`. The
+resolution came from reading what the earlier decision had actually
+settled — it was made when *no* provider declared a restart policy, so
+it chose devcroft's default in the absence of a declaration, not an
+override of one. A provider declaring nothing still gets `no`; one that
+declares gets what it declared. The flox side is pinned by a golden
+rendered config, checked against the commit before `ServiceDecl` grew
+and byte-identical.
+
+**And a small bug found by writing the test rather than the feature.**
+The refusal for "your provider cannot run these services" named `nix`
+unconditionally — so a devbox user was told their provider was one they
+had not written. It had gone unasserted because every test of that path
+needed flox *and* nix *and* a reachable store, and skipped on most
+hosts. The replacement test reads a flox manifest fixture off disk and
+needs no tooling at all, so it can never self-skip.

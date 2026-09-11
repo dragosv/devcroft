@@ -487,9 +487,17 @@ mechanism exists — the decision should be **revisited, not defended**.
   `env.provider` (`add-devbox-provider`), confirming the `Provider` trait
   generalizes to a substrate flox and nix don't share, and devenv is the
   fourth (`add-devenv-provider`), the one whose hook-free capture route
-  and whose project hook are both things the provider itself exposes. Its
-  `processes` are not supported: the ownership question is closed, where
-  the declarations come from is not.
+  and whose project hook are both things the provider itself exposes.
+- **Services work for flox and devenv, and are refused for devbox and
+  nix.** nix has no service concept. devbox's refusal is measured rather
+  than deferred (`add-devenv-services`): no schema in `devbox.json`,
+  plugin services as generated per-plugin files, and `devbox services ls`
+  running `shell.init_hook` — enumeration itself executes project code.
+  devenv's `processes` are read through `devenv eval processes`, which
+  runs none. What devcroft will not carry it **refuses by name**, never
+  drops; the ordering case is the subtle one, since devenv's
+  `before`/`after` are task-graph edges and a bare process name is a
+  silent no-op in devenv itself.
 - Known limitations are published, not hidden: no inter-sandbox process
   visibility separation in MVP, cooperative/platform-dependent network
   filtering, no cgroup resource limits.

@@ -207,16 +207,57 @@ not falsifiable:
   without it the first `up` of an unlocked project would choose input
   revisions at `up`.
 
-**Still open, and deliberately out of scope:** devenv's `processes`. They
-are process-compose-backed, the same supervisor `src/services` generates
-a config for, and the *ownership* question is already closed by
-`add-flox-services` (services and hooks are separate mechanisms with a
-stated precedence). What is not settled is where the declarations come
-from — flox qualified because it has a documented `[services]` schema,
-and whether devenv's `processes` are readable as a contract has to be
-measured before it is claimed. It is the same question
-`add-devbox-provider` deferred. Until then a devenv project declaring
-services fails distinguishably rather than silently starting nothing.
+**Services: built, and the measurement that decided it.** The open
+question was where the declarations come from — flox qualified because
+it has a documented `[services]` schema in its own manifest, and
+`add-flox-services` refused flox's *generated* `service-config.yaml` on
+the ground that a generated file is not a contract. Measured for devenv:
+`devenv eval processes` returns every declared process as normalized
+JSON and runs `enterShell` **zero** times, and the declarations come
+from `processes.<name>.exec`, a documented option in `devenv.nix`. Same
+bar flox met. Built in `add-devenv-services`.
+
+What devcroft carries: the command, environment, working directory,
+restart policy, shutdown signal and grace, and ordering — the last only
+in the `devenv:processes:<name>` spelling. What it refuses by name:
+`ready`, `watch`, `proxy`, `ports`, `listen`, `linux.capabilities`,
+`start.enable = false`, and devenv's `process-compose` passthrough. A
+refused field fails `up` naming the process and the field; nothing is
+dropped silently.
+
+**The ordering refusal is the one worth knowing.** devenv's
+`before`/`after` are edges in its *task* graph, not process references,
+and devenv validates neither: `after = [ "web" ]` evaluates fine and
+creates no edge at all. devcroft refuses that spelling rather than
+treating it as a dependency, because honouring it would order a service
+devenv does not — the same project behaving differently under the two
+tools, with devcroft the more featureful of the pair.
+
+### Rejected: devbox services
+
+**Property that fails:** criterion 4 (capturable without executing
+project code), plus the absence of a declaration contract. Measured
+against devbox 0.17.5, three independent reasons:
+
+1. `devbox.json` has **no service schema**. Its own configuration keys
+   are `packages`, `env`, `env_from`, `include`, `init_hook`, `scripts`
+   and the `environment*` family.
+2. Plugin services arrive as generated per-plugin
+   `.devbox/virtenv/<plugin>/process-compose.yaml` files under devbox's
+   cache directory — the artifact shape `add-flox-services` decision 1
+   refused for flox's own generated config.
+3. **`devbox services ls` executes `shell.init_hook`.** Sentinel-measured,
+   with `devbox install` (0 executions) and `devbox shellenv --pure` (0)
+   as controls. Merely *enumerating* devbox's services host-side runs
+   project code, on the one path support would require.
+
+Reason 3 is the one to re-measure first if this is revisited: a
+declaration schema alone would not make enumeration hook-free, and
+devcroft has no route that reads services without it.
+
+A devbox project whose flox environment declares services still fails
+distinguishably from "supports services, none declared" — the refusal
+names devbox and does not advise switching providers.
 
 ### Rejected: `host` / `none` passthrough
 

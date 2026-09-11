@@ -174,13 +174,21 @@ impl ServiceSupport {
 /// code and is only ever executed inside the sandbox, after restriction
 /// — never during resolution.
 ///
-/// The fields mirror flox's documented `[services]` schema, which is the
-/// contract this depends on (deliberately, over flox's *undocumented*
-/// generated `service-config.yaml` — see design.md decision 1). Dropping
-/// any of them is a correctness bug, not a simplification: a service
-/// whose port comes from `vars` starts on the wrong port if `vars` is
-/// ignored, and a daemon reaped without its `shutdown` command is killed
-/// rather than stopped.
+/// The first five fields mirrored flox's documented `[services]` schema,
+/// which is the contract this depends on (deliberately, over flox's
+/// *undocumented* generated `service-config.yaml` — see
+/// `add-flox-services` design.md decision 1). Dropping any of them is a
+/// correctness bug, not a simplification: a service whose port comes
+/// from `vars` starts on the wrong port if `vars` is ignored, and a
+/// daemon reaped without its `shutdown` command is killed rather than
+/// stopped.
+///
+/// The rest were added by `add-devenv-services` for a provider whose
+/// schema exceeds flox's. They are deliberately **concepts** rather than
+/// either provider's field names, and deliberately not the supervisor's
+/// vocabulary either: `decouple-service-supervisor` put the supervisor
+/// behind a seam, and filling this type with process-compose's names
+/// would undo that in the one place every provider touches.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ServiceDecl {
     pub name: String,
@@ -191,12 +199,82 @@ pub struct ServiceDecl {
     /// flox's `is-daemon`: the command backgrounds itself instead of
     /// staying in the foreground. Such a service cannot be supervised by
     /// watching the spawned process — it exits immediately by design —
-    /// and must be stopped via [`Self::shutdown_command`].
+    /// and must be stopped via [`Shutdown::Command`].
+    ///
+    /// flox's concept, and still only flox's: devenv has nothing
+    /// equivalent and always reports `false`. Named after the provider
+    /// that has it rather than generalized into something no other
+    /// provider means.
     pub is_daemon: bool,
-    /// flox's `shutdown.command`: how to stop a daemon service. Required
-    /// in practice whenever `is_daemon` is set, since killing the
+    /// Where to run the command, when the provider says. `None` means
+    /// the supervisor's own default, which is the sandbox's project
+    /// root.
+    pub working_dir: Option<String>,
+    /// Names of other services in the same declaration set that must
+    /// start first.
+    ///
+    /// Names, not provider-specific references: a provider whose own
+    /// ordering vocabulary is richer than "this service, before that
+    /// one" is responsible for reducing it to this or refusing, because
+    /// this is what a supervisor can be asked for. devenv's task-graph
+    /// edges are reduced in `devenv::ordering_dependencies`, which
+    /// refuses every form it cannot honour faithfully.
+    pub depends_on: Vec<String>,
+    /// What to do when the service exits.
+    ///
+    /// `Never` is both the default and what a provider declaring nothing
+    /// gets — see [`RestartPolicy`] for why that is not the same as
+    /// devcroft having no opinion.
+    pub restart: RestartPolicy,
+    /// How to stop the service.
+    pub shutdown: Shutdown,
+}
+
+/// What the supervisor does when a service exits.
+///
+/// **`Never` is devcroft's default and stays that way**
+/// (`add-flox-services` design.md decision 3: a crashed service stays
+/// dead and is reported, because a flapping database is worse than a
+/// visibly dead one for the agent-fleet case services exist to serve).
+///
+/// That decision was made when no supported provider declared a restart
+/// policy at all — flox's `[services]` schema has no such field — so it
+/// chose devcroft's default *in the absence of a declaration*. It did
+/// not choose to override one. A provider that declares a policy gets
+/// what it declared (`add-devenv-services` design.md decision 2b); a
+/// provider that declares nothing still gets `Never`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum RestartPolicy {
+    #[default]
+    Never,
+    /// Restart on a non-zero exit, at most `max` times.
+    OnFailure {
+        max: u32,
+    },
+    Always {
+        max: u32,
+    },
+}
+
+/// How a service is stopped.
+///
+/// An enum rather than a pair of optional fields, because the two
+/// providers stop a service by genuinely different mechanisms and a pair
+/// of `Option`s would let both be set and neither be meaningful
+/// (`add-devenv-services` design.md decision 2).
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub enum Shutdown {
+    /// Signal it and wait for the supervisor's own default grace period.
+    #[default]
+    Default,
+    /// flox's `shutdown.command`: how to stop a service that
+    /// backgrounds itself. Required in practice whenever
+    /// [`ServiceDecl::is_daemon`] is set, since killing the
     /// (already-exited) launcher stops nothing.
-    pub shutdown_command: Option<String>,
+    Command(String),
+    /// devenv's `shutdown.{signal,grace}`: which signal to send, and how
+    /// many seconds to wait before escalating.
+    Signal { signal: i32, grace: u64 },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

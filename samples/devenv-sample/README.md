@@ -68,11 +68,69 @@ without the refusal the first `up` would pick input revisions at `up`.
 
 ## Services
 
-devenv has `processes`, backed by the same process-compose supervisor
-devcroft already generates a config for — and they are **not** supported
-here. Whether devenv's process declarations are readable as a contract or
-only as generated output has not been measured, and the same question is
-open for devbox. A manifest declaring `[services]` under
-`provider = "devenv"` fails distinguishably rather than silently starting
-nothing. `flox-services-sample` is the one to read for services that
-work.
+**devenv is the second provider whose services devcroft supervises**, and
+the first added since flox. `processes.ticker` and `processes.follower`
+above are read at `up` through `devenv eval processes` — normalized data,
+zero project code executed — and then run *inside* the sandbox under this
+project's own compiled policy, supervised by its keeper, reaped at
+`devcroft down`.
+
+```sh
+devcroft up
+devcroft ps          # both processes, with their state
+devcroft down        # neither survives
+```
+
+That is the whole reason devenv qualified and **devbox did not**. Measured
+against devbox 0.17.5: `devbox.json` has no service schema, plugin
+services arrive as generated per-plugin files under a cache directory,
+and — decisively — `devbox services ls` executes `shell.init_hook`. Merely
+*enumerating* devbox's services runs project code on the host, on the one
+path support would need. See `docs/decisions.md`.
+
+### Ordering, and the spelling that looks right but is not
+
+`follower` declares `after = [ "devenv:processes:ticker" ]`, not
+`after = [ "ticker" ]`. Both are accepted by devenv's own evaluation, and
+only the first does anything: `before`/`after` are edges in devenv's
+**task** graph, whose nodes are things like `devenv:enterShell` and
+`devenv:processes:<name>`. A bare name matches no node, so devenv creates
+no ordering from it — measured, visible in `devenv tasks list`.
+
+devcroft therefore **refuses** the bare form rather than treating it as a
+dependency. Honouring it would mean devcroft ordering a service that
+devenv does not, so the same project would behave differently under the
+two tools, with devcroft the more featureful of the pair. The refusal
+names the process, the field, and the spelling that works.
+
+### What else is refused
+
+`ready`, `watch`, `proxy`, `ports`, `listen`, `linux.capabilities`,
+`start.enable = false`, and devenv's `process-compose` passthrough block
+all fail `up` at layer `provider`, naming the process and the field —
+rather than being dropped. A project that declares a readiness probe and
+gets a service without one has been lied to: the service would report
+healthy on a condition nobody checked. A refusal you can act on is better
+than a silence you cannot see.
+
+The `process-compose` block is the one that costs something real:
+expressing a dependency through it is common in devenv projects, and it
+would work, since devcroft's own supervisor *is* process-compose.
+It is refused to keep the supervisor behind the seam
+`decouple-service-supervisor` built — the fix is to restate the
+dependency as `after = [ "devenv:processes:<name>" ]`, which this sample
+does.
+
+### Where a process you never wrote comes from
+
+`devenv eval processes` returns every process devenv's evaluation
+produces, not only the ones typed under `processes`. Enabling one of
+devenv's own integrations — `services.redis.enable = true` — contributes
+one too, with its command pointing into the Nix store. devcroft
+supervises it like any other, because filtering would need devcroft to
+distinguish handwritten from contributed (devenv does not mark them) and
+would drop exactly the service a user enabling an integration wants
+running.
+
+So a `redis` in `devcroft ps` that you never wrote is expected, and this
+paragraph is where that is written down.

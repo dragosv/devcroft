@@ -5,7 +5,7 @@
 //! capture/diff/fingerprint machinery lives in `provider::capture`.
 
 use super::capture;
-use super::{Provider, ProviderError, Resolution, ServiceDecl, ServiceSupport};
+use super::{Provider, ProviderError, Resolution, ServiceDecl, ServiceSupport, Shutdown};
 use crate::paths::resolve_on_path;
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -187,7 +187,17 @@ fn read_service_declarations(project_root: &Path) -> Result<ServiceSupport, Prov
             command: command.to_string(),
             vars,
             is_daemon,
-            shutdown_command,
+            // flox's schema declares none of these. The defaults are
+            // exactly what this produced before `ServiceDecl` grew,
+            // which a byte-identical rendered config asserts rather than
+            // assumes.
+            working_dir: None,
+            depends_on: Vec::new(),
+            restart: super::RestartPolicy::Never,
+            shutdown: match shutdown_command {
+                Some(cmd) => Shutdown::Command(cmd),
+                None => Shutdown::Default,
+            },
         });
     }
     // BTreeMap iteration order from toml's table is already sorted by
@@ -575,7 +585,10 @@ mod tests {
         assert_eq!(db.vars.get("PGDATA").map(String::as_str), Some("./pgdata"));
         assert!(db.is_daemon);
         assert_eq!(
-            db.shutdown_command.as_deref(),
+            match &db.shutdown {
+                Shutdown::Command(c) => Some(c.as_str()),
+                _ => None,
+            },
             Some("pg_ctl stop -D ./pgdata")
         );
     }

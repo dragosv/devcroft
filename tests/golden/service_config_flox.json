@@ -1,0 +1,33 @@
+{
+  "version": "0.5",
+  "shell": {
+    "shell_command": "/nix/store/abc-bash/bin/bash",
+    "shell_argument": "-c"
+  },
+  "processes": {
+    "web": {
+      "command": "python3 -m http.server",
+      "environment": [
+        "LOG_LEVEL=debug",
+        "PORT=8080"
+      ],
+      "availability": {
+        "restart": "no"
+      },
+      "shutdown": {
+        "timeout": 1
+      }
+    },
+    "db": {
+      "command": "pg_ctl start",
+      "availability": {
+        "restart": "no"
+      },
+      "is_daemon": true,
+      "shutdown": {
+        "timeout": 1,
+        "command": "pg_ctl stop"
+      }
+    }
+  }
+}

@@ -47,11 +47,26 @@ impl Provider for DevboxProvider {
             env: capture::changed_env(&baseline, &activated),
             unset: capture::unset_env(&baseline, &activated),
             read_only_grants: capture::store_grants(&activated),
-            // devbox services arrive via plugin-supplied process-compose
-            // configs rather than a documented `devbox.json` schema —
-            // the shape `add-flox-services` decision 1 rejected for
-            // flox's own generated config. A separate change's decision
-            // to make, not this one's (proposal.md — Impact).
+            // Measured and refused, not deferred (`add-devenv-services`
+            // design.md decision 5), on three independent grounds
+            // against devbox 0.17.5:
+            //
+            // 1. `devbox.json` has no service schema at all — its own
+            //    keys are packages, env, env_from, include, init_hook,
+            //    scripts and the environment* family.
+            // 2. Plugin services arrive as generated per-plugin
+            //    `.devbox/virtenv/<plugin>/process-compose.yaml`, the
+            //    artifact shape `add-flox-services` decision 1 refused
+            //    for flox's own generated config.
+            // 3. `devbox services ls` executes `shell.init_hook` —
+            //    sentinel-measured, with `devbox install` and
+            //    `shellenv --pure` as zero-execution controls. So merely
+            //    *enumerating* devbox's services host-side runs project
+            //    code, on the one path support would require.
+            //
+            // Reason 3 is the one to re-measure first if devbox ever
+            // adds a declaration schema: a schema alone would not make
+            // enumeration hook-free.
             services: ServiceSupport::Unsupported,
             // Structurally false here, not merely unencountered: `shellenv`
             // never executes `shell.init_hook`, in any variant including

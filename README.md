@@ -268,11 +268,17 @@ what runs inside doesn't depend on what you happen to have installed. There is
 no "just use the host" fallback, on purpose. Eight sandboxes of one project cost
 one build, because they share a single content-addressed store.
 
+Long-lived **services** — databases, dev servers — are declared in the
+provider's own manifest and supervised by the sandbox's keeper, so parallel
+sandboxes get their own instances instead of fighting over a shared host one.
+Supported for flox and devenv; nix has no service concept, and devbox's are
+refused for a measured reason (listing them runs the project's init hook).
+
 **devenv is the one whose project hook actually runs**, and it runs inside the
 sandbox. Every provider treats `enterShell`-style hooks the same way — never on
 the host during provisioning — but devenv is the only one that hands back both
 the environment and the hook without executing either, so devcroft can defer the
-hook rather than work around it. Its `processes` are not supported yet.
+hook rather than work around it.
 
 **mise, pixi and hermit are a different answer, and not "they failed the
 test".** mise passes devcroft's six-criterion provider test, and the shape an

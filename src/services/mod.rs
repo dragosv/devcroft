@@ -23,7 +23,7 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use crate::provider::ServiceDecl;
+use crate::provider::{RestartPolicy as ServiceRestart, ServiceDecl, Shutdown};
 
 /// Everything specific to one service supervisor, in one place.
 ///
@@ -218,40 +218,106 @@ pub fn render_config(services: &[ServiceDecl], shell: &Path) -> String {
             proc.insert("environment".to_string(), serde_json::Value::Array(env));
         }
 
+        if let Some(dir) = &svc.working_dir {
+            proc.insert(
+                "working_dir".to_string(),
+                serde_json::Value::String(dir.clone()),
+            );
+        }
+
+        if !svc.depends_on.is_empty() {
+            // process-compose keys dependencies by name with a condition.
+            // `process_started` rather than `process_healthy`: a
+            // readiness probe is refused at translation today
+            // (`add-devenv-services` design.md decision 3), so waiting on
+            // health would wait on a condition nothing establishes.
+            let mut deps = serde_json::Map::new();
+            for name in &svc.depends_on {
+                deps.insert(
+                    name.clone(),
+                    serde_json::json!({ "condition": "process_started" }),
+                );
+            }
+            proc.insert("depends_on".to_string(), serde_json::Value::Object(deps));
+        }
+
         // Restart policy stated explicitly, never left to
-        // process-compose's default (design.md decision 3: a crashed
-        // service stays dead and is reported). Relying on the default
-        // would let an upstream change silently reverse that decision,
-        // and a flapping database is worse than a visibly dead one for
-        // the agent-fleet case this exists to serve.
+        // process-compose's default (`add-flox-services` design.md
+        // decision 3: a crashed service stays dead and is reported).
+        // Relying on the default would let an upstream change silently
+        // reverse that decision, and a flapping database is worse than a
+        // visibly dead one for the agent-fleet case this exists to serve.
+        //
+        // `Never` remains what a provider declaring nothing gets. A
+        // provider that *declares* a policy gets what it declared —
+        // which is not a reversal of that decision but the case it never
+        // had, since no provider declared one when it was made
+        // (`add-devenv-services` design.md decision 2b).
         let mut availability = serde_json::Map::new();
+        let (restart, max_restarts) = match svc.restart {
+            ServiceRestart::Never => ("no", None),
+            ServiceRestart::OnFailure { max } => ("on_failure", Some(max)),
+            ServiceRestart::Always { max } => ("always", Some(max)),
+        };
         availability.insert(
             "restart".to_string(),
-            serde_json::Value::String("no".to_string()),
+            serde_json::Value::String(restart.to_string()),
         );
+        if let Some(max) = max_restarts {
+            availability.insert(
+                "max_restarts".to_string(),
+                serde_json::Value::Number(max.into()),
+            );
+        }
         proc.insert(
             "availability".to_string(),
             serde_json::Value::Object(availability),
         );
 
         // Every service gets a shutdown timeout, daemon or not — see
-        // `SHUTDOWN_TIMEOUT_SECS`. A daemon additionally gets its
+        // `SHUTDOWN_TIMEOUT_SECS`. A provider that declares its own
+        // signal and grace period gets those instead; a daemon gets its
         // declared `shutdown.command`, which is how a backgrounding
         // service is stopped at all (its launcher has already exited, so
         // signalling that pid reaps nothing).
         let mut shutdown = serde_json::Map::new();
-        shutdown.insert(
-            "timeout".to_string(),
-            serde_json::Value::Number(SHUTDOWN_TIMEOUT_SECS.into()),
-        );
-        if svc.is_daemon {
-            proc.insert("is_daemon".to_string(), serde_json::Value::Bool(true));
-            if let Some(cmd) = &svc.shutdown_command {
+        match &svc.shutdown {
+            Shutdown::Default => {
+                shutdown.insert(
+                    "timeout".to_string(),
+                    serde_json::Value::Number(SHUTDOWN_TIMEOUT_SECS.into()),
+                );
+            }
+            Shutdown::Command(cmd) => {
+                shutdown.insert(
+                    "timeout".to_string(),
+                    serde_json::Value::Number(SHUTDOWN_TIMEOUT_SECS.into()),
+                );
                 shutdown.insert(
                     "command".to_string(),
                     serde_json::Value::String(cmd.clone()),
                 );
             }
+            Shutdown::Signal { signal, grace } => {
+                shutdown.insert(
+                    "signal".to_string(),
+                    serde_json::Value::Number((*signal).into()),
+                );
+                // Clamped, and this is a teardown guarantee rather than a
+                // preference: devcroft SIGKILLs process-compose itself
+                // after `keeper::DEFAULT_GRACE_PERIOD`, so a longer grace
+                // here would have devcroft kill the supervisor before the
+                // supervisor killed its children — reintroducing the
+                // orphan `SHUTDOWN_TIMEOUT_SECS` exists to prevent, by a
+                // different route.
+                shutdown.insert(
+                    "timeout".to_string(),
+                    serde_json::Value::Number((*grace).min(SHUTDOWN_TIMEOUT_SECS).into()),
+                );
+            }
+        }
+        if svc.is_daemon {
+            proc.insert("is_daemon".to_string(), serde_json::Value::Bool(true));
         }
         proc.insert("shutdown".to_string(), serde_json::Value::Object(shutdown));
 
@@ -733,7 +799,10 @@ mod tests {
             command: "true".into(),
             vars: Default::default(),
             is_daemon: false,
-            shutdown_command: None,
+            working_dir: None,
+            depends_on: Vec::new(),
+            restart: ServiceRestart::Never,
+            shutdown: Shutdown::Default,
         };
         let rendered = render_config(std::slice::from_ref(&svc), Path::new(TEST_SHELL_PATH));
         let parsed: serde_json::Value = serde_json::from_str(&rendered).unwrap();
@@ -753,7 +822,10 @@ mod tests {
             command: "start-db".into(),
             vars: Default::default(),
             is_daemon: true,
-            shutdown_command: Some("stop-db".into()),
+            working_dir: None,
+            depends_on: Vec::new(),
+            restart: ServiceRestart::Never,
+            shutdown: Shutdown::Command("stop-db".into()),
         };
         let rendered = render_config(std::slice::from_ref(&svc), Path::new(TEST_SHELL_PATH));
         let parsed: serde_json::Value = serde_json::from_str(&rendered).unwrap();
@@ -770,7 +842,10 @@ mod tests {
             command: command.to_string(),
             vars: BTreeMap::new(),
             is_daemon: false,
-            shutdown_command: None,
+            working_dir: None,
+            depends_on: Vec::new(),
+            restart: ServiceRestart::Never,
+            shutdown: Shutdown::Default,
         }
     }
 
@@ -813,7 +888,7 @@ mod tests {
     fn a_daemon_carries_its_shutdown_command() {
         let mut svc = decl("db", "pg_ctl start");
         svc.is_daemon = true;
-        svc.shutdown_command = Some("pg_ctl stop".to_string());
+        svc.shutdown = Shutdown::Command("pg_ctl stop".to_string());
 
         let parsed: serde_json::Value =
             serde_json::from_str(&render_config(&[svc], Path::new(TEST_SHELL_PATH))).unwrap();
