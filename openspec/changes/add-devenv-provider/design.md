@@ -126,6 +126,51 @@ inputs; it can change what resolves with `devenv.nix` untouched. Omitting
 it would report a changed environment as fresh — the failure mode
 staleness detection exists to prevent.
 
+### Decision 6: `.devenv/` is devenv's to own, and devcroft writes nothing else
+
+devenv keeps its evaluation artifacts under `.devenv/` in the project
+root, so unlike flox, nix and devbox, capturing a devenv environment
+writes into the working tree. Three ways to take that, and only one
+survives:
+
+- **Refuse to write at all** (capture into a scratch copy of the
+  project). Rejected: it changes what devenv evaluates — relative paths,
+  `devenv.yaml` inputs pointing at the repo — so it would be capturing a
+  different environment, the same objection that makes
+  `flox::derive_hook_free_env` legitimate and a copy-the-tree trick not.
+- **Write, then remove `.devenv/` afterwards.** Rejected: it is devenv's
+  own cache and GC-root directory, shared with the user's own `devenv`
+  invocations. Deleting it makes every `up` re-realize the closure and
+  can drop GC roots the user was relying on — devcroft would be
+  destroying state it does not own in order to look tidy.
+- **Write, confined and declared.** Taken. Capture may create or update
+  paths under `.devenv/` and nothing else in the project tree; the
+  project's own declaration files are byte-identical across a capture,
+  refused or not. That is stated as a spec property with a scenario, so
+  "devenv wrote somewhere else" is a test failure rather than a
+  discovery.
+
+Two consequences that belong to other changes and are recorded so they
+are not rediscovered: `sandbox-provisioning`'s provisioning profile must
+grant write to `.devenv/` for this provider, and the sample in task 5.1
+ignores it in git the way a devenv project normally does.
+
+### Decision 7: the shell resolution is measured for devenv, not inherited
+
+`src/shell.rs` resolves an absolute `sh` from the sandbox's own closure,
+accepting a `PATH` hit only when it lies inside a path the provider
+declared in `read_only_grants`. Every closure-tier provider satisfies it
+today through `capture::store_grants`, but *whether the captured
+environment contains a store-backed shell at all* is a property of what
+the capture route returns, not of Nix in general — and the capture route
+here is `devenv build shell`'s `declare -x` dump, which is exactly the
+place a missing entry would not announce itself.
+
+So it is measured in group 0 alongside the completeness diff, and
+asserted end to end. A failure here does not look like a capture error:
+it looks like `up` succeeding and `devcroft shell`, SSH login, and every
+service command failing later.
+
 ## Risks / Trade-offs
 
 - **`devenv build shell`'s format changes upstream** → A format test
@@ -146,6 +191,12 @@ staleness detection exists to prevent.
   accepted in `docs/decisions.md` §1: upstream churn in flakes, the
   daemon, or store semantics now hits four providers at once → Accepted,
   not mitigated, and named here so it is not rediscovered as a surprise.
+- **The captured environment has no shell `src/shell.rs` can resolve**,
+  which surfaces as working `exec` and broken login sessions rather than
+  as a capture failure → Measured in group 0, asserted in group 5
+  (decision 7).
+- **Capture writes into the project tree** — a property no shipped
+  provider has → Bounded to `.devenv/` by spec and test (decision 6).
 - **devenv is not installed in this repo's devcontainer by default** →
   It is reachable via `nix run nixpkgs#devenv`, which is how this design
   was measured; tests guard on the capability.
@@ -164,3 +215,6 @@ not name `devenv` is byte-identical, which the config delta asserts.
 - Whether `devenv.yaml` inputs can float in a way `devenv.lock` does not
   pin, the way devbox's base nixpkgs entry did. Affects one precondition
   test, not the approach.
+- Which devenv command creates a missing `devenv.lock`. `devenv update`
+  is the candidate `init`'s advice would name; it is measured in group 0
+  rather than inferred, and the spec states the property until it is.

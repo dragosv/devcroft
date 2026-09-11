@@ -11,6 +11,11 @@ existing devenv project (`devenv.nix`), an existing nix flake
 minimal `devcroft.toml` with commented-out common options, and never
 overwrites an existing manifest without `--force`.
 
+Where an environment is present but unlocked, the next step init prints
+SHALL be the command that creates that provider's lockfile. The command
+is a measured fact about each provider, not an inference from its name,
+and SHALL be recorded as such where the provider is implemented.
+
 Where several environments are present, detection SHALL apply a fixed,
 documented order — flox, then devbox, then devenv, then a bare flake —
 and SHALL state in one line which others were found and remain available.
@@ -44,8 +49,8 @@ evaluation artifacts under `.devenv/`, so a root flake beside a
 - **WHEN** `devenv.nix` exists in the project root and neither `.flox/`
   nor `devbox.json` does
 - **THEN** the generated manifest sets `provider = "devenv"`
-- **AND** if no `devenv.lock` exists, init prints `devenv update` as the
-  next step before `up`
+- **AND** if no `devenv.lock` exists, init prints the devenv command that
+  creates it as the next step before `up`
 
 #### Scenario: Init on a fully locked devenv project
 - **WHEN** `devenv.nix` and `devenv.lock` both exist

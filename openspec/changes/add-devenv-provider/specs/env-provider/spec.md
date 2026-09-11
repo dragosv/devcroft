@@ -18,6 +18,13 @@ Resolution SHALL require `devenv.nix` in the project root before any
 devenv command runs, failing at layer `provider` with exit code 3 and a
 hint to initialize a devenv project.
 
+Resolution SHALL require `devenv.lock` to exist **before** capture,
+failing at layer `provider` with exit code 3 and naming the devenv
+command that creates it. Reaching the same refusal through the
+after-capture comparison below is not equivalent: a project that was
+never locked has a different problem from one whose capture resolved
+something, and the messages SHALL distinguish them.
+
 The lockfile precondition SHALL be expressed as **"nothing resolves at
 `up`"**, enforced by verifying, after capture, that `devenv.lock` is
 byte-identical to what it was before. Where it is not, the system SHALL
@@ -29,6 +36,14 @@ A byte comparison is required rather than a prediction of which keys
 devenv needs, for the reason `add-devbox-provider` recorded: predicting
 the key set means reimplementing the provider's resolution rules, which
 drifts silently when they change.
+
+Capture writes into the project tree, which no other supported provider
+does: devenv keeps its evaluation artifacts under `.devenv/`. Every path
+capture creates or modifies in the project tree SHALL lie under
+`.devenv/`. The system SHALL NOT remove that directory — it is devenv's
+own cache and GC-root store, shared with the user's own `devenv`
+invocations, and deleting it would destroy state devcroft does not own
+to leave the tree looking untouched.
 
 #### Scenario: Environment captured host-side
 - **WHEN** `up` runs in a project declaring `provider = "devenv"` with
@@ -46,6 +61,20 @@ drifts silently when they change.
 - **WHEN** capture would change `devenv.lock`
 - **THEN** `up` fails at layer `provider` with exit code 3, and
   `devenv.lock` is left byte-identical to its pre-`up` content
+
+#### Scenario: Unlocked project is told to lock, not told capture resolved
+- **WHEN** provider is `devenv`, `devenv.nix` is present and
+  `devenv.lock` is absent
+- **THEN** `up` fails at layer `provider` with exit code 3 before capture
+  runs, naming the devenv command that creates the lockfile
+
+#### Scenario: Capture writes only where the provider owns the path
+- **WHEN** capture runs in a devenv project, whether `up` then succeeds
+  or is refused
+- **THEN** every path capture created or modified in the project tree
+  lies under `.devenv/`
+- **AND** `devenv.nix`, `devenv.yaml` and `devenv.lock` are byte-identical
+  to their pre-`up` content
 
 #### Scenario: Capture is independent of the invoking shell
 - **WHEN** `up` is run twice from shells with different `PATH` and
@@ -108,6 +137,33 @@ denied inside the sandbox, the same way a flox hook is.
 - **WHEN** `enterShell` invokes a binary the compiled policy denies
 - **THEN** the hook fails and `up` fails at layer `keeper`, naming the
   hook, rather than the sandbox coming up as though it had succeeded
+
+### Requirement: A devenv closure yields a shell devcroft can resolve
+The captured environment SHALL yield an absolute shell path resolvable by
+the rule every closure-tier provider already uses: a `PATH` entry only
+where the resolved binary lies inside a path the provider declared in its
+read-only grants, else a `bin/sh` from the closure's own requisites.
+Where neither yields one, `up` SHALL fail at layer `provider` naming the
+closure, rather than completing.
+
+This is stated as a requirement of *this* provider rather than inherited
+from "devenv is Nix underneath", because it is a property of what the
+chosen capture route returns. Failing it does not look like a capture
+error: `exec` keeps working, while `devcroft shell`, SSH login sessions
+and every supervised service command fail later, which is the shape
+`own-policy-baseline` produced for three providers at once.
+
+#### Scenario: Login session uses a shell from the closure
+- **WHEN** `up` completes for a devenv project
+- **THEN** the recorded shell is an absolute path inside the provider's
+  declared grants, and `devcroft shell` and an SSH login session both
+  start
+
+#### Scenario: A host shell is refused
+- **WHEN** the only `sh` reachable on the captured `PATH` is outside every
+  declared grant
+- **THEN** it is not selected, and resolution falls back to the closure's
+  requisites or fails at layer `provider`
 
 ### Requirement: devenv staleness covers all three declaration files
 The system SHALL treat a devenv environment as stale when any of

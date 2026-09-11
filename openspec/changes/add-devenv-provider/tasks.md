@@ -34,11 +34,29 @@ is the shared probe.
       turned out to have. If they can, the byte-comparison precondition
       is necessary but insufficient and the spec needs amending before
       implementation, not after.
-- [ ] 0.5 Investigate why `devenv shell -- <cmd>` runs `enterShell`
+- [ ] 0.5 **Does the captured environment carry a shell devcroft can
+      resolve?** Run `src/shell.rs`'s rule against the captured env by
+      hand: is there a `sh`/`bash` on the captured `PATH` whose real path
+      lies under a store path `capture::store_grants` would return, or is
+      the requisites fallback the only route? Record which, because a
+      capture that passes every other check and has no resolvable shell
+      produces a working `exec` and a broken login session (design.md
+      decision 7).
+- [ ] 0.6 **What does capture write into the project tree?** Snapshot the
+      project before and after `devenv build shell`, on a fresh project
+      and on an interrupted run. Confirm every created or modified path
+      is under `.devenv/` — decision 6 bounds devcroft to that, and the
+      spec scenario asserts it, so a write anywhere else is a finding
+      that changes the decision rather than a detail to absorb.
+- [ ] 0.7 **Which command creates a missing `devenv.lock`?** Measure on a
+      project with none; `devenv update` is the candidate `init` would
+      advise and is not to be asserted from its name (the cli spec states
+      the property and this task supplies the command).
+- [ ] 0.8 Investigate why `devenv shell -- <cmd>` runs `enterShell`
       twice. Not on the chosen path, so this does not block; record the
       finding either way, since an unexplained doubling at the hook
       boundary is the kind of detail that matters later.
-- [ ] 0.6 If 0.2 shows the hook-free route is incomplete and no other
+- [ ] 0.9 If 0.2 shows the hook-free route is incomplete and no other
       hook-free route is complete, **stop and report**. That outcome
       means devenv fails criterion 4 as measured, which is a
       qualification finding for `docs/decisions.md`, not a problem to
@@ -61,7 +79,12 @@ is the shared probe.
 - [ ] 2.1 `src/provider/devenv.rs`: preconditions — `devenv` usable,
       `nix` usable (reported as devenv's own requirement, not as advice
       to switch providers), `devenv.nix` present with a `devenv init`
-      hint, all at layer `provider`, exit 3.
+      hint, and `devenv.lock` present **before** capture with the lock
+      command from 0.7 as the hint — all at layer `provider`, exit 3.
+      The last one mirrors devbox's `ensure_everything_locked`: without
+      it an unlocked project fails through 2.5's after-the-fact byte
+      comparison, whose message is about capture resolving rather than
+      about the project never having been locked.
 - [ ] 2.2 Capture through the hook-free route chosen in group 0, diffed
       against the shared fixed baseline. Reuse `capture`'s existing
       machinery; if it needs changing, that is a finding about the trait
@@ -80,7 +103,13 @@ is the shared probe.
       reasoning inline, the way `nix.rs` does — so a devenv project
       declaring services fails distinguishably rather than silently
       starting nothing.
-- [ ] 2.7 Determinism test: capture twice from shells with different
+- [ ] 2.7 Working-tree test (design.md decision 6): after a capture —
+      successful and refused — every created or modified path in the
+      project tree is under `.devenv/`, and `devenv.nix`, `devenv.yaml`
+      and `devenv.lock` are byte-identical to their pre-`up` content.
+      devcroft does not delete `.devenv/`; it is devenv's own cache and
+      GC roots.
+- [ ] 2.8 Determinism test: capture twice from shells with different
       `PATH`/environment, assert byte-identical diffs
       (`tests/flox_env_capture_is_deterministic.rs` has the shape).
 
@@ -109,9 +138,10 @@ is the shared probe.
       including the "devenv present, Nix is not" scenario.
 - [ ] 4.3 `init`: detect `devenv.nix`; insert devenv into the documented
       detection order (flox → devbox → devenv → bare flake); name the
-      alternatives found in one line. Advise `devenv update` when
-      `devenv.lock` is absent — verify in group 0 that this is the
-      command that writes it, rather than assuming from the name.
+      alternatives found in one line. When `devenv.lock` is absent,
+      advise the lock command **measured in 0.7** — the spec states the
+      property ("the command that creates it") precisely so this task
+      supplies the name rather than the spec asserting it unmeasured.
 - [ ] 4.4 `src/bin/devcroft.rs`'s `USAGE` needs no new command, but
       confirm `tests/cli_help_and_version.rs` still passes — the surface
       is closed and this change does not widen it.
@@ -123,7 +153,15 @@ is the shared probe.
       demonstrates. No `[workspace]` exclusion needed unless it is a Rust
       project — see CLAUDE.md's samples note.
 - [ ] 5.2 E2E: `up`, `exec` sees the devenv toolchain, everything runs
-      under `network.default = "deny"`.
+      under `network.default = "deny"`. Written against the same
+      scaffolding the devbox e2e tests use; if `add-test-runtime-fixture`
+      has landed its row contract by then, devenv is a row rather than a
+      bespoke setup, and that choice is stated in the test rather than
+      left to whoever reads it next.
+- [ ] 5.5 Login-session E2E (design.md decision 7): `Meta.shell` records
+      an absolute shell from the devenv closure, `devcroft shell` opens,
+      and an SSH login session works. `exec` passing proves nothing here
+      — it does not go through the resolved shell.
 - [ ] 5.3 Closure-tier measurement, the one that makes "closure tier" a
       claim about *this provider* rather than about Nix in the abstract:
       a full build inside the sandbox needs the project root, `/tmp` and

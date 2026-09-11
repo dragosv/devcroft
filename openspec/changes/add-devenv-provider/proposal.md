@@ -93,16 +93,32 @@ absence.
   the same mechanism the other three closure providers use, annotated
   `provider:devenv`.
 - **Preconditions, checked at `up`, layer `provider`, exit code 3:**
-  `devenv` on PATH; `nix` present (devenv is a frontend over it);
-  `devenv.nix` present, whose absence is a missing environment with a
-  `devenv init` hint rather than a missing feature; and `devenv.lock`
-  present and unchanged by capture — the same "nothing resolves at `up`"
-  rule, enforced the same way devbox's is, by byte comparison after
-  capture rather than by predicting which keys devenv needs.
+  `devenv` usable and `nix` usable (devenv is a frontend over it) —
+  probed as a **capability**, never as a binary on `PATH`, since both
+  `devenv --version` and `nix flake --help` succeed against an
+  unreachable store, the failure mode this repo's testing rule exists
+  for; `devenv.nix` present, whose absence is a missing environment with
+  a `devenv init` hint rather than a missing feature; `devenv.lock`
+  present **before** capture, checked up front the way devbox's
+  `ensure_everything_locked` is, so a project that was never locked is
+  told to lock it rather than told that capture resolved something; and
+  `devenv.lock` unchanged **after** capture — the same "nothing resolves
+  at `up`" rule, enforced the same way devbox's is, by byte comparison
+  rather than by predicting which keys devenv needs.
 - **Staleness**: fingerprint of `devenv.nix` + `devenv.yaml` +
   `devenv.lock`. Three files rather than two, because `devenv.yaml`
   carries the inputs and can change what resolves without
   `devenv.nix` changing at all.
+- **Capture writes into the project tree, which no shipped provider
+  does.** devenv keeps its evaluation artifacts under `.devenv/` in the
+  project root — the same fact the `cli` delta relies on to rank a bare
+  flake last. flox, nix and devbox all capture without touching the
+  working tree, so this is a new property rather than a detail, and it
+  is named here rather than discovered during implementation. What it
+  costs — whether a refused `up` must remove those artifacts, what the
+  sample's `.gitignore` carries, and what `sandbox-provisioning`'s
+  profile has to grant — is settled in design.md decision 6, on
+  measurements group 0 takes.
 - **Services are `ServiceSupport::Unsupported` in this change.** See
   Impact; this is a scope decision with a named successor, not an
   oversight.
@@ -152,6 +168,21 @@ capability, the same reasoning `add-nix-provider` and
   on, and that the alternative here is not a documented route but
   running project code during provisioning. design.md has to make that
   trade explicitly, and record what breaks if devenv changes the format.
+- **Where devenv lands under `sandbox-provisioning`, stated rather than
+  implied.** The two ship together, and that change's own spec requires
+  residual host-side exposure be *stated rather than implied*, so this
+  one cannot leave it to be inferred. devenv executes no project shell
+  to resolve, so it is not the flox case (fail closed at layer
+  `provider`); it falls in that spec's "a provider evaluates
+  repository-controlled definitions" scenario, alongside `nix
+  print-dev-env --json` and `devbox shellenv --pure` — evaluation runs
+  host-side, bounded by the evaluator rather than by the provisioning
+  sandbox. One step further than nix's, though, and the step is devenv's
+  own frontend: it reads `devenv.yaml` and `devenv.nix` and generates a
+  flake before Nix evaluates anything, so what runs host-side is
+  devenv's interpreter *plus* the evaluator, not the evaluator alone.
+  That is the residual exposure, recorded here so the two changes agree
+  rather than each assuming the other settled it.
 - **Deliberately out of scope: devenv services and `processes`.**
   devenv's `processes` are process-compose-backed, the same supervisor
   `src/services` already generates a config for, and
@@ -170,7 +201,10 @@ capability, the same reasoning `add-nix-provider` and
 - **Unblocks**: `add-manifestless-mode` (0.6), which exists to be
   pointed at repositories nobody has read. A `devenv.nix` reported as
   unsupported is a poor version of "point it at anything", which is why
-  this is wanted before that change rather than after.
+  this is wanted before that change rather than after. Detection there is
+  that change's own surface: this one adds devenv to `init`'s documented
+  order only, so 0.6 has to place it in manifestless detection itself
+  rather than inherit it.
 
 ## Success Criteria
 
@@ -195,11 +229,25 @@ capability, the same reasoning `add-nix-provider` and
   `status` to stale and `up` prints the `--recreate` notice.
 - `policy --render` shows store grants with origin `provider:devenv`;
   provider resolution adds no write grants.
-- **`src/provider/mod.rs`'s dispatch is the only shared file that changes
-  shape.** If devenv forces a change to `Resolution`, to
-  `policy::compile`, or to `lifecycle::up`'s provider handling, the
-  "trait generalizes" claim is weaker than stated, and that is recorded
-  rather than absorbed.
+- **`devcroft shell` and an SSH login session both work** — a separate
+  claim from `exec` seeing the toolchain, and the one most likely to be
+  assumed. `src/shell.rs` has to resolve an absolute `sh` out of the
+  devenv closure: from the captured `PATH` only where the hit lies inside
+  a path the provider declared in `read_only_grants`, else from the
+  closure's requisites. This is the invariant `own-policy-baseline` broke
+  silently for all three shipped providers, it depends on what *this*
+  provider's capture actually contains, and "it is Nix underneath" is not
+  evidence for it.
+- **A refused `up` leaves the project's own files as it found them**,
+  `devenv.nix`, `devenv.yaml` and `devenv.lock` byte-identical, with
+  anything capture writes confined to `.devenv/`.
+- **No shared *type* changes shape.** Which shared *files* change is
+  known and mechanical — `provider/mod.rs`'s dispatch, `validate.rs`'s
+  name lists, `doctor`/`init` in `src/bin/devcroft.rs` — so the claim
+  under test is the narrower and checkable one: if devenv forces a change
+  to `Resolution`, to `policy::compile`, or to `lifecycle::up`'s provider
+  handling, the "trait generalizes" claim is weaker than stated, and that
+  is recorded rather than absorbed.
 
 ## Open Questions
 
@@ -215,6 +263,15 @@ capability, the same reasoning `add-nix-provider` and
   but the "nothing resolves at `up`" rule has to be checked against a
   project whose inputs are unpinned, the way devbox's base nixpkgs entry
   turned out to resolve live.
+- **What capture writes into the project tree**, and whether a failed or
+  interrupted capture can leave `.devenv/` in a state the next `up`
+  reads as valid.
+- **Which command creates `devenv.lock`** for a project that has none.
+  `devenv update` is the name-based candidate, and a name-based candidate
+  is exactly what this proposal exists to avoid asserting.
+- **Whether the devenv closure contains a shell `src/shell.rs` can
+  resolve**, and whether it is reachable on the captured `PATH` inside a
+  declared grant or only through the closure's requisites.
 - **Why `devenv shell -- <cmd>` runs `enterShell` twice.** Measured
   consistently, unexplained, and worth understanding before relying on
   any adjacent behaviour.
