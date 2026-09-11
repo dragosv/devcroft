@@ -15,6 +15,10 @@ CompiledPolicy {
             value: "/dev/null",
             origin: Baseline,
         },
+        AnnotatedValue {
+            value: "/tmp",
+            origin: Baseline,
+        },
     ],
     filesystem_read: [
         AnnotatedValue {

@@ -105,6 +105,44 @@ const KEEPER_SYSTEM_READWRITE: &[&str] = &["/dev/pts", "/dev/null"];
 #[cfg(target_os = "macos")]
 const KEEPER_SYSTEM_READWRITE: &[&str] = &["/dev/ptmx", "/dev/null"];
 
+/// A temporary directory, read **and** write.
+///
+/// Separate from [`KEEPER_SYSTEM_READWRITE`] on purpose: that set is
+/// scoped to what the keeper itself needs, and this is not — it is for
+/// the project's own code, which is the one category that set
+/// deliberately excludes. Keeping them apart keeps that claim true.
+///
+/// **Measured, and the measurement is why this exists:** a devcroft
+/// sandbox on macOS had *no* temporary directory at all. Neither `/tmp`
+/// nor `/private/tmp` was readable or writable. That is not a spelling
+/// problem — which is what it looked like for a while, since `/tmp` is a
+/// symlink there — it is an absent grant, and it broke four unrelated
+/// things at once:
+///
+/// - devenv's generated `enterShell` preamble (`mkdir -p /tmp/devenv-…`),
+/// - `process-compose`'s default log path, which it treats as fatal,
+/// - a devenv postgres service, whose socket directory lives under it,
+/// - `mysql_install_db` in devbox's mysql plugin.
+///
+/// Software assumes a temp directory exists the way it assumes a
+/// filesystem does. A sandbox without one cannot run ordinary programs,
+/// which is a worse failure than the sharing this grant admits.
+///
+/// **What it admits, stated rather than glossed:** `/tmp` is shared with
+/// the host and with every other sandbox, so this is not isolated
+/// scratch space. A per-sandbox temp directory with `TMPDIR` pointed at
+/// it would be better, and does not work today — devenv computes
+/// `/tmp/devenv-<hash>` from the project path at evaluation time and
+/// ignores `TMPDIR`, so the directory it wants is the shared one
+/// whatever devcroft sets. Narrowing this is `own-policy-baseline`'s to
+/// do, and needs the providers to cooperate.
+///
+/// Granted by its lexical spelling, not its canonical one: the backend
+/// emits a rule for each when they differ, and it can only do that if it
+/// is handed the spelling the manifest used
+/// (`fix-symlinked-grant-spelling`).
+const SANDBOX_TEMP_DIR: &[&str] = &["/tmp"];
+
 /// The signal isolation `extends: "default"` currently supplies as its
 /// *only* effective contribution (own-policy-baseline design.md Decision
 /// 4) — declared explicitly so it survives independently of `extends`
@@ -296,6 +334,13 @@ pub fn compile(manifest: &Manifest) -> CompiledPolicy {
     // [`KEEPER_SYSTEM_READWRITE`]'s doc comment for why this is separate.
     filesystem_allow.extend(
         KEEPER_SYSTEM_READWRITE
+            .iter()
+            .map(|p| AnnotatedValue::new(*p, Origin::Baseline)),
+    );
+    // A temporary directory for the project's own code — see
+    // [`SANDBOX_TEMP_DIR`] for what was measured and what it admits.
+    filesystem_allow.extend(
+        SANDBOX_TEMP_DIR
             .iter()
             .map(|p| AnnotatedValue::new(*p, Origin::Baseline)),
     );

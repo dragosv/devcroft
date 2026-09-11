@@ -443,6 +443,60 @@ not gated).
 named. Closing it properly would need something Seatbelt does not offer; the
 honest position is the declared degradation.
 
+## A sandbox on macOS had no temporary directory at all — fixed
+
+Measured with a probe inside a live sandbox: neither `/tmp` nor
+`/private/tmp` was readable or writable. Not a spelling problem — which
+is what it looked like while it was filed under the entry below, since
+`/tmp` is a symlink there — an absent grant. devcroft's baseline
+constants contained no temp directory on either platform, and on macOS
+nothing else supplied one.
+
+It broke four unrelated things at once, which is why it took four
+sightings to name: devenv's generated `enterShell` preamble
+(`mkdir -p /tmp/devenv-…`), `process-compose`'s default log path (which
+it treats as fatal), a devenv postgres service whose socket directory
+lives under it, and `mysql_install_db` in devbox's mysql plugin.
+
+Fixed by granting `/tmp` read+write in the baseline. Both spellings work
+from that one grant, because the backend emits a rule for each when they
+differ — the fix below is what makes granting the lexical spelling
+sufficient.
+
+**What it admits, stated rather than glossed:** `/tmp` is shared with the
+host and with every other sandbox, so this is not isolated scratch space.
+A per-sandbox directory with `TMPDIR` pointed at it would be better and
+does not work today: devenv computes `/tmp/devenv-<hash>` from the
+project path at evaluation time and ignores `TMPDIR`. Narrowing this
+belongs to `own-policy-baseline` and needs the providers to cooperate.
+
+## PostgreSQL cannot start in a sandbox on macOS
+
+Its postmaster creates a System V shared memory segment as an interlock
+against duplicate instances — a 56-byte one — and Seatbelt denies it:
+
+```
+FATAL:  could not create shared memory segment: Operation not permitted
+DETAIL:  Failed system call was shmget(key=…, size=56, 03600).
+```
+
+This is not a filesystem grant. The backend library exposes an `IpcMode`,
+but it governs **POSIX** IPC (`ipc-posix-shm`, POSIX semaphores); SysV
+shared memory is a different mechanism and has no knob. Landlock does not
+mediate SysV IPC at all, so the same project is expected to work on
+Linux — unverified there, and worth verifying before the asymmetry is
+relied on.
+
+Found by building the obvious demo: a devenv project with
+`services.postgres.enable`, a table, and a Go server reading it.
+Everything devcroft owns worked — the integration's postgres was captured
+as a service, its readiness probe carried, the dependent emitted as
+`process_healthy`, the failure reported rather than hidden. The database
+itself could not start.
+
+Adjacent, non-fatal, and noted because it will surface again:
+`/private/var/select/sh` is also denied during `initdb`.
+
 ## A grant does not cover the symlinked spelling of its own path on macOS — half fixed
 
 devcroft canonicalizes every filesystem grant before handing it to the backend,

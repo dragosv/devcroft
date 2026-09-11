@@ -12,6 +12,14 @@
 //! commit *before* `devenv` existed as a provider and re-checked against
 //! the current tree; a diff here means a change intended for one provider
 //! reached the policy every other manifest gets.
+//!
+//! **Updated once since, deliberately.** Granting a temporary directory
+//! in the baseline (`policy::SANDBOX_TEMP_DIR`) changes what *every*
+//! sandbox gets, so this golden legitimately moved — by exactly four
+//! lines, which is how that change was confirmed to touch nothing else.
+//! A golden pinning the whole artifact is supposed to break when the
+//! baseline changes. What it must never do is break silently, or by more
+//! than the change explains.
 
 use devcroft::policy::compile;
 
