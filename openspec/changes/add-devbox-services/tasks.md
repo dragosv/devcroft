@@ -98,13 +98,20 @@
       setup lives in the hook fails — `mysql`'s `setup_db.sh` runs
       `mysql_install_db`, so `mariadbd` had no datadir. Verified in the
       keeper log.
-- [ ] 2c.2 **BUG: services start before the activation hook runs.**
+- [x] 2c.2 **BUG: services start before the activation hook runs.**
+      Proposed as `fix-service-hook-ordering` rather than patched here:
+      the obvious fix — `up` starting services after the hook — is ruled
+      out by `client_disconnect_kills_session_after_grace_period`, so the
+      reordering touches the keeper's lifetime contract, which is the
+      part this project has twice paid to get right.
       Observed in the keeper log — `services started session=1` precedes
       the hook's spawn. Invisible for flox and devenv, whose services do
       not depend on hook output; fatal for a database whose datadir the
       hook creates. Not fixed.
 - [ ] 2c.3 `mysql_install_db` needs hostname resolution, which a
-      deny-all network policy refuses. The sandbox working as designed,
+      deny-all network policy refuses. **Not a defect** — the sandbox
+      working as designed. Needs a documented answer before the `mysql`
+      plugin can be called supported. The sandbox working as designed,
       but it means the mariadb path needs a documented answer (the
       script's own `--force`, or a manifest that grants what it needs)
       before this plugin can be called supported.
