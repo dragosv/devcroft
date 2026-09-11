@@ -11,32 +11,30 @@ test guards on the **capability**, never on the binary:
 
 ## 0. Measurement gate — no code until these are answered
 
-- [ ] 0.1 Re-confirm with a sentinel that `devenv eval processes` runs
-      `enterShell` zero times, on a project that declares both. Record
-      the devenv version.
-- [ ] 0.2 **Does `devenv eval processes` include processes contributed by
-      devenv's integrations**, or only those the project wrote under
-      `processes`? (design.md Open Questions.) A project enabling a
-      database integration and getting supervised services it never
-      wrote by hand is defensible — but it changes what "declared" means
-      and must not be discovered by a user.
-- [ ] 0.3 Measure whether `supervisionMode` can hold anything but
-      `native`, and whether `start.enable = false` is reachable from a
-      normal declaration. Both are refused by decision 3; confirm they
-      are refusals of something real rather than of something devenv
-      never emits.
-- [ ] 0.4 Does devenv validate `before`/`after` against declared process
-      names? If not, devcroft validates at `up` — a dependency on a
-      service that does not exist is a startup failure worth catching
-      before anything starts.
-- [ ] 0.5 Confirm the devbox measurements on a second run, since they
-      are what this change records as a decision: `devbox install` 0 hook
-      runs, `devbox shellenv --pure` 0, `devbox services ls` 1. Record
-      the devbox version.
-- [ ] 0.6 If 0.1 shows `devenv eval processes` runs project code after
-      all, **stop and report**: devenv's services would fail the same
-      criterion devbox's do, and that is a qualification finding for
-      `docs/decisions.md`, not a problem to engineer around.
+- [x] 0.1 Sentinel confirmed on **devenv 2.2.2, aarch64-darwin**:
+      `devenv eval processes` runs `enterShell` **0** times on a project
+      declaring both. The gate passes.
+- [x] 0.2 **Integration-contributed processes DO appear.**
+      `services.redis.enable = true` yields a `redis` process whose
+      `exec` is a store path. Taken as-is — see design.md decision 4a —
+      and stated in the spec, the sample and the docs, because it widens
+      what "declared" means.
+- [x] 0.3 `supervisionMode` is **read-only**: a project cannot set it and
+      every process comes back `native`. Refusing another value is
+      insurance against devenv emitting one, not a user restriction, and
+      the message says so. `start.enable = false` **is** reachable, so
+      that refusal refuses something real.
+- [x] 0.4 **`before`/`after` are task-graph edges, not process names, and
+      devenv validates neither** — the finding that moved the design.
+      `after = [ "web" ]` evaluates fine and produces **no edge**;
+      `after = [ "devenv:processes:web" ]` produces it, visible in
+      `devenv tasks list`. Design decision 2's straight mapping onto
+      `depends_on` would have honoured something devenv ignores. Replaced
+      by decision 2a.
+- [x] 0.5 devbox 0.17.5 re-confirmed: `devbox install` 0 hook runs,
+      `devbox shellenv --pure` 0 (control), `devbox services ls` **1**.
+- [x] 0.6 Gate passed — `devenv eval processes` runs no project code, so
+      devenv's services do not fail the criterion devbox's do.
 
 ## 1. `ServiceDecl` grows
 
@@ -63,17 +61,25 @@ test guards on the **capability**, never on the binary:
       **not** `Unsupported` — the distinction that lets a manifest
       asking for services fail loudly rather than start nothing.
 - [ ] 2.3 Map `exec`→command, `env`→vars, `cwd`→working_dir,
-      `before`/`after`→depends_on, `restart`→RestartPolicy,
-      `shutdown{signal,grace}`→`Shutdown::Signal`.
+      `restart`→RestartPolicy, `shutdown{signal,grace}`→`Shutdown::Signal`.
+- [ ] 2.3a Ordering (design.md decision 2a, per 0.4): only
+      `devenv:processes:<name>` naming another declared process becomes
+      `depends_on`. A bare name is refused **naming that devenv itself
+      creates no edge for it**; any other task reference is refused
+      because devcroft does not run devenv's task graph.
 - [ ] 2.4 **Refuse by name** (decision 3): `ready`, `watch`, `proxy`,
       `ports`, `listen`, `linux.capabilities`, `start.enable = false`,
       non-`native` `supervisionMode`. Fail at layer `provider`, exit 3,
-      naming the process *and* the field.
+      naming the process *and* the field. `supervisionMode`'s message
+      says it is read-only upstream, so a user reading it is not sent
+      looking for a setting they cannot change (0.3).
 - [ ] 2.5 **Refuse the `process-compose` passthrough** (decision 4), with
       a message pointing at `before`/`after` for the dependency case —
       the user's fix is to restate it in devenv's vocabulary, not to
       give up.
-- [ ] 2.6 Validate `depends_on` names against the declared set, per 0.4.
+- [ ] 2.6 Validate that each honoured dependency names a declared
+      process — devenv does not (measured, 0.4), so devcroft must, or a
+      sandbox comes up ordered against a service that does not exist.
 - [ ] 2.7 Parse failure is loud: an unrecognized shape fails rather than
       yielding a partial service set, the same rule the environment
       capture follows.

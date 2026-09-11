@@ -19,6 +19,39 @@ Three of those — `cwd`, `restart`, `shutdown` — describe things flox
 also expresses, differently. The rest are devenv concepts devcroft has
 no position on yet.
 
+## Measured (group 0)
+
+devenv 2.2.2, aarch64-darwin. Two results corrected this design before
+any code depended on it.
+
+| question | answer |
+|---|---|
+| `devenv eval processes` runs `enterShell`? | **no** — 0 sentinel appends |
+| does it include integration-contributed processes? | **yes** — `services.redis.enable = true` yields a `redis` process whose `exec` is a store path |
+| are `before`/`after` process names? | **no — task names** |
+| does devenv validate them? | **no** — a bogus entry evaluates fine and creates no edge |
+| can a project set `supervisionMode`? | **no** — the option is read-only |
+| is `start.enable = false` reachable? | **yes** |
+
+Per-process defaults, on every process devenv returns:
+`restart = {max: 5, on: "on_failure", window: null}`,
+`shutdown = {signal: 15, grace: 5}`, `cwd = null`, `ready = null`.
+
+**The `before`/`after` finding is the one that moved the design.** They
+are edges in devenv's *task* graph, whose nodes are things like
+`devenv:enterShell`, `devenv:files` and `devenv:processes:<name>`.
+Measured both ways:
+
+- `after = [ "web" ]` — a bare process name — evaluates without error
+  and produces **no edge**. In devenv itself it is a silent no-op.
+- `after = [ "devenv:processes:web" ]` produces the edge, visible in
+  `devenv tasks list` as `devenv:processes:worker → devenv:processes:web`.
+
+Decision 2 originally mapped `before`/`after` straight onto
+`depends_on`. That would have taken a declaration devenv treats as
+nothing and given it a meaning inside devcroft — the two would then
+disagree about what the same project does. See decision 2a.
+
 ## Goals / Non-Goals
 
 **Goals:**
@@ -77,8 +110,8 @@ So the type grows by *concepts*, each expressible by both providers and
 requestable from any plausible supervisor:
 
 - `working_dir: Option<PathBuf>` — devenv's `cwd`.
-- `depends_on: Vec<String>` — devenv's `before`/`after`. Names of other
-  declared services, validated to exist.
+- `depends_on: Vec<String>` — names of other declared services. What
+  fills it for devenv is decision 2a, not `before`/`after` verbatim.
 - `restart: RestartPolicy` — `Never` | `OnFailure { max }` | `Always`.
 - `shutdown: Shutdown` — an **enum**, not two optional fields:
   `Command(String)` for flox's `shutdown.command`, `Signal { signal,
@@ -91,12 +124,47 @@ requestable from any plausible supervisor:
 concept. It is flox's, it is still flox's, and the field's doc comment
 says so rather than pretending it is general.
 
+### Decision 2a: only the `devenv:processes:<name>` form becomes a dependency
+
+Measured (group 0): `before`/`after` are task-graph edges, not process
+references, and devenv validates neither.
+
+So each entry is treated by what devcroft can faithfully honour:
+
+- **`devenv:processes:<name>`, where `<name>` is another process this
+  project declares** → `depends_on: <name>`. This is the one form that
+  means the same thing on both sides: devenv builds exactly that edge,
+  and devcroft's supervisor can reproduce it.
+- **A bare name** (`after = [ "web" ]`) → **refused**, naming the
+  process and the entry, and saying that devenv itself creates no edge
+  for it. This is the important refusal: it is the spelling a user is
+  most likely to reach for, it does nothing in devenv, and mapping it to
+  a dependency would make devcroft *more* featureful than the provider
+  it is reading — the two would disagree about the same project.
+- **Any other task reference** (`devenv:enterShell`, `devenv:files`, a
+  project's own task) → **refused**. devcroft does not run devenv's task
+  graph, so it cannot honour an ordering against a node it never
+  executes.
+- **`devenv:processes:<name>` naming a process this project does not
+  declare** → refused, since the dependency cannot be satisfied.
+
+The alternative — carry `before`/`after` verbatim and let the supervisor
+sort it out — was rejected for the reason above: it invents a meaning
+the provider does not give them.
+
 ### Decision 3: everything else is refused by name, not ignored
 
-`ready`, `watch`, `proxy`, `ports`, `listen`, `linux.capabilities`,
-`start.enable = false`, and any `supervisionMode` other than `native`
-each cause `up` to fail at layer `provider`, naming the process and the
-field.
+`ready`, `watch`, `proxy`, `ports`, `listen`, `linux.capabilities` and
+`start.enable = false` each cause `up` to fail at layer `provider`,
+naming the process and the field. Measured: `start.enable = false` is
+reachable from a normal declaration, so that refusal refuses something
+real rather than something devenv never emits.
+
+`supervisionMode` is the exception, and for a reason worth recording:
+the option is **read-only** — a project cannot set it, and every process
+comes back `native`. Refusing a different value is therefore insurance
+against devenv itself starting to emit one, not a restriction on users,
+and the message says so.
 
 This is deliberately stricter than it needs to be for a first version,
 and the reason is the failure mode it avoids. A devenv project declaring
@@ -136,6 +204,27 @@ though `depends_on` is carried when declared through devenv's own
 `before`/`after`. The refusal message must say that, since the user's
 fix is to restate the dependency in devenv's own vocabulary rather than
 to give up.
+
+### Decision 4a: integration-contributed processes are supervised, and that is said out loud
+
+Measured: `services.redis.enable = true` produces a `redis` process in
+`devenv eval processes`, with `exec` pointing into the store. So what
+devcroft reads is every process devenv's evaluation produces, not only
+the ones written by hand under `processes`.
+
+Taken as-is, because the alternative is worse in both directions:
+filtering to handwritten processes would need devcroft to distinguish
+them (devenv does not mark them), and would drop exactly the services a
+user enabling an integration *wants* supervised.
+
+But it changes what "the project declared" means, so it is stated in the
+spec, in the sample's README, and in the refusal messages' framing — a
+user who never wrote `processes.redis` and sees `redis` in `devcroft ps`
+should be able to find out why without reading devcroft's source.
+
+A pleasant consequence for the closure tier: an integration's `exec` is
+a store path, so the supervised command comes from the closure rather
+than from whatever is on `PATH`.
 
 ### Decision 5: devbox's refusal moves from deferral to measurement
 

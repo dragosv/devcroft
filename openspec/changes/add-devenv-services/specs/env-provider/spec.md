@@ -13,6 +13,19 @@ project that declares none, and never as "this provider has no service
 concept" — the distinction is what lets a manifest asking for services
 fail loudly instead of silently starting nothing.
 
+The captured set SHALL be every process the provider's evaluation
+produces, not only those the project wrote by hand. Measured on devenv
+2.2.2: enabling one of devenv's own service integrations contributes a
+process, whose command is a store path. Filtering those out would
+require distinguishing them — the provider does not mark them — and
+would drop exactly the services a user enabling an integration expects
+to be supervised.
+
+Because that widens what "declared" means, the system SHALL make the
+origin discoverable: a user who never wrote a process by that name and
+sees it supervised SHALL be able to find out why from devcroft's own
+documentation and sample, not from its source.
+
 Resolution SHALL NOT start, attach to, or query a running supervisor to
 learn what is declared. devenv runs its own supervisor; devcroft never
 touches that instance, and reading declarations is not an exception.
@@ -29,6 +42,12 @@ touches that instance, and reading declarations is not an exception.
   outside the project root and declares processes
 - **THEN** resolution reads the declarations and the side effect has not
   occurred when `up` returns
+
+#### Scenario: An integration's process is supervised like any other
+- **WHEN** a devenv project enables one of the provider's own service
+  integrations and declares no process of that name itself
+- **THEN** that process is captured, supervised, and enumerable exactly
+  as a handwritten one is
 
 #### Scenario: Zero declared is not "unsupported"
 - **WHEN** a devenv project declares no processes
