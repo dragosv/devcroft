@@ -487,7 +487,15 @@ spelling and lets the library canonicalize, which it does atomically anyway.
 Measured A/B on one sandbox, granting `/tmp/dcspell-probe`: before, writing via
 `/tmp/…` was denied and via `/private/tmp/…` worked; after, both work.
 
-**Still open for the baseline's own grants**, and the two cases are worth
+**A third instance, and this one is a third party's default.**
+process-compose writes its own log to `/tmp/process-compose-<user>.log`
+and exits *fatally* when it cannot — measured inside a sandbox. devcroft
+passes `-L` so its own supervisor avoids it, but anything else in a
+sandbox that assumes `/tmp` is writable hits the same wall, and the
+pattern is now: user code, provider-generated code, and third-party
+defaults.
+
+**Still open for the baseline's own grants**, and the cases are worth
 keeping apart because they share a symptom. devenv's generated `enterShell`
 preamble does `mkdir -p /tmp/devenv-<hash>` and still fails, because `/tmp`
 itself is not a manifest grant — it comes from the backend's baseline group

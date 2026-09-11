@@ -60,12 +60,35 @@
 - [ ] 2.3 E2E: a `postgresql` project comes up, the service is ready only
       once its probe passes, and is reaped at `down`.
 - [ ] 2.4 E2E: `nginx`'s three processes are three services.
+- [ ] 2.4b **BLOCKED, and the feature is not verified end to end.**
+      Attempted with `redis`: the declarations are read, the generated
+      supervisor config is correct (verified by eye), and the keeper logs
+      `services started session=1` — but no `services.sock` or
+      `services.log` ever appears and `status` reports
+      `supervisor unreachable`.
+
+      Ruled out by measurement: the plugin's `redis.conf` **does** exist
+      (written by `devbox install`, not by `init_hook`); `REDIS_CONF` and
+      `REDIS_PORT` **are** in the captured environment; `redis-server`
+      and `process-compose` are both on `PATH` inside; `TMPDIR` is unset
+      in the devenv sandbox too, where services *do* work.
+
+      Found on the way: process-compose defaults its log to
+      `/tmp/process-compose-<user>.log` and dies fatally when `/tmp` is
+      denied — the **baseline half** of the symlinked-grant gap that
+      `fix-symlinked-grant-spelling` deliberately did not close. devcroft
+      passes `-L`, which dodges it, so this is not the cause here, but it
+      is one more instance of that gap and belongs in its entry.
+
+      Not isolated. The remaining suspect is the keeper's spawn path,
+      since the same binary with the same arguments run by hand inside
+      the same sandbox does not fail.
 - [x] 2.4a **Staleness**: a project that declared a service-bearing
       package and then removed it starts no service from the leftover
       plugin directory (decision 5). The regression this guards is a
       postgres that keeps starting after the user took it out.
-- [ ] 2.5 Regression: flox, nix and devenv unchanged; the flox golden is
-      byte-identical.
+- [x] 2.5 Regression: flox, nix and devenv unchanged; the flox golden is
+      byte-identical (full suite, 503 passed).
 
 ## 3. Documentation
 
