@@ -1,0 +1,8 @@
+# devenv's own cache, GC roots and evaluation artifacts. devcroft's
+# capture writes here and nowhere else in the project tree, and never
+# removes it — it is devenv's, shared with your own `devenv` runs.
+.devenv/
+.devenv.flake.nix
+
+# devcroft's generated supervisor config, its log and its socket.
+.devcroft/

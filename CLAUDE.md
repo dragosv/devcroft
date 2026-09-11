@@ -17,8 +17,8 @@ this crate's workspace); `nix-go-sample` (Go), `kotlin-ktor-sample`
 (Kotlin/Gradle — was `gvisor-kotlin-sample`, renamed by
 `remove-gvisor-backend`, which also dropped the `isolation = "hardened"`
 key from its manifest that would otherwise now fail to parse), and
-`flox-services-sample` and `devenv-sample` (neither has application
-code at all)
+`flox-services-sample`, `devenv-sample` and `devenv-services-sample`
+(none has application code at all)
 are non-Rust, so no workspace exclusion applies to them — see each
 sample's own `README.md` for what it demonstrates. `flox-services-sample`
 shows `network.ports` and supervised `[services]` both working — devcroft
@@ -32,7 +32,14 @@ the two-phase execution invariant below), so unlike the flox and nix
 samples it has no host-side hook to fetch crates.io dependencies in, and
 depends on nothing beyond `std` as a result.
 `devenv-sample` has no application code for a different reason: its
-subject is the provider's hook, not a CLI. devenv is the only provider
+subject is the provider's hook, not a CLI. `devenv-services-sample` is
+its services counterpart — deliberately the same shape as
+`flox-services-sample`, so the only two providers whose services devcroft
+supervises can be compared field for field. Its `[sandbox].name` is
+`devenvsvc` rather than the directory slug, and that is forced: the
+supervisor's socket path would otherwise be 112 bytes against the OS's
+103-byte limit, and `up` refuses. Worth knowing before adding another
+services sample with a long name. devenv is the only provider
 that exposes *both* a hook-free way to get the environment
 (`devenv build shell`) and a separate handle on the hook
 (`devenv eval enterShell`), so devcroft captures the hook as data and

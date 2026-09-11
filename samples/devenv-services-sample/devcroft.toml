@@ -1,0 +1,21 @@
+[sandbox]
+# Short on purpose. The supervisor's unix socket lives at
+# `<project>/.devcroft/<name>/services.sock`, and the OS caps a
+# unix socket path at 103 bytes — `devenv-services-sample` as a
+# name puts this sample's own path at 112 and `up` refuses,
+# naming the limit. A sample that cannot come up where it lives
+# is not much of a sample.
+name = "devenvsvc"
+
+[env]
+provider = "devenv"
+
+# The service declared in devenv.nix listens on 8730.
+#
+# Granting a loopback port is independent of egress, exactly as in
+# `flox-services-sample`: `default = "deny"` still blocks all outbound
+# traffic, while `ports` permits bind() and connect() on 127.0.0.1:8730
+# only. An ungranted port stays denied — try 8731 inside the sandbox.
+[network]
+default = "deny"
+ports = [8730]
