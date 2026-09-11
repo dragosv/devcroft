@@ -409,6 +409,76 @@ not of the conda ecosystem.
 
 ## 2. Dev Container features
 
+### Rejected: letting the provider start and supervise the services
+
+**Property that fails:** every provider's service runner needs authority
+devcroft's runtime boundary exists to exclude — and each needs a
+*different* one, which is why this is a rejection rather than an
+integration task.
+
+devcroft reads a provider's service *declarations* and runs them itself:
+its own generated process-compose config, its own supervisor, its own
+socket. The obvious objection is that this duplicates something the
+provider already does. The obvious alternative — have the provider start
+them, but **inside** the sandbox, after restriction, so the two-phase
+rule is not violated — is not absurd, and two of the three reasons first
+given against it were wrong. They are recorded here with the
+measurements, because the question returns otherwise.
+
+**What was wrong.** "The provider binary is not reachable inside the
+sandbox" — false: the store is granted read and execute, so `devenv`
+launched by absolute store path runs. And devbox and devenv are both
+nixpkgs packages (0.17.5, 2.2.2), so a project can declare the provider
+as one of its own, putting it in the closure by construction rather than
+by luck of where it was installed. flox is not in nixpkgs.
+
+"The provider's per-project state would collide between sandboxes" —
+real but narrow. devenv tracks its supervisor with a PID file under
+`.devenv/`, so a second start in the same directory is refused
+(*"Processes already running with PID …"*, observed). But the primary
+arrangement is one worktree per sandbox, which means one project root
+each and no collision; the shared-root arrangement is the alternative
+`add-port-allocation` offers, not the main path.
+
+**What holds, measured against all three providers:**
+
+| provider | what the service runner needs |
+|---|---|
+| devenv | the **nix daemon**, to create a GC root before starting anything — a store *write*. `--offline` does not avoid it, no flag skips it, and it is structural in devenv's source. |
+| devbox | the daemon too (`nix path-info`), **and** it writes to `devbox.json`, adding `process-compose` as a package. |
+| flox | cannot start services outside an activation at all: *"Cannot start services for an environment that is not activated."* |
+
+Each is disqualifying on its own terms:
+
+- Granting the **nix daemon socket** to a sandbox is not granting "a
+  socket". It is the store's write side: a process that can talk to the
+  daemon can realize derivations, which is provisioning authority inside
+  the runtime boundary — the one thing the two-phase rule exists to
+  prevent.
+- A service start that **rewrites the project's manifest** contradicts
+  "nothing resolves at `up`", which devcroft already enforces for devbox
+  by byte-comparing the lockfile.
+- flox's route would require running `flox activate` inside the sandbox,
+  which "Environment resolves once, at `up`" forbids in as many words:
+  per-session activation "would force the profile to grant flox
+  internals forever".
+
+**A corollary worth knowing before someone tries it on Linux.** There,
+the sandbox can currently reach the nix daemon socket — Landlock does not
+mediate AF_UNIX, which is the published gap `tests/unix_socket_not_mediated.rs`
+asserts and `add-mount-isolation` closes at 0.2. So a provider-supervises
+design would appear to work on Linux today and stop working when that gap
+is closed. It would be built on a bug.
+
+**What is given up by deciding this way**, stated so the trade is
+legible: devcroft must translate each provider's declarations into its
+own vocabulary, which is work per provider and loses whatever does not
+map — the reason `fix-lossy-service-translation` exists, and the reason
+every unmappable field is refused by name rather than dropped. What is
+bought is one supervisor devcroft owns: uniform `status`/`ps`/`logs`
+across providers, teardown verified by process absence, and one
+service instance per sandbox rather than one per project.
+
 ### Rejected: `initializeCommand` (host-side lifecycle hook)
 
 **Why:** it runs project-defined code on the host, outside any boundary,
