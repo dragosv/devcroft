@@ -59,6 +59,9 @@ fn assert_no_unexpected_doctor_failures(stdout: &str) {
                 // Nix being usable too, an independent capability these
                 // tests aren't about.
                 && !l.starts_with("[FAIL] provider: devbox")
+                // And devenv, which is a frontend over Nix for the same
+                // reason devbox is.
+                && !l.starts_with("[FAIL] provider: devenv")
                 // And the substrate under both: a host whose nix-daemon is
                 // not running fails this legitimately, and these tests are
                 // about `init`/`doctor`'s own reporting rather than about
@@ -328,6 +331,131 @@ fn init_prefers_an_existing_flake_over_a_toolchain_pin() {
     assert!(
         !stdout.contains("rustup alone"),
         "pin advice should not print when flake.nix already exists, got {stdout:?}"
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// cli spec: "Init on a devenv project".
+#[test]
+fn init_detects_an_existing_devenv_project() {
+    let dir = scratch_project("devenv");
+    std::fs::write(dir.join("devenv.nix"), "{ pkgs, ... }: { }\n").unwrap();
+    std::fs::write(dir.join("devenv.lock"), r#"{"nodes": {}}"#).unwrap();
+
+    let out = run(&dir, &["init"]);
+    assert!(out.status.success(), "{:?}", out);
+    let (manifest, _) =
+        devcroft::config::parse(&std::fs::read_to_string(dir.join("devcroft.toml")).unwrap())
+            .unwrap();
+    assert_eq!(manifest.env.provider, "devenv");
+
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("ready for `devcroft up`"),
+        "a locked devenv project should be ready, got {stdout:?}"
+    );
+    assert!(
+        !stdout.contains("devenv update"),
+        "should not advise locking when devenv.lock exists, got {stdout:?}"
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// The lock command is `devenv update`, measured against devenv 2.2.2
+/// rather than inferred from the name (add-devenv-provider task 0.7) —
+/// the spec states the property, and this asserts the command that
+/// satisfies it on the version devcroft was built against.
+#[test]
+fn init_on_an_unlocked_devenv_project_advises_the_lock_command() {
+    let dir = scratch_project("devenv-unlocked");
+    std::fs::write(dir.join("devenv.nix"), "{ pkgs, ... }: { }\n").unwrap();
+
+    let out = run(&dir, &["init"]);
+    assert!(out.status.success(), "{:?}", out);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("devenv update"),
+        "an unlocked devenv project must name the command that writes the lockfile, \
+         got {stdout:?}"
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// cli spec: "devenv and a flake both present". The order is a
+/// deterministic tiebreak and the alternative is named, so a user who
+/// wanted the flake can see it — devenv writes no root `flake.nix` of its
+/// own (measured for 2.2.2), so one beside a `devenv.nix` was authored
+/// deliberately.
+#[test]
+fn init_prefers_devenv_over_a_bare_flake_and_names_the_alternative() {
+    let dir = scratch_project("devenv-and-flake");
+    std::fs::write(dir.join("devenv.nix"), "{ pkgs, ... }: { }\n").unwrap();
+    std::fs::write(dir.join("devenv.lock"), r#"{"nodes": {}}"#).unwrap();
+    std::fs::write(dir.join("flake.nix"), "{ outputs = _: { }; }\n").unwrap();
+
+    let out = run(&dir, &["init"]);
+    assert!(out.status.success(), "{:?}", out);
+    let (manifest, _) =
+        devcroft::config::parse(&std::fs::read_to_string(dir.join("devcroft.toml")).unwrap())
+            .unwrap();
+    assert_eq!(manifest.env.provider, "devenv");
+
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("flake.nix") && stdout.contains("provider = \"nix\""),
+        "the flake that lost the tiebreak must still be named, got {stdout:?}"
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// devbox outranks devenv, and the loser is still named. Asserts the
+/// documented order rather than only its first and last entries.
+#[test]
+fn init_prefers_devbox_over_devenv_and_names_the_alternative() {
+    let dir = scratch_project("devbox-and-devenv");
+    std::fs::write(dir.join("devbox.json"), "{}").unwrap();
+    std::fs::write(dir.join("devbox.lock"), r#"{"packages": {}}"#).unwrap();
+    std::fs::write(dir.join("devenv.nix"), "{ pkgs, ... }: { }\n").unwrap();
+
+    let out = run(&dir, &["init"]);
+    assert!(out.status.success(), "{:?}", out);
+    let (manifest, _) =
+        devcroft::config::parse(&std::fs::read_to_string(dir.join("devcroft.toml")).unwrap())
+            .unwrap();
+    assert_eq!(manifest.env.provider, "devbox");
+
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("devenv.nix") && stdout.contains("provider = \"devenv\""),
+        "the devenv project that lost the tiebreak must still be named, got {stdout:?}"
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// cli spec: "An existing environment supersedes any toolchain pin" —
+/// asserted for devenv, the entry the requirement gained here.
+#[test]
+fn init_on_a_devenv_project_does_not_print_toolchain_pin_advice() {
+    let dir = scratch_project("devenv-and-rust-pin");
+    std::fs::write(dir.join("devenv.nix"), "{ pkgs, ... }: { }\n").unwrap();
+    std::fs::write(dir.join("devenv.lock"), r#"{"nodes": {}}"#).unwrap();
+    std::fs::write(
+        dir.join("rust-toolchain.toml"),
+        "[toolchain]\nchannel = \"stable\"\n",
+    )
+    .unwrap();
+
+    let out = run(&dir, &["init"]);
+    assert!(out.status.success(), "{:?}", out);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        !stdout.contains("rust-toolchain.toml"),
+        "an existing environment supersedes pin advice, got {stdout:?}"
     );
 
     let _ = std::fs::remove_dir_all(&dir);
@@ -710,6 +838,107 @@ fn doctor_on_a_devbox_project_reports_devbox_and_stays_silent_about_flox_and_nix
         stdout.contains("provider: devbox"),
         "a devbox project must report on devbox, got:\n{stdout}"
     );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// cli spec: "Only the declared provider is required", for devenv. The
+/// Nix line matters here for the same reason it does under devbox:
+/// devenv's own Nix-usability probe reports under "provider: devenv", so
+/// a separate "provider: nix" line would mean doctor is reporting on a
+/// provider this project does not declare.
+#[test]
+fn doctor_on_a_devenv_project_reports_devenv_and_stays_silent_about_the_others() {
+    if !devcroft::policy::backend_supported() {
+        eprintln!("skipping: this host has no usable Landlock/Seatbelt support");
+        return;
+    }
+
+    let dir = scratch_project("doctor-devenv-only");
+    std::fs::write(
+        dir.join("devcroft.toml"),
+        "[sandbox]\nname = \"doctordevenvonly\"\n[env]\nprovider = \"devenv\"\n",
+    )
+    .unwrap();
+
+    let stdout = String::from_utf8_lossy(&run(&dir, &["doctor"]).stdout).into_owned();
+
+    assert!(
+        !stdout.contains("provider: flox"),
+        "a devenv project must not report on flox at all, got:\n{stdout}"
+    );
+    assert!(
+        !stdout.contains("provider: devbox"),
+        "a devenv project must not report on devbox at all, got:\n{stdout}"
+    );
+    assert!(
+        !stdout.contains("provider: nix"),
+        "a devenv project must not report on the nix *provider* line — devenv's own \
+         Nix-usability probe reports under \"provider: devenv\", got:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("provider: devenv"),
+        "a devenv project must report on devenv, got:\n{stdout}"
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// cli spec: "devenv present but Nix is not" — the failure names Nix as
+/// **devenv's own** unmet requirement rather than suggesting a different
+/// provider. Only assertable where devenv is installed and Nix is not, so
+/// it self-skips on every other host; what it must never do is pass by
+/// asserting nothing on a host where devenv is present and Nix works.
+#[test]
+fn doctor_reports_nix_as_devenvs_own_requirement() {
+    if !devcroft::policy::backend_supported() {
+        eprintln!("skipping: this host has no usable Landlock/Seatbelt support");
+        return;
+    }
+    let devenv_present = std::process::Command::new("devenv")
+        .arg("version")
+        .output()
+        .is_ok_and(|o| o.status.success());
+    if !devenv_present {
+        eprintln!("skipping: devenv is not installed on this host");
+        return;
+    }
+
+    let dir = scratch_project("doctor-devenv-nix");
+    std::fs::write(
+        dir.join("devcroft.toml"),
+        "[sandbox]\nname = \"doctordevenvnix\"\n[env]\nprovider = \"devenv\"\n",
+    )
+    .unwrap();
+
+    let stdout = String::from_utf8_lossy(&run(&dir, &["doctor"]).stdout).into_owned();
+    let line = stdout
+        .lines()
+        .find(|l| l.contains("provider: devenv"))
+        .unwrap_or_else(|| panic!("no devenv provider line in:\n{stdout}"))
+        .to_string();
+
+    let nix_usable = std::process::Command::new("nix")
+        .arg("eval")
+        .arg("--expr")
+        .arg("1")
+        .output()
+        .is_ok_and(|o| o.status.success());
+    if nix_usable {
+        assert!(
+            line.starts_with("[PASS]") && line.contains("nix usable"),
+            "devenv and a usable nix should pass, got: {line}"
+        );
+    } else {
+        assert!(
+            line.starts_with("[FAIL]") && line.contains("Nix is not usable"),
+            "an unusable Nix must be reported as devenv's own unmet requirement, got: {line}"
+        );
+        assert!(
+            !line.contains("provider = \"nix\"") && !line.contains("use flox"),
+            "the message must not suggest switching providers, got: {line}"
+        );
+    }
 
     let _ = std::fs::remove_dir_all(&dir);
 }

@@ -256,12 +256,27 @@ sufficient anyway — it omits `HOME`, `SSL_CERT_FILE`, `NIX_ENFORCE_PURITY`
 and the temp directories, which the surrounding shell code handles
 separately.
 
-So the filter is devcroft's, stated as a rule rather than a list where
-possible — drop what the Nix builder sets, keep what the environment
-declares — and pinned by a test that, on a host that can run both routes,
-asserts the filtered hook-free capture plus the hook's own exports equals
-the truth, modulo an enumerated set. A key appearing on neither side of
-that comparison breaks CI, which is the only way a list like this stays
+So the filter is devcroft's, and it is **two** lists rather than one —
+a distinction found while implementing, and a correctness bug in the
+single-list version:
+
+- **By name**, unconditionally: derivation attributes and build-sandbox
+  plumbing (`out`, `stdenv`, `phases`, `NIX_BUILD_TOP`, …). These
+  describe how the shell was made and mean nothing once it runs.
+- **By value**, only where the value still carries the builder's marker:
+  `HOME=/homeless-shelter`, `SSL_CERT_FILE=/no-cert-file.crt`, and the
+  temp directories pointing inside `/nix/var/nix/builds/`. Dropping these
+  by name would break the projects that got them right — a project
+  declaring `pkgs.cacert` receives a *real* bundle under the same
+  `SSL_CERT_FILE`, and a name-only filter would delete it and take TLS
+  with it. devenv's own hook makes the same distinction for the temp
+  directories, in the same words: "only reset those that still point to
+  the Nix build dir; leave any user/CI-supplied value intact."
+
+Pinned by a test that, on a host that can run both routes, asserts the
+filtered hook-free capture plus the hook's own exports equals the truth,
+modulo an enumerated set. A key appearing on neither side of that
+comparison breaks CI, which is the only way a list like this stays
 correct across devenv versions.
 
 **Why this does not reopen the gate.** Task 0.9 stops the change if the
@@ -299,6 +314,30 @@ the hook devcroft already runs. Criterion 4 holds.
 - **devenv is not installed in this repo's devcontainer by default** →
   It is reachable via `nix run nixpkgs#devenv`, which is how this design
   was measured; tests guard on the capability.
+
+### Decision 9: devenv's preamble wants `/tmp`, and that gap is not this change's to close
+
+Found by the end-to-end tests, not by reading: devenv's generated
+preamble does `mkdir -p /tmp/devenv-<hash>` and links the result into
+`.devenv/run`. Inside a sandbox on macOS that fails — `/tmp` is the
+symlinked spelling of `/private/tmp`, and devcroft canonicalizes grants
+— so devenv's runtime directory is not created. It surfaces in the
+sandbox log rather than failing `up`, because devenv's hook does not stop
+at its first error.
+
+**Not closed here, deliberately.** The cause is already recorded in
+`docs/known-gaps.md` ("A grant does not cover the symlinked spelling of
+its own path on macOS"), whose entry names a flox `[hook].on-activate` as
+the case that surfaced it; devenv's preamble is a second instance, and
+the first that belongs to every project rather than to a user's own code.
+The fix is emitting both spellings of every filesystem grant, which is
+`own-policy-baseline`'s to make — it changes what every sandbox on the
+host gets. Widening one provider's grants to paper over it would be the
+wrong shape of fix and would hide the general case.
+
+What this change does instead is record it in that entry and in the
+sample's README, and confine the consequence: devenv services are
+unsupported, so nothing devcroft supports reads that directory today.
 
 ## Migration Plan
 

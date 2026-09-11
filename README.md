@@ -262,17 +262,17 @@ ssh
 
 ## Environments
 
-Three providers are supported — **flox**, **nix flakes**, and **devbox**. Each
-builds a *closure*: a complete, self-contained package set, so what runs inside
-doesn't depend on what you happen to have installed. There is no "just use the
-host" fallback, on purpose. Eight sandboxes of one project cost one build,
-because they share a single content-addressed store.
+Four providers are supported — **flox**, **nix flakes**, **devbox** and
+**devenv**. Each builds a *closure*: a complete, self-contained package set, so
+what runs inside doesn't depend on what you happen to have installed. There is
+no "just use the host" fallback, on purpose. Eight sandboxes of one project cost
+one build, because they share a single content-addressed store.
 
-**devenv is next, and only unbuilt.** It is Nix-based, so it would be a fourth
-closure provider rather than a new kind — the cheapest one left. Its one open
-question is whether its environment can be captured without running
-`enterShell`, and that is scheduled with `sandbox-provisioning`, because what
-the right answer *is* for a provider that runs a hook changes at that release.
+**devenv is the one whose project hook actually runs**, and it runs inside the
+sandbox. Every provider treats `enterShell`-style hooks the same way — never on
+the host during provisioning — but devenv is the only one that hands back both
+the environment and the hook without executing either, so devcroft can defer the
+hook rather than work around it. Its `processes` are not supported yet.
 
 **mise, pixi and hermit are a different answer, and not "they failed the
 test".** mise passes devcroft's six-criterion provider test, and the shape an

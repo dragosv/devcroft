@@ -91,14 +91,11 @@ context: |
     access, and that passing them alone no longer schedules it.
   - Qualified but unscheduled providers (meet the criteria — declarative
     manifest, real lockfile, immutable-capable shared store, env-diff
-    capturable activation — but no committed order):
-    - devenv (closure tier). The ownership open question this entry
-      carried — devenv's built-in services overlapping devcroft hooks —
-      is closed by `add-flox-services`: services and hooks are separate
-      mechanisms with a stated precedence. Services are supervised,
-      enumerable and reaped at teardown; hooks are one-shot and a failing
-      hook fails `up`. A long-lived process started by a hook is not
-      adopted as a service and stays the user's to reap
+    capturable activation **without executing project code** — but no
+    committed order). The emphasized half of that fourth criterion was
+    tightened by `fix-provisioning-hooks` and this list predated it;
+    devenv was the provider that had to re-qualify against the corrected
+    wording, and did:
     - mise (artifact tier; mandatory `mise.lock`, devcroft-owned
       append-only data dir; must declare host library grants)
     - pixi (artifact tier; content-addressed package cache shareable

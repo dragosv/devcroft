@@ -466,6 +466,17 @@ common for test fixtures and generated scratch directories. A flox
 `[hook].on-activate` writing to `$TMPDIR/...` is the case that actually surfaced
 it.
 
+**A second instance, found by `add-devenv-provider` and not specific to a
+user's own code.** devenv wraps every project's `enterShell` in a generated
+preamble that does `mkdir -p /tmp/devenv-<hash>` and links the result into
+`.devenv/run`. Inside a sandbox on macOS that step fails — `/tmp` is the
+symlinked spelling; `/private/tmp` works — so devenv's runtime directory is
+not created. It surfaces in the sandbox log rather than failing `up`, because
+devenv's hook does not stop at the first error. Nothing devcroft supports
+today reads that directory (devenv services are not supported), so the
+consequence is currently confined to the log, but it is the same one-line
+cause as above and closing it closes both.
+
 The backend library already does dual-path emission for unix-socket grants
 (emitting both `original` and `resolved` so `/tmp/x.sock` and
 `/private/tmp/x.sock` both match); filesystem grants emit only the resolved form.

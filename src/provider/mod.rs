@@ -1,7 +1,7 @@
 //! The `env-provider` capability: resolves the declarative environment
 //! (toolchain, PATH, env vars) a manifest names, host-side, before any
 //! sandbox restriction applies (design.md decision 2). Implemented
-//! providers: flox (task 3.2) and nix flakes (add-nix-provider). This
+//! Implemented providers: flox, nix flakes, devbox and devenv. This
 //! module also validates `env.provider` against every other name devcroft
 //! is ever going to support, rejecting the rest up front with a message
 //! naming why, and dispatches the validated name to the right
@@ -11,11 +11,13 @@
 
 mod capture;
 mod devbox;
+mod devenv;
 mod flox;
 mod nix;
 mod validate;
 
 pub use devbox::DevboxProvider;
+pub use devenv::DevenvProvider;
 pub use flox::FloxProvider;
 pub use nix::NixProvider;
 pub use validate::{normalize_provider_name, validate_provider};
@@ -275,19 +277,21 @@ impl std::error::Error for ProviderError {}
 /// Everything downstream that needs to run *a* provider (as opposed to
 /// merely validating the manifest's `env.provider` string) goes through
 /// this — `up`'s activation capture and `status`'s staleness check both
-/// dispatch off the same enum, so a third provider is added here once
+/// dispatch off the same enum, so a fourth provider is added here once
 /// rather than at every call site.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ProviderKind {
     Flox,
     Nix,
     Devbox,
+    Devenv,
 }
 
 impl ProviderKind {
     /// `name` must already be validated and normalized (see
     /// [`validate_provider`], [`normalize_provider_name`]) — this only
-    /// ever sees `"flox"`, `"nix"`, or `"devbox"` in practice, since
+    /// ever sees `"flox"`, `"nix"`, `"devbox"`, or `"devenv"` in
+    /// practice, since
     /// `config::parse` is the sole place a `Manifest` is constructed.
     /// Returns [`ProviderError::Unknown`] rather than panicking so a
     /// manifest built by a test or another caller that skipped validation
@@ -297,6 +301,7 @@ impl ProviderKind {
             "flox" => Ok(ProviderKind::Flox),
             "nix" => Ok(ProviderKind::Nix),
             "devbox" => Ok(ProviderKind::Devbox),
+            "devenv" => Ok(ProviderKind::Devenv),
             other => Err(ProviderError::Unknown {
                 name: other.to_string(),
             }),
@@ -314,6 +319,7 @@ impl ProviderKind {
             ProviderKind::Flox => "flox",
             ProviderKind::Nix => "nix",
             ProviderKind::Devbox => "devbox",
+            ProviderKind::Devenv => "devenv",
         }
     }
 }
@@ -324,6 +330,7 @@ impl Provider for ProviderKind {
             ProviderKind::Flox => FloxProvider.resolve(project_root),
             ProviderKind::Nix => NixProvider.resolve(project_root),
             ProviderKind::Devbox => DevboxProvider.resolve(project_root),
+            ProviderKind::Devenv => DevenvProvider.resolve(project_root),
         }
     }
 }
@@ -396,12 +403,14 @@ pub fn services_declared_by_flox(project_root: &Path) -> Vec<String> {
 /// Content fingerprint of the environment definition `provider` names, for
 /// staleness detection — dispatches to the matching provider's own
 /// fingerprint (flox: `manifest.toml` + lockfile; nix: `flake.nix` +
-/// `flake.lock`; devbox: `devbox.json` + `devbox.lock`).
+/// `flake.lock`; devbox: `devbox.json` + `devbox.lock`; devenv:
+/// `devenv.nix` + `devenv.yaml` + `devenv.lock`).
 pub fn manifest_fingerprint(provider: &str, project_root: &Path) -> Result<String, ProviderError> {
     match ProviderKind::from_name(provider)? {
         ProviderKind::Flox => flox::manifest_fingerprint(project_root),
         ProviderKind::Nix => nix::flake_fingerprint(project_root),
         ProviderKind::Devbox => devbox::devbox_fingerprint(project_root),
+        ProviderKind::Devenv => devenv::devenv_fingerprint(project_root),
     }
 }
 

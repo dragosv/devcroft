@@ -162,46 +162,61 @@ upstream churn in flakes, the daemon, or store semantics now hits every
 provider devcroft ships simultaneously, and that concentration risk is
 accepted here, not denied.
 
-### Not yet built: devenv
+### Built: devenv (fourth provider, closure tier)
 
-**Property that fails:** none established. This is a sequencing entry, not
-a rejection, and it exists because devenv was previously only *classified*
-here (as Nix-based, in the tier list above) and never argued.
+**Property that fails:** none. devenv passes all six criteria, and the one
+that was open — criterion 4, capturable activation *without executing
+project code* — was measured rather than assumed, against devenv 2.2.2.
 
 devenv is closure tier by construction: it builds on Nix, so criteria 3
 and 5 are answered by the same shared store model flox, nix flakes and
-devbox already use. That makes it the cheapest provider left to add —
-the "third provider is free" amortization applies to it, because it would
-be the fourth *nix* provider rather than the first of a new kind.
+devbox use. The "third provider is free" amortization applied again — it
+is the fourth *nix* provider rather than the first of a new kind.
 
-**The one open question is criterion 4**, and it must be measured rather
-than assumed. `enterShell` is project code, so the entry point devcroft
-uses has to hand back the environment without running it. devenv wrapping
-Nix makes a clean answer *likely* — nix itself has one in
-`print-dev-env --json` — but "likely" is exactly what the criterion-4
-table above exists to refuse: two shipped providers violated this
-unnoticed (`fix-provisioning-hooks`) precisely because the entry point was
-assumed rather than checked.
+**The measurement, because it is what qualified devenv and it corrected
+this entry's own expectation.** `enterShell` is project code, so the
+question was which entry point hands back an environment without running
+it. Sentinel method, clean canonical baseline:
 
-**Scheduled at 0.5, with `sandbox-provisioning`, and the reason is that
-measurement.** What the correct behaviour *is* for a provider that runs a
-hook changes at exactly that release: today devcroft warns, because
-provisioning is unconfined either way and refusing would block a user from
-something their own shell does identically; under `sandbox-provisioning`
-the promise becomes "activation is confined" and such a provider must fail
-closed at layer `provider`. Qualifying devenv before 0.5 means measuring
-against a promise about to change and then revisiting the decision;
-qualifying it at 0.5 means deciding once, against the final one.
+| entry point | runs `enterShell` |
+|---|---|
+| `devenv build shell` | no |
+| `devenv eval <attr>` | no |
+| `devenv info` | no |
+| `devenv direnv-export` | **yes**, once |
+| `devenv shell -- <cmd>` | **yes**, twice |
 
-It is wanted before 0.6 rather than after: `add-manifestless-mode` exists
-to be pointed at repositories nobody has read, and detecting a
-`devenv.nix` only to report it unsupported is a poor version of that.
+devcroft captures through `devenv build shell` and reads the hook itself
+through `devenv eval enterShell` — both hook-free — then runs the hook
+**inside** the sandbox. devenv is the only provider where that split
+exists upstream: flox needed a derived, hook-free copy of the environment
+devcroft builds itself, and nix and devbox have no captured hook at all.
 
-Two things to settle when it is built, neither affecting qualification:
-devenv's `processes` are supervised by process-compose, the same
-supervisor devcroft already generates its own config for (`src/services`),
-so the overlap needs a decision rather than a collision; and its `services`
-concept has to map onto `ServiceSupport` the way flox's does.
+**Two things the measurement found that the proposal had assumed away**,
+recorded because a qualification argument that hides its corrections is
+not falsifiable:
+
+- The hook-free route returns the environment of the derivation that
+  *builds* the shell, not the one a developer gets — 103 keys against 69,
+  including `HOME=/homeless-shelter`, `SSL_CERT_FILE=/no-cert-file.crt`
+  and temp directories inside a Nix build tree. devcroft filters them;
+  injecting them would produce a sandbox with no home and no TLS, failing
+  in ways that read as devcroft bugs.
+- `devenv build shell` on a project with no `devenv.lock` **writes one**.
+  So the lockfile precondition is checked before capture, not only after:
+  without it the first `up` of an unlocked project would choose input
+  revisions at `up`.
+
+**Still open, and deliberately out of scope:** devenv's `processes`. They
+are process-compose-backed, the same supervisor `src/services` generates
+a config for, and the *ownership* question is already closed by
+`add-flox-services` (services and hooks are separate mechanisms with a
+stated precedence). What is not settled is where the declarations come
+from — flox qualified because it has a documented `[services]` schema,
+and whether devenv's `processes` are readable as a contract has to be
+measured before it is claimed. It is the same question
+`add-devbox-provider` deferred. Until then a devenv project declaring
+services fails distinguishably rather than silently starting nothing.
 
 ### Rejected: `host` / `none` passthrough
 

@@ -1,0 +1,5 @@
+[sandbox]
+name = "devenvsample"
+
+[env]
+provider = "devenv"

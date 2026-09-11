@@ -21,18 +21,15 @@ const VERSION_MANAGERS: &[&str] = &[
 /// Provider names devcroft actually resolves. `flake`/`flakes` are
 /// accepted aliases for `nix` — normalized by [`normalize_provider_name`]
 /// so exactly one canonical name ever reaches provider dispatch, `status`,
-/// and policy rule origins. `devbox` has exactly one name — unlike `nix`,
-/// no alias is invented for it (config spec: "devbox provider value").
-const SUPPORTED: &[&str] = &["flox", "nix", "flake", "flakes", "devbox"];
+/// and policy rule origins. `devbox` and `devenv` have exactly one name
+/// each — unlike `nix`, no alias is invented for either (config spec:
+/// "devbox provider value", "devenv provider value").
+const SUPPORTED: &[&str] = &["flox", "nix", "flake", "flakes", "devbox", "devenv"];
 
 const NOT_YET_SUPPORTED: &[(&str, &str)] = &[
     (
         "mise",
         "mise is a qualified provider (artifact tier) but not yet scheduled",
-    ),
-    (
-        "devenv",
-        "devenv is a qualified provider (closure tier) but not yet scheduled",
     ),
     (
         "pixi",
@@ -120,6 +117,41 @@ mod tests {
     #[test]
     fn devbox_name_is_unaffected_by_normalization() {
         assert_eq!(normalize_provider_name("devbox"), "devbox");
+    }
+
+    #[test]
+    fn devenv_is_accepted() {
+        assert!(validate_provider("devenv").is_ok());
+    }
+
+    #[test]
+    fn devenv_name_is_unaffected_by_normalization() {
+        assert_eq!(normalize_provider_name("devenv"), "devenv");
+    }
+
+    /// devenv is known by exactly one name. A near-miss must be rejected
+    /// rather than normalized: inventing an alias means two spellings
+    /// reach `status` and policy rule origins for one provider, which the
+    /// canonical-name rule exists to prevent (config spec: "No alias
+    /// invented").
+    #[test]
+    fn devenv_near_miss_is_rejected_rather_than_normalized() {
+        match validate_provider("dev-env") {
+            Err(ProviderError::Unknown { name }) => assert_eq!(name, "dev-env"),
+            other => panic!("expected Unknown for dev-env, got {other:?}"),
+        }
+    }
+
+    /// The name moved out of `NOT_YET_SUPPORTED` when the provider landed.
+    /// Asserted so the two lists cannot both claim it — a supported
+    /// provider that still carries a "not yet scheduled" reason would
+    /// never surface it, and the stale entry would sit there indefinitely.
+    #[test]
+    fn devenv_is_not_also_listed_as_unsupported() {
+        assert!(
+            !NOT_YET_SUPPORTED.iter().any(|(name, _)| *name == "devenv"),
+            "devenv is implemented; it must not also be listed as not yet supported"
+        );
     }
 
     #[test]

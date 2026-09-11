@@ -1,0 +1,9 @@
+# devenv's own cache, GC roots and evaluation artifacts. devcroft's
+# capture writes here and nowhere else in the tree (add-devenv-provider
+# design.md decision 6), and it is devenv's to own — devcroft never
+# removes it.
+.devenv/
+.devenv.flake.nix
+
+# Written by this sample's own enterShell, inside the sandbox.
+.devcroft-sample/

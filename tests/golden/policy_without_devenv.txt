@@ -1,0 +1,88 @@
+CompiledPolicy {
+    sandbox_name: "inert",
+    filesystem_allow: [
+        AnnotatedValue {
+            value: ".",
+            origin: Manifest(
+                "filesystem.allow",
+            ),
+        },
+        AnnotatedValue {
+            value: "/dev/ptmx",
+            origin: Baseline,
+        },
+        AnnotatedValue {
+            value: "/dev/null",
+            origin: Baseline,
+        },
+    ],
+    filesystem_read: [
+        AnnotatedValue {
+            value: "/opt/shared",
+            origin: Manifest(
+                "filesystem.read",
+            ),
+        },
+        AnnotatedValue {
+            value: "/usr/lib",
+            origin: Baseline,
+        },
+        AnnotatedValue {
+            value: "/System/Library",
+            origin: Baseline,
+        },
+        AnnotatedValue {
+            value: "/private/var/db/dyld",
+            origin: Baseline,
+        },
+        AnnotatedValue {
+            value: "/var/db/dyld",
+            origin: Baseline,
+        },
+        AnnotatedValue {
+            value: "/dev/urandom",
+            origin: Baseline,
+        },
+    ],
+    filesystem_deny: [
+        AnnotatedValue {
+            value: "~/.local/share/devcroft",
+            origin: Baseline,
+        },
+        AnnotatedValue {
+            value: "~/.ssh",
+            origin: Baseline,
+        },
+        AnnotatedValue {
+            value: "~/.aws",
+            origin: Baseline,
+        },
+        AnnotatedValue {
+            value: "~/.config/gcloud",
+            origin: Baseline,
+        },
+        AnnotatedValue {
+            value: "~/.kube",
+            origin: Baseline,
+        },
+    ],
+    network_block: true,
+    network_allow_domain: [
+        AnnotatedValue {
+            value: "api.example.com",
+            origin: Manifest(
+                "network.allow",
+            ),
+        },
+        AnnotatedValue {
+            value: "crates.io",
+            origin: Manifest(
+                "network.allow",
+            ),
+        },
+    ],
+    network_ports: [],
+    network_proxy_port: None,
+    unix_socket_bind: [],
+    signal_mode: "isolated",
+}

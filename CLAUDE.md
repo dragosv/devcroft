@@ -9,7 +9,7 @@ tasks**, the last one being the publish itself. `src/` has real modules for `con
 `keeper`, `lifecycle`, `ssh`, `services`, plus the `devcroft` and `spike`
 binaries under `src/bin/`, backed by an integration `tests/` suite. Stack
 is Rust stable, edition 2024. `samples/` holds standalone example projects
-covering the three closure-tier providers —
+covering the four closure-tier providers —
 `flox-clap-sample`, `flox-rustup-sample`, `nix-flake-sample`, and
 `devbox-citytime-sample` are Rust projects with their own `Cargo.toml`
 (each has an explicit `[workspace]` table so they don't get pulled into
@@ -17,7 +17,8 @@ this crate's workspace); `nix-go-sample` (Go), `kotlin-ktor-sample`
 (Kotlin/Gradle — was `gvisor-kotlin-sample`, renamed by
 `remove-gvisor-backend`, which also dropped the `isolation = "hardened"`
 key from its manifest that would otherwise now fail to parse), and
-`flox-services-sample` (no application code at all)
+`flox-services-sample` and `devenv-sample` (neither has application
+code at all)
 are non-Rust, so no workspace exclusion applies to them — see each
 sample's own `README.md` for what it demonstrates. `flox-services-sample`
 shows `network.ports` and supervised `[services]` both working — devcroft
@@ -30,6 +31,14 @@ devcroft's devbox provider never runs `shell.init_hook` (by design — see
 the two-phase execution invariant below), so unlike the flox and nix
 samples it has no host-side hook to fetch crates.io dependencies in, and
 depends on nothing beyond `std` as a result.
+`devenv-sample` has no application code for a different reason: its
+subject is the provider's hook, not a CLI. devenv is the only provider
+that exposes *both* a hook-free way to get the environment
+(`devenv build shell`) and a separate handle on the hook
+(`devenv eval enterShell`), so devcroft captures the hook as data and
+runs it **inside** the sandbox rather than engineering around its
+absence the way `flox::derive_hook_free_env` does. The sample's
+`enterShell` writes a marker you can look for after `up`.
 
 Remaining work (see `openspec/changes/add-mvp-core/tasks.md`): task 7.5,
 and only its last step — running `cargo publish` and reserving the npm
@@ -471,12 +480,16 @@ mechanism exists — the decision should be **revisited, not defended**.
 - There is no non-reproducible mode. `host` and `none` providers are out of
   scope by design; the answer for a project without an environment is
   `flox init`, not a degraded fallback. Rejection messages must distinguish
-  "not yet supported" (devenv, mise, pixi, hermit) from "out of
+  "not yet supported" (mise, pixi, hermit) from "out of
   scope by design" (`host`, `none`) and from "fails the qualification
-  test" (version managers). Nix flakes and devbox are implemented, not
-  pending — devbox is the third closure-tier `env.provider`
-  (`add-devbox-provider`), confirming the `Provider` trait generalizes to
-  a substrate flox and nix don't share.
+  test" (version managers). Nix flakes, devbox and devenv are
+  implemented, not pending — devbox is the third closure-tier
+  `env.provider` (`add-devbox-provider`), confirming the `Provider` trait
+  generalizes to a substrate flox and nix don't share, and devenv is the
+  fourth (`add-devenv-provider`), the one whose hook-free capture route
+  and whose project hook are both things the provider itself exposes. Its
+  `processes` are not supported: the ownership question is closed, where
+  the declarations come from is not.
 - Known limitations are published, not hidden: no inter-sandbox process
   visibility separation in MVP, cooperative/platform-dependent network
   filtering, no cgroup resource limits.

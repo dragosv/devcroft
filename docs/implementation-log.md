@@ -574,3 +574,69 @@ Three instances in one audit — the provider capture, the test guards, and
 Each one asked whether a tool was present and reported the answer as
 though it had asked whether the tool would work. The file already carried
 the lesson in prose, twice, next to code that did not follow it.
+
+---
+
+**devenv, the fourth provider, and a measurement gate that earned its
+keep (`add-devenv-provider`).** The change was written with a task group
+0 that forbade any code until nine questions were measured against a real
+devenv. Four of the answers contradicted the proposal that ordered them.
+
+The entry-point table held: `devenv build shell`, `devenv info` and
+`devenv eval <attr>` run `enterShell` zero times; `devenv direnv-export`
+runs it once; `devenv shell -- <cmd>` runs it **twice**, under a clean
+environment as well as a dirty one, which remains unexplained. So devenv
+qualifies on criterion 4, and it does so more cheaply than flox: the
+hook-free split exists upstream, where flox needed devcroft to derive a
+hook-free copy of the environment it builds itself.
+
+What did not hold was the assumption underneath all of it — that the
+hook-free environment would be the real one minus the hook. **It is
+not, in either direction: 103 keys against 69.** `devenv build shell`
+returns the environment of the derivation that *builds* the dev shell, so
+the capture carries `HOME=/homeless-shelter`, `SSL_CERT_FILE` and
+`NIX_SSL_CERT_FILE` pointed at `/no-cert-file.crt`, `TMPDIR` and its three
+aliases pointed inside a Nix build tree, and 34 more builder names (`out`,
+`stdenv`, `buildInputs`, `phases`, `shellHook`). Injecting that would
+produce a sandbox with no home directory and no working TLS, failing in
+ways that read as devcroft bugs rather than as a capture that was too
+wide. devcroft filters them.
+
+The tempting shortcut there is devenv's own list: `enterShell` opens by
+unsetting 26 of those names. It does not work, for a reason worth
+recording — the hook runs in its own shell inside the sandbox, so its
+`unset` never reaches the environment the keeper injects into every
+session — and the list omits `HOME` and the certificate paths anyway.
+Filtering `HOME` also had to be done by *resetting it to the baseline
+value* rather than removing it, since a removed baseline key becomes an
+active `unset` in the keeper, which would leave every session with no
+`HOME` at all.
+
+The six keys the hook-free route *lacks* turned out to be the reassuring
+half: `IN_NIX_SHELL` and `MANPATH` are exported by `enterShell` itself,
+which devcroft already runs inside the sandbox. The hole is exactly the
+part the hook fills.
+
+**And `devenv build shell` writes `devenv.lock` when a project has
+none** — it resolves and locks rather than refusing. The lockfile
+precondition therefore had to move *before* capture rather than being
+left to the byte comparison after it, or the first `up` of an unlocked
+project would have chosen input revisions at `up`, through the very route
+chosen to prevent that. With the lockfile present, capture touches
+exactly one path in the project tree: `.devenv/nix-eval-cache.db`.
+
+**What the end-to-end tests found that the unit tests could not.** The
+first e2e run failed seven of ten tests on `keeper: hook 'activation'
+failed`. The cause was not devenv and not the provider: devenv's
+generated preamble does `mkdir -p /tmp/devenv-<hash>`, and on macOS a
+sandbox denies `/tmp` while allowing `/private/tmp` — the symlinked-grant
+gap already recorded in known-gaps.md, whose entry named a flox hook as
+the case that surfaced it. devenv's preamble is a second, and this one
+belongs to every project rather than to a user's own code. The test
+fixture had the same bug in its own hook, for the same reason:
+`std::env::temp_dir()` on macOS hands back `/var/folders/…`, the
+symlinked spelling of a path the policy granted canonically.
+
+Worth separating, because the two look alike in a failure log: the
+fixture's use was a test bug and was fixed; devenv's is a real gap and
+was recorded, not worked around.

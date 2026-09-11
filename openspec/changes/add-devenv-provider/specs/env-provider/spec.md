@@ -128,12 +128,26 @@ NOT rely on that: the hook runs in its own shell inside the sandbox, so
 its `unset` never reaches the environment sessions inherit, and its list
 omits `HOME` and the certificate paths.
 
+Where a name can carry either the builder's value or the project's, the
+system SHALL decide by **value**, not by name. A project declaring its
+own certificate bundle receives a real path under the same
+`SSL_CERT_FILE`, and a supplied temp directory is legitimate under the
+same `TMPDIR`; dropping either by name would break exactly the projects
+that configured them. devenv's own hook draws the same distinction for
+the temp directories.
+
 #### Scenario: A builder variable is not injected
 - **WHEN** a devenv environment is captured through the hook-free route
 - **THEN** the resolved environment contains no `HOME` pointing at the
   builder's sentinel home, no certificate path pointing at a file that
   does not exist, and no temp directory pointing into a Nix build
   directory
+
+#### Scenario: A project's own value is not mistaken for the builder's
+- **WHEN** the captured environment carries a certificate path or a temp
+  directory that the project's own package set supplied, rather than the
+  builder's sentinel value
+- **THEN** it survives into the resolved environment
 
 #### Scenario: The filter is pinned against the real environment
 - **WHEN** a host can run both the hook-free route and the hook-running

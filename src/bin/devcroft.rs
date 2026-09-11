@@ -528,22 +528,28 @@ fn cli_init(args: &[String]) -> i32 {
     let base_name = devcroft::config::slugify(&dir_name);
     let name = disambiguate_name(&base_name, &cwd);
 
-    // cli spec's init scenarios: flox, then devbox, then a bare flake — a
-    // deterministic tiebreak, not a judgement that the losers are derived
-    // artifacts (an earlier draft justified ranking devbox above a flake
-    // by claiming a root flake.nix in a devbox project is usually
-    // generated from devbox.json; devbox writes its generated flake under
-    // .devbox/gen/flake/, never to the project root, so that reasoning is
-    // false and is not restated — only the ordering survives). Any one of
-    // the three supersedes advice about a toolchain pin it would
-    // otherwise just be a fallback for.
+    // cli spec's init scenarios: flox, then devbox, then devenv, then a
+    // bare flake — a deterministic tiebreak, not a judgement that the
+    // losers are derived artifacts (an earlier draft justified ranking
+    // devbox above a flake by claiming a root flake.nix in a devbox
+    // project is usually generated from devbox.json; devbox writes its
+    // generated flake under .devbox/gen/flake/, never to the project
+    // root, so that reasoning is false and is not restated — only the
+    // ordering survives). devenv is the same case, measured for 2.2.2:
+    // it generates no root flake.nix at all, keeping its evaluation
+    // artifacts under .devenv/, so a root flake beside a devenv.nix was
+    // authored deliberately. Any one of the four supersedes advice about
+    // a toolchain pin it would otherwise just be a fallback for.
     let has_flox = cwd.join(".flox").is_dir();
     let has_devbox = cwd.join("devbox.json").is_file();
+    let has_devenv = cwd.join("devenv.nix").is_file();
     let has_flake = cwd.join("flake.nix").is_file();
     let provider = if has_flox {
         "flox"
     } else if has_devbox {
         "devbox"
+    } else if has_devenv {
+        "devenv"
     } else if has_flake {
         "nix"
     } else {
@@ -579,6 +585,12 @@ fn cli_init(args: &[String]) -> i32 {
                  is available if you'd rather use that instead."
             );
         }
+        if has_devenv {
+            println!(
+                "devcroft: a devenv project (devenv.nix) was also found; `provider = \"devenv\"` \
+                 is available if you'd rather use that instead."
+            );
+        }
         if has_flake {
             println!(
                 "devcroft: a nix flake (flake.nix) was also found; `provider = \"nix\"` is \
@@ -599,6 +611,34 @@ fn cli_init(args: &[String]) -> i32 {
         } else {
             println!(
                 "devcroft: found an existing devbox project (devbox.json); ready for `devcroft up`."
+            );
+        }
+        if has_devenv {
+            println!(
+                "devcroft: a devenv project (devenv.nix) was also found; `provider = \"devenv\"` \
+                 is available if you'd rather use that instead."
+            );
+        }
+        if has_flake {
+            println!(
+                "devcroft: a nix flake (flake.nix) was also found; `provider = \"nix\"` is \
+                 available if you'd rather use that instead."
+            );
+        }
+    } else if has_devenv {
+        // `devenv update`, measured rather than inferred from the
+        // command's name (add-devenv-provider task 0.7): it writes
+        // devenv.lock and runs no hook. `devenv build shell` would write
+        // one too, which is exactly why the provider refuses an unlocked
+        // project up front instead of letting capture resolve at `up`.
+        if !cwd.join("devenv.lock").is_file() {
+            println!(
+                "devcroft: found an existing devenv project (devenv.nix) with no devenv.lock."
+            );
+            println!("devcroft: run `devenv update` before `devcroft up`.");
+        } else {
+            println!(
+                "devcroft: found an existing devenv project (devenv.nix); ready for `devcroft up`."
             );
         }
         if has_flake {
@@ -1573,6 +1613,7 @@ fn doctor_provider() -> bool {
         Some(provider) => match provider.as_str() {
             "nix" => doctor_nix_provider(true),
             "devbox" => doctor_devbox_provider(true),
+            "devenv" => doctor_devenv_provider(true),
             // `config::parse` normalizes and rejects anything else, so
             // this is flox or a provider that could not exist.
             _ => doctor_flox_provider(true),
@@ -1585,7 +1626,8 @@ fn doctor_provider() -> bool {
             let flox = doctor_flox_provider(false);
             let nix = doctor_nix_provider(false);
             let devbox = doctor_devbox_provider(false);
-            let _ = (flox, nix, devbox);
+            let devenv = doctor_devenv_provider(false);
+            let _ = (flox, nix, devbox, devenv);
             true
         }
     }
@@ -1778,6 +1820,60 @@ fn doctor_devbox_provider(required: bool) -> bool {
         println!(
             "[WARN] provider: devbox found ({version}) but Nix is not usable — needed only if \
              a project declares `provider = \"devbox\"`"
+        );
+        true
+    }
+}
+
+/// devenv, like devbox, is a frontend over Nix: an unusable Nix is
+/// reported as **devenv's own** unmet requirement rather than as a
+/// suggestion to switch providers (cli spec: "Where a provider is a
+/// frontend over another tool").
+fn doctor_devenv_provider(required: bool) -> bool {
+    let devenv_found = std::process::Command::new("devenv")
+        .arg("version")
+        .output()
+        .ok()
+        .filter(|out| out.status.success());
+    let Some(out) = devenv_found else {
+        if required {
+            println!(
+                "[FAIL] provider: devenv not found on PATH, but this project declares \
+                 `provider = \"devenv\"` — install it from https://devenv.sh/getting-started/"
+            );
+            return false;
+        }
+        println!(
+            "[WARN] provider: devenv not found on PATH — only needed for projects with \
+             `provider = \"devenv\"`"
+        );
+        return true;
+    };
+    let version = String::from_utf8_lossy(&out.stdout).trim().to_string();
+
+    // `nix eval --expr 1`, the same capability probe the nix and devbox
+    // checks settled on: a version string proves the binary exists and
+    // nothing about whether it can evaluate.
+    let nix_usable = std::process::Command::new("nix")
+        .arg("eval")
+        .arg("--expr")
+        .arg("1")
+        .output()
+        .is_ok_and(|o| o.status.success());
+    if nix_usable {
+        println!("[PASS] provider: devenv found ({version}), nix usable");
+        true
+    } else if required {
+        println!(
+            "[FAIL] provider: devenv found ({version}) but Nix is not usable — devenv is a \
+             frontend over Nix and cannot resolve packages without it; install it from \
+             https://nixos.org/download"
+        );
+        false
+    } else {
+        println!(
+            "[WARN] provider: devenv found ({version}) but Nix is not usable — needed only if \
+             a project declares `provider = \"devenv\"`"
         );
         true
     }
