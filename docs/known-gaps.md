@@ -487,6 +487,37 @@ spelling and lets the library canonicalize, which it does atomically anyway.
 Measured A/B on one sandbox, granting `/tmp/dcspell-probe`: before, writing via
 `/tmp/…` was denied and via `/private/tmp/…` worked; after, both work.
 
+**The instance that shows it is not cosmetic: a devenv postgres cannot
+start.** Built as an end-to-end check — a devenv project with
+`services.postgres.enable`, a `clients` table, and a Go server listing
+it. Everything devcroft owns worked: the integration's postgres was
+captured as a service the project never wrote by hand, its readiness
+probe was carried, the dependent was emitted as `process_healthy`, and
+process-compose logged *"web is waiting for postgres to be healthy"*.
+
+postgres then failed, five restarts and out. `PGHOST` is
+`/tmp/devenv-<hash>/postgres` — devenv puts its runtime directory under
+`/tmp`, so that is where the postgres socket goes, and inside the sandbox
+`/tmp` is denied:
+
+```
+ls: cannot access '/tmp/devenv-827aed2/postgres': Operation not permitted
+```
+
+So the failure is visible and correctly attributed — `service postgres:
+failed (exit 1)`, `service web: skipped (dependency failed)` — but the
+stack cannot run. This is the ordinary shape of a devenv project with a
+database, which makes this half of the gap a functional blocker rather
+than log noise.
+
+Worth recording about the attempted workaround too: granting the runtime
+directory explicitly via `[filesystem] allow` did **not** fix it and made
+things worse — the supervisor then failed with `getcwd: cannot access
+parent directories` and `ln: failed to access '…/.devenv/profile'`,
+suggesting the declared grant interacts with the default project-root
+grant in a way that was not investigated. Noted as unexplained rather
+than diagnosed.
+
 **A third instance, and this one is a third party's default.**
 process-compose writes its own log to `/tmp/process-compose-<user>.log`
 and exits *fatally* when it cannot — measured inside a sandbox. devcroft
