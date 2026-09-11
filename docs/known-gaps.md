@@ -546,6 +546,20 @@ Until then, any workload using SysV shared memory — PostgreSQL is the
 common one — cannot run in a devcroft sandbox on macOS. Linux is
 unaffected: Landlock does not mediate SysV IPC.
 
+**Confirmed through a second provider.** devbox's `postgresql` plugin
+fails identically — `devcroft exec -- initdb` inside a devbox sandbox
+produces the same `shmget` EPERM on the same 56-byte segment. Nothing
+about the two providers is shared at this level, which is what makes the
+second reading worth having: the cause is the profile, not a provider's
+own arrangement.
+
+Worth knowing for that provider specifically: devbox's plugin creates the
+data directory in no hook at all. `devbox info postgresql` says *"To
+initialize the database run `initdb`"*, and the generated `.hooks.sh` is
+zero bytes — so this is not an instance of the service/hook ordering
+defect, which a first reading of it assumed. The `mysql` plugin, which
+ships a `setup_db.sh`, is.
+
 **Found alongside it, and separate:** `initdb` also emits
 `Error opening /private/var/select/sh: Operation not permitted`, many
 times, from inside the sandbox. `/var/select/sh` is macOS's shell

@@ -58,31 +58,52 @@
 - [x] 2.2 Unit: each surveyed field maps; an unknown field refuses naming
       plugin, process and field.
 - [ ] 2.3 E2E: a `postgresql` project comes up, the service is ready only
-      once its probe passes, and is reaped at `down`.
-- [ ] 2.4 E2E: `nginx`'s three processes are three services.
-- [ ] 2.4b **BLOCKED, and the feature is not verified end to end.**
-      Attempted with `redis`: the declarations are read, the generated
-      supervisor config is correct (verified by eye), and the keeper logs
-      `services started session=1` — but no `services.sock` or
-      `services.log` ever appears and `status` reports
-      `supervisor unreachable`.
+      once its probe passes, and is reaped at `down`. **Blocked upstream,
+      not by this change.** Measured: the declarations translate
+      correctly — `is_daemon`, `shutdown.command`, `restart: always` and
+      `readiness_probe.exec` (`pg_isready`) all render — and the service
+      starts. It then fails on `initdb`, with the `shmget` EPERM whose
+      cause is now isolated: the backend library's Seatbelt profile
+      allows the POSIX IPC family and no System V one
+      (`docs/known-gaps.md`, `docs/nono-sysv-ipc-issue.md`). Identical
+      failure to devenv's postgres, which is the useful part — the same
+      cause reached through a second provider. Re-run when the upstream
+      ask lands.
 
-      Ruled out by measurement: the plugin's `redis.conf` **does** exist
-      (written by `devbox install`, not by `init_hook`); `REDIS_CONF` and
-      `REDIS_PORT` **are** in the captured environment; `redis-server`
-      and `process-compose` are both on `PATH` inside; `TMPDIR` is unset
-      in the devenv sandbox too, where services *do* work.
+      Recorded separately, because a first reading called it an ordering
+      bug and it is not: devbox's postgresql plugin creates the data
+      directory in **no** hook. Its own `devbox info postgresql` says
+      *"To initialize the database run `initdb`"*, and the generated
+      `.hooks.sh` is zero bytes. The user runs `initdb` once, and
+      `fix-service-hook-ordering` does not apply here. The mysql plugin,
+      which ships a `setup_db.sh`, is the one that does.
+- [x] 2.4 E2E: `nginx`'s three processes are three services. **Verified.**
+      All three run (`nginx`, `nginx-error`, `nginx-access`), the
+      multi-line block scalar command survives translation intact, nginx
+      answers `HTTP 200`, and `down` leaves no survivor.
 
-      Found on the way: process-compose defaults its log to
-      `/tmp/process-compose-<user>.log` and dies fatally when `/tmp` is
-      denied — the **baseline half** of the symlinked-grant gap that
-      `fix-symlinked-grant-spelling` deliberately did not close. devcroft
-      passes `-L`, which dodges it, so this is not the cause here, but it
-      is one more instance of that gap and belongs in its entry.
+      One honest caveat: the manifest granted `ports = [8080]` and nginx
+      listens on **8081**, and it worked anyway — the documented macOS
+      degradation, where granting one port grants all of them. On Linux
+      this case would have failed, so any nginx sample must grant the
+      port the plugin actually uses.
+- [x] 2.4b **Resolved — the blocker was the missing `/tmp` grant, not
+      devbox.** The symptom recorded here (no `services.sock`, no
+      `services.log`, `supervisor unreachable`) no longer reproduces.
+      process-compose writes its own log under `/tmp` and exits *fatally*
+      when it cannot; the sandbox had no temp directory at all until that
+      baseline gap was fixed, so the supervisor died before it could
+      create its socket.
 
-      Not isolated. The remaining suspect is the keeper's spawn path,
-      since the same binary with the same arguments run by hand inside
-      the same sandbox does not fail.
+      The original entry ruled out four devbox-side explanations by
+      measurement and was right about all four. The cause was one layer
+      below, in devcroft's own baseline, and was found by an unrelated
+      investigation.
+
+      Re-measured end to end with `redis`: `service redis: running`,
+      `redis-cli ping` answers `PONG` from inside the sandbox, a
+      `set`/`get` round-trips, and `down` leaves no survivor. **devbox
+      services are verified working.**
 - [x] 2.4a **Staleness**: a project that declared a service-bearing
       package and then removed it starts no service from the leftover
       plugin directory (decision 5). The regression this guards is a
