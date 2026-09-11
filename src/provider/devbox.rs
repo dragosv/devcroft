@@ -41,6 +41,7 @@ impl Provider for DevboxProvider {
 
         let baseline = capture::canonical_base_env()?;
         let activated = capture_activated_env(&devbox_bin, project_root, &baseline)?;
+        let activation_script = capture_init_hook(&devbox_bin, project_root, &baseline)?;
         restore_lock_if_capture_resolved(project_root, &lock_before)?;
         let services = capture_plugin_services(project_root)?;
 
@@ -67,12 +68,93 @@ impl Provider for DevboxProvider {
             // than trusted as a property of devbox in general, since a
             // future switch to `devbox run` would silently reintroduce it.
             ran_activation_hook: false,
-            // `print-dev-env --json` / `shellenv --pure` return the
-            // environment without running the project's script, so there
-            // is nothing to defer into the sandbox — it simply never runs.
-            activation_script: None,
+            // Captured as data and run **inside** the sandbox, the same
+            // way flox's `[hook].on-activate` and devenv's `enterShell`
+            // are (`add-devbox-services`). This used to be `None`, on
+            // the reasoning that a hook devcroft never runs needs no
+            // deferring — true, and it made every plugin service that
+            // sets up in the hook fail. mariadb was the case: its
+            // `setup_db.sh` runs `mysql_install_db`, so without this the
+            // datadir is never created and `mariadbd` has nothing to
+            // start against.
+            activation_script,
         })
     }
+}
+
+/// devbox's init hook, as data (`add-devbox-services`).
+///
+/// **Why this exists at all.** `shellenv --pure` is what makes devbox
+/// pass criterion 4 — it never runs project code — and it is also what
+/// omits the setup devbox's own plugin services depend on. The `mysql`
+/// plugin's `setup_db.sh` runs `mysql_install_db`; skip it and
+/// `mariadbd` has no data directory to start against. The property that
+/// makes capture safe is the property that breaks the services.
+///
+/// The way out is the one flox forced into existence: capture the hook
+/// as data at `up`, run it **inside** the sandbox after restriction.
+///
+/// **How the text is obtained.** `shellenv --init-hook` emits a `source`
+/// line naming a generated script — it does not run it (measured: zero
+/// executions against a sentinel). That script holds both the plugin's
+/// setup invocation and the project's own `init_hook`. The path is read
+/// from devbox's own output rather than hardcoded, so devbox moving the
+/// file breaks here loudly instead of silently reading nothing.
+fn capture_init_hook(
+    devbox_bin: &Path,
+    project_root: &Path,
+    base: &BTreeMap<String, String>,
+) -> Result<Option<String>, ProviderError> {
+    let output = Command::new(devbox_bin)
+        .arg("shellenv")
+        .arg("--pure")
+        .arg("--init-hook")
+        .current_dir(project_root)
+        .env_clear()
+        .envs(base)
+        .output()
+        .map_err(|e| {
+            ProviderError::ResolutionFailed(format!("running `devbox shellenv --init-hook`: {e}"))
+        })?;
+
+    if !output.status.success() {
+        return Err(ProviderError::ResolutionFailed(format!(
+            "`devbox shellenv --pure --init-hook` exited with {}: {}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr).trim()
+        )));
+    }
+
+    let emitted = String::from_utf8_lossy(&output.stdout);
+    let Some(path) = hook_script_path(&emitted) else {
+        // No hook declared and no plugin contributing one: nothing to
+        // defer. Distinct from "devbox stopped emitting the line", which
+        // would be a shape change — but the two are indistinguishable
+        // from here, so the honest report is "none found" rather than an
+        // invented error.
+        return Ok(None);
+    };
+
+    let script = std::fs::read_to_string(&path).map_err(|e| {
+        ProviderError::ResolutionFailed(format!(
+            "reading the init hook devbox emitted at {}: {e}",
+            path.display()
+        ))
+    })?;
+    Ok(match script.trim().is_empty() {
+        true => None,
+        false => Some(script),
+    })
+}
+
+/// The path out of `shellenv --init-hook`'s `. "…";` source line.
+fn hook_script_path(emitted: &str) -> Option<PathBuf> {
+    emitted.lines().find_map(|line| {
+        let rest = line.trim().strip_prefix(". ")?;
+        let quoted = rest.trim_end_matches(';').trim();
+        let path = quoted.strip_prefix('"')?.strip_suffix('"')?;
+        Some(PathBuf::from(path))
+    })
 }
 
 /// The services devbox's plugins declare for this project

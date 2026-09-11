@@ -90,6 +90,25 @@
 - [x] 2.5 Regression: flox, nix and devenv unchanged; the flox golden is
       byte-identical (full suite, 503 passed).
 
+## 2c. Found by the end-to-end attempt
+
+- [x] 2c.1 **devbox's `init_hook` is now captured as data and run inside
+      the sandbox**, via the `source` line `shellenv --init-hook` emits
+      (zero executions, measured). Without it every plugin service whose
+      setup lives in the hook fails — `mysql`'s `setup_db.sh` runs
+      `mysql_install_db`, so `mariadbd` had no datadir. Verified in the
+      keeper log.
+- [ ] 2c.2 **BUG: services start before the activation hook runs.**
+      Observed in the keeper log — `services started session=1` precedes
+      the hook's spawn. Invisible for flox and devenv, whose services do
+      not depend on hook output; fatal for a database whose datadir the
+      hook creates. Not fixed.
+- [ ] 2c.3 `mysql_install_db` needs hostname resolution, which a
+      deny-all network policy refuses. The sandbox working as designed,
+      but it means the mariadb path needs a documented answer (the
+      script's own `--force`, or a manifest that grants what it needs)
+      before this plugin can be called supported.
+
 ## 3. Documentation
 
 - [x] 3.1 `docs/decisions.md`: the entry moves to built, **keeping** the

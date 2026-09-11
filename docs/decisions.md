@@ -285,7 +285,8 @@ Reading never goes through `devbox services ls`. A full `up` on a
 `postgresql` project runs the project's `init_hook` zero times,
 sentinel-measured.
 
-**The limit this ran into, and it is structural rather than a defect.**
+**A limit this ran into, which turned out not to be structural after
+all** — recorded as structural first, and corrected here.
 Measured end to end with the `mysql` plugin (mariadb) plus a Go client:
 the declarations translate correctly, the supervisor comes up, and both
 `mariadb` and `mariadb_logs` are supervised with the plugin's own restart
@@ -298,18 +299,34 @@ when the data directory is absent. It is invoked from the project's
 through — mentions it **zero** times, by design. So the datadir is never
 initialized and `mariadbd` has nothing to start against.
 
-That is the same property pulling in two directions: `shellenv --pure` is
-what makes devbox pass criterion 4, and it is what omits the setup its
-own plugin services depend on. devcroft cannot run the init hook at
-provisioning without giving up the property, and cannot run it later
-without knowing which part of it is setup rather than arbitrary project
-shell.
+The first reading of that was: `shellenv --pure` is what makes devbox
+pass criterion 4 *and* what omits the setup its own services need, so
+devcroft can neither run the hook at provisioning nor know which part of
+it is setup. That reading was wrong, and the way out is the one flox
+forced into existence.
 
-**So devbox services work for plugins whose setup happens at install
-time, and not for plugins that set up in the hook.** `redis` is the
-first kind — its `redis.conf` is written by `devbox install`. `mysql` is
-the second. Which a given plugin is cannot be told from its declarations,
-which is the part worth knowing before relying on this.
+**`devbox shellenv --init-hook` emits the hook as data.** It appends a
+`source` line naming `.devbox/gen/scripts/.hooks.sh` and runs nothing —
+measured, zero executions against a sentinel — and that file holds both
+the plugin's setup invocation and the project's own `init_hook`. So
+devcroft captures it at `up` and runs it **inside** the sandbox after
+restriction, exactly as it does for flox's `[hook].on-activate` and
+devenv's `enterShell`. Verified in the keeper log:
+`[hook activation] $ bash ".../virtenv/mysql/setup_db.sh"`.
+
+**Two things still stop mariadb specifically, and neither is the one
+above:**
+
+1. **Services start before the activation hook runs.** Observed in the
+   keeper log: `services started session=1` precedes the hook's spawn.
+   For flox and devenv this never showed, because their services did not
+   depend on what the hook does. For a database whose data directory the
+   hook creates, it is fatal regardless of whether the hook succeeds.
+   This is devcroft's ordering to fix, and it is not fixed.
+2. **`mysql_install_db` wants hostname resolution**, which
+   `network.default = "deny"` denies — *"Neither host … nor 'localhost'
+   could be looked up"*. That is the sandbox working as designed; the
+   script itself suggests `--force` as the way past it.
 
 Also measured, correcting the survey above: the **`mysql80` plugin
 declares `depends_on`**, which this implementation refuses by name. The
