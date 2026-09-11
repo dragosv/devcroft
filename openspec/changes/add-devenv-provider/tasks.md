@@ -217,11 +217,16 @@ is the shared probe.
 
 ## 7. Verification
 
-- [ ] 7.1 `cargo build`, `cargo clippy --all-targets`, `cargo fmt`,
+- [x] 7.1 `cargo build`, `cargo clippy --all-targets`, `cargo fmt`,
       `cargo doc --no-deps` all clean.
-- [ ] 7.2 `cargo test -- --nocapture 2>&1 | grep skipping` reviewed — a
-      green run that skipped every devenv test is not a passing run.
-- [ ] 7.3 `openspec validate --all` passes.
-- [ ] 7.4 `cargo package --list` includes any new source file; the
+- [x] 7.2 `cargo test -- --nocapture 2>&1 | grep skipping` reviewed — a
+      green run that skipped every devenv test is not a passing run. On
+      aarch64-darwin with devenv on `PATH`: **395 passed, 0 failed**, and
+      every devenv test ran except the Linux-gated closure-tier
+      measurement (5.3), which skips with its reason. The skips in that
+      run are unprivileged namespaces, loopback aliases and that one —
+      all platform, none devenv.
+- [x] 7.3 `openspec validate --all` passes.
+- [x] 7.4 `cargo package --list` includes any new source file; the
       anchored `include` allowlist in `Cargo.toml` does not silently drop
       it (CLAUDE.md's packaging note).
