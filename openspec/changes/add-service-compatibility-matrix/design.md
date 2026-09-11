@@ -162,8 +162,11 @@ diagnosed from one line:
 - `ls: cannot access '/tmp/devenv-827aed2/postgres': Operation not
   permitted` → a missing baseline grant, now fixed.
 - `web is waiting for postgres to be healthy` → an ordering defect.
-- `shmget … EPERM` → still unexplained, and the reason
-  `docs/known-gaps.md` says so instead of guessing.
+- `shmget … EPERM` → the backend library's Seatbelt profile allows the
+  POSIX IPC operations and no System V one, so a segment the sandbox did
+  not itself create is denied. Isolated only after four earlier probes
+  said Seatbelt was innocent — each had used a fresh key, which is the
+  one path that *is* allowed.
 
 A matrix of forty-two red cells with no text would have found none of
 them.

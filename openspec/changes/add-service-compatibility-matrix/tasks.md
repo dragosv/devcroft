@@ -122,11 +122,15 @@
       field) and `started` is expected to be the majority (25 of 42
       declare no probe). A wrong prediction here is a finding, not an
       error to quietly fix.
-- [ ] 5.4 Re-measure `postgres` specifically against the now-fixed `/tmp`
-      grant. `docs/known-gaps.md` records its `shmget` EPERM with the
-      cause **not** isolated, and this run either reproduces it with more
-      context or shows the earlier diagnosis was measuring the missing
-      grant. Either way the entry gets updated from data.
+- [ ] 5.4 Expect `postgres` to fail on macOS until `nono` allows the
+      System V IPC operations, and classify it as `failed` attributed to
+      the backend rather than to the service. The cause is isolated
+      (`docs/known-gaps.md`): the generated Seatbelt profile emits the
+      POSIX IPC family and no SysV one. Re-run this row once that
+      upstream ask lands — it is the single row most likely to change.
+      Clear leaked SysV segments with `ipcrm` first, or a full
+      `kern.sysv.shmmni` table turns the failure into a misleading
+      `ENOSPC`.
 
 ## 6. Fold the result back into what is published
 

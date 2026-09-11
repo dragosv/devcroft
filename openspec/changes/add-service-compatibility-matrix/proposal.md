@@ -6,7 +6,8 @@
 one took an hour.** A devenv postgres, a devbox mariadb, a redis — three
 attempts, three different causes: a missing temp directory in the
 baseline, an activation hook running after the services that depend on
-it, and a `shmget` refusal nobody has explained. Two of the three were
+it, and a `shmget` refusal that took four wrong answers to explain.
+Two of the three were
 devcroft's own defects, and neither would have been found without
 someone deciding to try that particular database that particular
 afternoon.
