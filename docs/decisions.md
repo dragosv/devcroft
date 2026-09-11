@@ -285,6 +285,39 @@ Reading never goes through `devbox services ls`. A full `up` on a
 `postgresql` project runs the project's `init_hook` zero times,
 sentinel-measured.
 
+**The limit this ran into, and it is structural rather than a defect.**
+Measured end to end with the `mysql` plugin (mariadb) plus a Go client:
+the declarations translate correctly, the supervisor comes up, and both
+`mariadb` and `mariadb_logs` are supervised with the plugin's own restart
+policy and shutdown command. They then fail, visibly — `service mariadb:
+failed (exit 1)`.
+
+The cause is the plugin's `setup_db.sh`, which runs `mysql_install_db`
+when the data directory is absent. It is invoked from the project's
+`init_hook`, and `devbox shellenv --pure` — the route devcroft captures
+through — mentions it **zero** times, by design. So the datadir is never
+initialized and `mariadbd` has nothing to start against.
+
+That is the same property pulling in two directions: `shellenv --pure` is
+what makes devbox pass criterion 4, and it is what omits the setup its
+own plugin services depend on. devcroft cannot run the init hook at
+provisioning without giving up the property, and cannot run it later
+without knowing which part of it is setup rather than arbitrary project
+shell.
+
+**So devbox services work for plugins whose setup happens at install
+time, and not for plugins that set up in the hook.** `redis` is the
+first kind — its `redis.conf` is written by `devbox install`. `mysql` is
+the second. Which a given plugin is cannot be told from its declarations,
+which is the part worth knowing before relying on this.
+
+Also measured, correcting the survey above: the **`mysql80` plugin
+declares `depends_on`**, which this implementation refuses by name. The
+six plugins surveyed when this was written did not, and the conclusion
+drawn from them — that the vocabulary was fully covered — was too
+confident. The refusal path is load-bearing today, not a guard against
+hypothetical future plugins.
+
 ### Rejected: `host` / `none` passthrough
 
 **Property that fails:** none — it does not even attempt reproducibility.
