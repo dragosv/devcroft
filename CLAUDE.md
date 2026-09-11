@@ -86,7 +86,15 @@ cargo test                  # integration tests; self-skip on a host that cannot
 cargo clippy                # lint; currently clean
 cargo fmt                   # format
 cargo doc --no-deps         # rustdoc; currently zero warnings — keep it there,
-                            # docs.rs renders these publicly
+                            # docs.rs renders these publicly. Count rustdoc's
+                            # own warnings, not the command's total: once a
+                            # sample whose closure carries the Apple SDK has
+                            # been brought up, cargo's package walk follows
+                            # that SDK's self-referential ncurses symlinks and
+                            # prints ~24 "File system loop found" warnings on
+                            # `doc`. They are about `samples/*/.devenv/profile`,
+                            # not about devcroft, and `[workspace] exclude`
+                            # does not suppress them (measured).
 ```
 
 **A green `cargo test` is not the same as a run that tested anything.**
@@ -495,15 +503,17 @@ mechanism exists — the decision should be **revisited, not defended**.
   generalizes to a substrate flox and nix don't share, and devenv is the
   fourth (`add-devenv-provider`), the one whose hook-free capture route
   and whose project hook are both things the provider itself exposes.
-- **Services work for flox and devenv, and are refused for devbox and
-  nix.** nix has no service concept. devbox's refusal is measured rather
-  than deferred (`add-devenv-services`), and it is a **judgement, not an
-  impossibility** — the entry in `docs/decisions.md` was corrected once
-  for overstating it. `devbox.json` has no service schema; services come
-  from generated per-plugin files holding the *plugin author's*
-  definitions, not the project's. `devbox services ls` does run
-  `shell.init_hook`, but that excludes one route, not all: `devbox
-  install` alone writes those files with zero hook executions.
+- **Services work for flox, devenv and devbox; nix has no service
+  concept.** devbox's were built against a stated argument
+  (`add-devbox-services`): `devbox.json` has no service schema, so the
+  declarations come from generated per-plugin files holding the *plugin
+  author's* definitions rather than the project's. The owner decided
+  that a user adding `postgresql` wants a postgres; `docs/decisions.md`
+  keeps the objection it was decided against. They are read from
+  `.devbox/virtenv/<package>/process-compose.yaml`, never through
+  `devbox services ls`, which runs `shell.init_hook`. **That directory is
+  stale cache** — removing a package leaves its config behind — so the
+  packages `devbox.json` declares decide what is read.
   devenv's `processes` are read through `devenv eval processes`, which
   runs none. What devcroft will not carry it **refuses by name**, never
   drops; the ordering case is the subtle one, since devenv's

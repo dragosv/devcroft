@@ -26,6 +26,20 @@ two, so a plugin contributes one *or more* services.
 **What is not there.** No `depends_on`, no `http_get`, no field
 `ServiceDecl` lacks — across four plugins, which is not the registry.
 
+## Measured (group 0)
+
+- **devcroft's own capture does not disturb the files.** `shellenv
+  --pure` leaves `.devbox/virtenv/` byte- and mtime-identical, and runs
+  the hook zero times. So they can be read at any point in resolution.
+- **`.devbox/virtenv/` is stale cache, not a manifest — and this changes
+  the design.** Removing `postgresql` from `devbox.json` and re-running
+  `devbox install` leaves `.devbox/virtenv/postgresql/process-compose.yaml`
+  in place. Enumerating the directory naively would start a service for
+  a package the project no longer declares. Decision 5.
+- Not every directory under `virtenv/` is a package: `runx` is devbox's
+  own. It ships no config, so it would not have been noticed without
+  looking.
+
 ## Goals / Non-Goals
 
 **Goals:**
@@ -84,10 +98,17 @@ A subset parser that got that subtly wrong would produce a *working*
 config running a slightly different command, which is the failure mode
 devcroft refuses everywhere else.
 
-Which crate is left to the task list rather than picked here, and it is
-measured on added crate count and maintenance status — the two things
-this project has twice recorded objections about (141 crates for nono's
-trust module, 116 for `nono-proxy`).
+Measured, net additions to devcroft's 288-crate tree: `serde_yaml` +2,
+`serde_norway` +2, `yaml-rust2` +4. The serde route is both cheaper and
+less code, because devcroft already carries serde and these share its
+dependencies; `yaml-rust2` costs more precisely because it shares
+nothing. **`serde_norway`** wins between the two at equal cost, being a
+maintained fork where `serde_yaml` is archived upstream.
+
+Worth stating plainly rather than leaving the framing above to imply
+otherwise: **two crates on 288 is a different order from the 141 and 116
+this project objected to before.** The objection recorded here is that
+the dependency is *new*, not that it is large.
 
 ### Decision 3: the plugin name is part of the error, not part of the service name
 
@@ -111,6 +132,29 @@ declaration is at least reachable by evaluating the project's own
 `devenv.nix`, where devbox's lives in a generated file under a cache
 directory. The documentation is the only place a user can find out.
 
+### Decision 5: the declared package set decides, not the directory listing
+
+Measured (group 0): removing a package leaves its plugin directory and
+its `process-compose.yaml` behind. `.devbox/virtenv/` records what was
+*ever* installed, not what is declared now.
+
+So the directory listing is not the source of truth. Each plugin config
+is read only where its directory name matches a package `devbox.json`
+declares — devcroft already parses that list for the lockfile
+precondition, so the check costs nothing new.
+
+A config whose package is no longer declared is **skipped, not refused**,
+and the distinction matters given how much else in this area refuses. A
+stale directory is not a declaration devcroft failed to understand; it is
+cache for a package the project removed. Refusing would make `devcroft
+up` fail until the user cleaned a directory devbox owns and devcroft does
+not. Skipping is the correct reading of what the project declared —
+stated here so it is a decision rather than an omission.
+
+The failure this prevents is concrete: remove `postgresql`, and without
+the check every subsequent `up` starts a postgres the project no longer
+asks for.
+
 ## Risks / Trade-offs
 
 - **Four plugins are not the registry.** A plugin using `depends_on`
@@ -130,6 +174,5 @@ now run. No other provider changes, which the flox golden asserts.
 
 ## Open Questions
 
-- Whether `.devbox/virtenv/` can be stale relative to `devbox.json` — if
-  a package is removed, does its plugin directory persist? A stale
-  directory would start a service the project no longer declares.
+- ~~Whether `.devbox/virtenv/` can be stale relative to `devbox.json`.~~
+  Measured: it can, and does. Decision 5.

@@ -8,11 +8,11 @@
 //! measured against devbox 0.18.0, not read from documentation).
 
 use super::capture;
-use super::{Provider, ProviderError, Resolution, ServiceSupport};
+use super::{Provider, ProviderError, Resolution};
 use crate::paths::resolve_on_path;
 use std::collections::{BTreeMap, BTreeSet};
 use std::os::unix::ffi::OsStrExt;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 pub struct DevboxProvider;
@@ -42,32 +42,23 @@ impl Provider for DevboxProvider {
         let baseline = capture::canonical_base_env()?;
         let activated = capture_activated_env(&devbox_bin, project_root, &baseline)?;
         restore_lock_if_capture_resolved(project_root, &lock_before)?;
+        let services = capture_plugin_services(project_root)?;
 
         Ok(Resolution {
             env: capture::changed_env(&baseline, &activated),
             unset: capture::unset_env(&baseline, &activated),
             read_only_grants: capture::store_grants(&activated),
-            // Not built, and it is a judgement rather than an
-            // impossibility — `docs/decisions.md` carries the full
-            // entry, including the correction that produced this
-            // wording.
+            // Read from the plugin configs devbox has already written
+            // (`add-devbox-services`) — never through `devbox services
+            // ls`, which executes `shell.init_hook`.
             //
-            // `devbox.json` has no service schema at all. Services come
-            // from generated per-plugin
-            // `.devbox/virtenv/<plugin>/process-compose.yaml` files, so
-            // what they contain is the *plugin author's* definition:
-            // someone writing `"packages": ["postgresql"]` has not
-            // declared a service. Every other provider devcroft reads
-            // declarations from is reading something the project wrote
-            // or evaluated.
-            //
-            // `devbox services ls` does execute `shell.init_hook`
-            // (sentinel-measured), but that rules out one route rather
-            // than all of them: `devbox install` alone writes those
-            // files with zero hook executions, and reading a file
-            // executes nothing. An earlier version of this comment
-            // called that measurement decisive, which overstated it.
-            services: ServiceSupport::Unsupported,
+            // The contract argument, kept because the decision was made
+            // *against* it rather than because it was refuted: these are
+            // the plugin author's declarations, not the project's.
+            // Someone writing `"packages": ["postgresql"]` has not
+            // described a service. `docs/decisions.md` holds the
+            // reasoning.
+            services,
             // Structurally false here, not merely unencountered: `shellenv`
             // never executes `shell.init_hook`, in any variant including
             // `--init-hook` (which only appends a source line to the
@@ -82,6 +73,321 @@ impl Provider for DevboxProvider {
             activation_script: None,
         })
     }
+}
+
+/// The services devbox's plugins declare for this project
+/// (`add-devbox-services`).
+///
+/// **Where they come from, and why that was a decision.** devbox has no
+/// service schema in `devbox.json`: a package name activates a plugin,
+/// and the plugin writes a process-compose config under
+/// `.devbox/virtenv/<package>/`. So these declarations are the *plugin
+/// author's* rather than the project's — someone writing
+/// `"packages": ["postgresql"]` has not described a service. Supervising
+/// them anyway is the project owner's decision, recorded in
+/// `docs/decisions.md` together with the argument it was made against.
+///
+/// **Read, never asked for.** `devbox services ls` would list them and
+/// executes `shell.init_hook` doing so — sentinel-measured, against
+/// `devbox install` and `devbox shellenv --pure` which execute nothing.
+/// The files are already on disk after installation, and reading a file
+/// executes nothing, so enumeration costs no project code. A full `up`
+/// through this path runs the hook zero times, which is the property the
+/// whole feature rests on.
+fn capture_plugin_services(project_root: &Path) -> Result<super::ServiceSupport, ProviderError> {
+    let virtenv = project_root.join(".devbox/virtenv");
+    let Ok(entries) = std::fs::read_dir(&virtenv) else {
+        // No plugin ever installed. Supported with none declared, never
+        // `Unsupported` — a manifest asking for services must be able to
+        // fail loudly rather than start nothing.
+        return Ok(super::ServiceSupport::Declared(Vec::new()));
+    };
+
+    // The declared package set decides, not the directory listing
+    // (design.md decision 5). Measured: removing a package leaves its
+    // plugin directory and its config behind, so `.devbox/virtenv/`
+    // records what was *ever* installed. Without this filter, removing
+    // `postgresql` would leave every later `up` starting a postgres the
+    // project no longer asks for.
+    let declared: BTreeSet<String> = declared_package_keys(project_root)?
+        .into_iter()
+        .map(|key| package_base_name(&key))
+        .collect();
+
+    let mut plugins: Vec<(String, PathBuf)> = Vec::new();
+    for entry in entries.flatten() {
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if !declared.contains(&name) {
+            // Stale cache for a package the project removed. Skipped
+            // rather than refused: it is not a declaration devcroft
+            // failed to understand, and refusing would make `up` fail
+            // until the user cleaned a directory devbox owns.
+            continue;
+        }
+        let config = entry.path().join("process-compose.yaml");
+        if config.is_file() {
+            plugins.push((name, config));
+        }
+    }
+    // Sorted, so the resolved service list does not depend on directory
+    // iteration order.
+    plugins.sort();
+
+    let mut declared_services = Vec::new();
+    for (plugin, config) in plugins {
+        declared_services.extend(parse_plugin_config(&plugin, &config)?);
+    }
+    Ok(super::ServiceSupport::Declared(declared_services))
+}
+
+/// `ripgrep@latest` -> `ripgrep`. Plugin directories are named for the
+/// package, without its version.
+fn package_base_name(key: &str) -> String {
+    key.split('@').next().unwrap_or(key).to_string()
+}
+
+/// One plugin's process-compose config, translated.
+///
+/// A plugin may declare several processes — `nginx` declares three,
+/// `mysql` two — so this yields zero or more services.
+fn parse_plugin_config(
+    plugin: &str,
+    config: &Path,
+) -> Result<Vec<super::ServiceDecl>, ProviderError> {
+    let raw = std::fs::read_to_string(config).map_err(|e| {
+        ProviderError::ResolutionFailed(format!("reading {}: {e}", config.display()))
+    })?;
+    let parsed: PluginConfig = serde_norway::from_str(&raw).map_err(|e| {
+        ProviderError::ResolutionFailed(format!(
+            "parsing {} (devbox plugin `{plugin}`): {e}",
+            config.display()
+        ))
+    })?;
+
+    let mut out = Vec::new();
+    for (name, process) in parsed.processes {
+        out.push(translate_plugin_process(plugin, &name, process)?);
+    }
+    Ok(out)
+}
+
+/// A plugin's process-compose config, as far as devcroft reads it.
+///
+/// Every field the surveyed plugins use is named, including the ones
+/// that only round-trip — a field devcroft does not mention would be
+/// dropped by serde without anyone noticing, which is the silence
+/// `fix-lossy-service-translation` exists to remove.
+#[derive(serde::Deserialize)]
+struct PluginConfig {
+    #[serde(default)]
+    processes: BTreeMap<String, PluginProcess>,
+}
+
+#[derive(serde::Deserialize)]
+struct PluginProcess {
+    command: String,
+    #[serde(default)]
+    is_daemon: bool,
+    #[serde(default)]
+    shutdown: Option<PluginShutdown>,
+    #[serde(default)]
+    availability: Option<PluginAvailability>,
+    #[serde(default)]
+    readiness_probe: Option<PluginReadiness>,
+    #[serde(default)]
+    environment: Vec<String>,
+    #[serde(default)]
+    working_dir: Option<String>,
+    #[serde(default)]
+    depends_on: BTreeMap<String, serde_norway::Value>,
+}
+
+#[derive(serde::Deserialize)]
+struct PluginShutdown {
+    #[serde(default)]
+    command: Option<String>,
+    #[serde(default)]
+    signal: Option<i32>,
+    #[serde(default)]
+    timeout: Option<u64>,
+}
+
+#[derive(serde::Deserialize)]
+struct PluginAvailability {
+    #[serde(default)]
+    restart: Option<String>,
+    #[serde(default)]
+    max_restarts: Option<u32>,
+}
+
+#[derive(serde::Deserialize)]
+struct PluginReadiness {
+    #[serde(default)]
+    exec: Option<PluginReadinessExec>,
+    #[serde(default)]
+    http_get: Option<PluginReadinessHttp>,
+    #[serde(default)]
+    initial_delay_seconds: u32,
+    #[serde(default)]
+    period_seconds: u32,
+    #[serde(default)]
+    timeout_seconds: u32,
+    #[serde(default)]
+    success_threshold: u32,
+    #[serde(default)]
+    failure_threshold: u32,
+}
+
+#[derive(serde::Deserialize)]
+struct PluginReadinessExec {
+    command: String,
+}
+
+#[derive(serde::Deserialize)]
+struct PluginReadinessHttp {
+    #[serde(default = "localhost")]
+    host: String,
+    port: u16,
+    #[serde(default = "root_path")]
+    path: String,
+    #[serde(default = "http_scheme")]
+    scheme: String,
+}
+
+fn localhost() -> String {
+    "127.0.0.1".to_string()
+}
+fn root_path() -> String {
+    "/".to_string()
+}
+fn http_scheme() -> String {
+    "http".to_string()
+}
+
+fn translate_plugin_process(
+    plugin: &str,
+    name: &str,
+    process: PluginProcess,
+) -> Result<super::ServiceDecl, ProviderError> {
+    // Named with the plugin as well as the process: a user did not write
+    // `nginx-access`, so "the field `x` on process `nginx-access`" leaves
+    // them hunting for where it came from (design.md decision 3).
+    let refuse = |field: &str, why: &str| {
+        ProviderError::ResolutionFailed(format!(
+            "devbox plugin `{plugin}` declares `{field}` on service `{name}`, which devcroft              cannot carry: {why}. devcroft refuses rather than starting a service that differs              from what the plugin declared"
+        ))
+    };
+
+    if !process.depends_on.is_empty() {
+        return Err(refuse(
+            "depends_on",
+            "ordering between plugin-declared services is not translated, and devcroft will              not start them in an order the plugin did not ask for",
+        ));
+    }
+
+    let mut vars = BTreeMap::new();
+    for entry in &process.environment {
+        let Some((key, value)) = entry.split_once('=') else {
+            return Err(refuse(
+                "environment",
+                &format!("the entry {entry:?} is not `KEY=value`"),
+            ));
+        };
+        vars.insert(key.to_string(), value.to_string());
+    }
+
+    let restart = match process
+        .availability
+        .as_ref()
+        .and_then(|a| a.restart.as_deref())
+    {
+        None | Some("no") | Some("never") => super::RestartPolicy::Never,
+        Some("on_failure") => super::RestartPolicy::OnFailure {
+            max: availability_max(&process.availability),
+        },
+        Some("always") => super::RestartPolicy::Always {
+            max: availability_max(&process.availability),
+        },
+        Some(other) => {
+            return Err(refuse(
+                "availability.restart",
+                &format!("`{other}` is not a restart policy devcroft can express"),
+            ));
+        }
+    };
+
+    let shutdown = match &process.shutdown {
+        None => super::Shutdown::Default,
+        Some(PluginShutdown {
+            command: Some(cmd), ..
+        }) => super::Shutdown::Command(cmd.clone()),
+        Some(PluginShutdown {
+            signal: Some(signal),
+            timeout,
+            ..
+        }) => super::Shutdown::Signal {
+            signal: *signal,
+            grace: timeout.unwrap_or(0),
+        },
+        Some(_) => super::Shutdown::Default,
+    };
+
+    let readiness = match process.readiness_probe {
+        None => None,
+        Some(probe) => {
+            let kind = match (probe.exec, probe.http_get) {
+                (Some(_), Some(_)) => {
+                    return Err(refuse(
+                        "readiness_probe",
+                        "it declares both an exec and an HTTP probe, and a service is ready by                          one means",
+                    ));
+                }
+                (Some(exec), None) => super::Probe::Command(exec.command),
+                (None, Some(http)) => super::Probe::Http {
+                    host: http.host,
+                    port: http.port,
+                    path: http.path,
+                    scheme: http.scheme,
+                },
+                (None, None) => {
+                    return Err(refuse(
+                        "readiness_probe",
+                        "it sets probe timing but declares neither `exec` nor `http_get`, so                          there is nothing to test",
+                    ));
+                }
+            };
+            Some(super::Readiness {
+                probe: kind,
+                initial_delay: probe.initial_delay_seconds,
+                period: probe.period_seconds,
+                probe_timeout: probe.timeout_seconds,
+                success_threshold: probe.success_threshold,
+                failure_threshold: probe.failure_threshold,
+            })
+        }
+    };
+
+    Ok(super::ServiceDecl {
+        // The plugin's own process name, not a devcroft-invented one:
+        // it is what a devbox user sees in devbox's tooling, and
+        // renaming would make the two disagree.
+        name: name.to_string(),
+        command: process.command,
+        vars,
+        is_daemon: process.is_daemon,
+        working_dir: process.working_dir,
+        depends_on: Vec::new(),
+        restart,
+        shutdown,
+        readiness,
+    })
+}
+
+fn availability_max(availability: &Option<PluginAvailability>) -> u32 {
+    availability
+        .as_ref()
+        .and_then(|a| a.max_restarts)
+        .unwrap_or(0)
 }
 
 /// `up` fails at layer `provider` with the `devbox init` hint (spec:
@@ -558,6 +864,7 @@ pub fn devbox_fingerprint(project_root: &Path) -> Result<String, ProviderError> 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::provider::{ServiceDecl, ServiceSupport};
     use std::fs;
     use std::path::PathBuf;
 
@@ -742,6 +1049,169 @@ mod tests {
     fn package_key_falls_back_to_bare_name_with_no_version() {
         let value = serde_json::json!({});
         assert_eq!(package_key("ripgrep", &value), "ripgrep");
+    }
+
+    /// The real `postgresql` plugin config, verbatim — every field the
+    /// surveyed plugins use, in one file.
+    const POSTGRES_PLUGIN: &str = r#"version: "0.5"
+
+processes:
+  postgresql:
+    command: "sh -c 'exec postgres'"
+    is_daemon: false
+    shutdown:
+      command: "pg_ctl stop -m fast"
+    availability:
+      restart: "always"
+    readiness_probe:
+      exec:
+        command: "pg_isready"
+"#;
+
+    fn write_plugin(root: &Path, plugin: &str, config: &str) {
+        let dir = root.join(".devbox/virtenv").join(plugin);
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("process-compose.yaml"), config).unwrap();
+    }
+
+    fn services_of(root: &Path) -> Vec<ServiceDecl> {
+        match capture_plugin_services(root).unwrap() {
+            ServiceSupport::Declared(v) => v,
+            other => panic!("devbox declares services; got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_plugin_config_translates_whole() {
+        let root = tempdir("plugin-translate");
+        write_devbox_project(&root, r#"{"packages": ["postgresql@latest"]}"#, None);
+        write_plugin(&root, "postgresql", POSTGRES_PLUGIN);
+
+        let services = services_of(&root);
+        assert_eq!(services.len(), 1);
+        let pg = &services[0];
+        assert_eq!(pg.name, "postgresql");
+        assert_eq!(pg.command, "sh -c 'exec postgres'");
+        assert!(!pg.is_daemon);
+        assert_eq!(
+            pg.shutdown,
+            super::super::Shutdown::Command("pg_ctl stop -m fast".to_string())
+        );
+        assert_eq!(pg.restart, super::super::RestartPolicy::Always { max: 0 });
+        assert_eq!(
+            pg.readiness.as_ref().map(|r| r.probe.clone()),
+            Some(super::super::Probe::Command("pg_isready".to_string())),
+            "readiness is the field that would have failed postgres on day one"
+        );
+    }
+
+    /// **The regression the measurement gate found.** Removing a package
+    /// leaves its plugin directory and config behind, so a naive listing
+    /// would keep starting a postgres the project no longer declares.
+    #[test]
+    fn a_plugin_whose_package_was_removed_declares_nothing() {
+        let root = tempdir("plugin-stale");
+        // The config is on disk, exactly as devbox leaves it...
+        write_plugin(&root, "postgresql", POSTGRES_PLUGIN);
+        // ...but the project no longer asks for the package.
+        write_devbox_project(&root, r#"{"packages": []}"#, None);
+
+        assert!(
+            services_of(&root).is_empty(),
+            "a stale plugin directory must not start a service the project removed"
+        );
+    }
+
+    /// One plugin, several processes — `nginx` declares three.
+    #[test]
+    fn one_plugin_may_declare_several_services() {
+        let root = tempdir("plugin-multi");
+        write_devbox_project(&root, r#"{"packages": ["nginx@latest"]}"#, None);
+        write_plugin(
+            &root,
+            "nginx",
+            r#"version: "0.5"
+processes:
+  nginx:
+    command: "nginx -g 'daemon off;'"
+    availability:
+      restart: on_failure
+      max_restarts: 5
+  nginx-error:
+    command: "tail -f error.log"
+    availability:
+      restart: "always"
+"#,
+        );
+
+        let services = services_of(&root);
+        let names: Vec<&str> = services.iter().map(|s| s.name.as_str()).collect();
+        assert_eq!(names, vec!["nginx", "nginx-error"]);
+        assert_eq!(
+            services[0].restart,
+            super::super::RestartPolicy::OnFailure { max: 5 }
+        );
+    }
+
+    /// A project whose packages ship no services reports supported with
+    /// none — not `Unsupported`, which is what lets a manifest asking for
+    /// services fail loudly instead of starting nothing.
+    #[test]
+    fn no_plugin_services_is_declared_empty_not_unsupported() {
+        let root = tempdir("plugin-none");
+        write_devbox_project(&root, r#"{"packages": ["ripgrep@latest"]}"#, None);
+        assert!(services_of(&root).is_empty());
+    }
+
+    /// design.md decision 3: the refusal names the plugin as well as the
+    /// process, because the user did not write either.
+    #[test]
+    fn an_unsupported_plugin_field_is_refused_naming_the_plugin() {
+        let root = tempdir("plugin-refuse");
+        write_devbox_project(&root, r#"{"packages": ["weird@latest"]}"#, None);
+        write_plugin(
+            &root,
+            "weird",
+            r#"version: "0.5"
+processes:
+  one:
+    command: "true"
+  two:
+    command: "true"
+    depends_on:
+      one:
+        condition: process_started
+"#,
+        );
+
+        let err = capture_plugin_services(&root).unwrap_err();
+        let ProviderError::ResolutionFailed(msg) = err else {
+            panic!("expected a provider-layer refusal, got {err:?}");
+        };
+        assert!(msg.contains("weird"), "must name the plugin: {msg}");
+        assert!(msg.contains("two"), "must name the process: {msg}");
+        assert!(msg.contains("depends_on"), "must name the field: {msg}");
+    }
+
+    /// A config devcroft cannot parse fails loudly rather than yielding a
+    /// partial service set — the same rule the environment capture
+    /// follows.
+    #[test]
+    fn an_unparseable_plugin_config_fails_rather_than_yielding_nothing() {
+        let root = tempdir("plugin-broken");
+        write_devbox_project(&root, r#"{"packages": ["broken@latest"]}"#, None);
+        write_plugin(
+            &root,
+            "broken",
+            "processes: [this is not a mapping]
+",
+        );
+
+        let err = capture_plugin_services(&root).unwrap_err();
+        let ProviderError::ResolutionFailed(msg) = err else {
+            panic!("expected a refusal, got {err:?}");
+        };
+        assert!(msg.contains("broken"), "got: {msg}");
     }
 
     #[test]

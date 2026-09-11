@@ -233,83 +233,57 @@ treating it as a dependency, because honouring it would order a service
 devenv does not — the same project behaving differently under the two
 tools, with devcroft the more featureful of the pair.
 
-### Not built: devbox services
+### Built, against the argument: devbox services
 
-**Property that fails:** none outright — and this entry was corrected
-once already, because its first version claimed otherwise. It is a
-decision about what counts as a declaration, not a report of an
-impossibility, and it is written that way so it can be argued with.
+**Property that fails:** none. This entry has been rewritten twice, and
+both rewrites are kept in outline because the reasoning is the useful
+part.
 
-**What was first written, and why it was wrong.** The rejection listed
-three measured reasons and called the third decisive: `devbox services
-ls` executes `shell.init_hook` (sentinel-measured, with `devbox install`
-and `devbox shellenv --pure` as zero-execution controls), so enumerating
-services host-side runs project code. That measurement holds. Calling it
-decisive did not: it rules out *one route*, not every route. Measured
-after the fact — `devbox install` alone, zero hook executions, already
-writes a complete and readable
-`.devbox/virtenv/<plugin>/process-compose.yaml`. Reading a file executes
-nothing.
+**First it was a rejection with a misranked reason** — three measured
+findings, the third (`devbox services ls` executes `shell.init_hook`)
+called decisive. That measurement holds, but it rules out one route, not
+every route: `devbox install` alone, zero hook executions, writes the
+plugin configs, and reading a file executes nothing.
 
-**So a hook-free route exists.** What remains is a judgement:
+**Then it was a judgement, and the judgement was overruled.** What
+remained after the correction was an argument about what counts as a
+declaration: `devbox.json` has no service schema, so what those generated
+files hold is the *plugin author's* definition. Someone writing
+`"packages": ["postgresql"]` has not described a service. Every other
+provider devcroft reads declarations from is reading something the
+project wrote or evaluated.
 
-1. **The declarations are not the project's.** `devbox.json` has no
-   service schema at all — its own keys are `packages`, `env`,
-   `env_from`, `include`, `init_hook`, `scripts` and the `environment*`
-   family. What those generated files contain is the *plugin author's*
-   service definition. Someone who writes `"packages": ["postgresql"]`
-   has not declared a service; a plugin has, on their behalf. Every
-   other provider devcroft reads declarations from is reading something
-   the project wrote or evaluated — devenv's contributed processes still
-   come from evaluating the project's own `devenv.nix`.
-2. **There is no single format to track.** One file per plugin, each
-   authored separately, under a directory devbox regenerates. `mkShell`'s
-   `declare -x` dump — the internal artifact devcroft *does* consume, for
-   devenv's environment capture — is one format from one upstream.
+The project owner decided to build them anyway, and that decision stands
+on its own: a user who adds `postgresql` almost certainly wants a
+postgres running, and calling the plugin's definition "not the project's"
+is true about authorship without being true about intent. The argument is
+kept here rather than deleted, because a decision made against a stated
+objection is worth being able to re-read.
 
-**The tension with that devenv decision is real and is not resolved by
-pretending it is absent.** `add-devenv-provider` design.md decision 2
-accepted an artifact devenv documents as an internal implementation
-detail, reasoning that every documented route ran project code, so the
-alternative was not a better contract but abandoning criterion 4. By that
-same test devbox services would qualify for the same treatment. The
-distinguishing arguments are (1) and (2) above; the argument that devenv
-capture is load-bearing while devbox services are optional is a judgement
-of value, not a property, and is not leaned on here.
+**What it cost, measured rather than estimated:**
 
-**What it would actually cost, measured**, so a future reader is deciding
-against numbers rather than against a summary:
+- **Two crates.** `serde_norway` adds +2 to devcroft's 288-crate tree —
+  `serde_yaml` also +2 but is archived upstream, and `yaml-rust2` costs
+  +4 because it shares none of serde's dependencies. That is a different
+  order from the 141 and 116 this file objects to elsewhere; the
+  objection here is that the dependency is *new*, not that it is large.
+- **Nothing else.** Surveyed across `postgresql`, `redis`, `nginx`,
+  `mysql`, `valkey` and `caddy`: every field they use —`command`,
+  `is_daemon`, `shutdown.command`, `availability.restart`,
+  `max_restarts`, `readiness_probe.exec` — already translates. Readiness
+  was the one gap, and `add-service-readiness` closed it.
 
-- **A YAML dependency, which devcroft does not have.** Its dependencies
-  are `base64, libc, nono, rand, russh, russh-sftp, serde, serde_json,
-  tokio, toml`. devcroft emits JSON precisely to avoid a YAML serializer;
-  reading these files means parsing YAML someone else wrote, and
-  `serde_yaml` is unmaintained.
-- ~~Readiness probes would have to exist first.~~ **Built**
-  (`add-service-readiness`). They were the reason `postgresql` — the most
-  common devbox service, which declares one where `redis` does not —
-  would have failed on day one. That cost is gone.
-- **The environment is not a problem.** `shellenv --pure` — the route
-  devcroft's capture already uses — carries `PGDATA`, `PGHOST`,
-  `REDIS_CONF` and `REDIS_PORT`, which the plugins' commands reference.
-  This was the most plausible practical blocker and it is not one.
+**The finding that changed the implementation**: `.devbox/virtenv/` is
+stale cache, not a manifest. Removing a package leaves its plugin
+directory *and its config* behind, so a naive listing would keep starting
+a postgres the project had removed. The declared package set decides
+instead, and a config without a declared package is skipped — not
+refused, since it is leftover cache rather than a declaration devcroft
+failed to understand.
 
-**The shared prerequisite has been built**, so the sequencing argument
-has been spent: `add-service-readiness` carried readiness for devenv, and
-devbox's plugin files are already written in the supervisor's own shape.
-What is left is a YAML dependency and the mapping — and the question that
-was always the real one: **do we call a plugin's services the project's
-declarations?** That is what a future reader should argue about, not
-whether it can be done.
-
-**Not measured, and it should be before any implementation:** how many
-devbox plugins exist, and whether any use forms devcroft cannot carry at
-all — `depends_on` across plugins, for instance. Two data points are not
-a schema.
-
-A devbox project whose flox environment declares services still fails
-distinguishably from "supports services, none declared" — the refusal
-names devbox and does not advise switching providers.
+Reading never goes through `devbox services ls`. A full `up` on a
+`postgresql` project runs the project's `init_hook` zero times,
+sentinel-measured.
 
 ### Rejected: `host` / `none` passthrough
 

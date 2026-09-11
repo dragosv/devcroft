@@ -29,6 +29,21 @@ nothing.
 - **THEN** it does not invoke a command that executes the project's
   activation hook
 
+The set of declarations SHALL be decided by the packages the project
+declares, not by what the provider's cache directory happens to contain.
+Measured: removing a package leaves its plugin's declarations on disk, so
+a listing of that directory describes what was ever installed rather than
+what is declared now. A declaration whose package is no longer declared
+SHALL be skipped — it is stale cache, not a declaration the system failed
+to understand, and refusing would make `up` fail until the user cleaned a
+directory the provider owns.
+
+#### Scenario: A removed package starts no service
+- **WHEN** a project declared a package whose plugin ships services, then
+  removed it, and the provider's cache still holds that plugin's
+  declarations
+- **THEN** no service from it is started
+
 #### Scenario: No plugin services is not "unsupported"
 - **WHEN** a devbox project's packages ship no service declarations
 - **THEN** resolution reports services as supported with an empty set

@@ -830,3 +830,59 @@ probe where `redis` does not, so devbox support was gated on this
 existing. It exists. What remains for devbox is a YAML dependency and the
 question that was always the real one: whether a plugin author's service
 definitions are the project's declarations.
+
+---
+
+**devbox services, built against the argument (`add-devbox-services`).**
+The entry in decisions.md had been rewritten once already — a rejection
+whose stated decisive reason turned out to rule out one route rather than
+all of them — leaving a judgement rather than an impossibility: the
+declarations are the plugin author's, not the project's. The owner
+decided to build them anyway. The objection is kept in the entry, because
+a decision made against a stated argument is worth being able to re-read.
+
+The measurement gate moved two numbers a long way and found one bug.
+
+**The dependency objection shrank.** Reading plugin configs needs a YAML
+parser, which devcroft's tree did not have — zero YAML crates across 335
+dependencies, because it emits JSON specifically to avoid a serializer.
+Measured net additions: `serde_norway` +2, `serde_yaml` +2 but archived
+upstream, `yaml-rust2` +4 — more, precisely because it shares none of
+serde's dependencies. Two crates on 288 is a different order from the 141
+and 116 this project has objected to before, and saying so matters:
+leaving the earlier framing in place would have implied a cost that is
+not there.
+
+**The vocabulary was already covered.** Across `postgresql`, `redis`,
+`nginx`, `mysql`, `valkey` and `caddy`, every field used maps onto
+`ServiceDecl` as it stands. Readiness was the one gap and had just been
+built — `postgresql` is the only one of the six that declares a probe,
+and it is the most common devbox service, so without it the flagship case
+would have failed on day one.
+
+**And `.devbox/virtenv/` turned out to be stale cache rather than a
+manifest.** Removing a package from `devbox.json` and re-running `devbox
+install` leaves that plugin's directory *and its `process-compose.yaml`*
+in place. A naive listing would have kept starting a postgres the project
+had removed — every `up`, silently, forever. The declared package set
+decides instead. A config with no declared package is *skipped* rather
+than refused, which is the opposite of this area's usual instinct and is
+right here: it is leftover cache, not a declaration devcroft failed to
+understand, and refusing would make `up` fail until the user cleaned a
+directory devbox owns.
+
+The route never touches `devbox services ls`. A full `up` on a
+`postgresql` project runs the project's `init_hook` zero times, measured
+with a sentinel rather than argued from which command was chosen.
+
+One design temptation worth recording as rejected: process-compose merges
+repeated `-f` config files (measured), so devcroft could have handed the
+plugin files straight to its own supervisor — no parser, no translation
+loss at all. That would mean running services devcroft never read: unable
+to list them in its own vocabulary, refuse a field it does not support,
+or say what a sandbox is running except by asking the supervisor. It is
+also exactly what `add-devenv-services` refused for devenv's
+`process-compose` passthrough, and doing for devbox what was refused for
+devenv would have left two opposite answers to one question in the
+codebase. The cost of translating is one dependency; the cost of
+forwarding is the seam.
