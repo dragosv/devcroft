@@ -497,9 +497,13 @@ mechanism exists — the decision should be **revisited, not defended**.
   and whose project hook are both things the provider itself exposes.
 - **Services work for flox and devenv, and are refused for devbox and
   nix.** nix has no service concept. devbox's refusal is measured rather
-  than deferred (`add-devenv-services`): no schema in `devbox.json`,
-  plugin services as generated per-plugin files, and `devbox services ls`
-  running `shell.init_hook` — enumeration itself executes project code.
+  than deferred (`add-devenv-services`), and it is a **judgement, not an
+  impossibility** — the entry in `docs/decisions.md` was corrected once
+  for overstating it. `devbox.json` has no service schema; services come
+  from generated per-plugin files holding the *plugin author's*
+  definitions, not the project's. `devbox services ls` does run
+  `shell.init_hook`, but that excludes one route, not all: `devbox
+  install` alone writes those files with zero hook executions.
   devenv's `processes` are read through `devenv eval processes`, which
   runs none. What devcroft will not carry it **refuses by name**, never
   drops; the ordering case is the subtle one, since devenv's

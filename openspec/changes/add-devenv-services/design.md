@@ -259,6 +259,28 @@ A pleasant consequence for the closure tier: an integration's `exec` is
 a store path, so the supervised command comes from the closure rather
 than from whatever is on `PATH`.
 
+### Decision 5a: the devbox refusal was misranked, and is corrected
+
+Decision 5 below listed three measured reasons and treated the third —
+`devbox services ls` executing `shell.init_hook` — as the one that
+settled it. Measured afterwards, and it does not: `devbox install` alone,
+zero hook executions, already writes a complete and readable
+`.devbox/virtenv/<plugin>/process-compose.yaml`. Reading a file executes
+nothing, so a hook-free route exists and reason 3 excludes one route
+rather than all of them.
+
+What remains is a judgement about what counts as a declaration — the
+generated files hold the *plugin author's* service definition, not the
+project's — and the full reasoning, including what reconsidering would
+cost (a YAML dependency, readiness probes as a prerequisite, and the
+measurement that the environment is *not* a blocker), lives in
+`docs/decisions.md` so a future reader argues against numbers rather
+than against a summary.
+
+Recorded rather than quietly rewritten, because this change's own
+discipline is that a claim which turns out to be misstated gets
+corrected in the open.
+
 ### Decision 5: devbox's refusal moves from deferral to measurement
 
 No behaviour change — `ServiceSupport::Unsupported` already fails

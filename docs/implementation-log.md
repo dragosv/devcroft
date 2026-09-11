@@ -702,3 +702,44 @@ had not written. It had gone unasserted because every test of that path
 needed flox *and* nix *and* a reachable store, and skipped on most
 hosts. The replacement test reads a flox manifest fixture off disk and
 needs no tooling at all, so it can never self-skip.
+
+---
+
+**A rejection that was right for a misranked reason, corrected.** The
+devbox-services entry listed three measured findings and called the third
+decisive: `devbox services ls` executes `shell.init_hook`, so enumerating
+services host-side runs project code. The measurement was sound; the
+ranking was not. Asked whether *any* workaround existed, the honest check
+produced one in a minute — `devbox install` alone, zero hook executions,
+already writes a complete and readable
+`.devbox/virtenv/<plugin>/process-compose.yaml`, and reading a file
+executes nothing. Reason 3 excludes one route, not every route.
+
+That matters beyond tidiness, because devcroft had already decided the
+general case the other way: `add-devenv-provider` accepted consuming an
+artifact devenv documents as an internal implementation detail, reasoning
+that every documented route ran project code so the alternative was not a
+better contract but abandoning criterion 4. Applied to devbox services,
+the same test points at acceptance. The arguments that survive are
+narrower than the original entry implied — the generated files hold the
+*plugin author's* definitions rather than the project's, and there is one
+format per plugin rather than one upstream to track — and the tempting
+third argument, that devenv capture is load-bearing where devbox services
+are optional, is a judgement of value rather than a property and is not
+leaned on.
+
+So the entry now says what it is: a decision about what counts as a
+declaration, written to be argued with, with the cost of reconsidering
+measured rather than summarized. A YAML dependency would be needed
+(devcroft has none, and emits JSON precisely to avoid one).
+`postgresql` declares a `readiness_probe` and `redis` does not, so the
+most common devbox service would fail until readiness translation exists.
+And the blocker that seemed most likely — whether the plugins' commands
+would find the variables they reference — is not one: `shellenv --pure`
+carries `PGDATA`, `PGHOST`, `REDIS_CONF` and `REDIS_PORT`.
+
+The useful sequencing fell out of that: **readiness probes are a shared
+prerequisite**. They are the refused field most likely to be wanted next
+for devenv, process-compose supports them natively, and building them
+turns devbox from "can it be done" into a much smaller step whose only
+remaining question is the one worth actually arguing about.

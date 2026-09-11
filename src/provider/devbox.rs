@@ -47,26 +47,26 @@ impl Provider for DevboxProvider {
             env: capture::changed_env(&baseline, &activated),
             unset: capture::unset_env(&baseline, &activated),
             read_only_grants: capture::store_grants(&activated),
-            // Measured and refused, not deferred (`add-devenv-services`
-            // design.md decision 5), on three independent grounds
-            // against devbox 0.17.5:
+            // Not built, and it is a judgement rather than an
+            // impossibility — `docs/decisions.md` carries the full
+            // entry, including the correction that produced this
+            // wording.
             //
-            // 1. `devbox.json` has no service schema at all — its own
-            //    keys are packages, env, env_from, include, init_hook,
-            //    scripts and the environment* family.
-            // 2. Plugin services arrive as generated per-plugin
-            //    `.devbox/virtenv/<plugin>/process-compose.yaml`, the
-            //    artifact shape `add-flox-services` decision 1 refused
-            //    for flox's own generated config.
-            // 3. `devbox services ls` executes `shell.init_hook` —
-            //    sentinel-measured, with `devbox install` and
-            //    `shellenv --pure` as zero-execution controls. So merely
-            //    *enumerating* devbox's services host-side runs project
-            //    code, on the one path support would require.
+            // `devbox.json` has no service schema at all. Services come
+            // from generated per-plugin
+            // `.devbox/virtenv/<plugin>/process-compose.yaml` files, so
+            // what they contain is the *plugin author's* definition:
+            // someone writing `"packages": ["postgresql"]` has not
+            // declared a service. Every other provider devcroft reads
+            // declarations from is reading something the project wrote
+            // or evaluated.
             //
-            // Reason 3 is the one to re-measure first if devbox ever
-            // adds a declaration schema: a schema alone would not make
-            // enumeration hook-free.
+            // `devbox services ls` does execute `shell.init_hook`
+            // (sentinel-measured), but that rules out one route rather
+            // than all of them: `devbox install` alone writes those
+            // files with zero hook executions, and reading a file
+            // executes nothing. An earlier version of this comment
+            // called that measurement decisive, which overstated it.
             services: ServiceSupport::Unsupported,
             // Structurally false here, not merely unencountered: `shellenv`
             // never executes `shell.init_hook`, in any variant including

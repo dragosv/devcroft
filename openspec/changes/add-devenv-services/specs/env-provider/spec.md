@@ -59,24 +59,27 @@ SHALL be the measured one rather than a deferral. A devbox project whose
 devcroft manifest declares services SHALL fail distinguishably from a
 provider that supports services and has none declared.
 
-Measured against devbox 0.17.5, three independent reasons, any one of
-which is sufficient:
+Measured against devbox 0.17.5. The reason is that **the declarations
+are not the project's**: `devbox.json` carries no service or process
+schema — its own configuration keys are `packages`, `env`, `env_from`,
+`include`, `init_hook`, `scripts` and the `environment*` family — and
+plugin-supplied services arrive as generated per-plugin
+`process-compose.yaml` files under devbox's cache directory, authored by
+the plugin rather than by the project. Someone writing a package name
+into `devbox.json` has not declared a service.
 
-1. `devbox.json` carries no service or process schema — its own
-   configuration keys are `packages`, `env`, `env_from`, `include`,
-   `init_hook`, `scripts` and the `environment*` family.
-2. Plugin-supplied services arrive as generated per-plugin
-   `process-compose.yaml` files under devbox's own cache directory,
-   which is the artifact shape `add-flox-services` decision 1 refused.
-3. `devbox services ls` executes `shell.init_hook` — measured against a
-   sentinel, with `devbox install` and `devbox shellenv --pure` as
-   zero-execution controls. Enumeration therefore runs project code
-   host-side, which the services capability forbids.
+`devbox services ls` does execute `shell.init_hook` (sentinel-measured,
+with `devbox install` and `devbox shellenv --pure` as zero-execution
+controls). That rules out one route rather than every route: `devbox
+install` alone writes those files with zero hook executions, and reading
+a file executes nothing. This spec previously called that measurement
+decisive, which overstated it — recorded here because a rejection whose
+stated reason is misranked is worse than one that is honest about being
+a judgement.
 
 The message SHALL name devbox's own unmet requirement and SHALL NOT
-suggest switching providers. Reason 3 is the one to re-measure first if
-devbox later adds a declaration schema, since a schema alone would not
-make enumeration hook-free.
+suggest switching providers. `docs/decisions.md` carries what
+reconsidering would cost, measured.
 
 #### Scenario: A devbox project asking for services fails distinguishably
 - **WHEN** a devcroft manifest declares services and names

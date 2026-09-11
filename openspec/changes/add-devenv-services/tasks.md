@@ -128,6 +128,19 @@ test guards on the **capability**, never on the binary:
       most hosts. Replaced with a unit test that reads a flox manifest
       fixture off disk and needs no tooling, so it can never self-skip.
 
+- [x] 4b.3 **The devbox rejection was misranked and is corrected.**
+      `devbox services ls` running the hook excludes one route, not all:
+      `devbox install` alone writes a readable per-plugin
+      `process-compose.yaml` with zero hook executions. The real reason
+      is that those files hold the plugin author's definitions rather
+      than the project's. Also measured, so a future reconsideration
+      argues against numbers: a YAML dependency would be needed (devcroft
+      has none), `postgresql` declares a `readiness_probe` that devcroft
+      refuses today while `redis` does not, and `shellenv --pure` does
+      carry the vars the plugin commands reference — so the environment
+      is not a blocker. Readiness probes are the shared prerequisite with
+      devenv.
+
 ## 5. Sample and documentation
 
 - [x] 5.1 `samples/devenv-sample`: add processes, and correct the README

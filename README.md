@@ -272,7 +272,8 @@ Long-lived **services** — databases, dev servers — are declared in the
 provider's own manifest and supervised by the sandbox's keeper, so parallel
 sandboxes get their own instances instead of fighting over a shared host one.
 Supported for flox and devenv; nix has no service concept, and devbox's are
-refused for a measured reason (listing them runs the project's init hook).
+refused because what devbox would offer are a plugin author's service
+definitions rather than the project's own (`docs/decisions.md`).
 
 **devenv is the one whose project hook actually runs**, and it runs inside the
 sandbox. Every provider treats `enterShell`-style hooks the same way — never on
