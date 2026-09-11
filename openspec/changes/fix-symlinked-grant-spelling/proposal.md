@@ -11,12 +11,16 @@ the paths involved are not symlinks. On macOS `/tmp` → `/private/tmp` and
 
 It has been published as a known gap since it was found, and the entry
 recorded a flox `[hook].on-activate` writing to `$TMPDIR/...` as the case
-that surfaced it. **What changed is that it now has a second instance
-that no user can avoid**: devenv wraps every project's `enterShell` in a
-generated preamble that does `mkdir -p /tmp/devenv-<hash>` and links the
-result into `.devenv/run`. That fails inside every devenv sandbox on
-macOS. The first instance was a user's own code, which a user could
-rewrite; this one is the provider's, and they cannot.
+that surfaced it. devenv's generated preamble looked like a second
+instance of the same thing.
+
+**Implementation measured that they are two different bugs wearing one
+symptom**, and this change closes one of them. The flox case is a grant
+*devcroft emits* — a project path under `$TMPDIR`, granted by the
+manifest and spelled one way, compiled another. devenv's `mkdir -p
+/tmp/devenv-<hash>` is `/tmp` itself, which no manifest grants and which
+comes from the backend's own baseline. Same symptom, different grant
+source, and only the first is devcroft's to spell.
 
 The fix is known and small, and the same library already does it
 elsewhere: unix-socket grants emit both the original and the resolved
@@ -78,9 +82,13 @@ None.
 
 - A sandbox granted a project at `/tmp/<name>` can write to both
   `/tmp/<name>/f` and `/private/tmp/<name>/f` on macOS.
-- devenv's generated preamble no longer fails on `mkdir -p
-  /tmp/devenv-<hash>`, verified against a real devenv sandbox rather than
-  by reasoning about the grant list.
+- ~~devenv's generated preamble no longer fails on `mkdir -p
+  /tmp/devenv-<hash>`.~~ **Measured false during implementation, and the
+  criterion was wrong rather than unmet.** That path is not a manifest
+  grant — it is `/tmp` itself, which comes from the backend's own
+  baseline. This change fixes the spellings of grants *devcroft* emits;
+  the baseline's spellings are not devcroft's to emit. See design.md
+  decision 4.
 - A manifest whose grants involve no symlinks compiles to a
   byte-identical policy — the existing golden test extended to cover it.
 - The symlink-escape guard still refuses a project-relative entry whose

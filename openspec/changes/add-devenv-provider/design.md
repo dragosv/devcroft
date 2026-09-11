@@ -339,6 +339,15 @@ What this change does instead is record it in that entry and in the
 sample's README, and confine the consequence: devenv services are
 unsupported, so nothing devcroft supports reads that directory today.
 
+**Followed up in `fix-symlinked-grant-spelling`, which closed half of
+it.** That change fixed the spellings of grants devcroft emits — a
+manifest path under `$TMPDIR` now works under both names. devenv's
+preamble still fails, because `/tmp` is not a manifest grant at all: it
+comes from the backend's own baseline, whose paths devcroft neither
+chooses nor spells. The two turned out to be different bugs wearing one
+symptom, which is why this entry's framing — "the fix is dual-spelling
+grants" — was right about the mechanism and wrong about the reach.
+
 ## Migration Plan
 
 None. Additive: a new `env.provider` value. No existing manifest

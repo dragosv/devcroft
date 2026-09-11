@@ -230,17 +230,19 @@ impl CapabilityPlan {
 
         let mut out = Vec::new();
         for value in &self.filesystem_allow {
-            if let Some(path) = resolve_and_validate(value, project_root)? {
+            if let Some(entry) = resolve_and_validate(value, project_root)? {
                 out.push(ResolvedGrant {
-                    path,
+                    // The canonical form: the mount view binds real
+                    // targets, and a symlink's own name is not one.
+                    path: entry.canonical,
                     mode: AccessMode::ReadWrite,
                 });
             }
         }
         for value in &self.filesystem_read {
-            if let Some(path) = resolve_and_validate(value, project_root)? {
+            if let Some(entry) = resolve_and_validate(value, project_root)? {
                 out.push(ResolvedGrant {
-                    path,
+                    path: entry.canonical,
                     mode: AccessMode::Read,
                 });
             }
@@ -354,13 +356,26 @@ fn grant(
     project_root: &Path,
     mode: AccessMode,
 ) -> Result<CapabilitySet, CapabilitySetError> {
-    let Some(resolved) = resolve_and_validate(value, project_root)? else {
+    let Some(grant) = resolve_and_validate(value, project_root)? else {
         return Ok(caps);
     };
-    Ok(if resolved.is_dir() {
-        caps.allow_path(resolved, mode)?
+    // The **non-canonical** path, deliberately (`fix-symlinked-grant-
+    // spelling`). `nono` canonicalizes internally — atomically, with no
+    // separate `exists()` check and therefore no TOCTOU window, by its
+    // own documented design — and keeps what it was handed as the
+    // capability's `original`. Its macOS backend then emits a Seatbelt
+    // rule for `original` *and* `resolved` when they differ, with a
+    // comment naming `/tmp` vs `/private/tmp` as the case.
+    //
+    // Handing it the already-canonical path made `original == resolved`,
+    // so that branch never fired and a sandbox denied `/tmp/x` while
+    // granting `/private/tmp/x` — the same directory. devcroft was
+    // defeating a mechanism the library already had, one step before the
+    // call.
+    Ok(if grant.canonical.is_dir() {
+        caps.allow_path(grant.as_written, mode)?
     } else {
-        caps.allow_file(resolved, mode)?
+        caps.allow_file(grant.as_written, mode)?
     })
 }
 
@@ -381,7 +396,7 @@ fn grant(
 fn resolve_and_validate(
     value: &str,
     project_root: &Path,
-) -> Result<Option<PathBuf>, CapabilitySetError> {
+) -> Result<Option<ResolvedEntry>, CapabilitySetError> {
     let (resolved, is_project_relative) = resolve(value, project_root);
     if !resolved.exists() {
         return Ok(None);
@@ -416,7 +431,30 @@ fn resolve_and_validate(
             });
         }
     }
-    Ok(Some(canonical_target))
+    Ok(Some(ResolvedEntry {
+        as_written: resolved,
+        canonical: canonical_target,
+    }))
+}
+
+/// One manifest entry, resolved two ways.
+///
+/// Both are absolute and both name the same target; they differ only
+/// where a symlink sits on the path — `/tmp/x` against `/private/tmp/x`
+/// on macOS, and nowhere at all on Linux.
+///
+/// Kept apart because the two consumers want different ones.
+/// `nono` wants [`Self::as_written`], because it canonicalizes itself and
+/// emits a backend rule for each spelling when they differ. The mount
+/// view wants [`Self::canonical`], because it builds a view of real
+/// targets and a symlink's own name is not one.
+struct ResolvedEntry {
+    /// Absolute, with `.`/`~` expanded, but **not** canonicalized: the
+    /// path as the manifest effectively spells it.
+    as_written: PathBuf,
+    /// Symlinks followed. What the kernel sees, and what the
+    /// symlink-escape guard is checked against.
+    canonical: PathBuf,
 }
 
 /// `~`, `~/rest`, an absolute path, or a project-relative path (`.`,
@@ -529,6 +567,55 @@ mod tests {
     /// level (a symlink to a scratch "credential" directory, granted
     /// despite reading as `credential-link` in the manifest) and here at
     /// the unit level so the guarantee doesn't depend on remembering to
+    /// `fix-symlinked-grant-spelling`: the resolver keeps the manifest's
+    /// own spelling alongside the canonical one, because `nono` emits a
+    /// backend rule for each when they differ and can only do that if it
+    /// is handed the pre-canonical path.
+    ///
+    /// Asserted on both platforms rather than skipped on one: where a
+    /// symlink is involved the two must differ, and where none is they
+    /// must match — an implementation that canonicalized both, or
+    /// neither, fails one half.
+    #[test]
+    fn the_resolver_keeps_both_spellings_of_a_path() {
+        let scratch = project_dir();
+        std::fs::create_dir_all(scratch.join("real")).unwrap();
+        // The *canonical* root, so the only divergence under test is the
+        // entry's own symlink. Found by this test failing: on macOS the
+        // scratch root is itself under `/var/folders` → `/private/var`,
+        // so every grant diverges there — which is the bug's real reach,
+        // and would have made the control below assert nothing.
+        let root = scratch.canonicalize().unwrap();
+        std::os::unix::fs::symlink(root.join("real"), root.join("link")).unwrap();
+
+        let through_link = resolve_and_validate("link", &root)
+            .unwrap()
+            .expect("the link exists");
+        assert!(
+            through_link.as_written.ends_with("link"),
+            "the manifest's spelling must survive, got {}",
+            through_link.as_written.display()
+        );
+        assert!(
+            through_link.canonical.ends_with("real"),
+            "the canonical form must follow the symlink, got {}",
+            through_link.canonical.display()
+        );
+
+        // And the other half: no symlink, no divergence. Without this a
+        // resolver that never canonicalized would pass the assertions
+        // above.
+        let direct = resolve_and_validate("real", &root)
+            .unwrap()
+            .expect("the directory exists");
+        assert_eq!(
+            direct.as_written, direct.canonical,
+            "with no symlink on the path the two spellings are one"
+        );
+
+        let _ = std::fs::remove_dir_all(&scratch);
+    }
+
     /// canonicalize at every caller.
     #[test]
     fn project_relative_symlink_escaping_the_project_root_is_rejected() {

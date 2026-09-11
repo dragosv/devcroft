@@ -743,3 +743,44 @@ prerequisite**. They are the refused field most likely to be wanted next
 for devenv, process-compose supports them natively, and building them
 turns devbox from "can it be done" into a much smaller step whose only
 remaining question is the one worth actually arguing about.
+
+---
+
+**A one-line fix that the gate found, and that verification then
+narrowed (`fix-symlinked-grant-spelling`).** The published gap was that a
+sandbox denies the spelling of a path it granted: devcroft canonicalizes
+grants, so a manifest saying `/tmp/proj` compiles to `/private/tmp/proj`
+and `/tmp/proj` is then refused. The proposal's design was to emit both
+spellings from devcroft.
+
+Group 0 replaced that design with something smaller. The backend library
+*already* emits a rule for each spelling — `FsCapability` keeps
+`original` beside `resolved`, and nono's macOS emission has the comment
+"If the original path differs (e.g. `/tmp` vs `/private/tmp`), emit a
+rule for the original too". The branch never fired because devcroft
+canonicalized one step before the call, making `original == resolved`.
+devcroft was defeating a mechanism the library already had. The fix is to
+stop canonicalizing before handing the path over; `allow_path`
+canonicalizes itself, atomically and without a separate `exists()` check,
+by its own documented design.
+
+Verified A/B by recreating one sandbox with and without the change,
+against a manifest granting `/tmp/dcspell-probe`: before, writing through
+`/tmp/…` was denied while `/private/tmp/…` worked; after, both work.
+
+**Then the same verification falsified one of the proposal's own success
+criteria**, which had claimed devenv's generated `enterShell` preamble
+would stop failing. It does not, identically. `mkdir -p
+/tmp/devenv-<hash>` fails on `/tmp` itself, which no manifest grants — it
+comes from the backend's baseline group set, whose paths devcroft neither
+chooses nor spells. The flox case and the devenv case had been recorded
+as two instances of one gap; they are two different bugs wearing one
+symptom, and only the first was devcroft's to fix. known-gaps.md now says
+"half fixed" and keeps them apart.
+
+A smaller thing worth keeping, because the test found it rather than the
+author: the resolver's unit test asserts that a path with no symlink in
+it resolves to itself — and failed, because on macOS the scratch root is
+*itself* under `/var/folders` → `/private/var`. Every grant diverges
+there. The control had to be rebuilt against a canonicalized root to
+assert anything, and the failure was the useful part.

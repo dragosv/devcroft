@@ -443,7 +443,7 @@ not gated).
 named. Closing it properly would need something Seatbelt does not offer; the
 honest position is the declared degradation.
 
-## A grant does not cover the symlinked spelling of its own path on macOS
+## A grant does not cover the symlinked spelling of its own path on macOS — half fixed
 
 devcroft canonicalizes every filesystem grant before handing it to the backend,
 so the compiled policy names `/private/tmp/proj` where the manifest (or the
@@ -477,12 +477,24 @@ today reads that directory (devenv services are not supported), so the
 consequence is currently confined to the log, but it is the same one-line
 cause as above and closing it closes both.
 
-The backend library already does dual-path emission for unix-socket grants
-(emitting both `original` and `resolved` so `/tmp/x.sock` and
-`/private/tmp/x.sock` both match); filesystem grants emit only the resolved form.
-Closing this means emitting both there too — devcroft-side when it builds the
-grant list, or upstream. Not attempted here; it belongs with
-`own-policy-baseline`, which owns what the compiled grant set contains.
+**Fixed for grants devcroft emits (`fix-symlinked-grant-spelling`).** The
+backend library was already emitting a rule for each spelling of a filesystem
+grant when they differ — the same `original`/`resolved` pair it uses for unix
+sockets. devcroft was canonicalizing one step before the call, so `original ==
+resolved` and that branch never fired. It now hands over the manifest's own
+spelling and lets the library canonicalize, which it does atomically anyway.
+
+Measured A/B on one sandbox, granting `/tmp/dcspell-probe`: before, writing via
+`/tmp/…` was denied and via `/private/tmp/…` worked; after, both work.
+
+**Still open for the baseline's own grants**, and the two cases are worth
+keeping apart because they share a symptom. devenv's generated `enterShell`
+preamble does `mkdir -p /tmp/devenv-<hash>` and still fails, because `/tmp`
+itself is not a manifest grant — it comes from the backend's baseline group
+set, whose paths devcroft neither chooses nor spells. That half is
+`own-policy-baseline`'s or upstream's: the library emits both spellings for
+capabilities it is handed, so the question is why its own baseline grants only
+one.
 
 ## A home-relative `filesystem` grant has no effect on macOS
 
