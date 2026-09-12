@@ -12,11 +12,16 @@
 
 ## 1. Implementation
 
-- [ ] 1.1 The activation script completes before the first service is
-      started.
+- [ ] 1.1 The activation script **and** the manifest's
+      `hooks.post_create` / `hooks.post_start` all complete before the
+      first service is started, keeping their existing order relative to
+      each other. Both are spawned after `spawn_keeper` today
+      (`up.rs:927` and `up.rs:939`, against services started inside the
+      keeper at `up.rs:882`), so both race it — fixing only the first
+      leaves the case a user can actually express still broken.
 - [ ] 1.2 Service registration stays in the keeper's registry, unchanged.
-- [ ] 1.3 A failing script fails `up` at layer `keeper`, exit 5, naming
-      the hook.
+- [ ] 1.3 A failing hook of either kind fails `up` at layer `keeper`,
+      exit 5, naming the hook.
 
 ## 2. Tests
 
@@ -30,6 +35,16 @@
 - [ ] 2.4 `--skip-hooks` suppresses the script and does not fail `up`.
 - [ ] 2.5 A devbox mariadb project gets its data directory before
       `mariadbd` starts — the case that found this.
+- [ ] 2.6 **The manifest-hook case, which is the one users write**: a
+      project declaring `hooks.post_create` and a service asserts the
+      hook completed first. Use a hook that is *slow to start* — one that
+      sources a file before doing any work — rather than a one-liner: a
+      one-liner wins the race by 9 ms without any fix, so the obvious
+      test passes today.
+- [ ] 2.7 Assert the margin, not just the order. Record the measured gap
+      between hook completion and first service start; a fix that turns
+      +9 ms into -2 ms has not established a guarantee, it has moved a
+      race.
 
 ## 3. Documentation
 

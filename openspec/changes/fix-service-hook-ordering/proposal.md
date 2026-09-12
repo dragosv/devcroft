@@ -128,3 +128,13 @@ None.
   services start later, there is a window where the sandbox is up, the
   hook has failed, and nothing has started — and `status` should say
   something truthful about it.
+
+- **A hook that needs a *running* service now has no phase.** Ordering
+  every hook before every service is right for preparation — `initdb`,
+  `setup_db.sh` — and wrong for anything that wants to talk to the
+  database it just set up. Dev Containers has a third phase
+  (`postAttachCommand`) for exactly this; devcroft has two. Adding a
+  third is a scope expansion this change should not make on its own, so
+  the consequence is recorded rather than solved: after this change,
+  `post_start = "psql -c 'select 1'"` fails where today it works by
+  accident, and the accident was a 9 ms race.
