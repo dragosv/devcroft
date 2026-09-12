@@ -251,8 +251,39 @@ What separates 0.6 from 1.0 is evidence, not features:
   maintainer has direct access to a Mac, just not through this
   devcontainer — so what's missing is the run happening, not access to
   run it.
-- **Scale.** "Eight sandboxes cost one build" follows from a shared
-  content-addressed store. It has been tested at two.
+- **Scale.** ~~"Eight sandboxes cost one build" follows from a shared
+  content-addressed store. It has been tested at two.~~ **Measured at
+  eight, and it holds** (2026-09-12, aarch64-darwin, devenv provider,
+  eight worktrees off one `devenv.lock`):
+
+  | sandbox | wall-clock | `/nix/store` growth |
+  |---|---|---|
+  | 1 | 5.1 s | **+7.9 MiB** |
+  | 2–8 | 4.1–4.4 s each | **+0.0 MiB each** |
+
+  The first pays the acquisition; the other seven pay nothing. The
+  packages were chosen *because* they were absent from the store
+  (`figlet`, `pv` — verified absent before the run), so the first
+  sandbox's build was real rather than another cache hit.
+
+  **Verified, not assumed, that all eight actually worked**: keeper
+  healthy, the `enterShell` marker written, and `rg`/`figlet`/`pv`
+  resolving from the closure inside each sandbox. Eight fast *failures*
+  would have produced the same flat table.
+
+  **Three qualifications this does not support**, stated so the number
+  is not read as more than it is. The marginal cost is not zero — it is
+  ~4.1 s of devcroft's own fixed work per sandbox (resolution, policy
+  compile, keeper spawn, hook) plus zero store bytes. The closure was
+  small; a rustc or JDK toolchain would move wall-clock, though not the
+  store-growth column, which is the claim's actual subject. And none of
+  the eight declared **services** — services add a supervisor process
+  each, and on macOS they collide on ports, so the fanout story is
+  measured for environments and not yet for stacks.
+
+  A leak check across the same eight found nothing: keepers went 9 → 1
+  (the one survivor a stale sandbox from an earlier session, not this
+  run), no System V segments, and no new `/tmp/devenv-*` directories.
 - **The published gaps.** Each entry in `docs/known-gaps.md` either closes
   or becomes a stated, permanent limitation with a reason — not a backlog
   item that quietly ages.

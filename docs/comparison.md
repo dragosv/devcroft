@@ -196,6 +196,14 @@ manifest *is* the snapshot. It's bit-reproducible, it's already the thing
 checked into the repo, and instantiating eight identical environments
 costs one cached build, not eight image builds.
 
+That last sentence used to be a deduction from how a content-addressed
+store works. It is now a measurement: eight sandboxes off one
+`devenv.lock`, with packages verified absent from the store beforehand,
+cost **+7.9 MiB on the first and +0.0 MiB on each of the other seven**,
+at 4.1–4.4 s apiece — see [roadmap.md](roadmap.md)'s 1.0 section for the
+table, what was checked to prove the eight actually worked, and the three
+things the number does *not* support.
+
 That's the actual differentiator from "yet another Docker wrapper" — not
 isolation (Landlock/Seatbelt are commodity at this point; [this list of
 sandboxing tools](https://gist.github.com/wincent/2752d8d97727577050c043e4ff9e386e)
