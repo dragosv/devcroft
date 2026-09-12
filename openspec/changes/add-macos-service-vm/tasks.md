@@ -6,11 +6,58 @@
 > group exists because the last three macOS assumptions in this project
 > were each wrong in a way only a measurement caught.
 
-- [ ] 0.1 **Does `fleet::netns` work unchanged inside a Lima guest?** It uses
-      `unshare(CLONE_NEWUSER | CLONE_NEWNET)` and needs no root on a normal
-      Linux host; confirm the guest permits unprivileged user namespaces.
-      If it does not, the whole design changes shape and the rest of these
-      tasks are void.
+- [x] 0.1 **Does `fleet::netns` work unchanged inside a Lima guest?**
+      **Yes — the gate passes, and the rest of these tasks are live.**
+      Measured on Lima 2.1.0, Ubuntu 25.10, kernel 6.17.0-14-generic,
+      aarch64, 4 CPUs / 8 GiB.
+
+      Confirmed twice, deliberately, because the first way could have
+      been a property of `unshare(1)` rather than of the call devcroft
+      makes:
+
+      1. `unshare(CLONE_NEWUSER | CLONE_NEWNET)` **in-process**, from a C
+         probe compiled in the guest — the exact syscall
+         `fleet::netns::enter_network_namespace` issues. Returns 0.
+      2. devcroft's own probe, through `doctor`:
+         *"namespaces: available on this host — sandboxes with
+         `network.default = "deny"`, no `network.allow`, and services or
+         `network.ports` each get their own port table, and every sandbox
+         gets its own filesystem view (mount isolation)."*
+
+      **The reason to insist on the second reading**: Ubuntu has
+      restricted unprivileged user namespaces since 24.04, and the
+      restriction is *on* in this guest —
+      `kernel.apparmor_restrict_unprivileged_userns = 1`, with
+      `kernel.unprivileged_userns_clone = 1` and
+      `user.max_user_namespaces = 31183`. It permits the call anyway,
+      because the gate is an AppArmor profile applied per binary rather
+      than a global switch. So this result is **Ubuntu-25.10-specific and
+      must not be generalized**: a distro or a policy that confines the
+      calling binary differently can still refuse, and the guest image is
+      therefore part of the design, not an implementation detail.
+
+      Recorded alongside, because it bears on `add-mount-isolation` and
+      `add-macos-unix-socket-scoping` rather than on this change:
+      **Landlock V6** is available in the guest, with *Basic filesystem
+      access control, Refer, Truncate, TCP network filtering, Device
+      ioctl filtering, and Signal and abstract UNIX socket scoping*.
+
+      Also established, and worth keeping because it is the expensive
+      part of any future guest: the provisioning sequence that makes a
+      guest a *usable* devcroft Linux. `nix` alone is not enough —
+      `doctor` correctly reported `[FAIL] provider: nix found but flake
+      commands are rejected` until `experimental-features = nix-command
+      flakes` was added to `/etc/nix/nix.conf`. With that, all four
+      providers report `[PASS]`: flox 1.16.0, nix 2.31.5 (flox's own,
+      which shadows a separately installed 2.35.2), devbox 0.18.0,
+      devenv 2.2.2. Note devbox is **0.18.0** in the guest against
+      0.16.0 on the macOS host — a version skew to control for before
+      comparing any devbox result across the two.
+
+      **Not measured: the test suite on Linux.** The run was started and
+      the host ran out of disk before its output could be read; its
+      exit code is not evidence of anything. The guest was deleted to
+      recover space. Tasks 0.2 and 0.3 still need a guest.
 - [ ] 0.2 Two sandboxes, two namespaces, same declared port, both serving —
       end to end in the guest. This is the property the change exists for;
       measure it before designing around it.
