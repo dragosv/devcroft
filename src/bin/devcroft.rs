@@ -3146,6 +3146,29 @@ fn keeper_main(fd: RawFd, ssh_fd: RawFd) -> ! {
     // above already terminates every registered process group on
     // SIGTERM, so `down` reaps process-compose (and, through it, the
     // services) exactly the way it reaps a live shell.
+    // **Hooks run here, before services, and this ordering is the point**
+    // (`fix-service-hook-ordering`). They used to run in `up`, over the
+    // control socket, once this process was responsive — which read as
+    // "services first" but was in fact neither order: the two raced, and
+    // the hook won by ~9 ms because process-compose needs that long to
+    // boot. A trivial hook won that race and a real one lost it.
+    //
+    // Running them here makes the ordering structural rather than
+    // probable: one process, one sequence, and `up`'s existing
+    // `wait_until_responsive` poll becomes the wait, because nothing
+    // below has run yet and the accept loop is further down still.
+    //
+    // A failure exits before any service starts, so the sandbox does not
+    // come up half-provisioned; `up` reports it by reading the line
+    // below out of this process's log.
+    if let Err(e) = run_keeper_hooks(&LocalSessionBackend) {
+        eprintln!(
+            "{}{e}",
+            devcroft::lifecycle::hooks::KEEPER_HOOK_FAILURE_PREFIX
+        );
+        std::process::exit(1);
+    }
+
     start_services_if_requested(Arc::clone(keeper.registry()), Arc::new(LocalSessionBackend));
 
     // Best-effort (task 6.1): a broken ssh handoff logs to this process's
@@ -3337,6 +3360,44 @@ fn start_services_if_requested(registry: Arc<Registry>, backend: Arc<dyn Session
             eprintln!("services failed to start: {e}");
         }
     }
+}
+
+/// Runs the hooks `up` handed down, in the order it listed them, before
+/// any service starts.
+///
+/// Reads them from the environment rather than from a file because the
+/// state directory is baseline-denied to this process — see
+/// `hooks::KEEPER_HOOK_FAILURE_PREFIX`, which documents the same
+/// constraint from the other direction. An absent variable means the
+/// hook was not declared *or* `--skip-hooks` was passed; the keeper does
+/// not distinguish them, and does not need to.
+fn run_keeper_hooks(
+    backend: &dyn devcroft::keeper::SessionBackend,
+) -> Result<(), devcroft::lifecycle::hooks::HookError> {
+    // The order is `up`'s, restated here rather than carried, because it
+    // is a property of what the hooks *are* — the provider's script
+    // prepares the environment the manifest's hooks then use.
+    const ORDER: [&str; 3] = ["activation", "post_create", "post_start"];
+    let hooks: Vec<(&'static str, String)> = ORDER
+        .iter()
+        .filter_map(|name| {
+            let value = std::env::var(format!("DEVCROFT_HOOK_{}", name.to_uppercase())).ok()?;
+            // `name` is one of the three literals above, so this borrow
+            // is of a `'static` str despite the loop.
+            let name: &'static str = match *name {
+                "activation" => "activation",
+                "post_create" => "post_create",
+                _ => "post_start",
+            };
+            Some((name, value))
+        })
+        .collect();
+    if hooks.is_empty() {
+        return Ok(());
+    }
+    let shell = std::env::var("DEVCROFT_SHELL").unwrap_or_else(|_| "sh".to_string());
+    let root = std::env::var("DEVCROFT_SERVICES_ROOT").unwrap_or_else(|_| ".".to_string());
+    devcroft::lifecycle::hooks::run_in_keeper(backend, &shell, std::path::Path::new(&root), &hooks)
 }
 
 /// `down`/`rm` (lifecycle::terminate) signal this process directly, then

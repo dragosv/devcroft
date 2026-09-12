@@ -5,7 +5,10 @@
 //! back down with the grace-period termination the lifecycle spec
 //! requires. `status`/`logs`/`ps` are read-only views over the same state.
 
-mod hooks;
+/// `pub` because the keeper binary runs them now, not `up`
+/// (`fix-service-hook-ordering`): the keeper is a separate crate target
+/// and reaches this through the library like any other consumer.
+pub mod hooks;
 mod state;
 // `pub(crate)` for the same reason `up` is: `test_support` re-exports one
 // seam function out of it under the `test-support` feature.

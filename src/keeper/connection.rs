@@ -260,12 +260,14 @@ pub(crate) fn to_exit_status(result: std::io::Result<std::process::ExitStatus>) 
 /// Emit one keeper log record as a single `write` call.
 ///
 /// `eprintln!` would not do: stderr is unbuffered, so a formatted record
-/// becomes one `write` per format fragment. The keeper is not the only
-/// writer of this file — `hooks::run` appends hook output to it from the
-/// `up` side — and the fd is `O_APPEND`, which makes each *write* land
-/// atomically at the end but says nothing about a record split across
-/// several. Interleaving then lands hook output inside a keeper record,
-/// mangling both. One record, one write.
+/// becomes one `write` per format fragment. This file has a second writer
+/// — the keeper's own `stdout`, which carries hook output
+/// (`hooks::run_in_keeper`) and, before `fix-service-hook-ordering`, was
+/// `up` appending the same output from the host side. Either way the fd
+/// is `O_APPEND`, which makes each *write* land atomically at the end but
+/// says nothing about a record split across several. Interleaving then
+/// lands hook output inside a keeper record, mangling both. One record,
+/// one write.
 fn log_record(mut line: String) {
     line.push('\n');
     let _ = std::io::stderr().write_all(line.as_bytes());

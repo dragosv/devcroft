@@ -879,6 +879,36 @@ fn up_process(
         crate::services::artifact_dir(project_root, &manifest.sandbox.name).join("home");
     std::fs::create_dir_all(&sandbox_home).map_err(UpError::State)?;
 
+    // Assembled here, host-side, and handed to the keeper to run before
+    // it starts any service (`fix-service-hook-ordering`). The order is
+    // the one `up` used to run them in and is load-bearing: the
+    // provider's activation script prepares the project's environment, so
+    // a `post_create` that depends on it — the common case, since that is
+    // what environment setup is for — must not run first.
+    //
+    // `--skip-hooks` produces an empty list, which is how its promise
+    // that nothing project-supplied runs is kept: there is nothing for
+    // the keeper to decline to run.
+    let mut keeper_hooks: Vec<(&'static str, String)> = Vec::new();
+    if !opts.skip_hooks {
+        if let Some(script) = &resolution.activation_script {
+            keeper_hooks.push(("activation", script.clone()));
+        }
+        // Lifecycle spec: `post_create` runs once, after the *first*
+        // successful `up` or after `--recreate` — `Recovered` means state
+        // already existed (so it ran back when that was `Started`), and
+        // `AlreadyUp` returned above without spawning anything.
+        // `post_start` runs on every keeper start, so it always runs here.
+        if matches!(outcome, UpOutcome::Started | UpOutcome::Recreated)
+            && let Some(cmd) = &manifest.hooks.post_create
+        {
+            keeper_hooks.push(("post_create", cmd.clone()));
+        }
+        if let Some(cmd) = &manifest.hooks.post_start {
+            keeper_hooks.push(("post_start", cmd.clone()));
+        }
+    }
+
     let keeper_pid = spawn_keeper(
         &exe,
         &listener,
@@ -900,6 +930,7 @@ fn up_process(
         relay.clone(),
         &mount_grants,
         relay.as_ref().map(|(_, sock)| sock.as_path()),
+        &keeper_hooks,
     )
     .map_err(|e| UpError::Keeper(e.to_string()))?;
     // Both fds must outlive this function for the child to inherit them
@@ -909,36 +940,24 @@ fn up_process(
 
     state::write_pidfile(&paths.pidfile, keeper_pid)?;
 
-    wait_until_responsive(paths, KEEPER_START_TIMEOUT)
-        .map_err(|e| UpError::Keeper(format!("keeper did not become responsive: {e}")))?;
+    wait_until_responsive(paths, KEEPER_START_TIMEOUT, keeper_pid).map_err(|e| {
+        // A hook that failed is not a keeper that was slow, and saying so
+        // would send the reader to the wrong place. `TimedOut` is the only
+        // kind this returns for actual unresponsiveness; everything else
+        // already carries a reason worth printing on its own.
+        UpError::Keeper(if e.kind() == io::ErrorKind::TimedOut {
+            format!("keeper did not become responsive: {e}")
+        } else {
+            e.to_string()
+        })
+    })?;
 
-    // The provider's own activation script, run **inside** the boundary
-    // (`sandbox-provisioning` P2d). Ordered before devcroft's own hooks
-    // deliberately: this is what prepares the project's environment, so a
-    // `post_create` that depends on it — the common case, since that is
-    // what environment setup is for — would otherwise run first and fail.
-    //
-    // `--skip-hooks` suppresses it for the same reason it suppresses
-    // everything else: that flag's promise is that nothing
-    // project-supplied runs, and this is project-supplied.
-    if !opts.skip_hooks
-        && let Some(script) = &resolution.activation_script
-    {
-        hooks::run_activation_script(paths, project_root, script)
-            .map_err(|e| UpError::Keeper(e.to_string()))?;
-    }
-
-    // Lifecycle spec: `post_create` runs once, as the first session after
-    // the *first* successful `up` or after `--recreate` — exactly the
-    // outcomes below, since `Recovered` means state already existed (so
-    // `post_create` already ran back when it was `Started`) and `AlreadyUp`
-    // already returned above without spawning anything. `post_start` runs
-    // on every keeper start regardless, so it always runs here too.
-    if !opts.skip_hooks {
-        let run_post_create = matches!(outcome, UpOutcome::Started | UpOutcome::Recreated);
-        hooks::run(paths, project_root, &manifest.hooks, run_post_create)
-            .map_err(|e| UpError::Keeper(e.to_string()))?;
-    }
+    // Hooks used to run here, over the control socket, once the keeper
+    // was responsive. They now run *inside* the keeper, before it starts
+    // any service — see `keeper_hooks` above and
+    // `hooks::run_in_keeper`. `wait_until_responsive` is what waits for
+    // them, because the keeper does not accept connections until they
+    // have finished.
 
     Ok(outcome)
 }
@@ -1107,6 +1126,7 @@ fn spawn_keeper(
     relay: Option<(u16, PathBuf)>,
     mount_grants: &[policy::ResolvedGrant],
     proxy_socket_for_view: Option<&Path>,
+    hooks: &[(&'static str, String)],
 ) -> io::Result<libc::pid_t> {
     // The pivot-root scratch directory (`StatePaths::mount_root`'s own
     // doc) must exist and be empty before `pre_exec` runs — created here,
@@ -1125,12 +1145,16 @@ fn spawn_keeper(
     let proxy_socket_for_view = proxy_socket_for_view.map(Path::to_path_buf);
     let project_root_owned = project_root.to_path_buf();
 
-    // Truncate the previous run's log, then reopen with `O_APPEND` — the
-    // keeper is not this file's only writer. `hooks::run` appends hook
-    // output to it from the `up` side (lifecycle spec: "hook output SHALL
-    // appear in `logs`"), concurrently with the keeper's own spawn/exit
-    // records. Without `O_APPEND` the keeper's fd carries its own offset
-    // and overwrites whatever the hook appended in between, silently
+    // Truncate the previous run's log, then reopen with `O_APPEND`.
+    //
+    // **`up` is no longer one of this file's writers**
+    // (`fix-service-hook-ordering`): hook output used to be appended here
+    // from this side, and now reaches the same file as the keeper's own
+    // stdout, because the keeper runs the hooks. `O_APPEND` still earns
+    // its place — the keeper writes hook output through `stdout` and its
+    // own spawn/exit records through `stderr`, two descriptors onto one
+    // file — and without it each would carry its own offset and overwrite
+    // the other, silently
     // eating exactly the output the spec requires to be there.
     std::fs::File::create(&paths.log)?;
     let log = std::fs::OpenOptions::new().append(true).open(&paths.log)?;
@@ -1193,13 +1217,36 @@ fn spawn_keeper(
         // and a session whose client disconnects is escalated after
         // `connection::DEFAULT_GRACE_PERIOD`, so anything `up` started
         // over the control socket would die seconds later. The keeper
-        // owns their lifetime, and its own startup is the moment — which
-        // also puts services before hooks, the ordering add-flox-services'
-        // design.md decision 4 settled on independently.
+        // owns their lifetime, and its own startup is the moment.
+        //
+        // **That used to put services before hooks**, and this comment
+        // used to cite `add-flox-services` design.md decision 4 as having
+        // settled that ordering. It was right about the mechanism and
+        // wrong about the consequence: `up` ran the hooks afterwards, so
+        // nothing ordered the two at all — they raced, and the hook won by
+        // ~9 ms. `fix-service-hook-ordering` moved the hooks into the
+        // keeper, ahead of this, which is what makes the ordering real.
         .env(
             "DEVCROFT_START_SERVICES",
             if services.is_some() { "1" } else { "0" },
         )
+        // The hooks the keeper runs **before** those services
+        // (`fix-service-hook-ordering`). Carried as environment rather
+        // than written to the state directory for the same reason the
+        // SSH key material is: that directory is baseline-*denied* to
+        // the keeper, so a file there is one it cannot read back.
+        //
+        // Absent means "no such hook", which is why `--skip-hooks`
+        // needs no flag of its own — the caller simply passes none, and
+        // the keeper's behaviour follows from what it was given rather
+        // than from a second thing it has to be told and could
+        // disagree about.
+        .envs(hooks.iter().map(|(name, cmd)| {
+            (
+                format!("DEVCROFT_HOOK_{}", name.to_uppercase()),
+                cmd.clone(),
+            )
+        }))
         // Which sandbox's artifact subdirectory to use. Service paths are
         // keyed on the sandbox name as well as the root, so that two
         // sandboxes sharing one project root do not overwrite each
@@ -1330,11 +1377,41 @@ fn keeper_exe() -> io::Result<PathBuf> {
     std::env::current_exe()
 }
 
-fn wait_until_responsive(paths: &StatePaths, timeout: Duration) -> io::Result<()> {
+/// Waits for the keeper to accept connections — and, since
+/// `fix-service-hook-ordering`, this is also what waits for the hooks,
+/// because the keeper runs them before its accept loop.
+///
+/// **Checking whether the keeper is still alive is what makes that
+/// bearable.** Without it a failing hook shows up as the full
+/// `KEEPER_START_TIMEOUT` elapsing followed by "timed out", which names
+/// nothing and blames the wrong thing. The pid is already in hand
+/// (`spawn_keeper` returns it, and it is in the pidfile), so the cost is
+/// one `kill(pid, 0)` per poll of a loop that already runs.
+///
+/// The *reason* comes out of the keeper's log, because that is the only
+/// channel it has: the state directory is baseline-denied to the keeper,
+/// so it cannot leave a status file, but `up` handed it this log as its
+/// stdout/stderr and `up` is unrestricted host-side code that can read
+/// it back. See `hooks::KEEPER_HOOK_FAILURE_PREFIX`.
+fn wait_until_responsive(
+    paths: &StatePaths,
+    timeout: Duration,
+    keeper_pid: libc::pid_t,
+) -> io::Result<()> {
     let deadline = Instant::now() + timeout;
     loop {
-        if UnixStream::connect(&paths.socket).is_ok() {
+        if keeper_answers(&paths.socket) {
             return Ok(());
+        }
+        if !keeper_alive(keeper_pid) {
+            // Race worth naming: the keeper can die *after* a successful
+            // connect above, in which case we already returned. This
+            // branch is only reached while the socket is still refusing,
+            // which is exactly the window the hooks run in.
+            return Err(io::Error::other(match keeper_failure_reason(&paths.log) {
+                Some(reason) => reason,
+                None => "the keeper exited during startup; see `devcroft logs`".to_string(),
+            }));
         }
         if Instant::now() >= deadline {
             return Err(io::Error::new(
@@ -1344,6 +1421,77 @@ fn wait_until_responsive(paths: &StatePaths, timeout: Duration) -> io::Result<()
         }
         std::thread::sleep(Duration::from_millis(50));
     }
+}
+
+/// A **round trip**, not a connect.
+///
+/// `up` binds the control socket itself, before the keeper exists
+/// (CLAUDE.md's listener-before-restriction ordering), so it is listening
+/// from that moment and `UnixStream::connect` succeeds into the kernel's
+/// backlog whether or not anyone is accepting. The previous version of
+/// this function tested exactly that and so returned almost immediately,
+/// every time — it could only ever have caught a missing socket file.
+///
+/// That was harmless while `up` did everything after it. It stopped being
+/// harmless when the keeper took over the hooks
+/// (`fix-service-hook-ordering`): a failing hook let `up` sail past this
+/// check and report success. So readiness is now a `Query` that has to be
+/// answered, which the keeper cannot do until it reaches its accept
+/// loop — after the hooks, after services.
+fn keeper_answers(socket: &Path) -> bool {
+    let Ok(mut stream) = UnixStream::connect(socket) else {
+        return false;
+    };
+    // Bounded so a keeper wedged mid-startup cannot hang `up` forever;
+    // the outer loop's deadline is the real budget.
+    let _ = stream.set_read_timeout(Some(Duration::from_millis(200)));
+    if crate::keeper::protocol::write_frame(&mut stream, &crate::keeper::protocol::Frame::Query)
+        .is_err()
+    {
+        return false;
+    }
+    matches!(
+        crate::keeper::protocol::read_frame(&mut stream),
+        Ok(crate::keeper::protocol::Frame::QueryResult(_))
+    )
+}
+
+/// Whether the keeper is still running, by `waitpid(WNOHANG)`.
+///
+/// **Not `kill(pid, 0)`, and the difference is the whole function.** The
+/// keeper is a direct child of `up` whose `Child` is deliberately
+/// forgotten so it can outlive this process (`spawn_keeper`). A child
+/// that exits while its parent is still alive and has not reaped it is a
+/// **zombie** — and a zombie's pid still exists, so `kill(pid, 0)`
+/// succeeds and reports it alive. That was measured, not reasoned about:
+/// the first version of this used signal 0, and a deliberately failing
+/// hook produced the full `KEEPER_START_TIMEOUT` and a "timed out"
+/// message instead of the hook's name.
+///
+/// Reaping here is correct rather than merely convenient: a keeper that
+/// exits during startup is one `up` is about to report as a failure, and
+/// leaving its zombie for init is worse than collecting it. A keeper that
+/// is *running* yields 0 from `waitpid` and is untouched, so the detach
+/// this function is checking on is not disturbed by checking on it.
+fn keeper_alive(pid: libc::pid_t) -> bool {
+    let mut status: libc::c_int = 0;
+    // 0: still running. pid: exited, and now reaped. -1: not our child
+    // (`ECHILD`) — impossible here, and treated as alive rather than
+    // guessed about, since the timeout is the backstop either way.
+    let reaped = unsafe { libc::waitpid(pid, &mut status, libc::WNOHANG) };
+    reaped != pid
+}
+
+/// The last hook-failure line the keeper wrote, if it wrote one.
+///
+/// Reads the whole log rather than seeking: it was truncated at this
+/// `up`'s start (`spawn_keeper`), so it holds this run only and is small.
+fn keeper_failure_reason(log: &Path) -> Option<String> {
+    let text = std::fs::read_to_string(log).ok()?;
+    text.lines()
+        .rev()
+        .find_map(|l| l.strip_prefix(hooks::KEEPER_HOOK_FAILURE_PREFIX))
+        .map(str::to_string)
 }
 
 /// `pub(crate)`: `crate::proxy::spawn` needs the identical clear (its

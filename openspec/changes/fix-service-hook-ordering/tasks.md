@@ -61,16 +61,39 @@
 
 ## 1. Implementation
 
-- [ ] 1.1 The activation script **and** the manifest's
+- [x] 1.1 The activation script **and** the manifest's
       `hooks.post_create` / `hooks.post_start` all complete before the
       first service is started, keeping their existing order relative to
       each other. Both are spawned after `spawn_keeper` today
       (`up.rs:927` and `up.rs:939`, against services started inside the
       keeper at `up.rs:882`), so both race it — fixing only the first
       leaves the case a user can actually express still broken.
-- [ ] 1.2 Service registration stays in the keeper's registry, unchanged.
-- [ ] 1.3 A failing hook of either kind fails `up` at layer `keeper`,
-      exit 5, naming the hook.
+- [x] 1.2 Service registration stays in the keeper's registry,
+      unchanged — `start_services_if_requested` is untouched; the hooks
+      run ahead of the call, not inside it.
+- [x] 1.3 A failing hook of either kind fails `up` at layer `keeper`,
+      exit 5, naming the hook. Measured:
+      `devcroft up: keeper: hook \`post_create\` failed: exited with status 7`,
+      exit code 5, and no service started.
+
+      **Two things had to be fixed that group 0 had got wrong**, both
+      found by the failure path not working:
+
+      - `wait_until_responsive` was not waiting for anything. `up` binds
+        the control socket itself before the keeper exists, so
+        `UnixStream::connect` succeeds into the backlog whether or not
+        anyone is accepting — it could only ever have caught a missing
+        socket file. Harmless while `up` did everything after it; not
+        harmless once a failing hook could sail past it and be reported
+        as success. It is now a `Query` that must be *answered*, which
+        the keeper cannot do before its accept loop. So 0.1's "the
+        success path needs no protocol change" was wrong.
+      - `kill(pid, 0)` reported a dead keeper as alive. The keeper is a
+        direct child whose `Child` is deliberately forgotten, so when it
+        exits it becomes a **zombie** — and a zombie's pid exists. The
+        first version used signal 0 and produced the full timeout and a
+        "timed out" message instead of the hook's name. It is now
+        `waitpid(WNOHANG)`, which also collects the corpse.
 
 ## 2. Tests
 
@@ -78,10 +101,13 @@
       script completing before the first service starts (design.md
       decision 2). Not "the service came up" — that passes for the wrong
       reasons.
-- [ ] 2.2 The existing denied-hook test still passes unchanged.
+- [x] 2.2 The existing denied-hook test still passes unchanged — the
+      whole suite does: 505 passed, 0 failed.
 - [ ] 2.3 Teardown: no service process survives `down`, by process
       absence.
-- [ ] 2.4 `--skip-hooks` suppresses the script and does not fail `up`.
+- [x] 2.4 `--skip-hooks` suppresses the hooks and does not fail `up` —
+      covered by `skip_hooks_bypasses_a_failing_hook_entirely`, and
+      confirmed by hand against a devbox `redis` project.
 - [ ] 2.5 A devbox mariadb project gets its data directory before
       `mariadbd` starts — the case that found this.
 - [ ] 2.6 **The manifest-hook case, which is the one users write**: a
@@ -97,8 +123,15 @@
 
 ## 3. Documentation
 
-- [ ] 3.1 The keeper's own comment currently documents the old ordering
-      as intentional. Correct it, and say why it was right when written.
+- [x] 3.1 The keeper's own comment documented the old ordering as
+      intentional. Corrected, along with two others that were also no
+      longer true: `up.rs`'s note that the keeper's startup "also puts
+      services before hooks, the ordering add-flox-services' design.md
+      decision 4 settled on independently" — right about the mechanism,
+      wrong about the consequence, since `up` ran the hooks afterwards
+      and so nothing ordered the two at all — and
+      `connection::log_record`'s account of who else writes the log,
+      which was `up` and is now the keeper's own stdout.
 - [ ] 3.2 `docs/implementation-log.md`.
 
 ## 4. Verification
