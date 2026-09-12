@@ -31,39 +31,70 @@ version of it does not work.
 
 ## Decisions
 
-### Decision 1: not yet made, and that is the change's substance
+### Decision 1: A — the keeper runs the hooks, then starts services
 
-Two shapes, and they trade the same pair of properties in opposite
-directions:
+**Settled by the project owner.** Both shapes were laid out and traded
+the same pair of properties in opposite directions; the argument each
+way is kept below, because the losing one is a real cost and not a
+strawman.
 
-**A. The keeper runs the script, then starts services.** Ordering becomes
-structural — one process, one sequence, no coordination. Lifetime
+**A (chosen). The keeper runs the hooks, then starts services.** Ordering
+becomes structural — one process, one sequence, no coordination. Lifetime
 ownership does not move. What it needs is a path for the result back to
-`up`: extending `QueryResult` with the script's outcome is the smallest
-version, since `up` already calls `wait_until_responsive` and could poll
-once.
+`up`: extending `QueryResult` with the outcome is the smallest version,
+since `up` already calls `wait_until_responsive` and could read it once.
 
-Cost: `--skip-hooks` and the failure message move into the keeper, and
-`up`'s exit code becomes a function of something it reads rather than
-something it did.
+Cost, paid knowingly: `--skip-hooks` and the failure message move into
+the keeper, and `up`'s exit code becomes a function of something it
+*reads* rather than something it *did*. That is a real weakening of a
+clean property, and it is why the lifecycle delta states the failure
+requirement as surviving "regardless of which process runs the script" —
+the guarantee is older than the reordering and does not bend to it.
 
-**B. `up` runs the script as today, then tells the keeper to start
-services.** Failure surfacing does not move at all. What it needs is a
-control frame whose effect outlives the connection — every existing frame
-is scoped to a session that dies with its client, so this would be the
-first that is not, and that exception has to be written carefully or it
-becomes a way to leak processes.
+**B (rejected). `up` runs the hooks as today, then tells the keeper to
+start services.** Failure surfacing would not move at all. What it needed
+was a control frame whose effect outlives the connection — every existing
+frame is scoped to a session that dies with its client, so it would have
+been the first exception, and an exception in exactly the mechanism that
+prevents leaked processes.
 
-Cost: a new protocol frame with different lifetime semantics from every
-other one.
+**Why A won.** The lifetime contract is what this project has repeatedly
+paid to get right: orphaned services were found twice, once by
+process-compose surviving `down` and once by a service ignoring SIGTERM.
+B pays in that currency; A pays in error-reporting plumbing, which is
+recoverable work rather than a class of bug.
 
-**A is the smaller change to reason about; B is the smaller change to the
-lifetime contract.** The lifetime contract is the one this project has
-repeatedly paid to get right — orphaned services were found twice, once
-by process-compose surviving `down` and once by a service ignoring
-SIGTERM. That argues for A, and A is what this design leans toward, but
-the `QueryResult` extension has not been prototyped and the decision is
-recorded as open rather than asserted.
+**The measurement that makes A structural rather than merely tidier.**
+The two are not ordered today — they *race*, and the hook wins by 9-10 ms
+(four consecutive runs; see proposal.md). A race is not fixed by issuing
+the spawn calls in a better order, because nothing in that order is a
+dependency. A makes service startup *follow the hook's completion* in one
+process, which is the only shape that removes the race rather than
+re-tuning it. B also removes it, by making the frame the dependency — so
+this argument selects A over "reorder the calls", not A over B.
+
+**Group 0 has since measured both open items, and it moved where A's
+cost is** — see tasks.md 0.1 and 0.2 for the citations.
+
+The success path turned out **free**: `up` already polls
+(`wait_until_responsive`, 50 ms, `up.rs:1333`), so a keeper that runs
+hooks, then starts services, then accepts, makes that existing wait the
+ordering wait. No protocol change, nothing added.
+
+The failure path turned out **more expensive than estimated above**, and
+`QueryResult` is the wrong mechanism for it — not because of polling, but
+because answering a `Query` means the keeper is accepting connections,
+i.e. the sandbox *came up*. A keeper reporting a failed hook that way
+contradicts the lifecycle requirement's other half. What A actually needs
+is a failure *channel*: `up` already holds `keeper_pid` and can tell a
+dead keeper from a slow one with a `kill(pid, 0)` in the loop it already
+runs, but the keeper's reason is written to stderr and `up` reads no
+keeper log today. That read is the work A adds.
+
+So the estimate "extending `QueryResult` is the smallest version" is
+withdrawn. The decision stands — the reasoning for A was never that it
+was free, it was that B pays in the lifetime contract — but 1.3 should be
+written against a failure channel rather than against `QueryResult`.
 
 ### Decision 2: the ordering guarantee is asserted by observation, not by success
 
