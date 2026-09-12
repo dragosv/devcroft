@@ -14,6 +14,34 @@ spawn session=2 … bash ".../virtenv/mysql/setup_db.sh"
 The hook creates the database's data directory. `mariadbd` is already
 running by then, against a directory that does not exist, and fails.
 
+**Re-measured, and the framing above is wrong in a way that matters: the
+two are not ordered at all — they race, and the margin is ~9 ms.** With
+devcroft's own `hooks.post_create` against a devbox `redis` project, four
+consecutive runs:
+
+| run | `post_create` | service `Started` | margin |
+|---|---|---|---|
+| 1 | 07:24:29.587 | 07:24:29.597 | **+10 ms** |
+| 2 | 07:24:35.118 | 07:24:35.127 | +9 ms |
+| 3 | 07:24:40.632 | 07:24:40.641 | +9 ms |
+| 4 | 07:24:46.189 | 07:24:46.198 | +9 ms |
+
+The keeper log still reads `services started session=1` *before*
+`spawn session=2 … post_create`, which is what the observation below was
+read from — but that is the **spawn** order, not the order things
+actually happen. process-compose has to boot, load its config, start its
+scheduler and launch the process; that takes ~9 ms, and a hook spawned
+over the control socket in the meantime wins.
+
+**This is worse than a wrong ordering, and it is why this change should
+not be closed by making the hook merely earlier.** A trivial hook wins
+the race and a real one loses it. `date > file` wins by 9 ms; devbox's
+`setup_db.sh`, which sources a generated shell script before doing any
+work, does not — which is exactly the observation below. So a test
+written with a toy hook **passes**, the feature **fails** in use, and the
+difference is a few milliseconds of hook startup. The fix has to
+establish a guarantee, not a better average.
+
 The ordering is deliberate and documented — the keeper's own comment says
 *"Services start here — at keeper startup, before hooks, which `up` runs
 only once this process is responsive"* — and it was correct when written.
