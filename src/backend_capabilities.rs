@@ -263,9 +263,16 @@ pub fn capabilities() -> &'static [Capability] {
         Capability {
             name: "signal-isolation",
             description: "A sandboxed process cannot signal (kill, stop, \
-                ...) processes outside its own sandbox, and nothing \
-                outside can signal into it \u{2014} the one library \
-                capability knob devcroft actually sets.",
+                ...) processes outside its own sandbox \u{2014} the one \
+                library capability knob devcroft actually sets. \
+                One-directional, and deliberately so: this does NOT stop \
+                an unsandboxed process on the host from signalling *in*, \
+                which it cannot, since the host process is under no \
+                profile at all. `down` depends on exactly that, since it \
+                signals the keeper directly. An earlier version of this \
+                line claimed both directions; measured false on macOS, \
+                and unmeasured on Linux \u{2014} do not restore it from \
+                argument.",
             linux: PlatformStatus {
                 status: Status::EnforcedWithNamedDegradation,
                 evidence: "SignalMode::Isolated maps to Landlock's \
@@ -277,10 +284,17 @@ pub fn capabilities() -> &'static [Capability] {
                     keeper::connection tests exercise the isolated case",
             },
             macos: PlatformStatus {
-                status: Status::Unverified,
-                evidence: "Seatbelt signal scoping is configured \
-                    identically via the same set_signal_mode call, but \
-                    has not been run on a macOS host.",
+                status: Status::Enforced,
+                evidence: "Measured live on aarch64-darwin, which is \
+                    what this entry said had not been done. From inside \
+                    a sandbox, kill(pid, 0) against a host process and \
+                    against a process in a *second* sandbox both fail \
+                    with EPERM, while the sandbox signals its own child \
+                    fine \u{2014} so the scope is the sandbox, not a \
+                    blanket denial that would have broken sessions. The \
+                    cross-sandbox row is the one the fleet story needs. \
+                    Inbound is not blocked and is not claimed to be: a \
+                    host process signals into a sandbox normally.",
             },
             linux_probe: Some(landlock_scoping_available),
             macos_probe: None,

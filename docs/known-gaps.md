@@ -701,6 +701,40 @@ it structurally. This is kernel-version-dependent, not a blanket guarantee:
 older kernels without ABI V6 would plausibly still allow it, and `doctor`'s
 ABI line is how to know which regime a given host is in.
 
+## Signal isolation on macOS: measured enforced, and the claim was half wrong
+
+`backend_capabilities` carried this as `unverified` on macOS — *"Seatbelt
+signal scoping is configured identically via the same `set_signal_mode`
+call, but has not been run on a macOS host."* It has been run now
+(2026-09-13, aarch64-darwin, two live sandboxes):
+
+| from | to | result |
+|---|---|---|
+| sandbox `sig1` | a process on the host | **`EPERM`** |
+| sandbox `sig1` | a process inside sandbox `sig2` | **`EPERM`** |
+| sandbox `sig1` | its own child | OK |
+| the host | a process inside a sandbox | OK |
+
+**The cross-sandbox row is the one that matters**, because it is what the
+fleet story needs: one agent must not be able to kill another's
+processes. It holds. The third row is the control that keeps the second
+from being vacuous — a blanket denial would also have produced `EPERM`
+there, and would have broken every session.
+
+**The fourth row contradicts what devcroft claimed.** The capability's
+description said a sandboxed process cannot signal out *"and nothing
+outside can signal into it"*. The second half is false, and it cannot be
+otherwise: an unsandboxed host process is under no profile, so there is
+nothing to enforce against it. `down` depends on exactly that — it
+signals the keeper directly.
+
+So the description is corrected to state one direction rather than two,
+with a note not to restore the other half from argument. The status moves
+to `enforced`, on the direction that was actually claimed and actually
+measured. **Linux's half of that sentence was never measured either**;
+its status is unchanged, but the over-claim was platform-independent and
+is now gone from both.
+
 ## Domain filtering: enforced on Linux, and now measured enforced on macOS too
 
 `add-egress-proxy` shipped a real, enforced domain filter on Linux —
