@@ -241,16 +241,19 @@ argument is restated here rather than left in its proposal.
 
 What separates 0.6 from 1.0 is evidence, not features:
 
-- **macOS.** Seatbelt is implemented and has never run on a CI host. Domain
-  filtering there is unverified, and this project does not ship a security
-  claim it has not measured. The AF_UNIX half of the mount-isolation
-  equivalent has a scoped follow-up now (`add-macos-unix-socket-scoping`,
-  0.2 above) rather than sitting here unexamined; domain filtering, and
-  anything that spike turns up the proposal didn't anticipate, still need
-  a real run. **This doesn't need hardware the project lacks** — the
-  maintainer has direct access to a Mac, just not through this
-  devcontainer — so what's missing is the run happening, not access to
-  run it.
+- **macOS.** Seatbelt is implemented and has never run on a CI host.
+  **Domain filtering there is no longer unverified** — measured
+  2026-09-13 on aarch64-darwin and found *enforced*, not cooperative,
+  which is the opposite of what `up` had been warning
+  (`docs/known-gaps.md`). What remains is that it is a measurement in a
+  document rather than a regression guard: `tests/egress_proxy_e2e.rs`
+  self-skips on macOS because it needs loopback aliases only Linux
+  assigns, and adding them needs root. The AF_UNIX half of the
+  mount-isolation equivalent has a scoped follow-up
+  (`add-macos-unix-socket-scoping`, 0.2 above). **None of this needs
+  hardware the project lacks** — the maintainer has direct access to a
+  Mac, just not through this devcontainer — so what is missing is each
+  run happening, not access to run it.
 - **Scale.** ~~"Eight sandboxes cost one build" follows from a shared
   content-addressed store. It has been tested at two.~~ **Measured at
   eight, and it holds** (2026-09-12, aarch64-darwin, devenv provider,

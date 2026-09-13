@@ -105,7 +105,34 @@ impl HostCapabilities {
     #[cfg(target_os = "macos")]
     fn current() -> Self {
         HostCapabilities {
-            domain_filtering: false,
+            // **`true`, and it used to be `false` on an argument that
+            // measurement reversed.** The warning this drove told every
+            // macOS user that "a process that bypasses the proxy can
+            // reach any host". Measured on aarch64-darwin, in a live
+            // sandbox with `network.default = "deny"` and
+            // `network.allow = ["example.com"]`:
+            //
+            // | probe | in the sandbox | same probe on the host |
+            // |---|---|---|
+            // | raw `connect()` to 1.1.1.1:443, 8.8.8.8:443 | `EPERM` | connected |
+            // | raw `connect()` to 127.0.0.1:54321 (a live listener, not the proxy) | `EPERM` | connected |
+            // | `CONNECT example.com:443` through the proxy | `200` | — |
+            // | `CONNECT cloudflare.com:443` through the proxy | `502` | — |
+            //
+            // So both halves hold: the kernel refuses egress that does
+            // not go through the proxy, and the proxy refuses hosts the
+            // manifest did not allow. The second row is what makes it a
+            // *scoped* rule rather than a permissive one — the sandbox
+            // cannot even reach another loopback port, which matters
+            // because macOS genuinely lacks per-port scoping for
+            // `network.ports` (see `port_scoped_bind` below) and the two
+            // could easily have shared that limitation. They do not.
+            //
+            // `backend_capabilities`' entry said the library's own
+            // `ProxyOnly` doc comment read as enforced while
+            // `policy::degraded` asserted cooperative, and instructed
+            // that this not be resolved from argument. It was not.
+            domain_filtering: true,
             port_scoped_bind: false,
         }
     }

@@ -243,14 +243,19 @@ pub fn capabilities() -> &'static [Capability] {
                     tests/egress_proxy_e2e.rs",
             },
             macos: PlatformStatus {
-                status: Status::Unverified,
-                evidence: "policy::degraded currently asserts this is \
-                    cooperative (unenforced) on macOS, but the pinned \
-                    library's own ProxyOnly doc comment describes a \
-                    *scoped* Seatbelt allow rule, which reads as \
-                    enforced, not cooperative. Neither claim has been \
-                    run on a macOS host \u{2014} this project has none. \
-                    See design.md C2; do not resolve this from argument.",
+                status: Status::Enforced,
+                evidence: "Measured live on aarch64-darwin, which is \
+                    what this entry previously said had never been done: \
+                    inside a sandbox with network.allow set, a raw \
+                    connect() to 1.1.1.1:443, to 8.8.8.8:443 and to a \
+                    live non-proxy listener on 127.0.0.1 all fail with \
+                    EPERM, while the same probes succeed on the host; \
+                    CONNECT through the proxy returns 200 for an allowed \
+                    domain and 502 for one the manifest did not allow. \
+                    The loopback row is the one that proves the rule is \
+                    scoped rather than permissive. The library's own \
+                    ProxyOnly doc comment was right and policy::degraded \
+                    was wrong; the latter is corrected.",
             },
             linux_probe: None,
             macos_probe: None,

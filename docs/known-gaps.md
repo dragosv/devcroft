@@ -701,7 +701,7 @@ it structurally. This is kernel-version-dependent, not a blanket guarantee:
 older kernels without ABI V6 would plausibly still allow it, and `doctor`'s
 ABI line is how to know which regime a given host is in.
 
-## Domain filtering: enforced on Linux, unverified on macOS
+## Domain filtering: enforced on Linux, and now measured enforced on macOS too
 
 `add-egress-proxy` shipped a real, enforced domain filter on Linux —
 Landlock `NetPort` gates every `connect()` except to a resident, per-session
@@ -709,13 +709,49 @@ Landlock `NetPort` gates every `connect()` except to a resident, per-session
 older framing, that domain filtering everywhere was merely cooperative, no
 longer describes Linux.
 
-Whether macOS Seatbelt enforces the equivalent `NetworkMode::ProxyOnly`
-gate as strictly, or only adds a permissive rule without narrowing anything
-else, is **unverified** — the pinned library's own doc comment for the
-macOS output reads as a scoped allow rule, which would argue for "enforced"
-under Seatbelt's default-deny model, but this project has no macOS host to
-measure it live on, and does not ship a security claim it hasn't measured.
-The degraded-on-macOS warning stays on until someone can check.
+**macOS was the open half, and it is now measured — the answer is
+"enforced", which is the opposite of what devcroft was telling its
+users.** The question was whether Seatbelt's `NetworkMode::ProxyOnly`
+narrows anything or merely adds a permissive rule. Measured on
+aarch64-darwin, in a live sandbox with `network.default = "deny"` and
+`network.allow = ["example.com"]`:
+
+| probe | in the sandbox | same probe on the host |
+|---|---|---|
+| raw `connect()` to `1.1.1.1:443`, `8.8.8.8:443` | `EPERM` | connected |
+| raw `connect()` to `127.0.0.1:54321`, a live listener that is **not** the proxy | `EPERM` | connected |
+| `CONNECT example.com:443` through the proxy | `200 Connection Established` | — |
+| `CONNECT cloudflare.com:443` through the proxy | `502 Bad Gateway` | — |
+
+Both halves hold: the kernel refuses egress that does not go through the
+proxy, and the proxy refuses hosts the manifest did not allow.
+
+**The loopback row is the one that settles it.** A rule that merely
+allowed the proxy without narrowing anything would have left every other
+local port reachable — and that was a live possibility rather than a
+pedantic one, because macOS genuinely lacks per-port scoping for
+`network.ports` (see the entry above), so the two could easily have
+shared that limitation. They do not.
+
+`up` warned, until this was measured, that "a process that bypasses the
+proxy can reach any host". That sentence was false on this platform, and
+it is the rarer failure: devcroft *under*-claiming, and telling users to
+distrust something that works. It is removed, and
+`backend_capabilities`' macOS status moves from `unverified` to
+`enforced`.
+
+Worth keeping for the method: that entry carried an explicit instruction
+not to resolve the question from argument, and both readings had a
+plausible case — `policy::degraded` asserted cooperative, the library's
+own `ProxyOnly` doc comment read as scoped. Argument would have picked
+one. It took four probes and their host controls to know which.
+
+**Still not covered by a test.** `tests/egress_proxy_e2e.rs` asserts the
+Linux half and self-skips on macOS, because it needs `127.0.0.3` and
+`127.0.0.4` loopback aliases that only Linux assigns automatically;
+adding them on macOS needs root, which a test may not take. The macOS
+result above is a measurement in this log, not a regression guard, and
+that gap is the honest state.
 
 On Linux, the original assumption was that a process could always bypass a
 domain allowlist with a raw socket straight to an unresolved IP.

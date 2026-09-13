@@ -326,9 +326,8 @@ a VM; that is the supported answer, and already how the macOS path works.
 **What devcroft actually enforces is declared data, not summarised here** —
 run `devcroft doctor` for the full capability matrix against your own host, or
 see [docs/known-gaps.md](docs/known-gaps.md) for the write-up behind each
-still-open entry (no rollback, no cgroup limits, macOS domain filtering
-unverified, no inter-sandbox process visibility separation, Zed's remote
-server). Treat any capability claim elsewhere on this page as a pointer to
+still-open entry (no rollback, no cgroup limits, no inter-sandbox process
+visibility separation, Zed's remote server). Treat any capability claim elsewhere on this page as a pointer to
 that matrix, not a restatement of it — if the two ever disagree, the matrix
 is right.
 
