@@ -4,7 +4,7 @@ devcroft is distributed under Apache-2.0 (see `LICENSE-APACHE` and `NOTICE`). A 
 
 **Generated file — do not edit by hand.** Regenerate with `python3 scripts/gen-third-party-licenses.py` after any `Cargo.lock` change. Scope is normal dependencies only; dev- and build-dependencies are excluded because they are not present in a shipped binary.
 
-335 dependencies, 75 distinct license texts.
+335 dependencies, 74 distinct license texts.
 
 ## Dependencies
 
@@ -16,7 +16,6 @@ devcroft is distributed under Apache-2.0 (see `LICENSE-APACHE` and `NOTICE`). A 
 | `aes` | 0.9.2 | MIT OR Apache-2.0 | [a9040321c3712d8f](#license-text-a9040321c3712d8f) |
 | `aes-gcm` | 0.11.0 | Apache-2.0 OR MIT | [a9040321c3712d8f](#license-text-a9040321c3712d8f) |
 | `aho-corasick` | 1.1.5 | Unlicense OR MIT | [0f96a83840e146e4](#license-text-0f96a83840e146e4) |
-| `allocator-api2` | 0.2.21 | MIT OR Apache-2.0 | [62c7a1e35f564068](#license-text-62c7a1e35f564068) |
 | `argon2` | 0.6.0-rc.8 | MIT OR Apache-2.0 | [a9040321c3712d8f](#license-text-a9040321c3712d8f) |
 | `async-broadcast` | 0.7.2 | MIT OR Apache-2.0 | [e4705ddab847449a](#license-text-e4705ddab847449a) |
 | `async-channel` | 2.5.0 | Apache-2.0 OR MIT | [a60eea8175145316](#license-text-a60eea8175145316) |
@@ -72,6 +71,7 @@ devcroft is distributed under Apache-2.0 (see `LICENSE-APACHE` and `NOTICE`). A 
 | `ctr` | 0.10.1 | MIT OR Apache-2.0 | [a9040321c3712d8f](#license-text-a9040321c3712d8f) |
 | `ctutils` | 0.4.2 | Apache-2.0 OR MIT | [cfc7749b96f63bd3](#license-text-cfc7749b96f63bd3) |
 | `curve25519-dalek` | 5.0.0 | BSD-3-Clause | [403c53069750101a](#license-text-403c53069750101a) |
+| `curve25519-dalek-derive` | 0.1.1 | MIT/Apache-2.0 | [a60eea8175145316](#license-text-a60eea8175145316) |
 | `dashmap` | 6.2.1 | MIT | [16692e8cee4aa06e](#license-text-16692e8cee4aa06e) |
 | `data-encoding` | 2.11.1 | MIT | [b68ad1a3367b8254](#license-text-b68ad1a3367b8254) |
 | `delegate` | 0.13.5 | MIT OR Apache-2.0 | [c6596eb7be8581c1](#license-text-c6596eb7be8581c1) |
@@ -100,7 +100,6 @@ devcroft is distributed under Apache-2.0 (see `LICENSE-APACHE` and `NOTICE`). A 
 | `ff` | 0.14.0 | MIT/Apache-2.0 | [3708458dee7f359a](#license-text-3708458dee7f359a) |
 | `flagset` | 0.4.7 | Apache-2.0 | [cfc7749b96f63bd3](#license-text-cfc7749b96f63bd3) |
 | `flate2` | 1.1.9 | MIT OR Apache-2.0 | [a60eea8175145316](#license-text-a60eea8175145316) |
-| `foldhash` | 0.2.0 | Zlib | [b1181a40b2a7b25c](#license-text-b1181a40b2a7b25c) |
 | `form_urlencoded` | 1.2.2 | MIT OR Apache-2.0 | [a60eea8175145316](#license-text-a60eea8175145316) |
 | `futures` | 0.3.33 | MIT OR Apache-2.0 | [275c491d6d116055](#license-text-275c491d6d116055) |
 | `futures-channel` | 0.3.33 | MIT OR Apache-2.0 | [275c491d6d116055](#license-text-275c491d6d116055) |
@@ -121,7 +120,6 @@ devcroft is distributed under Apache-2.0 (see `LICENSE-APACHE` and `NOTICE`). A 
 | `globset` | 0.4.20 | Unlicense OR MIT | [0f96a83840e146e4](#license-text-0f96a83840e146e4) |
 | `group` | 0.14.0 | MIT/Apache-2.0 | [a60eea8175145316](#license-text-a60eea8175145316) |
 | `hashbrown` | 0.14.5 | MIT OR Apache-2.0 | [a60eea8175145316](#license-text-a60eea8175145316) |
-| `hashbrown` | 0.16.1 | MIT OR Apache-2.0 | [a60eea8175145316](#license-text-a60eea8175145316) |
 | `hashbrown` | 0.17.1 | MIT OR Apache-2.0 | [a60eea8175145316](#license-text-a60eea8175145316) |
 | `hex` | 0.4.3 | MIT OR Apache-2.0 | [c6596eb7be8581c1](#license-text-c6596eb7be8581c1) |
 | `hex-literal` | 1.1.0 | MIT OR Apache-2.0 | [a9040321c3712d8f](#license-text-a9040321c3712d8f) |
@@ -174,7 +172,7 @@ devcroft is distributed under Apache-2.0 (see `LICENSE-APACHE` and `NOTICE`). A 
 | `module-lattice` | 0.2.3 | Apache-2.0 OR MIT | [a9040321c3712d8f](#license-text-a9040321c3712d8f) |
 | `nix` | 0.29.0 | MIT | [66e3ee1fa7f909ad](#license-text-66e3ee1fa7f909ad) |
 | `nix` | 0.31.3 | MIT | [66e3ee1fa7f909ad](#license-text-66e3ee1fa7f909ad) |
-| `nono` | 0.74.0 | Apache-2.0 | [c6596eb7be8581c1](#license-text-c6596eb7be8581c1) |
+| `nono` | 0.77.0 | Apache-2.0 | [c6596eb7be8581c1](#license-text-c6596eb7be8581c1) |
 | `num` | 0.4.3 | MIT OR Apache-2.0 | [a60eea8175145316](#license-text-a60eea8175145316) |
 | `num-bigint` | 0.4.8 | MIT OR Apache-2.0 | [a60eea8175145316](#license-text-a60eea8175145316) |
 | `num-complex` | 0.4.6 | MIT OR Apache-2.0 | [a60eea8175145316](#license-text-a60eea8175145316) |
@@ -222,7 +220,7 @@ devcroft is distributed under Apache-2.0 (see `LICENSE-APACHE` and `NOTICE`). A 
 | `rand_core` | 0.9.5 | MIT OR Apache-2.0 | [6df43f6f4b5d4587](#license-text-6df43f6f4b5d4587) |
 | `regex-automata` | 0.4.18 | MIT OR Apache-2.0 | [a60eea8175145316](#license-text-a60eea8175145316) |
 | `regex-syntax` | 0.8.11 | MIT OR Apache-2.0 | [a60eea8175145316](#license-text-a60eea8175145316) |
-| `regress` | 0.11.1 | MIT OR Apache-2.0 | [e36d55837170195c](#license-text-e36d55837170195c) |
+| `regress` | 0.12.0 | MIT OR Apache-2.0 | [e36d55837170195c](#license-text-e36d55837170195c) |
 | `reqwest` | 0.13.4 | MIT OR Apache-2.0 | [751963a8b88c0e3a](#license-text-751963a8b88c0e3a) |
 | `rfc6979` | 0.6.0 | Apache-2.0 OR MIT | [78779d420019e6b4](#license-text-78779d420019e6b4) |
 | `rsa` | 0.10.0-rc.18 | MIT OR Apache-2.0 | [769f80b5bcb42ed0](#license-text-769f80b5bcb42ed0) |
@@ -251,6 +249,7 @@ devcroft is distributed under Apache-2.0 (see `LICENSE-APACHE` and `NOTICE`). A 
 | `serde_derive` | 1.0.229 | MIT OR Apache-2.0 | [62c7a1e35f564068](#license-text-62c7a1e35f564068) |
 | `serde_json` | 1.0.151 | MIT OR Apache-2.0 | [62c7a1e35f564068](#license-text-62c7a1e35f564068) |
 | `serde_json_canonicalizer` | 0.3.2 | MIT | [aca0ff0ad6d92022](#license-text-aca0ff0ad6d92022) |
+| `serde_norway` | 0.9.42 | MIT OR Apache-2.0 | [62c7a1e35f564068](#license-text-62c7a1e35f564068) |
 | `serde_repr` | 0.1.21 | MIT OR Apache-2.0 | [62c7a1e35f564068](#license-text-62c7a1e35f564068) |
 | `serde_spanned` | 1.1.1 | MIT OR Apache-2.0 | [c6596eb7be8581c1](#license-text-c6596eb7be8581c1) |
 | `serde_urlencoded` | 0.7.1 | MIT/Apache-2.0 | [62c7a1e35f564068](#license-text-62c7a1e35f564068) |
@@ -315,6 +314,7 @@ devcroft is distributed under Apache-2.0 (see `LICENSE-APACHE` and `NOTICE`). A 
 | `typenum` | 1.20.1 | MIT OR Apache-2.0 | [516b24e051bf5630](#license-text-516b24e051bf5630) |
 | `unicode-ident` | 1.0.24 | (MIT OR Apache-2.0) AND Unicode-3.0 | [62c7a1e35f564068](#license-text-62c7a1e35f564068) |
 | `universal-hash` | 0.6.1 | MIT OR Apache-2.0 | [a9040321c3712d8f](#license-text-a9040321c3712d8f) |
+| `unsafe-libyaml-norway` | 0.2.15 | MIT | [23f18e03dc49df91](#license-text-23f18e03dc49df91) |
 | `untrusted` | 0.7.1 | ISC | [7abd9b6960dcf7d4](#license-text-7abd9b6960dcf7d4) |
 | `untrusted` | 0.9.0 | ISC | [7abd9b6960dcf7d4](#license-text-7abd9b6960dcf7d4) |
 | `url` | 2.5.8 | MIT OR Apache-2.0 | [a60eea8175145316](#license-text-a60eea8175145316) |
@@ -352,7 +352,7 @@ These declare Apache-2.0 but ship no license file in the published crate. Apache
 
 - `cms` 0.2.3 — Apache-2.0 OR MIT
 - `delegate` 0.13.5 — MIT OR Apache-2.0
-- `nono` 0.74.0 — Apache-2.0
+- `nono` 0.77.0 — Apache-2.0
 - `russh` 0.62.5 — Apache-2.0
 - `russh-cryptovec` 0.62.0 — Apache-2.0
 - `russh-util` 0.52.0 — Apache-2.0
@@ -971,7 +971,7 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 
 ### License text 23f18e03dc49df91
 
-Applies to: `endi`, `xdg-home`, `zbus_names`, `zmij`, `zvariant_utils`
+Applies to: `endi`, `unsafe-libyaml-norway`, `xdg-home`, `zbus_names`, `zmij`, `zvariant_utils`
 
 ```
 Permission is hereby granted, free of charge, to any
@@ -2662,7 +2662,7 @@ third-party/chromium/LICENSE.
 
 ### License text 62c7a1e35f564068
 
-Applies to: `allocator-api2`, `async-trait`, `itoa`, `libc`, `proc-macro2`, `quote`, `rustversion`, `ryu`, `ryu-js`, `serde`, `serde_bytes`, `serde_core`, and 9 more
+Applies to: `async-trait`, `itoa`, `libc`, `proc-macro2`, `quote`, `rustversion`, `ryu`, `ryu-js`, `serde`, `serde_bytes`, `serde_core`, `serde_derive`, and 9 more
 
 ```
                               Apache License
@@ -7019,32 +7019,6 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
-```
-
-### License text b1181a40b2a7b25c
-
-Applies to: `foldhash`
-
-```
-Copyright (c) 2024 Orson Peters
-
-This software is provided 'as-is', without any express or implied warranty. In
-no event will the authors be held liable for any damages arising from the use of
-this software.
-
-Permission is granted to anyone to use this software for any purpose, including
-commercial applications, and to alter it and redistribute it freely, subject to
-the following restrictions:
-
-1. The origin of this software must not be misrepresented; you must not claim
-    that you wrote the original software. If you use this software in a product,
-    an acknowledgment in the product documentation would be appreciated but is
-    not required.
-
-2. Altered source versions must be plainly marked as such, and must not be
-    misrepresented as being the original software.
-
-3. This notice may not be removed or altered from any source distribution.
 ```
 
 ### License text b1cf9a3333ca7815

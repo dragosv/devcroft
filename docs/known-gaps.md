@@ -502,7 +502,7 @@ DETAIL:  Failed system call was shmget(key=..., size=56, 03600).
 ```
 
 **The cause is now known: the sandbox denies System V shared memory, and
-the backend library's Seatbelt profile never allows it.** `nono` 0.74.0
+the backend library's Seatbelt profile never allows it.** `nono` 0.74.0 (and 0.77.0, now pinned — unchanged)
 emits `ipc-posix-sem`, `ipc-posix-shm-read-data`,
 `ipc-posix-shm-write-create` and `ipc-posix-shm-write-data` — the whole
 POSIX family — and no System V operation at all. Under its

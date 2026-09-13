@@ -9,9 +9,12 @@ name = "devcroft"
 # See `docs/roadmap.md` for when 0.1.0 gets cut.
 version = "0.0.1"
 edition = "2024"
-# Edition 2024 requires 1.85; stated explicitly so a too-old toolchain
-# reports that rather than failing with syntax errors deep in the build.
-rust-version = "1.85"
+# Edition 2024 needs 1.85; nono 0.77 needs 1.95, and a declared floor below
+# a dependency's is a lie cargo only catches at resolve time on the old
+# toolchain. Stated explicitly so a too-old toolchain reports that rather
+# than failing with syntax errors deep in the build. Matches
+# .devcontainer/Dockerfile.
+rust-version = "1.95"
 description = "Isolated, reproducible development environments built on OS-level sandboxing (Landlock/Seatbelt), each reachable over SSH"
 license = "Apache-2.0"
 repository = "https://github.com/dragosv/devcroft"
@@ -55,7 +58,7 @@ test-support = []
 [dependencies]
 base64 = "0.22.1"
 libc = "0.2.189"
-nono = "0.74.0"
+nono = "0.77.0"
 rand = "0.10.2"
 russh = "0.62.5"
 russh-sftp = "2.4.0"

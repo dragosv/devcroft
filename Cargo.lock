@@ -3046,9 +3046,9 @@ dependencies = [
 
 [[package]]
 name = "nono"
-version = "0.74.0"
+version = "0.77.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "14d8733fba69f455f1a0aacb77e4df46862d7b80fc4d42b81a77a820f008b0e5"
+checksum = "6e9977a50d63de19de0511990c967f654d1abe2e3f06c693e0fd3dcce26f5c4c"
 dependencies = [
  "der 0.8.1",
  "getrandom 0.4.3",
@@ -3060,7 +3060,7 @@ dependencies = [
  "libc",
  "nix 0.31.3",
  "prettyplease 0.3.0",
- "regress",
+ "regress 0.12.0",
  "serde",
  "serde_json",
  "sha2 0.11.0",
@@ -3970,6 +3970,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "158a764437582235e3501f683b93a0a6f8d825d04a789dbe5ed30b8799b8908a"
 dependencies = [
  "hashbrown 0.16.1",
+ "memchr",
+]
+
+[[package]]
+name = "regress"
+version = "0.12.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "32eef8b209c3c1c15dbad02c1f30f9539f00dc7253e0cbcdaae442a50a09d7c1"
+dependencies = [
  "memchr",
 ]
 
@@ -5560,7 +5569,7 @@ dependencies = [
  "log",
  "proc-macro2",
  "quote",
- "regress",
+ "regress 0.11.1",
  "schemars",
  "semver",
  "serde",
