@@ -311,17 +311,13 @@ fn a_real_build_succeeds_from_the_devbox_closure_with_the_host_toolchain_denied(
     // mediated separately — the claim is about exec, so the test must
     // exercise exec.
     //
-    // **Linux-only, because the property does not hold on macOS** — a
-    // published gap, not a skipped assertion (docs/known-gaps.md, "Host
-    // binaries execute on macOS"). Seatbelt's profile carries an
-    // unconditional `(allow process-exec*)`, so a sandboxed process can
-    // execute host binaries whose paths the policy never granted;
-    // measured live, `/usr/bin/gcc` runs inside a real macOS sandbox
-    // while `ls -l /usr/bin/gcc` in that same sandbox is refused. The
-    // closure half below is asserted on both platforms — it is the part
-    // that earns the "closure tier" claim; this half is what macOS
-    // currently fails to add to it.
-    #[cfg(target_os = "linux")]
+    // Asserted on both platforms. It used to be Linux-only, for a
+    // published gap: Seatbelt's generated profile carries an unconditional
+    // `(allow process-exec*)`, so `/usr/bin/gcc` ran inside a real macOS
+    // sandbox that refused `ls -l /usr/bin/gcc`. `policy::capability_set::
+    // scope_exec_to_read_grants` now denies `process-exec*` and re-allows
+    // it under the read grants only, which is what Landlock does by
+    // construction — so the same assertion holds on both.
     {
         let out = sandbox.run(&["exec", "--", "/usr/bin/gcc", "--version"]);
         assert!(

@@ -239,18 +239,9 @@ fn shell_channel_allocates_a_pty_and_runs_commands() {
     if skip_if_no_real_ssh_tools() {
         return;
     }
-    // Same published macOS gap `tests/shell_up.rs` skips for: the keeper's
-    // `openpty()` must open the pty *slave*, and the compiled profile
-    // grants only the master (docs/known-gaps.md, "Interactive pty sessions
-    // are refused on macOS"). The non-pty channels below — exec, scp, sftp,
-    // rsync — are not skipped and do work.
-    if cfg!(target_os = "macos") {
-        eprintln!(
-            "skipping: interactive pty sessions are refused on macOS — the compiled \
-             profile grants /dev/ptmx but not the pty slave (docs/known-gaps.md)"
-        );
-        return;
-    }
+    // Runs on macOS too, since `policy::capability_set::grant_pty_slaves`
+    // (docs/known-gaps.md, "Interactive pty sessions are refused on macOS
+    // — fixed"). It used to be skipped there with `tests/shell_up.rs`.
     let Some(sandbox) = Sandbox::up("shell") else {
         return;
     };

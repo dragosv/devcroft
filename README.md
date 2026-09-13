@@ -338,7 +338,8 @@ is right.
 
 Same floor as [nono](https://github.com/nolabs-ai/nono), the sandboxing library
 devcroft is built on. Verified end to end against real tooling in this repo's own
-Linux devcontainer; macOS is implemented but has no host measuring it yet.
+Linux devcontainer and on a macOS 15 host; where the two platforms differ,
+[docs/known-gaps.md](docs/known-gaps.md) says how, with the measurement.
 
 ## Ready to go deep?
 

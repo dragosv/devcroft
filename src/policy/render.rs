@@ -69,6 +69,21 @@ pub fn render(compiled: &CompiledPolicy) -> String {
     // show — and the Linux/macOS split here is about which platform *acts*
     // on the entry, not about which one compiles it.
     render_section(&mut out, "unix_socket.bind", &compiled.unix_socket_bind);
+    // Stated as a rule over the sections above rather than as a third
+    // list of the same paths — the same reasoning as the filesystem view
+    // note below. On Linux it is Landlock's own semantics (a read grant
+    // carries execute; nothing else does); on macOS it is rules devcroft
+    // appends to the library's profile (`capability_set::
+    // scope_exec_to_read_grants`), derived from exactly the grants
+    // Seatbelt received. Same statement on both platforms, because the
+    // sandbox behaves the same on both — which it did not until those
+    // rules existed (docs/known-gaps.md, "Host binaries execute on
+    // macOS").
+    writeln!(
+        out,
+        "process.exec: filesystem.allow + filesystem.read only               baseline"
+    )
+    .unwrap();
     writeln!(out).unwrap();
     render_filesystem_view_note(&mut out);
     out
@@ -254,6 +269,21 @@ mod tests {
                 "the note must still state what does hold off Linux: {out}"
             );
         }
+    }
+
+    #[test]
+    fn render_states_the_exec_rule_with_a_baseline_origin() {
+        let (manifest, _) = parse("[sandbox]\nname = \"rendertest\"\n").unwrap();
+        let out = render(&compile(&manifest));
+        let line = out
+            .lines()
+            .find(|l| l.starts_with("process.exec:"))
+            .expect("process.exec line");
+        assert!(
+            line.contains("filesystem.allow + filesystem.read only"),
+            "{line}"
+        );
+        assert!(line.trim_end().ends_with("baseline"), "{line}");
     }
 
     #[test]

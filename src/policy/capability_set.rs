@@ -200,6 +200,11 @@ impl CapabilityPlan {
         for value in &self.filesystem_read {
             caps = grant(caps, value, project_root, AccessMode::Read)?;
         }
+        #[cfg(target_os = "macos")]
+        {
+            caps = scope_exec_to_read_grants(caps)?;
+            caps = grant_pty_slaves(caps)?;
+        }
         self.apply_network_and_signal(caps)
     }
 
@@ -308,6 +313,91 @@ impl CapabilityPlan {
 
         Ok(caps)
     }
+}
+
+/// macOS only: make `execve` obey the read grants, as Landlock already
+/// does on Linux.
+///
+/// Landlock folds execute into the filesystem grants — nono maps
+/// `AccessMode::Read` to `ReadFile | ReadDir | Execute` — so on Linux a
+/// path nothing granted cannot be executed, and that is the whole of the
+/// "host toolchain is denied" property `own-policy-baseline` measured.
+/// Seatbelt checks `process-exec` as an operation of its own, and the
+/// library's generated profile allows it unconditionally, so on macOS
+/// `/usr/bin/gcc` ran inside a sandbox that refused to `stat` it
+/// (docs/known-gaps.md, "Host binaries execute on macOS", now closed).
+///
+/// The library has no typed mode for this (proposed upstream — see
+/// docs/nono-process-exec-issue.md), but it does emit `platform_rules`
+/// **after** everything it generates, specifically so a targeted deny wins
+/// under Seatbelt's last-rule-wins evaluation. So: one blanket deny, then
+/// one allow per read grant, in both spellings the library itself emits
+/// for `file-read*` (a grant through a symlink such as `/tmp` →
+/// `/private/tmp` needs both). Measured: a copy of `/usr/bin/true` inside
+/// a granted directory runs; `/bin/sh` is refused at `execve` with
+/// `EPERM`; the same grants without these rules run `/bin/sh`.
+///
+/// Reads `caps.fs_capabilities()` rather than the plan's own lists so the
+/// exec set is derived from *exactly* what Seatbelt was granted —
+/// canonicalized, existence-checked, skipped where missing — and cannot
+/// drift from it. `policy --render` states the rule (`process.exec:`)
+/// instead of repeating the paths, for the same reason the filesystem
+/// view note there does not repeat them.
+///
+/// Not a stacked second profile: `sandbox_init()` refuses a second call
+/// from an already sandboxed process (`EPERM`, measured), so this has to
+/// be in the one profile the keeper applies.
+#[cfg(target_os = "macos")]
+fn scope_exec_to_read_grants(mut caps: CapabilitySet) -> Result<CapabilitySet, CapabilitySetError> {
+    let mut rules = vec!["(deny process-exec*)".to_string()];
+    for cap in caps.fs_capabilities() {
+        if !matches!(cap.access, AccessMode::Read | AccessMode::ReadWrite) {
+            continue;
+        }
+        let kind = if cap.is_file { "literal" } else { "subpath" };
+        let mut spellings = vec![cap.resolved.as_path()];
+        if cap.original != cap.resolved {
+            spellings.push(cap.original.as_path());
+        }
+        for path in spellings {
+            rules.push(format!(
+                "(allow process-exec* ({kind} \"{}\"))",
+                seatbelt_escape(path)
+            ));
+        }
+    }
+    for rule in rules {
+        caps = caps.platform_rule(rule)?;
+    }
+    Ok(caps)
+}
+
+/// macOS only: let a session own the pty it is given.
+///
+/// The baseline grants `/dev/ptmx`, and `openpty()` gets its master from
+/// there; the *slave* it then opens is `/dev/ttysNNN`, allocated per
+/// session, which no literal grant can name in advance. The library
+/// already emits a regex `file-ioctl` rule for exactly this pattern but
+/// no read/write one, so every `devcroft shell` and every SSH pty session
+/// failed with `keeper refused to spawn: Operation not permitted`
+/// (docs/known-gaps.md, "Interactive pty sessions are refused on macOS").
+/// Same mechanism as [`scope_exec_to_read_grants`]: a raw rule the
+/// library appends last. The pattern is the library's own, so a slave
+/// name the library would not let `ioctl` is not one this lets `open`.
+#[cfg(target_os = "macos")]
+fn grant_pty_slaves(caps: CapabilitySet) -> Result<CapabilitySet, CapabilitySetError> {
+    Ok(caps.platform_rule("(allow file-read* file-write* (regex #\"^/dev/ttys[0-9]+$\"))")?)
+}
+
+/// A path as a Seatbelt string literal body: `\` and `"` are the only
+/// characters the profile grammar escapes inside `"..."`. The library
+/// escapes the paths it emits itself; a `platform_rule` is verbatim, so
+/// this is devcroft's to do for the rules above.
+#[cfg(target_os = "macos")]
+fn seatbelt_escape(path: &Path) -> String {
+    path.to_string_lossy()
+        .replace('\\', "\\\\")
+        .replace('"', "\\\"")
 }
 
 /// Every `filesystem_deny` entry against every `filesystem_allow`/
@@ -836,5 +926,80 @@ mod tests {
         let json = serde_json::to_string(&plan).unwrap();
         let back: CapabilityPlan = serde_json::from_str(&json).unwrap();
         assert_eq!(plan, back);
+    }
+
+    /// The exec set is the read set, both spellings, and nothing else —
+    /// asserted on the rules themselves, because the live measurement
+    /// (`tests/devbox_provider_e2e.rs`, host gcc refused) needs a closure
+    /// and this does not.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn exec_is_scoped_to_the_read_grants_in_both_spellings() {
+        let root = project_dir();
+        std::fs::create_dir_all(&root).unwrap();
+        let (manifest, _) = parse("[sandbox]\nname = \"capsettest\"\n").unwrap();
+
+        let caps = compile(&manifest)
+            .to_capability_plan()
+            .to_capability_set(&root)
+            .unwrap();
+        let rules = caps.platform_rules();
+
+        // The blanket deny comes first, so every allow after it is what
+        // wins under last-rule-wins — the order is the correctness.
+        assert_eq!(rules[0], "(deny process-exec*)");
+        let canonical_root = root.canonicalize().unwrap();
+        let allow_for = |p: &Path| format!("(allow process-exec* (subpath \"{}\"))", p.display());
+        assert!(rules.contains(&allow_for(&canonical_root)), "{rules:?}");
+        // `temp_dir()` is under `/var`, a symlink to `/private/var`: the
+        // library grants `file-read*` on both spellings, so exec must too.
+        // The original spelling is the one the library was handed —
+        // `<root>/.`, the manifest's `"."` joined — so match on prefix.
+        assert_ne!(root, canonical_root, "this test needs a symlinked root");
+        let original_prefix = format!("(allow process-exec* (subpath \"{}", root.display());
+        assert!(
+            rules.iter().any(|r| r.starts_with(&original_prefix)),
+            "{rules:?}"
+        );
+        // Nothing the read set does not contain.
+        assert!(!rules.iter().any(|r| r.contains("/usr/bin")), "{rules:?}");
+        assert!(
+            !rules.iter().any(|r| r == "(allow process-exec*)"),
+            "{rules:?}"
+        );
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn pty_slaves_are_readable_and_writable_by_pattern() {
+        let root = project_dir();
+        std::fs::create_dir_all(&root).unwrap();
+        let (manifest, _) = parse("[sandbox]\nname = \"capsettest\"\n").unwrap();
+
+        let caps = compile(&manifest)
+            .to_capability_plan()
+            .to_capability_set(&root)
+            .unwrap();
+
+        assert!(
+            caps.platform_rules()
+                .iter()
+                .any(|r| r == "(allow file-read* file-write* (regex #\"^/dev/ttys[0-9]+$\"))"),
+            "{:?}",
+            caps.platform_rules()
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn seatbelt_escape_handles_the_two_characters_the_grammar_escapes() {
+        assert_eq!(seatbelt_escape(Path::new("/a/b")), "/a/b");
+        assert_eq!(
+            seatbelt_escape(Path::new("/a \"b\"/c\\d")),
+            "/a \\\"b\\\"/c\\\\d"
+        );
     }
 }

@@ -340,39 +340,59 @@ nothing:**
 enforced (degraded)` on macOS, with both degradations named in the entry
 itself rather than in a footnote.
 
-## Host binaries execute on macOS, even at ungranted paths
+## Host binaries execute on macOS, even at ungranted paths — fixed
 
-**`own-policy-baseline`'s "the host toolchain is denied" property is Linux-only,
-and nothing said so until now.** It was measured on Linux, where Landlock's
-default-deny filesystem policy covers execution like any other access. macOS does
-not work that way: the backend library's Seatbelt profile carries an
-unconditional `(allow process-exec*)`, and Seatbelt treats executing a file as a
-separate operation from reading it.
+**`own-policy-baseline`'s "the host toolchain is denied" property was
+Linux-only, and nothing said so until this entry was written.** It was
+measured on Linux, where Landlock's default-deny filesystem policy covers
+execution like any other access. macOS does not work that way: the backend
+library's Seatbelt profile carries an unconditional `(allow process-exec*)`,
+and Seatbelt treats executing a file as a separate operation from reading it.
 
 Measured live in a real devcroft sandbox on macOS 15.7.4, with a devbox closure
 and `network.default = "deny"`:
 
-- `/bin/echo`, `/bin/ls`, `/usr/bin/gcc` and `/usr/bin/clang` all **execute**,
+- `/bin/echo`, `/bin/ls`, `/usr/bin/gcc` and `/usr/bin/clang` all **executed**,
   none of them granted by the manifest, the provider, or the baseline.
-- Reading those same paths is **refused**: `ls -l /usr/bin/gcc` from inside the
-  same sandbox gets `Operation not permitted`, as does `cat /etc/hosts`,
+- Reading those same paths was **refused**: `ls -l /usr/bin/gcc` from inside the
+  same sandbox got `Operation not permitted`, as did `cat /etc/hosts`,
   `ls ~/.ssh`, and `ls /usr/bin`.
 
-So the filesystem boundary is real and enforced; it simply does not extend to
-`execve`. The practical consequence is narrower than it first looks — a host
-binary that runs still cannot *read* anything the policy denies, so it cannot
-exfiltrate project files it was not already granted — but "the sandbox runs only
-what the closure provides" is not true on macOS, and a build that silently picks
-up a host tool will succeed there and fail on Linux.
+So the filesystem boundary was real; it simply did not extend to `execve`. A
+host binary that ran still could not *read* anything the policy denied, so it
+could not exfiltrate project files it was not already granted — but "the
+sandbox runs only what the closure provides" was not true on macOS, and a
+build that silently picked up a host tool succeeded there and failed on Linux.
 
-`tests/devbox_provider_e2e.rs` asserts the denial on Linux and is gated off on
-macOS with a pointer here, rather than the assertion being deleted or weakened to
-pass on both.
+**Fixed, in devcroft, through a seam the library already had.** The previous
+version of this entry said the fix was upstream-only, because the profile is
+the library's to generate. That was wrong: `CapabilitySet::platform_rule`
+injects raw Seatbelt rules, and the library emits them **after** everything it
+generates itself — deliberately, so that a targeted deny wins under
+Seatbelt's last-rule-wins evaluation (its own comment cites nono #970). So
+`policy::capability_set::scope_exec_to_read_grants` appends
+`(deny process-exec*)` and then one `(allow process-exec* (subpath|literal
+...))` per read grant, in both spellings the library emits for `file-read*`.
+That is exactly Landlock's semantics — the library maps a read grant to
+`ReadFile | ReadDir | Execute` there and nothing else carries `Execute` — so
+the two platforms now agree.
 
-Not yet investigated: whether `nono` can be asked to scope `process-exec*`, or
-whether devcroft should refuse to claim closure-tier semantics on macOS until it
-can. Both belong to `own-policy-baseline`, which is where the property was
-established.
+Three measurements, in the order they were needed:
+
+| probe | result |
+|---|---|
+| a second `sandbox_init()` from an already sandboxed process | `EPERM`, either order — Seatbelt does not stack, so no macOS analogue of the library's Linux-only `restrict_execute` layer is possible; the rule has to be in the one profile |
+| `(deny default)` + scoped `process-exec*` on a granted dir | a copy of `/usr/bin/true` there runs; `/bin/sh` refused at `execve` with `EPERM`; the same grants without the rules run `/bin/sh` |
+| `tests/devbox_provider_e2e.rs`, host-gcc assertion un-gated on macOS | passes with the rules; **fails without them** (`gcc --version` printed a version) — the control that shows the rules are what does it |
+
+`policy --render` states the rule as `process.exec: filesystem.allow +
+filesystem.read only   baseline`, on both platforms, and `doctor` carries it
+as `execute-scoping`. A typed mode in the library — so a consumer does not
+have to know the last-rule-wins detail — is proposed in
+[nono-process-exec-issue.md](nono-process-exec-issue.md), with an
+implementation; until it lands, the raw rules are the fix, and they are
+derived from `caps.fs_capabilities()` so they cannot drift from what
+Seatbelt was actually granted.
 
 ## A C toolchain from a closure cannot link on macOS
 
@@ -395,30 +415,32 @@ Found while making the test suite run on macOS for the first time
 (`add-macos-unix-socket-scoping`); the Linux half of the same test is unchanged
 and still asserts the full compile-link-run path.
 
-## Interactive pty sessions are refused on macOS
+## Interactive pty sessions are refused on macOS — fixed
 
-**`devcroft shell` does not work on macOS, and neither does an SSH session that
-asks for a pty.** Both fail with `keeper refused to spawn: Operation not
-permitted`. Non-pty sessions (`devcroft exec`) are unaffected and work normally.
+**`devcroft shell` did not work on macOS, and neither did an SSH session that
+asked for a pty.** Both failed with `keeper refused to spawn: Operation not
+permitted`. Non-pty sessions (`devcroft exec`) were unaffected.
 
 The cause, measured from inside a real sandbox rather than inferred from the
 symptom: `openpty()` allocates a master and then `open()`s the corresponding
 **slave** (`/dev/ttysNNN`). The compiled profile grants the master — `/dev/ptmx`
 is a baseline `filesystem.allow` entry — and the backend library adds tty
-*ioctl* rules for slave paths, but nothing grants read or write on the slave
-itself. Directly confirmed in a running sandbox: `/dev/ptmx` is readable, and
-opening `/dev/ttys000` is refused.
+*ioctl* rules for slave paths, but nothing granted read or write on the slave
+itself. Directly confirmed in a running sandbox: `/dev/ptmx` was readable, and
+opening `/dev/ttys000` was refused.
 
-devcroft cannot close this on its own. Baseline grants are literal paths and the
-slave path is allocated per session, so expressing it needs a pattern rule; the
-backend library already emits regex-based tty rules on macOS (for `file-ioctl`)
-and would need to extend them to read/write. Granting all of `/dev` instead
-would be a far larger widening than the problem warrants. This is an upstream
-ask, in the same category as the one already drafted about gating the library's
-trust module.
-
-`tests/shell_up.rs` skips on macOS naming this entry, rather than asserting
-something weaker — so closing the gap makes the test run again by itself.
+**Fixed by one rule, through the same seam as the entry above.** This entry
+used to say devcroft could not close it alone, because baseline grants are
+literal paths and the slave is allocated per session. The pattern rule it
+needed is expressible as a raw platform rule:
+`(allow file-read* file-write* (regex #"^/dev/ttys[0-9]+$"))` — the
+library's own regex, the one it already uses for `file-ioctl`, so a slave the
+library would not let `ioctl` is not one this lets `open`
+(`policy::capability_set::grant_pty_slaves`). Measured with
+`tests/shell_up.rs`, whose macOS skip is removed: a real flox sandbox with a
+pty session passes; with the rule commented out the same test fails at the
+spawn. Granting all of `/dev` would have been the far larger widening this
+entry warned against, and was not needed.
 
 ## `network.ports` is all-or-nothing on macOS
 
@@ -470,7 +492,7 @@ does not work today: devenv computes `/tmp/devenv-<hash>` from the
 project path at evaluation time and ignores `TMPDIR`. Narrowing this
 belongs to `own-policy-baseline` and needs the providers to cooperate.
 
-## PostgreSQL cannot start in a sandbox on macOS — cause isolated, fix is upstream
+## PostgreSQL cannot start in a sandbox on macOS — cause isolated, one rule away
 
 Its postmaster fails during `initdb`'s bootstrap:
 
@@ -536,15 +558,20 @@ and system-wide `shmmni` both yield `ENOSPC`, never `EPERM`) — but with a
 full table the primary failure is invisible behind the secondary one.
 `ipcrm` the leaked segments before investigating anything here.
 
-**The fix is one Seatbelt rule and it is not devcroft's to emit.** The
-profile is generated by the library from a capability set; devcroft has
-no seam that adds a raw SBPL operation. So this is an upstream request,
-drafted at [nono-sysv-ipc-issue.md](nono-sysv-ipc-issue.md):
-`nono` should allow the System V IPC operations alongside the POSIX ones
-it already emits, or expose them as a capability a caller can ask for.
-Until then, any workload using SysV shared memory — PostgreSQL is the
-common one — cannot run in a devcroft sandbox on macOS. Linux is
-unaffected: Landlock does not mediate SysV IPC.
+**The fix is one Seatbelt rule, and devcroft *can* emit it — this entry
+said otherwise, wrongly.** `CapabilitySet::platform_rule` injects a raw
+SBPL rule and the library appends it after its own (see "Host binaries
+execute on macOS" above, which is closed through exactly that seam).
+`platform_rule("(allow ipc-sysv-shm)")` is the whole mechanism. What is
+**not** decided is whether devcroft should emit it: System V IPC is a
+global namespace with no per-sandbox scoping, so granting it is a real
+widening, and the manifest has no key to ask for it. That is a policy
+decision, not a blocker, and it is left open here rather than made by a
+drive-by. The upstream draft at
+[nono-sysv-ipc-issue.md](nono-sysv-ipc-issue.md) is accordingly a request
+for a *typed* capability — so the grant shows up in the capability model
+rather than as an opaque string — with the raw rule declared as the
+workaround it is. Linux is unaffected: Landlock does not mediate SysV IPC.
 
 **Confirmed through a second provider.** devbox's `postgresql` plugin
 fails identically — `devcroft exec -- initdb` inside a devbox sandbox

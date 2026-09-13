@@ -199,6 +199,39 @@ pub fn capabilities() -> &'static [Capability] {
             macos_probe: Some(crate::policy::backend_supported),
         },
         Capability {
+            name: "execute-scoping",
+            description: "A sandboxed process can execute only files \
+                under its read grants \u{2014} the closure, the project, \
+                and the baseline \u{2014} so a build that reaches for a host \
+                tool fails the same way on both platforms.",
+            linux: PlatformStatus {
+                status: Status::Enforced,
+                evidence: "Landlock: the library maps a read grant to \
+                    ReadFile | ReadDir | Execute and nothing else carries \
+                    Execute, so exec is scoped by construction. \
+                    tests/devbox_provider_e2e.rs asserts the host gcc is \
+                    refused while the closure's builds.",
+            },
+            macos: PlatformStatus {
+                status: Status::Enforced,
+                evidence: "Seatbelt checks process-exec separately from \
+                    file-read*, and the library's profile allows it \
+                    unconditionally \u{2014} measured, /usr/bin/gcc ran \
+                    inside a sandbox that refused to stat it. devcroft \
+                    appends `(deny process-exec*)` plus one allow per read \
+                    grant through the library's platform_rules seam, which \
+                    it emits last so the deny wins \
+                    (policy::capability_set::scope_exec_to_read_grants). \
+                    Measured on macOS 15.7.4: with the rules the same gcc \
+                    is refused at execve and the closure's gcc still runs; \
+                    without them the assertion fails. The same e2e test \
+                    now runs on both platforms. Typed upstream form \
+                    proposed in docs/nono-process-exec-issue.md.",
+            },
+            linux_probe: Some(crate::policy::backend_supported),
+            macos_probe: Some(crate::policy::backend_supported),
+        },
+        Capability {
             name: "network-block-and-ports",
             description: "Deny-by-default outbound TCP, with an explicit \
                 per-port loopback allowlist for services and dev servers \

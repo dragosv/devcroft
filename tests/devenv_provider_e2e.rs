@@ -461,39 +461,37 @@ fn a_hook_denied_by_the_policy_fails_up_at_the_keeper_layer() {
 /// compile inside the sandbox needs the project root and the store, and
 /// the host's own toolchain is denied.
 ///
-/// **Linux only, and the reason is not convenience.** macOS cannot make
-/// either half of this measurement: host binaries execute there even at
-/// ungranted paths, so `/usr/bin/cc` being reachable would say nothing,
-/// and devenv's own preamble already fails on `/tmp` there — both
-/// recorded in `docs/known-gaps.md`. A version of this test that passed
-/// on macOS would be asserting the platform's gaps, not the provider's
-/// behaviour.
+/// **The compile half is Linux only, and the reason is not convenience:**
+/// a C toolchain from a closure cannot *link* on macOS (`docs/known-gaps.md`,
+/// "A C toolchain from a closure cannot link on macOS" — the nix linker
+/// wrapper reads `/dev/fd/63`, which the baseline does not grant). The
+/// denial half runs on both platforms: it used to be macOS-skipped too,
+/// because host binaries executed there at ungranted paths, and that gap
+/// is closed (same file, "Host binaries execute on macOS — fixed";
+/// `tests/devbox_provider_e2e.rs` is the same split, measured on a macOS
+/// host). A version of this test whose compile half passed on macOS
+/// would be asserting the platform's gap, not the provider's behaviour.
 #[test]
 fn a_compile_inside_the_sandbox_uses_the_closures_toolchain_and_not_the_hosts() {
-    if !cfg!(target_os = "linux") {
-        eprintln!(
-            "skipping: the closure-tier measurement is Linux-only — macOS executes host \
-             binaries at ungranted paths, so the denial half cannot be observed \
-             (docs/known-gaps.md)"
-        );
-        return;
-    }
     let Some(sandbox) = Sandbox::new("closuretier", &["gcc"], "", true) else {
         return;
     };
     assert!(sandbox.run(&["up"]).status.success());
 
-    std::fs::write(
-        sandbox.project_root.join("probe.c"),
-        "int main(void) { return 0; }\n",
-    )
-    .unwrap();
+    #[cfg(target_os = "linux")]
+    {
+        std::fs::write(
+            sandbox.project_root.join("probe.c"),
+            "int main(void) { return 0; }\n",
+        )
+        .unwrap();
 
-    let out = sandbox.run(&["exec", "--", "sh", "-c", "cc -o probe probe.c && ./probe"]);
-    assert!(
-        out.status.success(),
-        "a compile must work from the closure's own toolchain, under deny-all network: {out:?}"
-    );
+        let out = sandbox.run(&["exec", "--", "sh", "-c", "cc -o probe probe.c && ./probe"]);
+        assert!(
+            out.status.success(),
+            "a compile must work from the closure's own toolchain, under deny-all network: {out:?}"
+        );
+    }
 
     let host = sandbox.run(&["exec", "--", "/usr/bin/cc", "--version"]);
     assert!(

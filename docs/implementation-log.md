@@ -886,3 +886,38 @@ also exactly what `add-devenv-services` refused for devenv's
 devenv would have left two opposite answers to one question in the
 codebase. The cost of translating is one dependency; the cost of
 forwarding is the seam.
+
+**Two macOS gaps closed by a seam the library had all along — and the
+entry that said otherwise was written without checking.** `docs/known-gaps.md`
+carried "Host binaries execute on macOS" and "Interactive pty sessions are
+refused on macOS" as upstream-only: the Seatbelt profile is the library's
+to generate, the first said, and the second added that a per-session
+`/dev/ttysNNN` needs a pattern rule no literal grant can express. Both
+diagnoses were right and both conclusions were wrong. `nono` has had
+`CapabilitySet::platform_rule` since before the version devcroft pins,
+and it emits those rules *after* everything it generates — deliberately,
+so a targeted deny wins under last-rule-wins. That is the whole
+mechanism: `(deny process-exec*)` followed by one allow per read grant
+gives macOS Landlock's own exec semantics, and one regex rule — the
+library's own pattern, borrowed from its `file-ioctl` line — lets a
+session open its pty slave. Each was proven with its control: the host
+gcc assertion in `tests/devbox_provider_e2e.rs` and the pty session in
+`tests/shell_up.rs`, un-gated on macOS, pass with the rules and fail
+without them.
+
+The order of discovery is the useful part. The first plan was upstream:
+a typed `ProcessExecMode` in the library, implemented and tested on a
+branch, with the measurement that Seatbelt refuses a second
+`sandbox_init()` (so there is no macOS analogue of the library's
+Linux-only `restrict_execute` layer — the rule has to be in the one
+profile). The seam was found only afterwards, while checking whether the
+*other* upstream draft — System V IPC for PostgreSQL — followed the
+library's issue template. Its "What have you tried instead?" field had
+no honest answer, because the draft claimed *"no value of any public API"*
+could grant it, and `platform_rule("(allow ipc-sysv-shm)")` can. One
+template field exposed a false premise in a document this project had
+been treating as settled. Both drafts are rewritten: each now names the
+raw rule as the workaround it is and asks for the typed form on its own
+merits. The typed exec mode is still worth upstreaming — a consumer
+should not need to know the last-rule-wins detail — but as a
+convenience, not as the only fix, which is a weaker claim and a true one.

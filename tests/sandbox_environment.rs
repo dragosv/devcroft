@@ -59,13 +59,19 @@ fn the_invoking_shell_does_not_reach_the_sandbox() {
         eprintln!("skipping: flox init failed");
         return;
     }
+    // `bash` as well as `coreutils`, because the probes below run `sh -c`.
+    // With coreutils alone the closure has no `sh`, so the keeper's PATH
+    // walk fell through to the host's `/bin/sh` — which on macOS *executed*
+    // until execute-scoping landed (docs/known-gaps.md, "Host binaries
+    // execute on macOS — fixed"), so this test passed there by way of the
+    // gap it was not about. The sandbox's shell must come from the closure.
     if !Command::new("flox")
-        .args(["install", "coreutils"])
+        .args(["install", "coreutils", "bash"])
         .current_dir(&root)
         .output()
         .is_ok_and(|o| o.status.success())
     {
-        eprintln!("skipping: flox install coreutils failed");
+        eprintln!("skipping: flox install coreutils bash failed");
         return;
     }
 

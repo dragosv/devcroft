@@ -69,25 +69,6 @@ fn shell_runs_commands_over_a_pty_and_falls_back_when_shell_is_missing() {
         return;
     }
 
-    // **Skipped on macOS: pty sessions do not work there at all** — a
-    // published gap, not a flaky test (docs/known-gaps.md, "Interactive pty
-    // sessions are refused on macOS"). The keeper's `openpty()` has to
-    // `open()` the pty *slave* (`/dev/ttysNNN`), and the compiled profile
-    // grants only the master (`/dev/ptmx`); measured directly from inside a
-    // real sandbox, the master reads fine and opening a slave is refused.
-    // Every `devcroft shell` and every SSH pty session therefore fails with
-    // `keeper refused to spawn: Operation not permitted`. Left as a skip
-    // rather than a weakened assertion so that fixing the gap makes this
-    // test start running again.
-    if cfg!(target_os = "macos") {
-        eprintln!(
-            "skipping: interactive pty sessions are refused on macOS — the compiled \
-             profile grants /dev/ptmx but not the pty slave (docs/known-gaps.md)"
-        );
-        let _ = std::fs::remove_dir_all(&project_root);
-        return;
-    }
-
     let sandbox_name = format!("e2eshell{}", std::process::id());
     let (manifest, _) = parse(&format!("[sandbox]\nname = {sandbox_name:?}\n")).unwrap();
     let paths = StatePaths::new(&sandbox_name).unwrap();
