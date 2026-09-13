@@ -60,6 +60,25 @@ fn tooling_missing() -> bool {
 /// Counts host processes whose argv contains `needle`, without matching
 /// the counting command itself — `pgrep -f` matches its own command line
 /// and reports a false positive, which bit repeatedly during development.
+/// Counts host processes whose command line contains `needle`.
+///
+/// **The needle must identify *this* test's processes**, not a program
+/// this test happens to use. `ps -eo args` is host-wide by design — that
+/// is what makes teardown verifiable by absence rather than by a stop
+/// command's exit status — but it also sees every other sandbox on the
+/// machine, including the ones other test binaries are running
+/// concurrently.
+///
+/// Learned the hard way: this file asserted zero `http.server` processes
+/// after `down`, while `tests/host_port_reachability.rs` deliberately
+/// keeps one running inside its own sandbox for the length of its own
+/// test. `cargo test` runs test binaries in parallel, so the two windows
+/// overlapped and this file failed on a process it did not start and was
+/// never asserting about. It passed when run alone, which is the worst
+/// shape a failure can have.
+///
+/// So: scope the needle by this test's own port or sandbox name. A bare
+/// program name is a bug here, not a shorthand.
 fn host_process_count(needle: &str) -> usize {
     let out = Command::new("ps").arg("-eo").arg("args").output().unwrap();
     String::from_utf8_lossy(&out.stdout)
@@ -193,7 +212,7 @@ fn a_declared_service_runs_inside_the_sandbox_and_is_reaped_by_down() {
     );
 
     assert!(
-        host_process_count("http.server") > 0,
+        host_process_count(&format!("http.server {PORT}")) > 0,
         "sanity: the service process should be visible on the host before teardown"
     );
 
@@ -248,7 +267,11 @@ fn a_declared_service_runs_inside_the_sandbox_and_is_reaped_by_down() {
     let deadline = Instant::now() + Duration::from_secs(15);
     let mut reaped = false;
     while Instant::now() < deadline {
-        if host_process_count("http.server") == 0 && host_process_count("process-compose up") == 0 {
+        // Both needles are scoped to this test: its own port, and its own
+        // sandbox's supervisor config path. See `host_process_count`.
+        if host_process_count(&format!("http.server {PORT}")) == 0
+            && host_process_count(&format!("/{sandbox_name}/services.yaml")) == 0
+        {
             reaped = true;
             break;
         }

@@ -952,6 +952,34 @@ fn up_process(
         })
     })?;
 
+    // **And then wait for the supervisor's own socket, when there is one.**
+    //
+    // `wait_until_responsive` returns as soon as the keeper answers a
+    // `Query`, which it does immediately after *spawning* the supervisor
+    // — not after the supervisor has bound anything. Measured: `up`
+    // returned 17 ms before `services.sock` existed, so a `status` run
+    // straight after `up` reported `supervisor unreachable` and every
+    // service as `not started`, three times out of three, while the
+    // services were in fact starting normally.
+    //
+    // That window is a consequence of `fix-service-hook-ordering`. Before
+    // it, `up` ran the hooks *after* this point, over the control socket,
+    // and their duration was what the supervisor got to bind in. Moving
+    // the hooks ahead of services removed the only thing standing between
+    // spawning process-compose and `up` returning — an accidental
+    // dependency, and this is it made deliberate.
+    //
+    // **This does not wait for services to be ready**, which the
+    // `services` spec forbids ("services do not block sandbox
+    // availability") — a probe that never passes would hang `up` forever.
+    // It waits for the supervisor's own startup, which is bounded and
+    // fast, and it treats a timeout as non-fatal: the sandbox is up, and
+    // `status` already has the vocabulary to report a supervisor that
+    // never arrived.
+    if let Some(name) = services {
+        wait_for_supervisor(&crate::services::socket_path(project_root, name));
+    }
+
     // Hooks used to run here, over the control socket, once the keeper
     // was responsive. They now run *inside* the keeper, before it starts
     // any service — see `keeper_hooks` above and
@@ -1420,6 +1448,32 @@ fn wait_until_responsive(
             ));
         }
         std::thread::sleep(Duration::from_millis(50));
+    }
+}
+
+/// Waits, briefly and non-fatally, for the service supervisor to bind its
+/// socket.
+///
+/// Non-fatal on purpose: a supervisor that never appears is a real
+/// problem, but it is not one `up` should turn into a failed sandbox —
+/// the services spec keeps service health off the sandbox-availability
+/// path, and `status` reports an unreachable supervisor in its own words.
+/// All this removes is the window where `up` has returned and the socket
+/// has not yet appeared, which made an otherwise healthy sandbox look
+/// broken to anything that looked immediately.
+///
+/// Existence, not a connection: process-compose binds the socket before
+/// it accepts, and `status` does its own connect afterwards. Waiting for
+/// a successful connect here would duplicate that and could block on a
+/// supervisor mid-startup.
+fn wait_for_supervisor(socket: &Path) {
+    const BUDGET: Duration = Duration::from_secs(5);
+    let deadline = Instant::now() + BUDGET;
+    while !socket.exists() {
+        if Instant::now() >= deadline {
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(5));
     }
 }
 
