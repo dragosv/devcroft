@@ -99,12 +99,36 @@ mod tests {
         let mut slave = unsafe { File::from_raw_fd(pty.slave_fd) };
 
         slave.write_all(b"hello from slave\n").unwrap();
-        let mut buf = [0u8; 64];
-        let n = pty.master.read(&mut buf).unwrap();
+
         // Default (cooked-mode) termios settings apply ONLCR: a bare `\n`
         // written by the slave side arrives at the master as `\r\n`, same
         // as any real terminal.
-        assert_eq!(&buf[..n], b"hello from slave\r\n");
+        //
+        // A master read is not line-atomic, though, and asserting on one
+        // read made this fail on a GitHub ubuntu runner: the first read
+        // returned the 16 payload bytes and left `\r\n` for the next one.
+        // Accumulate instead — and poll with a deadline, so a genuinely
+        // wrong expectation fails the test rather than blocking it
+        // forever on a read that will never complete.
+        const EXPECTED: &[u8] = b"hello from slave\r\n";
+        let mut got = Vec::new();
+        while got.len() < EXPECTED.len() {
+            let mut pfd = libc::pollfd {
+                fd: pty.master.as_raw_fd(),
+                events: libc::POLLIN,
+                revents: 0,
+            };
+            let ready = unsafe { libc::poll(&mut pfd, 1, 5_000) };
+            assert!(
+                ready > 0,
+                "master produced only {got:?} within 5s, expected {EXPECTED:?}"
+            );
+            let mut buf = [0u8; 64];
+            let n = pty.master.read(&mut buf).unwrap();
+            assert!(n > 0, "master hit EOF after {got:?}");
+            got.extend_from_slice(&buf[..n]);
+        }
+        assert_eq!(got, EXPECTED);
     }
 
     #[test]

@@ -241,7 +241,8 @@ argument is restated here rather than left in its proposal.
 
 What separates 0.6 from 1.0 is evidence, not features:
 
-- **macOS.** Seatbelt is implemented and has never run on a CI host.
+- **macOS.** Seatbelt is implemented, runs on a `macos-latest` CI leg
+  (`.github/workflows/ci.yml`) and on a real Mac.
   **Domain filtering there is no longer unverified** — measured
   2026-09-13 on aarch64-darwin and found *enforced*, not cooperative,
   which is the opposite of what `up` had been warning

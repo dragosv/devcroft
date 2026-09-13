@@ -23,11 +23,25 @@ use std::io;
 /// The user namespace comes first and is what makes the rest
 /// unprivileged: a process that creates one holds a full capability set
 /// *inside it*, including the `CAP_NET_ADMIN` that [`bring_loopback_up`]
-/// needs, without any privilege on the host and without writing a uid
-/// map first (verified live — the ioctl below succeeds immediately after
-/// this call). `user_namespaces(7)` guarantees the ordering: given
-/// several `CLONE_NEW*` flags in one call, the user namespace is created
-/// first and owns the others.
+/// needs, without any privilege on the host. `user_namespaces(7)`
+/// guarantees the ordering: given several `CLONE_NEW*` flags in one
+/// call, the user namespace is created first and owns the others.
+///
+/// **Writes `uid_map`/`gid_map` explicitly, though this devcontainer's
+/// kernel grants the capability set without it.** An earlier version of
+/// this function relied on that implicit grant (`user_namespaces(7)`
+/// promises it unconditionally to the creating process) and was
+/// "verified live" here — the ioctl in [`bring_loopback_up`] did succeed
+/// immediately after `unshare`, no mapping written. It does not on
+/// GitHub Actions' hosted Ubuntu runner: `unshare` itself succeeds there
+/// too, but the loopback-up ioctl then fails with `EPERM`, measured
+/// directly against a real workflow run. Writing the mapping is the
+/// standard, portable way unprivileged tooling sets this up (`unshare
+/// -r`, rootless Podman/runc all do it) rather than depending on an
+/// implicit grant that apparently is not uniform across kernels/configs
+/// this project has now actually been run under. `setgroups` must be
+/// denied first — the kernel refuses an unprivileged `gid_map` write
+/// otherwise.
 ///
 /// Irreversible for this process, like every other restriction devcroft
 /// applies — callers run it in a child they are willing to lose, which
@@ -35,9 +49,21 @@ use std::io;
 /// function `doctor` calls in-process.
 #[cfg(target_os = "linux")]
 pub fn enter_network_namespace() -> io::Result<()> {
+    // Must be read before `unshare`: from inside the fresh (unmapped)
+    // user namespace, `getuid`/`getgid` report the namespace's own
+    // overflow id, not this process's real one, and it is the real one
+    // that `uid_map`/`gid_map` need to name.
+    let uid = unsafe { libc::getuid() };
+    let gid = unsafe { libc::getgid() };
+
     if unsafe { libc::unshare(libc::CLONE_NEWUSER | libc::CLONE_NEWNET) } != 0 {
         return Err(io::Error::last_os_error());
     }
+
+    std::fs::write("/proc/self/setgroups", b"deny")?;
+    std::fs::write("/proc/self/uid_map", format!("0 {uid} 1"))?;
+    std::fs::write("/proc/self/gid_map", format!("0 {gid} 1"))?;
+
     Ok(())
 }
 

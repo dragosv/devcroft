@@ -575,6 +575,147 @@ Each one asked whether a tool was present and reported the answer as
 though it had asked whether the tool would work. The file already carried
 the lesson in prose, twice, next to code that did not follow it.
 
+**The first macOS CI run hung for six hours, and the test that hung was
+asserting the wrong thing about macOS.** `tests/unix_socket_not_mediated.rs`
+starts a listener thread, runs a sandboxed probe against the socket, and
+joins the thread. On Linux the probe connects, so the join returns. On
+macOS the probe was refused, nothing ever arrived, and `accept()` blocked
+forever — a *failing* assertion turned into a hung process, which no
+timeout caught because the workflow set none and GitHub's own ceiling is
+six hours. Two independent defects, and both are worth naming separately:
+a test that cannot fail is not a test, and a CI job with no
+`timeout-minutes` converts any such test into a full runner day. The
+accept is now bounded, every job carries a timeout, and the two full
+`cargo test` runs the workflow used to do — the second one only to grep
+its output for skip lines — are one run through `tee`.
+
+Then the interesting half. The obvious reading of the refusal was "Seatbelt
+mediates AF_UNIX, so the gap is Linux-only", and that reading was one
+commit away from being published in `docs/known-gaps.md`. It is wrong. The
+probe path was `/tmp/<dir>/p.sock`; `/tmp` on macOS is a symlink to
+`/private/tmp`, Seatbelt evaluates the path as written, and it was the
+ungranted symlink traversal that got `Operation not permitted`. The *same
+socket* named `/private/tmp/<dir>/p.sock` connects, with the policy
+granting only cwd. So the gap is not Linux-shaped at all: both backends
+leave AF_UNIX outside the policy, and `docs/threat-model.md` and
+`docs/known-gaps.md` now say so. The test canonicalizes its socket
+directory, which is the only reason the second measurement was possible to
+take at all.
+
+The pattern is the one this file already records twice: a probe that
+answers a *different question* than the one asked, and reads as an answer
+to the intended one. "Can the sandbox reach this socket" was measured by a
+path that first had to traverse something else the sandbox could not
+reach.
+
+**Two loopback addresses is a host capability, not a given.** The same CI
+work surfaced `tests/egress_proxy_e2e.rs` panicking on macOS at
+`TcpListener::bind("127.0.0.3:0")` with `AddrNotAvailable`. Linux assigns
+the whole of `127.0.0.0/8` to `lo`; macOS assigns `127.0.0.1` and wants an
+explicit `ifconfig lo0 alias` for anything else. The test needs a second
+loopback address because `up_process` puts `127.0.0.1` in `NO_PROXY`, so
+it is not a detail that can be dropped — it now self-skips naming the
+`sudo ifconfig lo0 alias 127.0.0.3 up` that would enable it, like every
+other capability guard in the suite.
+
+**A denial test that failed on macOS turned out to be right about the
+sandbox and wrong about the platform.**
+`a_real_build_succeeds_from_the_devbox_closure_with_the_host_toolchain_denied`
+asserts that `/usr/bin/gcc` cannot run inside a devbox sandbox. On macOS it
+ran — and printed `gcc (GCC) 16.2.0`, which is not what `/usr/bin/gcc`
+prints on this host at all (`Apple clang version 17.0.0`). Two separate
+facts stacked into one confusing failure. First, macOS's `/usr/bin/gcc` is
+a stub that dispatches to whatever toolchain it finds, and inside the
+sandbox that is the closure's gcc — so the *output* was closure tooling
+while the *exec* was a host binary. Second, and the real finding: Seatbelt
+does not mediate exec at all. nono's macOS profile emits an unconditional
+`(allow process-exec*)`, so every host binary runs inside a macOS sandbox,
+while reads of the same path stay denied — `/bin/ls` runs and lists the
+project, `ls -l /usr/bin/gcc` is `Operation not permitted`.
+
+So `own-policy-baseline`'s measurement ("a build succeeds from the closure
+with `/usr/bin/gcc` and `/bin/ls` denied") is a Linux measurement, and the
+closure-tier guarantee is enforced on Linux and cooperative on macOS. That
+is now in `docs/known-gaps.md` rather than implied by a test that only ever
+ran on one platform. The test probes exec mediation — does `/bin/ls` run? —
+and skips where there is none, so it resumes asserting by itself if nono or
+macOS ever narrows that rule. The same session's guards say the same thing
+in three places now: gate on the capability, never on the platform or the
+binary.
+
+**Four macOS hook failures, one cause: a grant is per-spelling there, not
+per-directory.** `the_hook_runs_inside_the_sandbox_instead` failed with
+`hook \`activation\` failed: Operation not permitted`, and three
+`lifecycle_hooks` tests failed the same way. Seatbelt compares paths as
+written; `/var` and `/tmp` are symlinks; `std::env::temp_dir()` on macOS is
+`/var/folders/…`. So a sandbox built from that string could not even spawn
+a hook with that cwd, while the identical spawn at the `/private/var/…`
+spelling worked — measured both ways with a throwaway probe against the
+library directly, which is what separated "devcroft's policy is wrong" from
+"the two sides are naming the same directory differently".
+
+`up` now resolves the project root once, up front, so the grant,
+`Meta.project_root` and every spawn cwd agree on the spelling the backend
+compares against. That fixed all four. The CLI never had the bug —
+`current_dir()` hands it a resolved path — so this only ever bit callers
+that pass a root of their own, which is the whole integration suite. Worth
+noting how it was hiding: on Linux none of it exists, because Landlock
+works on inodes.
+
+The one part `up` cannot fix is a path a project *writes down*: a hook
+naming `/var/folders/…/marker` is denied under a policy granting
+`/private/var/folders/…`, because the two are different strings to
+Seatbelt. The flox test's helper now builds its project root resolved, for
+exactly the reason `tests/unix_socket_not_mediated.rs` does — third time
+this session that a macOS symlink turned a working policy into a false
+failure.
+
+**Running the suite on a Mac for the first time found four platform gaps,
+not four broken tests.** Once the path-spelling failures were out of the
+way, what was left divided cleanly, and none of it was visible from
+Linux:
+
+- **Supervised services never worked on macOS.** process-compose binds a
+  unix socket inside the sandbox; Seatbelt's `(deny network*)` covers
+  AF_UNIX bind, so it failed with `listen unix …: bind: operation not
+  permitted` and the sandbox came up supervising nothing. Landlock cannot
+  express AF_UNIX at all, so on Linux there was nothing to notice. The
+  policy now carries a `unix_socket_bind` axis, folded in at `up` exactly
+  the way provider store grants and the proxy port are — and rendered,
+  because a rule the keeper holds that `policy --render` cannot show is
+  the one thing the policy invariant forbids.
+- **Every pty session failed.** `openpty` opens `/dev/ptmx` and then the
+  slave it returns, and only the former was granted. The macOS baseline
+  entry was a Linux inference — its own comment said "not independently
+  live-verified" — and the verification found it insufficient. `/dev` is
+  granted there now, which is broader than anyone would choose; the
+  narrow fix belongs upstream, since nono already special-cases the pty
+  slaves for ioctl and just needs the matching read/write rule.
+- **`network.ports` is not a bind limit there.** Landlock scopes bind by
+  port; Seatbelt has no such rule, so nono emits a blanket
+  `(allow network-bind)` and any port binds.
+- **Exec is not mediated at all**, as recorded earlier in this file.
+
+The last two are now surfaced rather than only documented, but not in the
+same place, and the difference was learned by getting it wrong first.
+`up`'s degraded warnings are all of one shape — *this manifest asked for
+something this host cannot enforce* — so the port one belongs there, gated
+on a manifest actually declaring ports. Exec mediation has no such gate:
+nothing requests it, nothing avoids it, and warning about it at `up` fired
+on every run of every project and broke the two tests that pin "an
+unremarkable manifest warns about nothing". It moved to `doctor`, whose
+whole job is reporting what this host can and cannot do. That invariant — "degraded capabilities
+are surfaced, never silent" — had exactly one instance for the whole
+project's life, which made it easy to read as a statement about one
+feature rather than a rule. It is a rule.
+
+Worth stating plainly: every one of these was a *false negative in the
+docs*, not just in the tests. `own-policy-baseline`'s measurements,
+`network.ports`' semantics and the services feature were all described in
+platform-neutral language on the strength of Linux-only measurement. The
+tests were the only reason any of it surfaced, and only because someone
+ran them somewhere new.
+
 ---
 
 **devenv, the fourth provider, and a measurement gate that earned its

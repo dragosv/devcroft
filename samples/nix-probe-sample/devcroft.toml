@@ -1,0 +1,22 @@
+[sandbox]
+name = "nix-probe-sample"
+
+[env]
+provider = "nix"
+
+# `.` is the point of this sample: the project root is the only thing
+# granted, so every path the probe reaches for is outside it.
+#
+# `/tmp` is granted for the same measured reason nix-go-sample documents
+# -- `go build`'s scratch work directory lives there, own-policy-baseline
+# excludes host toolchain access, and `/tmp` is not part of what devcroft
+# grants a closure-tier project by default. `go run` builds before it
+# runs, so it needs this too.
+[filesystem]
+allow = [".", "/tmp"]
+
+# Nothing here binds or connects. Stated explicitly rather than left to
+# the default, because a reader of this sample is entitled to see the
+# whole policy in one file.
+[network]
+default = "deny"

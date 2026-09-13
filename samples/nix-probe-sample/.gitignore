@@ -1,0 +1,4 @@
+# Nothing is generated inside the project root: flake.nix points GOPATH,
+# GOCACHE and GOTMPDIR at /tmp, which devcroft.toml already grants. Only
+# an explicit `go build -o` lands here.
+/probe
