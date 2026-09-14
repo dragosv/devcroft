@@ -1062,3 +1062,62 @@ raw rule as the workaround it is and asks for the typed form on its own
 merits. The typed exec mode is still worth upstreaming — a consumer
 should not need to know the last-rule-wins detail — but as a
 convenience, not as the only fix, which is a weaker claim and a true one.
+
+**CI split per provider, and seven dispatched runs that each found
+something real.** The single `e2e-linux` job (flox + devbox on one
+runner, flox's nix serving the nix provider, no devenv) became an `e2e`
+matrix over flox, nix, devbox and devenv, each installing only its own
+tooling and selecting tests by *availability* — every e2e test already
+self-skips without its provider, and the fixture-driven ones take
+`DEVCROFT_TEST_PROVIDER` — rather than by a hand-kept list of binaries
+that would rot. The provider-free `test` job selects the nix-free `test`
+row explicitly, because the fixture's default row is a real nix closure
+and an unavailable *default* row fails by design: without that, all
+seven fixture-driven binaries panicked on a runner with no store, on
+both OSes, and had been doing so in the previous workflow too.
+
+Then the runs. Every one below was measured on GitHub's `ubuntu-latest`
+and none was visible from the macOS host or the Docker devcontainer this
+project had been measured on:
+
+- **Ubuntu 24.04 refuses unprivileged user namespaces** by AppArmor
+  default, and every Linux `up` needs one since `add-mount-isolation`.
+  Docker's profile allows it, so the devcontainer never said. One sysctl
+  step per Linux leg.
+- **`/dev/ptmx` had been lost in a merge.** `main` had granted it on
+  Linux (d26a9c9: devtmpfs hosts have a device node where Docker has a
+  symlink); the merge took `dev`'s version of the file. Re-applied — and
+  the re-application broke every view (the grants loop bound the device,
+  then `setup_dev`'s `File::create` on it was an `open(2)` of ptmx), and
+  the fix for *that* left `openpty` failing with a bare `ENOENT` that
+  took two more runs to name: the kernel cannot open a ptmx that is a
+  single-file bind mount at all (`path_pts` needs the node's parent
+  inside the node's own mount — its own comment calls the shape
+  unsupported), and a symlink to the host's `/dev/pts/ptmx` would meet
+  Ubuntu's `ptmxmode=000` with host root unmapped. The view now mounts
+  its own devpts instance and symlinks `ptmx -> pts/ptmx`: the container
+  shape, which is why Docker never showed any of it.
+- **`filesystem.read = ["/tmp"]` no longer means read-only**, because
+  the baseline grants `/tmp` read-write on every platform since the macOS
+  temp-dir fix, and grants compose as a union. `tests/tmp_grant_ordering.rs`
+  had pinned the read-only case; it pins the union now, and the view
+  computes the widest mode explicitly rather than taking the first grant
+  in list order. Whether a manifest should be able to narrow a baseline
+  grant is `own-policy-baseline`'s question, left open there.
+- **A golden recorded on macOS** (`tests/provider_addition_is_inert.rs`)
+  had never passed on Linux; the baseline is platform-split. One golden
+  per platform.
+- **"Unreachable" has two shapes** — Seatbelt's `Operation not
+  permitted`, the mount view's `No such file or directory` — and
+  `tests/sandbox_environment.rs` had asserted only the first, which
+  GitHub's runners (no `~/.ssh`) exposed.
+- **Three errors had no context**: the view's construction, the keeper's
+  spawn, and the pty assertions all reported a bare errno. Each now says
+  which step and which path; the pty diagnosis above needed all three.
+
+What CI could not settle: the devenv leg's `devenv_capture_contract`,
+where `devenv build shell` fails in nix's *evaluation* of
+`devenv-nixpkgs/rolling` (`setup-hook.sh is not valid`) under
+install-nix-action's daemon plus devenv's bundled evaluator. The
+provider's own e2e passes 15/15 on the same runner. That leg alone stays
+non-blocking, with the finding written where the next reader will look.

@@ -196,10 +196,15 @@ jobs:
   #
   # Pinned versions match what the project was measured against: flox and
   # devbox the same as `.devcontainer/Dockerfile`, devenv the version the
-  # provider was written against (`add-devenv-provider`). Still unverified
-  # on GitHub's hosted runners — no run has been dispatched from here —
-  # so every leg stays `continue-on-error` until one is green; flip it
-  # then, per provider.
+  # provider was written against (`add-devenv-provider`).
+  #
+  # flox, nix and devbox are blocking: green on run 34829168323, after
+  # seven dispatched runs that each found something real (user
+  # namespaces refused by AppArmor, a lost /dev/ptmx grant, a ptmx bind
+  # the kernel cannot open, a golden recorded on the wrong platform —
+  # docs/implementation-log.md has the list). devenv stays
+  # continue-on-error for the one failure above, which is nix's, until
+  # someone reads that log.
   e2e:
     name: e2e (${{ matrix.provider }})
     strategy:
@@ -208,7 +213,7 @@ jobs:
         provider: [flox, nix, devbox, devenv]
     runs-on: ubuntu-latest
     timeout-minutes: 45
-    continue-on-error: true
+    continue-on-error: ${{ matrix.provider == 'devenv' }}
     env:
       DEVBOX_NO_TELEMETRY: "1"
     steps:
