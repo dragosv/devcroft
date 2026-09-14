@@ -57,6 +57,12 @@ pub struct Env {
     /// in a file a reviewer reads, rather than because someone's shell
     /// happened to hold it.
     pub forward: Vec<String>,
+    /// `swift` only: refuse `up` when nothing in the project needs Apple
+    /// platforms, instead of warning. Off by default — an explicit
+    /// `provider = "swift"` is honoured as written, and the evidence scan
+    /// is advice. A project that wants the scan to be a gate says so here,
+    /// in the committed file, rather than having an inference decide.
+    pub require_native_apple_evidence: bool,
 }
 
 impl Default for Env {
@@ -65,6 +71,7 @@ impl Default for Env {
             provider: "flox".to_string(),
             vars: BTreeMap::new(),
             forward: Vec::new(),
+            require_native_apple_evidence: false,
         }
     }
 }
@@ -183,6 +190,13 @@ pub enum ConfigError {
     EnvVarBothSetAndForwarded {
         name: String,
     },
+    /// A key that only one provider acts on, set under another — it would
+    /// be silently inert, which a committed manifest must not be.
+    KeyRequiresProvider {
+        key: &'static str,
+        provider: &'static str,
+        actual: String,
+    },
     InvalidName {
         name: String,
         suggestion: String,
@@ -221,6 +235,15 @@ impl fmt::Display for ConfigError {
                 "`{name}` is both set in [env.vars] and listed in [env] forward; \
                  one gives it a literal value and the other takes the host's — \
                  remove it from whichever you did not mean"
+            ),
+            ConfigError::KeyRequiresProvider {
+                key,
+                provider,
+                actual,
+            } => write!(
+                f,
+                "`{key}` only applies to `provider = \"{provider}\"`; this manifest declares \
+                 `{actual}`, under which the key would do nothing"
             ),
             ConfigError::Parse(e) => write!(f, "invalid TOML: {e}"),
             ConfigError::UnknownKey { path, suggestion } => {

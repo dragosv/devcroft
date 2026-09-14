@@ -2064,6 +2064,30 @@ fn print_tier(provider: &str) {
     println!("devcroft: guarantee: {}", kind.tier().describe());
 }
 
+/// The `swift` provider puts a wrapper ahead of the toolchain's `swift`
+/// on the sandbox's `PATH` (`provider::swift::ProviderDirs::write_shim`).
+/// Said at `up`, once, in the same breath as the tier: a wrapper a user
+/// discovers with `which swift` is a surprise, and a surprise about what
+/// runs their build is the kind this project refuses to leave silent.
+/// The note names the file so the reader can open it — it is a
+/// twelve-line shell script — and the two flags, so nobody has to.
+fn print_swift_shim_note(provider: &str, project_root: &std::path::Path) {
+    if provider != "swift" {
+        return;
+    }
+    let shim = devcroft::provider::swift::ProviderDirs::shim_path(project_root);
+    let shown = shim
+        .strip_prefix(project_root)
+        .map(|p| p.display().to_string())
+        .unwrap_or_else(|_| shim.display().to_string());
+    println!(
+        "devcroft: swift: `swift build|run|test|package` go through {shown}, which adds \
+         --disable-sandbox (SwiftPM's own Seatbelt cannot nest inside devcroft's) and \
+         --cache-path (its package cache, otherwise ~/Library/Caches); every other \
+         invocation reaches the toolchain unchanged"
+    );
+}
+
 /// Extracts `--name <value>`, returning the value and the remaining args.
 ///
 /// **An override, not a selector**, and the distinction is the whole point.
@@ -2192,6 +2216,7 @@ fn cli_up(args: &[String]) -> i32 {
             };
             println!("devcroft: sandbox '{}' is {msg}.", manifest.sandbox.name);
             print_tier(&manifest.env.provider);
+            print_swift_shim_note(&manifest.env.provider, &project_root);
             warn_if_activation_hook_ran(&manifest);
             0
         }

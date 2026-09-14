@@ -59,13 +59,14 @@ impl Provider for SwiftProvider {
         // Data only: no project file is evaluated to answer this.
         let toolchain = probe_toolchain(&swift_bin)?;
 
-        // Is this provider even the right answer for this project?
-        // Answered from the filesystem — no project file is evaluated.
-        ensure_macos_dependent(project_root)?;
+        // Whether this provider is the *best* answer for this project is
+        // `up`'s to say, as advice (`apple_evidence_advice`); the manifest
+        // asked for swift, and resolution honours what it was asked.
 
         let baseline = capture::canonical_base_env()?;
-        let scratch = project_scratch_dir(project_root)?;
-        let activated = activated_env(&baseline, &swift_bin, &toolchain, Some(&scratch));
+        let dirs = ProviderDirs::create(project_root)?;
+        dirs.write_shim(&swift_bin)?;
+        let activated = activated_env(&baseline, &swift_bin, &toolchain, Some(&dirs));
 
         Ok(Resolution {
             env: capture::changed_env(&baseline, &activated),
@@ -149,14 +150,73 @@ impl Toolchain {
         // The developer directory is granted as well as injected: the
         // variable tells the shim where to look, and the sandbox still
         // has to be allowed to read what it finds there.
+        //
+        // **Under Xcode, the grant is the app bundle's `Contents`, not
+        // `Contents/Developer`.** Measured with Xcode 26 / Swift 6.2.4 (the
+        // branch had only been run against Command Line Tools, where no
+        // `xcodebuild` exists): `swift build` runs `xcodebuild`, which is
+        // linked against `Xcode.app/Contents/SharedFrameworks/DVT*.framework`
+        // — a sibling of `Developer`, not inside it — and the build died at
+        // dyld with "blocked by sandbox" before compiling anything. Granting
+        // `Contents` read-only covers `Developer`, `Frameworks`,
+        // `SharedFrameworks` and `PlugIns`, which is what "the toolchain"
+        // means when the toolchain is Xcode. Read-only, so nothing inside
+        // the sandbox can alter it; still host-linked, which is the
+        // artifact tier's stated cost, not a new one.
         if let Some(dev) = &self.developer_dir {
-            out.push(dev.clone());
+            let dev_path = Path::new(dev);
+            let bundle_contents = dev_path
+                .file_name()
+                .is_some_and(|n| n == "Developer")
+                .then(|| dev_path.parent())
+                .flatten()
+                .filter(|c| c.file_name().is_some_and(|n| n == "Contents"));
+            match bundle_contents {
+                Some(contents) => {
+                    out.push(contents.to_string_lossy().into_owned());
+                    // Where `xcodebuild` reads the record that the Xcode
+                    // license was accepted. Measured: with the license
+                    // accepted on the host, a sandboxed `swift build` still
+                    // said "You have not agreed to the Xcode license
+                    // agreements" — it could not read this file, and treats
+                    // unreadable as unaccepted. A single file, read-only;
+                    // `doctor` checks the same file from outside so the
+                    // host-side half of that failure is named before `up`.
+                    out.push(XCODE_LICENSE_RECORD.to_string());
+                    // `xcodebuild` loads every plug-in under
+                    // `Contents/PlugIns` at startup, and
+                    // `IDEiOSSupportCore` links `MobileDevice.framework`,
+                    // which lives under `/Library/Apple` — the sealed
+                    // system volume holds only a symlink to it. Measured:
+                    // ungranted, `xcodebuild -find swift` fails its plug-in
+                    // scan ("Loading a plug-in failed") and `xcrun` reports
+                    // that swift cannot be located at all. Read-only; the
+                    // directory is Apple's own device-support software.
+                    if Path::new(APPLE_SUPPORT_LIBRARY).is_dir() {
+                        out.push(APPLE_SUPPORT_LIBRARY.to_string());
+                    }
+                }
+                None => out.push(dev.clone()),
+            }
         }
         if let Some(dir) = swift_bin.parent() {
             out.push(dir.to_string_lossy().into_owned());
         }
         if let Some(dir) = host_shell_dir() {
             out.push(dir);
+            // macOS's `/bin/sh` is a selector that reads `/var/select/sh`
+            // to decide which shell to be. Ungranted, `sh -c` from inside
+            // the sandbox fails with "Error opening /private/var/select/sh:
+            // Operation not permitted" — and `xcrun` runs `sh -c
+            // 'xcodebuild -find swift'` on every invocation, so under Xcode
+            // that was fatal ("Failed to locate 'swift'"). Measured; the
+            // same message was already known as noise in a devbox postgres
+            // log (docs/known-gaps.md) — here it stops the build. Granted
+            // by its lexical spelling so the backend emits both
+            // (`fix-symlinked-grant-spelling`); a directory of one symlink.
+            if Path::new(HOST_SHELL_SELECTOR).is_dir() {
+                out.push(HOST_SHELL_SELECTOR.to_string());
+            }
         }
         out.sort();
         out.dedup();
@@ -164,6 +224,20 @@ impl Toolchain {
         out
     }
 }
+
+/// Where macOS's `/bin/sh` selector reads which shell to run. See
+/// `Toolchain::grants`.
+const HOST_SHELL_SELECTOR: &str = "/var/select";
+
+/// Apple's device-support frameworks (`MobileDevice.framework` and
+/// siblings), reached from `/System/Library/PrivateFrameworks` through a
+/// symlink. See `Toolchain::grants`.
+const APPLE_SUPPORT_LIBRARY: &str = "/Library/Apple";
+
+/// The plist `xcodebuild` consults for license acceptance. See
+/// `Toolchain::grants` for why it is granted, and `doctor` for why it is
+/// checked host-side too.
+pub(crate) const XCODE_LICENSE_RECORD: &str = "/Library/Preferences/com.apple.dt.Xcode.plist";
 
 /// Refuse this provider anywhere but macOS.
 ///
@@ -411,19 +485,29 @@ fn probe_sdk_path() -> Option<String> {
 ///   consulting `xcrun` — which is a host tool the sandbox is not granted.
 /// - `DEVELOPER_DIR`, so the toolchain shims skip a host symlink the
 ///   sandbox cannot read — see [`probe_developer_dir`].
-/// - `SWIFTPM_BUILD_DIR` and `TMPDIR`, both pointed **inside the project
-///   root** — see [`project_scratch_dir`], where the reasoning and the
-///   measured limits live.
+/// - `SWIFTPM_BUILD_DIR`, `TMPDIR`, `CLANG_MODULE_CACHE_PATH` and
+///   `xcrun_db`, all pointed **inside the project root** — see
+///   [`ProviderDirs`] and the comment on each below for what each was
+///   measured to move. The `swift` on `PATH` is the shim
+///   [`ProviderDirs::write_shim`] writes, for the two flags that have no
+///   variable.
 fn activated_env(
     baseline: &BTreeMap<String, String>,
     swift_bin: &Path,
     toolchain: &Toolchain,
-    scratch_dir: Option<&Path>,
+    dirs: Option<&ProviderDirs>,
 ) -> BTreeMap<String, String> {
     let mut activated = baseline.clone();
     if let Some(bin_dir) = swift_bin.parent().map(Path::to_string_lossy) {
         let existing = baseline.get("PATH").map(String::as_str).unwrap_or("");
-        activated.insert("PATH".to_string(), format!("{bin_dir}:{existing}"));
+        // The shim's directory first, then the toolchain's: `swift` on
+        // PATH is devcroft's wrapper, everything else (`swiftc`, `xcrun`,
+        // `clang`) is the toolchain's own binary.
+        let path = match dirs {
+            Some(d) => format!("{}:{bin_dir}:{existing}", d.bin.display()),
+            None => format!("{bin_dir}:{existing}"),
+        };
+        activated.insert("PATH".to_string(), path);
     }
     if let Some(sdk) = &toolchain.sdk_path {
         activated.insert("SDKROOT".to_string(), sdk.clone());
@@ -431,16 +515,54 @@ fn activated_env(
     if let Some(dev) = &toolchain.developer_dir {
         activated.insert("DEVELOPER_DIR".to_string(), dev.clone());
     }
-    if let Some(scratch) = scratch_dir {
-        let scratch = scratch.to_string_lossy().into_owned();
-        // The measured lever: SwiftPM honours this for its scratch
-        // directory, verified by moving `.build` out of the project
-        // entirely. `TMPDIR` is set alongside it for everything else that
-        // reads it — the two are not interchangeable, and neither
-        // redirects SwiftPM's *cache*, which has no environment lever at
-        // all (see `project_scratch_dir`).
-        activated.insert("SWIFTPM_BUILD_DIR".to_string(), scratch.clone());
-        activated.insert("TMPDIR".to_string(), scratch);
+    if let Some(d) = dirs {
+        // Every cache and scratch lever the toolchain has, pointed inside
+        // the project, so a build needs no grant outside it. Each was
+        // found by a build failing without it and measured to work —
+        // under Xcode 26 / Swift 6.2.4, with only the project root
+        // granted:
+        //
+        // - `SWIFTPM_BUILD_DIR`: SwiftPM's scratch and products; set to
+        //   the conventional `.build` explicitly rather than left to
+        //   default, so it is data in `policy --render`'s neighbour
+        //   (`exec -- env`) and not an assumption.
+        // - `TMPDIR`: everything that reads it — the Swift driver's
+        //   temporary VFS overlays, SwiftPM's manifest compile scratch.
+        //   Under `.devcroft`, not `.build`: a `swift package reset` or an
+        //   `rm -rf .build` from inside used to delete the sandbox's own
+        //   temporary directory and every later build failed with
+        //   `couldNotFindTmpDir` (measured).
+        // - `CLANG_MODULE_CACHE_PATH`: clang's, and through it the Swift
+        //   frontend's, module cache. Without it the *manifest* compile —
+        //   whose flags SwiftPM chooses, not the user — wrote to the
+        //   Darwin per-user cache directory (`_CS_DARWIN_USER_CACHE_DIR`,
+        //   `/var/folders/…/C`), which no `-module-cache-path` the user
+        //   can pass reaches, and failed with "unable to load standard
+        //   library". This variable is what removed the write grant on
+        //   that directory from the sample's manifest.
+        // - `xcrun_db` (lowercase — libxcrun's own name for it): where
+        //   `xcrun` keeps its lookup cache, otherwise
+        //   `_CS_DARWIN_USER_TEMP_DIR` again, and two "couldn't create
+        //   cache file" lines on every build. Not documented; read out of
+        //   `libxcrun.dylib`'s strings, then measured.
+        //
+        // What has **no** lever and needs the shim instead: SwiftPM's own
+        // sandbox (`--disable-sandbox`) and its package cache
+        // (`--cache-path`) — `strings swift-build | grep ^SWIFTPM_` lists
+        // neither, and the branch that first measured this said so.
+        activated.insert(
+            "SWIFTPM_BUILD_DIR".to_string(),
+            d.project_root.join(".build").to_string_lossy().into_owned(),
+        );
+        activated.insert("TMPDIR".to_string(), d.tmp.to_string_lossy().into_owned());
+        activated.insert(
+            "CLANG_MODULE_CACHE_PATH".to_string(),
+            d.cache.join("clang").to_string_lossy().into_owned(),
+        );
+        activated.insert(
+            "xcrun_db".to_string(),
+            d.cache.join("xcrun_db").to_string_lossy().into_owned(),
+        );
     }
     activated
 }
@@ -616,19 +738,19 @@ pub(super) fn scan_apple_evidence(project_root: &Path) -> AppleEvidence {
                     continue;
                 }
                 stack.push(path);
-            } else if path.extension().is_some_and(|e| e == "swift") {
-                if let Ok(text) = std::fs::read_to_string(&path) {
-                    if name == "Package.swift" {
-                        evidence
-                            .frameworks
-                            .extend(frameworks_named_in_manifest(&text));
-                    } else {
-                        collect_unguarded_imports(
-                            &text,
-                            &path.display().to_string(),
-                            &mut evidence.imports,
-                        );
-                    }
+            } else if path.extension().is_some_and(|e| e == "swift")
+                && let Ok(text) = std::fs::read_to_string(&path)
+            {
+                if name == "Package.swift" {
+                    evidence
+                        .frameworks
+                        .extend(frameworks_named_in_manifest(&text));
+                } else {
+                    collect_unguarded_imports(
+                        &text,
+                        &path.display().to_string(),
+                        &mut evidence.imports,
+                    );
                 }
             }
         }
@@ -726,131 +848,146 @@ pub(super) fn collect_unguarded_imports(text: &str, file: &str, out: &mut Vec<Ap
     }
 }
 
-/// Refuse `swift` for a package a qualifying provider already covers.
+/// What the evidence scan has to say about a project that shows no
+/// Apple dependency: `None` where evidence exists, otherwise the advice.
 ///
-/// **This is the narrowing that makes shipping a test-failing provider
-/// defensible at all.** `docs/decisions.md` §1 justifies `swift` on the
-/// grounds that Swift users otherwise get nothing — but that is only true
-/// for packages depending on Apple frameworks. A portable Swift package
-/// builds perfectly well from a nix or flox closure, where it gets the
-/// closure tier, a hook-free activation, and no host-side execution of
-/// `Package.swift`. Offering it the weaker provider buys the user nothing
-/// and costs them all three.
-///
-/// So the provider is accepted only on positive evidence that no closure
-/// can serve the project:
-///
-/// - an Apple framework named in `Package.swift`, which is conclusive; or
-/// - an unguarded import of an Apple-only module, which cannot compile on
-///   Linux; or
-/// - an Apple project artifact — `Info.plist`, `.entitlements`,
-///   `.xcodeproj`, an asset catalog.
-///
-/// **The third is about the deliverable rather than the source**, and it
-/// was added because the first two alone gave a wrong answer for a real
-/// class of project: a Mac application whose Swift is entirely
-/// `Foundation` still cannot be produced by a Linux closure, because the
-/// app bundle, entitlements, code signature and `xcodebuild` are all
-/// Apple-side. Judging it by imports refused it and sent the user to flox,
-/// which cannot sign code or build a bundle — a wrong refusal with no
-/// remedy, which is the worst kind.
-///
-/// **`platforms:` is deliberately not evidence**, and this is the subtlety
-/// that would otherwise make the gate useless. `platforms: [.macOS(.v13)]`
-/// only sets minimum versions for Apple platforms — SwiftPM on Linux
-/// ignores it entirely — so thousands of portable packages declare it.
-/// Using it here would accept nearly everything and narrow nothing.
-///
-/// **A heuristic, and it says so when it refuses.** `docs/decisions.md`
-/// §1's criterion 6 is hostile to preconditions that cannot be checked
-/// cleanly, and this one can be wrong: a macOS-only package that reaches
-/// Apple APIs some other way is refused despite having no alternative.
-/// The refusal therefore names exactly what was searched for, so a user
-/// who is on the wrong side of it can see why rather than guess. The
-/// asymmetry is deliberate — a wrong refusal sends someone to a *better*
-/// provider, while a wrong acceptance silently downgrades their guarantee
-/// and runs their code on the host.
-fn ensure_macos_dependent(project_root: &Path) -> Result<(), ProviderError> {
+/// **Advice, not a gate — and that is a reversal of this provider's
+/// first cut, on review.** The scan reads the tree for a linked Apple
+/// framework, an unguarded `import` of an Apple-only module, or an Apple
+/// project artifact. It is good at *recommending* — `init` ranks swift
+/// below every closure provider on it — and bad as a *refusal*: it
+/// cannot prove nix or flox can actually build the project; it misses an
+/// Apple-native project with an unusual layout; it accepts a project on
+/// the strength of a stale `Info.plist`; and it turns the manifest's
+/// explicit `provider = "swift"` into an inference that can go false as
+/// the project evolves. So `up` honours the manifest and says this once,
+/// with the closure-tier alternative named. A project that wants the
+/// scan to refuse opts in with `[env] require_native_apple_evidence =
+/// true`, in the committed file.
+pub fn apple_evidence_advice(project_root: &Path) -> Option<String> {
     if !scan_apple_evidence(project_root).is_empty() {
-        return Ok(());
+        return None;
     }
-    Err(ProviderError::CoveredByQualifiedProvider {
-        provider: "swift",
-        reason: format!(
-            "nothing in this project requires Apple platforms, so a closure-tier provider \
-             covers it — and covers it better (reproducible across machines, and `up` does \
-             not run Package.swift on the host). devcroft looked under {} for a linked Apple \
-             framework, an unguarded `import` of an Apple-only module ({} of them, including \
-             AppKit, SwiftUI, Metal and Security), and Apple project artifacts (Info.plist, \
-             .entitlements, .xcodeproj, .xcassets), and found none; note that \
-             `platforms: [.macOS(...)]` is not evidence, since SwiftPM ignores it on Linux. \
-             Use `provider = \"nix\"` or `provider = \"flox\"` with the swift package. If \
-             this project really does need Apple platforms, that is a gap in this check \
-             worth reporting rather than working around",
-            project_root.display(),
-            APPLE_ONLY_MODULES.len()
-        ),
-    })
+    Some(format!(
+        "nothing in this project requires Apple platforms, so a closure-tier provider \
+         would cover it — and cover it better (reproducible across machines, and `up` does \
+         not run Package.swift on the host). devcroft looked under {} for a linked Apple \
+         framework, an unguarded `import` of an Apple-only module ({} of them, including \
+         AppKit, SwiftUI, Metal and Security), and Apple project artifacts (Info.plist, \
+         .entitlements, .xcodeproj, .xcassets), and found none; note that \
+         `platforms: [.macOS(...)]` is not evidence, since SwiftPM ignores it on Linux. \
+         `provider = \"nix\"` or `provider = \"flox\"` with the swift package is the \
+         closure-tier route; `[env] require_native_apple_evidence = true` makes this a \
+         refusal instead of a warning",
+        project_root.display(),
+        APPLE_ONLY_MODULES.len()
+    ))
 }
 
-/// A scratch directory **inside the project root**, for SwiftPM to build
-/// and write temporary state in.
+/// The provider's own directory inside the project:
+/// `<project>/.devcroft/swift/{bin,cache,tmp}`.
 ///
-/// **Found by running the build, and the constraint it satisfies is a
-/// standing invariant rather than a preference.** With the toolchain
-/// resolved, `swift build` failed next on
-///
-/// ```text
-/// swift: error: couldn't create cache file
-///   '/var/folders/__/…/T/xcrun_db-T2q5wfUP' (errno=Operation not permitted)
-/// error: … couldNotFindTmpDir("/var/folders/__/…/T")
-/// ```
-///
-/// The host's own `TMPDIR` is a per-user directory outside the project,
-/// and the tempting fix — grant it read-write — is the one thing a
-/// provider may not do. CLAUDE.md: *"Provider resolution must not widen
-/// the policy. If activation would need write access outside the project
-/// root, `up` fails naming the path rather than silently granting it."*
-/// A provider that quietly granted write to `/var/folders/<user>/…` would
-/// be handing the sandbox a host-global scratch space shared with every
-/// other process of that user, which is exactly the widening that rule
-/// exists to stop.
-///
-/// So the temp directory moves inside the project root, which is already
-/// writable and already the sandbox's own. Under `.build/`, because
-/// SwiftPM owns that directory, every Swift project's `.gitignore`
-/// already covers it, and `swift package clean` disposes of it — devcroft
-/// introduces no new path a user has to know about or clean up.
-///
-/// Created host-side at `up` rather than left to the sandbox: the
-/// variables below want it to exist before anything starts, and a
-/// provider materializing a directory inside the project root is ordinary
-/// provisioning.
-///
-/// **What this does and does not fix, measured.** `SWIFTPM_BUILD_DIR` is
-/// a real lever — SwiftPM honours it for the scratch directory, verified
-/// by moving `.build` out of the project entirely. There is **no
-/// environment lever for SwiftPM's cache**: `strings` over `swift-package`
-/// yields no cache equivalent and only `--cache-path` works, verified by
-/// the real home cache's mtime being unchanged after a build that
-/// populated a redirected one. devcroft injects an environment rather
-/// than wrapping commands, so the cache stays unredirected and this is a
-/// known gap rather than a solved problem.
-///
-/// A related measurement hazard, recorded because it produces a confident
-/// wrong answer: **macOS resolves the home directory from the password
-/// database, not from `$HOME`**, so testing cache behaviour by pointing
-/// `HOME` at an empty directory shows nothing written there and means
-/// nothing. Compare mtimes instead.
-fn project_scratch_dir(project_root: &Path) -> Result<PathBuf, ProviderError> {
-    let dir = project_root.join(".build").join("devcroft-tmp");
-    std::fs::create_dir_all(&dir).map_err(|e| {
-        ProviderError::ResolutionFailed(format!(
-            "creating the project-local temporary directory {}: {e}",
-            dir.display()
-        ))
-    })?;
-    Ok(dir)
+/// Under the artifact directory devcroft already owns and every sample
+/// ignores in git, not under SwiftPM's `.build`: the project can wipe
+/// `.build` from inside the sandbox (`swift package reset` does) and the
+/// sandbox must survive that. Not keyed by sandbox name the way
+/// `services::artifact_dir` is, because nothing here is per-sandbox:
+/// two sandboxes on one project root would share a `.build` too.
+pub struct ProviderDirs {
+    project_root: PathBuf,
+    /// Holds the `swift` shim; first on the sandbox's `PATH`.
+    bin: PathBuf,
+    /// SwiftPM's package cache, clang's module cache, xcrun's lookup db.
+    cache: PathBuf,
+    /// `TMPDIR`.
+    tmp: PathBuf,
+}
+
+impl ProviderDirs {
+    pub fn create(project_root: &Path) -> Result<Self, ProviderError> {
+        let root = project_root
+            .join(super::super::services::ARTIFACT_DIR)
+            .join("swift");
+        let dirs = ProviderDirs {
+            project_root: project_root.to_path_buf(),
+            bin: root.join("bin"),
+            cache: root.join("cache"),
+            tmp: root.join("tmp"),
+        };
+        for d in [&dirs.bin, &dirs.cache, &dirs.tmp] {
+            std::fs::create_dir_all(d).map_err(|e| {
+                ProviderError::ResolutionFailed(format!("creating {}: {e}", d.display()))
+            })?;
+        }
+        Ok(dirs)
+    }
+
+    /// Where the shim lives; `up` names it so the wrapper is never a
+    /// surprise found by `which swift`.
+    pub fn shim_path(project_root: &Path) -> PathBuf {
+        project_root
+            .join(super::super::services::ARTIFACT_DIR)
+            .join("swift")
+            .join("bin")
+            .join("swift")
+    }
+
+    /// Write the `swift` wrapper. Rewritten on every resolution so a
+    /// toolchain change (`xcode-select -s`) is reflected at the next `up`.
+    ///
+    /// **Why a wrapper at all, and why this small.** Two SwiftPM behaviours
+    /// have no environment lever (`activated_env` lists the ones that do):
+    ///
+    /// - SwiftPM applies its *own* Seatbelt profile (`sandbox-exec`) when
+    ///   it compiles `Package.swift` and runs plugins. Seatbelt does not
+    ///   nest — a second `sandbox_init` from an already sandboxed process
+    ///   returns `EPERM`, measured — so inside a devcroft sandbox every
+    ///   `swift build` died with `Invalid manifest`. `--disable-sandbox`
+    ///   turns SwiftPM's off; devcroft's, the outer and stricter one, is
+    ///   what remains. Nothing is weakened: SwiftPM's sandbox permitted
+    ///   reads of the whole home directory, devcroft's does not.
+    /// - SwiftPM's package cache defaults to `~/Library/Caches/org.swift.swiftpm`
+    ///   with `~` taken from the password database, not `$HOME`, so the
+    ///   sandbox's own home does not redirect it. `--cache-path` does.
+    ///
+    /// The shim adds exactly those two flags, to exactly the subcommands
+    /// that accept them, and execs the real binary for everything else.
+    /// It is a shell script, not a binary, so `policy --render`'s reader
+    /// can open it and see the whole of what it does; the host `/bin/sh`
+    /// it needs is already the artifact tier's declared shell grant.
+    fn write_shim(&self, real_swift: &Path) -> Result<(), ProviderError> {
+        use std::os::unix::fs::PermissionsExt;
+        let shim = self.bin.join("swift");
+        let script = format!(
+            "#!/bin/sh\n\
+             # devcroft's swift shim — written by the swift provider at every `up`.\n\
+             # Adds the two SwiftPM flags that have no environment equivalent:\n\
+             #   --disable-sandbox  SwiftPM's own Seatbelt cannot nest inside devcroft's\n\
+             #   --cache-path       SwiftPM's package cache, otherwise ~/Library/Caches\n\
+             # Everything else is passed to the toolchain's swift unchanged.\n\
+             real={real}\n\
+             cache={cache}\n\
+             case \"$1\" in\n\
+               build|run|test|package)\n\
+                 sub=$1; shift\n\
+                 exec \"$real\" \"$sub\" --disable-sandbox --cache-path \"$cache\" \"$@\" ;;\n\
+               *)\n\
+                 exec \"$real\" \"$@\" ;;\n\
+             esac\n",
+            real = shell_quote(&real_swift.to_string_lossy()),
+            cache = shell_quote(&self.cache.join("swiftpm").to_string_lossy()),
+        );
+        std::fs::write(&shim, script).map_err(|e| {
+            ProviderError::ResolutionFailed(format!("writing {}: {e}", shim.display()))
+        })?;
+        std::fs::set_permissions(&shim, std::fs::Permissions::from_mode(0o755))
+            .map_err(|e| ProviderError::ResolutionFailed(format!("chmod {}: {e}", shim.display())))
+    }
+}
+
+/// Single-quote `s` for `sh`, escaping embedded single quotes.
+fn shell_quote(s: &str) -> String {
+    format!("'{}'", s.replace('\'', "'\\''"))
 }
 
 /// Content fingerprint of `Package.swift` + `Package.resolved`, for
@@ -1142,27 +1279,78 @@ mod tests {
         }
     }
 
-    /// The scratch directory carries the lever SwiftPM actually honours.
-    /// `TMPDIR` alone was measured not to move SwiftPM's build directory.
+    /// Every cache and scratch lever points inside the project, and the
+    /// shim's directory leads `PATH` — the whole reason a build needs no
+    /// grant outside the project root. Asserted on the environment, not
+    /// on a build, so it runs on every host.
     #[test]
-    fn the_scratch_directory_sets_the_lever_swiftpm_honours() {
+    fn every_lever_points_inside_the_project_and_the_shim_leads_path() {
         let baseline = BTreeMap::from([("PATH".to_string(), "/usr/bin".to_string())]);
         let toolchain = parse_target_info(REAL_TARGET_INFO.as_bytes()).unwrap();
-        let scratch = Path::new("/p/.build/devcroft-tmp");
+        let root = std::env::temp_dir().join(format!("devcroft-swift-dirs-{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        let dirs = ProviderDirs::create(&root).unwrap();
         let env = activated_env(
             &baseline,
             Path::new("/usr/bin/swift"),
             &toolchain,
-            Some(scratch),
+            Some(&dirs),
         );
+        let inside = |key: &str| {
+            let v = env.get(key).unwrap_or_else(|| panic!("{key} must be set"));
+            assert!(
+                Path::new(v).starts_with(&root),
+                "{key}={v} must be inside the project root {}",
+                root.display()
+            );
+        };
+        for key in [
+            "SWIFTPM_BUILD_DIR",
+            "TMPDIR",
+            "CLANG_MODULE_CACHE_PATH",
+            "xcrun_db",
+        ] {
+            inside(key);
+        }
         assert_eq!(
-            env.get("SWIFTPM_BUILD_DIR"),
-            Some(&"/p/.build/devcroft-tmp".to_string())
+            env.get("SWIFTPM_BUILD_DIR").unwrap(),
+            &root.join(".build").to_string_lossy()
         );
+        let path = env.get("PATH").unwrap();
+        assert!(
+            path.starts_with(&format!("{}:", dirs.bin.display())),
+            "the shim's directory must lead PATH, got {path}"
+        );
+        assert!(
+            path.contains(":/usr/bin:"),
+            "the toolchain's bin must follow, got {path}"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// The shim is a readable script that adds exactly the two flags with
+    /// no environment lever, to exactly the subcommands that take them.
+    #[test]
+    fn the_shim_adds_the_two_flags_only_to_swiftpm_subcommands() {
+        let root = std::env::temp_dir().join(format!("devcroft-swift-shim-{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        let dirs = ProviderDirs::create(&root).unwrap();
+        dirs.write_shim(Path::new("/tool/bin/swift")).unwrap();
+        let shim = ProviderDirs::shim_path(&root);
+        let text = std::fs::read_to_string(&shim).unwrap();
+        assert!(text.starts_with("#!/bin/sh\n"));
+        assert!(text.contains("build|run|test|package)"));
+        assert!(text.contains("--disable-sandbox --cache-path"));
+        assert!(text.contains("real='/tool/bin/swift'"));
+        // The pass-through arm execs the real binary with the arguments
+        // untouched, so `swiftc`-style invocations are never rewritten.
+        assert!(text.contains("exec \"$real\" \"$@\""));
+        use std::os::unix::fs::PermissionsExt;
         assert_eq!(
-            env.get("TMPDIR"),
-            Some(&"/p/.build/devcroft-tmp".to_string())
+            std::fs::metadata(&shim).unwrap().permissions().mode() & 0o777,
+            0o755
         );
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     /// The gate, end to end, on a real file tree. Both directions, since
@@ -1184,9 +1372,8 @@ mod tests {
             "import Foundation\nprint(1)\n",
         )
         .unwrap();
-        match ensure_macos_dependent(&dir) {
-            Err(ProviderError::CoveredByQualifiedProvider { provider, reason }) => {
-                assert_eq!(provider, "swift");
+        match apple_evidence_advice(&dir) {
+            Some(reason) => {
                 assert!(reason.contains("nix") && reason.contains("flox"));
                 assert!(
                     reason.contains("platforms"),
@@ -1194,7 +1381,7 @@ mod tests {
                      declares a macOS platform — since that is not evidence; got: {reason}"
                 );
             }
-            other => panic!("a portable package must be refused, got {other:?}"),
+            None => panic!("a portable package must draw the advice"),
         }
 
         // A framework named in Package.swift alone is conclusive, with
@@ -1204,7 +1391,7 @@ mod tests {
             "// swift-tools-version:5.9\nlinkerSettings: [.linkedFramework(\"AppKit\")]\n",
         )
         .unwrap();
-        assert!(ensure_macos_dependent(&dir).is_ok());
+        assert!(apple_evidence_advice(&dir).is_none());
         std::fs::remove_file(dir.join("Package.swift")).unwrap();
 
         // An unguarded Apple import alone is conclusive, with no
@@ -1214,7 +1401,7 @@ mod tests {
             "import AppKit\nprint(1)\n",
         )
         .unwrap();
-        assert!(ensure_macos_dependent(&dir).is_ok());
+        assert!(apple_evidence_advice(&dir).is_none());
 
         // Guarded again: back to refused, so the guard test is live
         // through the real file scan and not only in `imports()`.
@@ -1224,7 +1411,7 @@ mod tests {
         )
         .unwrap();
         assert!(
-            ensure_macos_dependent(&dir).is_err(),
+            apple_evidence_advice(&dir).is_some(),
             "a package whose only Apple import is guarded is portable"
         );
 
@@ -1289,13 +1476,13 @@ mod tests {
 
             // Portable sources alone: refused.
             assert!(
-                ensure_macos_dependent(&dir).is_err(),
+                apple_evidence_advice(&dir).is_some(),
                 "control: Foundation-only with no artifact must be refused"
             );
 
             std::fs::write(dir.join(artifact), b"x").unwrap();
             assert!(
-                ensure_macos_dependent(&dir).is_ok(),
+                apple_evidence_advice(&dir).is_none(),
                 "{artifact} must count as evidence"
             );
 
@@ -1326,7 +1513,7 @@ mod tests {
             "got {:?}",
             evidence.artifacts
         );
-        assert!(ensure_macos_dependent(&dir).is_ok());
+        assert!(apple_evidence_advice(&dir).is_none());
 
         let _ = std::fs::remove_dir_all(&dir);
     }

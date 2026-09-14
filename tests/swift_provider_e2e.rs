@@ -42,11 +42,12 @@ fn write_fixture(root: &std::path::Path, name: &str) {
          targets: [.executableTarget(name: \"app\", path: \"Sources/app\")])\n",
     )
     .unwrap();
-    // **Unguarded `import AppKit`, and it is load-bearing.** The provider
-    // refuses a package a closure-tier provider could serve, so a fixture
-    // importing only Foundation would be refused — correctly — and this
-    // test would be asserting the wrong thing. The gate's own unit tests
-    // cover the refusal; this fixture is the accepted side of it.
+    // **Unguarded `import AppKit`, and it is load-bearing.** A fixture
+    // importing only Foundation draws `up`'s advice that a closure-tier
+    // provider would serve it (a warning, or a refusal under
+    // `require_native_apple_evidence`), and a test of the provider's
+    // resolution should not be reading through that. The advice has its
+    // own test below; this fixture is the evidence-present side of it.
     std::fs::write(
         root.join("Sources/app/main.swift"),
         "import AppKit\nprint(\"hi\")\n",
@@ -268,12 +269,14 @@ fn a_closure_provider_makes_no_such_disclosure() {
     );
 }
 
-/// **The refusal, end to end through the real CLI.** The unit tests cover
-/// the decision; this covers that it reaches the user as a `provider`-layer
-/// failure with the alternative named, rather than as a sandbox that comes
-/// up with a weaker guarantee nobody asked for.
+/// The evidence scan is advice by default and a gate only on request.
+/// Both halves asserted in one place — a portable package comes up with
+/// one warning that names the closure-tier route; the same package with
+/// `require_native_apple_evidence = true` is refused at layer `provider`
+/// with exit 3 — because either behaviour alone would pass a test written
+/// for the other's opposite.
 #[test]
-fn a_portable_swift_package_is_refused_and_pointed_at_a_closure_provider() {
+fn a_portable_swift_package_is_advised_by_default_and_refused_on_request() {
     if !swift_available() {
         eprintln!("skipping: no usable Swift toolchain on this host");
         return;
@@ -291,31 +294,62 @@ fn a_portable_swift_package_is_refused_and_pointed_at_a_closure_provider() {
     )
     .unwrap();
 
+    // Default: honoured, with advice.
     let up = Command::new(bin)
         .arg("up")
         .current_dir(&root)
         .output()
         .unwrap();
     let stderr = String::from_utf8_lossy(&up.stderr).into_owned();
+    let _ = Command::new(bin).arg("down").current_dir(&root).output();
+    assert!(
+        up.status.success(),
+        "an explicit `provider = \"swift\"` must be honoured; stderr was:\n{stderr}"
+    );
+    assert_eq!(
+        stderr.matches("warning: swift:").count(),
+        1,
+        "exactly one advice line; stderr was:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("nix")
+            && stderr.contains("flox")
+            && stderr.contains("require_native_apple_evidence"),
+        "the advice must name the closure-tier route and the opt-in; got:\n{stderr}"
+    );
 
+    // Opt-in: refused, at the provider layer, before anything starts.
+    std::fs::write(
+        root.join("devcroft.toml"),
+        format!(
+            "[sandbox]\nname = \"{name}\"\n[env]\nprovider = \"swift\"\n\
+             require_native_apple_evidence = true\n"
+        ),
+    )
+    .unwrap();
+    let up = Command::new(bin)
+        .arg("up")
+        .current_dir(&root)
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&up.stderr).into_owned();
     let _ = Command::new(bin).arg("down").current_dir(&root).output();
     if let Ok(paths) = devcroft::lifecycle::StatePaths::new(&name) {
         let _ = std::fs::remove_dir_all(&paths.root);
     }
     let _ = std::fs::remove_dir_all(&root);
 
-    assert!(!up.status.success(), "a portable package must not come up");
+    assert!(
+        !up.status.success(),
+        "with the opt-in, a portable package must not come up"
+    );
     assert_eq!(
         up.status.code(),
         Some(3),
         "a provider-layer refusal is exit 3 (error contract); stderr was:\n{stderr}"
     );
     assert!(
-        stderr.contains("provider:"),
-        "the failure must name its layer; got:\n{stderr}"
-    );
-    assert!(
-        stderr.contains("nix") && stderr.contains("flox"),
-        "a refusal must name the providers that serve this project better; got:\n{stderr}"
+        stderr.contains("provider:") && stderr.contains("require_native_apple_evidence = true"),
+        "the refusal must name its layer and the key that asked for it; got:\n{stderr}"
     );
 }

@@ -14,7 +14,7 @@ mod devbox;
 mod devenv;
 mod flox;
 mod nix;
-mod swift;
+pub mod swift;
 mod validate;
 
 pub use devbox::DevboxProvider;
