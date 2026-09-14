@@ -527,9 +527,10 @@ impl ProviderKind {
     /// authoritative.
     pub fn tier(self) -> Tier {
         match self {
-            ProviderKind::Flox | ProviderKind::Nix | ProviderKind::Devbox | ProviderKind::Devenv => {
-                Tier::Closure
-            }
+            ProviderKind::Flox
+            | ProviderKind::Nix
+            | ProviderKind::Devbox
+            | ProviderKind::Devenv => Tier::Closure,
             ProviderKind::Swift => Tier::Artifact,
         }
     }

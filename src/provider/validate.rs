@@ -28,7 +28,9 @@ const VERSION_MANAGERS: &[&str] = &[
 /// it is the one provider devcroft ships that *fails* the qualification
 /// test in `docs/decisions.md` §1, and a reader auditing which projects
 /// took that trade should be able to grep for a single string.
-const SUPPORTED: &[&str] = &["flox", "nix", "flake", "flakes", "devbox", "devenv", "swift"];
+const SUPPORTED: &[&str] = &[
+    "flox", "nix", "flake", "flakes", "devbox", "devenv", "swift",
+];
 
 const NOT_YET_SUPPORTED: &[(&str, &str)] = &[
     (
