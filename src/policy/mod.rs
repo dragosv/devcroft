@@ -83,13 +83,35 @@ const KEEPER_SYSTEM_READ: &[&str] = &[
 /// live as an opaque "keeper refused to spawn" with nothing pointing at
 /// the real cause.
 ///
-/// - `/dev/pts` (Linux): `devcroft shell`/pty sessions
-///   (`keeper::pty::open_pty`, `libc::openpty`) — glibc's `openpty` opens
-///   `/dev/ptmx`, itself a symlink to `/dev/pts/ptmx` on this host (and
-///   every Linux system checked), and Landlock evaluates the resolved
-///   target. macOS's `/dev/ptmx` equivalent is included on the same
-///   reasoning, not independently live-verified (this devcontainer is
-///   Linux-only).
+/// - `/dev/pts` **and `/dev/ptmx`** (Linux): `devcroft shell`/pty
+///   sessions (`keeper::pty::open_pty`, `libc::openpty`) — glibc's
+///   `openpty` opens `/dev/ptmx`, and Landlock evaluates the *resolved*
+///   target, so which of the two entries carries the grant depends on
+///   what `/dev/ptmx` is on the host.
+///
+///   This listed only `/dev/pts` and justified it as "`/dev/ptmx` is
+///   itself a symlink to `/dev/pts/ptmx` on this host (and every Linux
+///   system checked)". The parenthetical was the tell: the systems
+///   checked were all this project's own devcontainer, and that shape is
+///   Docker's — Docker creates `/dev/ptmx` as a symlink into `/dev/pts`,
+///   which resolves inside the existing grant. On a systemd host with a
+///   devtmpfs `/dev` — GitHub's `ubuntu-latest` runners, and an ordinary
+///   Ubuntu install — `/dev/ptmx` is a real character device at that
+///   path, resolving to nothing under `/dev/pts`, so `openpty` was denied
+///   and every pty session died. Non-pty sessions were unaffected, which
+///   is why `tests/exec_up.rs` passed on exactly the runs
+///   `tests/shell_up.rs` failed on. Fixed once on `main` (d26a9c9), lost
+///   in the merge that took this branch's version of the file, and found
+///   again by CI run 34823971268 — the mount view already replicates the
+///   device-node shape (`fleet::mount::setup_dev`); this is the Landlock
+///   half.
+///
+///   Granting both covers both shapes and costs nothing on either: where
+///   `/dev/ptmx` is a symlink the rule is redundant with `/dev/pts`, and
+///   where it is a device node it is precisely the path `openpty` opens.
+///   The macOS entry is `/dev/ptmx` alone (there is no `/dev/pts`), with
+///   the pty *slave* handled by a pattern rule instead
+///   (`policy::capability_set::grant_pty_slaves`).
 /// - `/dev/null`: every session's `Stdio::null()` redirection
 ///   (`keeper::session::spawn_piped`/`spawn_pty`) opens it for *writing*
 ///   (stdout/stderr), not just reading — confirmed with a standalone
@@ -100,7 +122,7 @@ const KEEPER_SYSTEM_READ: &[&str] = &[
 ///   in isolation first — the failure was specifically in
 ///   `std::process::Command::spawn()`'s own `Stdio::null()` handling.
 #[cfg(not(target_os = "macos"))]
-const KEEPER_SYSTEM_READWRITE: &[&str] = &["/dev/pts", "/dev/null"];
+const KEEPER_SYSTEM_READWRITE: &[&str] = &["/dev/pts", "/dev/ptmx", "/dev/null"];
 
 #[cfg(target_os = "macos")]
 const KEEPER_SYSTEM_READWRITE: &[&str] = &["/dev/ptmx", "/dev/null"];
@@ -141,6 +163,17 @@ const KEEPER_SYSTEM_READWRITE: &[&str] = &["/dev/ptmx", "/dev/null"];
 /// emits a rule for each when they differ, and it can only do that if it
 /// is handed the spelling the manifest used
 /// (`fix-symlinked-grant-spelling`).
+///
+/// **A consequence a manifest author will meet:** `filesystem.read =
+/// ["/tmp"]` no longer makes `/tmp` read-only. Grants compose as a union
+/// — only baseline *denials* win over the manifest, baseline grants
+/// cannot be narrowed by it — so the manifest's read-only entry is
+/// subsumed by this read-write one, in the compiled policy and in the
+/// Linux mount view alike (`fleet::mount::construct_view` takes the
+/// widest mode). Found by CI on Linux, where `tests/tmp_grant_ordering.rs`
+/// had pinned the read-only case; the test now pins this. If narrowing
+/// is ever wanted, it is a policy-model change for `own-policy-baseline`,
+/// not a special case here.
 const SANDBOX_TEMP_DIR: &[&str] = &["/tmp"];
 
 /// The signal isolation `extends: "default"` currently supplies as its

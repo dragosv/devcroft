@@ -239,7 +239,28 @@ pub fn construct_view(
     //    Measured live: doing this *before* step 2 instead made every
     //    nested grant under /tmp fail with `EROFS`, trying to create a
     //    mount point under an already-read-only parent.
-    let tmp_mode = grants.iter().find(|g| g.path == tmp_path).map(|g| g.mode);
+    //
+    // The mode is the *union* of every grant naming /tmp, not the first
+    // one found. Since `policy::SANDBOX_TEMP_DIR` the baseline grants
+    // /tmp read-write on every platform, so a manifest's
+    // `filesystem.read = ["/tmp"]` arrives here alongside it — and
+    // devcroft's grants compose as a union (only baseline *denials*
+    // win), so the answer is read-write. `find` gave the same answer only
+    // because `resolved_grants` lists allow before read; making the rule
+    // explicit means the answer cannot flip if that ordering ever does.
+    // First seen on CI (run 34823971268): `tests/tmp_grant_ordering.rs`
+    // asserted read-only and got a write.
+    let tmp_mode = grants
+        .iter()
+        .filter(|g| g.path == tmp_path)
+        .map(|g| g.mode)
+        .reduce(|a, b| {
+            if a == nono::AccessMode::ReadWrite || b == nono::AccessMode::ReadWrite {
+                nono::AccessMode::ReadWrite
+            } else {
+                a
+            }
+        });
     if tmp_mode.is_some() {
         mount_private_tmp(new_root)?;
     }

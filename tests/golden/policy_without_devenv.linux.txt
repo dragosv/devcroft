@@ -1,0 +1,116 @@
+CompiledPolicy {
+    sandbox_name: "inert",
+    filesystem_allow: [
+        AnnotatedValue {
+            value: ".",
+            origin: Manifest(
+                "filesystem.allow",
+            ),
+        },
+        AnnotatedValue {
+            value: "/dev/pts",
+            origin: Baseline,
+        },
+        AnnotatedValue {
+            value: "/dev/ptmx",
+            origin: Baseline,
+        },
+        AnnotatedValue {
+            value: "/dev/null",
+            origin: Baseline,
+        },
+        AnnotatedValue {
+            value: "/tmp",
+            origin: Baseline,
+        },
+    ],
+    filesystem_read: [
+        AnnotatedValue {
+            value: "/opt/shared",
+            origin: Manifest(
+                "filesystem.read",
+            ),
+        },
+        AnnotatedValue {
+            value: "/lib",
+            origin: Baseline,
+        },
+        AnnotatedValue {
+            value: "/lib64",
+            origin: Baseline,
+        },
+        AnnotatedValue {
+            value: "/lib/x86_64-linux-gnu",
+            origin: Baseline,
+        },
+        AnnotatedValue {
+            value: "/lib/aarch64-linux-gnu",
+            origin: Baseline,
+        },
+        AnnotatedValue {
+            value: "/usr/lib",
+            origin: Baseline,
+        },
+        AnnotatedValue {
+            value: "/usr/lib64",
+            origin: Baseline,
+        },
+        AnnotatedValue {
+            value: "/usr/lib/x86_64-linux-gnu",
+            origin: Baseline,
+        },
+        AnnotatedValue {
+            value: "/usr/lib/aarch64-linux-gnu",
+            origin: Baseline,
+        },
+        AnnotatedValue {
+            value: "/etc/ld.so.cache",
+            origin: Baseline,
+        },
+        AnnotatedValue {
+            value: "/dev/urandom",
+            origin: Baseline,
+        },
+    ],
+    filesystem_deny: [
+        AnnotatedValue {
+            value: "~/.local/share/devcroft",
+            origin: Baseline,
+        },
+        AnnotatedValue {
+            value: "~/.ssh",
+            origin: Baseline,
+        },
+        AnnotatedValue {
+            value: "~/.aws",
+            origin: Baseline,
+        },
+        AnnotatedValue {
+            value: "~/.config/gcloud",
+            origin: Baseline,
+        },
+        AnnotatedValue {
+            value: "~/.kube",
+            origin: Baseline,
+        },
+    ],
+    network_block: true,
+    network_allow_domain: [
+        AnnotatedValue {
+            value: "api.example.com",
+            origin: Manifest(
+                "network.allow",
+            ),
+        },
+        AnnotatedValue {
+            value: "crates.io",
+            origin: Manifest(
+                "network.allow",
+            ),
+        },
+    ],
+    network_ports: [],
+    network_proxy_port: None,
+    unix_socket_bind: [],
+    signal_mode: "isolated",
+}

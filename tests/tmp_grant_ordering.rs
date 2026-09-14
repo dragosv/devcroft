@@ -174,11 +174,21 @@ fn tmp_granted_read_write_is_writable_at_the_mount_level() {
     );
 }
 
-/// Finding 2, the actual bug: `/tmp` granted via `filesystem.read` must
-/// be genuinely read-only at the mount level, not just in the rendered
-/// policy.
+/// Finding 2, as it stands now — and it is the opposite of what this test
+/// first pinned. It used to assert that `filesystem.read = ["/tmp"]` is
+/// genuinely read-only at the mount level, which was true until
+/// `policy::SANDBOX_TEMP_DIR` put `/tmp` read-write into the baseline on
+/// every platform. Grants compose as a union (only baseline denials win),
+/// so the manifest's read-only entry is subsumed: the compiled policy
+/// carries both, and the view takes the widest. CI on Linux is what
+/// showed it (run 34823971268 — "got WROTE"); the macOS host this was
+/// last run on has no mount view to show it with.
+///
+/// Pinned as a *positive* assertion rather than deleted: if the baseline
+/// ever narrows, or a manifest ever gains the power to narrow it, this
+/// is the test that should start failing and be rewritten again.
 #[test]
-fn tmp_granted_read_only_is_read_only_at_the_mount_level() {
+fn tmp_read_in_the_manifest_is_subsumed_by_the_baselines_read_write_grant() {
     if !mount_namespaces_available() {
         eprintln!("skipping: this host cannot create unprivileged mount namespaces");
         return;
@@ -195,27 +205,26 @@ fn tmp_granted_read_only_is_read_only_at_the_mount_level() {
 
     assert!(
         out.status.success(),
-        "constructing the view must succeed even though /tmp is read-only: {}",
+        "constructing the view must succeed: {}",
         String::from_utf8_lossy(&out.stderr)
     );
-    assert!(
-        String::from_utf8_lossy(&out.stdout)
-            .trim()
-            .starts_with("REFUSED"),
-        "filesystem.read = [\"/tmp\"] must be read-only at the mount level, not just in \
-         policy --render: got {:?}",
-        String::from_utf8_lossy(&out.stdout)
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout).trim(),
+        "WROTE",
+        "the baseline grants /tmp read-write and a manifest cannot narrow it \
+         (policy::SANDBOX_TEMP_DIR); a REFUSED here means that rule changed"
     );
 }
 
-/// The combined, trickiest case: a project root nested under `/tmp` with
-/// its own `ReadWrite` grant must stay writable even when `/tmp` itself
-/// is granted read-only — the non-recursive remount is what this test
-/// exists to pin. A recursive remount (the naive fix for finding 1)
-/// would silently drag the nested project root's own mount read-only
-/// too, which is finding 2's failure mode in a different disguise.
+/// The combined case, kept for the half that still says something: a
+/// project root physically nested under `/tmp`, with `/tmp` also named by
+/// the manifest, must stay reachable and writable through its own mount.
+/// The other half this test used to carry — `/tmp` itself read-only
+/// around it, pinning the non-recursive remount — cannot be expressed by
+/// a manifest any more (see the test above), so `finalize_tmp_mode`'s
+/// read-only branch is reachable only if the baseline changes.
 #[test]
-fn a_nested_project_root_stays_writable_when_tmp_itself_is_read_only() {
+fn a_nested_project_root_stays_writable_when_tmp_is_also_named_read_only() {
     if !mount_namespaces_available() {
         eprintln!("skipping: this host cannot create unprivileged mount namespaces");
         return;
@@ -227,7 +236,6 @@ fn a_nested_project_root_stays_writable_when_tmp_itself_is_read_only() {
     );
     let probe = build_write_probe(&project.root);
 
-    // Inside the project root: must succeed (its own ReadWrite grant).
     let inside_target = project.root.join("written-inside");
     let out_inside = run_probe(
         &project.root,
@@ -237,21 +245,7 @@ fn a_nested_project_root_stays_writable_when_tmp_itself_is_read_only() {
     assert_eq!(
         String::from_utf8_lossy(&out_inside.stdout).trim(),
         "WROTE",
-        "a project root's own ReadWrite grant must survive /tmp's own read-only remount, \
+        "a project root's own ReadWrite grant must hold through its own mount, \
          even though the project root is physically nested under /tmp"
-    );
-
-    // Directly under /tmp, outside the project root: must be refused.
-    let outside_target = std::path::Path::new("/tmp/devcroft-tmp-ordering-combo-marker");
-    let out_outside = run_probe(
-        &project.root,
-        &[probe.as_os_str(), outside_target.as_os_str()],
-    );
-    assert!(out_outside.status.success());
-    assert!(
-        String::from_utf8_lossy(&out_outside.stdout)
-            .trim()
-            .starts_with("REFUSED"),
-        "/tmp's own top-level read-only mode must still hold outside the nested project root"
     );
 }

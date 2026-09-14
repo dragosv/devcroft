@@ -183,13 +183,16 @@ jobs:
   #   `devenv_capture_contract`, the devenv half of `services_e2e`).
   #   Adding the row belongs to the fixture change, not to CI.
   #
-  # The devenv leg has a second, separate failure on the first run
-  # (34823186189), after the namespace one: `devenv build shell` dies in
-  # evaluation with `error: path '/nix/store/…-setup-hook.sh' is not
-  # valid`, from inside devenv's patched nixpkgs, under install-nix-action's
-  # nix. Locally (flox's nix-daemon, macOS) the same provider resolves.
-  # Not diagnosed from here; the leg stays continue-on-error and its log
-  # is the next thing to read.
+  # The devenv leg, as of run 34823971268: the provider itself works on
+  # the runner — `devenv_provider_e2e` passes 15/15 (closure compile,
+  # supervised processes, readiness, the hook running inside). What fails
+  # is `devenv_capture_contract`'s two `resolve` calls, where
+  # `devenv build shell` dies in *evaluation* of `devenv-nixpkgs/rolling`
+  # with `error: path '/nix/store/…-setup-hook.sh' is not valid` — a nix
+  # evaluator/daemon problem under install-nix-action's nix plus devenv's
+  # bundled one, not a devcroft one, and not reproduced locally (flox's
+  # nix-daemon, macOS). Undiagnosed; the leg stays continue-on-error and
+  # that binary's log is the next thing to read.
   #
   # Pinned versions match what the project was measured against: flox and
   # devbox the same as `.devcontainer/Dockerfile`, devenv the version the

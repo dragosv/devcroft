@@ -48,7 +48,16 @@ fn a_manifest_that_does_not_name_devenv_compiles_exactly_as_before() {
     assert!(warnings.is_empty(), "unexpected warnings: {warnings:?}");
 
     let rendered = format!("{:#?}", compile(&manifest));
-    let golden = include_str!("golden/policy_without_devenv.txt");
+    // One golden per platform, because the baseline is platform-split
+    // (`policy::KEEPER_SYSTEM_READ`/`KEEPER_SYSTEM_READWRITE`): the file
+    // was first recorded on macOS and the test had never run on Linux
+    // until CI did — the first run there failed on `/dev/pts` vs
+    // `/dev/ptmx`. The Linux file is the macOS one with exactly those two
+    // constant blocks swapped; `compile` is otherwise platform-blind.
+    #[cfg(target_os = "macos")]
+    let golden = include_str!("golden/policy_without_devenv.macos.txt");
+    #[cfg(not(target_os = "macos"))]
+    let golden = include_str!("golden/policy_without_devenv.linux.txt");
 
     assert_eq!(
         rendered.trim(),

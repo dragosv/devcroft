@@ -248,9 +248,19 @@ fn the_invoking_shell_does_not_reach_the_sandbox() {
         "a tool must be able to write under $HOME — the whole reason it moved, \
          and what an agent's own installer needs"
     );
+    // Two shapes of "unreachable", one per backend, and both are the
+    // property: Seatbelt refuses the path (`Operation not permitted`);
+    // Linux's mount view leaves nothing at that path to refuse, so the
+    // sandbox sees `No such file or directory` — whether or not the host
+    // has a `~/.ssh` at all (GitHub's runners do not, which is how the
+    // first CI run found this assertion asserting the macOS shape only).
+    // What must never appear is a listing.
     assert!(
-        host_ssh_err.contains("not permitted"),
-        "the host's ~/.ssh must stay unreachable from inside; got: {host_ssh_err:?}"
+        host_ssh.stdout.is_empty()
+            && (host_ssh_err.contains("not permitted")
+                || host_ssh_err.contains("No such file or directory")),
+        "the host's ~/.ssh must stay unreachable from inside; got stdout={:?} stderr={host_ssh_err:?}",
+        String::from_utf8_lossy(&host_ssh.stdout)
     );
 }
 
