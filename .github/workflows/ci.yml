@@ -47,6 +47,18 @@ jobs:
   # skip logic itself: a test that *fails* here instead of skipping is
   # guarding on the binary rather than the capability. Provider coverage
   # is the `e2e` matrix below.
+  #
+  # The fixture-driven tests (`tests/common::for_each_row`) are the one
+  # place "no provider" is not a skip: their default row is a real nix
+  # closure, and an unavailable *default* row fails the run by design —
+  # "will not fall back to something cheaper behind your back". So this
+  # leg asks for the cheaper row by name: `test`, the nix-free row that
+  # drives `up` through the injection seam, which exists only under
+  # `--features test-support` and is precisely the row for a host without
+  # a Nix store. That feature gates the seam and nothing else
+  # (`src/lib.rs`), so every other test runs exactly as it does without
+  # it. Without this, all seven fixture-driven binaries panic here on
+  # both OSes.
   test:
     name: unit + process tier, no provider (${{ matrix.os }})
     strategy:
@@ -72,13 +84,15 @@ jobs:
       # the macos-latest leg of run 33546435126 did at 6h5m.
       - name: cargo test
         timeout-minutes: 20
+        env:
+          DEVCROFT_TEST_PROVIDER: test
         run: |
           set -o pipefail
-          cargo test -- --nocapture 2>&1 | tee /tmp/test-output.txt
+          cargo test --features test-support -- --nocapture 2>&1 | tee /tmp/test-output.txt
 
       - name: report what actually ran vs. self-skipped
         if: always()
-        run: grep -i skipping /tmp/test-output.txt || true
+        run: grep -iE "skipping|provider matrix" /tmp/test-output.txt || true
 
   packaging:
     name: cargo package
@@ -268,4 +282,4 @@ jobs:
 
       - name: report what actually ran vs. self-skipped
         if: always()
-        run: grep -i skipping /tmp/test-output.txt || true
+        run: grep -iE "skipping|provider matrix" /tmp/test-output.txt || true
