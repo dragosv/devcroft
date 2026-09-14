@@ -74,6 +74,20 @@ jobs:
         with:
           key: ${{ matrix.os }}
 
+      # ubuntu-24.04 (what `ubuntu-latest` resolves to) ships AppArmor's
+      # `apparmor_restrict_unprivileged_userns=1`, which refuses an
+      # unprivileged `unshare(CLONE_NEWUSER|CLONE_NEWNS)`. Every `up` on
+      # Linux needs exactly that since `add-mount-isolation` — measured on
+      # run 34823186189, where all five Linux legs failed at their first
+      # `up` with "this host cannot create unprivileged mount namespaces".
+      # The devcontainer never hit it (Docker's default profile allows it).
+      - name: allow unprivileged user namespaces (ubuntu 24.04 AppArmor default)
+        if: runner.os == 'Linux'
+        run: |
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
+          sudo sysctl -w kernel.unprivileged_userns_clone=1 || true
+          unshare --user --mount --map-root-user true && echo "user+mount namespaces: ok"
+
       - run: cargo build
 
       # One run, not two. This step used to be a plain `cargo test`
@@ -88,7 +102,7 @@ jobs:
           DEVCROFT_TEST_PROVIDER: test
         run: |
           set -o pipefail
-          cargo test --features test-support -- --nocapture 2>&1 | tee /tmp/test-output.txt
+          cargo test --no-fail-fast --features test-support -- --nocapture 2>&1 | tee /tmp/test-output.txt
 
       - name: report what actually ran vs. self-skipped
         if: always()
@@ -169,6 +183,14 @@ jobs:
   #   `devenv_capture_contract`, the devenv half of `services_e2e`).
   #   Adding the row belongs to the fixture change, not to CI.
   #
+  # The devenv leg has a second, separate failure on the first run
+  # (34823186189), after the namespace one: `devenv build shell` dies in
+  # evaluation with `error: path '/nix/store/…-setup-hook.sh' is not
+  # valid`, from inside devenv's patched nixpkgs, under install-nix-action's
+  # nix. Locally (flox's nix-daemon, macOS) the same provider resolves.
+  # Not diagnosed from here; the leg stays continue-on-error and its log
+  # is the next thing to read.
+  #
   # Pinned versions match what the project was measured against: flox and
   # devbox the same as `.devcontainer/Dockerfile`, devenv the version the
   # provider was written against (`add-devenv-provider`). Still unverified
@@ -194,6 +216,20 @@ jobs:
           # Build artifacts are provider-independent; share one cache
           # across the four legs and with the `test` job's ubuntu leg.
           key: ubuntu-latest
+
+      # ubuntu-24.04 (what `ubuntu-latest` resolves to) ships AppArmor's
+      # `apparmor_restrict_unprivileged_userns=1`, which refuses an
+      # unprivileged `unshare(CLONE_NEWUSER|CLONE_NEWNS)`. Every `up` on
+      # Linux needs exactly that since `add-mount-isolation` — measured on
+      # run 34823186189, where all five Linux legs failed at their first
+      # `up` with "this host cannot create unprivileged mount namespaces".
+      # The devcontainer never hit it (Docker's default profile allows it).
+      - name: allow unprivileged user namespaces (ubuntu 24.04 AppArmor default)
+        if: runner.os == 'Linux'
+        run: |
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
+          sudo sysctl -w kernel.unprivileged_userns_clone=1 || true
+          unshare --user --mount --map-root-user true && echo "user+mount namespaces: ok"
 
       # --- flox: its own installer provisions a private Nix store and
       # nix-daemon (there is no separate system-wide Nix install anywhere
@@ -272,13 +308,17 @@ jobs:
       # *fails* the run rather than skipping (`tests/common/mod.rs`), which
       # is exactly the guard a per-provider leg wants: a leg whose provider
       # silently did not install must not pass on the unit tests alone.
+      # `--no-fail-fast` on both legs: cargo otherwise stops at the first
+      # failing test *binary*, so a leg reports one failure where it has
+      # several — the first dispatched run showed exactly one binary per
+      # leg, all with the same cause, and would have hidden a second.
       - name: cargo test
         timeout-minutes: 40
         env:
           DEVCROFT_TEST_PROVIDER: ${{ matrix.provider == 'devenv' && 'nix' || matrix.provider }}
         run: |
           set -o pipefail
-          cargo test -- --nocapture 2>&1 | tee /tmp/test-output.txt
+          cargo test --no-fail-fast -- --nocapture 2>&1 | tee /tmp/test-output.txt
 
       - name: report what actually ran vs. self-skipped
         if: always()
