@@ -146,16 +146,50 @@ after which the recorded digest is what counts, like a lockfile).
 
 ### D6 — Fields honored and refused, by name
 
-Honored: `image` (digest-pinned or lock-recorded), `name` (ignored with
-no error), `forwardPorts` (ignored: SSH forwards; §3),
-`customizations.*` (ignored: editor-side). Refused in this cut, each
-with its own message: `build`, `features`, `postCreateCommand`,
-`postStartCommand`, `postAttachCommand`, `initializeCommand`,
-`remoteUser`, `containerUser`, `mounts`, `runArgs`, `privileged`,
-`capAdd`, `securityOpt`, `dockerComposeFile`. `updateRemoteUserUID`,
-`overrideCommand`, `shutdownAction` are ignored as meaningless without a
-container. Unknown keys are ignored — the file is shared with other
-tools and devcroft must not fail on their extensions.
+Honored: `image` (digest-pinned or lock-recorded); `postCreateCommand`
+and `postStartCommand` (D8); `name` (ignored with no error),
+`forwardPorts` (ignored: SSH forwards; §3), `customizations.*` (ignored:
+editor-side). Refused in this cut, each with its own message: `build`,
+`features`, `postAttachCommand`, `initializeCommand`, `remoteUser`,
+`containerUser`, `mounts`, `runArgs`, `privileged`, `capAdd`,
+`securityOpt`, `dockerComposeFile`. `updateRemoteUserUID`,
+`overrideCommand`, `shutdownAction`, `waitFor` are ignored as
+meaningless without a container. Unknown keys are ignored — the file is
+shared with other tools and devcroft must not fail on their extensions.
+
+### D8 — Lifecycle commands run inside the boundary, as the hooks they are
+
+`postCreateCommand` is project code that runs after the environment
+exists. devcroft already has the rule for that category and applies it
+to flox's `on-activate` and devenv's `enterShell`: never on the host at
+provisioning, always inside, under the manifest's policy. So
+`postCreateCommand` becomes the sandbox's `post_create` hook and
+`postStartCommand` its `post_start` — same once-per-creation and
+once-per-start semantics the format specifies and devcroft's hooks
+already have. The string and array forms are both accepted; the object
+form (parallel named commands) runs its entries in key order.
+
+What differs from a container is not whether the command runs but what
+it can touch, and that difference is the design, not a gap. The project
+root is writable; the rootfs is read-only and shared. `npm install`,
+`cargo fetch`, `pre-commit install`, `pip install --user` into a
+project-local venv all work. `sudo apt-get install`, `pip install` into
+the system prefix, anything writing under `/usr` or `/opt`, fail at
+layer `keeper` — and the failure message says the rootfs is shared by
+every sandbox on this digest, that mutating it would break the one
+guarantee the tier makes, and that `features` (next cut) is where
+`/usr`-level installs belong. A command that needs the network needs a
+`network.allow` entry, exactly as every hook does; the two-phase
+invariant's consequence — "a hook that needs the network needs an
+allowlist entry" — applies unchanged.
+
+Rejected alternative: run `postCreateCommand` at materialization, in
+the build container, and commit the result into the rootfs. That is
+what `features` are for; doing it for `postCreateCommand` would run
+project code with the build container's authority (root, network) on
+the host's Docker daemon, at provisioning — the thing the two-phase
+invariant exists to forbid — and would bake one project's `npm install`
+into a rootfs another project on the same digest shares.
 
 ### D7 — Staleness is the recorded digest, plus the file
 

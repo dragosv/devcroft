@@ -63,6 +63,13 @@ measurement.
 - [ ] 1.7 Tier `image` — the third variant of the `Tier` type
       `add-swift-provider` introduces, or the type itself if this lands
       first; printed at `up` and in `status`.
+- [ ] 1.8 `postCreateCommand` → `post_create`, `postStartCommand` →
+      `post_start` (design D8): parse string/array/object forms into the
+      hook list the keeper already runs (`lifecycle::hooks`), so the
+      existing once-per-creation/once-per-start machinery and the
+      existing hook failure path are reused unchanged; the keeper-layer
+      failure message gains the rootfs-shared sentence when the failing
+      write is under the rootfs grant.
 
 ## 2. Session view
 
@@ -107,9 +114,15 @@ measurement.
 - [ ] 4.3 The entrypoint-marker test: an image built for the test whose
       entrypoint writes to a bind-mounted host path; after `up` the path
       is untouched.
-- [ ] 4.4 macOS: `up` refuses with the platform message; `init` still
+- [ ] 4.4 Hooks: a `postCreateCommand` that writes a marker into the
+      project ran exactly once inside (marker present after `up`, not
+      duplicated by a second `up`); one that writes under `/usr` fails
+      `up` at layer `keeper` with the sharing sentence and leaves the
+      rootfs byte-identical (assert on a checksum of the store dir); one
+      that dials an unallowed host fails naming `network.allow`.
+- [ ] 4.5 macOS: `up` refuses with the platform message; `init` still
       detects and writes the manifest (a Linux teammate will run it).
-- [ ] 4.5 CI: `e2e (devcontainer)` leg on `ubuntu-latest` (docker is
+- [ ] 4.6 CI: `e2e (devcontainer)` leg on `ubuntu-latest` (docker is
       preinstalled there), `DEVCROFT_TEST_PROVIDER=nix` for the fixture
       rows as the devenv leg does, blocking once green.
 

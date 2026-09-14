@@ -83,16 +83,17 @@ and SHALL NOT describe it as `closure` or `artifact`.
   definition, and `status` names it thereafter
 
 ### Requirement: devcontainer fields honored and refused by name
-The system SHALL honor `image`, ignore fields that have no meaning
-without a container or that belong to the editor (`name`,
-`forwardPorts`, `customizations`, `updateRemoteUserUID`,
-`overrideCommand`, `shutdownAction`), ignore unknown fields, and SHALL
-refuse at layer `provider`, each with its own message naming the field:
-`build`, `features`, `postCreateCommand`, `postStartCommand`,
-`postAttachCommand`, `initializeCommand`, `remoteUser`, `containerUser`,
-`mounts`, `runArgs`, `privileged`, `capAdd`, `securityOpt`,
-`dockerComposeFile`. An image whose `Config.User` is neither absent nor
-root SHALL be refused for the same reason `remoteUser` is.
+The system SHALL honor `image`, `postCreateCommand` and
+`postStartCommand`; ignore fields that have no meaning without a
+container or that belong to the editor (`name`, `forwardPorts`,
+`customizations`, `updateRemoteUserUID`, `overrideCommand`,
+`shutdownAction`, `waitFor`); ignore unknown fields; and SHALL refuse at
+layer `provider`, each with its own message naming the field: `build`,
+`features`, `postAttachCommand`, `initializeCommand`, `remoteUser`,
+`containerUser`, `mounts`, `runArgs`, `privileged`, `capAdd`,
+`securityOpt`, `dockerComposeFile`. An image whose `Config.User` is
+neither absent nor root SHALL be refused for the same reason
+`remoteUser` is.
 
 #### Scenario: A file with `features` is refused, not partially honored
 - **WHEN** `devcontainer.json` has both `image` and `features`
@@ -103,6 +104,40 @@ root SHALL be refused for the same reason `remoteUser` is.
 #### Scenario: Unknown fields do not fail
 - **WHEN** the file carries a key devcroft does not know
 - **THEN** resolution proceeds and the key is not mentioned
+
+#### Scenario: `postAttachCommand` and `initializeCommand` stay refused
+- **WHEN** the file carries either
+- **THEN** `up` fails naming the field and the reason `docs/decisions.md`
+  §2 already records for it
+
+### Requirement: Lifecycle commands run inside the boundary as hooks
+The system SHALL run `postCreateCommand` as the sandbox's `post_create`
+hook and `postStartCommand` as its `post_start` hook — inside the
+boundary, under the manifest's policy, once per creation and once per
+start respectively — and SHALL NOT run either on the host or at
+materialization. String, array and object forms SHALL be accepted; the
+object form's entries run in key order. A command's failure SHALL fail
+`up` at layer `keeper` as any hook's does, and a failure caused by
+writing into the rootfs SHALL say that the rootfs is shared and
+read-only and that `features` is where system-level installs belong.
+
+#### Scenario: A project-local install works
+- **WHEN** `postCreateCommand` is `npm install` and the manifest allows
+  the registry's host
+- **THEN** it runs once inside the sandbox after the first `up`, writes
+  under the project root, and does not run again on a plain `up`
+
+#### Scenario: A system-level install fails with the reason
+- **WHEN** `postCreateCommand` is `sudo apt-get install -y jq` or
+  anything writing under `/usr`
+- **THEN** `up` fails at layer `keeper`, the message names the rootfs as
+  shared and read-only and names `features`, and no other sandbox on
+  the digest is affected
+
+#### Scenario: Network without an allowlist
+- **WHEN** `postCreateCommand` reaches a host the manifest does not allow
+- **THEN** it fails as any hook does, and the message names
+  `network.allow`
 
 ### Requirement: devcontainer staleness
 The system SHALL report the sandbox stale when the hash of

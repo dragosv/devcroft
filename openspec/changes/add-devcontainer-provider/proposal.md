@@ -20,10 +20,22 @@ the mount view, the network namespace and the proxy, exactly as on
   runtime (`docker` or `podman`, whichever `doctor` finds) to produce a
   **read-only rootfs on the host**, keyed by digest and shared by every
   sandbox of every project that names it. In the first cut only a
-  digest-pinned `image:` is honored; `build:`, `features` and
-  `postCreateCommand` are **refused by name** with the reason, and are
-  the next cut — they too run inside the build container at
-  materialization, never at `up`.
+  digest-pinned `image:` is honored; `build:` and `features` are
+  **refused by name** with the reason, and are the next cut — they run
+  inside the build container at materialization, never at `up`, because
+  they write into `/usr` by design.
+- **Lifecycle commands are project code and run where devcroft runs
+  project code: inside the boundary.** `postCreateCommand` maps to the
+  manifest's `post_create` hook and `postStartCommand` to `post_start` —
+  once per creation and per start respectively, under the manifest's
+  own policy, with the project root writable and the rootfs not. A
+  command that writes into the project (`npm install`, `cargo fetch`)
+  works; one that needs the network needs `network.allow`, like any
+  hook; one that writes into the rootfs (`apt-get install`) fails
+  loudly with the sharing reason and a pointer to `features`. This is
+  the same treatment flox's `on-activate` and devenv's `enterShell`
+  already get. `initializeCommand` (host-side) and `postAttachCommand`
+  (per-session) stay refused, per `docs/decisions.md` §2.
 - **Runtime is devcroft's, unchanged:** the rootfs is a read-only
   provider grant (`provider:devcontainer` origin), the project root is
   read-write, the mount view binds both, the keeper self-restricts with
@@ -77,8 +89,10 @@ _None._
   value — `add-swift-provider` introduces the `Tier` type and this change
   adds the third variant, so it lands after that branch or carries the
   enum itself.
-- A rootfs store under devcroft's data dir (`<data>/rootfs/<digest>/`),
-  baseline-denied to sandboxes except for the one rootfs each is granted.
+- A rootfs store at `$XDG_CACHE_HOME/devcroft/rootfs/<digest>/` — a
+  sibling of the data dir, not inside it, because the data dir is
+  baseline-denied and the deny wins over any nested grant; each sandbox
+  is granted only the one digest it resolved.
 - `docs/decisions.md` §1 gets the sixth criterion's answer for this
   provider (preconditions: runtime present, digest resolvable) and the
   `image` tier's definition; §2's "Covered differently" gains the
@@ -86,8 +100,11 @@ _None._
 - Tests: Linux e2e against a small pinned image (`debian:stable-slim@sha256:…`)
   — resolve, up, exec a rootfs binary, refuse a host binary, shell from
   the rootfs, `status` stale after digest edit; a refusal test for
-  `latest`, `build`, `features`, `postCreateCommand`, `remoteUser`,
-  `mounts`, `runArgs`; a macOS refusal test. CI gets an `e2e
+  `latest`, `build`, `features`, `initializeCommand`,
+  `postAttachCommand`, `remoteUser`, `mounts`, `runArgs`; a
+  `postCreateCommand` that writes into the project ran once inside, one
+  that writes into the rootfs failed at layer `keeper` naming the
+  sharing reason; a macOS refusal test. CI gets an `e2e
   (devcontainer)` leg with docker available (it is, on `ubuntu-latest`).
 - `samples/devcontainer-sample/` with the file most projects already
   have, unmodified.
