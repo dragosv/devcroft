@@ -272,16 +272,30 @@ pub fn construct_view(
             // item, distinct from "mirror what was granted").
             continue;
         }
-        bind_mount_grant(new_root, &grant.path, grant.mode)?;
+        if grant.path == std::path::Path::new("/dev/ptmx") {
+            // Owned by `setup_dev`, which replicates whichever shape the
+            // host has (symlink into /dev/pts, or a device node). It is a
+            // baseline grant on Linux for Landlock's sake — the device-
+            // node hosts where `openpty` opens exactly this path — and
+            // binding it here as a generic file grant *before* `setup_dev`
+            // then opened the already-mounted device with `File::create`,
+            // which is an `open(2)` of ptmx itself. Measured on CI (run
+            // 34825300174): every view construction failed with ENOENT
+            // the moment the grant existed.
+            continue;
+        }
+        bind_mount_grant(new_root, &grant.path, grant.mode)
+            .map_err(|e| ctx(e, "bind-mounting grant", &grant.path))?;
     }
 
     if let Some(mode) = tmp_mode {
-        finalize_tmp_mode(new_root, mode)?;
+        finalize_tmp_mode(new_root, mode).map_err(|e| ctx(e, "finalizing /tmp mode", tmp_path))?;
     }
 
-    mount_proc(new_root)?;
-    setup_dev(new_root)?;
-    setup_merged_usr_compat(new_root)?;
+    mount_proc(new_root).map_err(|e| ctx(e, "mounting /proc", new_root))?;
+    setup_dev(new_root).map_err(|e| ctx(e, "setting up /dev", new_root))?;
+    setup_merged_usr_compat(new_root)
+        .map_err(|e| ctx(e, "recreating merged-/usr symlinks", new_root))?;
 
     // M3: the sandbox's own proxy socket, granted here explicitly and
     // never through the generic `grants` loop above — the surrounding
@@ -322,6 +336,15 @@ fn mount_tmpfs(target: &std::path::Path) -> io::Result<()> {
         return Err(io::Error::last_os_error());
     }
     Ok(())
+}
+
+/// An `io::Error` that says which step of the view failed and on what
+/// path. A bare "No such file or directory" out of a dozen `mount(2)`
+/// and `open(2)` calls is undiagnosable from a CI log — which is where
+/// the first one was read.
+#[cfg(target_os = "linux")]
+fn ctx(e: io::Error, step: &str, path: &std::path::Path) -> io::Error {
+    io::Error::new(e.kind(), format!("{step} {}: {e}", path.display()))
 }
 
 /// Bind-mount `source` (real, canonical, already confirmed to exist by
@@ -595,7 +618,13 @@ fn setup_dev(new_root: &std::path::Path) -> io::Result<()> {
             let link_target = std::fs::read_link(host_ptmx)?;
             std::os::unix::fs::symlink(&link_target, &target)?;
         } else {
-            std::fs::File::create(&target)?;
+            // `File::create` on a path that is *already* the ptmx device
+            // (bound by an earlier step) is an `open(2)` of ptmx — a pty
+            // allocation, not a touch. Only create the mount point when
+            // nothing is there yet.
+            if std::fs::symlink_metadata(&target).is_err() {
+                std::fs::File::create(&target)?;
+            }
             bind_mount(host_ptmx, &target, false)?;
         }
     }
