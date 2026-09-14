@@ -1175,3 +1175,253 @@ fn the_top_level_command_surface_stays_closed() {
 
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// `init` selects `swift` for a SwiftPM package with nothing else present.
+///
+/// The alternative here is not a better provider — it is a `devcroft.toml`
+/// naming `flox` for a project that has no flox environment, which fails
+/// on the first `up`.
+#[test]
+fn init_detects_a_swiftpm_package() {
+    let dir = scratch_project("swiftpkg");
+    std::fs::write(
+        dir.join("Package.swift"),
+        "// swift-tools-version:5.9\nimport PackageDescription\n\
+         let package = Package(name: \"x\")\n",
+    )
+    .unwrap();
+    // Unguarded and Apple-only, so no closure provider can serve it —
+    // which is the only case `init` selects `swift` for.
+    std::fs::create_dir_all(dir.join("Sources/x")).unwrap();
+    std::fs::write(dir.join("Sources/x/main.swift"), "import AppKit\n").unwrap();
+
+    let out = run(&dir, &["init"]);
+    assert!(out.status.success(), "{out:?}");
+    let (manifest, _) =
+        devcroft::config::parse(&std::fs::read_to_string(dir.join("devcroft.toml")).unwrap())
+            .unwrap();
+    assert_eq!(manifest.env.provider, "swift");
+
+    // Selecting the one provider that fails the qualification test is a
+    // trade, and `init` is the moment the user is opted into it. Both
+    // costs must be named right there — not left to documentation nobody
+    // reads at this point.
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("artifact-tier"),
+        "init must name the tier it selected; got {stdout:?}"
+    );
+    assert!(
+        stdout.contains("runs Package.swift"),
+        "init must say that `up` will run the project's own code; got {stdout:?}"
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// **The ordering assertion, and the one that matters.** `swift` ranks
+/// below every closure provider, so a Swift project that also has a real
+/// environment keeps the stronger guarantee. Without this, "swift is
+/// selected last" is an unverified claim in a comment.
+#[test]
+fn init_prefers_every_closure_provider_over_a_swift_package() {
+    for (label, setup) in [
+        (
+            "flox",
+            &(|d: &std::path::Path| {
+                std::fs::create_dir_all(d.join(".flox")).unwrap();
+            }) as &dyn Fn(&std::path::Path),
+        ),
+        ("devbox", &|d: &std::path::Path| {
+            std::fs::write(d.join("devbox.json"), "{}").unwrap();
+            std::fs::write(d.join("devbox.lock"), "{}").unwrap();
+        }),
+        ("nix", &|d: &std::path::Path| {
+            std::fs::write(
+                d.join("flake.nix"),
+                "{ description = \"x\"; outputs = { self }: {}; }",
+            )
+            .unwrap();
+            std::fs::write(d.join("flake.lock"), "{}").unwrap();
+        }),
+    ] {
+        let dir = scratch_project(&format!("swiftvs{label}"));
+        std::fs::write(
+            dir.join("Package.swift"),
+            "// swift-tools-version:5.9\nlet package = 0\n",
+        )
+        .unwrap();
+        std::fs::create_dir_all(dir.join("Sources/x")).unwrap();
+        std::fs::write(dir.join("Sources/x/main.swift"), "import AppKit\n").unwrap();
+        setup(&dir);
+
+        let out = run(&dir, &["init"]);
+        assert!(out.status.success(), "{out:?}");
+        let (manifest, _) =
+            devcroft::config::parse(&std::fs::read_to_string(dir.join("devcroft.toml")).unwrap())
+                .unwrap();
+        assert_eq!(
+            manifest.env.provider, label,
+            "a closure provider must win over a SwiftPM package; \
+             {label} lost to swift"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
+/// **`init` applies the provider's own gate.** A portable Swift package
+/// keeps `flox`, because writing `provider = "swift"` here would generate
+/// a manifest that `up` then refuses — the refusal is correct, but meeting
+/// it after `init` reported success is a worse way to learn it.
+#[test]
+fn init_keeps_flox_for_a_portable_swift_package() {
+    let dir = scratch_project("swiftportable");
+    std::fs::write(
+        dir.join("Package.swift"),
+        "// swift-tools-version:5.9\nlet package = 0\n",
+    )
+    .unwrap();
+    std::fs::create_dir_all(dir.join("Sources/x")).unwrap();
+    // The only difference from `init_detects_a_swiftpm_package`.
+    std::fs::write(dir.join("Sources/x/main.swift"), "import Foundation\n").unwrap();
+
+    let out = run(&dir, &["init"]);
+    assert!(out.status.success(), "{out:?}");
+    let (manifest, _) =
+        devcroft::config::parse(&std::fs::read_to_string(dir.join("devcroft.toml")).unwrap())
+            .unwrap();
+    assert_eq!(
+        manifest.env.provider, "flox",
+        "a portable Swift package is served better by a closure provider"
+    );
+
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("no sign that it needs"),
+        "init must say why it did not pick swift; got {stdout:?}"
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// The guard distinction reaches `init` too: an Apple import behind
+/// `#if canImport` means the package is portable with an Apple branch, so
+/// it keeps the closure provider.
+#[test]
+fn init_keeps_flox_when_the_apple_import_is_guarded() {
+    let dir = scratch_project("swiftguarded");
+    std::fs::write(
+        dir.join("Package.swift"),
+        "// swift-tools-version:5.9\nlet package = 0\n",
+    )
+    .unwrap();
+    std::fs::create_dir_all(dir.join("Sources/x")).unwrap();
+    std::fs::write(
+        dir.join("Sources/x/main.swift"),
+        "#if canImport(AppKit)\nimport AppKit\n#endif\n",
+    )
+    .unwrap();
+
+    let out = run(&dir, &["init"]);
+    assert!(out.status.success(), "{out:?}");
+    let (manifest, _) =
+        devcroft::config::parse(&std::fs::read_to_string(dir.join("devcroft.toml")).unwrap())
+            .unwrap();
+    assert_eq!(manifest.env.provider, "flox");
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A Mac app whose Swift is entirely portable still needs Apple platforms
+/// to be *produced*, so `init` selects `swift` on the project artifact —
+/// the case that a source-only rule got wrong.
+#[test]
+fn init_selects_swift_for_an_apple_deliverable_with_portable_sources() {
+    let dir = scratch_project("swiftbundle");
+    std::fs::write(
+        dir.join("Package.swift"),
+        "// swift-tools-version:5.9\nlet package = 0\n",
+    )
+    .unwrap();
+    std::fs::create_dir_all(dir.join("Sources/x")).unwrap();
+    std::fs::write(dir.join("Sources/x/main.swift"), "import Foundation\n").unwrap();
+    std::fs::write(dir.join("Info.plist"), "<plist/>").unwrap();
+
+    let out = run(&dir, &["init"]);
+    assert!(out.status.success(), "{out:?}");
+    let (manifest, _) =
+        devcroft::config::parse(&std::fs::read_to_string(dir.join("devcroft.toml")).unwrap())
+            .unwrap();
+    assert_eq!(
+        manifest.env.provider, "swift",
+        "an Info.plist means the deliverable is an Apple bundle, which no closure builds"
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// The swift arm probes what resolution resolves against — the selected
+/// developer directory, the toolchain answering `-print-target-info`, the
+/// SDK, and under Xcode the accepted-and-readable license — and never
+/// reports the generic flox line for a swift project, which is what it
+/// did before the arm existed.
+#[test]
+fn doctor_on_a_swift_project_reports_the_toolchain_and_its_preconditions() {
+    if !devcroft::policy::backend_supported() {
+        eprintln!("skipping: this host has no usable Landlock/Seatbelt support");
+        return;
+    }
+    let dir = scratch_project("doctor-swift");
+    std::fs::write(dir.join("Package.swift"), "// swift-tools-version:5.9\n").unwrap();
+    std::fs::write(
+        dir.join("devcroft.toml"),
+        "[sandbox]\nname = \"doctorswift\"\n[env]\nprovider = \"swift\"\n",
+    )
+    .unwrap();
+
+    let stdout = String::from_utf8_lossy(&run(&dir, &["doctor"]).stdout).into_owned();
+    assert!(
+        !stdout.contains("provider: flox"),
+        "a swift project must not get the flox arm; got:\n{stdout}"
+    );
+    if !cfg!(target_os = "macos") {
+        assert!(
+            stdout.contains("swift") && stdout.contains("macOS-only")
+                || stdout.contains("runs only on macOS"),
+            "off macOS the arm reports the platform, not a missing toolchain; got:\n{stdout}"
+        );
+        return;
+    }
+    let toolchain_ok = std::process::Command::new("swift")
+        .arg("-print-target-info")
+        .output()
+        .is_ok_and(|o| o.status.success());
+    if !toolchain_ok {
+        assert!(
+            stdout.contains("[FAIL] provider:") || stdout.contains("[WARN] provider:"),
+            "without a working toolchain the arm must fail or warn, naming the fix; got:\n{stdout}"
+        );
+        return;
+    }
+    let provider_lines: Vec<&str> = stdout.lines().filter(|l| l.contains("provider:")).collect();
+    assert!(
+        provider_lines.iter().any(|l| l.starts_with("[OK]")
+            && (l.contains("Xcode at") || l.contains("Command Line Tools at"))),
+        "the developer directory and its flavor must be reported; got:\n{stdout}"
+    );
+    assert!(
+        provider_lines.iter().any(|l| l.contains("Swift version")),
+        "the toolchain version must be reported; got:\n{stdout}"
+    );
+    assert!(
+        provider_lines.iter().any(|l| l.contains("SDK")),
+        "the SDK must be reported; got:\n{stdout}"
+    );
+    if provider_lines.iter().any(|l| l.contains("Xcode at")) {
+        assert!(
+            provider_lines.iter().any(|l| l.contains("license")),
+            "under Xcode the license state must be reported; got:\n{stdout}"
+        );
+    }
+}

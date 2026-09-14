@@ -53,6 +53,35 @@ surfacing inside the sandbox and far from its cause, so
 `devcroft why --env GH_TOKEN` answers it directly and prints the line
 above when that is the answer.
 
+## Eight Swift sandboxes cost eight builds
+
+The closure tier's headline property — "eight sandboxes of one project
+cost one build, because they share a content-addressed store" — is **false
+for `env.provider = "swift"`**.
+
+SwiftPM has no shared store. Each sandbox resolves and builds its own
+`.build/checkouts`, so N sandboxes of one Swift project cost N fetches and
+N builds. This is criterion 3 of `docs/decisions.md` §1 failing, and it is
+the price that entry records the provider paying in exchange for criterion
+4 — devcroft never evaluating `Package.swift`.
+
+The cache is now per project rather than per user, which changes where
+it lives and not what it costs. Measured: SwiftPM honours
+`SWIFTPM_BUILD_DIR` for the scratch directory but **nothing** for the
+cache — `strings` over `swift-package` yields no cache equivalent, and
+only `--cache-path` works — so the provider writes a `swift` shim that
+adds it (see the entry below), and the cache lands at
+`.devcroft/swift/cache/swiftpm`. Eight sandboxes are eight caches, as
+they were eight before under `~/Library/Caches`; nothing here is shared,
+and nothing here is content-addressed.
+
+A measurement hazard worth repeating, because it produces a confident
+wrong answer: **macOS resolves the home directory from the password
+database, not from `$HOME`**. Pointing `HOME` at an empty directory and
+observing that nothing was written there reads as "SwiftPM needs no home
+access" and is false — the real cache was written throughout. Compare
+mtimes instead.
+
 ## Port collisions: fixed on Linux, still real on macOS
 
 **The platform split is stated first because this entry used to bury it.**
@@ -597,26 +626,34 @@ until it is granted.
 
 ## A grant does not cover the symlinked spelling of its own path on macOS — half fixed
 
-devcroft canonicalizes every filesystem grant before handing it to the backend,
-so the compiled policy names `/private/tmp/proj` where the manifest (or the
-shell, or `$TMPDIR`) says `/tmp/proj`. On Linux that is invisible, because the
+devcroft canonicalized every filesystem grant before handing it to the backend,
+so the compiled policy named `/private/tmp/proj` where the manifest (or the
+shell, or `$TMPDIR`) said `/tmp/proj`. On Linux that is invisible, because the
 paths involved are not symlinks. On macOS `/tmp` → `/private/tmp` and `/var` →
-`/private/var` both are, and the sandbox denies the un-canonicalized spelling of
-a path it has granted.
+`/private/var` both are, and the sandbox denied the un-canonicalized spelling of
+a path it had granted.
 
-Measured, in a sandbox whose project root was granted normally:
+**Fixed by emitting both spellings**, which is exactly what this entry already
+proposed: `policy::capability_set`'s grant path now hands nono the literal path
+as well as the canonical one whenever they differ. The canonical rule is
+unchanged, so nothing that worked before can regress; the literal rule is
+additive. nono keys its macOS dedup on `original` precisely so the two survive
+as separate rules — devcroft canonicalizing first meant nono only ever saw one
+spelling, and the distinction it preserves had nothing to preserve.
 
-```
-touch /var/folders/…/T/proj/FILE      -> Operation not permitted
-touch /private/var/folders/…/T/proj/FILE -> OK
-touch FILE                             -> OK   (relative, from the project root)
-```
+Two measurements from the fix, worth keeping because one of them corrects a
+natural reading of the old title:
 
-Relative paths and canonical absolute paths both work, so this mostly bites
-projects living under `/tmp` or `$TMPDIR` — which is rare for real projects and
-common for test fixtures and generated scratch directories. A flox
-`[hook].on-activate` writing to `$TMPDIR/...` is the case that actually surfaced
-it.
+- **Seatbelt does resolve symlinks when matching.** A `deny` on the canonical
+  path refuses the symlinked spelling too. So the problem was never that
+  Seatbelt matches literally — it was that the *symlink component itself* was
+  never granted. With `/var/folders/…/T` granted and canonicalized away,
+  `ls -ld /var` returned `Operation not permitted`: nothing named `/var`, so it
+  could not even be stat'd, and no path through it could be resolved.
+- **`sandbox-exec` cannot be used to probe this.** A `(deny default)` profile
+  makes the process hang rather than fail, surviving a `kill -9` watchdog, so
+  hand-written probe profiles report nothing. The instrument has to be
+  devcroft's own compiled policy.
 
 **A second instance, found by `add-devenv-provider` and not specific to a
 user's own code.** devenv wraps every project's `enterShell` in a generated
@@ -686,6 +723,59 @@ set, whose paths devcroft neither chooses nor spells. That half is
 `own-policy-baseline`'s or upstream's: the library emits both spellings for
 capabilities it is handed, so the question is why its own baseline grants only
 one.
+
+What it unblocked: `swift build` inside a sandbox on macOS, which failed because
+the Swift driver derives its scratch directory from `_CS_DARWIN_USER_TEMP_DIR`
+— spelled `/var/folders/…` — and no grant devcroft could compile was reachable
+under that name.
+
+## `swift build` in a sandbox needed three things the manifest had to declare — now none
+
+An earlier version of this entry listed what a project had to put in its
+own manifest before `env.provider = "swift"` would build: two Darwin
+per-user directories granted read-write (`/var/folders/…/T` and `…/C`,
+machine-specific, "no environment variable overrides either"),
+`swift build --disable-sandbox` typed by hand, and `/usr/share` plus
+`/var/db/timezone` read-only for date formatting. Every item was a real
+measurement; every conclusion was wrong, and the two write grants were
+exactly the widening the artifact tier exists to avoid.
+
+Measured again on Xcode 26.3 (the provider had only met Command Line
+Tools before), with the project root as the manifest's only grant:
+
+- **The per-user directories are not needed.** `CLANG_MODULE_CACHE_PATH`
+  moves the module cache the *manifest* compile writes (whose flags are
+  SwiftPM's, not the user's — that is why `-module-cache-path` could not
+  reach it), and `xcrun_db` — lowercase, undocumented, read out of
+  `libxcrun.dylib`'s strings — moves `xcrun`'s lookup cache. With
+  `TMPDIR` and `SWIFTPM_BUILD_DIR`, every write lands under `.build/` or
+  `.devcroft/swift/`. The provider sets all four.
+- **`--disable-sandbox` and `--cache-path` are added by a shim** the
+  provider writes at `.devcroft/swift/bin/swift`, first on `PATH`, for
+  `build|run|test|package` only; `up` prints what it does. SwiftPM has no
+  environment lever for either (`strings swift-build | grep ^SWIFTPM_`
+  lists neither).
+- **`/usr/share/icu` and `/var/db/timezone` are the provider's grants**,
+  not the project's: Foundation's data, and an empty formatted date
+  without ICU is a property of every Foundation program, not of one
+  manifest.
+
+`samples/swift-spm-sample/devcroft.toml` is `allow = ["."]`, and
+`tests/swift_provider_e2e.rs` asserts a plain `swift build` and
+`swift run` succeed that way — the assertion the file's own header used
+to say it could not make.
+
+What Xcode added, each found by a build failing, each now a
+`provider:swift` read-only grant: the bundle's `Contents` (`xcodebuild`
+links `SharedFrameworks`, a sibling of `Developer`), the license record
+(a sandboxed `xcodebuild` that cannot read it says the license is
+unaccepted when it is), `/Library/Apple` (`MobileDevice.framework`,
+behind a `/System` symlink, without which the plug-in scan fails),
+`/var/select` (macOS's `/bin/sh` reads it to pick a shell; `xcrun`'s
+`sh -c` failed without it), and `/usr/share/firmlinks` — FSEvents'
+firmlink table; `xcodebuild -find swift` segfaulted in
+`DVTFilePathEventWatcher` without it, and no subdirectory of
+`/usr/share` sufficed where the one 680-byte file did.
 
 ## A home-relative `filesystem` grant has no effect on macOS
 

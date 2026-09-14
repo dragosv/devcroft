@@ -9,7 +9,7 @@ tasks**, the last one being the publish itself. `src/` has real modules for `con
 `keeper`, `lifecycle`, `ssh`, `services`, plus the `devcroft` and `spike`
 binaries under `src/bin/`, backed by an integration `tests/` suite. Stack
 is Rust stable, edition 2024. `samples/` holds standalone example projects
-covering the four closure-tier providers —
+covering every implemented provider —
 `flox-clap-sample`, `flox-rustup-sample`, `nix-flake-sample`, and
 `devbox-citytime-sample` are Rust projects with their own `Cargo.toml`
 (each has an explicit `[workspace]` table so they don't get pulled into
@@ -65,6 +65,34 @@ that exposes *both* a hook-free way to get the environment
 runs it **inside** the sandbox rather than engineering around its
 absence the way `flox::derive_hook_free_env` does. The sample's
 `enterShell` writes a marker you can look for after `up`.
+
+`swift-spm-sample` (Swift/SwiftPM) is the odd one out on every axis, and
+each difference is deliberate rather than incidental — read its README
+before copying anything from it:
+
+- It is the only **artifact-tier** sample, and the only one whose
+  provider fails devcroft's own six-criterion test (criterion 3, no
+  content-addressed shared store). `up` and `status` print the guarantee.
+- It is **macOS-only**, because the provider is: `swift` resolves an
+  Xcode / Command Line Tools toolchain and fails closed elsewhere.
+- Its unguarded `import AppKit` is **load-bearing, not decoration.** `up`
+  warns for a package a closure provider could serve (and refuses under
+  `[env] require_native_apple_evidence = true`), so a Foundation-only
+  version of this sample draws the advice and names flox — swapping the
+  import is the fastest way to see the scan work. The scan is advice,
+  not a gate, by review decision; `docs/decisions.md` §1 has the four
+  reasons.
+- Its manifest grants **the project root and nothing else.** Everything
+  the toolchain needs is the provider's grant (`policy --render`,
+  origin `provider:swift`) or a variable pointing a cache inside the
+  project. An earlier version granted two `/var/folders/…` directories
+  read-write; `CLANG_MODULE_CACHE_PATH` and `xcrun_db` made both
+  unnecessary.
+- Plain `swift build` works, through a **shim** the provider writes at
+  `.devcroft/swift/bin/swift` (first on `PATH`; adds `--disable-sandbox`
+  and `--cache-path` to `build|run|test|package`, since SwiftPM sandboxes
+  its own manifest evaluation and Seatbelt does not nest, and SwiftPM has
+  no environment lever for either). `up` prints what the shim does.
 
 Remaining work (see `openspec/changes/add-mvp-core/tasks.md`): task 7.5,
 and only its last step — running `cargo publish` and reserving the npm

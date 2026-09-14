@@ -540,10 +540,30 @@ fn cli_init(args: &[String]) -> i32 {
     // artifacts under .devenv/, so a root flake beside a devenv.nix was
     // authored deliberately. Any one of the four supersedes advice about
     // a toolchain pin it would otherwise just be a fallback for.
+    //
+    // **`swift` ranks last among the five, and the ordering is the whole
+    // of the care taken here.** It is the one provider devcroft ships
+    // that fails the qualification test (`docs/decisions.md` §1), so a
+    // project that has *any* closure environment keeps it: a Swift
+    // package with a `.flox/` beside it still gets `flox`. Only a project
+    // with nothing else gets `swift`, where the alternative is not a
+    // better provider but no working `devcroft init` at all.
+    //
+    // Selecting it is a real trade and `init` says so rather than writing
+    // the line quietly — see the advice branch below, which names both
+    // costs (host-linked toolchain, and `up` running `Package.swift`) at
+    // the moment the manifest is generated.
     let has_flox = cwd.join(".flox").is_dir();
     let has_devbox = cwd.join("devbox.json").is_file();
     let has_devenv = cwd.join("devenv.nix").is_file();
     let has_flake = cwd.join("flake.nix").is_file();
+    // Only a SwiftPM package that a closure provider *cannot* serve, so
+    // `init` never writes a manifest `up` would then refuse
+    // (`provider::swift`'s gate). The scan executes nothing, which is the
+    // reason `init` uses it rather than the fuller `dump-package` check.
+    let has_swift_package = cwd.join("Package.swift").is_file();
+    let swift_needs_apple =
+        has_swift_package && devcroft::provider::swift_package_needs_apple_platforms(&cwd);
     let provider = if has_flox {
         "flox"
     } else if has_devbox {
@@ -552,6 +572,8 @@ fn cli_init(args: &[String]) -> i32 {
         "devenv"
     } else if has_flake {
         "nix"
+    } else if swift_needs_apple {
+        "swift"
     } else {
         "flox"
     };
@@ -657,6 +679,50 @@ fn cli_init(args: &[String]) -> i32 {
             println!("devcroft: found flake.nix but no flake.lock.");
             println!("devcroft: run `nix flake lock` before `devcroft up`.");
         }
+    } else if has_swift_package && !swift_needs_apple {
+        // A portable Swift package: a closure provider serves it, and
+        // serves it better. `init` says so rather than writing a
+        // `provider = "swift"` line that `up` would refuse — the refusal
+        // is correct, but meeting it after `init` reported success is a
+        // worse way to learn it.
+        println!(
+            "devcroft: found a SwiftPM package (Package.swift) with no sign that it needs \
+             Apple platforms — no Apple-only import, no Info.plist, entitlements, \
+             .xcodeproj or asset catalog."
+        );
+        println!(
+            "devcroft: a closure provider serves it better (reproducible across machines, \
+             and `up` does not run Package.swift on the host), so the manifest keeps \
+             `provider = \"flox\"` — run `flox init` and add the swift package."
+        );
+        println!(
+            "devcroft: `provider = \"swift\"` is for projects that cannot be built or \
+             produced without Apple platforms; devcroft refuses it for this one."
+        );
+    } else if has_swift_package {
+        // Selected, and therefore disclosed *more* loudly rather than
+        // less. Every other branch here reports a discovery; this one
+        // reports a trade the user is being opted into, so it states both
+        // costs and the alternative that avoids them. The `[FAIL]`-free
+        // wording is deliberate — this is a working configuration, not an
+        // error — but it must not read as a clean bill of health either.
+        println!(
+            "devcroft: found a SwiftPM package (Package.swift); wrote `provider = \"swift\"`."
+        );
+        println!(
+            "devcroft: note: swift is devcroft's only artifact-tier provider — the toolchain \
+             comes from this host, so the same Package.swift can behave differently on another \
+             machine."
+        );
+        println!(
+            "devcroft: note: resolving it runs Package.swift, which is a Swift program, on the \
+             host at every `up`. Treat `devcroft up` on a repository you have not read as \
+             running its code."
+        );
+        println!(
+            "devcroft: for a reproducible Swift environment instead, run `flox init`, add the \
+             swift package, and change provider back to \"flox\"."
+        );
     } else if cwd.join("rust-toolchain.toml").exists() {
         println!("devcroft: found rust-toolchain.toml but no .flox/ environment.");
         println!(
@@ -1614,6 +1680,7 @@ fn doctor_provider() -> bool {
             "nix" => doctor_nix_provider(true),
             "devbox" => doctor_devbox_provider(true),
             "devenv" => doctor_devenv_provider(true),
+            "swift" => doctor_swift_provider(true),
             // `config::parse` normalizes and rejects anything else, so
             // this is flox or a provider that could not exist.
             _ => doctor_flox_provider(true),
@@ -1825,6 +1892,135 @@ fn doctor_devbox_provider(required: bool) -> bool {
     }
 }
 
+/// The swift arm: every precondition the provider resolves against, probed
+/// the way resolution probes it, with the fix named on each failure.
+///
+/// Four things, in the order a build meets them, and three of them were
+/// found by a build failing rather than designed in: the developer
+/// directory `xcode-select` names must exist; the toolchain must answer
+/// `swift -print-target-info` (a version string proves nothing about
+/// that); under Xcode the license must be accepted *and its record
+/// readable* — a sandboxed `xcodebuild` reads
+/// `/Library/Preferences/com.apple.dt.Xcode.plist` and treats "cannot
+/// read" as "not accepted"; and the SDK `xcrun` would inject must exist.
+/// On Linux this arm reports the provider as unavailable on the platform
+/// and stops — a missing-toolchain failure there would send the user to
+/// install a Swift that this provider would not use.
+fn doctor_swift_provider(required: bool) -> bool {
+    if !cfg!(target_os = "macos") {
+        if required {
+            println!(
+                "[FAIL] provider: swift resolves an Xcode or Command Line Tools toolchain and \
+                 runs only on macOS — on this platform use `provider = \"nix\"` or \
+                 `provider = \"flox\"` with the swift package (closure tier)"
+            );
+            return false;
+        }
+        println!("[INFO] provider: swift is macOS-only; not checked on this platform");
+        return true;
+    }
+    let developer_dir = std::process::Command::new("xcode-select")
+        .arg("-p")
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string());
+    let Some(developer_dir) = developer_dir else {
+        let level = if required { "FAIL" } else { "WARN" };
+        println!(
+            "[{level}] provider: no developer directory is selected — install Xcode or the \
+             Command Line Tools (`xcode-select --install`), then `sudo xcode-select -s <dir>`"
+        );
+        return !required;
+    };
+    if !std::path::Path::new(&developer_dir).is_dir() {
+        println!(
+            "[FAIL] provider: xcode-select names {developer_dir}, which does not exist — \
+             `sudo xcode-select -s /Applications/Xcode.app/Contents/Developer` (or the \
+             Command Line Tools path) to correct the selection"
+        );
+        return false;
+    }
+    let is_xcode = developer_dir.ends_with("Xcode.app/Contents/Developer")
+        || developer_dir.contains(".app/Contents/Developer");
+    let flavor = if is_xcode {
+        "Xcode"
+    } else {
+        "Command Line Tools"
+    };
+
+    let target_info_ok = std::process::Command::new("swift")
+        .arg("-print-target-info")
+        .output()
+        .is_ok_and(|o| o.status.success());
+    if !target_info_ok {
+        println!(
+            "[FAIL] provider: {flavor} at {developer_dir} is selected, but `swift \
+             -print-target-info` does not run — the toolchain is incomplete or its first \
+             launch is pending; open Xcode once, or reinstall the Command Line Tools"
+        );
+        return false;
+    }
+    let version = std::process::Command::new("swift")
+        .arg("--version")
+        .output()
+        .ok()
+        .map(|o| {
+            let text = String::from_utf8_lossy(&o.stderr).into_owned()
+                + &String::from_utf8_lossy(&o.stdout);
+            text.lines()
+                .find(|l| l.contains("Swift version"))
+                .unwrap_or("")
+                .trim()
+                .to_string()
+        })
+        .unwrap_or_default();
+    println!("[OK]   provider: {flavor} at {developer_dir}; {version}");
+
+    let sdk = std::process::Command::new("xcrun")
+        .arg("--show-sdk-path")
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string());
+    match sdk {
+        Some(p) if std::path::Path::new(&p).is_dir() => println!("[OK]   provider: SDK {p}"),
+        _ => {
+            println!(
+                "[WARN] provider: `xcrun --show-sdk-path` names no usable SDK — builds that \
+                 need one will fail inside the sandbox with the policy visible in \
+                 `policy --render`"
+            );
+        }
+    }
+
+    if is_xcode {
+        let record = devcroft::provider::swift::XCODE_LICENSE_RECORD;
+        let accepted = std::process::Command::new("xcodebuild")
+            .arg("-checkFirstLaunchStatus")
+            .output()
+            .is_ok_and(|o| o.status.success());
+        let readable = std::fs::File::open(record).is_ok();
+        if !accepted {
+            println!(
+                "[FAIL] provider: the Xcode license is not accepted, or Xcode's first launch \
+                 is pending — `sudo xcodebuild -license accept` (and `sudo xcodebuild \
+                 -runFirstLaunch`); a sandboxed build refuses until then"
+            );
+            return false;
+        }
+        if !readable {
+            println!(
+                "[FAIL] provider: the license record {record} is not readable by this user; a \
+                 sandboxed xcodebuild reads it and treats unreadable as unaccepted"
+            );
+            return false;
+        }
+        println!("[OK]   provider: Xcode license accepted ({record} readable)");
+    }
+    true
+}
+
 /// devenv, like devbox, is a frontend over Nix: an unusable Nix is
 /// reported as **devenv's own** unmet requirement rather than as a
 /// suggestion to switch providers (cli spec: "Where a provider is a
@@ -1981,6 +2177,47 @@ fn warn_if_activation_hook_ran(manifest: &devcroft::config::Manifest) {
     );
 }
 
+/// The guarantee tier, printed once at `up` and on every `status`
+/// (`docs/decisions.md` §1: "the tier is always visible in `status` and
+/// once at `up`", and devcroft "does not market two different guarantees
+/// under one word").
+///
+/// Unlike [`warn_if_activation_hook_ran`], this prints for every provider
+/// including the closure ones. The rule it serves is comparison — two
+/// sandboxes should be tellable apart without reading documentation — and
+/// a line that appeared only for the weaker tier would make its absence
+/// the signal, which is exactly the thing that goes unnoticed.
+fn print_tier(provider: &str) {
+    let Ok(kind) = devcroft::provider::ProviderKind::from_name(provider) else {
+        return;
+    };
+    println!("devcroft: guarantee: {}", kind.tier().describe());
+}
+
+/// The `swift` provider puts a wrapper ahead of the toolchain's `swift`
+/// on the sandbox's `PATH` (`provider::swift::ProviderDirs::write_shim`).
+/// Said at `up`, once, in the same breath as the tier: a wrapper a user
+/// discovers with `which swift` is a surprise, and a surprise about what
+/// runs their build is the kind this project refuses to leave silent.
+/// The note names the file so the reader can open it — it is a
+/// twelve-line shell script — and the two flags, so nobody has to.
+fn print_swift_shim_note(provider: &str, project_root: &std::path::Path) {
+    if provider != "swift" {
+        return;
+    }
+    let shim = devcroft::provider::swift::ProviderDirs::shim_path(project_root);
+    let shown = shim
+        .strip_prefix(project_root)
+        .map(|p| p.display().to_string())
+        .unwrap_or_else(|_| shim.display().to_string());
+    println!(
+        "devcroft: swift: `swift build|run|test|package` go through {shown}, which adds \
+         --disable-sandbox (SwiftPM's own Seatbelt cannot nest inside devcroft's) and \
+         --cache-path (its package cache, otherwise ~/Library/Caches); every other \
+         invocation reaches the toolchain unchanged"
+    );
+}
+
 /// Extracts `--name <value>`, returning the value and the remaining args.
 ///
 /// **An override, not a selector**, and the distinction is the whole point.
@@ -2108,6 +2345,8 @@ fn cli_up(args: &[String]) -> i32 {
                 devcroft::lifecycle::UpOutcome::Recreated => "recreated",
             };
             println!("devcroft: sandbox '{}' is {msg}.", manifest.sandbox.name);
+            print_tier(&manifest.env.provider);
+            print_swift_shim_note(&manifest.env.provider, &project_root);
             warn_if_activation_hook_ran(&manifest);
             0
         }
@@ -2217,6 +2456,9 @@ fn cli_status(args: &[String]) -> i32 {
 
 fn print_status(s: &devcroft::lifecycle::SandboxStatus, provider: &str) {
     println!("sandbox: {}", s.name);
+    if let Ok(kind) = devcroft::provider::ProviderKind::from_name(provider) {
+        println!("guarantee: {}", kind.tier().describe());
+    }
     match &s.keeper {
         devcroft::lifecycle::KeeperStatus::None => println!("keeper: not running"),
         devcroft::lifecycle::KeeperStatus::Stale => {

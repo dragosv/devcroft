@@ -410,6 +410,122 @@ The same reasoning applies to any single-ecosystem toolchain manager —
 nvm, pyenv, rbenv, sdkman, ghcup. mise qualifies where they do not
 precisely because it spans ecosystems and can deliver utilities too.
 
+### Shipped despite failing the test: swift (Xcode / Command Line Tools)
+
+**Property that fails:** 3 (immutable-capable shared store).
+
+The only provider devcroft ships that does not pass all six criteria,
+recorded here rather than under a rejection so the test keeps meaning
+something. Adopted by owner decision.
+
+**Read the name carefully: this provider resolves a *toolchain*, not a
+package manager.** It is backed by Xcode or the Command Line Tools, and
+that distinction decides every verdict below. An earlier draft of this
+entry treated it as a SwiftPM provider and got two criteria wrong in
+opposite directions — worth recording, because the SwiftPM framing is the
+one that suggests itself first.
+
+| # | Criterion | Verdict |
+|---|---|---|
+| 1 | Declarative manifest | Pass, with a caveat — `Package.swift` is a file, but it is *executable Swift*. devcroft never opens it; see 4. |
+| 2 | Restorable lockfile | Pass — `Package.resolved` pins revisions by commit SHA. |
+| 3 | Immutable-capable shared store | **Fail** — see below. |
+| 4 | Capturable activation without executing project code | **Pass, and the cleanest of any provider** — see below. |
+| 5 | Completeness | Pass, unusually well — the CLT tree ships clang, the linker, the macOS SDK, system headers and the Swift runtime. It is *the* C toolchain on macOS, not one ecosystem's slice. Weakness: pinned by whatever the host installed, not by hash. |
+| 6 | Verifiable preconditions | Pass — `xcode-select -p`, `xcrun --show-sdk-path` and `swift -print-target-info` are all cheap and checkable at `up`. |
+
+**Criterion 4 passes because devcroft does less, not because SwiftPM
+offers more.** SwiftPM has no hook-free entry point: `swift package
+dump-package` looks like nix's `print-dev-env --json` and is not — it
+compiles and runs `Package.swift`, measured with a manifest carrying a
+side effect. Unlike flox there is nothing to strip, because
+`Package.swift` *is* the manifest.
+
+And the sandbox SwiftPM applies to that evaluation does not help where it
+matters. Probed from inside a manifest: reads of `~/.ssh` and
+`/etc/passwd` **allowed**, exec **allowed**, writes and network denied. It
+is a write-and-network sandbox, not a read or exec sandbox.
+
+So devcroft does not evaluate the manifest at all. It resolves
+`DEVELOPER_DIR`, `SDKROOT` and the toolchain's `PATH` entry from
+`xcode-select` and `xcrun` — no project file is opened — and dependency
+resolution happens *inside* the sandbox at `swift build` time, confined by
+the policy the project declared. That is a stronger criterion-4 position
+than any other provider has: not "a hook-free entry point was found", but
+"no project file is read".
+
+**Criterion 3 is what it pays.** SwiftPM has no content-addressed shared
+store, so each sandbox resolves and builds its own `.build/checkouts`.
+"Eight sandboxes cost one build" — the closure tier's headline property —
+is false here: eight Swift sandboxes cost eight fetches and eight builds.
+Published in `docs/known-gaps.md` rather than buried.
+
+**The tier is `artifact`, and it is visible in the linkage**: a trivial
+SwiftPM executable links `/usr/lib/libSystem.B.dylib`,
+`/usr/lib/libc++.1.dylib` and `/usr/lib/swift/libswiftCore.dylib` — host
+libraries, which per `own-policy-baseline` the baseline grants none of, so
+this provider declares them as `provider:swift` grants.
+
+**Scoped twice, because a failing-the-test provider is only justified
+where the alternative is nothing:**
+
+- **macOS only.** Swift exists on Linux; an Xcode-backed provider does
+  not, so `provider = "swift"` fails closed off macOS rather than silently
+  resolving a different toolchain under the same name.
+- **Advised away from projects a closure could serve.** A portable Swift
+  package builds fine from nix or flox, where it gets the closure tier
+  and a shared store. `up` honours an explicit `provider = "swift"` and
+  prints one warning for such a package naming the alternative; a
+  manifest that sets `[env] require_native_apple_evidence = true` gets a
+  refusal instead. Evidence is positive: an Apple framework named in
+  `Package.swift`, an unguarded import of an Apple-only module, or an
+  Apple project artifact (`Info.plist`, entitlements, `.xcodeproj`, an
+  asset catalog). The third concerns the *deliverable* — a Mac app whose
+  Swift is entirely `Foundation` still cannot be produced by a Linux
+  closure.
+
+Three traps in that evidence, all measured, each of which would have made
+the gate useless:
+
+- **`platforms: [.macOS(...)]` is not evidence.** It sets minimum versions
+  for Apple platforms and SwiftPM ignores it on Linux, so portable packages
+  declare it freely.
+- **`Foundation` and `Dispatch` are not Apple-only.** Both ship on Linux
+  via swift-corelibs; counting them qualifies every Swift package.
+- **A guarded import is not evidence.** `#if canImport(AppKit)` marks a
+  *portable* package with an Apple branch — exactly the closure tier's case.
+
+**The scan is a heuristic, and that is why it advises rather than
+gates — reversed on review from the first cut, which refused.** As a
+gate it had four defects: it cannot prove nix or flox can actually build
+the project; it misses an Apple-native project with an unusual layout;
+it accepts a project on the strength of a residual `Info.plist`; and it
+turns the manifest's declared choice into an inference that goes false
+as the project evolves. As advice it keeps what was good about it — a
+wrong warning costs a sentence, and `init` still ranks swift below every
+closure provider on the same scan — and a project that wants the
+inference to bind says so in its committed file.
+
+**What the tier costs, measured on Xcode 26 rather than argued, and
+carried by the provider rather than the manifest.** `swift build` inside
+a devcroft sandbox needed, in order of discovery: SwiftPM's own Seatbelt
+turned off (`--disable-sandbox` — Seatbelt does not nest, and devcroft's
+is the outer and stricter profile); its package cache moved
+(`--cache-path`, since `~` comes from the password database, not
+`$HOME`); clang's module cache and `xcrun`'s lookup cache pointed inside
+the project (`CLANG_MODULE_CACHE_PATH`, `xcrun_db` — the latter read out
+of `libxcrun`'s strings); and, under Xcode, read access to the app
+bundle's `Contents`, the license record, `/Library/Apple`, and the
+680-byte firmlink table FSEvents reads, without which `xcodebuild`
+segfaults. The two flags have no environment lever, so the provider
+writes a twelve-line `swift` shim first on `PATH` and `up` says so;
+everything else is a variable or a `provider:swift` grant in `policy
+--render`. The host's `/usr/bin` is granted deliberately: this tier has
+no closure to supply `grep` or `python3`, and with execute following the
+read grant every host binary there runs inside — the tier's definition,
+one directory over. The sample's manifest grants the project root and
+nothing else.
+
 ### Rejected: Homebrew
 
 **Properties that fail:** 2, 3, and the per-project environment concept.

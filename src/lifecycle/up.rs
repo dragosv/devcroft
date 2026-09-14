@@ -118,7 +118,46 @@ pub fn up(
     // *whole* of what this function does that `up_with_provider` does not —
     // see that function's doc for why the split is drawn exactly here.
     let provider = ProviderKind::from_name(&manifest.env.provider).map_err(UpError::Provider)?;
+    advise_or_refuse_swift_without_apple_evidence(manifest, project_root)?;
     up_with_provider(manifest, project_root, opts, &provider)
+}
+
+/// The swift provider's evidence scan, applied the way the manifest asks:
+/// as one warning by default, as a refusal at layer `provider` when the
+/// manifest sets `[env] require_native_apple_evidence = true`.
+///
+/// Here, in `up`, and not in the provider's `resolve`: the scan judges
+/// whether swift is the *best* provider for this project, which is a
+/// question about the manifest's choice, not about the environment —
+/// and the manifest is what `up` holds and `resolve` does not. It used
+/// to be a hard refusal inside `resolve`, and review made the case
+/// against that (`provider::swift::apple_evidence_advice`'s doc): an
+/// explicit `provider = "swift"` should be honoured as written, and a
+/// heuristic should advise. The injection seam (`up_with_provider`)
+/// bypasses this on purpose — a test row is not a manifest choice.
+fn advise_or_refuse_swift_without_apple_evidence(
+    manifest: &Manifest,
+    project_root: &Path,
+) -> Result<(), UpError> {
+    if manifest.env.provider != "swift" {
+        return Ok(());
+    }
+    let Some(advice) = crate::provider::swift::apple_evidence_advice(project_root) else {
+        return Ok(());
+    };
+    if manifest.env.require_native_apple_evidence {
+        return Err(UpError::Provider(
+            crate::provider::ProviderError::CoveredByQualifiedProvider {
+                provider: "swift",
+                reason: format!(
+                    "refused because this manifest sets `require_native_apple_evidence = true`: \
+                     {advice}"
+                ),
+            },
+        ));
+    }
+    eprintln!("devcroft: warning: swift: {advice}");
+    Ok(())
 }
 
 /// `up`, with the provider supplied rather than selected from the manifest.

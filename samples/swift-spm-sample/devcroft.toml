@@ -1,0 +1,20 @@
+[sandbox]
+name = "swift-spm-sample"
+
+[env]
+provider = "swift"
+
+[filesystem]
+# The project root, and nothing else: everything the toolchain needs
+# outside it is the provider's to declare, and `policy --render` shows
+# each of those grants with a `provider:swift` origin — the Xcode bundle
+# (or Command Line Tools), the SDK, Foundation's ICU and time-zone data,
+# the host shell and its selector. Every cache and scratch directory the
+# toolchain would otherwise write outside the project is pointed inside
+# it by the provider (`.devcroft/swift/`), so no `/var/folders` grant is
+# needed — an earlier version of this file granted two of them read-write,
+# which was exactly the widening the artifact tier exists to avoid.
+allow = ["."]
+
+[network]
+default = "deny"

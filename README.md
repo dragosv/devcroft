@@ -252,6 +252,7 @@ inspecting
   policy --render [name]      the compiled profile, every rule with its origin
   why --path P --op <mode>    whether one operation is allowed, and which rule decides
   why --host <domain>         the same question for an outbound host
+  why --env <NAME>            why a variable is or is not in the sandbox
   doctor                      check this host for what devcroft needs
 
 ssh
@@ -267,6 +268,30 @@ Four providers are supported — **flox**, **nix flakes**, **devbox** and
 what runs inside doesn't depend on what you happen to have installed. There is
 no "just use the host" fallback, on purpose. Eight sandboxes of one project cost
 one build, because they share a single content-addressed store.
+Three providers build a *closure* — **flox**, **nix flakes**, and **devbox**: a
+complete, self-contained package set, so what runs inside doesn't depend on what
+you happen to have installed. There is no "just use the host" fallback, on
+purpose. Eight sandboxes of one project cost one build, because they share a
+single content-addressed store.
+
+A fourth, **swift**, is *artifact* tier and is the one exception. It resolves the
+Mac's own Xcode or Command Line Tools toolchain, so it runs **only on macOS** and
+what it builds depends on what that host installed. It is also **scoped to
+projects the other three cannot serve**: devcroft refuses it for a portable Swift
+package and points you at nix or flox.
+
+It buys that with a real cost, stated plainly: SwiftPM has no shared store, so
+eight Swift sandboxes cost eight builds rather than one. What it does *not* cost
+is your secrets — devcroft never evaluates `Package.swift`, which is a program,
+so `up` opens no project file at all.
+It resolves a SwiftPM project against the host's own toolchain, so two machines
+can behave differently from the same `Package.swift`, and resolving it **runs the
+project's code** — `Package.swift` is a Swift program SwiftPM compiles and
+executes, with no data-only entry point. `devcroft up` prints both facts every
+time: the tier, and a warning to treat `up` on a repository you have not read as
+running its code. It is the only provider that fails devcroft's own six-criterion
+test; `docs/decisions.md` §1 records why it ships anyway, and
+`docs/known-gaps.md` records what it cannot do yet.
 
 Long-lived **services** — databases, dev servers — are declared in the
 provider's own manifest and supervised by the sandbox's keeper, so parallel

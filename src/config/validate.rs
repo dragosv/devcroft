@@ -6,7 +6,15 @@ use crate::paths::{SENSITIVE_PATHS, has_traversal, is_within};
 /// of user-chosen names and is never schema-checked.
 const SECTIONS: &[(&str, &[&str])] = &[
     ("sandbox", &["name", "isolation"]),
-    ("env", &["provider", "vars", "forward"]),
+    (
+        "env",
+        &[
+            "provider",
+            "vars",
+            "forward",
+            "require_native_apple_evidence",
+        ],
+    ),
     ("filesystem", &["allow", "read", "deny"]),
     ("network", &["default", "allow", "ports"]),
     ("ssh", &["forward_agent"]),
@@ -91,6 +99,16 @@ pub fn check_env(env: &Env) -> Result<(), ConfigError> {
         if env.vars.contains_key(name) {
             return Err(ConfigError::EnvVarBothSetAndForwarded { name: name.clone() });
         }
+    }
+    // Only the swift provider has an evidence scan for this key to gate.
+    // Set for any other provider it would do nothing, and a key that does
+    // nothing in a committed manifest misleads its next reader.
+    if env.require_native_apple_evidence && env.provider != "swift" {
+        return Err(ConfigError::KeyRequiresProvider {
+            key: "env.require_native_apple_evidence",
+            provider: "swift",
+            actual: env.provider.clone(),
+        });
     }
     Ok(())
 }
