@@ -23,7 +23,22 @@
 
 use std::process::Command;
 
+/// A usable toolchain **on macOS**. The platform is part of the
+/// capability, not a separate check: GitHub's `ubuntu-latest` image ships
+/// a Swift toolchain, so a probe on the binary alone said "available"
+/// there and every test in this file then asserted a success the provider
+/// refuses by design (it resolves Xcode or Command Line Tools and nothing
+/// else). Measured on CI run 34869696777, all three failing. The Linux
+/// case has its own test below, which uses that same toolchain to assert
+/// the refusal.
 fn swift_available() -> bool {
+    if !cfg!(target_os = "macos") {
+        return false;
+    }
+    swift_binary_present()
+}
+
+fn swift_binary_present() -> bool {
     Command::new("swift")
         .arg("-print-target-info")
         .output()
@@ -67,7 +82,9 @@ fn swift_resolves_as_artifact_tier_without_reading_the_package_graph() {
         return;
     }
     if !swift_available() {
-        eprintln!("skipping: no usable Swift toolchain on this host");
+        eprintln!(
+            "skipping: no usable Swift toolchain on this host, or not macOS (the provider is macOS-only)"
+        );
         return;
     }
     // SAFETY: this process runs a single test.
@@ -278,7 +295,9 @@ fn a_closure_provider_makes_no_such_disclosure() {
 #[test]
 fn a_portable_swift_package_is_advised_by_default_and_refused_on_request() {
     if !swift_available() {
-        eprintln!("skipping: no usable Swift toolchain on this host");
+        eprintln!(
+            "skipping: no usable Swift toolchain on this host, or not macOS (the provider is macOS-only)"
+        );
         return;
     }
     let bin = env!("CARGO_BIN_EXE_devcroft");
@@ -375,7 +394,9 @@ fn swift_build_and_run_succeed_through_the_shim_with_only_the_project_granted() 
         return;
     }
     if !swift_available() {
-        eprintln!("skipping: no usable Swift toolchain on this host");
+        eprintln!(
+            "skipping: no usable Swift toolchain on this host, or not macOS (the provider is macOS-only)"
+        );
         return;
     }
     let bin = env!("CARGO_BIN_EXE_devcroft");
@@ -465,4 +486,58 @@ fn swift_build_and_run_succeed_through_the_shim_with_only_the_project_granted() 
         "caches land under .devcroft/swift/cache"
     );
     let _ = std::fs::remove_dir_all(&root);
+}
+
+/// Off macOS, an explicit `provider = "swift"` is refused at layer
+/// `provider`, naming the platform and the closure-tier route — even on
+/// a host that *has* a Swift toolchain, which GitHub's Linux runners do.
+/// That is the case the requirement exists for: the same manifest must
+/// not mean Xcode on one machine and a different toolchain on another.
+#[test]
+fn off_macos_swift_is_refused_with_the_platform_named() {
+    if cfg!(target_os = "macos") {
+        eprintln!("skipping: this is the macOS host; the refusal is for every other platform");
+        return;
+    }
+    if !devcroft::policy::backend_supported() {
+        eprintln!("skipping: this host has no usable Landlock support");
+        return;
+    }
+    let bin = env!("CARGO_BIN_EXE_devcroft");
+    let name = format!("swiftlinux{}", std::process::id());
+    let root = std::env::temp_dir().join(format!("devcroft-swift-linux-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).unwrap();
+    write_fixture(&root, &name);
+
+    let up = Command::new(bin)
+        .arg("up")
+        .current_dir(&root)
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&up.stderr).into_owned();
+    let _ = std::fs::remove_dir_all(&root);
+
+    assert!(!up.status.success(), "swift must not come up off macOS");
+    assert_eq!(
+        up.status.code(),
+        Some(3),
+        "layer provider is exit 3; stderr:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("provider:") && stderr.contains("macOS"),
+        "the refusal must name its layer and the platform; got:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("nix") && stderr.contains("flox"),
+        "and the closure-tier route; got:\n{stderr}"
+    );
+    // The point of the test: the host's own swift was there to be
+    // misused, and was not.
+    if swift_binary_present() {
+        assert!(
+            !stderr.contains("not found"),
+            "a present toolchain must not be reported as missing; got:\n{stderr}"
+        );
+    }
 }
