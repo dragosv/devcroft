@@ -103,7 +103,13 @@ fn spawn_piped(req: &SpawnRequest) -> io::Result<SpawnedSession> {
         });
     }
 
-    let mut child = cmd.spawn()?;
+    let mut child = cmd.spawn().map_err(|e| {
+        spawn_ctx(
+            e,
+            &format!("spawning {:?} in", req.cmd),
+            std::path::Path::new(&req.cwd),
+        )
+    })?;
     let pgid = child.id() as libc::pid_t;
     let stdin = child
         .stdin
@@ -125,8 +131,18 @@ fn spawn_piped(req: &SpawnRequest) -> io::Result<SpawnedSession> {
     })
 }
 
+/// `e` with the step and the path it was about. A session spawn has
+/// three places to fail with the same errno — the pty, the program, the
+/// working directory — and "keeper refused to spawn: No such file or
+/// directory" names none of them; five CI runs on a Linux host were read
+/// before this existed.
+fn spawn_ctx(e: io::Error, step: &str, what: &std::path::Path) -> io::Error {
+    io::Error::new(e.kind(), format!("{step} {}: {e}", what.display()))
+}
+
 fn spawn_pty(req: &SpawnRequest, size: &PtySize) -> io::Result<SpawnedSession> {
-    let opened = pty::open_pty(size)?;
+    let opened = pty::open_pty(size)
+        .map_err(|e| spawn_ctx(e, "openpty", std::path::Path::new("/dev/ptmx")))?;
     let stdout_handle = opened.master.try_clone()?;
     let resize_handle = opened.master.try_clone()?;
     let slave_fd = opened.slave_fd;
@@ -171,7 +187,13 @@ fn spawn_pty(req: &SpawnRequest, size: &PtySize) -> io::Result<SpawnedSession> {
     unsafe {
         libc::close(slave_fd);
     }
-    let child = spawn_result?;
+    let child = spawn_result.map_err(|e| {
+        spawn_ctx(
+            e,
+            &format!("spawning {:?} on a pty in", req.cmd),
+            std::path::Path::new(&req.cwd),
+        )
+    })?;
     let pgid = child.id() as libc::pid_t;
 
     Ok(SpawnedSession {
