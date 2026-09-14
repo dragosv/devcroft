@@ -38,8 +38,9 @@ grant; and §1's rule that the guarantee tier is visible and honest.
 
 **Non-Goals:**
 
-- `build:`, `features`, `postCreateCommand` — next cut, same phase
-  (materialization), explicitly refused by name in this one.
+- `build:` and `features` — next cut, at materialization, explicitly
+  refused by name in this one. (`postCreateCommand` is *not* deferred:
+  it runs inside, as a hook — D8.)
 - macOS. A rootfs is Linux; on macOS the answer is a VM
   (`add-macos-service-vm`), and this change refuses with that pointer.
 - Running the container. There is no `docker run` anywhere in this
