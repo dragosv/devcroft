@@ -135,7 +135,9 @@ measurement.
       run at build, in the container (next cut)"; the `remoteUser`
       rejection extended to `Config.User`.
 - [ ] 5.2 `docs/known-gaps.md`: no GC of rootfs directories; `features`
-      unsupported; Linux-only.
+      unsupported; Linux-only. `docs/decisions.md` §2: "Rejected:
+      `dockerComposeFile`" with D6's reason — N containers do not map to
+      one environment plus processes; only the `service:` image does.
 - [ ] 5.3 `CLAUDE.md`: provider count, the two-level view in the
       architecture invariants (one paragraph: keeper on host libc,
       sessions on the image's, Landlock by inode is what makes it one

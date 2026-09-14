@@ -158,6 +158,21 @@ editor-side). Refused in this cut, each with its own message: `build`,
 meaningless without a container. Unknown keys are ignored — the file is
 shared with other tools and devcroft must not fail on their extensions.
 
+`dockerComposeFile` is refused for a reason that is not "later": it
+does not map. A compose file is N containers, each with its own image,
+entrypoint, network identity (the compose DNS name `db` that the app
+connects to) and volumes. devcroft's model is one environment and
+processes: one rootfs, with services as processes under process-compose
+inside the same boundary, from the provider's own declarations. Of a
+compose file, exactly one service maps — the one `service:` names, the
+app's own image — and that is this change. Every other service is a
+container that must *run*, with its entrypoint, in its network: the
+non-goal, and §2's DinD rejection. The only conceivable mapping — a
+rootfs per sibling service, its entrypoint started by process-compose
+from that rootfs, `db` resolved to loopback, volumes as grants,
+`depends_on` as readiness — is a separate change with its own
+measurements, and not a smaller version of this one.
+
 ### D8 — Lifecycle commands run inside the boundary, as the hooks they are
 
 `postCreateCommand` is project code that runs after the environment

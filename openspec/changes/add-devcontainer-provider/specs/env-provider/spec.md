@@ -110,6 +110,13 @@ neither absent nor root SHALL be refused for the same reason
 - **THEN** `up` fails naming the field and the reason `docs/decisions.md`
   §2 already records for it
 
+#### Scenario: `dockerComposeFile` is refused as unmappable, not deferred
+- **WHEN** the file carries `dockerComposeFile`
+- **THEN** `up` fails naming the field, saying that only the `service:`
+  the file points at could map to a sandbox and that its sibling
+  services are containers devcroft does not run, and naming the
+  provider's `[services]` as where a database or cache belongs
+
 ### Requirement: Lifecycle commands run inside the boundary as hooks
 The system SHALL run `postCreateCommand` as the sandbox's `post_create`
 hook and `postStartCommand` as its `post_start` hook — inside the
