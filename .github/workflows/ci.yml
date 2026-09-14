@@ -39,8 +39,16 @@ jobs:
         env:
           RUSTDOCFLAGS: -D warnings
 
+  # The provider-free leg, on both OSes. Every e2e test self-skips on a
+  # host without its provider (CLAUDE.md: "a green cargo test is not the
+  # same as a run that tested anything"), so this measures the unit tests
+  # and the process tier alone — which on macOS is real signal, since
+  # Seatbelt is native and needs no daemon. It is also the control for the
+  # skip logic itself: a test that *fails* here instead of skipping is
+  # guarding on the binary rather than the capability. Provider coverage
+  # is the `e2e` matrix below.
   test:
-    name: build + test (${{ matrix.os }})
+    name: unit + process tier, no provider (${{ matrix.os }})
     strategy:
       fail-fast: false
       matrix:
@@ -56,14 +64,6 @@ jobs:
 
       - run: cargo build
 
-      # Every e2e test self-skips on a host that can't run it (no
-      # flox/nix/devbox, no reachable nix-daemon) rather than failing —
-      # see CLAUDE.md's "a green cargo test is not the same as a run that
-      # tested anything". On macOS this is still real signal — Seatbelt is
-      # native and needs no daemon, so process-tier tests that don't need
-      # a provider-built closure actually run here, which is the host
-      # measurement the README's Status section says macOS is missing.
-      # Full flox/nix/devbox coverage is `e2e-linux` below.
       # One run, not two. This step used to be a plain `cargo test`
       # followed by a second, full `cargo test -- --nocapture | grep
       # skipping` — the whole suite twice, for a log line. The
@@ -128,44 +128,65 @@ jobs:
       - run: npm install -g @fission-ai/openspec@latest
       - run: openspec validate --all
 
-  # Unlike the jobs above, this installs real flox + devbox (pinned to the
-  # same versions the devcontainer's own Dockerfile uses) and starts
-  # nix-daemon, so `cargo test` exercises the e2e suite instead of
-  # self-skipping most of it. This is genuinely load-bearing: measured
-  # with `--no-fail-fast` in the devcontainer this workflow was authored
-  # in, going without the nix-command/flakes fix below left 3 test
-  # binaries failing (14 named test failures: 6 in `provider::devbox`'s
-  # own unit tests, plus 8 more across two integration binaries whose
-  # names include `a_real_build_succeeds_from_the_devbox_closure...` and
-  # `up_resolves_devbox_and_the_toolchain_is_visible_in_a_session`) and 7
-  # more tests self-skipping with "nix present but flakes not enabled on
-  # this host" or equivalent. With the fix: 0 failures, and the only
-  # skip left is `rsync not on PATH` (unrelated — the binary just isn't
-  # installed here). Plain `cargo test` without `--no-fail-fast` would
-  # have shown none of this breadth — it stops at the first failing
-  # binary, so CLAUDE.md's documented working command alone would only
-  # ever have surfaced the 6 `provider::devbox` failures.
+  # One job per provider, in parallel, each installing only its own
+  # tooling. This used to be a single `e2e-linux` job with flox + devbox
+  # on one runner (and flox's nix serving the nix provider), so a failure
+  # in one provider's closure build held the others' results hostage and
+  # the 45-minute budget was one serial wall. Selection is by
+  # *availability*, not by a hand-maintained list of test binaries: every
+  # e2e test self-skips when its provider is absent, and the fixture-driven
+  # ones (`tests/common::for_each_row`) take `DEVCROFT_TEST_PROVIDER` — so
+  # each leg runs the full suite and the "report" step shows what that leg
+  # actually exercised. A list of binaries per provider would rot the
+  # first time a test moved.
   #
-  # Still unverified against GitHub's own hosted runners specifically — no
-  # access to actually dispatch a run from here — so this mirrors the
-  # Dockerfile's own "UNVERIFIED beyond this build step" posture and stays
-  # non-blocking (continue-on-error) until a real run confirms the install
-  # steps behave the same way on ubuntu-latest as they do here.
-  e2e-linux:
-    name: e2e (flox + nix + devbox)
+  # Two things worth knowing before editing:
+  #
+  # - The flox leg deliberately leaves `nix-command`/`flakes` OFF for the
+  #   bare `nix` binary flox puts on PATH. `provider::nix` and
+  #   `provider::devbox` call that binary directly and self-skip with "nix
+  #   present but flakes not enabled" without it; flox itself uses its
+  #   own wrapper and does not care. Enabling them there would make the
+  #   flox leg run the nix suite a second time. The nix leg gets its nix
+  #   from install-nix-action, flakes on.
+  # - devenv has no `for_each_row` row yet (the fixture knows nix, flox,
+  #   devbox), so that leg selects the nix row for the matrix tests and
+  #   covers devenv through its own binaries (`devenv_provider_e2e`,
+  #   `devenv_capture_contract`, the devenv half of `services_e2e`).
+  #   Adding the row belongs to the fixture change, not to CI.
+  #
+  # Pinned versions match what the project was measured against: flox and
+  # devbox the same as `.devcontainer/Dockerfile`, devenv the version the
+  # provider was written against (`add-devenv-provider`). Still unverified
+  # on GitHub's hosted runners — no run has been dispatched from here —
+  # so every leg stays `continue-on-error` until one is green; flip it
+  # then, per provider.
+  e2e:
+    name: e2e (${{ matrix.provider }})
+    strategy:
+      fail-fast: false
+      matrix:
+        provider: [flox, nix, devbox, devenv]
     runs-on: ubuntu-latest
     timeout-minutes: 45
     continue-on-error: true
+    env:
+      DEVBOX_NO_TELEMETRY: "1"
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+        with:
+          # Build artifacts are provider-independent; share one cache
+          # across the four legs and with the `test` job's ubuntu leg.
+          key: ubuntu-latest
 
-      # flox's own installer provisions a private Nix store + nix-daemon
-      # (there is no separate system-wide Nix install anywhere in this
-      # repo's own Dockerfile either) — same pinned .deb, same live
+      # --- flox: its own installer provisions a private Nix store and
+      # nix-daemon (there is no separate system-wide Nix install anywhere
+      # in this repo's own Dockerfile either) — same pinned .deb, same live
       # SHA256SUMS verification the Dockerfile uses.
-      - name: install flox (also provides nix + nix-daemon)
+      - name: install flox (provides nix + nix-daemon)
+        if: matrix.provider == 'flox'
         env:
           FLOX_VERSION: "1.14.0"
         run: |
@@ -182,18 +203,23 @@ jobs:
             | grep "deb/${DEB}\$" | awk -v f="$DEB" '{print $1"  "f}' | sha256sum -c -
           sudo apt-get update && sudo apt-get install -y --no-install-recommends "./${DEB}"
           flox --version
+          sudo service nix-daemon status || sudo service nix-daemon start
 
-      # flox's own nix.conf does not enable `nix-command`/`flakes` for the
-      # bare `nix` binary it puts on PATH — only flox's internal wrapper
-      # has them on. `provider::nix` and `provider::devbox` both invoke
-      # that bare binary directly, so without this every test that
-      # reaches a real `nix` subprocess fails with "experimental Nix
-      # feature '...' is disabled" — measured directly against this exact
-      # flox version, same fix applied to `.devcontainer/Dockerfile`.
-      - name: enable nix-command + flakes for the bare nix binary
-        run: echo "experimental-features = nix-command flakes" | sudo tee -a /etc/nix/nix.conf
+      # --- nix / devbox / devenv: a plain multi-user Nix with flakes on,
+      # which is what those three providers' tests invoke directly.
+      # `trusted-users` is what lets `--accept-flake-config` below actually
+      # take devenv's binary cache from its flake rather than build devenv
+      # from source on the runner.
+      - name: install nix (flakes on)
+        if: matrix.provider != 'flox'
+        uses: cachix/install-nix-action@v31
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+            trusted-users = root runner
 
       - name: install devbox
+        if: matrix.provider == 'devbox'
         env:
           DEVBOX_VERSION: "0.18.0"
         run: |
@@ -213,15 +239,29 @@ jobs:
           sudo chmod +x /usr/local/bin/devbox
           devbox version
 
-      - name: start nix-daemon
-        run: sudo service nix-daemon status || sudo service nix-daemon start
-
-      # Same single-run shape as the `test` job above; the timeout is
-      # larger because this leg really does build closures.
-      - name: cargo test
-        timeout-minutes: 35
+      # devenv's own documented install, pinned. Its flake carries the
+      # `devenv.cachix.org` substituter in `nixConfig`; `--accept-flake-config`
+      # takes it, which is the difference between a download and a Rust
+      # build of devenv on every run.
+      - name: install devenv
+        if: matrix.provider == 'devenv'
         env:
-          DEVBOX_NO_TELEMETRY: "1"
+          DEVENV_VERSION: "v2.2.2"
+        run: |
+          set -eu
+          nix profile install --accept-flake-config "github:cachix/devenv/${DEVENV_VERSION}"
+          devenv version
+
+      # Full suite, every leg; the provider that is installed is the one
+      # whose tests run. `DEVCROFT_TEST_PROVIDER` is the fixture's row
+      # selection — an explicitly selected row that turns out unavailable
+      # *fails* the run rather than skipping (`tests/common/mod.rs`), which
+      # is exactly the guard a per-provider leg wants: a leg whose provider
+      # silently did not install must not pass on the unit tests alone.
+      - name: cargo test
+        timeout-minutes: 40
+        env:
+          DEVCROFT_TEST_PROVIDER: ${{ matrix.provider == 'devenv' && 'nix' || matrix.provider }}
         run: |
           set -o pipefail
           cargo test -- --nocapture 2>&1 | tee /tmp/test-output.txt
