@@ -281,6 +281,44 @@ impl ProviderFixture for DevboxRow {
     }
 }
 
+/// The swift row: the artifact tier's representative in the matrix, and
+/// the only row whose environment is the host's toolchain rather than a
+/// store. macOS only, like the provider.
+pub struct SwiftRow {
+    root: PathBuf,
+    sandbox: String,
+}
+
+impl ProviderFixture for SwiftRow {
+    fn name(&self) -> &'static str {
+        "swift"
+    }
+    fn capabilities(&self) -> ProviderCapabilities {
+        ProviderCapabilities {
+            services: false,
+            activation_hook: false,
+            // The host's `/usr/bin` and `/bin` are provider grants on this
+            // tier — `pwd`, `sleep`, `wc` are all there.
+            external_utils: true,
+            cli_drivable: true,
+            // `Package.swift` is in the fingerprint.
+            staleness: true,
+        }
+    }
+    fn project_root(&self) -> &Path {
+        &self.root
+    }
+    fn sandbox_name(&self) -> &str {
+        &self.sandbox
+    }
+    fn mutate_to_drift(&mut self) {
+        let p = self.root.join("Package.swift");
+        let mut s = std::fs::read_to_string(&p).unwrap();
+        s.push_str("\n// drifted by the fixture\n");
+        std::fs::write(&p, s).unwrap();
+    }
+}
+
 // ---------------------------------------------------------------------
 // Setup
 // ---------------------------------------------------------------------
@@ -446,6 +484,42 @@ fn setup_devbox(tag: &str) -> Result<Box<dyn ProviderFixture>, Unavailable> {
     let sandbox = format!("fxdbx{tag}{}", std::process::id());
     write_manifest(&root, &sandbox, "devbox");
     Ok(Box::new(DevboxRow { root, sandbox }))
+}
+
+/// A dependency-free SwiftPM package with an unguarded Apple import, so
+/// `up` draws no advice and needs no network: the toolchain resolves from
+/// `xcode-select`, and the fixture is three files. Unavailable off macOS
+/// — the provider refuses there by design — and where the toolchain does
+/// not answer `swift -print-target-info`, which is resolution's own probe.
+fn setup_swift(tag: &str) -> Result<Box<dyn ProviderFixture>, Unavailable> {
+    if !cfg!(target_os = "macos") {
+        return Err(Unavailable("the swift provider is macOS-only".into()));
+    }
+    if !Command::new("swift")
+        .arg("-print-target-info")
+        .output()
+        .is_ok_and(|o| o.status.success())
+    {
+        return Err(Unavailable(
+            "no Swift toolchain answers `swift -print-target-info` on this host".into(),
+        ));
+    }
+    let root = fixture_root("swift", tag);
+    std::fs::create_dir_all(root.join("Sources/app")).unwrap();
+    std::fs::write(
+        root.join("Package.swift"),
+        "// swift-tools-version:5.9\nimport PackageDescription\n\
+         let package = Package(name: \"app\", targets: [.executableTarget(name: \"app\")])\n",
+    )
+    .unwrap();
+    std::fs::write(
+        root.join("Sources/app/main.swift"),
+        "import AppKit\nprint(\"fixture\")\n",
+    )
+    .unwrap();
+    let sandbox = format!("fxswift{tag}{}", std::process::id());
+    write_manifest(&root, &sandbox, "swift");
+    Ok(Box::new(SwiftRow { root, sandbox }))
 }
 
 // ---------------------------------------------------------------------
@@ -729,6 +803,7 @@ const ROWS: &[(&str, SetupFn)] = &[
     ("nix", setup_nix),
     ("flox", setup_flox),
     ("devbox", setup_devbox),
+    ("swift", setup_swift),
     // Only under `test-support`, because it drives `up` through the
     // injection seam. A default `cargo test` does not have this row at all,
     // which is the strongest available form of "it is not the default".
@@ -748,7 +823,7 @@ const DEFAULT_ROW: &str = "nix";
 /// row's outcome.
 ///
 /// Selection: `DEVCROFT_TEST_PROVIDER` unset → the default row;
-/// `nix|flox|devbox` → that row; `all` → every row, skipping the ones this
+/// `nix|flox|devbox|swift` → that row; `all` → every row, skipping the ones this
 /// host cannot set up.
 ///
 /// **No fallback, ever.** A row that cannot be set up is reported as
@@ -827,7 +902,7 @@ pub fn for_each_row(tag: &str, body: impl Fn(&mut dyn ProviderFixture)) {
                          devcroft's suite defaults to a real Nix environment on purpose. \
                          It will not fall back to something cheaper behind your back; \
                          select another row explicitly with \
-                         DEVCROFT_TEST_PROVIDER=flox|devbox|all."
+                         DEVCROFT_TEST_PROVIDER=flox|devbox|swift|all."
                     );
                 }
                 report.push(format!("{name} skip({reason})"));

@@ -381,5 +381,11 @@ first time this provider met Xcode rather than Command Line Tools.
       `xcodebuild` segfaulted — bisected to the one file). Command Line
       Tools coverage is the same test on a host with CLT selected; this
       host had both, and the earlier CLT runs on this branch passed.
+- [x] 9.8 A `swift` row in the runtime fixture (`tests/common/mod.rs`
+      `SwiftRow`/`setup_swift`), so the neutral lifecycle matrix runs
+      under the artifact tier: measured, all ten rows `swift ok` on the
+      first run. CI's macOS leg selects `all` so it runs on every push.
+      `provider-injection-seam` delta records the row and corrects the
+      "exactly three providers" wording.
 - [ ] 9.7 `docs/roadmap.md`: swift as the macOS-native half of the 1.0
       story, after the conditions above — the owner's placement.

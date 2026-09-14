@@ -96,10 +96,19 @@ jobs:
       # step-level timeout is the real point though: a test that hangs
       # (rather than fails) otherwise burns GitHub's 6h job ceiling, as
       # the macos-latest leg of run 33546435126 did at 6h5m.
+      # `test` on Linux: the nix-free row, and nothing else can run there.
+      # `all` on macOS: the swift row *is* available there — the runner
+      # image ships Xcode — so the lifecycle matrix (`for_each_row`:
+      # up/down/recreate/status/stale/exec/shell/worktree) runs under the
+      # artifact tier's only provider on every push, next to the nix-free
+      # row; nix, flox and devbox skip by name with the reason. `all`
+      # passes when at least one row ran and fails if every row skipped,
+      # so a macOS runner that lost its toolchain is a red leg, not a
+      # quiet one.
       - name: cargo test
         timeout-minutes: 20
         env:
-          DEVCROFT_TEST_PROVIDER: test
+          DEVCROFT_TEST_PROVIDER: ${{ runner.os == 'macOS' && 'all' || 'test' }}
         run: |
           set -o pipefail
           cargo test --no-fail-fast --features test-support -- --nocapture 2>&1 | tee /tmp/test-output.txt
