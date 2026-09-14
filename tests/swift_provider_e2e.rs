@@ -353,3 +353,116 @@ fn a_portable_swift_package_is_advised_by_default_and_refused_on_request() {
         "the refusal must name its layer and the key that asked for it; got:\n{stderr}"
     );
 }
+
+/// The build itself, through the shim, with the project root as the
+/// manifest's only grant. This is the measurement the review asked for
+/// before calling the provider a development environment, and it was
+/// false on the branch as merged: SwiftPM's own Seatbelt cannot nest
+/// inside devcroft's, and the manifest compile wrote to the Darwin
+/// per-user cache directory. Both are now handled by what the provider
+/// injects — the shim's two flags and the cache variables — so the
+/// assertion is on a plain `swift build` and `swift run`, exactly as a
+/// user would type them.
+///
+/// Xcode or Command Line Tools, whichever `xcode-select` names: the two
+/// differ in what the toolchain needs granted (Xcode adds the bundle,
+/// the license record, `/Library/Apple`), and this test is what tells a
+/// host with one of them that the grants for it are complete.
+#[test]
+fn swift_build_and_run_succeed_through_the_shim_with_only_the_project_granted() {
+    if !devcroft::policy::backend_supported() {
+        eprintln!("skipping: this host has no usable Landlock/Seatbelt support");
+        return;
+    }
+    if !swift_available() {
+        eprintln!("skipping: no usable Swift toolchain on this host");
+        return;
+    }
+    let bin = env!("CARGO_BIN_EXE_devcroft");
+    let name = format!("swiftbuild{}", std::process::id());
+    let root = std::env::temp_dir().join(format!("devcroft-swift-build-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).unwrap();
+    let root = root.canonicalize().unwrap();
+    write_fixture(&root, &name);
+    std::fs::write(
+        root.join("Sources/app/main.swift"),
+        "import AppKit\nprint(\"built-inside:\\(NSApplication.shared.isActive ? 1 : 0)\")\n",
+    )
+    .unwrap();
+
+    let up = Command::new(bin)
+        .arg("up")
+        .current_dir(&root)
+        .output()
+        .unwrap();
+    assert!(
+        up.status.success(),
+        "up must succeed; stderr:\n{}",
+        String::from_utf8_lossy(&up.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&up.stdout);
+    assert!(
+        stdout.contains("swift build|run|test|package") && stdout.contains("--disable-sandbox"),
+        "up must say the shim exists and what it adds; stdout was:\n{stdout}"
+    );
+
+    // Resolved through PATH, not by path: that is what makes the shim the
+    // `swift` a user's own command line reaches.
+    let which = Command::new(bin)
+        .args(["exec", "--", "sh", "-c", "command -v swift"])
+        .current_dir(&root)
+        .output()
+        .unwrap();
+    let which = String::from_utf8_lossy(&which.stdout).trim().to_string();
+    assert!(
+        which.ends_with("/.devcroft/swift/bin/swift"),
+        "the shim must be the swift on PATH; got {which:?}"
+    );
+
+    let build = Command::new(bin)
+        .args(["exec", "--", "swift", "build"])
+        .current_dir(&root)
+        .output()
+        .unwrap();
+    let run = Command::new(bin)
+        .args(["exec", "--", "swift", "run"])
+        .current_dir(&root)
+        .output()
+        .unwrap();
+
+    let _ = Command::new(bin).arg("down").current_dir(&root).output();
+    if let Ok(paths) = devcroft::lifecycle::StatePaths::new(&name) {
+        let _ = std::fs::remove_dir_all(&paths.root);
+    }
+
+    assert!(
+        build.status.success(),
+        "a plain `swift build` must succeed inside the sandbox; stderr:\n{}\nstdout:\n{}",
+        String::from_utf8_lossy(&build.stderr),
+        String::from_utf8_lossy(&build.stdout)
+    );
+    let build_err = String::from_utf8_lossy(&build.stderr);
+    assert!(
+        !build_err.contains("couldn't create cache file") && !build_err.contains("sandbox_apply"),
+        "no cache or nested-sandbox noise may remain; stderr:\n{build_err}"
+    );
+    assert!(
+        String::from_utf8_lossy(&run.stdout).contains("built-inside:"),
+        "`swift run` must execute the built program; stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&run.stdout),
+        String::from_utf8_lossy(&run.stderr)
+    );
+    // Everything the build wrote is inside the project — the products in
+    // SwiftPM's conventional place, the caches in the provider's.
+    assert!(
+        root.join(".build/debug").exists(),
+        "products land in .build/debug"
+    );
+    assert!(
+        root.join(".devcroft/swift/cache/swiftpm").exists()
+            && root.join(".devcroft/swift/cache/clang").exists(),
+        "caches land under .devcroft/swift/cache"
+    );
+    let _ = std::fs::remove_dir_all(&root);
+}

@@ -55,6 +55,17 @@ impl Provider for SwiftProvider {
             provider: "swift",
             hint: "devcroft doctor",
         })?;
+        // The *toolchain's* swift, not the `/usr/bin/swift` shim `PATH`
+        // finds first. The shim is an `xcrun` trampoline whose directory
+        // is the host's entire `/usr/bin`; granting that — which
+        // `Toolchain::grants` does for the binary's parent — made every
+        // host binary executable inside the sandbox, since execute follows
+        // the read grant. `xcrun --find swift` names the real one, inside
+        // the toolchain the sandbox is granted anyway. Data only: `xcrun`
+        // prints a path and runs nothing of the project's. Falls back to
+        // the shim where `xcrun` is absent (a bare Swift.org toolchain
+        // without Command Line Tools), which is the case `doctor` names.
+        let swift_bin = toolchain_swift_via_xcrun().unwrap_or(swift_bin);
 
         // Data only: no project file is evaluated to answer this.
         let toolchain = probe_toolchain(&swift_bin)?;
@@ -195,12 +206,59 @@ impl Toolchain {
                     if Path::new(APPLE_SUPPORT_LIBRARY).is_dir() {
                         out.push(APPLE_SUPPORT_LIBRARY.to_string());
                     }
+                    // `xcodebuild` sets up an FSEvents watcher at startup
+                    // (`DVTFilePathEventWatcher`), and FSEvents reads the
+                    // firmlink table to translate paths. Ungranted, the
+                    // read fails, the framework dereferences the nil it
+                    // gets back, and `xcodebuild -find swift` dies with
+                    // SIGSEGV — so `xcrun` reports swift cannot be located
+                    // and the shim's `swift build` never starts. Found by
+                    // bisecting `/usr/share`: no subdirectory sufficed, the
+                    // one top-level file did. 680 bytes, read-only.
+                    if Path::new(FIRMLINK_TABLE).is_file() {
+                        out.push(FIRMLINK_TABLE.to_string());
+                    }
                 }
                 None => out.push(dev.clone()),
             }
         }
         if let Some(dir) = swift_bin.parent() {
             out.push(dir.to_string_lossy().into_owned());
+        }
+        // Foundation's own host data, for every toolchain. Measured with a
+        // program that formats a `Date`: without `/usr/share/icu` the
+        // formatted string is *empty* — no error, no crash, an empty
+        // field — because ICU's data file lives there and Foundation
+        // loads it lazily; `/var/db/timezone` is the zone database for
+        // anything but UTC. Both are read-only host data every Foundation
+        // program depends on, which makes them the artifact tier's to
+        // declare (own-policy-baseline: a host-linked provider names its
+        // host grants) rather than the project's to discover.
+        for host_data in [ICU_DATA, TIMEZONE_DATA] {
+            if Path::new(host_data).exists() {
+                out.push(host_data.to_string());
+            }
+        }
+        // The host's userland, deliberately. An attempt to grant less —
+        // the toolchain's own `bin` plus single files as builds demanded
+        // them (`/usr/bin/codesign`, which SwiftPM execs to apply debug
+        // entitlements and without which every build fails) — produced a
+        // sandbox with `sh` and `ls` and no `grep`, `sed`, `awk`, `find`,
+        // `env` or `python3`: a closure provider brings those in its
+        // closure, and this provider has no closure to bring them in.
+        // The artifact tier's definition is "runtime links against host
+        // libraries, so behavior depends on this host"; its userland being
+        // the host's is the same fact one directory over. So `/usr/bin`,
+        // read-only, rendered as `provider:swift` where a reader can see
+        // it, and with execute following the read grant — every host
+        // binary in it runs inside, which is what this tier costs and
+        // what `up` prints. `swift` itself is still resolved past the
+        // `/usr/bin` trampoline to the toolchain's binary, so the shim and
+        // the grants name the real toolchain rather than a shim's parent.
+        for dir in HOST_USERLAND {
+            if Path::new(dir).is_dir() {
+                out.push(dir.to_string());
+            }
         }
         if let Some(dir) = host_shell_dir() {
             out.push(dir);
@@ -233,6 +291,20 @@ const HOST_SHELL_SELECTOR: &str = "/var/select";
 /// siblings), reached from `/System/Library/PrivateFrameworks` through a
 /// symlink. See `Toolchain::grants`.
 const APPLE_SUPPORT_LIBRARY: &str = "/Library/Apple";
+
+/// The host's userland the artifact tier runs on. See `Toolchain::grants`
+/// for why this is a directory and not a list of files.
+const HOST_USERLAND: &[&str] = &["/usr/bin"];
+
+/// ICU's data, which Foundation loads for any locale-aware formatting;
+/// empty output without it, silently. See `Toolchain::grants`.
+const ICU_DATA: &str = "/usr/share/icu";
+/// The zone database, for any `TimeZone` other than UTC.
+const TIMEZONE_DATA: &str = "/var/db/timezone";
+
+/// The firmlink table FSEvents reads; `xcodebuild` crashes without it.
+/// See `Toolchain::grants`.
+const FIRMLINK_TABLE: &str = "/usr/share/firmlinks";
 
 /// The plist `xcodebuild` consults for license acceptance. See
 /// `Toolchain::grants` for why it is granted, and `doctor` for why it is
@@ -453,6 +525,21 @@ fn host_shell_dir() -> Option<String> {
     let sh = resolve_on_path(crate::shell::SHELL_NAME)?;
     let real = sh.canonicalize().unwrap_or(sh);
     Some(real.parent()?.to_string_lossy().into_owned())
+}
+
+/// `xcrun --find swift`: the toolchain's own binary, past the `/usr/bin`
+/// trampoline. `None` where `xcrun` is missing or does not know.
+fn toolchain_swift_via_xcrun() -> Option<PathBuf> {
+    let xcrun = resolve_on_path("xcrun")?;
+    let out = Command::new(xcrun)
+        .args(["--find", "swift"])
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let path = PathBuf::from(String::from_utf8_lossy(&out.stdout).trim());
+    path.is_file().then_some(path)
 }
 
 /// The platform SDK, on hosts that have one.
