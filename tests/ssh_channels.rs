@@ -265,9 +265,11 @@ fn shell_channel_allocates_a_pty_and_runs_commands() {
     let out = child.wait_with_output().unwrap();
     assert!(
         String::from_utf8_lossy(&out.stdout).contains("shell-channel-marker-hi"),
-        "expected pty output to contain the marker, got stdout={:?} stderr={:?}",
+        "expected pty output to contain the marker, got stdout={:?} stderr={:?}\n\
+         keeper log:\n{}",
         String::from_utf8_lossy(&out.stdout),
-        String::from_utf8_lossy(&out.stderr)
+        String::from_utf8_lossy(&out.stderr),
+        std::fs::read_to_string(&StatePaths::new(&sandbox.name).unwrap().log).unwrap_or_default()
     );
 }
 

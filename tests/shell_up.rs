@@ -111,10 +111,17 @@ fn shell_runs_commands_over_a_pty_and_falls_back_when_shell_is_missing() {
         .write_all(b"echo shell-marker-hi\nexit\n")
         .unwrap();
     let out = child.wait_with_output().unwrap();
+    // stderr and the keeper's own log in the message: the pty spawn is
+    // refused *inside* the keeper, and the client sees only an empty
+    // session. Two CI runs (34825300174, 34826398846) showed `got ""` and
+    // nothing else, which is not a diagnosis.
     assert!(
         String::from_utf8_lossy(&out.stdout).contains("shell-marker-hi"),
-        "expected pty output to contain the echoed marker, got {:?}",
-        String::from_utf8_lossy(&out.stdout)
+        "expected pty output to contain the echoed marker, got stdout={:?} stderr={:?}\n\
+         keeper log:\n{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr),
+        std::fs::read_to_string(&paths.log).unwrap_or_default()
     );
     assert_eq!(out.status.code(), Some(0));
 
