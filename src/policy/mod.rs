@@ -102,9 +102,11 @@ const KEEPER_SYSTEM_READ: &[&str] = &[
 ///   is why `tests/exec_up.rs` passed on exactly the runs
 ///   `tests/shell_up.rs` failed on. Fixed once on `main` (d26a9c9), lost
 ///   in the merge that took this branch's version of the file, and found
-///   again by CI run 34823971268 — the mount view already replicates the
-///   device-node shape (`fleet::mount::setup_dev`); this is the Landlock
-///   half.
+///   again by CI run 34823971268. This is the Landlock half; the mount
+///   view's half is `fleet::mount::setup_dev`, which gives the sandbox
+///   its own devpts instance and a `ptmx -> pts/ptmx` symlink rather than
+///   binding either host path — measured, a single-file bind of the host's
+///   ptmx cannot be opened at all (its doc has the kernel's reason).
 ///
 ///   Granting both covers both shapes and costs nothing on either: where
 ///   `/dev/ptmx` is a symlink the rule is redundant with `/dev/pts`, and

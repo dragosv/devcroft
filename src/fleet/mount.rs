@@ -272,16 +272,19 @@ pub fn construct_view(
             // item, distinct from "mirror what was granted").
             continue;
         }
-        if grant.path == std::path::Path::new("/dev/ptmx") {
-            // Owned by `setup_dev`, which replicates whichever shape the
-            // host has (symlink into /dev/pts, or a device node). It is a
-            // baseline grant on Linux for Landlock's sake — the device-
-            // node hosts where `openpty` opens exactly this path — and
-            // binding it here as a generic file grant *before* `setup_dev`
-            // then opened the already-mounted device with `File::create`,
-            // which is an `open(2)` of ptmx itself. Measured on CI (run
-            // 34825300174): every view construction failed with ENOENT
-            // the moment the grant existed.
+        if grant.path == std::path::Path::new("/dev/ptmx")
+            || grant.path == std::path::Path::new("/dev/pts")
+        {
+            // Both owned by `setup_dev`: the view gets its *own* devpts
+            // instance and a `ptmx -> pts/ptmx` symlink, never a bind of
+            // the host's. They stay baseline grants for Landlock's sake
+            // (the keeper restricts itself after entering the view, so
+            // the rules land on the private instance). Binding the host's
+            // `/dev/ptmx` here as a generic file grant was measured to
+            // break every view (CI run 34825300174, ENOENT at
+            // `File::create` on the already-mounted device), and binding
+            // the host's `/dev/pts` is what left `openpty` failing —
+            // see `setup_dev` for the kernel's reason.
             continue;
         }
         bind_mount_grant(new_root, &grant.path, grant.mode)
@@ -330,6 +333,36 @@ fn mount_tmpfs(target: &std::path::Path) -> io::Result<()> {
             tmpfs.as_ptr(),
             0,
             std::ptr::null(),
+        )
+    };
+    if ret != 0 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(())
+}
+
+/// A fresh devpts instance at `target`, for [`setup_dev`]. `devpts` is a
+/// `FS_USERNS_MOUNT` filesystem, so an unprivileged user namespace may
+/// mount its own (kernel ≥ 4.7, where every devpts mount is already a
+/// separate instance — `newinstance` is accepted and no longer means
+/// anything). `ptmxmode=0666` is the whole point: the instance's `ptmx`
+/// must be openable by the namespace's root, which owns it. `mode=0620`
+/// is the conventional slave mode; no `gid=` because the host's `tty`
+/// group is not mapped here and the kernel would refuse it.
+#[cfg(target_os = "linux")]
+fn mount_private_devpts(target: &std::path::Path) -> io::Result<()> {
+    let target_c = path_to_cstring(target)?;
+    let devpts = c"devpts";
+    let opts = c"newinstance,ptmxmode=0666,mode=0620";
+    // SAFETY: every C string is valid and NUL-terminated; `CAP_SYS_ADMIN`
+    // comes from the user namespace already entered.
+    let ret = unsafe {
+        libc::mount(
+            devpts.as_ptr(),
+            target_c.as_ptr(),
+            devpts.as_ptr(),
+            libc::MS_NOSUID | libc::MS_NOEXEC,
+            opts.as_ptr() as *const libc::c_void,
         )
     };
     if ret != 0 {
@@ -574,28 +607,43 @@ fn mount_proc(new_root: &std::path::Path) -> io::Result<()> {
     bind_mount(std::path::Path::new("/proc"), &target, true)
 }
 
-/// The minimal `/dev` design.md Open Question 1 measured: `null`,
-/// `urandom`, `tty` bind-mounted individually from the host's real device
-/// nodes (small, safe, and exactly what a bind mount is for — a device
-/// special file mounted onto an empty regular-file target behaves as
-/// that device, the same trick bubblewrap uses, cited as the reference
-/// in design.md M2); `ptmx` and `fd`/`stdin`/`stdout`/`stderr` handled
-/// separately below because neither is a plain device bind.
+/// **`/dev/pts` and `/dev/ptmx` are built here, as a private devpts
+/// instance plus a `ptmx -> pts/ptmx` symlink — the container shape —
+/// never as binds of the host's.** They are still baseline grants
+/// (`policy/mod.rs`'s `KEEPER_SYSTEM_READWRITE`) so Landlock allows
+/// them; the keeper restricts itself after entering the view, so those
+/// rules attach to the instance mounted here.
 ///
-/// **`/dev/pts` itself is not built here.** It is a normal
-/// `KEEPER_SYSTEM_READWRITE` baseline grant (`policy/mod.rs`), so the
-/// generic `grants` loop in [`construct_view`] already bind-mounts it —
-/// this function only has to make `/dev/ptmx` resolve into that.
+/// **Why not bind the host's, which is what this did first.** Measured
+/// on a GitHub `ubuntu-latest` runner — a systemd host with a devtmpfs
+/// `/dev`, where `/dev/ptmx` is a device node rather than Docker's
+/// symlink into `/dev/pts` — every pty session failed with
+/// `openpty /dev/ptmx: No such file or directory` (CI run 34828395635,
+/// once the keeper's spawn errors named their step). The kernel's
+/// reason, from `fs/devpts/inode.c` and `fs/namei.c`: opening a ptmx
+/// node that is not itself inside a devpts filesystem makes
+/// `devpts_acquire` look for a `pts` *sibling* of that node
+/// (`devpts_ptmx_path` → `path_pts`), and `path_pts` first requires the
+/// node's parent directory to be reachable within the node's own mount
+/// (`path_connected`). A bind mount of a single file has no parent
+/// inside it, so the lookup fails with `ENOENT` before it ever sees the
+/// `pts` next door — the kernel's own comment names "bind-mounting
+/// `/dev/pts/ptmx` to `/ptmx`" as the unsupported case, and a single-file
+/// bind to `/dev/ptmx` is that case from the kernel's side. The symlink
+/// shape avoids it (`open` lands on a path *inside* the devpts), but the
+/// host's `/dev/pts/ptmx` carries `ptmxmode=000` on Debian/Ubuntu, and
+/// this view's user namespace maps only the keeper's own uid to root —
+/// host root is unmapped, so `CAP_DAC_OVERRIDE` does not reach that
+/// inode and a symlink to the *host's* instance would fail with
+/// `EACCES` instead. A private instance, mounted in this namespace with
+/// `ptmxmode=0666`, is owned by the namespace's root and has neither
+/// problem. It is also what Docker does, which is why the devcontainer
+/// never showed any of this.
 ///
-/// `/dev/ptmx` is host-shape-dependent, confirmed by `policy/mod.rs`'s
-/// own `KEEPER_SYSTEM_READWRITE` doc comment: on this devcontainer (and
-/// "every Linux system checked" there) it is a *symlink* to
-/// `pts/ptmx`, not a standalone device node — Landlock evaluates the
-/// resolved target, which is why granting `/dev/pts` alone is sufficient
-/// there. A mount view is a real directory tree, though, so the symlink
-/// itself must physically exist for that resolution to find anything —
-/// replicated here rather than assumed, checking which shape this host
-/// actually has instead of hard-coding one.
+/// Consequence worth stating: ptys allocated inside a sandbox live in
+/// its own instance and are not visible in the host's `/dev/pts`. Nothing
+/// in devcroft reads them from outside — the keeper allocates and owns
+/// every session's pty from inside the view.
 #[cfg(target_os = "linux")]
 fn setup_dev(new_root: &std::path::Path) -> io::Result<()> {
     let dev = new_root.join("dev");
@@ -607,27 +655,19 @@ fn setup_dev(new_root: &std::path::Path) -> io::Result<()> {
             continue;
         }
         let target = dev.join(name);
-        std::fs::File::create(&target)?;
+        // Idempotent against the grants loop, which binds `/dev/null` and
+        // `/dev/urandom` itself: `File::create` on an already-mounted
+        // device is an `open(2)` of that device, not a touch.
+        if std::fs::symlink_metadata(&target).is_err() {
+            std::fs::File::create(&target)?;
+        }
         bind_mount(&source, &target, false)?;
     }
 
-    let host_ptmx = std::path::Path::new("/dev/ptmx");
-    if let Ok(meta) = std::fs::symlink_metadata(host_ptmx) {
-        let target = dev.join("ptmx");
-        if meta.file_type().is_symlink() {
-            let link_target = std::fs::read_link(host_ptmx)?;
-            std::os::unix::fs::symlink(&link_target, &target)?;
-        } else {
-            // `File::create` on a path that is *already* the ptmx device
-            // (bound by an earlier step) is an `open(2)` of ptmx — a pty
-            // allocation, not a touch. Only create the mount point when
-            // nothing is there yet.
-            if std::fs::symlink_metadata(&target).is_err() {
-                std::fs::File::create(&target)?;
-            }
-            bind_mount(host_ptmx, &target, false)?;
-        }
-    }
+    let pts = dev.join("pts");
+    std::fs::create_dir_all(&pts)?;
+    mount_private_devpts(&pts).map_err(|e| ctx(e, "mounting private devpts at", &pts))?;
+    std::os::unix::fs::symlink("pts/ptmx", dev.join("ptmx"))?;
 
     // Dynamic, not bound, for the identical reason `/proc` itself is a
     // live mount rather than a snapshot: correct only if resolved fresh
