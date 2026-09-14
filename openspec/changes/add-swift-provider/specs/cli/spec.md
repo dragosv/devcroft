@@ -81,3 +81,37 @@ resolving the environment executes `Package.swift` on the host at every
 - **WHEN** `init` runs in a directory holding `Package.swift`, sources that
   import nothing Apple-only, and an `Info.plist`
 - **THEN** the generated manifest declares `provider = "swift"`
+
+### Requirement: doctor has a swift arm
+The system SHALL add a swift arm to `doctor`, selected when the
+discovered manifest declares `provider = "swift"`, that probes what
+resolution resolves against: the developer directory `xcode-select`
+names and whether it exists; the toolchain answering
+`swift -print-target-info` (a version string proves nothing about
+that), with its flavor — Xcode or Command Line Tools — and version; the
+SDK `xcrun` would inject; and, under Xcode, that the license is
+accepted **and its record is readable**, since a sandboxed `xcodebuild`
+reads `/Library/Preferences/com.apple.dt.Xcode.plist` and treats
+unreadable as unaccepted. Each failure SHALL name the command that fixes
+it. Off macOS the arm SHALL report the provider as unavailable on the
+platform and SHALL NOT report a missing toolchain.
+
+#### Scenario: A healthy Xcode
+- **WHEN** `doctor` runs on macOS with Xcode selected, its license
+  accepted, and a working toolchain
+- **THEN** it reports the developer directory as Xcode, the Swift
+  version, the SDK path, and the license as accepted and readable
+
+#### Scenario: A selected directory that no longer exists
+- **WHEN** `xcode-select` names a directory that is absent
+- **THEN** the arm fails naming `sudo xcode-select -s <dir>`
+
+#### Scenario: License not accepted
+- **WHEN** Xcode is selected and `xcodebuild -checkFirstLaunchStatus`
+  fails
+- **THEN** the arm fails naming `sudo xcodebuild -license accept`
+
+#### Scenario: `doctor` on Linux
+- **WHEN** `doctor` runs on Linux and the manifest declares `swift`
+- **THEN** it reports the provider as macOS-only and does not suggest
+  installing a toolchain

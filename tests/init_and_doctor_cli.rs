@@ -1360,3 +1360,68 @@ fn init_selects_swift_for_an_apple_deliverable_with_portable_sources() {
 
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// The swift arm probes what resolution resolves against — the selected
+/// developer directory, the toolchain answering `-print-target-info`, the
+/// SDK, and under Xcode the accepted-and-readable license — and never
+/// reports the generic flox line for a swift project, which is what it
+/// did before the arm existed.
+#[test]
+fn doctor_on_a_swift_project_reports_the_toolchain_and_its_preconditions() {
+    if !devcroft::policy::backend_supported() {
+        eprintln!("skipping: this host has no usable Landlock/Seatbelt support");
+        return;
+    }
+    let dir = scratch_project("doctor-swift");
+    std::fs::write(dir.join("Package.swift"), "// swift-tools-version:5.9\n").unwrap();
+    std::fs::write(
+        dir.join("devcroft.toml"),
+        "[sandbox]\nname = \"doctorswift\"\n[env]\nprovider = \"swift\"\n",
+    )
+    .unwrap();
+
+    let stdout = String::from_utf8_lossy(&run(&dir, &["doctor"]).stdout).into_owned();
+    assert!(
+        !stdout.contains("provider: flox"),
+        "a swift project must not get the flox arm; got:\n{stdout}"
+    );
+    if !cfg!(target_os = "macos") {
+        assert!(
+            stdout.contains("swift") && stdout.contains("macOS-only")
+                || stdout.contains("runs only on macOS"),
+            "off macOS the arm reports the platform, not a missing toolchain; got:\n{stdout}"
+        );
+        return;
+    }
+    let toolchain_ok = std::process::Command::new("swift")
+        .arg("-print-target-info")
+        .output()
+        .is_ok_and(|o| o.status.success());
+    if !toolchain_ok {
+        assert!(
+            stdout.contains("[FAIL] provider:") || stdout.contains("[WARN] provider:"),
+            "without a working toolchain the arm must fail or warn, naming the fix; got:\n{stdout}"
+        );
+        return;
+    }
+    let provider_lines: Vec<&str> = stdout.lines().filter(|l| l.contains("provider:")).collect();
+    assert!(
+        provider_lines.iter().any(|l| l.starts_with("[OK]")
+            && (l.contains("Xcode at") || l.contains("Command Line Tools at"))),
+        "the developer directory and its flavor must be reported; got:\n{stdout}"
+    );
+    assert!(
+        provider_lines.iter().any(|l| l.contains("Swift version")),
+        "the toolchain version must be reported; got:\n{stdout}"
+    );
+    assert!(
+        provider_lines.iter().any(|l| l.contains("SDK")),
+        "the SDK must be reported; got:\n{stdout}"
+    );
+    if provider_lines.iter().any(|l| l.contains("Xcode at")) {
+        assert!(
+            provider_lines.iter().any(|l| l.contains("license")),
+            "under Xcode the license state must be reported; got:\n{stdout}"
+        );
+    }
+}

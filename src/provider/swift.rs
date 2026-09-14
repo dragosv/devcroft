@@ -309,7 +309,7 @@ const FIRMLINK_TABLE: &str = "/usr/share/firmlinks";
 /// The plist `xcodebuild` consults for license acceptance. See
 /// `Toolchain::grants` for why it is granted, and `doctor` for why it is
 /// checked host-side too.
-pub(crate) const XCODE_LICENSE_RECORD: &str = "/Library/Preferences/com.apple.dt.Xcode.plist";
+pub const XCODE_LICENSE_RECORD: &str = "/Library/Preferences/com.apple.dt.Xcode.plist";
 
 /// Refuse this provider anywhere but macOS.
 ///

@@ -1680,6 +1680,7 @@ fn doctor_provider() -> bool {
             "nix" => doctor_nix_provider(true),
             "devbox" => doctor_devbox_provider(true),
             "devenv" => doctor_devenv_provider(true),
+            "swift" => doctor_swift_provider(true),
             // `config::parse` normalizes and rejects anything else, so
             // this is flox or a provider that could not exist.
             _ => doctor_flox_provider(true),
@@ -1889,6 +1890,135 @@ fn doctor_devbox_provider(required: bool) -> bool {
         );
         true
     }
+}
+
+/// The swift arm: every precondition the provider resolves against, probed
+/// the way resolution probes it, with the fix named on each failure.
+///
+/// Four things, in the order a build meets them, and three of them were
+/// found by a build failing rather than designed in: the developer
+/// directory `xcode-select` names must exist; the toolchain must answer
+/// `swift -print-target-info` (a version string proves nothing about
+/// that); under Xcode the license must be accepted *and its record
+/// readable* — a sandboxed `xcodebuild` reads
+/// `/Library/Preferences/com.apple.dt.Xcode.plist` and treats "cannot
+/// read" as "not accepted"; and the SDK `xcrun` would inject must exist.
+/// On Linux this arm reports the provider as unavailable on the platform
+/// and stops — a missing-toolchain failure there would send the user to
+/// install a Swift that this provider would not use.
+fn doctor_swift_provider(required: bool) -> bool {
+    if !cfg!(target_os = "macos") {
+        if required {
+            println!(
+                "[FAIL] provider: swift resolves an Xcode or Command Line Tools toolchain and \
+                 runs only on macOS — on this platform use `provider = \"nix\"` or \
+                 `provider = \"flox\"` with the swift package (closure tier)"
+            );
+            return false;
+        }
+        println!("[INFO] provider: swift is macOS-only; not checked on this platform");
+        return true;
+    }
+    let developer_dir = std::process::Command::new("xcode-select")
+        .arg("-p")
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string());
+    let Some(developer_dir) = developer_dir else {
+        let level = if required { "FAIL" } else { "WARN" };
+        println!(
+            "[{level}] provider: no developer directory is selected — install Xcode or the \
+             Command Line Tools (`xcode-select --install`), then `sudo xcode-select -s <dir>`"
+        );
+        return !required;
+    };
+    if !std::path::Path::new(&developer_dir).is_dir() {
+        println!(
+            "[FAIL] provider: xcode-select names {developer_dir}, which does not exist — \
+             `sudo xcode-select -s /Applications/Xcode.app/Contents/Developer` (or the \
+             Command Line Tools path) to correct the selection"
+        );
+        return false;
+    }
+    let is_xcode = developer_dir.ends_with("Xcode.app/Contents/Developer")
+        || developer_dir.contains(".app/Contents/Developer");
+    let flavor = if is_xcode {
+        "Xcode"
+    } else {
+        "Command Line Tools"
+    };
+
+    let target_info_ok = std::process::Command::new("swift")
+        .arg("-print-target-info")
+        .output()
+        .is_ok_and(|o| o.status.success());
+    if !target_info_ok {
+        println!(
+            "[FAIL] provider: {flavor} at {developer_dir} is selected, but `swift \
+             -print-target-info` does not run — the toolchain is incomplete or its first \
+             launch is pending; open Xcode once, or reinstall the Command Line Tools"
+        );
+        return false;
+    }
+    let version = std::process::Command::new("swift")
+        .arg("--version")
+        .output()
+        .ok()
+        .map(|o| {
+            let text = String::from_utf8_lossy(&o.stderr).into_owned()
+                + &String::from_utf8_lossy(&o.stdout);
+            text.lines()
+                .find(|l| l.contains("Swift version"))
+                .unwrap_or("")
+                .trim()
+                .to_string()
+        })
+        .unwrap_or_default();
+    println!("[OK]   provider: {flavor} at {developer_dir}; {version}");
+
+    let sdk = std::process::Command::new("xcrun")
+        .arg("--show-sdk-path")
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string());
+    match sdk {
+        Some(p) if std::path::Path::new(&p).is_dir() => println!("[OK]   provider: SDK {p}"),
+        _ => {
+            println!(
+                "[WARN] provider: `xcrun --show-sdk-path` names no usable SDK — builds that \
+                 need one will fail inside the sandbox with the policy visible in \
+                 `policy --render`"
+            );
+        }
+    }
+
+    if is_xcode {
+        let record = devcroft::provider::swift::XCODE_LICENSE_RECORD;
+        let accepted = std::process::Command::new("xcodebuild")
+            .arg("-checkFirstLaunchStatus")
+            .output()
+            .is_ok_and(|o| o.status.success());
+        let readable = std::fs::File::open(record).is_ok();
+        if !accepted {
+            println!(
+                "[FAIL] provider: the Xcode license is not accepted, or Xcode's first launch \
+                 is pending — `sudo xcodebuild -license accept` (and `sudo xcodebuild \
+                 -runFirstLaunch`); a sandboxed build refuses until then"
+            );
+            return false;
+        }
+        if !readable {
+            println!(
+                "[FAIL] provider: the license record {record} is not readable by this user; a \
+                 sandboxed xcodebuild reads it and treats unreadable as unaccepted"
+            );
+            return false;
+        }
+        println!("[OK]   provider: Xcode license accepted ({record} readable)");
+    }
+    true
 }
 
 /// devenv, like devbox, is a frontend over Nix: an unusable Nix is

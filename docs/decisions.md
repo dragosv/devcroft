@@ -472,11 +472,13 @@ where the alternative is nothing:**
 - **macOS only.** Swift exists on Linux; an Xcode-backed provider does
   not, so `provider = "swift"` fails closed off macOS rather than silently
   resolving a different toolchain under the same name.
-- **Only for projects a closure cannot serve.** A portable Swift package
-  builds fine from nix or flox, where it gets the closure tier and a
-  shared store. devcroft refuses `swift` for such a package and names the
-  alternative. Acceptance needs positive evidence: an Apple framework named
-  in `Package.swift`, an unguarded import of an Apple-only module, or an
+- **Advised away from projects a closure could serve.** A portable Swift
+  package builds fine from nix or flox, where it gets the closure tier
+  and a shared store. `up` honours an explicit `provider = "swift"` and
+  prints one warning for such a package naming the alternative; a
+  manifest that sets `[env] require_native_apple_evidence = true` gets a
+  refusal instead. Evidence is positive: an Apple framework named in
+  `Package.swift`, an unguarded import of an Apple-only module, or an
   Apple project artifact (`Info.plist`, entitlements, `.xcodeproj`, an
   asset catalog). The third concerns the *deliverable* — a Mac app whose
   Swift is entirely `Foundation` still cannot be produced by a Linux
@@ -493,11 +495,36 @@ the gate useless:
 - **A guarded import is not evidence.** `#if canImport(AppKit)` marks a
   *portable* package with an Apple branch — exactly the closure tier's case.
 
-**The gate is a heuristic and criterion 6 is hostile to heuristics**, so
-the asymmetry is deliberate: a wrong refusal sends someone to a *better*
-provider and names what was searched for, while a wrong acceptance
-silently downgrades their guarantee. Only the second is invisible to the
-user.
+**The scan is a heuristic, and that is why it advises rather than
+gates — reversed on review from the first cut, which refused.** As a
+gate it had four defects: it cannot prove nix or flox can actually build
+the project; it misses an Apple-native project with an unusual layout;
+it accepts a project on the strength of a residual `Info.plist`; and it
+turns the manifest's declared choice into an inference that goes false
+as the project evolves. As advice it keeps what was good about it — a
+wrong warning costs a sentence, and `init` still ranks swift below every
+closure provider on the same scan — and a project that wants the
+inference to bind says so in its committed file.
+
+**What the tier costs, measured on Xcode 26 rather than argued, and
+carried by the provider rather than the manifest.** `swift build` inside
+a devcroft sandbox needed, in order of discovery: SwiftPM's own Seatbelt
+turned off (`--disable-sandbox` — Seatbelt does not nest, and devcroft's
+is the outer and stricter profile); its package cache moved
+(`--cache-path`, since `~` comes from the password database, not
+`$HOME`); clang's module cache and `xcrun`'s lookup cache pointed inside
+the project (`CLANG_MODULE_CACHE_PATH`, `xcrun_db` — the latter read out
+of `libxcrun`'s strings); and, under Xcode, read access to the app
+bundle's `Contents`, the license record, `/Library/Apple`, and the
+680-byte firmlink table FSEvents reads, without which `xcodebuild`
+segfaults. The two flags have no environment lever, so the provider
+writes a twelve-line `swift` shim first on `PATH` and `up` says so;
+everything else is a variable or a `provider:swift` grant in `policy
+--render`. The host's `/usr/bin` is granted deliberately: this tier has
+no closure to supply `grep` or `python3`, and with execute following the
+read grant every host binary there runs inside — the tier's definition,
+one directory over. The sample's manifest grants the project root and
+nothing else.
 
 ### Rejected: Homebrew
 

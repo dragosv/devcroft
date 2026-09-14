@@ -75,20 +75,24 @@ before copying anything from it:
   content-addressed shared store). `up` and `status` print the guarantee.
 - It is **macOS-only**, because the provider is: `swift` resolves an
   Xcode / Command Line Tools toolchain and fails closed elsewhere.
-- Its unguarded `import AppKit` is **load-bearing, not decoration.** The
-  provider refuses a package a closure provider could serve, so a
-  Foundation-only version of this sample would be correctly refused and
-  pointed at flox — swapping the import is the fastest way to see the
-  gate work.
-- Its `devcroft.toml` is the only sample manifest carrying
-  **machine-specific paths**: the two Darwin per-user directories from
-  `getconf DARWIN_USER_TEMP_DIR` / `DARWIN_USER_CACHE_DIR`. They are
-  declared rather than granted by the provider because they sit outside
-  the project root and need write access, and provider resolution must
-  not widen the policy.
-- Building it needs `swift build --disable-sandbox`, because SwiftPM
-  sandboxes its own manifest evaluation and Seatbelt does not nest.
-  Nothing is lost: devcroft's sandbox is already the stronger one.
+- Its unguarded `import AppKit` is **load-bearing, not decoration.** `up`
+  warns for a package a closure provider could serve (and refuses under
+  `[env] require_native_apple_evidence = true`), so a Foundation-only
+  version of this sample draws the advice and names flox — swapping the
+  import is the fastest way to see the scan work. The scan is advice,
+  not a gate, by review decision; `docs/decisions.md` §1 has the four
+  reasons.
+- Its manifest grants **the project root and nothing else.** Everything
+  the toolchain needs is the provider's grant (`policy --render`,
+  origin `provider:swift`) or a variable pointing a cache inside the
+  project. An earlier version granted two `/var/folders/…` directories
+  read-write; `CLANG_MODULE_CACHE_PATH` and `xcrun_db` made both
+  unnecessary.
+- Plain `swift build` works, through a **shim** the provider writes at
+  `.devcroft/swift/bin/swift` (first on `PATH`; adds `--disable-sandbox`
+  and `--cache-path` to `build|run|test|package`, since SwiftPM sandboxes
+  its own manifest evaluation and Seatbelt does not nest, and SwiftPM has
+  no environment lever for either). `up` prints what the shim does.
 
 Remaining work (see `openspec/changes/add-mvp-core/tasks.md`): task 7.5,
 and only its last step — running `cargo publish` and reserving the npm

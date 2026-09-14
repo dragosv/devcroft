@@ -70,30 +70,39 @@ devcroft status              # names the artifact tier
 
 ```sh
 devcroft up
-devcroft exec -- swift build --disable-sandbox
-devcroft exec -- swift run --disable-sandbox citytime
+devcroft exec -- swift build
+devcroft exec -- swift run citytime
 ```
 
-**`--disable-sandbox` is required, and loses nothing.** SwiftPM sandboxes
-its own manifest evaluation with `sandbox-exec`, and Seatbelt does not
-nest — inside devcroft that fails with `sandbox-exec: sandbox_apply:
-Operation not permitted`. devcroft's sandbox is already applied and is
-strictly stronger than the write-and-network profile SwiftPM would have
-added, so turning SwiftPM's off removes a redundant inner layer rather
-than a protection.
+Plain `swift build`, and the manifest grants the project root and nothing
+else. Two things make that true, and `up` names both:
 
-**The two `/var/folders/...` grants in `devcroft.toml` are specific to
-this machine.** They are the Darwin per-user scratch and cache
-directories, derived from your uid; the Swift driver and clang find them
-through `_CS_DARWIN_USER_TEMP_DIR` / `_CS_DARWIN_USER_CACHE_DIR`, which no
-environment variable overrides. Replace them with your own:
+**The `swift` on the sandbox's `PATH` is a shim** at
+`.devcroft/swift/bin/swift`, a twelve-line shell script the provider
+writes at every `up`. For `build`, `run`, `test` and `package` it adds
+`--disable-sandbox` — SwiftPM sandboxes its own manifest evaluation with
+`sandbox-exec`, Seatbelt does not nest, and inside devcroft that fails
+with `sandbox_apply: Operation not permitted`; devcroft's sandbox is the
+outer and stricter one, so nothing is lost — and `--cache-path`, since
+SwiftPM's package cache defaults to `~/Library/Caches` with `~` taken
+from the password database, not `$HOME`. Every other invocation reaches
+the toolchain's own `swift` unchanged. Open the file; it is meant to be
+read.
 
-```sh
-getconf DARWIN_USER_TEMP_DIR
-getconf DARWIN_USER_CACHE_DIR
-```
+**Every cache and scratch directory is pointed inside the project** by
+the environment the provider resolves: `SWIFTPM_BUILD_DIR` (`.build/`),
+`TMPDIR`, `CLANG_MODULE_CACHE_PATH` and `xcrun_db` (all under
+`.devcroft/swift/`). An earlier version of this sample granted two
+`/var/folders/…` directories read-write instead — the Darwin per-user
+scratch and cache — on the reasoning that no variable moved them. Two
+did, once found: clang's module cache has `CLANG_MODULE_CACHE_PATH`,
+and `xcrun`'s lookup cache has `xcrun_db`, an undocumented variable
+read out of `libxcrun.dylib`. Those grants were exactly the widening the
+artifact tier exists to avoid, and they are gone.
 
-devcroft does not grant them from the provider on purpose: they are
-outside the project root and need write access, and provider resolution
-must not widen the policy. A host-global scratch directory is the
-project's decision, declared where its reviewers can see it.
+What the toolchain needs from the host beyond the project — the Xcode
+bundle or Command Line Tools, the SDK, Foundation's ICU and time-zone
+data, the license record, the host shell and userland — is the
+provider's to declare: `devcroft policy --render` lists each with a
+`provider:swift` origin. `devcroft doctor` checks the same preconditions
+before `up`, the Xcode license included.

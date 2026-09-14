@@ -65,12 +65,15 @@ N builds. This is criterion 3 of `docs/decisions.md` §1 failing, and it is
 the price that entry records the provider paying in exchange for criterion
 4 — devcroft never evaluating `Package.swift`.
 
-There is no partial mitigation available through environment injection.
-Measured: SwiftPM honours `SWIFTPM_BUILD_DIR` for the scratch directory
-(verified by moving `.build` out of the project entirely), but honours
-**nothing** for the cache — `strings` over `swift-package` yields no cache
-equivalent, and only `--cache-path` works. devcroft injects an environment
-rather than wrapping commands, so the cache stays where SwiftPM puts it.
+The cache is now per project rather than per user, which changes where
+it lives and not what it costs. Measured: SwiftPM honours
+`SWIFTPM_BUILD_DIR` for the scratch directory but **nothing** for the
+cache — `strings` over `swift-package` yields no cache equivalent, and
+only `--cache-path` works — so the provider writes a `swift` shim that
+adds it (see the entry below), and the cache lands at
+`.devcroft/swift/cache/swiftpm`. Eight sandboxes are eight caches, as
+they were eight before under `~/Library/Caches`; nothing here is shared,
+and nothing here is content-addressed.
 
 A measurement hazard worth repeating, because it produces a confident
 wrong answer: **macOS resolves the home directory from the password
@@ -726,34 +729,53 @@ the Swift driver derives its scratch directory from `_CS_DARWIN_USER_TEMP_DIR`
 — spelled `/var/folders/…` — and no grant devcroft could compile was reachable
 under that name.
 
-## `swift build` in a sandbox needs three things the manifest must declare
+## `swift build` in a sandbox needed three things the manifest had to declare — now none
 
-With the symlink fix above, `env.provider = "swift"` builds and runs on macOS.
-It is not automatic, and the three requirements are recorded here because each
-one was found by a build failing, not by reading documentation.
+An earlier version of this entry listed what a project had to put in its
+own manifest before `env.provider = "swift"` would build: two Darwin
+per-user directories granted read-write (`/var/folders/…/T` and `…/C`,
+machine-specific, "no environment variable overrides either"),
+`swift build --disable-sandbox` typed by hand, and `/usr/share` plus
+`/var/db/timezone` read-only for date formatting. Every item was a real
+measurement; every conclusion was wrong, and the two write grants were
+exactly the widening the artifact tier exists to avoid.
 
-**Two Darwin per-user directories, granted read-write in the manifest.** The
-Swift driver and clang derive them from `_CS_DARWIN_USER_TEMP_DIR` and
-`_CS_DARWIN_USER_CACHE_DIR`; no environment variable overrides either, so unlike
-`SWIFTPM_BUILD_DIR` they cannot be redirected into the project. They are
-machine-specific (`getconf DARWIN_USER_TEMP_DIR`, `getconf DARWIN_USER_CACHE_DIR`).
+Measured again on Xcode 26.3 (the provider had only met Command Line
+Tools before), with the project root as the manifest's only grant:
 
-devcroft deliberately does **not** grant them from the provider: they are outside
-the project root and need write access, and provider resolution must not widen
-the policy. A host-global scratch directory is the project's decision, declared
-in a file its reviewers can see.
+- **The per-user directories are not needed.** `CLANG_MODULE_CACHE_PATH`
+  moves the module cache the *manifest* compile writes (whose flags are
+  SwiftPM's, not the user's — that is why `-module-cache-path` could not
+  reach it), and `xcrun_db` — lowercase, undocumented, read out of
+  `libxcrun.dylib`'s strings — moves `xcrun`'s lookup cache. With
+  `TMPDIR` and `SWIFTPM_BUILD_DIR`, every write lands under `.build/` or
+  `.devcroft/swift/`. The provider sets all four.
+- **`--disable-sandbox` and `--cache-path` are added by a shim** the
+  provider writes at `.devcroft/swift/bin/swift`, first on `PATH`, for
+  `build|run|test|package` only; `up` prints what it does. SwiftPM has no
+  environment lever for either (`strings swift-build | grep ^SWIFTPM_`
+  lists neither).
+- **`/usr/share/icu` and `/var/db/timezone` are the provider's grants**,
+  not the project's: Foundation's data, and an empty formatted date
+  without ICU is a property of every Foundation program, not of one
+  manifest.
 
-**`swift build --disable-sandbox`.** SwiftPM sandboxes its own manifest
-evaluation with `sandbox-exec`, and Seatbelt does not nest — inside devcroft that
-fails with `sandbox-exec: sandbox_apply: Operation not permitted`. Disabling it
-loses nothing: devcroft's sandbox is already applied and is strictly stronger
-than the write-and-network profile SwiftPM would have added.
+`samples/swift-spm-sample/devcroft.toml` is `allow = ["."]`, and
+`tests/swift_provider_e2e.rs` asserts a plain `swift build` and
+`swift run` succeed that way — the assertion the file's own header used
+to say it could not make.
 
-**`/usr/share` and `/var/db/timezone`, read-only**, if the project formats dates.
-Without them everything succeeds and every formatted date comes out empty —
-a silent wrong answer rather than an error.
-
-`samples/swift-spm-sample` carries all of this in a commented manifest.
+What Xcode added, each found by a build failing, each now a
+`provider:swift` read-only grant: the bundle's `Contents` (`xcodebuild`
+links `SharedFrameworks`, a sibling of `Developer`), the license record
+(a sandboxed `xcodebuild` that cannot read it says the license is
+unaccepted when it is), `/Library/Apple` (`MobileDevice.framework`,
+behind a `/System` symlink, without which the plug-in scan fails),
+`/var/select` (macOS's `/bin/sh` reads it to pick a shell; `xcrun`'s
+`sh -c` failed without it), and `/usr/share/firmlinks` — FSEvents'
+firmlink table; `xcodebuild -find swift` segfaulted in
+`DVTFilePathEventWatcher` without it, and no subdirectory of
+`/usr/share` sufficed where the one 680-byte file did.
 
 ## A home-relative `filesystem` grant has no effect on macOS
 

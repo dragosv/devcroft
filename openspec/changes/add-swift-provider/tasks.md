@@ -327,12 +327,59 @@
       empty.
       Verified live: `Build complete!`, and `swift run` prints the AppKit
       query from inside the sandbox.
-- [ ] 8.2 Reconcile the two branches' remaining artifacts. This branch now
-      carries the corrected analysis and a working implementation;
-      `origin/add-swift-provider` carries a `policy` delta spec, a `doctor`
-      arm, and a dyld-shared-cache grant finding this branch has not adopted —
-      **`/usr/lib/libSystem.B.dylib` and friends do not exist as files** and
-      are served from the shared cache at
-      `/System/Volumes/Preboot/Cryptexes/OS/System/Library/dyld/`, so a grant
-      naming them grants nothing and fails silently. Worth taking before this
-      is called done.
+- [x] 8.2 Reconcile the two branches' remaining artifacts. Ported from
+      `origin/add-swift-provider`: the `policy` delta (`specs/policy/spec.md`
+      — attributed rendering, and "a provider grants only paths the host
+      has", which records the dyld-shared-cache finding: **`/usr/lib/
+      libSystem.B.dylib` and friends do not exist as files**, they are served
+      from the shared cache, so a per-dylib grant enforces nothing; the
+      provider grants existing directories and existence-checks every entry);
+      and the `doctor` arm (`specs/cli/spec.md`, `doctor_swift_provider`),
+      extended with what the Xcode measurements below added (license record
+      readable, flavor). The rest of that branch's analysis was already the
+      corrected one here.
+
+## 9. Review conditions, on integration (2026-09-14)
+
+An external review accepted the provider for `dev` under six conditions
+(the reviewer's numbering). Each is closed by a measurement, not by a
+reading; the measurements were made on Xcode 26.3 / Swift 6.2.4, the
+first time this provider met Xcode rather than Command Line Tools.
+
+- [x] 9.1 Rebased onto `dev` (`swift-on-dev`): conflicts in `provider/
+      mod.rs`, `validate.rs`, `devcroft.rs` (init ranking now flox → devbox
+      → devenv → flake → swift), `capability_set.rs` (this branch's symlink
+      fix was `fix-symlinked-grant-spelling` done twice; dev's kept), docs.
+- [x] 9.2 Toolchain discovery stays data-only: `resolve` runs
+      `swift -print-target-info`, `xcode-select -p`, `xcrun --show-sdk-path`
+      and now `xcrun --find swift`; no SwiftPM command that compiles
+      `Package.swift`. Asserted by the unchanged "no disclosure" test.
+- [x] 9.3 The evidence scan is advice, not a gate: `apple_evidence_advice`
+      in the provider, applied in `lifecycle::up` (not in `resolve` — the
+      manifest is what `up` holds); one warning by default; refusal under
+      `[env] require_native_apple_evidence = true`, rejected under any other
+      provider. `tests/swift_provider_e2e.rs` asserts both halves in one test.
+- [x] 9.4 The cache problem is closed, tighter than the review asked: no
+      write grant outside the project at all. `CLANG_MODULE_CACHE_PATH` and
+      `xcrun_db` (found in `libxcrun.dylib`'s strings) move the two caches
+      the branch had measured as immovable; `TMPDIR` and `SWIFTPM_BUILD_DIR`
+      the rest; the shim at `.devcroft/swift/bin/swift` adds the two flags
+      with no lever (`--disable-sandbox`, `--cache-path`) and `up` names it.
+      The sample's manifest is `allow = ["."]`. **Measured, and it changed
+      the design:** the first plan was a shim carrying `--cache-path` and a
+      manifest still granting the Darwin cache directory; the module cache
+      variable removed the grant, and `xcrun_db` removed the last noise.
+- [x] 9.5 Ported from the older branch: 8.2 above.
+- [x] 9.6 Real tests on Xcode, on macOS: `swift_build_and_run_succeed_
+      through_the_shim_with_only_the_project_granted` builds, runs, and
+      checks where products and caches landed. What Xcode needed that
+      Command Line Tools did not, each found by that test failing: the
+      bundle's `Contents` (not `Contents/Developer` — `xcodebuild` links
+      `SharedFrameworks`), the license record (unreadable reads as
+      unaccepted), `/Library/Apple` (plug-in scan), `/var/select` (`sh`
+      selector; `xcrun`'s `sh -c` failed), `/usr/share/firmlinks` (FSEvents;
+      `xcodebuild` segfaulted — bisected to the one file). Command Line
+      Tools coverage is the same test on a host with CLT selected; this
+      host had both, and the earlier CLT runs on this branch passed.
+- [ ] 9.7 `docs/roadmap.md`: swift as the macOS-native half of the 1.0
+      story, after the conditions above — the owner's placement.
