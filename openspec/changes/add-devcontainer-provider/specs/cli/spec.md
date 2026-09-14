@@ -18,15 +18,21 @@ time that the image tier is what was chosen and why.
   `flake.nix`
 - **THEN** `init` selects `nix`
 
-### Requirement: doctor reports the OCI runtime and the rootfs store
+### Requirement: doctor reports the registry, the rootfs store and the digest
 The system SHALL, in `devcroft doctor` for a `devcontainer` project,
-report whether a usable OCI runtime is present and which, that it is
-required at provisioning only, whether the rootfs store is writable,
-and — where the project resolves — whether its digest is materialized.
-Each failure SHALL name the fix.
+report whether the image's registry is reachable, whether the rootfs
+store is writable, and — where the project resolves — whether its digest
+is materialized (in which case no network is needed). It SHALL NOT
+probe for or mention a container runtime, since none is used. Each
+failure SHALL name the fix.
 
-#### Scenario: Docker present but not usable by this user
-- **WHEN** `docker` is on `PATH` and the daemon refuses the user
-- **THEN** `doctor` reports the runtime as present and unusable, names
-  the group or rootless mode as the fix, and names `podman` as the
-  alternative
+#### Scenario: Registry unreachable, digest already present
+- **WHEN** the digest is materialized and the registry cannot be reached
+- **THEN** `doctor` reports the store as complete for this project and
+  the registry as unreachable, and says `up` will succeed offline
+
+#### Scenario: A registry needing a credential helper
+- **WHEN** the image's registry requires a credential helper devcroft
+  does not drive
+- **THEN** `doctor` names it as unsupported in this version and points at
+  a token in the registry's standard auth file as the alternative

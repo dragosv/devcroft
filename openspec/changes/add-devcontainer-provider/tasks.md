@@ -5,14 +5,21 @@ Every item here is a probe with a number or a yes/no, recorded in
 measurement that contradicts a decision changes the decision, not the
 measurement.
 
-- [ ] 0.1 Materialization: `docker create` + `docker export` of
-      `debian:stable-slim@sha256:…` and `alpine@sha256:…` into a user-owned
-      directory. Record wall time, on-disk size, file count, and what the
-      tar contains that must be skipped (device nodes, setuid bits,
-      `/proc`/`/sys` placeholders). Confirm no process from the image ran
-      (an image whose entrypoint writes a marker).
-- [ ] 0.2 Same with `podman`, rootless. Record the verb differences and
-      whether the exported tree is identical.
+- [ ] 0.1 The dependency tail, as a number: `cargo tree` before and after
+      adding `oci-client` + `oci-spec` to a scratch copy of the crate;
+      count the marginal crates, name the big ones, and note what
+      devcroft already links (`reqwest`-shaped, TLS) through `russh` and
+      `sigstore`. Same discipline as `use-nono-library`'s 141 and
+      `nono-proxy`'s 116: the number goes in `design.md`.
+- [ ] 0.2 Pull and unpack `debian:stable-slim@sha256:…` and
+      `alpine@sha256:…` with a probe binary: `oci-client` for the
+      manifest/config/layers, devcroft's own unpacker for the tar stream
+      with whiteouts. Record wall time, on-disk size, file count, what
+      had to be skipped (device nodes, `/proc`/`/sys` placeholders) and
+      dropped (setuid). **Diff the tree against `docker export` of the
+      same digest** on a host that has Docker (this Mac does): identical,
+      or every difference explained. Confirm no process from the image
+      ran (an image whose entrypoint writes a marker).
 - [ ] 0.3 **The decision D3 rests on:** in a probe binary, grant
       `<rootfs>` read-only with nono in a parent, then in a child
       `unshare(CLONE_NEWNS)` + pivot into a view whose root is `<rootfs>`,
@@ -44,20 +51,22 @@ measurement.
       an unknown-field-tolerant JSON reader, apply D6's honored/ignored/
       refused table, each refusal a `ProviderError` naming the field.
 - [ ] 1.2 Digest resolution: `image@sha256:…` used as is; a bare tag
-      resolved once via the runtime and recorded in
+      resolved once against the registry (manifest digest) and recorded in
       `.devcontainer/devcroft.lock`; the lock wins thereafter until
       `--recreate`.
 - [ ] 1.3 Materialization into `$XDG_CACHE_HOME/devcroft/rootfs/<digest>/`
-      (D2), skipping what 0.1 found, then made read-only; idempotent on a
-      present digest; a partial extraction (crash mid-way) is detected by
-      a completion marker and redone.
+      (D2): `oci-client` pull, devcroft's unpacker applying layers in
+      order with whiteouts, skipping and dropping what 0.2 found, then
+      made read-only; idempotent on a present digest; a partial extraction
+      (crash mid-way) is detected by a completion marker and redone. No
+      binary is executed to do any of it.
 - [ ] 1.4 Environment from `Config.Env` as the diff against
       `canonical_base_env`; `Resolution.read_only_grants` is the one
       rootfs directory; `services: Unsupported` (no service concept, like
       nix).
 - [ ] 1.5 `ProviderKind::Devcontainer`, `validate.rs` list, fingerprint =
-      hash(devcontainer.json) + recorded digest, `host_can_materialize_images()`
-      probe alongside `host_can_build_nix_closures()`.
+      hash(devcontainer.json) + recorded digest, `registry_reachable(ref)`
+      probe for `doctor` (never a runtime probe — there is none).
 - [ ] 1.6 Platform gate: `resolve` on non-Linux fails at layer `provider`
       naming the VM route.
 - [ ] 1.7 Tier `image` — the third variant of the `Tier` type
@@ -94,9 +103,9 @@ measurement.
 
 - [ ] 3.1 `init` detection and ranking (cli delta); the advice line names
       the tier and the closure alternative.
-- [ ] 3.2 `doctor`: runtime present/usable/which, rootfs store writable,
-      digest materialized; fixes named (cli delta's docker-group
-      scenario).
+- [ ] 3.2 `doctor`: registry reachable, rootfs store writable, digest
+      materialized (offline is fine then), credential helpers named as
+      unsupported; fixes named (cli delta).
 - [ ] 3.3 `USAGE` unchanged (no new command); `tests/cli_help_and_version.rs`
       still passes.
 
@@ -105,8 +114,9 @@ measurement.
 - [ ] 4.1 Unit: the field table (each refused field → its message; each
       ignored field → silence; unknown → silence), digest parsing, lock
       precedence, fingerprint sensitivity.
-- [ ] 4.2 Linux e2e, self-skipping without a usable runtime, against the
-      two pinned images: `up`; `exec -- /usr/bin/env` shows the image's
+- [ ] 4.2 Linux e2e, self-skipping without network to the registry (or
+      with the digest pre-materialized in the store), against the two
+      pinned images: `up`; `exec -- /usr/bin/env` shows the image's
       `PATH`; a rootfs binary runs; the host's `/usr/bin/gcc` is refused;
       `shell` gets a prompt from the rootfs's `sh`; `status` stale after
       editing the lock; second project on the same digest materializes
@@ -122,18 +132,26 @@ measurement.
       that dials an unallowed host fails naming `network.allow`.
 - [ ] 4.5 macOS: `up` refuses with the platform message; `init` still
       detects and writes the manifest (a Linux teammate will run it).
-- [ ] 4.6 CI: `e2e (devcontainer)` leg on `ubuntu-latest` (docker is
-      preinstalled there), `DEVCROFT_TEST_PROVIDER=nix` for the fixture
-      rows as the devenv leg does, blocking once green.
+- [ ] 4.6 CI: `e2e (devcontainer)` leg on `ubuntu-latest` — nothing to
+      install; the registry is reachable from the runner —
+      `DEVCROFT_TEST_PROVIDER=nix` for the fixture rows as the devenv leg
+      does, blocking once green. A `devcontainer` fixture row is a
+      follow-up, as devenv's is.
 
 ## 5. Documents
 
 - [ ] 5.1 `docs/decisions.md` §1: the `image` tier defined beside the
       other two; the qualification test answered per criterion for this
-      provider (3: the rootfs store; 4: `create`+`export`+`inspect`, no
-      execution; 6: runtime present, digest resolvable). §2: "Features →
-      run at build, in the container (next cut)"; the `remoteUser`
-      rejection extended to `Config.User`.
+      provider (3: the rootfs store; 4: pull + unpack + config as data, no
+      execution; 6: registry reachable, digest resolvable). §2: "Rejected:
+      `build:` and `features` at provisioning — devcroft does not build
+      images; prebuilds are the route" with D9's reasoning, and the
+      confined-builder question recorded as open; the `remoteUser`
+      rejection extended to `Config.User`. `docs/prior-art.md`: `dev`
+      (squirrelsoft-dev) for `devcontainer.json` parsing and its `runArgs`
+      translation table, `oci-client` as the pull crate it also uses;
+      youki read and set aside, with the runtime/image distinction that
+      rules it out.
 - [ ] 5.2 `docs/known-gaps.md`: no GC of rootfs directories; `features`
       unsupported; Linux-only; `dockerComposeFile` deferred, with D6's
       mapping (sibling services as materialized rootfs + supervised

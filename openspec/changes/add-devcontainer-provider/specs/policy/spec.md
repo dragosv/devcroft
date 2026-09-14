@@ -5,7 +5,7 @@ The system SHALL compile a `devcontainer` sandbox's rootfs directory as
 a read-only grant with origin `provider:devcontainer`, rendered by
 `policy --render` by its real host path, subject to the same
 deny-overlap check as every grant, and SHALL NOT grant the rootfs store
-as a whole, any other digest, or the OCI runtime's socket.
+as a whole or any other digest.
 
 #### Scenario: Only the resolved digest is granted
 - **WHEN** the rootfs store holds two digests and the project resolves

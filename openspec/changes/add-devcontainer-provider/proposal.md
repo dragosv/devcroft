@@ -15,15 +15,19 @@ the mount view, the network namespace and the proxy, exactly as on
 - A fifth `env.provider`, `devcontainer`, **Linux-only** (a container
   rootfs is a Linux filesystem; on macOS the answer stays
   `add-macos-service-vm`, not this).
-- **Materialization, once, host-side:** the provider reads
-  `devcontainer.json`, resolves `image` to a digest, and uses an OCI
-  runtime (`docker` or `podman`, whichever `doctor` finds) to produce a
-  **read-only rootfs on the host**, keyed by digest and shared by every
-  sandbox of every project that names it. In the first cut only a
-  digest-pinned `image:` is honored; `build:` and `features` are
-  **refused by name** with the reason, and are the next cut — they run
-  inside the build container at materialization, never at `up`, because
-  they write into `/usr` by design.
+- **Materialization, once, host-side, in-process:** the provider reads
+  `devcontainer.json`, resolves `image` to a digest, pulls the manifest
+  and layers from the registry (`oci-client`) and unpacks them itself into
+  a **read-only rootfs on the host**, keyed by digest and shared by every
+  sandbox of every project that names it. No Docker, no Podman, no
+  daemon: the only host requirement is network to the registry at
+  provisioning, as for every store. Only a digest-pinned `image:` is
+  honored; `build:` and `features` are **refused by name** with the
+  route: build in CI, push, pin the digest (`devcontainer build --push`
+  does it in one step). Whether devcroft ever builds images itself is a
+  separate decision — a rootless builder would run project code at
+  provisioning with its own network, the one thing the two-phase
+  invariant forbids — recorded as design D9 and not taken here.
 - **Lifecycle commands are project code and run where devcroft runs
   project code: inside the boundary.** `postCreateCommand` maps to the
   manifest's `post_create` hook and `postStartCommand` to `post_start` —
@@ -54,10 +58,9 @@ the mount view, the network namespace and the proxy, exactly as on
 - **Staleness** is the digest: `status` reports stale when
   `devcontainer.json` or the recorded digest changes; `up --recreate`
   re-materializes.
-- Provisioning needs an OCI runtime binary on the host — an external
-  dependency **at provisioning time only**. The invariant "the process
-  tier requires no external backend binary" is kept; the `doctor` entry
-  says the runtime is needed and for what.
+- No external binary, at provisioning or at runtime. The dependency is
+  two crates (`oci-client`, `oci-spec`) and devcroft's own layer
+  unpacker; their tail is measured in phase 0.
 - `devcroft init` learns to recognise `.devcontainer/devcontainer.json`,
   ranked below every closure provider and above `swift`.
 
@@ -76,8 +79,9 @@ _None._
   requirement, not a note.
 - `config`: `provider = "devcontainer"` accepted on Linux, refused with
   the platform reason on macOS.
-- `cli`: `init` detection and ranking; `doctor` reports the OCI runtime
-  and the rootfs store.
+- `cli`: `init` detection and ranking; `doctor` reports registry
+  reachability, the rootfs store, and whether the project's digest is
+  materialized.
 - `policy`: the rootfs grant renders with origin `provider:devcontainer`;
   the exec set inside the sandbox is the rootfs's, not the host's (which
   `execute-scoping` already gives on Linux by construction).
@@ -105,6 +109,6 @@ _None._
   `postCreateCommand` that writes into the project ran once inside, one
   that writes into the rootfs failed at layer `keeper` naming the
   sharing reason; a macOS refusal test. CI gets an `e2e
-  (devcontainer)` leg with docker available (it is, on `ubuntu-latest`).
+  (devcontainer)` leg; it needs only network to a registry.
 - `samples/devcontainer-sample/` with the file most projects already
   have, unmodified.

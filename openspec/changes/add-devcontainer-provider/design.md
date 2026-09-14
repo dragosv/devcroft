@@ -32,15 +32,18 @@ grant; and §1's rule that the guarantee tier is visible and honest.
   flox project: nono, mount view, netns, proxy, SSH.
 - N sandboxes of one image share one materialized rootfs; a second
   project naming the same digest shares it too.
-- Docker/podman is used once, to produce bytes on disk, and is absent
-  from every process an agent can reach.
+- No container runtime or daemon is needed on the host at all: the image
+  is pulled and unpacked in-process, and nothing an agent can reach is a
+  container.
 - The tier is named, and named differently from `closure` and `artifact`.
 
 **Non-Goals:**
 
-- `build:` and `features` — next cut, at materialization, explicitly
-  refused by name in this one. (`postCreateCommand` is *not* deferred:
-  it runs inside, as a hook — D8.)
+- `build:` and `features` — refused by name with the prebuild route (D9-A);
+  a confined builder is a separate, later decision (D9-B).
+  (`postCreateCommand` is *not* deferred: it runs inside, as a hook — D8.)
+- A container runtime anywhere: not at provisioning (D1 pulls and unpacks
+  in-process) and not at runtime.
 - macOS. A rootfs is Linux; on macOS the answer is a VM
   (`add-macos-service-vm`), and this change refuses with that pointer.
 - Running the container. There is no `docker run` anywhere in this
@@ -50,28 +53,58 @@ grant; and §1's rule that the guarantee tier is visible and honest.
 
 ## Decisions
 
-### D1 — Materialize to a rootfs on disk; never run the image
+### D1 — Pull and unpack in-process; no container runtime, no daemon
 
-`docker create <image@digest>` + `docker export` (or `podman` with the
-same verbs) yields a tar of the container's filesystem without starting
-it. devcroft extracts it, as the invoking user, into
-`<rootfs-store>/<digest>/`, read-only after extraction, and records
-`digest` in a lockfile it owns (`.devcontainer/devcroft.lock`, next to
-the file it reads). Device nodes in the tar are skipped — the mount
-view supplies `/dev`; setuid bits are dropped on extraction — they
-would be setuid to the user anyway, and a sandbox must not gain a
-privilege the user lacks.
+Materialization is three operations, none of which is "run a
+container": fetch the manifest, config and layers for a digest from the
+registry; unpack the layers in order into a directory, honouring OCI
+whiteouts (`.wh.<name>`, `.wh..wh..opq`); read `Config.Env` and
+`Config.User` from the image config. All three are OCI *distribution*
+and *image-spec* work, not OCI *runtime* work, and devcroft does them
+itself:
 
-Alternative: use the OCI layer store directly (`skopeo`/`umoci`). Rejected
-for the first cut: two more tools to require, for a result `docker
-export` already gives; revisit if extraction cost measured in phase 0
-says so.
+- `oci-client` (the crate the `dev` devcontainer CLI uses for the same
+  step; `docs/prior-art.md`) for the registry side — manifests, auth,
+  blobs, by digest.
+- `oci-spec` for the config types.
+- Layer unpacking is devcroft's own: `tar` + `flate2`/`zstd`, applied
+  layer by layer with whiteout handling, device nodes skipped (the mount
+  view supplies `/dev`), setuid bits dropped (they would be setuid to the
+  user anyway). Roughly a hundred lines, measured in phase 0 against
+  `debian:stable-slim` and `alpine`, both of which use whiteouts.
 
-Why `create`+`export` and not `run`: `run` executes the image's
-entrypoint — project-controlled code — on the host. `create` executes
-nothing. This is the two-phase invariant at the provider's own entry
-point, the same choice made for every other provider (the entry point
-that hands back an environment, not the one that runs a command).
+The result lands in `<rootfs-store>/<digest>/`, read-only after a
+completion marker is written; the digest is recorded in a lockfile
+devcroft owns (`.devcontainer/devcroft.lock`, next to the file it reads).
+
+**No Docker, no Podman, no daemon, no socket, no `docker` group, no
+rootless setup.** The provider's only host requirement is network to
+the registry at provisioning time — the same requirement every closure
+provider has for its store — and `doctor` reports exactly that.
+
+Alternatives considered:
+
+- **`docker create` + `docker export`** — the first draft. Rejected: it
+  makes a daemon and a group membership a prerequisite for a provider
+  whose whole point is that Docker is not in the picture, and `doctor`
+  would have had to explain "present but not usable by this user" for a
+  tool devcroft does not otherwise need. What it offered — images that
+  exist only in the local Docker cache, never pushed — is a `build:`
+  concern, and `build:` is D9.
+- **youki** — an OCI *runtime* (a `runc` in Rust). It runs a bundle that
+  is already unpacked; it neither pulls nor unpacks. It is the part of
+  the pipeline this design deliberately has none of, and would bring
+  cgroups, seccomp and namespace code devcroft would not call. Not a fit
+  for pull, and not a builder either (D9).
+- **`skopeo`/`umoci`** — do the right operations, as external binaries.
+  Rejected for the same reason as Docker, weaker: two tools to require
+  for what two crates provide.
+
+Why "never run the image" survives the change of mechanism unchanged:
+nothing here executes an entrypoint, a `CMD`, or a lifecycle hook on
+the host. The two-phase invariant holds at the provider's entry point
+exactly as it does for `nix print-dev-env --json` — the route that hands
+back an environment, not the one that runs a command.
 
 ### D2 — The rootfs store is a sibling of the data dir, not inside it
 
@@ -220,6 +253,41 @@ rootfs directories are not garbage-collected by this change — `rm`
 of the last sandbox naming a digest does not remove it, and a `devcroft
 gc` is post-MVP surface, not added here.
 
+### D9 — `build:` and `features` are prebuilds first; a confined builder is a later, separate decision
+
+A Dockerfile in the repository is project code, and a `RUN` step in it
+executes with root-in-container and the network. Building an image is
+therefore the one thing in this provider that would run project code at
+provisioning — the exact act the two-phase invariant forbids — and it
+needs a container runtime to do it. That is why `build:` and `features`
+are not "pull with one more step"; they are a different question, and
+this change answers it in two parts.
+
+**A, this change: devcroft never builds.** `build:` and `features` are
+refused with a message that names the route: build the image where
+images are built — in CI, on a runner that has Docker anyway — push it,
+and pin `image@sha256:…`. The reference `devcontainer build --push`
+produces exactly that image, features applied, in one CI step; GitHub
+Codespaces' prebuilds are the same model. For a fleet this is not a
+workaround but the right shape: N agents pull one digest instead of
+each running one build. `docs/decisions.md` §3 already maps
+"prebuilds → binary caches" for the closure tier; this is the same
+mapping for the image tier.
+
+**B, a later change, and a decision rather than a task:** a rootless,
+daemonless builder at provisioning — `buildah`/`podman build` in its own
+user namespace, output an OCI layout devcroft unpacks with D1's code.
+`RUN` would run as root-mapped-to-the-user with no host access beyond
+the build context, which makes the build container the boundary for
+build-time project code the way the sandbox is the boundary for hooks —
+*but with the build's own, unfiltered network*, which is precisely the
+authority `fix-provisioning-hooks` refused to hand a flox hook. Whether
+that exception is acceptable is the owner's call, written into that
+change's proposal, not inherited from this one. Rejected outright for B:
+Docker/BuildKit through a daemon (`bollard`, the `dev` CLI's route) —
+`RUN` with the daemon's authority; and a devcroft-written builder on
+youki — BuildKit reimplemented to avoid one binary.
+
 ## Risks / Trade-offs
 
 - [The image's libc predates the host kernel's expectations, or the
@@ -230,10 +298,21 @@ gc` is post-MVP surface, not added here.
 - [A 1–2 GB rootfs makes the mount view or Landlock slow] → one bind
   and one Landlock rule for the whole tree, same as `/nix/store`; phase
   0 measures `up` latency and records it.
-- [`docker export` needs the daemon, which needs the user in the `docker`
-  group or rootless mode] → `doctor` names it; podman rootless is the
-  alternative the same `doctor` entry offers. This is a provisioning-time
-  requirement, and the invariant about runtime binaries is untouched.
+- [`oci-client` brings a dependency tail — `reqwest`, TLS, async runtime]
+  → measured in phase 0 the way nono's tail was, as a number; devcroft
+  already links `reqwest`-shaped crates through `russh`/`sigstore`, so
+  the marginal count is what matters. A registry that needs a credential
+  helper (`~/.docker/config.json` `credHelpers`) is out of scope for the
+  first cut; `doctor` says so when it sees one.
+- [Unpacking gets whiteouts subtly wrong and a file from a lower layer
+  survives] → phase 0 diffs devcroft's unpack of `debian:stable-slim`
+  against `docker export` of the same digest on a host that has Docker;
+  identical trees or the difference explained.
+- [An image exists only in a local Docker cache, never pushed] → not
+  served; the refusal says "push it and pin the digest", which is D9-A's
+  answer for `build:` as well. A local-cache fallback via `docker export`
+  is a two-line addition if it is ever wanted, and it is not wanted by
+  default because it reintroduces the daemon as a dependency.
 - [A digest-pinned `image` is rare in the wild; most files say
   `image: mcr.microsoft.com/devcontainers/rust:1`] → the lockfile
   (D5) records the digest the tag resolved to at first `up`; the file
@@ -250,12 +329,12 @@ Additive. No existing provider, manifest, or state file changes shape.
 
 ## Open Questions
 
-1. Whether `features` in the next cut are run by `devcontainer build`
-   (the reference CLI, Node) or by devcroft driving `docker build` with
-   the feature install scripts — the former is one more external tool,
-   the latter re-implements the Features spec. Not this change's to
-   settle; phase 0 records what the reference CLI does when run with
-   `--skip-post-create`.
+1. For D9-B, if it is ever taken: `buildah` versus `podman build` as
+   the rootless builder, and whether `features` are applied by the
+   reference CLI's `devcontainer build` (Node) or by devcroft generating
+   the Dockerfile the Features spec describes. Not this change's to
+   settle; phase 0 records what the reference CLI does with
+   `--skip-post-create` so that change starts from a measurement.
 2. Whether the rootfs store should be content-addressed after
    extraction (hash the extracted tree) so two digests with identical
    contents share space. Cheap to add later; `image` tier's promise

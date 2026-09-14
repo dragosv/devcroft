@@ -5,17 +5,18 @@ The system SHALL resolve `env.provider = "devcontainer"` from the
 project's `.devcontainer/devcontainer.json` (or `.devcontainer.json`)
 by materializing its `image` into a read-only root filesystem on the
 host, once per image digest, and treating that filesystem as the
-provider's grant. Materialization SHALL use an OCI runtime present on the
-host (`docker` or `podman`) to produce the filesystem's bytes and SHALL
-NOT start the image: no entrypoint, no command, no lifecycle hook runs
-on the host. The environment SHALL be taken from the image's
+provider's grant. Materialization SHALL be done in-process — the
+manifest, config and layers fetched from the registry by digest and the
+layers unpacked by devcroft with OCI whiteouts honoured — and SHALL
+require no container runtime, daemon, or socket on the host. Nothing
+from the image SHALL run on the host: no entrypoint, no command, no
+lifecycle hook. The environment SHALL be taken from the image's
 configuration as data (`Env`; `WorkingDir` ignored), never by executing
-anything inside the image. The OCI runtime SHALL NOT be invoked after
-resolution completes, and no sandbox SHALL be granted its socket.
+anything inside the image.
 
 #### Scenario: A digest-pinned image resolves without running anything
 - **WHEN** `devcontainer.json` declares `"image": "<ref>@sha256:<digest>"`
-  and `up` runs on Linux with an OCI runtime available
+  and `up` runs on Linux with the registry reachable
 - **THEN** the image's filesystem is materialized under the rootfs store
   keyed by that digest, read-only
 - **AND** the resolution's grants name that directory with origin
@@ -40,10 +41,19 @@ resolution completes, and no sandbox SHALL be granted its socket.
 - **THEN** it fails at layer `provider` with exit code 3, saying the
   provider needs a Linux host and naming the VM change as the macOS route
 
-#### Scenario: No OCI runtime
-- **WHEN** neither `docker` nor `podman` is usable on the host
-- **THEN** `up` fails at layer `provider` naming the requirement, that it
-  is needed at provisioning only, and `devcroft doctor`
+#### Scenario: The registry is unreachable
+- **WHEN** the digest is not materialized and the registry cannot be
+  reached
+- **THEN** `up` fails at layer `provider` naming the registry and that
+  the image was never pulled, and a digest already materialized needs no
+  network at all
+
+#### Scenario: Whiteouts are honoured
+- **WHEN** an image's upper layer deletes a file or directory a lower
+  layer created
+- **THEN** the unpacked rootfs does not contain it, and the unpacked
+  tree matches what a container runtime would produce for the same
+  digest
 
 ### Requirement: The rootfs is the session's root and the keeper's grant
 The system SHALL run each session of a `devcontainer` sandbox with the
@@ -95,11 +105,12 @@ layer `provider`, each with its own message naming the field: `build`,
 neither absent nor root SHALL be refused for the same reason
 `remoteUser` is.
 
-#### Scenario: A file with `features` is refused, not partially honored
-- **WHEN** `devcontainer.json` has both `image` and `features`
-- **THEN** `up` fails naming `features`, that it is not run in this
-  version, and that the image alone would resolve if the field were
-  removed
+#### Scenario: `build` and `features` are refused with the prebuild route
+- **WHEN** `devcontainer.json` has `build`, or `image` with `features`
+- **THEN** `up` fails naming the field, that devcroft does not build
+  images, and the route — build in CI, push, pin `image@sha256:…`
+  (`devcontainer build --push` does it with features applied) — and
+  that the image alone would resolve if the field were removed
 
 #### Scenario: Unknown fields do not fail
 - **WHEN** the file carries a key devcroft does not know

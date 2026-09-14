@@ -402,3 +402,29 @@ sandbox record, every other host variable left behind. Recorded against
 project with a real VM boundary has no answer for subscription auth either,
 which is independent evidence for that change's task 7.1 premise rather than
 devcroft's own observation about itself.
+
+## `dev` (squirrelsoft-dev) — <https://github.com/squirrelsoft-dev/dev>
+
+A terminal-first dev-container CLI in Rust, read for
+`add-devcontainer-provider`. Two things taken as reference: its
+`devcontainer.json` handling — JSONC, the layered configuration merge,
+the string/array/object union of lifecycle commands — and its `runArgs`
+translation table, which is a measurement of what projects actually put
+there (devcroft refuses the field; the table says what the refusal
+costs). One thing taken as a dependency choice rather than code:
+`oci-client`, the crate it pulls images with, which is also the crate
+devcroft's design settles on. Not taken: its runtime — it runs the
+container through Docker, Podman or Apple Containers (`bollard` with
+BuildKit for builds), which is the half of the format devcroft's
+provider deliberately has none of.
+
+## youki — <https://github.com/youki-dev/youki>
+
+Read for the same change and set aside, with the distinction worth
+recording: youki is an OCI *runtime* — a `runc` in Rust — and runs a
+bundle that is already unpacked. It neither pulls images nor unpacks
+layers, which is the whole of what the devcontainer provider needs, and
+running containers is the part it has none of by design. It would fit
+only a devcroft-written image *builder*, and that would be BuildKit
+reimplemented to avoid one binary (design D9). Its sibling `oci-spec-rs`
+is used for the image-config types.
