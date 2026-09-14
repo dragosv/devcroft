@@ -525,8 +525,11 @@ pub fn clear_runtime_state(paths: &StatePaths) -> io::Result<()> {
     // Not the keeper's own pidfile, and not touched by `health()` above,
     // but still runtime state: a stale entry here would make a later
     // `up` believe a proxy from a previous, now-gone run is still owned
-    // by this sandbox. `terminate.rs::stop_if_running` is what actually
-    // kills the process before this runs.
+    // by this sandbox. **This forgets the proxy; it does not stop it.**
+    // Every caller must `terminate_and_wait` the proxy pidfile first —
+    // `down`, `--recreate` and stale-keeper recovery all do now; the last
+    // did not until a spec review noticed, and a crashed keeper's `up`
+    // left the old proxy listening with the old allowlist and token.
     let _ = std::fs::remove_file(&paths.proxy_pidfile);
     // The two listener sockets, for the same reason as `socket` above:
     // they are runtime state, and leaving them makes `down` report a

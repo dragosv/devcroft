@@ -210,6 +210,17 @@ pub fn up_with_provider(
         match state::health(&paths)? {
             Health::Healthy(_) => return Ok(UpOutcome::AlreadyUp),
             Health::Stale(_) => {
+                // The proxy outlives a crashed keeper — it is a separate
+                // process with its own pidfile — and `clear_runtime_state`
+                // only *forgets* it (its own comment says the kill happens
+                // before it runs, which was true for `down` and `--recreate`
+                // and not here). Forgetting a live proxy meant the next
+                // `ensure_egress_proxy` spawned a second one, leaving the
+                // first listening with the previous allowlist and token,
+                // owned by nobody. Found by spec review, not by a test —
+                // `tests/egress_proxy_e2e.rs` now has the one that would
+                // have.
+                state::terminate_and_wait(&paths.proxy_pidfile, TERMINATE_GRACE_PERIOD);
                 state::clear_runtime_state(&paths)?;
                 UpOutcome::Recovered
             }

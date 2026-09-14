@@ -173,3 +173,132 @@ fn network_allow_actually_filters_by_host_through_a_real_curl() {
     let _ = std::fs::remove_dir_all(&paths.root);
     let _ = std::fs::remove_dir_all(&project_root);
 }
+
+/// A keeper that dies leaves its egress proxy running — it is a separate
+/// process — and the next `up` takes the stale-recovery path. That path
+/// must stop the old proxy before starting a new one; it used to forget
+/// it instead (`clear_runtime_state` removed the pidfile, nothing sent
+/// the signal), so a recovered sandbox ran *two* proxies, the orphan
+/// still answering with the previous allowlist and token. `--recreate`
+/// and `down` had the kill; recovery did not. Found by spec review.
+#[test]
+fn recovering_a_dead_keeper_stops_the_orphaned_egress_proxy() {
+    if !devcroft::policy::backend_supported() {
+        eprintln!("skipping: this host has no usable Landlock/Seatbelt support");
+        return;
+    }
+    if Command::new("flox").arg("--version").output().is_err()
+        || !devcroft::provider::host_can_build_nix_closures()
+    {
+        eprintln!("skipping: no usable flox here (not on PATH, or no reachable Nix store)");
+        return;
+    }
+    unsafe {
+        std::env::set_var("DEVCROFT_KEEPER_EXE", env!("CARGO_BIN_EXE_devcroft"));
+    }
+
+    let project_root = std::env::temp_dir().join(format!(
+        "devcroft-egress-proxy-recovery-{}",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&project_root);
+    std::fs::create_dir_all(&project_root).unwrap();
+    let project_root = project_root.canonicalize().unwrap();
+    let init = Command::new("flox")
+        .arg("init")
+        .current_dir(&project_root)
+        .output()
+        .unwrap();
+    if !init.status.success() {
+        eprintln!("skipping: flox init failed");
+        return;
+    }
+
+    let name = format!("e2eproxyrecover{}", std::process::id());
+    let (manifest, _) = parse(&format!(
+        "[sandbox]\nname = {name:?}\n[network]\ndefault = \"deny\"\nallow = [\"example.com\"]\n"
+    ))
+    .unwrap();
+    let paths = StatePaths::new(&name).unwrap();
+    let _ = std::fs::remove_dir_all(&paths.root);
+
+    assert_eq!(
+        up(&manifest, &project_root, &UpOptions::default()).unwrap(),
+        UpOutcome::Started
+    );
+    let first_proxy = read_pid(&paths.proxy_pidfile).expect("up with network.allow starts a proxy");
+    assert!(
+        pid_alive(first_proxy),
+        "the first proxy must be running after up"
+    );
+
+    // A crashed keeper, not a clean `down`: SIGKILL, then reap — `up` ran
+    // in-process, so this test is the keeper's parent (same reasoning as
+    // `tests/lifecycle_hooks.rs`'s recovery test).
+    let keeper = match devcroft::lifecycle::health(&paths).unwrap() {
+        devcroft::lifecycle::Health::Healthy(pid) => pid,
+        other => panic!("expected a healthy keeper, got {other:?}"),
+    };
+    unsafe {
+        assert_eq!(libc::kill(keeper, libc::SIGKILL), 0);
+        libc::waitpid(keeper, std::ptr::null_mut(), 0);
+    }
+    assert!(
+        pid_alive(first_proxy),
+        "the proxy is a separate process and must survive the keeper's death — \
+         otherwise this test measures nothing"
+    );
+
+    assert_eq!(
+        up(&manifest, &project_root, &UpOptions::default()).unwrap(),
+        UpOutcome::Recovered
+    );
+    let second_proxy = read_pid(&paths.proxy_pidfile).expect("recovery starts a proxy");
+    assert_ne!(
+        second_proxy, first_proxy,
+        "recovery must start a fresh proxy"
+    );
+    assert!(
+        !pid_alive(first_proxy),
+        "the orphaned proxy (pid {first_proxy}) must be stopped by recovery, not left \
+         listening with the old allowlist and token"
+    );
+
+    down(&name).unwrap();
+    let _ = std::fs::remove_dir_all(&project_root);
+}
+
+fn read_pid(pidfile: &std::path::Path) -> Option<libc::pid_t> {
+    std::fs::read_to_string(pidfile)
+        .ok()?
+        .split_whitespace()
+        .next()?
+        .parse()
+        .ok()
+}
+
+/// Alive and not a zombie: `kill(pid, 0)` alone says yes for a zombie,
+/// which is exactly the state an unreaped orphan would sit in if the
+/// signal were sent but nothing waited for it.
+fn pid_alive(pid: libc::pid_t) -> bool {
+    if unsafe { libc::kill(pid, 0) } != 0 {
+        return false;
+    }
+    #[cfg(target_os = "linux")]
+    {
+        std::fs::read_to_string(format!("/proc/{pid}/stat"))
+            .map(|s| !s.contains(") Z "))
+            .unwrap_or(false)
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let out = Command::new("ps")
+            .args(["-o", "stat=", "-p", &pid.to_string()])
+            .output()
+            .ok();
+        out.is_some_and(|o| {
+            let s = String::from_utf8_lossy(&o.stdout);
+            !s.trim().is_empty() && !s.trim().starts_with('Z')
+        })
+    }
+}
