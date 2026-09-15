@@ -5,7 +5,7 @@ goes wrong can't reach the rest of your machine — and so every branch gets its
 own tools, ports and databases.
 
 No daemon running in the background, no container, no VM. Your code runs
-natively on your own machine, which on a Mac means it actually runs on macOS.
+natively on your own machine — which on a Mac means it actually runs on macOS.
 
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE-APACHE)
 [![Status](https://img.shields.io/badge/release-0.0.1-yellow.svg)](#what-works-today)
@@ -49,7 +49,9 @@ you have no preference, use flox; use nix if the project already has a
 Be aware of the real price: if your project already has a flake, a flox
 environment or a `devbox.json`, devcroft costs you one small config file. If it
 has none of them, the actual decision in front of you is adopting Nix, and
-devcroft is the smaller half of that.
+devcroft is the smaller half of that. That price is coming down — devenv is
+supported on `dev`, Swift on a Mac needs no Nix at all, and reading a
+`devcontainer.json` is next; see [Where it's going](#where-its-going).
 
 `devcroft doctor` tells you what this machine is missing.
 
@@ -111,9 +113,11 @@ Nothing asked politely and nothing cooperated. The sample's README runs the same
 program *without* devcroft, where it deletes the file — a refusal only proves
 something if the same operation succeeds without the sandbox.
 
-**On macOS, only the third line is reliable.** Reads and writes are refused, but
-a program naming a full path to a host tool still gets it.
-[docs/known-gaps.md](docs/known-gaps.md) has the details.
+**On macOS, only the third line is reliable in this release.** Reads and writes
+are refused, but a program naming a full path to a host tool still gets it.
+That is closed on `dev` — the sandbox there runs only what its environment
+provides, on both platforms — and [docs/known-gaps.md](docs/known-gaps.md) has
+the measurement on each side of the fix.
 
 ## Branches, ports and services
 
@@ -121,11 +125,18 @@ If your project declares services or ports, each sandbox gets its own private
 set of them. Eight branches, eight Postgres instances, all on 5432, none aware
 of the others — no allocation, no config edits.
 
-**Git worktrees need one thing from you today.** A sandbox is identified by the
-name in `devcroft.toml`, and that file is committed — so every worktree carries
-the same name and ends up sharing one sandbox, with the second `up` serving the
-first one's code. Give each worktree its own name until this is fixed;
-[docs/known-gaps.md](docs/known-gaps.md) has the measurement.
+**Git worktrees need one thing from you.** A sandbox is identified by the name
+in `devcroft.toml`, and that file is committed — so every worktree carries the
+same name. Give each one its own at `up`, and the committed file stays as it is:
+
+```sh
+devcroft up --name feature-auth      # in one worktree
+devcroft up --name feature-search    # in another
+```
+
+In this release, forgetting to means the second worktree quietly serves the
+first one's code; on `dev` devcroft ties a sandbox to the checkout that created
+it and refuses instead.
 
 The catch with private ports is that they're private: your dev server is no
 longer on your own `localhost`. You reach it through a tunnel —
@@ -231,6 +242,38 @@ away. If something breaks, [open an issue](https://github.com/dragosv/devcroft/i
 The sandboxing itself is [nono](https://github.com/nolabs-ai/nono), a library
 from the Sigstore team; devcroft is the part that builds environments, runs
 services and speaks SSH.
+
+## Where it's going
+
+This page describes the release. The `dev` branch is ahead of it, and this is
+the direction — each item is either merged there or a written proposal in
+[openspec/changes/](openspec/changes/) you can read before it's code:
+
+- **More ways to have an environment.** devenv is a fourth provider on `dev`.
+  On a Mac, a Swift project uses the Xcode or Command Line Tools you already
+  have — no Nix — because Xcode, the Apple SDKs and code signing cannot live in
+  a Linux container, and that is the reason to stay native at all. It is
+  honest about what it costs: no shared store, so eight Swift sandboxes are
+  eight builds, and what builds depends on that Mac's Xcode.
+- **Projects with a `devcontainer.json`.** Most repositories describe their
+  environment that way, not with Nix. devcroft will read that file, pull the
+  image it names, unpack it once, and run sandboxes on it the way it runs them
+  on a Nix store — your CI builds the image; devcroft owns the runtime, and no
+  container ever runs. Linux only, since an image is a Linux filesystem.
+- **The boundary gets tighter.** On `dev`, a Linux sandbox gets its own
+  filesystem view and network namespace, macOS refuses host tools the way Linux
+  does, outbound traffic goes through a per-sandbox proxy with an allowlist, a
+  service with a readiness check is waited for by the ones that depend on it,
+  and the sandbox no longer inherits your shell's environment — you name what
+  goes in (`[env] forward`) and ask `devcroft why --env` when something's
+  missing.
+- **A fleet of agents on one Linux machine**, each with its own filesystem,
+  network and ports, sharing one store. What's left is per-agent CPU and
+  memory budgets and process visibility.
+- **Locked-down hosts.** Ubuntu 24.04 switches off the user namespaces the
+  filesystem view needs; `up` says so and names the sysctl. An explicit flag to
+  run with Landlock alone there is designed, refused wherever the policy would
+  promise more than that can keep.
 
 ## More
 
