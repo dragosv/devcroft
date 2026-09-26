@@ -48,6 +48,20 @@ That is forced rather than chosen — if PID 1 exits, the kernel `SIGKILL`s the
 entire PID namespace, so the helper cannot hand off by replacing itself, and
 something must reap orphans or the namespace accumulates zombies.
 
+**Capabilities.** The identity map makes the helper uid 0 in its user
+namespace, and a uid-0 `execve` there grants the full capability set. So
+the helper starts the command with `SECBIT_NOROOT | SECBIT_NOROOT_LOCKED`,
+and an exec'd program holds nothing (`CapEff` 0, asserted by
+`tests/fleet_init.rs`). Landlock would already stop it changing mounts, but
+nothing else would stop it using the rest.
+
+**A fresh `/proc` is part of the PID namespace, not optional.** Without
+one, the inherited procfs still lists every host process, so the namespace
+isolates signals but not visibility. The kernel refuses a new procfs in a
+user namespace while the only one it can see is partly masked, and Docker
+masks it by default (measured: EPERM). Fleet inside a container therefore
+needs `systempaths=unconfined`. On a real host it just works.
+
 **Identity handshake.** The parent writes single-entry UID and GID maps
 (`0 -> ` the host's real UID/GID), with `setgroups=deny` written *before*
 `gid_map` — mandatory for an unprivileged writer since kernel 3.19. The child

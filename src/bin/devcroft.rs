@@ -55,6 +55,12 @@ fn main() {
         // Hidden, same reasoning as `__netns_probe`: entering a mount
         // namespace is irreversible for the process that does it.
         Some("__mount_probe") => std::process::exit(mount_probe_main(&args[2..])),
+        // Hidden: fleet's init helper, PID 1 of an agent's namespaces
+        // (`fleet::init`). The supervisor's clone3 execs straight into it.
+        #[cfg(target_os = "linux")]
+        Some(devcroft::fleet::init::SUBCOMMAND) => {
+            std::process::exit(devcroft::fleet::init::helper_main())
+        }
         // Hidden: proves a mount made inside a fresh, private-propagation
         // mount namespace does not leak to the host's own namespace, for
         // `tests/fleet_mount.rs`. Lives in the real binary rather than the

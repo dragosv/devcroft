@@ -268,7 +268,24 @@ the implementation before it resolves.
 
 - [ ] Implement the internal `devcroft-init` subcommand: single-threaded, config
       over pipe, ruleset over inherited fd.
+      **Built without the ruleset** (`src/fleet/init.rs`, `__fleet_init`):
+      one `clone3` into all seven namespaces, directly into the cgroup leaf,
+      with a pidfd. The child does only `dup2` and `execve`. The parent
+      writes the identity map, then the configuration. The helper is PID 1:
+      it mounts a fresh `/proc`, sets the hostname, brings `lo` up, starts
+      the command under `SECBIT_NOROOT`, reaps, forwards SIGTERM/INT/HUP/
+      QUIT, and exits with the command's status. The mount view, Landlock
+      and the keeper slot in before the command starts.
+      **A fresh `/proc` is refused under Docker's default masking**
+      (measured: `unshare --mount-proc` gets EPERM), and without one a PID
+      namespace hides nothing. The devcontainer now runs with
+      `systempaths=unconfined`; `tests/fleet_init.rs` skips on a masked host
+      and says why. On this host before the rebuild, the handshake ran end
+      to end and reported `mount a fresh /proc: EPERM` by name in 5.7 ms,
+      leaving the leaf empty.
 - [ ] Implement namespace creation (net, pid, ipc, uts, mount).
+      **All of them, plus cgroup, in `fleet::init::spawn`**; tick once
+      `tests/fleet_init.rs` has run unskipped.
       **`net` is done** (`src/fleet/netns.rs`,
       `enter_network_namespace`) — the rest (pid, ipc, uts, mount) is
       not. Split out and built first because the D5 spike showed the
@@ -307,6 +324,8 @@ the implementation before it resolves.
 - [ ] Wire ruleset construction in the parent, namespace-local rule addition in
       the helper, application after mounts.
 - [ ] Structured error reporting from the helper back to the supervisor.
+      One JSON line on fd 4 naming the failed step, or EOF plus the
+      helper's exit status. Built; tick with the test run above.
 - [ ] Test on at least two distributions, including one that restricts
       unprivileged user namespaces by default.
 - [ ] Test: agent cannot see or signal another agent's processes.
