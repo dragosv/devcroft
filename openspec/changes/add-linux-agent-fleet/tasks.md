@@ -175,7 +175,7 @@ the implementation before it resolves.
       segments exactly** — the reference does the last one specifically to
       stop path traversal, which is not obvious from "parse
       /proc/self/cgroup".
-- [ ] **Verify requested controllers appear in the parent's
+- [x] **Verify requested controllers appear in the parent's
       `cgroup.subtree_control` and fail if not.** This is D6's
       "silently under-enforce" concern as a concrete check: without it a
       missing controller means the limit is configured and absent.
@@ -196,6 +196,8 @@ the implementation before it resolves.
       (`nsdelegate`) or moving itself out. The fd-write route also works
       and is the fallback, but the 5.14 `cgroup.kill` needs already
       includes clone3 (5.7).
+      **The fallback is built** (`Leaf::attach_on_spawn`, a `pre_exec`
+      write); the `clone3` route lands with D2's init helper.
 - [ ] **Every cgroup fd the supervisor opens is `O_CLOEXEC`**, including
       the leaf fd handed to `clone3`. Agents run as the uid that owns
       every delegated file, so nothing but reachability protects a
@@ -204,7 +206,10 @@ the implementation before it resolves.
       `openat(leaked_fd, "../b/memory.max")`. Test it from the agent side:
       `/proc/self/fd` holds no cgroupfs fd, and a sibling's interface files
       are unreachable by path.
-- [ ] **Leave `memory.high` unset when swap is off.** With
+      **Done for `src/fleet/cgroup.rs`**: `Leaf::open_dir` is `O_CLOEXEC`,
+      asserted by test, and `attach_on_spawn`'s fd is std's (also
+      close-on-exec). The agent-side test waits for the init helper.
+- [x] **Leave `memory.high` unset when swap is off.** With
       `memory.swap.max=0`, a program over `memory.high` stalls instead of
       being killed, which looks like a hang rather than a limit. Set
       `memory.max` plus `memory.oom.group=1` so the whole leaf dies
@@ -213,9 +218,13 @@ the implementation before it resolves.
       `max` let a 512 MB allocation succeed (384 MB swapped, nothing
       killed). With `swap.max=0` it was killed in 10 ms, the whole leaf with
       it, and `memory.events` recorded `oom_group_kill 1`.
-- [ ] Create the empty internal `fleet` node plus one domain leaf per agent;
+- [x] Create the empty internal `fleet` node plus one domain leaf per agent;
       keep the supervisor and each agent's host-side proxy out of the leaves.
+      Keeping the supervisor and proxy out is the caller's placement; the
+      module only makes leaves.
 - [ ] Apply memory, CPU weight, IO weight and PID limits from configuration.
+      **Applying is done** (`src/fleet/cgroup.rs`, `Limits`); reading them
+      from configuration waits for fleet's config surface.
 - [ ] **Wall-clock timeout, which needs no cgroups and is missing entirely.**
       devcroft has no execution limit of any kind today — a runaway agent
       runs until someone notices. A timer plus the escalating
@@ -226,7 +235,7 @@ the implementation before it resolves.
       agent, and `timeout 30 devcroft exec …` only helps a human who is
       watching. Noted from `sandlock`, which exposes it as `-t/--timeout`
       (`docs/prior-art.md`).
-- [ ] Implement teardown via `cgroup.kill` (Linux 5.14+), then poll
+- [x] Implement teardown via `cgroup.kill` (Linux 5.14+), then poll
       `cgroup.procs` until the kernel has reaped — the reference polls 50
       times at 10ms. Measured: 20 orphaned, SIGTERM-ignoring daemons were
       reaped before the first 1 ms poll, so that budget is generous. Leave the directory behind with a warning rather than
@@ -241,9 +250,19 @@ the implementation before it resolves.
       and `pids.events`' denied-fork count turn "the agent vanished" into
       "the agent was OOM-killed". Report nothing when the counters are
       zero, so a clean run stays quiet.
+      **Exit evidence done** (`Leaf::exit_evidence`, `Evidence::is_quiet`);
+      usage metrics (`memory.current`, `cpu.stat`) wait for `ps` to consume
+      them.
 - [ ] Preflight check for cgroup v2 delegation with an actionable diagnostic.
+      **The cgroup half is done** (`FleetNode::create`): cgroup2 filesystem,
+      required controllers present, each enable read back, swap without
+      `memory.swap.max` refused, and `EBUSY` explained as the
+      no-internal-process rule. Finding the delegated root is the systemd
+      half, still open.
 - [ ] Test: runaway build in one agent leaves other agents schedulable.
-- [ ] Test: stopping an agent with orphaned descendants leaves nothing alive.
+- [x] Test: stopping an agent with orphaned descendants leaves nothing alive.
+      `tests/fleet_cgroup.rs`: five `setsid` daemons ignoring SIGTERM,
+      reparented away from the test, all gone after `Leaf::kill`.
 
 ## 2. Sandbox runtime
 

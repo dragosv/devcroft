@@ -16,6 +16,13 @@
 //! ships while D5 stays open, and an agent built on it today is fully
 //! network-isolated except its own loopback, which is a safe default
 //! rather than a half-finished one.
+//!
+//! `mount` and `cgroup` followed on the same reasoning: each is a
+//! primitive the supervisor will call, testable before it exists. `cgroup`
+//! is D6's resource control, minus finding the delegated root, which is
+//! systemd's half.
 
+#[cfg(target_os = "linux")]
+pub mod cgroup;
 pub mod mount;
 pub mod netns;

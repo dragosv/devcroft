@@ -98,6 +98,13 @@
 
   "remoteUser": "vscode",
 
+  // Opts tests/fleet_cgroup.rs in: it writes into the named subtree, so it
+  // never derives one on its own (on a systemd desktop that would be the
+  // user manager's tree). The tests also need to run in a process already
+  // inside the subtree, so `sudo cgroup-delegate enter $$` comes first in
+  // that shell; without it they skip and say so.
+  "remoteEnv": { "DEVCROFT_TEST_CGROUP_ROOT": "/sys/fs/cgroup/delegated" },
+
   // The claude-code feature can bootstrap Node itself, but only best-effort
   // and at 18.x; its own NOTES.md recommends declaring Node explicitly, which
   // also keeps the version a decision rather than a fallback. Both are pinned
