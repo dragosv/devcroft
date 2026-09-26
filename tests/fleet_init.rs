@@ -139,7 +139,7 @@ fn an_agent_is_alone_in_its_namespaces_and_holds_nothing() {
              cat /proc/sys/kernel/hostname; \
              echo procs=$(ls /proc | grep -c '^[0-9]'); \
              grep CapEff /proc/self/status; \
-             for f in /proc/$$/fd/*; do readlink $f; done",
+             for f in /proc/$$/fd/*; do readlink $f || :; done",
         ),
     );
     assert_eq!(code, 0, "{out}");
@@ -160,6 +160,8 @@ fn an_agent_is_alone_in_its_namespaces_and_holds_nothing() {
         "{out}"
     );
     // No cgroup fd, config pipe or status pipe survived into the agent.
+    // (The glob also lists the fd sh read the directory through, which is
+    // closed by the time readlink runs, hence the `|| :`.)
     for fd in &lines[5..] {
         assert!(
             !fd.contains("cgroup"),
@@ -182,7 +184,7 @@ fn agents_cannot_see_or_signal_each_other() {
     let (code, out) = run(
         &a_leaf,
         &spec(&format!(
-            "cat /proc/[0-9]*/comm; kill -0 {} 2>/dev/null && echo SIGNALLED",
+            "cat /proc/[0-9]*/comm; if kill -0 {} 2>/dev/null; then echo SIGNALLED; fi",
             b.pid()
         )),
     );

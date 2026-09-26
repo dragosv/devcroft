@@ -283,9 +283,17 @@ the implementation before it resolves.
       and says why. On this host before the rebuild, the handshake ran end
       to end and reported `mount a fresh /proc: EPERM` by name in 5.7 ms,
       leaving the leaf empty.
-- [ ] Implement namespace creation (net, pid, ipc, uts, mount).
-      **All of them, plus cgroup, in `fleet::init::spawn`**; tick once
-      `tests/fleet_init.rs` has run unskipped.
+      **After the rebuild, the first run found a race D2 had already
+      warned about:** the child exec'd before the parent wrote `uid_map`,
+      and an `execve` by an unmapped (non-zero) uid drops every capability.
+      About half the agents failed at their first mount with EPERM. The
+      child now blocks in `read` on a sync pipe until the map exists. 20 of
+      20 runs are green since. Mutants checked: without `SECBIT_NOROOT` the
+      `CapEff` assertion fails; without the fresh `/proc`, 47 processes are
+      visible and agent a sees the host's `bash`.
+- [x] Implement namespace creation (net, pid, ipc, uts, mount).
+      **All of them, plus cgroup, in `fleet::init::spawn`**, asserted from
+      inside the agent by `tests/fleet_init.rs`.
       **`net` is done** (`src/fleet/netns.rs`,
       `enter_network_namespace`) — the rest (pid, ipc, uts, mount) is
       not. Split out and built first because the D5 spike showed the
@@ -323,12 +331,15 @@ the implementation before it resolves.
       CA certificates are all present in the constructed view.
 - [ ] Wire ruleset construction in the parent, namespace-local rule addition in
       the helper, application after mounts.
-- [ ] Structured error reporting from the helper back to the supervisor.
+- [x] Structured error reporting from the helper back to the supervisor.
       One JSON line on fd 4 naming the failed step, or EOF plus the
-      helper's exit status. Built; tick with the test run above.
+      helper's exit status (`a_failing_step_is_reported_by_name`).
 - [ ] Test on at least two distributions, including one that restricts
       unprivileged user namespaces by default.
-- [ ] Test: agent cannot see or signal another agent's processes.
+- [x] Test: agent cannot see or signal another agent's processes.
+      `agents_cannot_see_or_signal_each_other`: agent a's fresh `/proc`
+      lists only its own helper, `sh` and `cat`, and `kill -0` on agent
+      b's pid fails.
 
 ## 2b. Making N sandboxes affordable
 

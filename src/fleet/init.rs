@@ -10,9 +10,14 @@
 //! before the clone.
 //!
 //! **Handshake.** The parent writes the identity map (`0 → ` its own
-//! uid/gid, `setgroups` denied first), *then* writes the configuration to
-//! the helper's fd 3. So by the time the helper has read its
-//! configuration, the map is in place. It reports back once on fd 4: a
+//! uid/gid, `setgroups` denied first), then releases the child, which has
+//! been blocked in `read` on a sync pipe. **The child must not `execve`
+//! before the map exists.** An unmapped uid is not 0, and an `execve` by a
+//! non-zero uid drops the whole capability set, so the helper would start
+//! with nothing and fail at its first mount. The first version exec'd
+//! straight away, and that race failed about half the tests with `private
+//! propagation: EPERM`. The configuration goes to the helper's fd 3 after
+//! that. The helper reports back once on fd 4: a
 //! single JSON line, either `{"ok":true}` or an error naming the step that
 //! failed. That is the structured error channel section 2 asks for; a
 //! helper that dies before reporting shows up as an EOF plus its exit
@@ -121,6 +126,7 @@ pub fn spawn(exe: &Path, leaf: &Leaf, spec: &AgentSpec, stdio: Stdio) -> io::Res
     let config = serde_json::to_vec(spec).map_err(io::Error::other)?;
     let (config_r, mut config_w) = pipe()?;
     let (mut status_r, status_w) = pipe()?;
+    let (sync_r, sync_w) = pipe()?;
     let devnull: OwnedFd = std::fs::File::open("/dev/null")?.into();
 
     // Every fd the child ends up with, moved above the targets first so
@@ -138,6 +144,8 @@ pub fn spawn(exe: &Path, leaf: &Leaf, spec: &AgentSpec, stdio: Stdio) -> io::Res
     }
     drop((config_r, status_w, devnull, stdio));
     let dups: Vec<(RawFd, RawFd)> = plan.iter().map(|(fd, t)| (fd.as_raw_fd(), *t)).collect();
+    // Read in place, not dup'd: close-on-exec, the helper never sees it.
+    let sync_fd = sync_r.as_raw_fd();
 
     let exe_c = CString::new(exe.as_os_str().as_bytes())?;
     let sub_c = CString::new(SUBCOMMAND)?;
@@ -180,6 +188,12 @@ pub fn spawn(exe: &Path, leaf: &Leaf, spec: &AgentSpec, stdio: Stdio) -> io::Res
         // Child. Only async-signal-safe calls from here to `execve`:
         // `dups`, `argv` and `envp` were all built before the clone.
         unsafe {
+            // Wait for the identity map (see the module doc). EOF means
+            // the parent gave up.
+            let mut go = 0u8;
+            if libc::read(sync_fd, (&mut go as *mut u8).cast(), 1) != 1 {
+                libc::_exit(125);
+            }
             for &(src, target) in &dups {
                 if libc::dup2(src, target) < 0 {
                     libc::_exit(126);
@@ -204,8 +218,11 @@ pub fn spawn(exe: &Path, leaf: &Leaf, spec: &AgentSpec, stdio: Stdio) -> io::Res
     };
     drop((plan, leaf_fd));
 
+    drop(sync_r);
     let handshake = (|| {
         write_id_maps(pid, uid, gid)?;
+        (&sync_w).write_all(b"1")?;
+        drop(sync_w);
         config_w.write_all(&config)?;
         drop(config_w);
         let mut line = String::new();
