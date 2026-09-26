@@ -48,6 +48,17 @@ That is forced rather than chosen — if PID 1 exits, the kernel `SIGKILL`s the
 entire PID namespace, so the helper cannot hand off by replacing itself, and
 something must reap orphans or the namespace accumulates zombies.
 
+**Revised: the ruleset is built and applied in the helper, after the
+view (measured 2026-09-26).** The parent-side construction above was
+right about `fork` and wrong about where the inodes live. The view's
+`/tmp` and `/dev/pts` are new filesystem instances, and its `/proc` is
+fresh, so rules whose fds are opened before the view attach to the host's
+instances. As a mutant, that refused the agent's private `/tmp` and put a
+`/proc` grant on the host's procfs. The allocation concern does not apply
+to the helper, which is a freshly exec'd single-threaded process, so it
+builds the ruleset from the plan in its configuration, applies it to
+itself, and the command inherits it. No ruleset fd crosses the clone.
+
 **Capabilities.** The identity map makes the helper uid 0 in its user
 namespace, and a uid-0 `execve` there grants the full capability set. So
 the helper starts the command with `SECBIT_NOROOT | SECBIT_NOROOT_LOCKED`,

@@ -16,6 +16,7 @@
 
 use devcroft::fleet::cgroup::{FleetNode, Leaf, Limits, Teardown};
 use devcroft::fleet::init::{self, Agent, AgentSpec, Stdio, View};
+use devcroft::policy::CapabilityPlan;
 use std::io::{BufRead, BufReader, Read};
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -87,12 +88,53 @@ impl Drop for Scratch {
     }
 }
 
-fn spec(script: &str) -> AgentSpec {
+/// A plan like `up` compiles for a project whose manifest grants `.` and
+/// reads `read`, with the host's `/usr` standing in for a provider closure
+/// (merged `/usr` makes that `sh`, `cat` and the loader).
+fn plan(read: &[&str]) -> CapabilityPlan {
+    let read: Vec<String> = read.iter().map(|r| format!("{r:?}")).collect();
+    let manifest = format!(
+        "[sandbox]\nname = \"fleet-agent\"\n\n[env]\nprovider = \"flox\"\n\n\
+         [filesystem]\nallow = [\".\"]\nread = [{}]\n",
+        read.join(", ")
+    );
+    let (manifest, _) = devcroft::config::parse(&manifest).unwrap();
+    devcroft::policy::compile(&manifest)
+        .with_provider_grants("flox", &["/usr".to_owned()])
+        .to_capability_plan()
+}
+
+/// A project directory and an empty view root, removed on drop.
+struct Dirs(PathBuf, PathBuf);
+
+impl Dirs {
+    fn new(tag: &str) -> Dirs {
+        let base = std::env::temp_dir().join(format!("devcroft-init-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let (project, view) = (base.join("project"), base.join("view"));
+        std::fs::create_dir_all(&project).unwrap();
+        std::fs::create_dir_all(&view).unwrap();
+        Dirs(project, view)
+    }
+}
+
+impl Drop for Dirs {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(self.0.parent().unwrap());
+    }
+}
+
+/// `sh -c script` in the project root, on the host's root (no view), with
+/// `/proc` readable so the tests can look at the agent from inside it.
+/// A restricted process reads nothing under `/proc` without that grant.
+fn spec(dirs: &Dirs, script: &str) -> AgentSpec {
     AgentSpec {
         command: vec!["sh".into(), "-c".into(), script.into()],
         env: vec![("PATH".into(), std::env::var("PATH").unwrap())],
-        cwd: None,
+        cwd: Some(dirs.0.clone()),
         hostname: "agent".into(),
+        plan: plan(&["/proc"]),
+        project_root: dirs.0.clone(),
         view: None,
     }
 }
@@ -132,14 +174,17 @@ fn an_agent_is_alone_in_its_namespaces_and_holds_nothing() {
     let Some(root) = capable_host() else { return };
     let node = Scratch::new(&root, "alone");
     let leaf = node.leaf("a");
+    let dirs = Dirs::new("alone");
     let (code, out) = run(
         &leaf,
         &spec(
+            &dirs,
             "echo pid=$$; \
              cat /proc/self/cgroup; \
              cat /proc/sys/kernel/hostname; \
              echo procs=$(ls /proc | grep -c '^[0-9]'); \
              grep CapEff /proc/self/status; \
+             grep NoNewPrivs /proc/1/status; \
              for f in /proc/$$/fd/*; do readlink $f || :; done",
         ),
     );
@@ -160,17 +205,54 @@ fn an_agent_is_alone_in_its_namespaces_and_holds_nothing() {
         Some("0000000000000000"),
         "{out}"
     );
+    // PID 1 applied the ruleset to itself, not only to the command: nono
+    // sets no_new_privs as part of restricting.
+    assert_eq!(lines[5].split_whitespace().nth(1), Some("1"), "{out}");
     // No cgroup fd, config pipe or status pipe survived into the agent.
     // (The glob also lists the fd sh read the directory through, which is
     // closed by the time readlink runs, hence the `|| :`.)
-    for fd in &lines[5..] {
+    for fd in &lines[6..] {
         assert!(
             !fd.contains("cgroup"),
             "a cgroup fd leaked into the agent: {out}"
         );
     }
-    assert!(lines.len() <= 5 + 4, "unexpected fds in the agent: {out}");
+    assert!(lines.len() <= 6 + 4, "unexpected fds in the agent: {out}");
     assert_eq!(leaf.kill().unwrap(), Teardown::Removed);
+}
+
+#[test]
+fn on_the_host_root_the_plan_still_refuses_what_it_does_not_grant() {
+    let Some(root) = capable_host() else { return };
+    let node = Scratch::new(&root, "enforced");
+    let leaf = node.leaf("a");
+    let dirs = Dirs::new("enforced");
+    let repo = env!("CARGO_MANIFEST_DIR");
+    let mut s = spec(
+        &dirs,
+        &format!(
+            "test -e {repo}/Cargo.toml && echo REPO_VISIBLE; \
+             cat {repo}/Cargo.toml >/dev/null 2>&1 && echo REPO_READ; \
+             cat /proc/self/status >/dev/null 2>&1 && echo PROC_READ; \
+             echo x > written && echo PROJECT_WRITTEN; \
+             true"
+        ),
+    );
+    s.plan = plan(&[]);
+    let (code, out) = run(&leaf, &s);
+    assert_eq!(code, 0, "{out}");
+    // D2a's host-root strategy: an ungranted path stays visible...
+    assert!(out.contains("REPO_VISIBLE"), "{out}");
+    // ...and is refused by Landlock, like /proc without a grant.
+    assert!(
+        !out.contains("REPO_READ"),
+        "an ungranted path was readable: {out}"
+    );
+    assert!(
+        !out.contains("PROC_READ"),
+        "an ungranted /proc was readable: {out}"
+    );
+    assert!(out.contains("PROJECT_WRITTEN"), "{out}");
 }
 
 #[test]
@@ -178,16 +260,20 @@ fn agents_cannot_see_or_signal_each_other() {
     let Some(root) = capable_host() else { return };
     let node = Scratch::new(&root, "pair");
     let (b_leaf, a_leaf) = (node.leaf("b"), node.leaf("a"));
-    let (b, mut b_out) = start(&b_leaf, &spec("echo up; exec sleep 30"));
+    let (b_dirs, a_dirs) = (Dirs::new("pair-b"), Dirs::new("pair-a"));
+    let (b, mut b_out) = start(&b_leaf, &spec(&b_dirs, "echo up; exec sleep 30"));
     let mut line = String::new();
     BufReader::new(&mut b_out).read_line(&mut line).unwrap();
 
     let (code, out) = run(
         &a_leaf,
-        &spec(&format!(
-            "cat /proc/[0-9]*/comm; if kill -0 {} 2>/dev/null; then echo SIGNALLED; fi",
-            b.pid()
-        )),
+        &spec(
+            &a_dirs,
+            &format!(
+                "cat /proc/[0-9]*/comm; if kill -0 {} 2>/dev/null; then echo SIGNALLED; fi",
+                b.pid()
+            ),
+        ),
     );
     assert_eq!(code, 0, "{out}");
     for comm in out.lines() {
@@ -204,7 +290,8 @@ fn agents_cannot_see_or_signal_each_other() {
 fn the_commands_exit_status_is_the_agents() {
     let Some(root) = capable_host() else { return };
     let node = Scratch::new(&root, "exit");
-    let (code, _) = run(&node.leaf("a"), &spec("exit 7"));
+    let dirs = Dirs::new("exit");
+    let (code, _) = run(&node.leaf("a"), &spec(&dirs, "exit 7"));
     assert_eq!(code, 7);
 }
 
@@ -213,9 +300,13 @@ fn sigterm_reaches_the_command_through_pid_1() {
     let Some(root) = capable_host() else { return };
     let node = Scratch::new(&root, "term");
     let leaf = node.leaf("a");
+    let dirs = Dirs::new("term");
     let (agent, out) = start(
         &leaf,
-        &spec("trap 'exit 42' TERM; echo ready; while :; do sleep 0.05; done"),
+        &spec(
+            &dirs,
+            "trap 'exit 42' TERM; echo ready; while :; do sleep 0.05; done",
+        ),
     );
     let mut line = String::new();
     BufReader::new(out).read_line(&mut line).unwrap();
@@ -231,8 +322,9 @@ fn the_namespace_ends_with_its_command() {
     let Some(root) = capable_host() else { return };
     let node = Scratch::new(&root, "ends");
     let leaf = node.leaf("a");
+    let dirs = Dirs::new("ends");
     // Two background processes outlive the command, then the command exits.
-    let (code, _) = run(&leaf, &spec("sleep 300 & sleep 300 & exit 0"));
+    let (code, _) = run(&leaf, &spec(&dirs, "sleep 300 & sleep 300 & exit 0"));
     assert_eq!(code, 0);
     // PID 1 exited, so the kernel killed the rest of the namespace.
     wait_until("the leaf is empty", || !leaf.populated().unwrap());
@@ -244,68 +336,23 @@ fn a_failing_step_is_reported_by_name() {
     let Some(root) = capable_host() else { return };
     let node = Scratch::new(&root, "fail");
     let leaf = node.leaf("a");
-    let mut bad = spec("true");
+    let dirs = Dirs::new("fail");
+    let exe = Path::new(env!("CARGO_BIN_EXE_devcroft"));
+
+    let mut bad = spec(&dirs, "true");
     bad.hostname = "x".repeat(100); // over HOST_NAME_MAX
-    let err = init::spawn(
-        Path::new(env!("CARGO_BIN_EXE_devcroft")),
-        &leaf,
-        &bad,
-        Stdio::default(),
-    )
-    .unwrap_err()
-    .to_string();
+    let err = init::spawn(exe, &leaf, &bad, Stdio::default())
+        .unwrap_err()
+        .to_string();
     assert!(err.contains("sethostname"), "{err}");
     wait_until("the leaf is empty", || !leaf.populated().unwrap());
 
-    bad = spec("true");
+    bad = spec(&dirs, "true");
     bad.command = vec!["/nonexistent/agent".into()];
-    let err = init::spawn(
-        Path::new(env!("CARGO_BIN_EXE_devcroft")),
-        &leaf,
-        &bad,
-        Stdio::default(),
-    )
-    .unwrap_err()
-    .to_string();
+    let err = init::spawn(exe, &leaf, &bad, Stdio::default())
+        .unwrap_err()
+        .to_string();
     assert!(err.contains("start \"/nonexistent/agent\""), "{err}");
-}
-
-/// A plan like `up` compiles for a project whose manifest grants `.`, with
-/// the host's `/usr` standing in for a provider closure (merged `/usr`
-/// makes that `sh`, `cat` and the loader).
-fn view_for(project_root: &Path, view_root: &Path) -> View {
-    let manifest = "[sandbox]\nname = \"fleet-view\"\n\n[env]\nprovider = \"flox\"\n\n\
-                    [filesystem]\nallow = [\".\"]\n";
-    let (manifest, _) = devcroft::config::parse(manifest).unwrap();
-    let plan = devcroft::policy::compile(&manifest)
-        .with_provider_grants("flox", &["/usr".to_owned()])
-        .to_capability_plan();
-    View {
-        root: view_root.to_path_buf(),
-        plan,
-        project_root: project_root.to_path_buf(),
-        proxy_socket: None,
-    }
-}
-
-/// Two fresh directories under the temp dir, removed on drop.
-struct Dirs(PathBuf, PathBuf);
-
-impl Dirs {
-    fn new(tag: &str) -> Dirs {
-        let base = std::env::temp_dir().join(format!("devcroft-init-{tag}-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&base);
-        let (project, view) = (base.join("project"), base.join("view"));
-        std::fs::create_dir_all(&project).unwrap();
-        std::fs::create_dir_all(&view).unwrap();
-        Dirs(project, view)
-    }
-}
-
-impl Drop for Dirs {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(self.0.parent().unwrap());
-    }
 }
 
 #[test]
@@ -315,23 +362,29 @@ fn with_a_view_an_agent_sees_exactly_its_grants() {
     let leaf = node.leaf("a");
     let dirs = Dirs::new("view");
     let repo = env!("CARGO_MANIFEST_DIR");
-    let mut s = spec(&format!(
-        "echo $(ls /); \
-         echo procs=$(ls /proc | grep -c '^[0-9]'); \
-         pwd; \
-         test -e {repo} && echo REPO_VISIBLE; \
-         test -e /etc/passwd && echo PASSWD_VISIBLE; \
-         echo written > marker"
-    ));
-    s.view = Some(view_for(&dirs.0, &dirs.1));
-    s.cwd = Some(dirs.0.clone());
+    let mut s = spec(
+        &dirs,
+        &format!(
+            "echo $(ls /); \
+             echo procs=$(ls /proc | grep -c '^[0-9]'); \
+             pwd; \
+             test -e {repo} && echo REPO_VISIBLE; \
+             test -e /etc/passwd && echo PASSWD_VISIBLE; \
+             echo x > /tmp/scratch && echo TMP_WRITTEN; \
+             echo written > marker"
+        ),
+    );
+    s.view = Some(View {
+        root: dirs.1.clone(),
+        proxy_socket: None,
+    });
     let (code, out) = run(&leaf, &s);
     assert_eq!(code, 0, "{out}");
     let lines: Vec<&str> = out.lines().collect();
 
     // The root holds the grants (`/usr` and what merged `/usr` needs), the
-    // project root's parents, and the view's own /dev and /proc. Nothing
-    // else: not this repository, not /home, not the rest of /etc.
+    // project root's parents, and the view's own /dev, /proc and /tmp.
+    // Nothing else: not this repository, not /home, not the rest of /etc.
     let allowed = [
         "bin", "dev", "etc", "lib", "lib64", "proc", "sbin", "tmp", "usr",
     ];
@@ -353,6 +406,13 @@ fn with_a_view_an_agent_sees_exactly_its_grants() {
     let procs: usize = lines[1].trim_start_matches("procs=").parse().unwrap();
     assert!(procs <= 5, "{procs} processes visible: {out}");
     assert_eq!(Path::new(lines[2]), dirs.0);
+    // The view's /tmp is its own tmpfs, which exists only inside the
+    // agent's mount namespace. The baseline's /tmp rule covers it only
+    // because the ruleset was built after the view.
+    assert!(
+        out.contains("TMP_WRITTEN"),
+        "the view's private /tmp was refused: {out}"
+    );
 
     // The project root is the host's, writable, and what the agent writes
     // is owned by the real user (the identity map).

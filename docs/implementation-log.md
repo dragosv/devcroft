@@ -1135,3 +1135,15 @@ such a mount (`/proc`, `/dev/shm`, `/run`, a host `/tmp` mounted
 `nosuid`). Nothing had caught it because every grant tested lived on the
 root filesystem. The remount now carries the flags `statvfs` reports, as
 bubblewrap does; `tests/mount_locked_flags.rs` fails without it.
+
+**The same work settled where fleet's Landlock ruleset is built, by
+measurement rather than argument.** D2 had it built in the supervisor and
+carried across the clone as prepared fds. The helper applies it after the
+view instead. As a mutant, preparing the ruleset (`prepare_landlock_with_abi`,
+which opens the rule fds) before `construct_view` fails two tests: the
+view's private `/tmp` is refused, and a `/proc` grant lands on the host's
+procfs rather than the agent's fresh one. Two things that looked like
+evidence were not. nono adds no `/proc` rules of its own (0 of 12 for a
+real plan), so `/proc/self` was never the reason. And moving only
+`to_capability_set` earlier changes nothing, because nono opens the rule
+fds inside `apply`: that first mutant passed, and it tested nothing.

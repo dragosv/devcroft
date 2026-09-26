@@ -268,7 +268,10 @@ the implementation before it resolves.
 
 - [ ] Implement the internal `devcroft-init` subcommand: single-threaded, config
       over pipe, ruleset over inherited fd.
-      **Built without the ruleset** (`src/fleet/init.rs`, `__fleet_init`):
+      **Built, with the ruleset applied in the helper rather than carried
+      over an fd** (see the ruleset task below for why); unticked only
+      until the keeper is the command.
+      **First version, without the ruleset** (`src/fleet/init.rs`, `__fleet_init`):
       one `clone3` into all seven namespaces, directly into the cgroup leaf,
       with a pidfd. The child does only `dup2` and `execve`. The parent
       writes the identity map, then the configuration. The helper is PID 1:
@@ -342,9 +345,20 @@ the implementation before it resolves.
       is workspace isolation's (group 4).
 - [ ] Verify the agent command, its language runtime, its config directories and
       CA certificates are all present in the constructed view.
-- [ ] Wire ruleset construction in the parent, namespace-local rule addition in
+- [x] Wire ruleset construction in the parent, namespace-local rule addition in
       the helper, application after mounts.
-      **Re-derive the split before building it.** D2 builds the ruleset in
+      **Built differently, after measuring:** the helper builds *and*
+      applies the ruleset after the view, from the plan in its
+      configuration (`to_capability_set` plus `apply_auto`, as `up`'s
+      keeper does), so PID 1 is confined too (`NoNewPrivs: 1` on PID 1,
+      asserted). As a mutant, preparing it before the view
+      (`prepare_landlock_with_abi`, which opens the rule fds) fails two
+      tests: the view's private `/tmp` is refused, and a `/proc` grant
+      lands on the host's procfs. Moving only `to_capability_set` earlier
+      proves nothing, since nono opens the fds inside `apply`.
+      `on_the_host_root_the_plan_still_refuses_what_it_does_not_grant`
+      covers D2a's other strategy: the repository is visible and refused.
+      **What was reasoned before measuring:** D2 builds the ruleset in
       the parent because allocating after a `fork` is unsafe. The helper
       is a freshly exec'd, single-threaded process, though, so that reason
       is gone there. `up`'s keeper already restricts itself *inside* the
@@ -364,9 +378,13 @@ the implementation before it resolves.
       does not exist in the parent. Rules bind to inodes, so rules built in
       the parent would attach to the host's `/tmp` and devpts, and the
       agent's own would be denied. `fleet::mount::setup_dev` already relies
-      on the keeper restricting itself after entering the view. Reasoned
-      from that code and Landlock's inode binding; not yet measured for
-      the parent-built case.
+      on the keeper restricting itself after entering the view. (Measured
+      since; see the paragraph above.)
+      **Found on the way, a bug in `up`:** a read-only grant on any
+      `nosuid`/`nodev`/`noexec` mount failed `construct_view` with
+      `EPERM`, because the remount dropped flags a user namespace locks.
+      Fixed in `remount_readonly`, with `tests/mount_locked_flags.rs`
+      (`docs/implementation-log.md`).
 - [x] Structured error reporting from the helper back to the supervisor.
       One JSON line on fd 4 naming the failed step, or EOF plus the
       helper's exit status (`a_failing_step_is_reported_by_name`).

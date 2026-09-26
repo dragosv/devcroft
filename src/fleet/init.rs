@@ -45,8 +45,16 @@
 //! what they say, and by the same resolver Landlock's rules come from, so
 //! the view and the ruleset cannot disagree.
 //!
-//! What is not here yet: the Landlock ruleset and the keeper. They slot in
-//! between the view and starting the command.
+//! **Then the helper restricts itself**, from the same plan, the way `up`'s
+//! keeper does (`to_capability_set` plus `nono::Sandbox::apply_auto`), and
+//! the command inherits it. That happens after the view rather than in the
+//! supervisor, as D2 first had it, because the view's `/tmp` and
+//! `/dev/pts` are new filesystem instances. Landlock rules bind to inodes,
+//! so rules built in the parent would attach to the host's and miss the
+//! agent's. PID 1 is confined too, so nothing in the namespace runs
+//! unrestricted once the command exists.
+//!
+//! What is not here yet: the keeper, which becomes the command.
 
 use std::ffi::CString;
 use std::io::{self, Read, Write};
@@ -102,22 +110,25 @@ pub struct AgentSpec {
     pub cwd: Option<PathBuf>,
     /// The agent's hostname, in its own UTS namespace.
     pub hostname: String,
+    /// The compiled policy. Always applied: an agent without one would
+    /// not be a sandbox, so it is not representable. With a view, its
+    /// grants are also exactly what the view contains.
+    pub plan: crate::policy::CapabilityPlan,
+    /// What relative grants such as `.` resolve against.
+    pub project_root: PathBuf,
     /// The agent's filesystem view. `None` keeps the host's root (D2a's
-    /// host-root strategy), with only `/proc` replaced.
+    /// host-root strategy), with only `/proc` replaced; Landlock still
+    /// refuses everything the plan does not grant, but it stays visible.
     #[serde(default)]
     pub view: Option<View>,
 }
 
-/// A minimal root for one agent, built from its compiled policy.
+/// A minimal root for one agent, built from [`AgentSpec::plan`].
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct View {
     /// An existing, empty directory to build the view on. It stays empty
     /// on the host: everything is mounted inside the agent's namespace.
     pub root: PathBuf,
-    /// The compiled policy. Its grants are exactly what the view contains.
-    pub plan: crate::policy::CapabilityPlan,
-    /// What relative grants such as `.` resolve against.
-    pub project_root: PathBuf,
     /// The agent's egress proxy socket, bound into the view by itself.
     pub proxy_socket: Option<PathBuf>,
 }
@@ -398,9 +409,9 @@ fn setup(signals: &libc::sigset_t) -> io::Result<libc::pid_t> {
     super::mount::make_propagation_private().map_err(|e| step("private propagation", e))?;
     match &spec.view {
         Some(view) => {
-            let grants = view
+            let grants = spec
                 .plan
-                .resolved_grants(&view.project_root)
+                .resolved_grants(&spec.project_root)
                 .map_err(|e| step("resolve grants", io::Error::other(e.to_string())))?;
             super::mount::construct_view(
                 &view.root,
@@ -417,6 +428,24 @@ fn setup(signals: &libc::sigset_t) -> io::Result<libc::pid_t> {
         return Err(step("sethostname", io::Error::last_os_error()));
     }
     super::netns::bring_loopback_up().map_err(|e| step("bring lo up", e))?;
+
+    // Resolved now, inside the view: the rules must bind to the inodes the
+    // agent will see, its private /tmp and devpts included.
+    let caps = spec
+        .plan
+        .to_capability_set(&spec.project_root)
+        .map_err(|e| {
+            step(
+                "build the Landlock ruleset",
+                io::Error::other(e.to_string()),
+            )
+        })?;
+    nono::Sandbox::apply_auto(&caps).map_err(|e| {
+        step(
+            "apply the Landlock ruleset",
+            io::Error::other(e.to_string()),
+        )
+    })?;
 
     // Blocked before the command exists, so no SIGCHLD can be missed.
     // std's `Command` clears the mask again in the child.
