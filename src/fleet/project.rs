@@ -9,9 +9,13 @@
 //! before anything is restricted. That is `up`'s two-phase rule applied per
 //! agent.
 //!
+//! **Egress is `network.allow`, through the agent's own proxy**, and
+//! nothing else. `network.default = "allow"` is refused: an agent's network
+//! namespace has no route out, and that is the egress boundary (D9's
+//! re-derivation), so unfiltered egress would mean giving it one.
+//!
 //! **What fleet does not carry yet is refused by name**, never dropped:
-//! egress (agents have no route out until group 3's per-agent proxy) and
-//! services (group 5). A manifest asking for either would otherwise start
+//! services (group 5). A manifest asking for them would otherwise start
 //! agents that silently lack what it declared.
 
 use std::path::Path;
@@ -123,22 +127,18 @@ pub fn prepare(
         authorized_key_pem: authorized_key_pem.to_owned(),
         limits,
         view,
+        egress_allow: manifest.network.allow.clone(),
     })
 }
 
 fn refuse_what_fleet_cannot_carry(manifest: &Manifest) -> Result<(), PrepareError> {
-    let no_egress = "fleet agents have no route out of their network namespace until \
-                     each has its own egress proxy (add-linux-agent-fleet group 3)";
     if manifest.network.default == NetworkDefault::Allow {
-        return Err(PrepareError::Config(format!(
-            "network.default = \"allow\": {no_egress}"
-        )));
-    }
-    if !manifest.network.allow.is_empty() {
-        return Err(PrepareError::Config(format!(
-            "network.allow = {:?}: {no_egress}",
-            manifest.network.allow
-        )));
+        return Err(PrepareError::Config(
+            "network.default = \"allow\": a fleet agent's egress goes through its own \
+             proxy, to the hosts `network.allow` names, and nowhere else; its network \
+             namespace has no route out, which is what makes that the boundary"
+                .to_string(),
+        ));
     }
     Ok(())
 }

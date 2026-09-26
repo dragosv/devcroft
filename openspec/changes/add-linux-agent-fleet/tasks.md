@@ -544,17 +544,41 @@ the implementation before it resolves.
       workloads especially) are unmeasurable.
 - [ ] Implement connectivity into each netns using slirp4netns (D5's baseline),
       gated on the behavioural preflight above.
+      **Not needed for egress, which is built without it** (next items):
+      the relay to the proxy's unix socket crosses the namespace, so no
+      helper, no TUN device and no route. Adding slirp4netns would give
+      agents a route out and reinstate D9's filter (see the D9
+      re-derivation). What is left of this item is inbound host port
+      mapping (`service-ports`), for which the reverse relay above is the
+      better candidate.
 - [ ] Install the proxy-only seccomp filter and transfer its listener to the
       host proxy loop **before the keeper starts** (D9's phase-0 gate).
-- [ ] Host one proxy instance per agent in the supervisor, outside the sandbox.
-- [ ] Forward the proxy port into each agent namespace.
+- [x] Host one proxy instance per agent in the supervisor, outside the sandbox.
+      `Supervisor::start_in` spawns `__egress_proxy` for an agent whose
+      `network.allow` is non-empty, with its socket and log in the agent's
+      directory. The proxy runs in its own `<id>-proxy` cgroup leaf, beside
+      the agent's and never inside it (D6), and is killed with the agent.
+      `network.default = "allow"` is refused: the route-less namespace is
+      the boundary.
+- [x] Forward the proxy port into each agent namespace. Through the keeper's
+      relay, the same mechanism `up` uses for an isolated sandbox. The
+      helper binds the relay **before** restricting, because a keeper that
+      starts restricted cannot, and hands it over as
+      `DEVCROFT_PROXY_RELAY_FD`.
 - [ ] Attribute requests to agents by listener; include the agent ID in audit
-      logs.
+      logs. **Half done:** one proxy per agent, logging to that agent's
+      `egress.log`, so the listener attributes each request. The agent ID
+      is not in the log lines themselves yet.
 - [ ] Test: a direct socket is refused by the seccomp policy **even though the
       network helper could route it**. The old wording ("no route out except
       the forwarded proxy port") tested the helper's configuration; the point
       is that the helper is not the boundary, so the test must defeat it.
-- [ ] Test: agent B's request to a destination only agent A allows is refused.
+- [x] Test: agent B's request to a destination only agent A allows is refused.
+      `each_agent_reaches_only_its_own_allowlist_through_its_own_proxy`: A
+      and B each reach their own host and are refused the other's. A request
+      bypassing the proxy (`--noproxy '*'`) gets nothing, since the
+      namespace has no route. Stopping A removes its proxy and leaves B's
+      working.
 - [ ] Revise any documentation claiming exfiltration is prevented.
 
 ## 4. Workspace isolation

@@ -3551,6 +3551,21 @@ fn keeper_main(fd: RawFd, ssh_fd: RawFd) -> ! {
         .and_then(|p| p.parse::<u16>().ok())
         .zip(std::env::var("DEVCROFT_PROXY_SOCKET").ok())
         .and_then(|(port, sock)| {
+            // A fleet agent's keeper starts already restricted (its init
+            // helper applied the policy), so it cannot bind here: the
+            // helper bound the relay before restricting and handed it over.
+            // Taken first, and made close-on-exec, since sessions must not
+            // inherit it.
+            if let Some(fd) = std::env::var("DEVCROFT_PROXY_RELAY_FD")
+                .ok()
+                .and_then(|fd| fd.parse::<RawFd>().ok())
+            {
+                // SAFETY: the helper placed a bound TCP listener at `fd`
+                // for this process alone.
+                unsafe { libc::fcntl(fd, libc::F_SETFD, libc::FD_CLOEXEC) };
+                let l = unsafe { std::net::TcpListener::from_raw_fd(fd) };
+                return Some((l, std::path::PathBuf::from(sock)));
+            }
             match std::net::TcpListener::bind(("127.0.0.1", port)) {
                 Ok(l) => Some((l, std::path::PathBuf::from(sock))),
                 Err(e) => {
@@ -3594,6 +3609,8 @@ fn keeper_main(fd: RawFd, ssh_fd: RawFd) -> ! {
         std::env::remove_var("DEVCROFT_SSH_HOST_KEY");
         std::env::remove_var("DEVCROFT_SSH_AUTHORIZED_KEY");
         std::env::remove_var("DEVCROFT_SANDBOX_HOME");
+        // Taken above if present; a session has no use for the number.
+        std::env::remove_var("DEVCROFT_PROXY_RELAY_FD");
     }
 
     self_restrict();

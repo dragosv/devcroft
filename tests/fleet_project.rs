@@ -110,25 +110,35 @@ fn an_agent_gets_ups_plan_shell_and_hooks_for_its_own_workspace() {
 }
 
 #[test]
-fn egress_is_refused_by_name_rather_than_dropped() {
-    for (extra, named) in [
-        ("[network]\ndefault = \"allow\"\n", "network.default"),
-        ("[network]\nallow = [\"crates.io\"]\n", "network.allow"),
-    ] {
-        let err = prepare(
-            &HostUsr::new(),
-            &manifest(extra),
-            Path::new("/tmp/w"),
-            exe(),
-            "key",
-            Limits::default(),
-            true,
-        )
-        .unwrap_err();
-        assert!(matches!(err, PrepareError::Config(_)), "{err}");
-        let msg = err.to_string();
-        assert!(msg.contains(named) && msg.contains("egress"), "{msg}");
-    }
+fn egress_is_network_allow_through_a_proxy_and_never_unfiltered() {
+    // `network.allow` becomes the agent's proxy allowlist.
+    let launch = prepare(
+        &HostUsr::new(),
+        &manifest("[network]\nallow = [\"crates.io\"]\n"),
+        Path::new("/tmp/w"),
+        exe(),
+        "key",
+        Limits::default(),
+        true,
+    )
+    .unwrap();
+    assert_eq!(launch.egress_allow, ["crates.io"]);
+
+    // Unfiltered egress would need a route out, and the route-less
+    // namespace is the boundary: refused by name.
+    let err = prepare(
+        &HostUsr::new(),
+        &manifest("[network]\ndefault = \"allow\"\n"),
+        Path::new("/tmp/w"),
+        exe(),
+        "key",
+        Limits::default(),
+        true,
+    )
+    .unwrap_err();
+    assert!(matches!(err, PrepareError::Config(_)), "{err}");
+    assert!(err.to_string().contains("network.default"), "{err}");
+
     // Listener ports are inside the agent's own namespace, so they are fine.
     prepare(
         &HostUsr::new(),

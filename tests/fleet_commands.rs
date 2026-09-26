@@ -265,12 +265,12 @@ fn a_refused_manifest_leaves_no_clone_and_no_agent() {
     let s = Setup::new(
         "egress",
         Some(&root),
-        "\n[network]\nallow = [\"crates.io\"]\n",
+        "\n[network]\ndefault = \"allow\"\n",
         true,
     );
     let err = s.up(1).unwrap_err();
     assert_eq!(err.exit_code(), 2, "{err}");
-    assert!(err.to_string().contains("network.allow"), "{err}");
+    assert!(err.to_string().contains("network.default"), "{err}");
     assert!(!s.project().join(".devcroft/fleet/a1").exists());
     assert!(!s.state().join("agents/a1").exists());
 }

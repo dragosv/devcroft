@@ -887,20 +887,10 @@ fn up_process(
         // `npm`/`pip` authenticate to this sandbox's proxy without any
         // devcroft-specific proxy support (`add-egress-proxy`'s
         // authentication requirement; `proxy::server::authorized` is the
-        // matching check).
-        let endpoint = format!("http://{token}@127.0.0.1:{port}");
-        for key in ["HTTP_PROXY", "http_proxy", "HTTPS_PROXY", "https_proxy"] {
-            env.insert(key.to_string(), endpoint.clone());
-        }
-        // Without this, a well-behaved client honoring the variables
-        // above would route its own loopback traffic (e.g. a test
-        // hitting a `network.ports`-granted dev server) through the
-        // proxy too — which then denies it, since `localhost` is not
-        // something anyone would think to add to `network.allow`. Standard
-        // proxy convention, not a devcroft invention.
-        for key in ["NO_PROXY", "no_proxy"] {
-            env.insert(key.to_string(), "localhost,127.0.0.1,::1".to_string());
-        }
+        // matching check). `NO_PROXY` keeps loopback traffic (a test
+        // hitting a `network.ports`-granted dev server) away from a proxy
+        // that would deny it. Shared with fleet (`proxy::client_env`).
+        env.extend(crate::proxy::client_env(*port, token));
     }
 
     // The relay is only needed when the sandbox is *both* isolated (no

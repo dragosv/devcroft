@@ -54,6 +54,9 @@ pub struct AgentLaunch {
     /// Build a minimal root from the plan (D2a); `false` keeps the host's
     /// root, still under the same Landlock policy.
     pub view: bool,
+    /// Hosts the agent may reach, through its own egress proxy. Empty means
+    /// no egress at all: the agent's network namespace has no route out.
+    pub egress_allow: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -92,6 +95,9 @@ pub struct AgentRecord {
     /// removed, since its counters go with it; absent on a clean stop.
     #[serde(default)]
     pub evidence: Option<Evidence>,
+    /// The hosts its egress proxy allows; empty for no egress.
+    #[serde(default)]
+    pub egress: Vec<String>,
 }
 
 /// A record plus what is true of it right now.
@@ -174,8 +180,10 @@ impl Supervisor {
         match build(&id).and_then(|launch| self.start_in(&id, &dir, &launch)) {
             Ok(()) => Ok(id),
             Err(e) => {
-                if let Some(leaf) = self.node.existing_leaf(&id) {
-                    let _ = leaf.kill();
+                for name in [id.clone(), proxy_leaf_name(&id)] {
+                    if let Some(leaf) = self.node.existing_leaf(&name) {
+                        let _ = leaf.kill();
+                    }
                 }
                 let _ = std::fs::remove_dir_all(&dir);
                 Err(io::Error::new(
@@ -199,10 +207,37 @@ impl Supervisor {
 
         let home = crate::services::artifact_dir(&launch.workspace, id).join("home");
         std::fs::create_dir_all(&home)?;
+
+        // Egress, when the agent has any: its own proxy, host-side and
+        // outside the agent's leaf (D4, D6), reached from inside the
+        // route-less namespace through the keeper's relay to the proxy's
+        // unix socket, which crosses the namespace. The plan's port gate
+        // and the environment point at the same proxy, as in `up`.
+        let mut plan = launch.plan.clone();
+        let mut provider_env = launch.provider_env.clone();
+        let proxy_socket = dir.join("proxy.sock");
+        let relay = if launch.egress_allow.is_empty() {
+            None
+        } else {
+            let proxy_leaf = self
+                .node
+                .create_leaf(&proxy_leaf_name(id), &Limits::default())?;
+            let (_, port, token) = crate::proxy::spawn_at(
+                &self.exe,
+                &proxy_socket,
+                &dir.join("egress.log"),
+                &launch.egress_allow,
+                |cmd| proxy_leaf.attach_on_spawn(cmd),
+            )?;
+            plan.network_proxy_port = Some(port);
+            provider_env.extend(crate::proxy::client_env(port, &token));
+            Some(port)
+        };
+
         let env = crate::lifecycle::KeeperEnv {
-            env: &launch.provider_env,
+            env: &provider_env,
             unset: &launch.unset,
-            plan: &launch.plan,
+            plan: &plan,
             ssh_host_key_pem: &host_key,
             ssh_authorized_key_pem: &launch.authorized_key_pem,
             shell: &launch.shell,
@@ -210,7 +245,7 @@ impl Supervisor {
             hooks: &launch.hooks,
             project_root: &launch.workspace,
             sandbox_home: &home,
-            relay: None,
+            relay: relay.map(|port| (port, proxy_socket.as_path())),
         }
         .vars()
         .into_iter()
@@ -222,7 +257,7 @@ impl Supervisor {
             std::fs::create_dir(&root)?;
             Some(View {
                 root,
-                proxy_socket: None,
+                proxy_socket: relay.map(|_| proxy_socket.clone()),
             })
         } else {
             None
@@ -239,8 +274,11 @@ impl Supervisor {
             env,
             cwd: Some(launch.workspace.clone()),
             hostname: id.to_owned(),
-            plan: launch.plan.clone(),
+            // The effective plan, proxy port included: this is what the
+            // helper turns into the Landlock ruleset.
+            plan: plan.clone(),
             project_root: launch.workspace.clone(),
+            relay_port: relay,
             view,
         };
         let log = std::fs::OpenOptions::new()
@@ -257,6 +295,8 @@ impl Supervisor {
         let agent = init::spawn(&self.exe, &leaf, &spec, stdio)?;
         self.children.insert(id.to_owned(), agent);
 
+        // The manifest's plan, not the effective one: the proxy port differs
+        // per agent, and agents under the same policy should compare equal.
         let plan_json = serde_json::to_vec(&launch.plan).map_err(io::Error::other)?;
         write_record(
             dir,
@@ -270,6 +310,7 @@ impl Supervisor {
                 port_mappings: Vec::new(),
                 attention: false,
                 evidence: None,
+                egress: launch.egress_allow.clone(),
             },
         )
     }
@@ -350,6 +391,11 @@ impl Supervisor {
                 )));
             }
         }
+        // Its proxy goes with it: a proxy outliving its agent would hold an
+        // allowlist open for nobody.
+        if let Some(proxy) = self.node.existing_leaf(&proxy_leaf_name(&record.id)) {
+            proxy.kill()?;
+        }
         record.state = AgentState::Stopped;
         self.release(&record)
     }
@@ -398,6 +444,7 @@ impl Supervisor {
         let dir = self.agent_dir(&record.id);
         let _ = std::fs::remove_file(self.control_socket(&record.id));
         let _ = std::fs::remove_file(self.ssh_socket(&record.id));
+        let _ = std::fs::remove_file(dir.join("proxy.sock"));
         let _ = std::fs::remove_dir(dir.join("root"));
         let mut record = record.clone();
         record.port_mappings.clear();
@@ -445,6 +492,13 @@ fn reap(id: &str, agent: &Agent) -> io::Result<()> {
         "agent {id}: its init helper (pid {}) outlived its emptied leaf",
         agent.pid()
     )))
+}
+
+/// The cgroup leaf an agent's egress proxy runs in: beside the agent's,
+/// never inside it (D6), so the agent's memory pressure or a `cgroup.kill`
+/// of its leaf cannot take down the component filtering it.
+fn proxy_leaf_name(id: &str) -> String {
+    format!("{id}-proxy")
 }
 
 fn id_number(id: &str) -> Option<u64> {

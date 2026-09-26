@@ -120,6 +120,13 @@ pub struct AgentSpec {
     pub plan: crate::policy::CapabilityPlan,
     /// What relative grants such as `.` resolve against.
     pub project_root: PathBuf,
+    /// The port of the keeper's egress relay, when the agent has egress.
+    /// The helper binds it on the agent's loopback **before** restricting,
+    /// since the policy grants only `connect` to it, and hands it to the
+    /// command as `DEVCROFT_PROXY_RELAY_FD` (listener before restriction,
+    /// one level down: a keeper that starts restricted cannot bind it).
+    #[serde(default)]
+    pub relay_port: Option<u16>,
     /// The agent's filesystem view. `None` keeps the host's root (D2a's
     /// host-root strategy), with only `/proc` replaced; Landlock still
     /// refuses everything the plan does not grant, but it stays visible.
@@ -440,6 +447,24 @@ fn setup(signals: &libc::sigset_t) -> io::Result<libc::pid_t> {
         .map_err(|e| step("read configuration", e))?;
     let ConfigIn { spec, inherited } = serde_json::from_slice(&raw)
         .map_err(|e| step("parse configuration", io::Error::other(e)))?;
+    // Every fd above the ones this agent was given is something the
+    // supervisor leaked (an fd with CLOEXEC cleared for some other child),
+    // and it would otherwise reach the agent's command. Measured to matter:
+    // an egress proxy's listeners, cleared for the proxy to inherit, would
+    // let a process in one agent `accept()` another agent's egress.
+    // SAFETY: closes only descriptors this process does not use; 0-4 and
+    // the inherited range are kept.
+    if unsafe {
+        libc::syscall(
+            libc::SYS_close_range,
+            FIRST_INHERITED_FD as u32 + inherited as u32,
+            u32::MAX,
+            0u32,
+        )
+    } != 0
+    {
+        return Err(step("close leaked descriptors", io::Error::last_os_error()));
+    }
     if spec.command.is_empty() {
         return Err(io::Error::other("configuration: empty command"));
     }
@@ -477,6 +502,35 @@ fn setup(signals: &libc::sigset_t) -> io::Result<libc::pid_t> {
     }
     super::netns::bring_loopback_up().map_err(|e| step("bring lo up", e))?;
 
+    // Bound now, while nothing is restricted, at the fd after the inherited
+    // ones (every fd above those was just closed, so it is free).
+    let relay_fd = FIRST_INHERITED_FD + inherited as RawFd;
+    let mut env = spec.env.clone();
+    if let Some(port) = spec.relay_port {
+        let listener = std::net::TcpListener::bind(("127.0.0.1", port))
+            .map_err(|e| step(&format!("bind the egress relay on 127.0.0.1:{port}"), e))?;
+        // Taken out of the listener rather than dup2'd from it: 0-6 are all
+        // in use here, so `bind` usually returns the very fd wanted, and
+        // `dup2(fd, fd)` is a no-op that leaves CLOEXEC set, after which
+        // dropping the listener closes the relay (measured: the keeper
+        // found an eventfd at its number and every agent's egress was
+        // refused).
+        let raw = std::os::fd::IntoRawFd::into_raw_fd(listener);
+        // SAFETY: `raw` is ours; `relay_fd` is free (everything above the
+        // inherited range was closed) or is `raw` itself.
+        unsafe {
+            if raw != relay_fd {
+                if libc::dup2(raw, relay_fd) < 0 {
+                    return Err(step("place the egress relay", io::Error::last_os_error()));
+                }
+                libc::close(raw);
+            }
+            // Inherited by the command, so not close-on-exec.
+            libc::fcntl(relay_fd, libc::F_SETFD, 0);
+        }
+        env.push(("DEVCROFT_PROXY_RELAY_FD".into(), relay_fd.to_string()));
+    }
+
     // Resolved now, inside the view: the rules must bind to the inodes the
     // agent will see, its private /tmp and devpts included.
     let caps = spec
@@ -501,9 +555,7 @@ fn setup(signals: &libc::sigset_t) -> io::Result<libc::pid_t> {
     unsafe { libc::sigprocmask(libc::SIG_BLOCK, signals, std::ptr::null_mut()) };
 
     let mut cmd = std::process::Command::new(&spec.command[0]);
-    cmd.args(&spec.command[1..])
-        .env_clear()
-        .envs(spec.env.iter().cloned());
+    cmd.args(&spec.command[1..]).env_clear().envs(env);
     if let Some(cwd) = &spec.cwd {
         cmd.current_dir(cwd);
     }
@@ -528,6 +580,10 @@ fn setup(signals: &libc::sigset_t) -> io::Result<libc::pid_t> {
     for n in 0..inherited {
         // SAFETY: closing fds `spawn` placed for the command, unused here.
         unsafe { libc::close(FIRST_INHERITED_FD + n as RawFd) };
+    }
+    if spec.relay_port.is_some() {
+        // SAFETY: as above; the relay is the command's now.
+        unsafe { libc::close(relay_fd) };
     }
     Ok(child.id() as libc::pid_t)
 }

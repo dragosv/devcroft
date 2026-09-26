@@ -135,6 +135,7 @@ fn spec(dirs: &Dirs, script: &str) -> AgentSpec {
         hostname: "agent".into(),
         plan: plan(&["/proc"]),
         project_root: dirs.0.clone(),
+        relay_port: None,
         view: None,
     }
 }
@@ -176,6 +177,15 @@ fn an_agent_is_alone_in_its_namespaces_and_holds_nothing() {
     let node = Scratch::new(&root, "alone");
     let leaf = node.leaf("a");
     let dirs = Dirs::new("alone");
+    // An fd the supervisor leaked, CLOEXEC cleared for some other child:
+    // the helper must close it before the agent's command can inherit it.
+    // At a high number on purpose: a low one (the first attempt got fd 3)
+    // is overwritten by the clone's own `dup2` plan and proves nothing.
+    let marker = dirs.0.parent().unwrap().join("leaked-fd-marker");
+    let file = std::fs::File::create(&marker).unwrap();
+    // SAFETY: F_DUPFD returns a new fd this test owns, without CLOEXEC.
+    let leaked = unsafe { libc::fcntl(std::os::fd::AsRawFd::as_raw_fd(&file), libc::F_DUPFD, 200) };
+    assert!(leaked >= 200);
     let (code, out) = run(
         &leaf,
         &spec(
@@ -212,10 +222,17 @@ fn an_agent_is_alone_in_its_namespaces_and_holds_nothing() {
     // No cgroup fd, config pipe or status pipe survived into the agent.
     // (The glob also lists the fd sh read the directory through, which is
     // closed by the time readlink runs, hence the `|| :`.)
+    // SAFETY: the fd this test duplicated above.
+    unsafe { libc::close(leaked) };
+    drop(file);
     for fd in &lines[6..] {
         assert!(
             !fd.contains("cgroup"),
             "a cgroup fd leaked into the agent: {out}"
+        );
+        assert!(
+            !fd.contains("leaked-fd-marker"),
+            "a supervisor fd leaked into the agent: {out}"
         );
     }
     assert!(lines.len() <= 6 + 4, "unexpected fds in the agent: {out}");
@@ -528,6 +545,7 @@ fn the_keeper_runs_as_the_agents_command_and_serves_sessions() {
         hostname: "agent".into(),
         plan,
         project_root: dirs.0.clone(),
+        relay_port: None,
         view: Some(View {
             root: dirs.1.clone(),
             proxy_socket: None,

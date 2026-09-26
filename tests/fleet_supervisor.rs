@@ -117,6 +117,7 @@ impl Fleet {
             authorized_key_pem: client.public_key().to_openssh().unwrap(),
             limits: Limits::default(),
             view: true,
+            egress_allow: Vec::new(),
         }
     }
 }
@@ -433,4 +434,100 @@ fn an_oom_killed_agent_is_retired_with_the_reason() {
     let other = sup.start(&fleet.launch("b")).unwrap();
     sup.stop(&other).unwrap();
     assert_eq!(sup.inspect(&other).unwrap().record.evidence, None);
+}
+
+/// A host-side HTTP server answering `200 ok` on `addr`, until the test
+/// ends. `None` where the address cannot be bound (no 127/8 alias).
+fn serve_ok(addr: &str) -> Option<u16> {
+    use std::io::{Read, Write};
+    let listener = std::net::TcpListener::bind((addr, 0)).ok()?;
+    let port = listener.local_addr().ok()?.port();
+    std::thread::spawn(move || {
+        for mut stream in listener.incoming().flatten() {
+            let mut buf = [0u8; 1024];
+            let _ = stream.read(&mut buf);
+            let _ = stream
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok");
+        }
+    });
+    Some(port)
+}
+
+/// Group 3: each agent's egress goes through its own proxy, to its own
+/// allowlist, and nowhere else. The destinations are on 127.0.0.3/.4, which
+/// `NO_PROXY` does not exempt, so the test needs no internet.
+#[test]
+fn each_agent_reaches_only_its_own_allowlist_through_its_own_proxy() {
+    let Some(root) = capable_host() else { return };
+    if !Path::new("/usr/bin/curl").exists() {
+        eprintln!("skipping: no /usr/bin/curl");
+        return;
+    }
+    let (Some(p3), Some(p4)) = (serve_ok("127.0.0.3"), serve_ok("127.0.0.4")) else {
+        eprintln!("skipping: no 127.0.0.3/127.0.0.4 loopback aliases");
+        return;
+    };
+    let fleet = Fleet::new(&root, "egress");
+    let (mut la, mut lb) = (fleet.launch("a"), fleet.launch("b"));
+    la.egress_allow = vec!["127.0.0.3".into()];
+    lb.egress_allow = vec!["127.0.0.4".into()];
+    let mut sup = fleet.open();
+    let a = sup.start(&la).unwrap();
+    let b = sup.start(&lb).unwrap();
+
+    let (sock_a, sock_b) = (sup.control_socket(&a), sup.control_socket(&b));
+    let code = |socket: &Path, launch: &AgentLaunch, extra: &str, url: String| {
+        let (_, out) = session(
+            socket,
+            &launch.workspace,
+            &format!("curl -s -o /dev/null --max-time 5 -w '%{{http_code}}' {extra} {url}"),
+        );
+        out.trim().to_owned()
+    };
+    let (to3, to4) = (
+        format!("http://127.0.0.3:{p3}/"),
+        format!("http://127.0.0.4:{p4}/"),
+    );
+
+    // A session inherits nothing of the keeper's: not its control or SSH
+    // listener (which would let project code accept a later `devcroft exec`
+    // meant for the keeper), not the relay, not the relay's fd number.
+    let (_, fds) = session(
+        &sock_a,
+        &la.workspace,
+        "for f in /proc/$$/fd/*; do readlink $f || :; done; \
+         echo relay-var=$(env | grep -c DEVCROFT_PROXY_RELAY_FD)",
+    );
+    assert!(
+        !fds.contains("socket:"),
+        "a session inherited a socket: {fds}"
+    );
+    assert!(fds.contains("relay-var=0"), "{fds}");
+    // Each agent reaches its own allowed host, through its proxy.
+    assert_eq!(code(&sock_a, &la, "", to3.clone()), "200");
+    assert_eq!(code(&sock_b, &lb, "", to4.clone()), "200");
+    // And not the other's: B is refused what only A allows, and vice versa.
+    assert_ne!(code(&sock_b, &lb, "", to3.clone()), "200");
+    assert_ne!(code(&sock_a, &la, "", to4.clone()), "200");
+    // Around the proxy there is nothing: the namespace has no route out,
+    // and 127.0.0.3 inside it is the agent's own loopback.
+    assert_eq!(code(&sock_a, &la, "--noproxy '*'", to3.clone()), "000");
+
+    // Each proxy logged its own agent's requests.
+    let log = |id: &str| {
+        std::fs::read_to_string(fleet.state().join("agents").join(id).join("egress.log")).unwrap()
+    };
+    assert!(log(&a).contains(&format!("port={p4}")), "{}", log(&a));
+    assert!(log(&b).contains(&format!("port={p3}")), "{}", log(&b));
+
+    // Stopping an agent takes its proxy with it.
+    sup.stop(&a).unwrap();
+    assert!(!root.join(&fleet.name).join(format!("{a}-proxy")).exists());
+    assert_eq!(
+        code(&sock_b, &lb, "", to4),
+        "200",
+        "B's proxy is independent of A's"
+    );
+    assert_eq!(sup.inspect(&b).unwrap().record.egress, ["127.0.0.4"]);
+    sup.stop(&b).unwrap();
 }

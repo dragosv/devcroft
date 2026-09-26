@@ -1147,3 +1147,30 @@ evidence were not. nono adds no `/proc` rules of its own (0 of 12 for a
 real plan), so `/proc/self` was never the reason. And moving only
 `to_capability_set` earlier changes nothing, because nono opens the rule
 fds inside `apply`: that first mutant passed, and it tested nothing.
+
+**Three file-descriptor leaks, found by giving fleet agents egress
+(2026-09-26).** One of them was in the shipped `up`.
+
+- **Every session inherited the keeper's control and SSH listeners.** `up`
+  clears FD_CLOEXEC on both so the keeper can inherit them, and nothing set
+  it back, so every hook, service and session got fds 5 and 6 (measured
+  from inside a session). Project code could then `accept()` a later
+  `devcroft exec` or `shell` meant for the keeper, over a protocol whose
+  only boundary is the socket's permissions. The keeper now marks both
+  close-on-exec before anything it runs could inherit them. The fleet
+  egress test asserts that a session holds no socket, and it fails
+  without the fix.
+- **`proxy::spawn` leaked its listeners into the caller.** It
+  `std::mem::forget`s them after the spawn, with CLOEXEC cleared. In `up`,
+  a one-shot process, that was harmless. In a fleet supervisor, every agent
+  started afterwards would have inherited the previous agent's proxy
+  listeners. They are now dropped, since `spawn` returns only after the
+  exec, and the init helper closes every fd above the ones it was given, as
+  a second line. A test leaks an fd on purpose. The first version leaked
+  fd 3, which the clone's own `dup2` plan overwrote, so it passed with the
+  defence removed. It now leaks at fd 200 and catches that.
+- **`dup2(fd, fd)` is a no-op.** The helper binds the keeper's egress relay
+  before restricting (a restricted keeper cannot bind it). With fds 0–6
+  in use, `bind` returned 7, the number wanted, so `dup2` did nothing, left
+  CLOEXEC set, and dropping the listener closed the relay. The keeper then
+  found an eventfd at that number, and every agent's egress was refused.

@@ -72,6 +72,26 @@ pub fn spawn(
     paths: &StatePaths,
     allow: &[String],
 ) -> io::Result<(libc::pid_t, u16, String)> {
+    spawn_at(
+        exe,
+        &paths.proxy_socket,
+        &paths.proxy_log,
+        allow,
+        |_| Ok(()),
+    )
+}
+
+/// [`spawn`], with the unix socket and log at explicit paths and a hook
+/// that can adjust the command before it runs. Fleet uses both: each agent
+/// has its own proxy in its own directory, placed in a cgroup leaf of its
+/// own through the hook.
+pub fn spawn_at(
+    exe: &Path,
+    socket: &Path,
+    log_path: &Path,
+    allow: &[String],
+    configure: impl FnOnce(&mut Command) -> io::Result<()>,
+) -> io::Result<(libc::pid_t, u16, String)> {
     let listener = std::net::TcpListener::bind(("127.0.0.1", 0))?;
     let port = listener.local_addr()?.port();
     crate::lifecycle::clear_cloexec(listener.as_raw_fd())?;
@@ -88,15 +108,13 @@ pub fn spawn(
     // connect at all (`tests/unix_socket_not_mediated.rs`), so filesystem
     // permissions are the only thing standing between another local user
     // and this sandbox's network reach.
-    let _ = std::fs::remove_file(&paths.proxy_socket);
-    let unix_listener = std::os::unix::net::UnixListener::bind(&paths.proxy_socket)?;
-    std::fs::set_permissions(&paths.proxy_socket, std::fs::Permissions::from_mode(0o600))?;
+    let _ = std::fs::remove_file(socket);
+    let unix_listener = std::os::unix::net::UnixListener::bind(socket)?;
+    std::fs::set_permissions(socket, std::fs::Permissions::from_mode(0o600))?;
     crate::lifecycle::clear_cloexec(unix_listener.as_raw_fd())?;
 
-    std::fs::File::create(&paths.proxy_log)?;
-    let log = std::fs::OpenOptions::new()
-        .append(true)
-        .open(&paths.proxy_log)?;
+    std::fs::File::create(log_path)?;
+    let log = std::fs::OpenOptions::new().append(true).open(log_path)?;
 
     let mut cmd = Command::new(exe);
     cmd.arg("__egress_proxy")
@@ -115,7 +133,7 @@ pub fn spawn(
         // unexpected panic or a dependency's own stray `eprintln!` still
         // lands in the file even though it never goes through `run`'s
         // structured logging.
-        .env("DEVCROFT_EGRESS_LOG", &paths.proxy_log)
+        .env("DEVCROFT_EGRESS_LOG", log_path)
         .stdin(Stdio::null())
         .stdout(log.try_clone()?)
         .stderr(log);
@@ -131,10 +149,33 @@ pub fn spawn(
         });
     }
 
+    configure(&mut cmd)?;
     let child = cmd.spawn()?;
-    // Both listeners' fds must outlive this function for the child to
-    // inherit them across exec; ownership passes to the proxy process.
-    std::mem::forget(listener);
-    std::mem::forget(unix_listener);
+    // The child has its own copies now: `spawn` returns only once the exec
+    // has succeeded. Ours are closed here, not leaked. **They used to be
+    // `forget`-ed**, which was harmless in `up`, a one-shot process, and is
+    // not in a fleet supervisor: both listeners have CLOEXEC cleared, so
+    // every agent started afterwards would inherit this proxy's listeners,
+    // and a process in agent B could `accept()` agent A's egress.
+    drop(listener);
+    drop(unix_listener);
     Ok((child.id() as libc::pid_t, port, token))
+}
+
+/// The proxy variables a sandbox's environment gets: every standard HTTP
+/// client turns `token@` in a proxy URL into `Proxy-Authorization`
+/// unprompted, and `NO_PROXY` keeps a client's own loopback traffic (a test
+/// hitting a dev server) away from a proxy that would refuse it. Shared by
+/// `up` and fleet, so the two cannot disagree on what a sandbox sees.
+pub fn client_env(port: u16, token: &str) -> Vec<(String, String)> {
+    let endpoint = format!("http://{token}@127.0.0.1:{port}");
+    let mut vars: Vec<(String, String)> =
+        ["HTTP_PROXY", "http_proxy", "HTTPS_PROXY", "https_proxy"]
+            .iter()
+            .map(|k| (k.to_string(), endpoint.clone()))
+            .collect();
+    for key in ["NO_PROXY", "no_proxy"] {
+        vars.push((key.to_string(), "localhost,127.0.0.1,::1".to_string()));
+    }
+    vars
 }

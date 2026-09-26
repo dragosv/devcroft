@@ -224,6 +224,7 @@ pub fn preflight(cgroup_root: &Path, exe: &Path) -> Result<(), FleetError> {
             hostname: "preflight".into(),
             plan,
             project_root: std::env::temp_dir(),
+            relay_port: None,
             view: None,
         };
         let devnull: std::os::fd::OwnedFd = std::fs::File::create("/dev/null")
