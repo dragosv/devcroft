@@ -5,13 +5,23 @@ Every item here is a probe with a number or a yes/no, recorded in
 measurement that contradicts a decision changes the decision, not the
 measurement.
 
-- [ ] 0.1 The dependency tail, as a number: `cargo tree` before and after
+- [x] 0.1 The dependency tail, as a number: `cargo tree` before and after
       adding `oci-client` + `oci-spec` to a scratch copy of the crate;
       count the marginal crates, name the big ones, and note what
       devcroft already links (`reqwest`-shaped, TLS) through `russh` and
       `sigstore`. Same discipline as `use-nono-library`'s 141 and
       `nono-proxy`'s 116: the number goes in `design.md`.
-- [ ] 0.2 Pull and unpack `debian:stable-slim@sha256:…` and
+      → **+27 for `oci-client` 0.18.0 + `oci-spec` 0.10.0, +6 more for
+      the unpacker (`tar`, `zstd`), +33 in all** — identical on
+      x86_64-linux, aarch64-linux and macOS. None of the big ones is new:
+      `reqwest` 0.13, `rustls` 0.23, `hyper` 1 and `tokio` were already
+      linked. The 27 are `derive_builder`/`darling`/`getset`/`strum`/
+      `const_format` proc-macro scaffolding for `oci-spec`, plus
+      `http-auth`, `olpc-cjson`, `regex`, `unicode-normalization`. The 6
+      are `tar`, `filetime`, `xattr`, `zstd`, `zstd-safe` and `zstd-sys`
+      (C, built by `cc`). Baseline measured as 335 on
+      x86_64-linux, matching `THIRD-PARTY-LICENSES.md`. See design.md D1.
+- [x] 0.2 Pull and unpack `debian:stable-slim@sha256:…` and
       `alpine@sha256:…` with a probe binary: `oci-client` for the
       manifest/config/layers, devcroft's own unpacker for the tar stream
       with whiteouts. Record wall time, on-disk size, file count, what
@@ -20,6 +30,41 @@ measurement.
       same digest** on a host that has Docker (this Mac does): identical,
       or every difference explained. Confirm no process from the image
       ran (an image whose entrypoint writes a marker).
+      → **Identical up to two kinds of explained difference, on all five
+      images.** Measured 2026-09-24, linux/arm64 images, on macOS
+      (case-sensitive APFS volume) and on Linux (OrbStack VM, overlayfs,
+      unpacking as uid 1000):
+
+      | image | layers | pull | unpack (mac / linux) | size | entries |
+      |---|---|---|---|---|---|
+      | `debian:stable-slim` | 1 | 2.0 s | 0.53 / 0.46 s | 104 MB | 3,264 |
+      | `alpine:latest` | 1 | 1.4 s | 0.07 / 0.05 s | 9.9 MB | 515 |
+      | `devcontainers/rust:1` | 15 | 47–50 s | 10.9 / 19.7 s | 2.4 GB | 51,428 |
+
+      Against `docker export` of the same digest (type, permission bits,
+      content hash, symlink target; not ownership or mtime): 0 content,
+      type or target differences, 51,427 common entries for rust. What
+      differs is (1) what Docker writes into a *container*, never the
+      image — `.dockerenv`, `dev/{console,pts,shm}`,
+      `etc/{hosts,hostname,resolv.conf,mtab}`; and (2) setuid/setgid bits
+      dropped on purpose: 11 files in debian, 14 in rust, **and setgid on
+      three directories** (`var/mail`, `usr/local/cargo`,
+      `usr/local/rustup`), which D1 did not mention. Nothing was skipped:
+      no image had a device node, and none had an xattr. No write went
+      through a symlinked parent.
+      **The design's premise that the two base images exercise whiteouts
+      was wrong:** both are single-layer, with no whiteouts. Whiteouts were
+      covered by `devcontainers/rust` (7 whiteouts, 3,250 replaced
+      entries, 159 hardlinks). Opaque whiteouts, which none of the three
+      has and BuildKit did not emit for `rm -rf dir && mkdir dir`, were
+      covered by a hand-written two-layer image with the `.wh..wh..opq`
+      marker both after and before its layer's own entries: the result is
+      the same as Docker's.
+      No process ran: under `strace -f -e execve,execveat,fork,vfork`, each
+      of the five pulls made exactly one `execve` (the probe itself) and no
+      fork. An image whose `ENTRYPOINT` and `CMD` touch
+      `/devcroft-*-ran`, `/tmp/…` and `$HOME/…` left no marker anywhere on
+      either host.
 - [ ] 0.3 **The decision D3 rests on:** in a probe binary, grant
       `<rootfs>` read-only with nono in a parent, then in a child
       `unshare(CLONE_NEWNS)` + pivot into a view whose root is `<rootfs>`,
@@ -34,13 +79,44 @@ measurement.
 - [ ] 0.5 `up` latency on a 1–2 GB rootfs versus a flox sandbox on the
       same host: one bind, one rule, or something scales with file count?
       Record both numbers.
-- [ ] 0.6 `docker inspect` `Config.Env` of the two images and of
+- [x] 0.6 `docker inspect` `Config.Env` of the two images and of
       `mcr.microsoft.com/devcontainers/rust`: what `PATH` is, whether
       `shell.rs`'s resolver finds `/bin/sh` inside the rootfs under the
       declared-grant guard, and what `Config.User` is for each (the
       `devcontainers/*` images say `vscode` — this is where D4's refusal
       bites, and the measurement decides whether "refuse" or "run as
       root-in-image" is the right first cut).
+      → **Two of the three premises measured wrong.** Read from the OCI
+      config the probe pulled; cross-checked against `docker inspect`,
+      which matches.
+      - `PATH` is the stock `/usr/local/sbin:…:/bin` for debian and alpine.
+        The rust image prepends `/usr/local/cargo/bin` (twice) and sets
+        `CARGO_HOME=/usr/local/cargo` and `RUSTUP_HOME=/usr/local/rustup`.
+      - **`shell::resolve` returns `None` for all three**, called directly
+        with the image's `Env` and the materialized rootfs as the one
+        grant. The image's `PATH` names absolute directories of the
+        *session's* view, and `resolve_on_path` searches them in the
+        *host's*. It finds the host's `/bin/sh`, the guard correctly refuses
+        it (not inside the rootfs), and the image's own `sh` is never a
+        candidate. As written, `up` fails for every devcontainer project.
+        Symlink resolution has to be rootfs-relative too: alpine's
+        `bin/sh` is `/bin/busybox`, an *absolute* target that
+        `canonicalize()` would resolve on the host. debian's is `dash`,
+        relative. See design.md D4.
+      - **`Config.User` is not `vscode`.** It is absent for debian and
+        alpine and `root` for `devcontainers/rust`. `vscode` comes from the
+        image label `devcontainer.metadata` (`[{"remoteUser":"vscode"}]`),
+        which the reference CLI merges into `devcontainer.json`. The same
+        label carries `capAdd: ["SYS_PTRACE"]` and
+        `securityOpt: ["seccomp=unconfined"]` from the rust feature. D4's
+        `Config.User` refusal therefore never fires, and D6's refusal table
+        never sees the label. The "refuse or root-in-image" question moves
+        to the label. See design.md D6.
+      - Not asked for, but found: `CARGO_HOME=/usr/local/cargo` is inside
+        the rootfs, which is read-only and shared, and the image ships the
+        directory as `2777` so that the `rustlang` group can write to it. A
+        `cargo fetch` in the sandbox writes `$CARGO_HOME/registry` there
+        and will be denied. See design.md, Risks.
 - [ ] 0.7 The reference `devcontainer` CLI with `--skip-post-create`:
       what it runs on the host, for the open question on `features`.
       Record; do not act.

@@ -73,6 +73,28 @@ itself:
   user anyway). Roughly a hundred lines, measured in phase 0 against
   `debian:stable-slim` and `alpine`, both of which use whiteouts.
 
+**MEASURED (tasks 0.1, 0.2) — the mechanism holds, and one premise was
+wrong.** The dependency tail is +27 crates for `oci-client` + `oci-spec`
+and +6 for the unpacker: +33 in all, with nothing big among them, because
+`reqwest`, `rustls`, `hyper` and `tokio` were already linked. The
+unpacker, written as a probe (about 250 lines including whiteout
+handling), produces the same tree as `docker export` of the same digest
+for debian, alpine and the 15-layer `devcontainers/rust`. The only
+differences are files Docker writes into a container and the bits
+dropped on purpose. It makes no `execve` and no fork (strace, Linux).
+But **debian and alpine do not use whiteouts**: both are single-layer.
+Whiteouts were covered by the rust image, and opaque whiteouts, which no
+real image measured had, by a hand-written image. Two corrections to the
+list above:
+
+- **Setgid is dropped on directories too**, not only on files:
+  `usr/local/cargo` and `usr/local/rustup` ship as `2777`.
+- **No write may follow a symlinked parent.** The probe refuses such an
+  entry rather than following it, and none of the four real images
+  produced one. The provider must keep that property against a hostile
+  layer, with `openat2(RESOLVE_BENEATH | RESOLVE_NO_SYMLINKS)` or an
+  equivalent per-component walk, not by joining paths.
+
 The result lands in `<rootfs-store>/<digest>/`, read-only after a
 completion marker is written; the digest is recorded in a lockfile
 devcroft owns (`.devcontainer/devcroft.lock`, next to the file it reads).
@@ -166,6 +188,28 @@ as the invoking user, and an image whose tooling only works as
 `remoteUser` rejection in §2, at the image level. Nothing is executed to
 obtain any of this.
 
+**MEASURED (task 0.6) — both halves of this decision rest on a premise
+that is false.**
+
+- **The shell is not found.** `shell::resolve`, called with each image's
+  `Env` and the rootfs as the grant, returns `None` for debian, alpine
+  and `devcontainers/rust`. `PATH` names directories of the *session's*
+  view (the rootfs is `/`), but it is searched host-side, in the
+  keeper's. The first hit is the host's `/bin/sh`, which the guard
+  correctly refuses, and the image's own shell is never a candidate. The
+  guard is right and the search is wrong. For this provider, the search
+  has to run *inside* the rootfs: each `PATH` entry joined under
+  `<rootfs>`, with symlinks resolved relative to `<rootfs>`, because
+  alpine's `bin/sh → /bin/busybox` is absolute and `canonicalize()` would
+  resolve it on the host. The result then has two spellings:
+  `<rootfs>/usr/bin/dash` is what is granted and what `policy --render`
+  shows, and `/bin/sh` is what a session execs. `Meta.shell` and
+  `DEVCROFT_SHELL` must record the session's spelling. This is new
+  surface for `ResolvedShell`, not a fix to the existing guard.
+- **`Config.User` is not where `vscode` lives.** It is absent or `root`
+  in all three images. `devcontainers/*` images set `remoteUser` in the
+  `devcontainer.metadata` label; see D6.
+
 ### D5 — A tier named `image`
 
 Not `closure`: there is no dependency graph below the digest, and two
@@ -190,6 +234,21 @@ editor-side). Refused in this cut, each with its own message: `build`,
 `overrideCommand`, `shutdownAction`, `waitFor` are ignored as
 meaningless without a container. Unknown keys are ignored — the file is
 shared with other tools and devcroft must not fail on their extensions.
+
+**MEASURED (task 0.6) — the table has a second source this decision does
+not read.** An image carries its own `devcontainer.json` fragments in the
+label `devcontainer.metadata`, a JSON array the reference CLI merges
+under the project's file. For `mcr.microsoft.com/devcontainers/rust:1`
+that label holds `{"remoteUser": "vscode"}`, and from the rust feature
+`capAdd: ["SYS_PTRACE"]` and `securityOpt: ["seccomp=unconfined"]`.
+Applying D6 to `devcontainer.json` alone would pass that image silently,
+which the degraded-capabilities invariant forbids. Applying D6 as written
+to the merged result would refuse every `devcontainers/*` image, which is
+the headline case. **Open, and the owner's call:** which label-borne
+fields are refused, and which are ignored with one `up` warning naming
+them. `remoteUser` and `capAdd: SYS_PTRACE` are the two that decide it.
+devcroft runs as the invoking user regardless, and the debugger's
+ptrace is a Landlock/nono question, not a capability grant.
 
 `dockerComposeFile` is refused in this cut, and the reason is scope,
 not impossibility. A compose file is N containers, each with its own
@@ -304,6 +363,16 @@ youki — BuildKit reimplemented to avoid one binary.
   the marginal count is what matters. A registry that needs a credential
   helper (`~/.docker/config.json` `credHelpers`) is out of scope for the
   first cut; `doctor` says so when it sees one.
+- [An image points a tool's writable home into the rootfs] → measured
+  on `devcontainers/rust`: `CARGO_HOME=/usr/local/cargo`, shipped `2777`
+  so that group `rustlang` can write to it. In a read-only, shared
+  rootfs, `cargo fetch` writing `$CARGO_HOME/registry` is denied, and so
+  is every tool of the same shape (`GOPATH`, `npm`'s global prefix,
+  `pip --user` without a project venv). The swift provider's answer is
+  the precedent: redirect the variable to a project-local or
+  per-sandbox directory, rendered with origin `provider:devcontainer`.
+  Which variables get redirected has to be decided per image family, not
+  guessed. Until then this is a known gap on the headline image.
 - [Unpacking gets whiteouts subtly wrong and a file from a lower layer
   survives] → phase 0 diffs devcroft's unpack of `debian:stable-slim`
   against `docker export` of the same digest on a host that has Docker;
