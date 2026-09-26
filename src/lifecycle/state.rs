@@ -225,6 +225,23 @@ pub fn client_key_paths() -> io::Result<(PathBuf, PathBuf)> {
     Ok((dir.join("id_ed25519"), dir.join("id_ed25519.pub")))
 }
 
+/// A fleet's state directory, for the sandbox name its manifest gives.
+///
+/// Under `_fleet` in the data dir: that name cannot be a sandbox name
+/// (they start with `[a-z0-9]`), so a fleet can never collide with a
+/// sandbox of the same name, and `ps` skips it for the same reason. Inside
+/// devcroft's baseline-denied data dir, so no agent can read its own or
+/// another agent's record or sockets' directory.
+pub fn fleet_state_dir(sandbox_name: &str) -> io::Result<PathBuf> {
+    if !crate::config::is_valid_name(sandbox_name) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("'{sandbox_name}' is not a valid sandbox name ([a-z0-9][a-z0-9-]{{0,31}})"),
+        ));
+    }
+    Ok(data_dir()?.join("_fleet").join(sandbox_name))
+}
+
 /// The `~/.local/share/devcroft` root all sandboxes live under.
 /// `pub(super)` so `ps` (status.rs) can enumerate every sandbox directory
 /// — the one thing that needs the root itself rather than one sandbox's

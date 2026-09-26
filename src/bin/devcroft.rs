@@ -100,6 +100,7 @@ fn main() {
         Some("status") => std::process::exit(cli_status(&args[2..])),
         Some("logs") => std::process::exit(cli_logs(&args[2..])),
         Some("ps") => std::process::exit(cli_ps()),
+        Some("fleet") => std::process::exit(cli_fleet(&args[2..])),
         Some("ssh") => std::process::exit(cli_ssh(&args[2..])),
         Some("policy") => std::process::exit(cli_policy(&args[2..])),
         Some("why") => std::process::exit(cli_why(&args[2..])),
@@ -163,6 +164,13 @@ inspecting
   why --host <domain>         the same question for an outbound host
   why --env <NAME>            why a variable is or is not in the sandbox
   doctor                      check this host for what devcroft needs
+
+fleet (Linux; experimental)
+  fleet up --agents N         start N agents, each on its own clone of this project
+      [--cgroup-root P]         (a delegated cgroup v2 subtree; or DEVCROFT_FLEET_CGROUP_ROOT)
+      [--host-root]             (keep the host's root instead of a minimal view)
+  fleet ls                    every agent: state, memory, CPU, workspace
+  fleet stop <id>             stop one agent, keeping its workspace
 
 ssh
   ssh [name]                  connect over the sandbox's own SSH server
@@ -2611,6 +2619,184 @@ fn cli_logs(args: &[String]) -> i32 {
 /// `devcroft ps` (cli spec's "ps lists all sandboxes" scenario): every
 /// sandbox with existing state, name/keeper-health/session-count/project-
 /// root, no name resolution needed since it lists everything.
+/// `devcroft fleet up | ls | stop` (`add-linux-agent-fleet`). Thin over
+/// `fleet::commands`, which the tests drive directly.
+fn cli_fleet(args: &[String]) -> i32 {
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = args;
+        eprintln!(
+            "devcroft fleet: backend: fleet is Linux-only (user namespaces and cgroup v2); \
+             on macOS, run devcroft inside a Linux VM"
+        );
+        4
+    }
+    #[cfg(target_os = "linux")]
+    cli_fleet_linux(args)
+}
+
+#[cfg(target_os = "linux")]
+fn cli_fleet_linux(args: &[String]) -> i32 {
+    const USAGE: &str = "devcroft fleet: usage: devcroft fleet up --agents N \
+                         [--cgroup-root P] [--host-root] | ls | stop <id>";
+    let fail = |e: devcroft::fleet::commands::FleetError| {
+        eprintln!("devcroft fleet: {e}");
+        e.exit_code()
+    };
+
+    let cwd = match std::env::current_dir() {
+        Ok(dir) => dir,
+        Err(e) => {
+            eprintln!("devcroft fleet: cannot determine current directory: {e}");
+            return 1;
+        }
+    };
+    let (manifest, project_root) = match discover_manifest(&cwd) {
+        Ok(v) => v,
+        Err(msg) => {
+            eprintln!("devcroft fleet: config: {msg}");
+            return 2;
+        }
+    };
+    let state_dir = match devcroft::lifecycle::fleet_state_dir(&manifest.sandbox.name) {
+        Ok(d) => d,
+        Err(e) => {
+            eprintln!("devcroft fleet: config: {e}");
+            return 2;
+        }
+    };
+    let exe = match std::env::current_exe() {
+        Ok(e) => e,
+        Err(e) => {
+            eprintln!("devcroft fleet: cannot locate the devcroft binary: {e}");
+            return 1;
+        }
+    };
+
+    match args.first().map(String::as_str) {
+        Some("up") => {
+            let mut agents = None;
+            let mut cgroup_root =
+                std::env::var_os("DEVCROFT_FLEET_CGROUP_ROOT").map(std::path::PathBuf::from);
+            let mut view = true;
+            let mut rest = args[1..].iter();
+            while let Some(a) = rest.next() {
+                match a.as_str() {
+                    "--agents" => agents = rest.next().and_then(|n| n.parse::<usize>().ok()),
+                    "--cgroup-root" => cgroup_root = rest.next().map(std::path::PathBuf::from),
+                    "--host-root" => view = false,
+                    _ => {
+                        eprintln!("{USAGE}");
+                        return 2;
+                    }
+                }
+            }
+            let Some(agents) = agents else {
+                eprintln!("{USAGE}");
+                return 2;
+            };
+            let Some(cgroup_root) = cgroup_root else {
+                eprintln!(
+                    "devcroft fleet: backend: no delegated cgroup v2 subtree given; pass \
+                     --cgroup-root or set DEVCROFT_FLEET_CGROUP_ROOT (finding systemd's \
+                     delegated subtree automatically is not built yet)"
+                );
+                return 4;
+            };
+            let provider = match devcroft::provider::ProviderKind::from_name(&manifest.env.provider)
+            {
+                Ok(p) => p,
+                Err(e) => {
+                    eprintln!("devcroft fleet: provider: {e}");
+                    return 3;
+                }
+            };
+            let authorized = match fleet_client_key() {
+                Ok(k) => k,
+                Err(msg) => {
+                    eprintln!("devcroft fleet: ssh: {msg}");
+                    return 5;
+                }
+            };
+            let req = devcroft::fleet::commands::UpRequest {
+                manifest: &manifest,
+                project_root: &project_root,
+                cgroup_root: &cgroup_root,
+                agents,
+                view,
+                exe: &exe,
+                authorized_key_pem: &authorized,
+                state_dir: &state_dir,
+            };
+            match devcroft::fleet::commands::up(&provider, &req) {
+                Ok(started) => {
+                    for a in &started {
+                        println!("{}\t{}", a.id, a.workspace.display());
+                    }
+                    println!(
+                        "each agent works on a clone of HEAD; uncommitted changes are not in it"
+                    );
+                    0
+                }
+                Err(e) => fail(e),
+            }
+        }
+        Some("ls") if args.len() == 1 => {
+            match devcroft::fleet::commands::ls(&state_dir, &manifest, &exe) {
+                Ok(agents) if agents.is_empty() => {
+                    println!("no agents");
+                    0
+                }
+                Ok(agents) => {
+                    for a in agents {
+                        let state = match a.record.state {
+                            devcroft::fleet::supervisor::AgentState::Running => "running",
+                            devcroft::fleet::supervisor::AgentState::Stopped => "stopped",
+                        };
+                        let mem = a
+                            .memory_bytes
+                            .map(|b| format!("{} MiB", b / (1 << 20)))
+                            .unwrap_or_else(|| "-".into());
+                        let cpu = a
+                            .cpu_usec
+                            .map(|u| format!("{:.1}s cpu", u as f64 / 1e6))
+                            .unwrap_or_else(|| "-".into());
+                        println!(
+                            "{}\t{state}\t{mem}\t{cpu}\t{}",
+                            a.record.id,
+                            a.record.workspace.display()
+                        );
+                    }
+                    0
+                }
+                Err(e) => fail(e),
+            }
+        }
+        Some("stop") if args.len() == 2 => {
+            match devcroft::fleet::commands::stop(&state_dir, &manifest, &exe, &args[1]) {
+                Ok(()) => {
+                    println!("stopped {}", args[1]);
+                    0
+                }
+                Err(e) => fail(e),
+            }
+        }
+        _ => {
+            eprintln!("{USAGE}");
+            2
+        }
+    }
+}
+
+/// The client public key every agent's SSH server accepts: the same
+/// devcroft identity `up` uses for every sandbox.
+#[cfg(target_os = "linux")]
+fn fleet_client_key() -> Result<String, String> {
+    let (private, public) = devcroft::lifecycle::client_key_paths().map_err(|e| e.to_string())?;
+    let key = devcroft::ssh::ensure_client_keypair(&private, &public).map_err(|e| e.to_string())?;
+    key.public_key().to_openssh().map_err(|e| e.to_string())
+}
+
 fn cli_ps() -> i32 {
     match devcroft::lifecycle::ps() {
         Ok(sandboxes) => {

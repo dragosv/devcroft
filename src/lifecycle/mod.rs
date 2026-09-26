@@ -21,7 +21,7 @@ mod terminate;
 pub(crate) mod up;
 
 pub use hooks::HookError;
-pub use state::{Health, Meta, StatePaths, client_key_paths, health, read_meta};
+pub use state::{Health, Meta, StatePaths, client_key_paths, fleet_state_dir, health, read_meta};
 pub use status::{KeeperStatus, SandboxStatus, SandboxSummary, StatusError, logs, ps, status};
 pub use terminate::{GRACE_PERIOD, TerminateError, down, rm};
 pub use up::{KeeperEnv, UpError, UpOptions, UpOutcome, up};

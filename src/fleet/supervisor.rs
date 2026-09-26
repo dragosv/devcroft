@@ -152,10 +152,21 @@ impl Supervisor {
 
     /// Start one agent. Returns its ID.
     pub fn start(&mut self, launch: &AgentLaunch) -> io::Result<String> {
+        self.start_with(|_| Ok(launch.clone()))
+    }
+
+    /// Start one agent whose launch depends on its ID, such as a workspace
+    /// named after it. `build` runs once the ID is allocated; if it fails,
+    /// nothing is started and what the supervisor made is removed. What
+    /// `build` itself made is the caller's to remove.
+    pub fn start_with(
+        &mut self,
+        build: impl FnOnce(&str) -> io::Result<AgentLaunch>,
+    ) -> io::Result<String> {
         let id = self.next_id()?;
         let dir = self.agent_dir(&id);
         std::fs::DirBuilder::new().mode(0o700).create(&dir)?;
-        match self.start_in(&id, &dir, launch) {
+        match build(&id).and_then(|launch| self.start_in(&id, &dir, &launch)) {
             Ok(()) => Ok(id),
             Err(e) => {
                 if let Some(leaf) = self.node.existing_leaf(&id) {

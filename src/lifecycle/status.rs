@@ -225,6 +225,12 @@ pub fn ps() -> io::Result<Vec<SandboxSummary>> {
             continue;
         }
         let name = entry.file_name().to_string_lossy().into_owned();
+        // Only sandbox-named directories are sandboxes. `_fleet` (fleet
+        // state, `fleet_state_dir`) is deliberately not a valid name, so
+        // it can neither collide with a sandbox nor be listed as one.
+        if !crate::config::is_valid_name(&name) {
+            continue;
+        }
         let paths = StatePaths::in_dir(entry.path());
         let keeper = keeper_status(&paths).unwrap_or(KeeperStatus::Stale);
         let meta = state::read_meta(&paths.meta)?;

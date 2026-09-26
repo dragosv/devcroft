@@ -358,6 +358,9 @@ the implementation before it resolves.
       is workspace isolation's (group 4).
 - [ ] Verify the agent command, its language runtime, its config directories and
       CA certificates are all present in the constructed view.
+      **The runtime half, for one provider:** a real devbox closure builds
+      and runs the sample inside an agent's view (`tests/fleet_commands.rs`).
+      Config directories and CA certificates are not checked yet.
 - [x] Wire ruleset construction in the parent, namespace-local rule addition in
       the helper, application after mounts.
       **Built differently, after measuring:** the helper builds *and*
@@ -474,9 +477,26 @@ the implementation before it resolves.
       `populated 0`. And the failed-start test checked for leftovers only
       after `list`, whose reconcile removed them, so it passed with no
       cleanup at all.
-- [ ] `devcroft fleet` commands (`up --agents N`, `ls`, `stop`, `inspect`),
-      in the foreground, with the delegated cgroup root given explicitly.
-      A new command must also go in `USAGE` (`tests/cli_help_and_version.rs`).
+- [x] `devcroft fleet up --agents N | ls | stop <id>`, with the delegated
+      cgroup root given explicitly (`--cgroup-root` or
+      `DEVCROFT_FLEET_CGROUP_ROOT`, recorded in `fleet.json` for `ls`
+      and `stop`). No daemon: liveness is the leaf, so each command opens
+      the supervisor, reconciles and acts. `fleet::project::prepare`
+      resolves each agent's environment for its own clone, as `up` does
+      for a sandbox; `fleet::commands` holds the logic the CLI is thin
+      over. Fleet state lives in `_fleet` under the data dir, a name no
+      sandbox can have, and `ps` skips it.
+      **Measured with a real provider:** on `devbox-citytime-sample`, two
+      agents came up in 12 s, and a real `cargo build` from the devbox
+      closure succeeded inside one, with the original repository
+      unreadable (`a_real_devbox_agent_builds_its_project_in_its_clone`).
+      **Found while building it:** a project in a subdirectory of its
+      repository (every sample here) would have put the agent at the
+      clone's root. The workspace is now the same relative path inside
+      the clone; a mutant putting it back at the root fails.
+- [ ] `fleet inspect <id>` (one agent's record and evidence) and
+      `fleet rm`: stopped agents keep their records, and the fleet's empty
+      cgroup node stays until something removes it.
 - [ ] Preflight before the first agent (spec: *Preflight environment
       validation*): delegation, user namespaces, a fresh procfs, the
       Landlock ABI, each named with its remedy. `FleetNode::create` and the
@@ -525,6 +545,10 @@ the implementation before it resolves.
 ## 4. Workspace isolation
 
 - [ ] Implement the shared bare mirror and per-agent clone with `--reference`.
+      **A minimal form exists** (`fleet::commands`): a `git clone --local`
+      per agent at `<project>/.devcroft/fleet/<id>`, hardlinked objects, no
+      alternates, so no GC hazard yet. The mirror, GC control and remote
+      handling are still this task's.
 - [ ] Disable automatic GC on the mirror and all clones; add supervisor-driven
       maintenance when the fleet is idle.
 - [ ] Remove or block the upstream remote in agent clones; implement the

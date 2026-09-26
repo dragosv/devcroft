@@ -26,6 +26,8 @@
 #[cfg(target_os = "linux")]
 pub mod cgroup;
 #[cfg(target_os = "linux")]
+pub mod commands;
+#[cfg(target_os = "linux")]
 pub mod init;
 pub mod mount;
 pub mod netns;
