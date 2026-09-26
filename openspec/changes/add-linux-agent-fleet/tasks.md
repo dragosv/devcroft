@@ -139,6 +139,15 @@ the implementation before it resolves.
       VM. Measured after the rebuild: the root is empty, all five
       controllers are available in `delegated/`, and after `enter` the dev
       user can `mkdir` a child and enable `+memory` there without root.
+      **Cgroup half run (2026-09-26); design.md D6 "Measured" has the
+      numbers.** Top-down enablement, a domain leaf, `clone3` straight into
+      it, a group OOM kill, `pids.max`, and `cgroup.kill` of 20 orphans
+      (`populated 0` in 1.9 ms) all behave as D6 assumes. Four results
+      change section 1: `io.weight` can be missing while `io` is enabled;
+      `CLONE_INTO_CGROUP` removes the attach race; without
+      `memory.swap.max=0`, swap turns `memory.max` into no cap at all; and
+      agents own their cgroup files, so a leaked cgroup fd lets one agent
+      rewrite another's limits. Left open: the systemd half, on a VM.
 - [ ] Decide the supported kernel floor and the degradation behaviour below it
       (Open Question 6). Note `SeccompNetFallback` and
       `probe_seccomp_block_network_support` already provide a network-blocking
@@ -170,17 +179,40 @@ the implementation before it resolves.
       `cgroup.subtree_control` and fail if not.** This is D6's
       "silently under-enforce" concern as a concrete check: without it a
       missing controller means the limit is configured and absent.
-- [ ] **The child attaches itself to the leaf immediately after `fork`**,
-      writing its pid to an inherited `cgroup.procs` fd using only
-      async-signal-safe calls. Otherwise there is a window where the child
-      runs uncapped in the parent's cgroup — a race this task list did not
-      previously mention, and the same post-fork discipline devcroft
-      already applies in `pre_exec`.
+      **Check the interface file too, not only the controller**: measured,
+      `io` enables cleanly on a host whose leaves have no `io.weight`
+      (the `none` scheduler; weights need BFQ or iocost). A missing
+      `io.weight` is D6's named degraded capability. On a host with swap
+      on, a missing `memory.swap.max` is a refusal: the next task shows
+      `memory.max` alone does not cap anything there.
+- [ ] **The child starts inside its leaf: `clone3(CLONE_INTO_CGROUP)` in
+      D2's clone, together with `CLONE_NEWCGROUP`.** Otherwise there is a
+      window where the child runs uncapped in the parent's cgroup. The
+      reference closes it by having the child write its pid to an inherited
+      `cgroup.procs` fd right after `fork`. Measured, `CLONE_INTO_CGROUP`
+      closes it outright: the child's first instruction already sees the
+      leaf. In the same call it roots the child's cgroup namespace at the
+      leaf, which is what refuses an agent raising its own limits
+      (`nsdelegate`) or moving itself out. The fd-write route also works
+      and is the fallback, but the 5.14 `cgroup.kill` needs already
+      includes clone3 (5.7).
+- [ ] **Every cgroup fd the supervisor opens is `O_CLOEXEC`**, including
+      the leaf fd handed to `clone3`. Agents run as the uid that owns
+      every delegated file, so nothing but reachability protects a
+      sibling's limits. Measured: an agent in its own cgroupns, with `/sys`
+      hidden, set a sibling's `memory.max` to 1M through
+      `openat(leaked_fd, "../b/memory.max")`. Test it from the agent side:
+      `/proc/self/fd` holds no cgroupfs fd, and a sibling's interface files
+      are unreachable by path.
 - [ ] **Leave `memory.high` unset when swap is off.** With
       `memory.swap.max=0`, a program over `memory.high` stalls instead of
       being killed, which looks like a hang rather than a limit. Set
       `memory.max` plus `memory.oom.group=1` so the whole leaf dies
-      together.
+      together. **`memory.swap.max=0` is load-bearing, not tidying**:
+      measured on a host with zram swap, `memory.max=128M` with swap left at
+      `max` let a 512 MB allocation succeed (384 MB swapped, nothing
+      killed). With `swap.max=0` it was killed in 10 ms, the whole leaf with
+      it, and `memory.events` recorded `oom_group_kill 1`.
 - [ ] Create the empty internal `fleet` node plus one domain leaf per agent;
       keep the supervisor and each agent's host-side proxy out of the leaves.
 - [ ] Apply memory, CPU weight, IO weight and PID limits from configuration.
@@ -196,7 +228,8 @@ the implementation before it resolves.
       (`docs/prior-art.md`).
 - [ ] Implement teardown via `cgroup.kill` (Linux 5.14+), then poll
       `cgroup.procs` until the kernel has reaped — the reference polls 50
-      times at 10ms. Leave the directory behind with a warning rather than
+      times at 10ms. Measured: 20 orphaned, SIGTERM-ignoring daemons were
+      reaped before the first 1 ms poll, so that budget is generous. Leave the directory behind with a warning rather than
       blocking forever if it does not drain.
 - [ ] **Sweep stale leaves from crashed supervisors** before creating a
       new one, confirming the owning pid is gone via `/proc/<pid>` first.

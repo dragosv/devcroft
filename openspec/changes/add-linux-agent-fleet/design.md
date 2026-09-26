@@ -34,8 +34,9 @@ no upstream work is required.
 ## D2 — The re-executed init helper is PID 1 of the agent's namespace
 
 **Decision.** The supervisor builds the Landlock ruleset in the parent, then
-`clone`s the child into new **user, mount, PID, network, IPC and UTS**
-namespaces and immediately re-execs its own binary as a hidden `devcroft-init`
+`clone`s the child into new **user, mount, PID, network, IPC, UTS and cgroup**
+namespaces, directly into the agent's leaf with `clone3(CLONE_INTO_CGROUP)`
+(D6), and immediately re-execs its own binary as a hidden `devcroft-init`
 subcommand. That helper is single-threaded, receives configuration over a pipe
 and inherited file descriptors, and performs: identity mapping handshake →
 mounts → add namespace-local rules → restrict_self → seccomp → start the
@@ -281,8 +282,9 @@ be filtering it.
 - Enable `cpu`, `memory` and `pids` controllers top-down through
   `cgroup.subtree_control`.
 - Per leaf: `memory.max`, `memory.swap.max=0`, `memory.oom.group=1`,
-  `cpu.weight`, `pids.max`. `io.weight` only where the `io` controller is
-  available — its absence is a **named degraded capability**, not a reason to
+  `cpu.weight`, `pids.max`. `io.weight` only where the leaf has an `io.weight`
+  file, which the `io` controller alone does not guarantee (measured below);
+  its absence is a **named degraded capability**, not a reason to
   abandon the other limits.
 - The `fleet` node stays process-free: cgroup v2's no-internal-process rule
   means a populated internal cgroup cannot distribute domain controllers to its
@@ -290,6 +292,73 @@ be filtering it.
 - Leaves are never `threaded`: `cgroup.kill` must terminate every descendant,
   and the supervisor waits for `cgroup.events: populated 0` before removing the
   leaf.
+
+**Measured (2026-09-26, the devcontainer's delegated subtree, kernel 7.0.14,
+12 CPUs, 12 GB zram swap).** These are the cgroup mechanics only. The systemd
+half, meaning the user manager, `Delegate=yes` and finding the delegated
+ancestor, still needs a VM. Spike: C against the raw interface files, no
+library.
+
+- **Enabling controllers top-down works as written.** `+cpu +memory +pids +io`
+  enabled on `delegated/` and then `fleet/`, and leaves came up `domain` with
+  all four. A process moved into `fleet/` itself gets `EBUSY`, so the
+  process-free internal node is enforced by the kernel. It is not just a
+  convention.
+- **`io` available does not mean `io.weight` available.** The controller
+  enabled, but no cgroup has `io.weight` (or `io.bfq.weight`). Only `io.max`
+  and `io.stat` exist, because every disk here uses the `none` scheduler and
+  weights need BFQ or iocost. The degraded-capability check has to test for
+  the *file*, not the controller, or it passes and the weight is never written.
+- **The attach race has a zero-window fix: `clone3(CLONE_INTO_CGROUP)`
+  (5.7+).** The child's first instruction already reports
+  `0::/delegated/fleet/a`. It combines with `CLONE_NEWUSER | CLONE_NEWCGROUP`
+  in one call, which makes the leaf the child's cgroup-namespace root (it sees
+  `0::/`). D2's clone is the natural place for it, so the reference's
+  post-fork `cgroup.procs` write is not needed. That write also works, even
+  after `unshare(CLONE_NEWUSER)` through an fd the parent opened. It is the
+  fallback, but `cgroup.kill` already needs 5.14, so any host that can tear
+  a leaf down also has clone3.
+- **`memory.swap.max=0` is what makes `memory.max` a cap on a host with swap.**
+  With `memory.max=128M` and swap left at `max`, a 512 MB allocation
+  *succeeded*: 384 MB went to zram, nothing was killed, and `memory.events`
+  showed only `max` events. With `swap.max=0` the same allocation was killed
+  in 10 ms, `oom.group=1` took a sleeping sibling with it, and
+  `oom_group_kill 1` recorded why. zram swap is on by default on several
+  distributions, so a host with swap on and no `memory.swap.max` file (swap
+  accounting off) cannot enforce a memory limit at all. That is a preflight
+  refusal, not a degraded capability.
+- **`pids.max=16`:** 15 forks succeeded (the launcher counts) and 49 failed
+  with `EAGAIN`, which `pids.events` reported as `max 49`.
+- **`cgroup.kill`:** 20 double-forked, `setsid`, SIGTERM-ignoring orphans,
+  whose launcher had already exited, were all gone in 1.9 ms. The first poll
+  saw `populated 0`, and `rmdir` succeeded. Cgroup membership does not follow
+  reparenting, which is the whole point.
+- **CPU:** a probe doing a fixed loop took 9.1 ms alone. With 24 spinners in
+  the *same* leaf it took 17.9 ms, and 10.9 ms with the spinners in a sibling
+  leaf of equal weight. One run, so the worst cases are noise; the means are
+  the result.
+
+**Agents own their cgroup files, so ownership protects nothing between them.**
+Under D2's identity map, every agent runs as the uid that owns the whole
+delegated subtree. Measured from an agent in `fleet/a`:
+
+| from `fleet/a` | no cgroupns | own userns + cgroupns |
+| --- | --- | --- |
+| raise own `memory.max` | written | `EPERM` (`nsdelegate`) |
+| set sibling `b`'s `memory.max=1M` | written | **written** |
+| sibling `b`'s `cgroup.kill` | written | **written** |
+| move self into `b` | written | `ENOENT` |
+
+The cgroup namespace protects an agent's own limits and stops it leaving its
+leaf. **Sibling protection comes from the path not being reachable**, which
+means the mount view (the shipped `construct_view` has no `/sys`) or, under
+D2a's host-root strategy, Landlock never granting write under `/sys/fs/cgroup`.
+**One leak defeats both:** an agent holding a leaf directory fd, with `/sys`
+hidden and in its own cgroupns, reached `openat(fd, "../b/memory.max")` and set
+the sibling's limit to 1M. So every cgroup fd the supervisor opens is
+`O_CLOEXEC`. That includes the one passed to `clone3`, which the helper
+inherits until it re-execs. Whether Landlock would also refuse the `openat`
+after `restrict_self` has not been measured.
 
 **A working systemd user manager and a delegated unified cgroup v2 subtree are
 hard MVP requirements. There is no manual-delegation fallback.**
