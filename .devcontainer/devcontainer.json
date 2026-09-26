@@ -77,7 +77,23 @@
   // systemd as PID 1 (changes how everything in here boots). The second is
   // D6's real target, so the systemd-user-manager half of the spike still
   // belongs on a Linux VM with systemd.
-  "runArgs": ["--security-opt", "seccomp=unconfined", "--cap-add=SYS_ADMIN"],
+  //
+  // **`systempaths=unconfined` is for fleet's PID namespace** (D2). Docker
+  // masks parts of /proc (tmpfs over /proc/interrupts, /proc/keys, ...; a
+  // read-only /proc/sys), and the kernel refuses a fresh procfs inside a
+  // user namespace while the only procfs it can see is a masked one.
+  // Measured before adding it: `unshare --user --map-root-user --pid
+  // --fork --mount-proc` gets EPERM here. Without a fresh /proc, a PID
+  // namespace hides nothing, because the bound host /proc still lists
+  // every process. It is the same flag rootless Podman needs inside Docker.
+  // As with SYS_ADMIN, only container root gains anything (an unmasked
+  // /proc, a writable /proc/sys), and `vscode` reaches root only through
+  // the scoped sudoers rules.
+  "runArgs": [
+    "--security-opt", "seccomp=unconfined",
+    "--cap-add=SYS_ADMIN",
+    "--security-opt", "systempaths=unconfined"
+  ],
 
   // Fails loudly if Landlock is not reachable, instead of letting the spike
   // report a confinement result that the kernel never enforced. Also
