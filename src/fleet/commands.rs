@@ -119,6 +119,7 @@ pub fn up(provider: &dyn ProviderEntry, req: &UpRequest) -> Result<Vec<Started>,
         return Err(FleetError::Config("--agents must be at least 1".into()));
     }
     require_git_repository(req.project_root)?;
+    preflight(req.cgroup_root, req.exe)?;
 
     std::fs::create_dir_all(req.state_dir).map_err(backend)?;
     let fleet_file = serde_json::to_vec_pretty(&FleetFile {
@@ -137,16 +138,12 @@ pub fn up(provider: &dyn ProviderEntry, req: &UpRequest) -> Result<Vec<Started>,
 
     let mut started = Vec::new();
     for _ in 0..req.agents {
-        let mut clone_root = None;
+        let mut made_clone = None;
         let mut workspace = None;
         let mut refused = None;
         let result = sup.start_with(|id| {
-            let dir = req
-                .project_root
-                .join(crate::services::ARTIFACT_DIR)
-                .join("fleet")
-                .join(id);
-            clone_root = Some(dir.clone());
+            let dir = clone_root(req.project_root, id);
+            made_clone = Some(dir.clone());
             let ws = clone_workspace(req.project_root, &dir)?;
             workspace = Some(ws.clone());
             prepare(
@@ -171,7 +168,7 @@ pub fn up(provider: &dyn ProviderEntry, req: &UpRequest) -> Result<Vec<Started>,
             }),
             Err(e) => {
                 // The clone was ours; the supervisor removed its own part.
-                if let Some(dir) = clone_root {
+                if let Some(dir) = made_clone {
                     let _ = std::fs::remove_dir_all(dir);
                 }
                 return Err(match refused {
@@ -182,6 +179,94 @@ pub fn up(provider: &dyn ProviderEntry, req: &UpRequest) -> Result<Vec<Started>,
         }
     }
     Ok(started)
+}
+
+/// Check the host can run an agent at all, before cloning anything
+/// (`agent-supervisor`: *Preflight environment validation*).
+///
+/// **By running one**, not by reading sysctls or a kernel version: a
+/// container's seccomp profile, an AppArmor rule on unprivileged user
+/// namespaces, `max_user_namespaces`, Docker's `/proc` masking and a
+/// missing Landlock each refuse independently, and no readable value
+/// predicts all of them (`fleet::netns::probe` follows the same rule). The
+/// probe is a real agent running `devcroft --version` on the host root, in
+/// its own throwaway node. The helper already names the step that failed;
+/// this adds what to do about it.
+pub fn preflight(cgroup_root: &Path, exe: &Path) -> Result<(), FleetError> {
+    use super::cgroup::FleetNode;
+    use super::init::{self, AgentSpec, Stdio};
+
+    // Unique per call, not just per process: two `up`s in one process (a
+    // library caller, or parallel tests) would otherwise share the probe
+    // leaf and fail each other with EEXIST.
+    static PROBES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let n = PROBES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let node = FleetNode::create(
+        cgroup_root,
+        &format!("fleet-preflight-{}-{n}", std::process::id()),
+    )
+    .map_err(|e| FleetError::Backend(format!("preflight: cgroup delegation: {e}")))?;
+    let result = (|| {
+        let leaf = node
+            .create_leaf("probe", &Limits::default())
+            .map_err(|e| format!("cgroup delegation: {e}"))?;
+        let (manifest, _) =
+            crate::config::parse("[sandbox]\nname = \"preflight\"\n\n[env]\nprovider = \"nix\"\n")
+                .map_err(|e| e.to_string())?;
+        let exe_dir = exe.parent().unwrap_or(exe).to_string_lossy().into_owned();
+        let plan = crate::policy::compile(&manifest)
+            .with_keeper_exe_grant(exe_dir)
+            .to_capability_plan();
+        let spec = AgentSpec {
+            command: vec![exe.to_string_lossy().into_owned(), "--version".into()],
+            env: Vec::new(),
+            cwd: None,
+            hostname: "preflight".into(),
+            plan,
+            project_root: std::env::temp_dir(),
+            view: None,
+        };
+        let devnull: std::os::fd::OwnedFd = std::fs::File::create("/dev/null")
+            .map_err(|e| e.to_string())?
+            .into();
+        let stdio = Stdio {
+            stdout: Some(devnull),
+            stderr: None,
+            inherit: Vec::new(),
+        };
+        let outcome = init::spawn(exe, &leaf, &spec, stdio)
+            .map_err(|e| remedy(&e.to_string()))
+            .and_then(|agent| match agent.wait() {
+                Ok(status) if status.success() => Ok(()),
+                Ok(status) => Err(format!("the probe agent exited with {status}")),
+                Err(e) => Err(e.to_string()),
+            });
+        let _ = leaf.kill();
+        outcome
+    })();
+    let _ = node.remove();
+    result.map_err(|e| FleetError::Backend(format!("preflight: {e}")))
+}
+
+/// What to do about a failed agent step, keyed on the step the helper
+/// names (or on `clone3` itself, which fails before there is a helper).
+fn remedy(error: &str) -> String {
+    let fix = if error.contains("clone3") {
+        "unprivileged user namespaces are unavailable: check \
+         kernel.unprivileged_userns_clone, user.max_user_namespaces, an AppArmor \
+         restriction on unprivileged user namespaces (Ubuntu 23.10+), or a \
+         container seccomp profile"
+    } else if error.contains("mount a fresh /proc") || error.contains("mounting /proc") {
+        "this host masks /proc (Docker's default), so an agent's PID namespace \
+         cannot have its own; run the container with \
+         `--security-opt systempaths=unconfined`, or run on a host or VM"
+    } else if error.contains("Landlock") {
+        "Landlock is unavailable: it needs Linux 5.13+ with `landlock` in the \
+         LSM list (`cat /sys/kernel/security/lsm`)"
+    } else {
+        return error.to_owned();
+    };
+    format!("{error}\n  {fix}")
 }
 
 /// Every agent the fleet has recorded, reconciled against the kernel.
@@ -199,10 +284,88 @@ pub fn ls(
 pub fn stop(state_dir: &Path, manifest: &Manifest, exe: &Path, id: &str) -> Result<(), FleetError> {
     open_existing(state_dir, manifest, exe)?
         .stop(id)
-        .map_err(|e| match e.kind() {
-            io::ErrorKind::NotFound => FleetError::Config(e.to_string()),
-            _ => backend(e),
-        })
+        .map_err(not_found_is_config)
+}
+
+/// One agent, reconciled.
+pub fn inspect(
+    state_dir: &Path,
+    manifest: &Manifest,
+    exe: &Path,
+    id: &str,
+) -> Result<AgentStatus, FleetError> {
+    open_existing(state_dir, manifest, exe)?
+        .inspect(id)
+        .map_err(not_found_is_config)
+}
+
+/// Remove a stopped agent: its record and its clone. The clone is removed
+/// only where `up` makes clones, so a record naming any other path cannot
+/// make this delete it.
+pub fn rm(
+    state_dir: &Path,
+    manifest: &Manifest,
+    exe: &Path,
+    project_root: &Path,
+    id: &str,
+) -> Result<(), FleetError> {
+    let mut sup = open_existing(state_dir, manifest, exe)?;
+    let record = sup.remove(id).map_err(not_found_is_config)?;
+    remove_clone(project_root, &record.id, &record.workspace)
+}
+
+/// Stop and remove every agent, their clones, the fleet's cgroup node and
+/// its state.
+pub fn rm_all(
+    state_dir: &Path,
+    manifest: &Manifest,
+    exe: &Path,
+    project_root: &Path,
+) -> Result<Vec<String>, FleetError> {
+    let mut sup = open_existing(state_dir, manifest, exe)?;
+    let mut removed = Vec::new();
+    for status in sup.list().map_err(backend)? {
+        let id = status.record.id;
+        if status.record.state == super::supervisor::AgentState::Running {
+            sup.stop(&id).map_err(backend)?;
+        }
+        let record = sup.remove(&id).map_err(backend)?;
+        remove_clone(project_root, &record.id, &record.workspace)?;
+        removed.push(id);
+    }
+    sup.remove_node().map_err(backend)?;
+    std::fs::remove_dir_all(state_dir).map_err(backend)?;
+    Ok(removed)
+}
+
+fn clone_root(project_root: &Path, id: &str) -> PathBuf {
+    project_root
+        .join(crate::services::ARTIFACT_DIR)
+        .join("fleet")
+        .join(id)
+}
+
+fn remove_clone(project_root: &Path, id: &str, workspace: &Path) -> Result<(), FleetError> {
+    let root = clone_root(project_root, id);
+    if !workspace.starts_with(&root) {
+        return Err(FleetError::Config(format!(
+            "agent {id}'s workspace {} is not the clone fleet made at {}; left in place",
+            workspace.display(),
+            root.display()
+        )));
+    }
+    match std::fs::remove_dir_all(&root) {
+        Ok(()) => Ok(()),
+        Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(backend(e)),
+    }
+}
+
+fn not_found_is_config(e: io::Error) -> FleetError {
+    match e.kind() {
+        io::ErrorKind::NotFound | io::ErrorKind::ResourceBusy => FleetError::Config(e.to_string()),
+        _ => backend(e),
+    }
 }
 
 fn open_existing(
@@ -295,5 +458,21 @@ fn clone_workspace(project_root: &Path, dest: &Path) -> io::Result<PathBuf> {
             dest.display(),
             String::from_utf8_lossy(&out.stderr).trim()
         )))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::remedy;
+
+    #[test]
+    fn each_failing_step_gets_its_own_remedy() {
+        assert!(remedy("clone3 into /x: Operation not permitted").contains("user namespaces"));
+        assert!(
+            remedy("fleet init: mount a fresh /proc: EPERM").contains("systempaths=unconfined")
+        );
+        assert!(remedy("fleet init: apply the Landlock ruleset: x").contains("landlock"));
+        // An error nothing recognises is passed through, not dressed up.
+        assert_eq!(remedy("something else"), "something else");
     }
 }

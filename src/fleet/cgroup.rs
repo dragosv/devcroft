@@ -260,7 +260,7 @@ pub enum Teardown {
 
 /// The kernel's record of why a leaf's processes died. All zero on a
 /// clean run.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Evidence {
     /// `memory.events: oom_group_kill`: the whole leaf was OOM-killed.
     pub oom_group_kills: u64,

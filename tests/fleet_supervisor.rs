@@ -382,3 +382,55 @@ fn a_prepared_agent_runs_its_hooks_inside_itself() {
     );
     sup.stop(&id).unwrap();
 }
+
+/// Section 1's "why something died": an agent over its memory limit is
+/// OOM-killed whole (`memory.oom.group`), and its record says so after the
+/// leaf, and the counters in it, are gone.
+#[test]
+fn an_oom_killed_agent_is_retired_with_the_reason() {
+    let Some(root) = capable_host() else { return };
+    if !Path::new("/usr/bin/python3").exists() {
+        eprintln!("skipping: no /usr/bin/python3 to allocate with");
+        return;
+    }
+    let fleet = Fleet::new(&root, "oom");
+    let mut launch = fleet.launch("a");
+    launch.limits.memory_max = Some(64 << 20);
+    let mut sup = fleet.open();
+    let id = sup.start(&launch).unwrap();
+
+    // 256 MiB in a 64 MiB agent. The session dies with the agent, so its
+    // connection just closes; nothing here waits for an Exit frame.
+    let mut stream = UnixStream::connect(sup.control_socket(&id)).unwrap();
+    protocol::write_frame(
+        &mut stream,
+        &Frame::Spawn(SpawnRequest {
+            cmd: "/usr/bin/python3".into(),
+            args: vec!["-c".into(), "b = bytearray(256 << 20)".into()],
+            cwd: launch.workspace.to_string_lossy().into_owned(),
+            env: Default::default(),
+            pty: None,
+        }),
+    )
+    .unwrap();
+    while protocol::read_frame(&mut stream).is_ok() {}
+
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    let status = loop {
+        let s = sup.inspect(&id).unwrap();
+        if s.record.state == AgentState::Stopped {
+            break s;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the agent was never retired"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    };
+    let evidence = status.record.evidence.expect("an OOM kill leaves evidence");
+    assert!(evidence.oom_group_kills >= 1, "{evidence:?}");
+    // And a clean stop leaves none.
+    let other = sup.start(&fleet.launch("b")).unwrap();
+    sup.stop(&other).unwrap();
+    assert_eq!(sup.inspect(&other).unwrap().record.evidence, None);
+}

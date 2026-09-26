@@ -329,6 +329,12 @@ fn the_cli_names_what_is_missing_with_the_contracts_exit_codes() {
     let (code, _) = run(&["bogus"]);
     assert_eq!(code, Some(2));
 
+    // Removing agents deletes their clones: never without --yes when
+    // nobody is at a terminal to have meant it.
+    let (code, err) = run(&["rm", "--all"]);
+    assert_eq!(code, Some(2), "{err}");
+    assert!(err.contains("--yes"), "{err}");
+
     // Fleet state lives under `_fleet` in the data dir, which `ps` must not
     // list as a sandbox.
     std::fs::create_dir_all(home.join(".local/share/devcroft/_fleet/x/agents")).unwrap();
@@ -426,4 +432,56 @@ fn a_real_devbox_agent_builds_its_project_in_its_clone() {
     );
     assert!(!out.contains("REPO_READABLE"), "{out}");
     commands::stop(&state, &manifest, exe(), &agent.id).unwrap();
+}
+
+#[test]
+fn rm_refuses_a_running_agent_and_removes_a_stopped_one_with_its_clone() {
+    let Some(root) = capable_host() else { return };
+    let s = Setup::new("rm", Some(&root), "", true);
+    let started = s.up(2).unwrap();
+    let m = s.manifest();
+    let clone = |id: &str| s.project().join(".devcroft/fleet").join(id);
+
+    let err = commands::rm(&s.state(), &m, exe(), &s.project(), "a1").unwrap_err();
+    assert_eq!(err.exit_code(), 2, "{err}");
+    assert!(err.to_string().contains("stop it first"), "{err}");
+    assert!(clone("a1").is_dir());
+
+    commands::stop(&s.state(), &m, exe(), "a1").unwrap();
+    commands::rm(&s.state(), &m, exe(), &s.project(), "a1").unwrap();
+    assert!(!clone("a1").exists());
+    assert!(!s.state().join("agents/a1").exists());
+    let listed = commands::ls(&s.state(), &m, exe()).unwrap();
+    assert_eq!(listed.len(), 1);
+    assert_eq!(listed[0].record.id, started[1].id);
+
+    // --all stops what is running and leaves nothing: no clones, no node,
+    // no state.
+    let removed = commands::rm_all(&s.state(), &m, exe(), &s.project()).unwrap();
+    assert_eq!(removed, ["a2"]);
+    assert!(!clone("a2").exists());
+    assert!(!root.join(format!("fleet-{}", s.name)).exists());
+    assert!(!s.state().exists());
+}
+
+/// Preflight runs before anything is cloned, and names what failed.
+#[test]
+fn preflight_refuses_an_undelegated_cgroup_before_cloning() {
+    if !Path::new("/sys/fs/cgroup/cgroup.controllers").exists() {
+        eprintln!("skipping: no cgroup v2 hierarchy here");
+        return;
+    }
+    // The hierarchy's own root: never delegated to an unprivileged user.
+    let s = Setup::new("undelegated", Some(Path::new("/sys/fs/cgroup")), "", true);
+    if unsafe { libc::geteuid() } == 0 {
+        eprintln!("skipping: root can write the hierarchy's root");
+        return;
+    }
+    let err = s.up(1).unwrap_err();
+    assert_eq!(err.exit_code(), 4, "{err}");
+    assert!(
+        err.to_string().contains("preflight: cgroup delegation"),
+        "{err}"
+    );
+    assert!(!s.project().join(".devcroft").exists());
 }

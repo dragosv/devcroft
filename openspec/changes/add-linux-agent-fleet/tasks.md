@@ -252,7 +252,14 @@ the implementation before it resolves.
       empty is retired and its leaf removed; a directory with no record (a
       start interrupted by a crash) is removed with its leaf. Unticked
       until leaves with no directory at all are swept too.
-- [ ] Read metrics and exit events from the agent's cgroup interface files.
+- [x] Read metrics and exit events from the agent's cgroup interface files.
+      **Done:** `fleet ls` and `inspect` read `memory.current` and
+      `cpu.stat`, and the evidence is kept in the agent's record when it
+      dies. It is read *before* the leaf is removed, since the counters go
+      with it, both on `stop` and when reconciling an agent that died on
+      its own. An agent OOM-killed at 64 MiB is retired with
+      `oom_group_kill` recorded, and a clean stop records nothing; a mutant
+      that drops the evidence fails.
       **Including why something died**: `memory.events`' `oom_kill` counter
       and `pids.events`' denied-fork count turn "the agent vanished" into
       "the agent was OOM-killed". Report nothing when the counters are
@@ -494,13 +501,21 @@ the implementation before it resolves.
       repository (every sample here) would have put the agent at the
       clone's root. The workspace is now the same relative path inside
       the clone; a mutant putting it back at the root fails.
-- [ ] `fleet inspect <id>` (one agent's record and evidence) and
-      `fleet rm`: stopped agents keep their records, and the fleet's empty
-      cgroup node stays until something removes it.
-- [ ] Preflight before the first agent (spec: *Preflight environment
-      validation*): delegation, user namespaces, a fresh procfs, the
-      Landlock ABI, each named with its remedy. `FleetNode::create` and the
-      helper already fail by name; this runs them before any agent exists.
+- [x] `fleet inspect <id>` and `fleet rm <id> | --all [--yes]`. `rm` refuses
+      a running agent, deletes its record and its clone (only at the path
+      `up` makes clones, whatever the record says), and `--all` stops what
+      is running, then removes every clone, the cgroup node and the state.
+      `--yes` is required non-interactively, as for `rm`.
+- [x] Preflight before the first agent (spec: *Preflight environment
+      validation*), **by running one**: a probe agent runs
+      `devcroft --version` in a throwaway node, so delegation, user
+      namespaces, a fresh procfs and Landlock are each tested for real, and
+      the step the helper names gets its remedy (`commands::remedy`). It
+      runs before anything is cloned: an undelegated cgroup root is refused
+      with exit 4 and no `.devcroft/` made.
+      **Found by the tests:** the probe's node was named by pid, so two
+      `up`s in one process shared its leaf and failed each other with
+      EEXIST; it is now unique per call.
 - [ ] The systemd user unit (`Delegate=yes`) and finding the delegated
       root from `/proc/self/cgroup` (section 1), on a VM with systemd.
 - [ ] Per-agent workspaces are group 4's clones; today `AgentLaunch`

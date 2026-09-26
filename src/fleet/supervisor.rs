@@ -30,7 +30,7 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use super::cgroup::{FleetNode, Limits, Teardown};
+use super::cgroup::{Evidence, FleetNode, Limits, Teardown};
 use super::init::{self, Agent, AgentSpec, Stdio, View};
 use crate::policy::CapabilityPlan;
 
@@ -87,6 +87,11 @@ pub struct AgentRecord {
     pub port_mappings: Vec<PortMapping>,
     /// Set when the agent is blocked on a question (`add-agent-interaction`).
     pub attention: bool,
+    /// Why the agent's processes died, when the kernel recorded a reason
+    /// (an OOM kill, refused forks). Read from the leaf before it is
+    /// removed, since its counters go with it; absent on a clean stop.
+    #[serde(default)]
+    pub evidence: Option<Evidence>,
 }
 
 /// A record plus what is true of it right now.
@@ -264,6 +269,7 @@ impl Supervisor {
                 view: launch.view,
                 port_mappings: Vec::new(),
                 attention: false,
+                evidence: None,
             },
         )
     }
@@ -289,18 +295,60 @@ impl Supervisor {
     /// Stop one agent: everything in its leaf, however detached, and only
     /// that. Its record stays, as Stopped.
     pub fn stop(&mut self, id: &str) -> io::Result<()> {
-        let mut record = read_record(&self.agent_dir(id))?
+        let record = read_record(&self.agent_dir(id))?
             .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, format!("no agent {id}")))?;
-        if let Some(leaf) = self.node.existing_leaf(id)
-            && let Teardown::LeftBehind(path) = leaf.kill()?
-        {
-            return Err(io::Error::other(format!(
-                "agent {id}: processes remain in {} after cgroup.kill; left in place",
-                path.display()
-            )));
-        }
+        self.retire(record)?;
         if let Some(agent) = self.children.remove(id) {
             reap(id, &agent)?;
+        }
+        Ok(())
+    }
+
+    /// One agent, reconciled first.
+    pub fn inspect(&mut self, id: &str) -> io::Result<AgentStatus> {
+        self.list()?
+            .into_iter()
+            .find(|a| a.record.id == id)
+            .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, format!("no agent {id}")))
+    }
+
+    /// Forget a stopped agent: its directory and record. Refuses a running
+    /// one. Returns the record, so the caller can remove what it made for
+    /// the agent (its workspace).
+    pub fn remove(&mut self, id: &str) -> io::Result<AgentRecord> {
+        let status = self.inspect(id)?;
+        if status.record.state == AgentState::Running {
+            return Err(io::Error::new(
+                io::ErrorKind::ResourceBusy,
+                format!("agent {id} is running; stop it first"),
+            ));
+        }
+        std::fs::remove_dir_all(self.agent_dir(id))?;
+        Ok(status.record)
+    }
+
+    /// Remove the fleet's cgroup node. Fails while any agent's leaf exists.
+    pub fn remove_node(self) -> io::Result<()> {
+        self.node.remove()
+    }
+
+    /// Empty the agent's leaf, keep the kernel's reason if it recorded
+    /// one, and record the agent Stopped. The evidence is read first: the
+    /// counters live in the leaf, and removing it discards them.
+    fn retire(&self, mut record: AgentRecord) -> io::Result<()> {
+        if let Some(leaf) = self.node.existing_leaf(&record.id) {
+            if let Ok(evidence) = leaf.exit_evidence()
+                && !evidence.is_quiet()
+            {
+                record.evidence = Some(evidence);
+            }
+            if let Teardown::LeftBehind(path) = leaf.kill()? {
+                return Err(io::Error::other(format!(
+                    "agent {}: processes remain in {} after cgroup.kill; left in place",
+                    record.id,
+                    path.display()
+                )));
+            }
         }
         record.state = AgentState::Stopped;
         self.release(&record)
@@ -327,7 +375,7 @@ impl Supervisor {
                     }
                     std::fs::remove_dir_all(&dir)?;
                 }
-                Some(mut record) if record.state == AgentState::Running => {
+                Some(record) if record.state == AgentState::Running => {
                     let alive = self
                         .node
                         .existing_leaf(&id)
@@ -335,11 +383,7 @@ impl Supervisor {
                         .transpose()?
                         .unwrap_or(false);
                     if !alive {
-                        if let Some(leaf) = self.node.existing_leaf(&id) {
-                            leaf.kill()?;
-                        }
-                        record.state = AgentState::Stopped;
-                        self.release(&record)?;
+                        self.retire(record)?;
                     }
                 }
                 Some(_) => {}

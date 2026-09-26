@@ -170,7 +170,10 @@ fleet (Linux; experimental)
       [--cgroup-root P]         (a delegated cgroup v2 subtree; or DEVCROFT_FLEET_CGROUP_ROOT)
       [--host-root]             (keep the host's root instead of a minimal view)
   fleet ls                    every agent: state, memory, CPU, workspace
+  fleet inspect <id>          one agent's record, and why it died if it did
   fleet stop <id>             stop one agent, keeping its workspace
+  fleet rm <id> | --all       remove stopped agents and their clones (--yes
+      [--yes]                   non-interactively); --all stops them first
 
 ssh
   ssh [name]                  connect over the sandbox's own SSH server
@@ -2638,7 +2641,8 @@ fn cli_fleet(args: &[String]) -> i32 {
 #[cfg(target_os = "linux")]
 fn cli_fleet_linux(args: &[String]) -> i32 {
     const USAGE: &str = "devcroft fleet: usage: devcroft fleet up --agents N \
-                         [--cgroup-root P] [--host-root] | ls | stop <id>";
+                         [--cgroup-root P] [--host-root] | ls | inspect <id> | stop <id> \
+                         | rm <id>|--all [--yes]";
     let fail = |e: devcroft::fleet::commands::FleetError| {
         eprintln!("devcroft fleet: {e}");
         e.exit_code()
@@ -2770,6 +2774,75 @@ fn cli_fleet_linux(args: &[String]) -> i32 {
                     0
                 }
                 Err(e) => fail(e),
+            }
+        }
+        Some("inspect") if args.len() == 2 => {
+            match devcroft::fleet::commands::inspect(&state_dir, &manifest, &exe, &args[1]) {
+                Ok(a) => {
+                    let r = &a.record;
+                    println!("id\t{}", r.id);
+                    println!("state\t{:?}", r.state);
+                    println!("workspace\t{}", r.workspace.display());
+                    println!("cgroup\t{}", r.cgroup.display());
+                    println!(
+                        "view\t{}",
+                        if r.view { "minimal root" } else { "host root" }
+                    );
+                    println!("policy\t{}", r.policy_fingerprint);
+                    if let Some(b) = a.memory_bytes {
+                        println!("memory\t{b} bytes");
+                    }
+                    if let Some(u) = a.cpu_usec {
+                        println!("cpu\t{:.3}s", u as f64 / 1e6);
+                    }
+                    if let Some(e) = r.evidence {
+                        println!(
+                            "died\t{} OOM kill(s), {} whole-agent OOM kill(s), {} fork(s) refused",
+                            e.oom_kills, e.oom_group_kills, e.forks_denied
+                        );
+                    }
+                    0
+                }
+                Err(e) => fail(e),
+            }
+        }
+        Some("rm") => {
+            let yes = args.iter().any(|a| a == "--yes");
+            let targets: Vec<&String> = args[1..].iter().filter(|a| *a != "--yes").collect();
+            let [target] = targets[..] else {
+                eprintln!("{USAGE}");
+                return 2;
+            };
+            if !yes && !stdout_is_tty() {
+                eprintln!(
+                    "devcroft fleet: removing agents deletes their clones; pass --yes to run \
+                     non-interactively"
+                );
+                return 2;
+            }
+            if target == "--all" {
+                match devcroft::fleet::commands::rm_all(&state_dir, &manifest, &exe, &project_root)
+                {
+                    Ok(ids) => {
+                        println!("removed {} agent(s) and the fleet", ids.len());
+                        0
+                    }
+                    Err(e) => fail(e),
+                }
+            } else {
+                match devcroft::fleet::commands::rm(
+                    &state_dir,
+                    &manifest,
+                    &exe,
+                    &project_root,
+                    target,
+                ) {
+                    Ok(()) => {
+                        println!("removed {target} and its clone");
+                        0
+                    }
+                    Err(e) => fail(e),
+                }
             }
         }
         Some("stop") if args.len() == 2 => {
