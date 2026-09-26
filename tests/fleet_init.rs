@@ -145,6 +145,7 @@ fn start(leaf: &Leaf, spec: &AgentSpec) -> (Agent, std::io::PipeReader) {
     let stdio = Stdio {
         stdout: Some(w.into()),
         stderr: None,
+        inherit: Vec::new(),
     };
     let agent = init::spawn(Path::new(env!("CARGO_BIN_EXE_devcroft")), leaf, spec, stdio).unwrap();
     (agent, r)
@@ -276,6 +277,8 @@ fn agents_cannot_see_or_signal_each_other() {
         ),
     );
     assert_eq!(code, 0, "{out}");
+    // Its own processes are listed, so the loop below checks something.
+    assert!(out.lines().any(|l| l == "sh"), "{out}");
     for comm in out.lines() {
         assert!(
             ["devcroft", "sh", "cat"].contains(&comm),
@@ -365,7 +368,7 @@ fn with_a_view_an_agent_sees_exactly_its_grants() {
     let mut s = spec(
         &dirs,
         &format!(
-            "echo $(ls /); \
+            "echo mounts=$(cut -d' ' -f5 /proc/self/mountinfo | tr '\\n' ' '); \
              echo procs=$(ls /proc | grep -c '^[0-9]'); \
              pwd; \
              test -e {repo} && echo REPO_VISIBLE; \
@@ -382,16 +385,29 @@ fn with_a_view_an_agent_sees_exactly_its_grants() {
     assert_eq!(code, 0, "{out}");
     let lines: Vec<&str> = out.lines().collect();
 
-    // The root holds the grants (`/usr` and what merged `/usr` needs), the
-    // project root's parents, and the view's own /dev, /proc and /tmp.
-    // Nothing else: not this repository, not /home, not the rest of /etc.
-    let allowed = [
-        "bin", "dev", "etc", "lib", "lib64", "proc", "sbin", "tmp", "usr",
-    ];
-    for entry in lines[0].split_whitespace() {
+    // Every mount in the agent's namespace is one of its plan's grants, or
+    // one the view makes for itself (its root, /proc, /tmp and /dev). Read from the agent's own mountinfo: listing `/`
+    // is refused, since nothing grants it, so the view cannot be
+    // enumerated from inside by walking it.
+    let grants: Vec<PathBuf> = s
+        .plan
+        .resolved_grants(&dirs.0)
+        .unwrap()
+        .into_iter()
+        .map(|g| g.path)
+        .collect();
+    // `setup_dev`'s minimal /dev (its own nodes and devpts) is the view's,
+    // covered by that function's tests rather than by the plan.
+    let own = |m: &str| m == "/" || m == "/proc" || m == "/tmp" || m.starts_with("/dev");
+    let mounts: Vec<&str> = lines[0]
+        .trim_start_matches("mounts=")
+        .split_whitespace()
+        .collect();
+    assert!(mounts.contains(&"/usr"), "{out}");
+    for m in &mounts {
         assert!(
-            allowed.contains(&entry),
-            "{entry:?} in the view's root: {out}"
+            own(m) || grants.iter().any(|g| g == Path::new(m)),
+            "{m:?} is mounted in the view but is not a grant: {out}"
         );
     }
     assert!(
@@ -424,4 +440,138 @@ fn with_a_view_an_agent_sees_exactly_its_grants() {
     });
     // Everything was mounted inside the agent's namespace.
     assert_eq!(std::fs::read_dir(&dirs.1).unwrap().count(), 0);
+}
+
+/// The keeper, as fleet will run it: `__keeper` as the agent's command,
+/// its control and SSH sockets bound here, by the supervisor, before any
+/// restriction exists, and handed in as inherited fds. A session then goes
+/// through the ordinary keeper protocol and runs inside the agent.
+#[test]
+fn the_keeper_runs_as_the_agents_command_and_serves_sessions() {
+    use devcroft::keeper::protocol::{self, Frame, SpawnRequest};
+    use std::os::unix::net::{UnixListener, UnixStream};
+
+    let Some(root) = capable_host() else { return };
+    let node = Scratch::new(&root, "keeper");
+    let leaf = node.leaf("a");
+    let dirs = Dirs::new("keeper");
+    let exe = Path::new(env!("CARGO_BIN_EXE_devcroft"));
+
+    // Bound on the host, before the agent exists: the sockets stay
+    // reachable from out here only because they predate its restriction.
+    let state = dirs.0.parent().unwrap().join("state");
+    std::fs::create_dir(&state).unwrap();
+    let control_path = state.join("control.sock");
+    let control = UnixListener::bind(&control_path).unwrap();
+    let ssh = UnixListener::bind(state.join("ssh.sock")).unwrap();
+
+    // What `up` compiles, including the grant that lets the keeper binary
+    // be exec'd inside the view.
+    let (manifest, _) = devcroft::config::parse(
+        "[sandbox]\nname = \"fleet-keeper\"\n\n[env]\nprovider = \"flox\"\n\n\
+         [filesystem]\nallow = [\".\"]\nread = [\"/proc\"]\n",
+    )
+    .unwrap();
+    let plan = devcroft::policy::compile(&manifest)
+        .with_provider_grants("flox", &["/usr".to_owned()])
+        .with_keeper_exe_grant(exe.parent().unwrap().to_string_lossy().into_owned())
+        .to_capability_plan();
+
+    let first = init::FIRST_INHERITED_FD;
+    let spec = AgentSpec {
+        command: vec![
+            exe.to_string_lossy().into_owned(),
+            "__keeper".into(),
+            first.to_string(),
+            (first + 1).to_string(),
+        ],
+        env: vec![
+            ("PATH".into(), std::env::var("PATH").unwrap()),
+            (
+                "DEVCROFT_CAPABILITY_PLAN".into(),
+                serde_json::to_string(&plan).unwrap(),
+            ),
+            ("DEVCROFT_START_SERVICES".into(), "0".into()),
+        ],
+        cwd: Some(dirs.0.clone()),
+        hostname: "agent".into(),
+        plan,
+        project_root: dirs.0.clone(),
+        view: Some(View {
+            root: dirs.1.clone(),
+            proxy_socket: None,
+        }),
+    };
+    let (log_r, log_w) = std::io::pipe().unwrap();
+    let stdio = Stdio {
+        stdout: None,
+        stderr: Some(log_w.into()),
+        inherit: vec![control.into(), ssh.into()],
+    };
+    let agent = init::spawn(exe, &leaf, &spec, stdio).unwrap();
+
+    let session = |script: &str| -> (Option<i32>, String) {
+        let mut stream = UnixStream::connect(&control_path).unwrap();
+        protocol::write_frame(
+            &mut stream,
+            &Frame::Spawn(SpawnRequest {
+                cmd: "sh".into(),
+                args: vec!["-c".into(), script.into()],
+                cwd: dirs.0.to_string_lossy().into_owned(),
+                env: Default::default(),
+                pty: None,
+            }),
+        )
+        .unwrap();
+        let mut out = String::new();
+        loop {
+            match protocol::read_frame(&mut stream).unwrap() {
+                Frame::SpawnOk { .. } => {}
+                Frame::SpawnErr { message } => panic!("keeper refused to spawn: {message}"),
+                Frame::Stdout(b) | Frame::Stderr(b) => out.push_str(&String::from_utf8_lossy(&b)),
+                Frame::Exit(status) => return (status.code, out),
+                _ => {}
+            }
+        }
+    };
+
+    let repo = env!("CARGO_MANIFEST_DIR");
+    let (code, out) = session(&format!(
+        "cat /proc/self/cgroup; \
+         cat /proc/sys/kernel/hostname; \
+         cat /proc/[0-9]*/comm | sort | uniq -c | tr -s ' ' | tr '\\n' ';'; echo; \
+         test -e {repo}/Cargo.toml && echo REPO_VISIBLE; \
+         echo from-a-session > marker; \
+         exit 3"
+    ));
+    assert_eq!(code, Some(3), "{out}");
+    let lines: Vec<&str> = out.lines().collect();
+    // The session runs in the agent: its leaf, its hostname, its view.
+    assert_eq!(lines[0], "0::/", "{out}");
+    assert_eq!(lines[1], "agent", "{out}");
+    // Its PID namespace holds the helper, the keeper and the session
+    // (both `devcroft`), and nothing of the host.
+    assert!(lines[2].contains("devcroft"), "{out}");
+    for entry in lines[2].split(';').filter(|e| !e.trim().is_empty()) {
+        let comm = entry.split_whitespace().last().unwrap();
+        assert!(
+            ["devcroft", "sh", "cat", "sort", "uniq", "tr"].contains(&comm),
+            "a process that is not the agent's: {comm:?} in {out}"
+        );
+    }
+    // The keeper binary's grant is `target/debug`, inside this repository,
+    // so the repository's path exists in the view as that grant's parent
+    // directories. Its contents do not.
+    assert!(!out.contains("REPO_VISIBLE"), "{out}");
+    assert_eq!(
+        std::fs::read_to_string(dirs.0.join("marker")).unwrap(),
+        "from-a-session\n"
+    );
+
+    // Stopping the agent takes the keeper and its sessions with it.
+    agent.signal(libc::SIGKILL).unwrap();
+    agent.wait().unwrap();
+    wait_until("the leaf is empty", || !leaf.populated().unwrap());
+    assert!(UnixStream::connect(&control_path).is_err());
+    drop(log_r);
 }

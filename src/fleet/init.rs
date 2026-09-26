@@ -75,6 +75,10 @@ pub const SUBCOMMAND: &str = "__fleet_init";
 const CONFIG_FD: RawFd = 3;
 const STATUS_FD: RawFd = 4;
 
+/// Where [`Stdio::inherit`]'s fds land, in order, in both the helper and
+/// the command: the first is fd 5, the next 6, and so on.
+pub const FIRST_INHERITED_FD: RawFd = 5;
+
 // Not exported by `libc` for every target; stable kernel ABI.
 const CLONE_INTO_CGROUP: u64 = 0x2_0000_0000;
 const SECBIT_NOROOT: libc::c_ulong = 1 << 0;
@@ -140,12 +144,33 @@ pub struct Agent {
     pidfd: OwnedFd,
 }
 
-/// Where the agent's stdout and stderr go. `None` inherits the
+/// The agent's fds. For stdout and stderr, `None` inherits the
 /// supervisor's; stdin is always `/dev/null`.
 #[derive(Debug, Default)]
 pub struct Stdio {
     pub stdout: Option<OwnedFd>,
     pub stderr: Option<OwnedFd>,
+    /// Handed to the command at [`FIRST_INHERITED_FD`] onward. This is how
+    /// the keeper gets its listening sockets: bound by the supervisor, on
+    /// the host, before any restriction exists (the listener-before-
+    /// restriction invariant), and reachable from outside only because
+    /// they predate it. PID 1 closes its own copies once the command has
+    /// them.
+    pub inherit: Vec<OwnedFd>,
+}
+
+/// What crosses the configuration pipe: the spec plus how many fds were
+/// inherited, which only `spawn` knows.
+#[derive(Serialize)]
+struct ConfigOut<'a> {
+    spec: &'a AgentSpec,
+    inherited: usize,
+}
+
+#[derive(Deserialize)]
+struct ConfigIn {
+    spec: AgentSpec,
+    inherited: usize,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -160,7 +185,11 @@ struct Status {
 /// running `spec`. Returns once the helper has reported that the command
 /// started, or with the helper's own error if it did not.
 pub fn spawn(exe: &Path, leaf: &Leaf, spec: &AgentSpec, stdio: Stdio) -> io::Result<Agent> {
-    let config = serde_json::to_vec(spec).map_err(io::Error::other)?;
+    let config = serde_json::to_vec(&ConfigOut {
+        spec,
+        inherited: stdio.inherit.len(),
+    })
+    .map_err(io::Error::other)?;
     let (config_r, mut config_w) = pipe()?;
     let (mut status_r, status_w) = pipe()?;
     let (sync_r, sync_w) = pipe()?;
@@ -178,6 +207,9 @@ pub fn spawn(exe: &Path, leaf: &Leaf, spec: &AgentSpec, stdio: Stdio) -> io::Res
     }
     if let Some(fd) = &stdio.stderr {
         plan.push((high(fd)?, 2));
+    }
+    for (n, fd) in stdio.inherit.iter().enumerate() {
+        plan.push((high(fd)?, FIRST_INHERITED_FD + n as RawFd));
     }
     drop((config_r, status_w, devnull, stdio));
     let dups: Vec<(RawFd, RawFd)> = plan.iter().map(|(fd, t)| (fd.as_raw_fd(), *t)).collect();
@@ -384,13 +416,17 @@ pub fn helper_main() -> i32 {
 }
 
 fn setup(signals: &libc::sigset_t) -> io::Result<libc::pid_t> {
+    // Off the supervisor's terminal, as `up` detaches its keeper. A clone
+    // child is never a group leader, so this cannot fail with EPERM.
+    // SAFETY: no arguments; affects only this process.
+    unsafe { libc::setsid() };
     // SAFETY: fd 3 was placed by `spawn`.
     let mut config = unsafe { std::fs::File::from_raw_fd(CONFIG_FD) };
     let mut raw = Vec::new();
     config
         .read_to_end(&mut raw)
         .map_err(|e| step("read configuration", e))?;
-    let spec: AgentSpec = serde_json::from_slice(&raw)
+    let ConfigIn { spec, inherited } = serde_json::from_slice(&raw)
         .map_err(|e| step("parse configuration", io::Error::other(e)))?;
     if spec.command.is_empty() {
         return Err(io::Error::other("configuration: empty command"));
@@ -475,6 +511,12 @@ fn setup(signals: &libc::sigset_t) -> io::Result<libc::pid_t> {
     let child = cmd
         .spawn()
         .map_err(|e| step(&format!("start {:?}", spec.command[0]), e))?;
+    // The command holds the inherited fds now. PID 1 keeping a listening
+    // socket would leave it open after the command that serves it exits.
+    for n in 0..inherited {
+        // SAFETY: closing fds `spawn` placed for the command, unused here.
+        unsafe { libc::close(FIRST_INHERITED_FD + n as RawFd) };
+    }
     Ok(child.id() as libc::pid_t)
 }
 

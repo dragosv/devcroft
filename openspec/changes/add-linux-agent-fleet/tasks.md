@@ -266,11 +266,17 @@ the implementation before it resolves.
 
 ## 2. Sandbox runtime
 
-- [ ] Implement the internal `devcroft-init` subcommand: single-threaded, config
+- [x] Implement the internal `devcroft-init` subcommand: single-threaded, config
       over pipe, ruleset over inherited fd.
       **Built, with the ruleset applied in the helper rather than carried
-      over an fd** (see the ruleset task below for why); unticked only
-      until the keeper is the command.
+      over an fd** (see the ruleset task below for why). **The keeper runs
+      as the agent's command** (`__keeper 5 6`): the supervisor binds the
+      control and SSH sockets on the host, `Stdio::inherit` hands them to
+      the command at `FIRST_INHERITED_FD` onward, and PID 1 closes its own
+      copies. `the_keeper_runs_as_the_agents_command_and_serves_sessions`
+      runs a session over the ordinary keeper protocol: it lands in the
+      agent's leaf, hostname, PID namespace and view, writes to the
+      project, and dies with the agent.
       **First version, without the ruleset** (`src/fleet/init.rs`, `__fleet_init`):
       one `clone3` into all seven namespaces, directly into the cgroup leaf,
       with a pidfd. The child does only `dup2` and `execve`. The parent
@@ -385,6 +391,13 @@ the implementation before it resolves.
       `EPERM`, because the remount dropped flags a user namespace locks.
       Fixed in `remount_readonly`, with `tests/mount_locked_flags.rs`
       (`docs/implementation-log.md`).
+- [ ] **Share the keeper's environment with `up`.** The test above sets
+      only what the keeper requires (`DEVCROFT_CAPABILITY_PLAN`, services
+      off, so no SSH keys and no hooks). `up` builds the rest inline in
+      `spawn_keeper`: SSH key material, the resolved shell, hooks,
+      services, `HOME` and the relay. Extract it into one function both
+      call when fleet's supervisor composes real agents, so the two cannot
+      drift, and move `spawn_keeper`'s comments with it.
 - [x] Structured error reporting from the helper back to the supervisor.
       One JSON line on fd 4 naming the failed step, or EOF plus the
       helper's exit status (`a_failing_step_is_reported_by_name`).
