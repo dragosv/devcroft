@@ -1121,3 +1121,17 @@ where `devenv build shell` fails in nix's *evaluation* of
 install-nix-action's daemon plus devenv's bundled evaluator. The
 provider's own e2e passes 15/15 on the same runner. That leg alone stays
 non-blocking, with the finding written where the next reader will look.
+
+**A read-only grant on a `nosuid` mount failed every view (found through
+fleet, 2026-09-26).** Fleet's tests grant `/proc` read, so an agent can be
+inspected from inside, and `construct_view` refused it with a bare `EPERM`.
+The cause was general. Inside a user namespace, an inherited mount's
+`nosuid`, `nodev`, `noexec` and atime flags are locked: a remount may add a
+restriction but not drop one, and `remount_readonly` named only
+`MS_RDONLY`, which drops the rest. Measured through `__mount_view_probe`: a
+`filesystem.read` of `/dev/shm` failed the same way, `/usr/share` (no
+locked flags) worked. So `up` failed for any manifest that read a path on
+such a mount (`/proc`, `/dev/shm`, `/run`, a host `/tmp` mounted
+`nosuid`). Nothing had caught it because every grant tested lived on the
+root filesystem. The remount now carries the flags `statvfs` reports, as
+bubblewrap does; `tests/mount_locked_flags.rs` fails without it.

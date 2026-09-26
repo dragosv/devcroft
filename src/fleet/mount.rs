@@ -508,7 +508,7 @@ fn bind_mount(
 #[cfg(target_os = "linux")]
 fn remount_readonly(target: &std::path::Path, recursive: bool) -> io::Result<()> {
     let target_c = path_to_cstring(target)?;
-    let mut flags = libc::MS_BIND | libc::MS_REMOUNT | libc::MS_RDONLY;
+    let mut flags = libc::MS_BIND | libc::MS_REMOUNT | libc::MS_RDONLY | locked_flags(&target_c)?;
     if recursive {
         flags |= libc::MS_REC;
     }
@@ -527,6 +527,39 @@ fn remount_readonly(target: &std::path::Path, recursive: bool) -> io::Result<()>
         return Err(io::Error::last_os_error());
     }
     Ok(())
+}
+
+/// The flags a remount of `target` must keep, read from the mount as it is.
+///
+/// **Without these, a read-only grant on any `nosuid`, `nodev` or `noexec`
+/// mount fails the whole view with `EPERM`.** A mount inherited into a
+/// user namespace has those flags (and its atime mode) *locked*: a remount
+/// may add restrictions but may not drop one, and a remount that does not
+/// name a flag drops it. Found through fleet (a manifest reading `/proc`,
+/// which is `nosuid,nodev,noexec`), then measured to be general: through
+/// `__mount_view_probe`, a `filesystem.read` of `/dev/shm` failed the same
+/// way while one of `/usr/share` worked. That made every `up` whose
+/// manifest reads such a path fail. The same fix bubblewrap applies.
+#[cfg(target_os = "linux")]
+fn locked_flags(target: &std::ffi::CStr) -> io::Result<libc::c_ulong> {
+    // SAFETY: `statvfs` is plain-old-data, fully written by the call.
+    let mut st: libc::statvfs = unsafe { std::mem::zeroed() };
+    // SAFETY: a valid NUL-terminated path and a valid out-pointer.
+    if unsafe { libc::statvfs(target.as_ptr(), &mut st) } != 0 {
+        return Err(io::Error::last_os_error());
+    }
+    let pairs = [
+        (libc::ST_NOSUID, libc::MS_NOSUID),
+        (libc::ST_NODEV, libc::MS_NODEV),
+        (libc::ST_NOEXEC, libc::MS_NOEXEC),
+        (libc::ST_NOATIME, libc::MS_NOATIME),
+        (libc::ST_NODIRATIME, libc::MS_NODIRATIME),
+        (libc::ST_RELATIME, libc::MS_RELATIME),
+    ];
+    Ok(pairs
+        .iter()
+        .filter(|(st_flag, _)| st.f_flag & st_flag != 0)
+        .fold(0, |acc, (_, ms_flag)| acc | ms_flag))
 }
 
 /// A fresh, private `tmpfs` at `<new_root>/tmp` — never a bind of the
