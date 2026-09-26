@@ -34,7 +34,7 @@ the implementation before it resolves.
 - [ ] Confirm the snapshot layer is the content-addressable `undo` module rather
       than an overlay, and measure agent startup cost at N agents on a
       representative worktree (Open Question 3).
-- [ ] **Re-derive whether D9's filter is needed at all — do this before the
+- [x] **Re-derive whether D9's filter is needed at all — do this before the
       spike below, not after.** D9 declared the proxy-only seccomp filter
       mandatory and made the handoff spike a hard gate, reasoning that a
       userspace network helper providing a general stack makes proxy
@@ -44,9 +44,37 @@ the implementation before it resolves.
       `HTTPS_PROXY` is refused by Landlock's `NetPort` *and* by there being
       no route out. If that holds for a fleet agent, both items below stop
       being blockers and this group loses its hardest work.
+      **Answered (2026-09-26, measured): not needed — conditionally, and
+      the "refused twice over" framing was wrong.** The two layers are not
+      redundant; they cover different axes. A Landlock-restricted child
+      (ABI 8, `ConnectTcp` for one port P only):
+
+      | probe | host netns | fresh userns+netns, `lo` only |
+      | --- | --- | --- |
+      | `127.0.0.1:P` | connected | connected |
+      | *non-loopback address*`:P` | **connected** | connected (`127.0.0.2`) |
+      | `127.0.0.1:Q` (not granted) | EACCES | EACCES |
+      | `1.1.1.1:443` | EACCES | EACCES |
+      | UDP `sendto 1.1.1.1:53` | **sent** | ENETUNREACH |
+
+      `NetPort` scopes by **port number alone, never by address**, and
+      is TCP-only. So Landlock alone would let a workload reach *any
+      host* on the proxy's port (or a declared `network.ports` port), and
+      any host at all over UDP. What makes egress non-cooperative is the
+      namespace having no route out; Landlock is the TCP-port second
+      layer inside it. The filter is therefore unnecessary **exactly as
+      long as an agent's namespace never gains a route** — which is the
+      invariant D5 would break (see the slirp4netns item below).
+      Probe: a ctypes script calling `landlock_create_ruleset`/
+      `add_rule(NET_PORT)`/`restrict_self` directly, so the result is the
+      kernel's, not nono's.
 - [ ] ~~**Spike (blocking): the seccomp notification listener handoff.**~~
-      **Gate suspended pending the re-derivation above**, not struck: the
-      spike itself is still the right work *if* the filter is needed. The
+      **Gate lifted by the re-derivation above, conditionally**: not
+      needed while agent namespaces stay route-less. It comes back the
+      moment anything gives an agent a general stack — and then it is
+      needed for UDP as much as for TCP, since `NetPort` covers neither
+      addresses nor datagrams. The spike itself is still the right work
+      *if* the filter is needed. The
       proxy-only filter traps `sendmsg`, so the listener FD cannot be passed
       over an ordinary control socket after installation; a bootstrap
       (`CLONE_FILES`, or the pidfd route) would have to transfer it to the
@@ -70,6 +98,19 @@ the implementation before it resolves.
       **Scope reduced to the host-side port mapping**: reaching the proxy and
       (through it) a registry needs no helper, since a unix socket crosses a
       network namespace. Nothing in fleet's in-namespace half waits on this.
+      **Re-examine before spiking — the D9 re-derivation makes this the
+      wrong tool.** slirp4netns attaches a tap with a default route and has
+      no flag that disables outbound (`--disable-host-loopback` only covers
+      the host's loopback). Attaching it for *inbound* mapping therefore
+      hands the agent a route out, and with it UDP to anywhere and TCP to
+      any host on a granted port — exactly D9's premise, which reinstates
+      the filter and its handoff gate. The alternative keeps the invariant:
+      E7's stream relay in the other direction (host TCP listener → a
+      pathname unix socket → the in-namespace forwarder, bound before
+      restriction → `127.0.0.1:<port>`). That needs no `/dev/net/tun`,
+      no helper binary and no helper preflight. Unverified: whether the
+      forwarder's Landlock profile grants `ConnectTcp` to its own declared
+      ports (`allow_localhost_port` suggests yes).
 - [ ] **Spike: systemd user-service delegation** — create the subtree, enable
       controllers, move a child into a leaf, `cgroup.kill` it, and observe
       `cgroup.events` report it empty (D6).

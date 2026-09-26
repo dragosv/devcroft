@@ -253,6 +253,18 @@ missing namespace, but the warning is about port collisions and does not
 mention this. Closing that properly needs the seccomp filter nono only
 installs on old kernels — an upstream ask, or a devcroft-side filter.
 
+**The same residual has a TCP half, found while re-deriving fleet's D9
+(2026-09-26).** `NetPort` scopes by port number, not address. The name
+`allow_localhost_port` says "localhost", but the rule it compiles to does
+not. Measured with a raw Landlock ruleset granting `ConnectTcp` for one port:
+a connect to the container's non-loopback address on that port succeeded,
+while other ports got EACCES. On a host without a namespace, then, a
+sandbox can reach *any* host on the proxy's port or on any declared
+`network.ports` port. The proxy port is OS-assigned and ephemeral, so
+reaching it on a remote host requires a listener placed there on purpose,
+which is not an accident. Isolated sandboxes are unaffected, since they have
+no route to any address but their own.
+
 ## Unix sockets are not mediated by Landlock — both halves now closed, on both platforms
 
 **Landlock's network rules cover TCP only.** `connect()` to a pathname

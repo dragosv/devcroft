@@ -365,6 +365,19 @@ blocking-verification group loses its hardest item. **Re-derive this before
 building either way** — the claim above is reasoned from a shipped mechanism
 and one measured test, not from a fleet agent under load.
 
+**Re-derived (2026-09-26, measured; tasks.md §0 has the table).** The
+conclusion holds and the reasoning did not. "Refused twice over" implied two
+redundant layers. They are not redundant: Landlock's `NetPort` scopes by port
+number alone, never by address, and it is TCP-only. A restricted child granted
+one port connected to a *non-loopback* address on that port and sent UDP to
+`1.1.1.1:53`. In a route-less namespace the same child got `ENETUNREACH` for
+the datagram. **The namespace is the egress boundary for every protocol and
+address. Landlock is a port filter inside it.** So the filter below is
+unnecessary exactly as long as an agent's namespace never gains a route. That
+turns the invariant into the thing to protect: D5's general-stack helpers
+break it, and adopting one reinstates this section's original decision in
+full.
+
 So the filter is not extra hardening layered on a working boundary — it **is**
 the boundary for runtime egress. Direct sockets fail closed; only the agent's
 local proxy endpoint and its declared listener ports are permitted.

@@ -272,8 +272,11 @@ pub fn capabilities() -> &'static [Capability] {
                 status: Status::Enforced,
                 evidence: "NetworkMode::ProxyOnly is a Landlock NetPort \
                     rule permitting only the proxy's own port \u{2014} \
-                    raw connect() to anything else fails at the kernel; \
-                    tests/egress_proxy_e2e.rs",
+                    raw connect() to any other port fails at the kernel; \
+                    tests/egress_proxy_e2e.rs. NetPort scopes by port, \
+                    not address, so the per-sandbox network namespace is \
+                    what confines that port to the relay (known-gaps.md, \
+                    UDP residual).",
             },
             macos: PlatformStatus {
                 status: Status::Enforced,
