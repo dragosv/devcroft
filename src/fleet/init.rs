@@ -36,9 +36,17 @@
 //! user namespace, and without that bit anything it execs would hold every
 //! capability there.
 //!
-//! What is not here yet: the mount view (`fleet::mount::construct_view`),
-//! the Landlock ruleset and the keeper. They slot in between the fresh
-//! `/proc` and starting the command.
+//! **The mount view is optional per agent** ([`AgentSpec::view`]),
+//! which is D2a's choice made explicit. With one, the helper builds
+//! `fleet::mount::construct_view` with a fresh `/proc` and pivots into it,
+//! so the agent sees only what its plan grants. Without one, the agent
+//! keeps the host's root and gets only the fresh `/proc`. The grants are
+//! resolved in the helper, before `pivot_root` while host paths still mean
+//! what they say, and by the same resolver Landlock's rules come from, so
+//! the view and the ruleset cannot disagree.
+//!
+//! What is not here yet: the Landlock ruleset and the keeper. They slot in
+//! between the view and starting the command.
 
 use std::ffi::CString;
 use std::io::{self, Read, Write};
@@ -94,6 +102,24 @@ pub struct AgentSpec {
     pub cwd: Option<PathBuf>,
     /// The agent's hostname, in its own UTS namespace.
     pub hostname: String,
+    /// The agent's filesystem view. `None` keeps the host's root (D2a's
+    /// host-root strategy), with only `/proc` replaced.
+    #[serde(default)]
+    pub view: Option<View>,
+}
+
+/// A minimal root for one agent, built from its compiled policy.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct View {
+    /// An existing, empty directory to build the view on. It stays empty
+    /// on the host: everything is mounted inside the agent's namespace.
+    pub root: PathBuf,
+    /// The compiled policy. Its grants are exactly what the view contains.
+    pub plan: crate::policy::CapabilityPlan,
+    /// What relative grants such as `.` resolve against.
+    pub project_root: PathBuf,
+    /// The agent's egress proxy socket, bound into the view by itself.
+    pub proxy_socket: Option<PathBuf>,
 }
 
 /// A running agent: its init helper, seen from the supervisor.
@@ -370,7 +396,22 @@ fn setup(signals: &libc::sigset_t) -> io::Result<libc::pid_t> {
     }
 
     super::mount::make_propagation_private().map_err(|e| step("private propagation", e))?;
-    mount_fresh_proc().map_err(|e| step("mount a fresh /proc", e))?;
+    match &spec.view {
+        Some(view) => {
+            let grants = view
+                .plan
+                .resolved_grants(&view.project_root)
+                .map_err(|e| step("resolve grants", io::Error::other(e.to_string())))?;
+            super::mount::construct_view(
+                &view.root,
+                &grants,
+                view.proxy_socket.as_deref(),
+                super::mount::ProcMount::Fresh,
+            )
+            .map_err(|e| step("construct the view", e))?;
+        }
+        None => mount_fresh_proc().map_err(|e| step("mount a fresh /proc", e))?,
+    }
     // SAFETY: a valid buffer and its length.
     if unsafe { libc::sethostname(spec.hostname.as_ptr().cast(), spec.hostname.len()) } != 0 {
         return Err(step("sethostname", io::Error::last_os_error()));

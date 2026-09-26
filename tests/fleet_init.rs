@@ -15,7 +15,7 @@
 #![cfg(target_os = "linux")]
 
 use devcroft::fleet::cgroup::{FleetNode, Leaf, Limits, Teardown};
-use devcroft::fleet::init::{self, Agent, AgentSpec, Stdio};
+use devcroft::fleet::init::{self, Agent, AgentSpec, Stdio, View};
 use std::io::{BufRead, BufReader, Read};
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -93,6 +93,7 @@ fn spec(script: &str) -> AgentSpec {
         env: vec![("PATH".into(), std::env::var("PATH").unwrap())],
         cwd: None,
         hostname: "agent".into(),
+        view: None,
     }
 }
 
@@ -267,4 +268,100 @@ fn a_failing_step_is_reported_by_name() {
     .unwrap_err()
     .to_string();
     assert!(err.contains("start \"/nonexistent/agent\""), "{err}");
+}
+
+/// A plan like `up` compiles for a project whose manifest grants `.`, with
+/// the host's `/usr` standing in for a provider closure (merged `/usr`
+/// makes that `sh`, `cat` and the loader).
+fn view_for(project_root: &Path, view_root: &Path) -> View {
+    let manifest = "[sandbox]\nname = \"fleet-view\"\n\n[env]\nprovider = \"flox\"\n\n\
+                    [filesystem]\nallow = [\".\"]\n";
+    let (manifest, _) = devcroft::config::parse(manifest).unwrap();
+    let plan = devcroft::policy::compile(&manifest)
+        .with_provider_grants("flox", &["/usr".to_owned()])
+        .to_capability_plan();
+    View {
+        root: view_root.to_path_buf(),
+        plan,
+        project_root: project_root.to_path_buf(),
+        proxy_socket: None,
+    }
+}
+
+/// Two fresh directories under the temp dir, removed on drop.
+struct Dirs(PathBuf, PathBuf);
+
+impl Dirs {
+    fn new(tag: &str) -> Dirs {
+        let base = std::env::temp_dir().join(format!("devcroft-init-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let (project, view) = (base.join("project"), base.join("view"));
+        std::fs::create_dir_all(&project).unwrap();
+        std::fs::create_dir_all(&view).unwrap();
+        Dirs(project, view)
+    }
+}
+
+impl Drop for Dirs {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(self.0.parent().unwrap());
+    }
+}
+
+#[test]
+fn with_a_view_an_agent_sees_exactly_its_grants() {
+    let Some(root) = capable_host() else { return };
+    let node = Scratch::new(&root, "view");
+    let leaf = node.leaf("a");
+    let dirs = Dirs::new("view");
+    let repo = env!("CARGO_MANIFEST_DIR");
+    let mut s = spec(&format!(
+        "echo $(ls /); \
+         echo procs=$(ls /proc | grep -c '^[0-9]'); \
+         pwd; \
+         test -e {repo} && echo REPO_VISIBLE; \
+         test -e /etc/passwd && echo PASSWD_VISIBLE; \
+         echo written > marker"
+    ));
+    s.view = Some(view_for(&dirs.0, &dirs.1));
+    s.cwd = Some(dirs.0.clone());
+    let (code, out) = run(&leaf, &s);
+    assert_eq!(code, 0, "{out}");
+    let lines: Vec<&str> = out.lines().collect();
+
+    // The root holds the grants (`/usr` and what merged `/usr` needs), the
+    // project root's parents, and the view's own /dev and /proc. Nothing
+    // else: not this repository, not /home, not the rest of /etc.
+    let allowed = [
+        "bin", "dev", "etc", "lib", "lib64", "proc", "sbin", "tmp", "usr",
+    ];
+    for entry in lines[0].split_whitespace() {
+        assert!(
+            allowed.contains(&entry),
+            "{entry:?} in the view's root: {out}"
+        );
+    }
+    assert!(
+        !out.contains("REPO_VISIBLE"),
+        "an ungranted path is in the view: {out}"
+    );
+    assert!(
+        !out.contains("PASSWD_VISIBLE"),
+        "an ungranted path is in the view: {out}"
+    );
+    // The view's /proc is the fresh one.
+    let procs: usize = lines[1].trim_start_matches("procs=").parse().unwrap();
+    assert!(procs <= 5, "{procs} processes visible: {out}");
+    assert_eq!(Path::new(lines[2]), dirs.0);
+
+    // The project root is the host's, writable, and what the agent writes
+    // is owned by the real user (the identity map).
+    let marker = dirs.0.join("marker");
+    assert_eq!(std::fs::read_to_string(&marker).unwrap(), "written\n");
+    use std::os::unix::fs::MetadataExt;
+    assert_eq!(std::fs::metadata(&marker).unwrap().uid(), unsafe {
+        libc::getuid()
+    });
+    // Everything was mounted inside the agent's namespace.
+    assert_eq!(std::fs::read_dir(&dirs.1).unwrap().count(), 0);
 }

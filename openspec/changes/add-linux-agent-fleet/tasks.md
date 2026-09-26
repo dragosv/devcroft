@@ -327,10 +327,32 @@ the implementation before it resolves.
       socket, and a mount view is what closes it. Same relationship fleet
       already has to `fleet::netns` — the primitive ships for one sandbox
       first, fleet is the second consumer.
+      **Consumed** (`AgentSpec::view`): the helper resolves the plan's
+      grants before `pivot_root`, with the same resolver Landlock uses, then
+      calls `construct_view` with `ProcMount::Fresh`. That is the one
+      change the fleet case needed, since `up` binds the host's `/proc`
+      (no PID namespace there). `None` keeps the host root, which is D2a's
+      other strategy, so the choice is the caller's to record.
+      `with_a_view_an_agent_sees_exactly_its_grants`: the root holds only
+      `bin dev etc lib proc sbin tmp usr`; the repository and `/etc/passwd`
+      are absent; `/proc` is the fresh one; a file written in the project
+      root is the host's and owned by the real user; and the view directory
+      stays empty on the host. Mutant: with `HostBind`, 37 processes are
+      visible. Leave unticked for the `/workspace` fixed path (D2a), which
+      is workspace isolation's (group 4).
 - [ ] Verify the agent command, its language runtime, its config directories and
       CA certificates are all present in the constructed view.
 - [ ] Wire ruleset construction in the parent, namespace-local rule addition in
       the helper, application after mounts.
+      **Re-derive the split before building it.** D2 builds the ruleset in
+      the parent because allocating after a `fork` is unsafe. The helper
+      is a freshly exec'd, single-threaded process, though, so that reason
+      is gone there. `up`'s keeper already restricts itself *inside* the
+      view, from the same `CapabilityPlan`. Rules bind to inodes, so
+      building them after `pivot_root` names what the agent actually sees,
+      including a fresh `/proc` where a pre-pivot `/proc/self` would name
+      the host's. Unverified: whether nono adds `/proc` rules of its own
+      at apply time (devcroft's baseline has none).
 - [x] Structured error reporting from the helper back to the supervisor.
       One JSON line on fd 4 naming the failed step, or EOF plus the
       helper's exit status (`a_failing_step_is_reported_by_name`).

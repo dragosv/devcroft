@@ -166,6 +166,22 @@ pub fn make_propagation_private() -> io::Result<()> {
     ))
 }
 
+/// Which procfs [`construct_view`] puts at `/proc`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProcMount {
+    /// A bind of the host's procfs. The only choice without a PID
+    /// namespace: a fresh instance would still be the caller's namespace,
+    /// and see `mount_proc`'s doc for why `/proc/self` needs the live one.
+    HostBind,
+    /// A fresh procfs for the PID namespace the caller is PID 1 of (fleet's
+    /// init helper). It lists only that namespace's processes, which is
+    /// what makes a PID namespace hide anything. The kernel refuses it in a
+    /// user namespace while the only procfs visible is masked (Docker's
+    /// default), so the caller needs a host, or a container run with
+    /// `systempaths=unconfined`.
+    Fresh,
+}
+
 /// Build the sandbox's filesystem view at `new_root` — already created,
 /// currently an empty directory — and `pivot_root` into it (task group
 /// 2, "The mount plan").
@@ -208,6 +224,7 @@ pub fn construct_view(
     new_root: &std::path::Path,
     grants: &[crate::policy::ResolvedGrant],
     proxy_socket: Option<&std::path::Path>,
+    proc: ProcMount,
 ) -> io::Result<()> {
     let tmp_path = std::path::Path::new("/tmp");
 
@@ -295,7 +312,11 @@ pub fn construct_view(
         finalize_tmp_mode(new_root, mode).map_err(|e| ctx(e, "finalizing /tmp mode", tmp_path))?;
     }
 
-    mount_proc(new_root).map_err(|e| ctx(e, "mounting /proc", new_root))?;
+    match proc {
+        ProcMount::HostBind => mount_proc(new_root),
+        ProcMount::Fresh => mount_fresh_proc(new_root),
+    }
+    .map_err(|e| ctx(e, "mounting /proc", new_root))?;
     setup_dev(new_root).map_err(|e| ctx(e, "setting up /dev", new_root))?;
     setup_merged_usr_compat(new_root)
         .map_err(|e| ctx(e, "recreating merged-/usr symlinks", new_root))?;
@@ -607,6 +628,30 @@ fn mount_proc(new_root: &std::path::Path) -> io::Result<()> {
     bind_mount(std::path::Path::new("/proc"), &target, true)
 }
 
+/// A fresh procfs at `<new_root>/proc`, for [`ProcMount::Fresh`]. Mounted
+/// after the grants loop, like the bind, so it covers any `/proc/...`
+/// grant bound there from the host's instance.
+#[cfg(target_os = "linux")]
+fn mount_fresh_proc(new_root: &std::path::Path) -> io::Result<()> {
+    let target = new_root.join("proc");
+    std::fs::create_dir_all(&target)?;
+    let target_c = path_to_cstring(&target)?;
+    // SAFETY: valid NUL-terminated strings and a null data pointer.
+    let ret = unsafe {
+        libc::mount(
+            c"proc".as_ptr(),
+            target_c.as_ptr(),
+            c"proc".as_ptr(),
+            libc::MS_NOSUID | libc::MS_NODEV | libc::MS_NOEXEC,
+            std::ptr::null(),
+        )
+    };
+    if ret != 0 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(())
+}
+
 /// **`/dev/pts` and `/dev/ptmx` are built here, as a private devpts
 /// instance plus a `ptmx -> pts/ptmx` symlink — the container shape —
 /// never as binds of the host's.** They are still baseline grants
@@ -813,6 +858,7 @@ pub fn construct_view(
     _new_root: &std::path::Path,
     _grants: &[crate::policy::ResolvedGrant],
     _proxy_socket: Option<&std::path::Path>,
+    _proc: ProcMount,
 ) -> io::Result<()> {
     Err(io::Error::new(
         io::ErrorKind::Unsupported,

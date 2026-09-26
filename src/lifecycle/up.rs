@@ -1424,6 +1424,9 @@ fn spawn_keeper(
                     &mount_root,
                     &mount_grants,
                     proxy_socket_for_view.as_deref(),
+                    // No PID namespace here, so a fresh procfs would be the
+                    // host's anyway; see `ProcMount::HostBind`.
+                    crate::fleet::mount::ProcMount::HostBind,
                 )?;
                 std::env::set_current_dir(&project_root_owned)?;
             }

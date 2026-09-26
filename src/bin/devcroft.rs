@@ -961,7 +961,12 @@ fn uds_probe_main(args: &[String]) -> i32 {
         if std::fs::create_dir_all(&new_root).is_err() {
             return 2;
         }
-        if let Err(e) = devcroft::fleet::mount::construct_view(&new_root, &grants, None) {
+        if let Err(e) = devcroft::fleet::mount::construct_view(
+            &new_root,
+            &grants,
+            None,
+            devcroft::fleet::mount::ProcMount::HostBind,
+        ) {
             eprintln!("devcroft __uds_probe: constructing view: {e}");
             return 2;
         }
@@ -1443,6 +1448,7 @@ fn mount_view_probe_main(args: &[String]) -> i32 {
         std::path::Path::new(new_root),
         &grants,
         proxy_socket.as_deref(),
+        devcroft::fleet::mount::ProcMount::HostBind,
     ) {
         eprintln!("constructing view: {e}");
         return 1;
