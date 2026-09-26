@@ -166,4 +166,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends sudo \
         > /etc/sudoers.d/nix-daemon \
     && chmod 0440 /etc/sudoers.d/nix-daemon
 
+# cgroup v2 delegation for fleet's resource-control work — see the script
+# for what `setup` and `enter` do, and devcontainer.json for why it needs
+# CAP_SYS_ADMIN. Same posture as the rule above: one root-owned script,
+# not a sudo grant. `enter` validates that the pid it moves belongs to the
+# invoking user, since the rule lets that user pass any argument.
+COPY cgroup-delegate.sh /usr/local/bin/cgroup-delegate
+RUN chmod 0755 /usr/local/bin/cgroup-delegate \
+    && echo "$USERNAME ALL=(root) NOPASSWD: /usr/local/bin/cgroup-delegate *" \
+        > /etc/sudoers.d/cgroup-delegate \
+    && chmod 0440 /etc/sudoers.d/cgroup-delegate
+
 USER $USERNAME

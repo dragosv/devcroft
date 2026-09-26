@@ -52,7 +52,32 @@
   // trade this comment argues has a real cost, and the in-namespace
   // service-port half of fleet does not need it. Add it when the D5
   // spike actually resumes, not before.
-  "runArgs": ["--security-opt", "seccomp=unconfined"],
+  //
+  // **`--cap-add=SYS_ADMIN` is for cgroup v2 delegation** (fleet's D6
+  // resource control). Measured before adding it: Docker mounts
+  // /sys/fs/cgroup `ro` for any non-privileged container, the tree is
+  // root-owned with nothing delegated, and a userns-mounted cgroup2 shows
+  // every file as 65534 (EACCES on mkdir). Remounting rw needs
+  // CAP_SYS_ADMIN, and nothing narrower grants it.
+  //
+  // What it changes, and what it does not:
+  //   - Only *root* gains anything. The dev user's capability sets stay
+  //     empty, so everything that ran as `vscode` before runs the same.
+  //     Unprivileged user namespaces are unaffected in either direction,
+  //     since a new user namespace starts with a full set anyway.
+  //   - Root is reachable from `vscode` only through the two scoped
+  //     sudoers rules, both of which invoke fixed scripts.
+  //   - `cgroup-delegate setup` (postStartCommand) moves every process into
+  //     an `init` leaf that has no limits — the same nesting step
+  //     docker-in-docker performs. `docker exec` keeps working (runc falls
+  //     back to the init process's cgroup): measured after the first
+  //     rebuild, exec'd shells land in `init/` and the root stays empty.
+  //
+  // Rejected: `--privileged` (every device, no confinement at all) and
+  // systemd as PID 1 (changes how everything in here boots). The second is
+  // D6's real target, so the systemd-user-manager half of the spike still
+  // belongs on a Linux VM with systemd.
+  "runArgs": ["--security-opt", "seccomp=unconfined", "--cap-add=SYS_ADMIN"],
 
   // Fails loudly if Landlock is not reachable, instead of letting the spike
   // report a confinement result that the kernel never enforced. Also
@@ -65,7 +90,11 @@
   // supervise it, and it does not persist across container restarts, so
   // start it explicitly on every boot. The `status` check keeps repeated
   // starts quiet instead of erroring on an already-running daemon.
-  "postStartCommand": "sudo service nix-daemon status >/dev/null 2>&1 || sudo service nix-daemon start",
+  //
+  // cgroup-delegate runs after the daemon so the daemon is moved into
+  // `init/` along with everything else; the cgroup namespace is fresh on
+  // every start, so this is per-start too.
+  "postStartCommand": "(sudo service nix-daemon status >/dev/null 2>&1 || sudo service nix-daemon start) && sudo cgroup-delegate setup",
 
   "remoteUser": "vscode",
 

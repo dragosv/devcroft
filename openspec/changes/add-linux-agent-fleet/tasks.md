@@ -114,6 +114,31 @@ the implementation before it resolves.
 - [ ] **Spike: systemd user-service delegation** — create the subtree, enable
       controllers, move a child into a leaf, `cgroup.kill` it, and observe
       `cgroup.events` report it empty (D6).
+      **Cannot run in this devcontainer, measured (2026-09-26).** PID 1 is
+      `sh`, there is no systemd and no `/run/systemd`. The unified
+      hierarchy is mounted `ro,nsdelegate`, owned by root, with an empty
+      `cgroup.subtree_control` (controllers `cpuset cpu io memory pids`
+      are available, none delegated); the container sits at `0::/` in its
+      own cgroup namespace. The capability bounding set is Docker's default
+      (`0xa80425fb`, no `CAP_SYS_ADMIN`), so root could not remount it
+      either. The last route fails too: a fresh userns+mountns+cgroupns
+      *can* mount cgroup2, but every file shows as `65534:65534`, and both
+      `mkdir` and writing `cgroup.subtree_control` get EACCES.
+      Making it work here would take `--privileged` or systemd-as-init.
+      That is a far larger standing relaxation than `/dev/net/tun`, and it
+      still would not test D6's actual target, a systemd **user** manager
+      with `Delegate=yes`. Run this spike on a real systemd host or a
+      Linux VM with systemd as PID 1.
+      **Partly unblocked since then:** the devcontainer now delegates
+      `/sys/fs/cgroup/delegated` to `vscode` (`--cap-add=SYS_ADMIN` plus
+      `.devcontainer/cgroup-delegate.sh`, dind-style nesting). Run
+      `sudo cgroup-delegate enter $$` first. That covers the cgroup
+      mechanics: subtree, controllers, leaf, `cgroup.kill`, `cgroup.events`.
+      It does not cover the systemd half (user manager, `Delegate=yes`,
+      discovering the `user@<uid>.service` ancestor), which still needs the
+      VM. Measured after the rebuild: the root is empty, all five
+      controllers are available in `delegated/`, and after `enter` the dev
+      user can `mkdir` a child and enable `+memory` there without root.
 - [ ] Decide the supported kernel floor and the degradation behaviour below it
       (Open Question 6). Note `SeccompNetFallback` and
       `probe_seccomp_block_network_support` already provide a network-blocking
