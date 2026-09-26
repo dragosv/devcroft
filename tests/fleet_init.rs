@@ -463,7 +463,8 @@ fn the_keeper_runs_as_the_agents_command_and_serves_sessions() {
     std::fs::create_dir(&state).unwrap();
     let control_path = state.join("control.sock");
     let control = UnixListener::bind(&control_path).unwrap();
-    let ssh = UnixListener::bind(state.join("ssh.sock")).unwrap();
+    let ssh_path = state.join("ssh.sock");
+    let ssh = UnixListener::bind(&ssh_path).unwrap();
 
     // What `up` compiles, including the grant that lets the keeper binary
     // be exec'd inside the view.
@@ -477,6 +478,43 @@ fn the_keeper_runs_as_the_agents_command_and_serves_sessions() {
         .with_keeper_exe_grant(exe.parent().unwrap().to_string_lossy().into_owned())
         .to_capability_plan();
 
+    // Exactly the environment `up` gives its keeper, from the same
+    // function, with real SSH key material so the SSH server starts too.
+    let keys = dirs.0.parent().unwrap().join("keys");
+    std::fs::create_dir(&keys).unwrap();
+    let lf = russh::keys::ssh_key::LineEnding::LF;
+    let host_key = devcroft::ssh::generate_host_key(&keys.join("host"))
+        .unwrap()
+        .to_openssh(lf)
+        .unwrap();
+    let client =
+        devcroft::ssh::ensure_client_keypair(&keys.join("id"), &keys.join("id.pub")).unwrap();
+    let authorized = client.public_key().to_openssh().unwrap();
+    let provider_env =
+        std::collections::BTreeMap::from([("PATH".to_owned(), std::env::var("PATH").unwrap())]);
+    let env = devcroft::lifecycle::KeeperEnv {
+        env: &provider_env,
+        unset: &[],
+        plan: &plan,
+        ssh_host_key_pem: &host_key,
+        ssh_authorized_key_pem: &authorized,
+        shell: Path::new("/usr/bin/sh"),
+        services: None,
+        hooks: &[],
+        project_root: &dirs.0,
+        sandbox_home: &dirs.0,
+        relay: None,
+    }
+    .vars()
+    .into_iter()
+    .map(|(k, v)| {
+        (
+            k.to_string_lossy().into_owned(),
+            v.to_string_lossy().into_owned(),
+        )
+    })
+    .collect();
+
     let first = init::FIRST_INHERITED_FD;
     let spec = AgentSpec {
         command: vec![
@@ -485,14 +523,7 @@ fn the_keeper_runs_as_the_agents_command_and_serves_sessions() {
             first.to_string(),
             (first + 1).to_string(),
         ],
-        env: vec![
-            ("PATH".into(), std::env::var("PATH").unwrap()),
-            (
-                "DEVCROFT_CAPABILITY_PLAN".into(),
-                serde_json::to_string(&plan).unwrap(),
-            ),
-            ("DEVCROFT_START_SERVICES".into(), "0".into()),
-        ],
+        env,
         cwd: Some(dirs.0.clone()),
         hostname: "agent".into(),
         plan,
@@ -567,6 +598,17 @@ fn the_keeper_runs_as_the_agents_command_and_serves_sessions() {
         std::fs::read_to_string(dirs.0.join("marker")).unwrap(),
         "from-a-session\n"
     );
+
+    // The keeper's SSH server answers on the other inherited socket.
+    // A socket nobody serves still accepts into its backlog, so without a
+    // timeout a missing server would hang this test rather than fail it.
+    let ssh_stream = UnixStream::connect(&ssh_path).unwrap();
+    ssh_stream
+        .set_read_timeout(Some(Duration::from_secs(5)))
+        .unwrap();
+    let mut banner = String::new();
+    let _ = BufReader::new(ssh_stream).read_line(&mut banner);
+    assert!(banner.starts_with("SSH-2.0-"), "{banner:?}");
 
     // Stopping the agent takes the keeper and its sessions with it.
     agent.signal(libc::SIGKILL).unwrap();

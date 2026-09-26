@@ -391,13 +391,14 @@ the implementation before it resolves.
       `EPERM`, because the remount dropped flags a user namespace locks.
       Fixed in `remount_readonly`, with `tests/mount_locked_flags.rs`
       (`docs/implementation-log.md`).
-- [ ] **Share the keeper's environment with `up`.** The test above sets
-      only what the keeper requires (`DEVCROFT_CAPABILITY_PLAN`, services
-      off, so no SSH keys and no hooks). `up` builds the rest inline in
-      `spawn_keeper`: SSH key material, the resolved shell, hooks,
-      services, `HOME` and the relay. Extract it into one function both
-      call when fleet's supervisor composes real agents, so the two cannot
-      drift, and move `spawn_keeper`'s comments with it.
+- [x] **Share the keeper's environment with `up`.** `lifecycle::KeeperEnv`
+      is what `spawn_keeper` used to build inline (SSH key material, the
+      resolved shell, hooks, services, `HOME`, the relay), moved with its
+      comments; `spawn_keeper` and the fleet keeper test both call
+      `vars()`. The test now passes real SSH keys, and the keeper's SSH
+      server answers with an `SSH-2.0` banner on the socket the supervisor
+      bound. `up`'s lifecycle, hooks, environment, services and SSH suites
+      pass unchanged, with one skip (`rsync` not on `PATH`).
 - [x] Structured error reporting from the helper back to the supervisor.
       One JSON line on fd 4 naming the failed step, or EOF plus the
       helper's exit status (`a_failing_step_is_reported_by_name`).

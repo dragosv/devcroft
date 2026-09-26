@@ -1170,6 +1170,169 @@ fn prepare_services(
     Ok(true)
 }
 
+/// Everything the keeper reads from its environment, in the order it is
+/// set. `up`'s keeper and a fleet agent's keeper both start from exactly
+/// this, so the two cannot drift: the keeper's only inputs besides its fds
+/// are these variables, and an input one caller sets and the other does not
+/// is a keeper that behaves differently for no stated reason.
+pub struct KeeperEnv<'a> {
+    /// The provider's resolved environment.
+    pub env: &'a std::collections::BTreeMap<String, String>,
+    /// Keys activation removed, which must not reach the keeper.
+    pub unset: &'a [String],
+    pub plan: &'a policy::CapabilityPlan,
+    pub ssh_host_key_pem: &'a str,
+    pub ssh_authorized_key_pem: &'a str,
+    pub shell: &'a Path,
+    /// The sandbox name when services should start, `None` otherwise.
+    pub services: Option<&'a str>,
+    pub hooks: &'a [(&'static str, String)],
+    pub project_root: &'a Path,
+    pub sandbox_home: &'a Path,
+    pub relay: Option<(u16, &'a Path)>,
+}
+
+impl KeeperEnv<'_> {
+    /// The variables, in order; a later entry for the same key wins, as
+    /// with `Command::env`.
+    pub fn vars(&self) -> Vec<(std::ffi::OsString, std::ffi::OsString)> {
+        let KeeperEnv {
+            env,
+            unset,
+            plan,
+            ssh_host_key_pem,
+            ssh_authorized_key_pem,
+            shell,
+            services,
+            hooks,
+            project_root,
+            sandbox_home,
+            relay,
+        } = self;
+        // provider::Resolution's "unset" gap: without this filter, a key
+        // activation explicitly removed would still leak into the keeper
+        // from *this* process's own ambient environment (whoever's shell
+        // ran `up`). `.envs(env)` can only add or override, never remove,
+        // so a plain map has no way to represent "unset" at all.
+        Vars::default()
+            .envs(env.iter().filter(|(key, _)| !unset.contains(key)))
+            // The keeper's very first action (task group 4): deserialize this
+            // and self-restrict, before reading anything else from `env`.
+            // Same trust boundary the SSH key material below already crosses
+            // this way — the keeper cannot read this back off disk itself
+            // once sandboxed (nothing under `policy::DEVCROFT_DATA_DIR` is
+            // reachable to it, and by the time it *could* read a file, it
+            // would already need to be restricted to know it's safe to).
+            .env(
+                "DEVCROFT_CAPABILITY_PLAN",
+                serde_json::to_string(plan).expect("CapabilityPlan serialization is infallible"),
+            )
+            // ssh spec's key handoff (task 6.1): the keeper can't read either
+            // key back off disk itself (see the call site's comment), so both
+            // travel as env vars, same trust boundary the resolved provider
+            // environment above already crosses this way.
+            .env("DEVCROFT_SSH_HOST_KEY", ssh_host_key_pem)
+            .env("DEVCROFT_SSH_AUTHORIZED_KEY", ssh_authorized_key_pem)
+            // The absolute shell `up` resolved out of this sandbox's closure
+            // (`crate::shell`). The keeper starts SSH login sessions with it;
+            // a bare `sh` would PATH-resolve to the host's, which the
+            // compiled policy denies, and the failure surfaces only as
+            // `shell request failed on channel 0`.
+            .env("DEVCROFT_SHELL", shell)
+            // Services are started by the *keeper*, not by `up`: `up` exits,
+            // and a session whose client disconnects is escalated after
+            // `connection::DEFAULT_GRACE_PERIOD`, so anything `up` started
+            // over the control socket would die seconds later. The keeper
+            // owns their lifetime, and its own startup is the moment.
+            //
+            // **That used to put services before hooks**, and this comment
+            // used to cite `add-flox-services` design.md decision 4 as having
+            // settled that ordering. It was right about the mechanism and
+            // wrong about the consequence: `up` ran the hooks afterwards, so
+            // nothing ordered the two at all — they raced, and the hook won by
+            // ~9 ms. `fix-service-hook-ordering` moved the hooks into the
+            // keeper, ahead of this, which is what makes the ordering real.
+            .env(
+                "DEVCROFT_START_SERVICES",
+                if services.is_some() { "1" } else { "0" },
+            )
+            // The hooks the keeper runs **before** those services
+            // (`fix-service-hook-ordering`). Carried as environment rather
+            // than written to the state directory for the same reason the
+            // SSH key material is: that directory is baseline-*denied* to
+            // the keeper, so a file there is one it cannot read back.
+            //
+            // Absent means "no such hook", which is why `--skip-hooks`
+            // needs no flag of its own — the caller simply passes none, and
+            // the keeper's behaviour follows from what it was given rather
+            // than from a second thing it has to be told and could
+            // disagree about.
+            .envs(hooks.iter().map(|(name, cmd)| {
+                (
+                    format!("DEVCROFT_HOOK_{}", name.to_uppercase()),
+                    cmd.clone(),
+                )
+            }))
+            // Which sandbox's artifact subdirectory to use. Service paths are
+            // keyed on the sandbox name as well as the root, so that two
+            // sandboxes sharing one project root do not overwrite each
+            // other's config or fight over one supervisor socket.
+            .env("DEVCROFT_SANDBOX_NAME", services.unwrap_or_default())
+            // Absolute, not relative-to-cwd: the hardened tier's control
+            // server runs host-side and dispatches through `runsc exec
+            // --cwd`, which needs an absolute path. Same value here keeps
+            // one code path in `start_services_if_requested`.
+            .env("DEVCROFT_SERVICES_ROOT", project_root)
+            // The sandbox's own `HOME` (`own-sandbox-environment` D4). Read and
+            // removed in the keeper's prologue, then applied to its environment
+            // *after* `self_restrict` — see `keeper_main` for why the ordering is
+            // the whole trick.
+            .env("DEVCROFT_SANDBOX_HOME", sandbox_home)
+            // Set together or not at all — `keeper_main` reads them as a
+            // pair, so a half-configured relay is not representable.
+            .envs(
+                relay
+                    .as_ref()
+                    .map(|(port, sock)| {
+                        [
+                            ("DEVCROFT_PROXY_RELAY_PORT".to_string(), port.to_string()),
+                            (
+                                "DEVCROFT_PROXY_SOCKET".to_string(),
+                                sock.to_string_lossy().into_owned(),
+                            ),
+                        ]
+                    })
+                    .unwrap_or_default(),
+            )
+            .0
+    }
+}
+
+/// Accumulates variables with `Command`'s `env`/`envs` shape, so the
+/// keeper's environment reads the same as when it was built on the
+/// `Command` directly.
+#[derive(Default)]
+struct Vars(Vec<(std::ffi::OsString, std::ffi::OsString)>);
+
+impl Vars {
+    fn env(mut self, key: impl AsRef<std::ffi::OsStr>, value: impl AsRef<std::ffi::OsStr>) -> Self {
+        self.0
+            .push((key.as_ref().to_owned(), value.as_ref().to_owned()));
+        self
+    }
+
+    fn envs<K, V>(mut self, vars: impl IntoIterator<Item = (K, V)>) -> Self
+    where
+        K: AsRef<std::ffi::OsStr>,
+        V: AsRef<std::ffi::OsStr>,
+    {
+        for (key, value) in vars {
+            self = self.env(key, value);
+        }
+        self
+    }
+}
+
 /// The ssh server's fd and key material `spawn_keeper` hands the keeper,
 /// bundled to keep that call under clippy's argument-count lint —  see
 /// its call site for why the key material can't just be a file the
@@ -1255,106 +1418,24 @@ fn spawn_keeper(
         // result. Inheriting on top of it discarded the guarantee one layer
         // below.
         //
-        // Everything the keeper itself reads is set explicitly below or comes
+        // Everything the keeper itself reads is set by `KeeperEnv` or comes
         // from `env`; nothing is left to inheritance.
         .env_clear()
-        .envs(env);
-    for key in unset {
-        // provider::Resolution's "unset" gap: without this, a key
-        // activation explicitly removed would still leak into the keeper
-        // from *this* process's own ambient environment (whoever's shell
-        // ran `up`) — `.envs(env)` above can only add/override, never
-        // remove, so a plain map has no way to represent "unset" at all.
-        cmd.env_remove(key);
-    }
-    cmd
-        // The keeper's very first action (task group 4): deserialize this
-        // and self-restrict, before reading anything else from `env`.
-        // Same trust boundary the SSH key material below already crosses
-        // this way — the keeper cannot read this back off disk itself
-        // once sandboxed (nothing under `policy::DEVCROFT_DATA_DIR` is
-        // reachable to it, and by the time it *could* read a file, it
-        // would already need to be restricted to know it's safe to).
-        .env(
-            "DEVCROFT_CAPABILITY_PLAN",
-            serde_json::to_string(plan).expect("CapabilityPlan serialization is infallible"),
-        )
-        // ssh spec's key handoff (task 6.1): the keeper can't read either
-        // key back off disk itself (see the call site's comment), so both
-        // travel as env vars, same trust boundary the resolved provider
-        // environment above already crosses this way.
-        .env("DEVCROFT_SSH_HOST_KEY", ssh.host_key_pem)
-        .env("DEVCROFT_SSH_AUTHORIZED_KEY", ssh.authorized_key_pem)
-        // The absolute shell `up` resolved out of this sandbox's closure
-        // (`crate::shell`). The keeper starts SSH login sessions with it;
-        // a bare `sh` would PATH-resolve to the host's, which the
-        // compiled policy denies, and the failure surfaces only as
-        // `shell request failed on channel 0`.
-        .env("DEVCROFT_SHELL", shell)
-        // Services are started by the *keeper*, not by `up`: `up` exits,
-        // and a session whose client disconnects is escalated after
-        // `connection::DEFAULT_GRACE_PERIOD`, so anything `up` started
-        // over the control socket would die seconds later. The keeper
-        // owns their lifetime, and its own startup is the moment.
-        //
-        // **That used to put services before hooks**, and this comment
-        // used to cite `add-flox-services` design.md decision 4 as having
-        // settled that ordering. It was right about the mechanism and
-        // wrong about the consequence: `up` ran the hooks afterwards, so
-        // nothing ordered the two at all — they raced, and the hook won by
-        // ~9 ms. `fix-service-hook-ordering` moved the hooks into the
-        // keeper, ahead of this, which is what makes the ordering real.
-        .env(
-            "DEVCROFT_START_SERVICES",
-            if services.is_some() { "1" } else { "0" },
-        )
-        // The hooks the keeper runs **before** those services
-        // (`fix-service-hook-ordering`). Carried as environment rather
-        // than written to the state directory for the same reason the
-        // SSH key material is: that directory is baseline-*denied* to
-        // the keeper, so a file there is one it cannot read back.
-        //
-        // Absent means "no such hook", which is why `--skip-hooks`
-        // needs no flag of its own — the caller simply passes none, and
-        // the keeper's behaviour follows from what it was given rather
-        // than from a second thing it has to be told and could
-        // disagree about.
-        .envs(hooks.iter().map(|(name, cmd)| {
-            (
-                format!("DEVCROFT_HOOK_{}", name.to_uppercase()),
-                cmd.clone(),
-            )
-        }))
-        // Which sandbox's artifact subdirectory to use. Service paths are
-        // keyed on the sandbox name as well as the root, so that two
-        // sandboxes sharing one project root do not overwrite each
-        // other's config or fight over one supervisor socket.
-        .env("DEVCROFT_SANDBOX_NAME", services.unwrap_or_default())
-        // Absolute, not relative-to-cwd: the hardened tier's control
-        // server runs host-side and dispatches through `runsc exec
-        // --cwd`, which needs an absolute path. Same value here keeps
-        // one code path in `start_services_if_requested`.
-        .env("DEVCROFT_SERVICES_ROOT", project_root)
-        // The sandbox's own `HOME` (`own-sandbox-environment` D4). Read and
-        // removed in the keeper's prologue, then applied to its environment
-        // *after* `self_restrict` — see `keeper_main` for why the ordering is
-        // the whole trick.
-        .env("DEVCROFT_SANDBOX_HOME", sandbox_home)
-        // Set together or not at all — `keeper_main` reads them as a
-        // pair, so a half-configured relay is not representable.
         .envs(
-            relay
-                .as_ref()
-                .map(|(port, sock)| {
-                    [
-                        ("DEVCROFT_PROXY_RELAY_PORT".to_string(), port.to_string()),
-                        (
-                            "DEVCROFT_PROXY_SOCKET".to_string(),
-                            sock.to_string_lossy().into_owned(),
-                        ),
-                    ]
-                })
-                .unwrap_or_default(),
+            KeeperEnv {
+                env,
+                unset,
+                plan,
+                ssh_host_key_pem: ssh.host_key_pem,
+                ssh_authorized_key_pem: ssh.authorized_key_pem,
+                shell,
+                services,
+                hooks,
+                project_root,
+                sandbox_home,
+                relay: relay.as_ref().map(|(port, sock)| (*port, sock.as_path())),
+            }
+            .vars(),
         )
         .stdin(Stdio::null())
         .stdout(log.try_clone()?)
