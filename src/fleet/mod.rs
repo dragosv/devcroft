@@ -21,7 +21,7 @@
 //! primitive the supervisor will call, testable before it exists. `cgroup`
 //! is D6's resource control, minus finding the delegated root, which is
 //! systemd's half. `init` is D2's helper, which puts the other three
-//! together for one agent.
+//! together for one agent, and `supervisor` runs N of them by ID.
 
 #[cfg(target_os = "linux")]
 pub mod cgroup;
@@ -29,3 +29,5 @@ pub mod cgroup;
 pub mod init;
 pub mod mount;
 pub mod netns;
+#[cfg(target_os = "linux")]
+pub mod supervisor;

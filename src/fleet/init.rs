@@ -341,6 +341,18 @@ impl Agent {
         }
     }
 
+    /// The helper's exit status if it has already exited, reaping it;
+    /// `None` while it runs.
+    pub fn try_wait(&self) -> io::Result<Option<ExitStatus>> {
+        let mut status = 0;
+        // SAFETY: our own child; `status` is a valid out-pointer.
+        match unsafe { libc::waitpid(self.pid, &mut status, libc::WNOHANG) } {
+            0 => Ok(None),
+            n if n > 0 => Ok(Some(ExitStatus::from_raw(status))),
+            _ => Err(io::Error::last_os_error()),
+        }
+    }
+
     /// Wait for the helper, which exits with the command's status.
     pub fn wait(self) -> io::Result<ExitStatus> {
         let mut status = 0;

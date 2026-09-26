@@ -228,6 +228,14 @@ impl FleetNode {
         Ok(leaf)
     }
 
+    /// A handle to a leaf that already exists, such as one a previous
+    /// supervisor created. `None` if there is no such leaf.
+    pub fn existing_leaf(&self, name: &str) -> Option<Leaf> {
+        validate_name(name).ok()?;
+        let dir = self.dir.join(name);
+        dir.is_dir().then_some(Leaf { dir })
+    }
+
     /// Remove the node. Fails while any leaf remains.
     pub fn remove(self) -> io::Result<()> {
         fs::remove_dir(&self.dir).map_err(|e| ctx(e, "remove fleet node", &self.dir))
@@ -363,6 +371,21 @@ impl Leaf {
     pub fn populated(&self) -> io::Result<bool> {
         let events = fs::read_to_string(self.dir.join("cgroup.events"))?;
         Ok(field(&events, "populated") != 0)
+    }
+
+    /// `memory.current`: bytes charged to the leaf right now.
+    pub fn memory_current(&self) -> io::Result<u64> {
+        let s = fs::read_to_string(self.dir.join("memory.current"))?;
+        s.trim()
+            .parse()
+            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))
+    }
+
+    /// `cpu.stat: usage_usec`: CPU time the leaf has used, in microseconds,
+    /// across every process that has ever been in it.
+    pub fn cpu_usage_usec(&self) -> io::Result<u64> {
+        let stat = fs::read_to_string(self.dir.join("cpu.stat"))?;
+        Ok(field(&stat, "usage_usec"))
     }
 
     /// The kernel's counters for why processes in this leaf died.

@@ -245,6 +245,13 @@ the implementation before it resolves.
       devcroft already applies exactly this reasoning to pidfiles
       (`state::is_same_process`), so it is the same rule in a second
       place, not a new one.
+      **Done differently, by `Supervisor::reconcile`:** a leaf's own
+      `populated` is the liveness test, not a recorded pid, since nothing
+      but the supervisor creates leaves under its node and membership
+      survives reparenting and restarts. A Running record whose leaf is
+      empty is retired and its leaf removed; a directory with no record (a
+      start interrupted by a crash) is removed with its leaf. Unticked
+      until leaves with no directory at all are swept too.
 - [ ] Read metrics and exit events from the agent's cgroup interface files.
       **Including why something died**: `memory.events`' `oom_kill` counter
       and `pids.events`' denied-fork count turn "the agent vanished" into
@@ -446,6 +453,40 @@ the implementation before it resolves.
       warm path rather than a cold one. A performance mechanism that cannot be
       observed cannot be debugged, and a warm instance carrying stale state is
       exactly the bug this would introduce.
+
+## 2c. The supervisor
+
+- [x] `fleet::Supervisor` (library): agents by stable ID (`a<N>`, never
+      reused), each with a 0700 directory holding its 0600 control and SSH
+      sockets, an ephemeral host key and `record.json`. The record is the
+      spec's durable identity (workspace, cgroup, state, policy
+      fingerprint, view strategy, port mappings, attention) and holds no
+      pid. Start is all or nothing; stop kills one agent's leaf and nothing
+      else; a restarted supervisor adopts live agents and retires dead
+      ones. `tests/fleet_supervisor.rs`, with three mutants: reconcile that
+      trusts the record, a failed start that keeps its directory, and a
+      stop that never kills. The last one used to hang the suite (a
+      blocking `wait` on a helper that never dies); `stop` now reaps with a
+      bound and names the helper that outlived its leaf.
+      **Two test bugs found on the way.** `cgroup.kill` is asynchronous, so
+      a test that reopened the supervisor right after it found the agent
+      correctly still running (11 of 15 runs); it now waits for
+      `populated 0`. And the failed-start test checked for leftovers only
+      after `list`, whose reconcile removed them, so it passed with no
+      cleanup at all.
+- [ ] `devcroft fleet` commands (`up --agents N`, `ls`, `stop`, `inspect`),
+      in the foreground, with the delegated cgroup root given explicitly.
+      A new command must also go in `USAGE` (`tests/cli_help_and_version.rs`).
+- [ ] Preflight before the first agent (spec: *Preflight environment
+      validation*): delegation, user namespaces, a fresh procfs, the
+      Landlock ABI, each named with its remedy. `FleetNode::create` and the
+      helper already fail by name; this runs them before any agent exists.
+- [ ] The systemd user unit (`Delegate=yes`) and finding the delegated
+      root from `/proc/self/cgroup` (section 1), on a VM with systemd.
+- [ ] Per-agent workspaces are group 4's clones; today `AgentLaunch`
+      takes any directory. Port mappings (group 5) and `attention`
+      (`add-agent-interaction`) have their fields and nothing that sets
+      them.
 
 ## 3. Networking
 
