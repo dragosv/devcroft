@@ -30,4 +30,6 @@ pub mod init;
 pub mod mount;
 pub mod netns;
 #[cfg(target_os = "linux")]
+pub mod project;
+#[cfg(target_os = "linux")]
 pub mod supervisor;

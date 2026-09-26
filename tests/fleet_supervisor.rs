@@ -315,3 +315,70 @@ fn a_failed_start_leaves_no_agent_behind() {
     assert!(!root.join(&fleet.name).join("a1").exists());
     assert!(sup.list().unwrap().is_empty());
 }
+
+/// `fleet::project::prepare` into `Supervisor::start`: an agent whose
+/// launch came from a manifest and a provider, the way `devcroft fleet up`
+/// builds one. The provider's activation script and the manifest's hooks
+/// run inside the agent, in its own workspace, in `up`'s order.
+#[test]
+fn a_prepared_agent_runs_its_hooks_inside_itself() {
+    use devcroft::provider::{ProviderEntry, ProviderError, Resolution, ServiceSupport, Tier};
+
+    struct HostUsr;
+    impl ProviderEntry for HostUsr {
+        fn resolve(&self, _: &Path) -> Result<Resolution, ProviderError> {
+            Ok(Resolution {
+                env: [("PATH".to_owned(), "/usr/bin".to_owned())].into(),
+                unset: Vec::new(),
+                read_only_grants: vec!["/usr".to_owned()],
+                activation_script: Some("echo activation >> hooks.log".to_owned()),
+                services: ServiceSupport::Unsupported,
+                ran_activation_hook: false,
+            })
+        }
+        fn fingerprint(&self, _: &Path) -> Result<String, ProviderError> {
+            Ok(String::new())
+        }
+        fn tier(&self) -> Tier {
+            Tier::Closure
+        }
+        fn static_name(&self) -> &'static str {
+            "nix"
+        }
+    }
+
+    let Some(root) = capable_host() else { return };
+    let fleet = Fleet::new(&root, "prepared");
+    let template = fleet.launch("a");
+    let (manifest, _) = devcroft::config::parse(
+        "[sandbox]\nname = \"fleet-sup\"\n\n[env]\nprovider = \"nix\"\n\n\
+         [hooks]\npost_create = \"echo post_create $(cat /proc/sys/kernel/hostname) >> hooks.log\"\n\
+         post_start = \"echo post_start >> hooks.log\"\n\n\
+         [filesystem]\nread = [\"/proc\"]\n",
+    )
+    .unwrap();
+    let launch = devcroft::fleet::project::prepare(
+        &HostUsr,
+        &manifest,
+        &template.workspace,
+        Path::new(env!("CARGO_BIN_EXE_devcroft")),
+        &template.authorized_key_pem,
+        Limits::default(),
+        true,
+    )
+    .unwrap();
+    let mut sup = fleet.open();
+    let id = sup.start(&launch).unwrap();
+
+    // The keeper runs the hooks before it accepts sessions, so once a
+    // session answers they have run.
+    let (code, _) = session(&sup.control_socket(&id), &launch.workspace, "true");
+    assert_eq!(code, Some(0));
+    let log = std::fs::read_to_string(launch.workspace.join("hooks.log")).unwrap();
+    assert_eq!(
+        log,
+        format!("activation\npost_create {id}\npost_start\n"),
+        "hooks ran out of order, or outside the agent"
+    );
+    sup.stop(&id).unwrap();
+}
