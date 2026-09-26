@@ -3629,6 +3629,18 @@ fn keeper_main(fd: RawFd, ssh_fd: RawFd) -> ! {
     // SAFETY: `up` created both listeners before restriction, cleared
     // their FD_CLOEXEC, and passed the fd numbers as this process's argv
     // — they are ours alone to take ownership of.
+    //
+    // **And close-on-exec again, before anything here starts a child.**
+    // FD_CLOEXEC was cleared so this process could inherit them, and
+    // nothing set it back, so every hook, service and session inherited the
+    // keeper's control and SSH listeners (measured: fds 5 and 6 in a
+    // session). With them, project code could `accept()` a later
+    // `devcroft exec` or `shell` meant for the keeper, over a protocol whose
+    // only boundary is the socket's permissions.
+    for listener_fd in [fd, ssh_fd] {
+        // SAFETY: setting a flag on an fd this process owns.
+        unsafe { libc::fcntl(listener_fd, libc::F_SETFD, libc::FD_CLOEXEC) };
+    }
     let listener = unsafe { UnixListener::from_raw_fd(fd) };
     let ssh_listener = unsafe { UnixListener::from_raw_fd(ssh_fd) };
 
