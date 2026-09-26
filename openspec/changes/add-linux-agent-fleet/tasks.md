@@ -349,10 +349,24 @@ the implementation before it resolves.
       is a freshly exec'd, single-threaded process, though, so that reason
       is gone there. `up`'s keeper already restricts itself *inside* the
       view, from the same `CapabilityPlan`. Rules bind to inodes, so
-      building them after `pivot_root` names what the agent actually sees,
-      including a fresh `/proc` where a pre-pivot `/proc/self` would name
-      the host's. Unverified: whether nono adds `/proc` rules of its own
-      at apply time (devcroft's baseline has none).
+      building them after `pivot_root` names what the agent actually sees.
+      **nono adds no `/proc` rules (measured 2026-09-26, nono 0.77.0).** For
+      a real plan (`allow = ["."]` plus a `/usr` provider grant), the
+      `CapabilitySet` holds 12 rules, 0 of them under `/proc`, and
+      `apply_with_abi_inner` adds a rule only for each entry in
+      `fs_capabilities()`. Under that restriction every `/proc` read is
+      refused (`/proc/self/{status,cmdline,maps}`, `/proc/1/cmdline`, and
+      listing `/proc` and `/proc/self/fd`); only `readlink /proc/self/exe`
+      works, because Landlock does not mediate `readlink`. So `/proc/self`
+      is not the reason. **The reason to build rules after the view is
+      `/tmp` and `/dev/pts`.** Both are baseline grants, and in the view
+      each is a new filesystem instance (private tmpfs, private devpts) that
+      does not exist in the parent. Rules bind to inodes, so rules built in
+      the parent would attach to the host's `/tmp` and devpts, and the
+      agent's own would be denied. `fleet::mount::setup_dev` already relies
+      on the keeper restricting itself after entering the view. Reasoned
+      from that code and Landlock's inode binding; not yet measured for
+      the parent-built case.
 - [x] Structured error reporting from the helper back to the supervisor.
       One JSON line on fd 4 naming the failed step, or EOF plus the
       helper's exit status (`a_failing_step_is_reported_by_name`).
