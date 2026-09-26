@@ -12,16 +12,16 @@ creation to the sandbox library or to an external sandboxing binary.
 
 - **WHEN** an agent is started
 - **THEN** the supervisor allocates an agent ID, creates the agent's cgroup,
-  builds the sandbox ruleset, and clones a child that re-execs as the init helper
+  compiles the agent's policy, and clones a child directly into that cgroup
+  that re-execs as the init helper
 - **AND** the supervisor retains a handle capable of querying status and
   terminating the agent
 
-#### Scenario: Sandbox library exposes only a combined spawn entry point
+#### Scenario: The sandbox cannot be applied
 
-- **WHEN** the pinned sandbox crate offers no way to build a ruleset separately
-  from applying it to the current process
-- **THEN** the supervisor SHALL fail at build or startup with a diagnostic
-  naming the missing capability
+- **WHEN** the init helper cannot apply the agent's policy
+- **THEN** the agent does not start, and the supervisor reports the failing
+  step
 - **AND** the fleet feature SHALL NOT silently degrade to unsandboxed execution
 
 ### Requirement: Init helper is single-threaded and re-executed
@@ -35,18 +35,28 @@ runtime.
 - **WHEN** the cloned child begins execution
 - **THEN** it immediately re-execs the devcroft binary as the internal init
   subcommand
-- **AND** the helper receives its configuration over an inherited pipe and its
-  ruleset over an inherited file descriptor
-- **AND** the helper performs, in order: enter namespaces, perform mounts, add
-  namespace-local sandbox rules, apply the sandbox ruleset, apply the syscall
-  filter if configured, then exec the agent command
+- **AND** the child does not exec until the supervisor has written its
+  identity map, since an exec by an unmapped uid drops every capability
+- **AND** the helper receives its configuration, including the compiled
+  policy, over an inherited pipe
+- **AND** the helper performs, in order: perform mounts, build the sandbox
+  ruleset from the policy and apply it, apply the syscall filter if
+  configured, then start the agent command as its child
+
+The ruleset is built inside the helper, after the mounts, and not carried
+across the clone. The view's `/tmp`, `/dev/pts` and `/proc` are new
+filesystem instances that do not exist in the supervisor, and Landlock rules
+bind to inodes, so rules prepared beforehand attach to the host's instances
+(measured: they refused the agent's private `/tmp`). The helper is a freshly
+exec'd, single-threaded process, so building it there has none of the
+post-`fork` allocation hazard that motivated preparing it in the parent.
 
 #### Scenario: Setup fails inside the helper
 
 - **WHEN** any setup step in the init helper fails
 - **THEN** the helper SHALL exit without exec'ing the agent command
 - **AND** the failing step and its errno SHALL be reported to the supervisor over
-  the configuration pipe
+  a status pipe the helper inherits for that purpose
 
 ### Requirement: Agents are individually addressable
 
