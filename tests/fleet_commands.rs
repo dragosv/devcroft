@@ -95,7 +95,9 @@ impl Setup {
             ),
         )
         .unwrap();
-        std::fs::write(base.join("repo").join(".gitignore"), ".devcroft/\n").unwrap();
+        // No ignore for `.devcroft/`: fleet's own `.gitignore` in its
+        // clones' directory is what must keep them out of `git status`.
+        std::fs::write(base.join("repo").join("README"), "test\n").unwrap();
         if git {
             let repo = base.join("repo");
             for args in [
@@ -132,6 +134,15 @@ impl Setup {
 
     fn project(&self) -> PathBuf {
         self.base.join("repo").join("proj")
+    }
+
+    fn repo(&self) -> PathBuf {
+        self.base.join("repo")
+    }
+
+    /// Where fleet clones: under the repository root, not the project.
+    fn clones(&self) -> PathBuf {
+        self.repo().join(".devcroft/fleet")
     }
 
     fn state(&self) -> PathBuf {
@@ -229,11 +240,19 @@ fn each_agent_works_on_its_own_clone_and_keeps_it_after_stopping() {
     let started = s.up(2).unwrap();
     let ids: Vec<_> = started.iter().map(|a| a.id.as_str()).collect();
     assert_eq!(ids, ["a1", "a2"]);
+    // The clones are not untracked files in the repository they came from.
+    let status = Command::new("git")
+        .arg("-C")
+        .arg(s.repo())
+        .args(["status", "--porcelain"])
+        .output()
+        .unwrap();
+    assert_eq!(String::from_utf8_lossy(&status.stdout), "");
 
     for a in &started {
         // The project's own directory inside the agent's clone, not the
         // clone's root.
-        let clone_root = s.project().join(".devcroft/fleet").join(&a.id);
+        let clone_root = s.clones().join(&a.id);
         assert_eq!(a.workspace, clone_root.join("proj"));
         assert!(a.workspace.join("devcroft.toml").is_file());
 
@@ -281,7 +300,7 @@ fn a_refused_manifest_leaves_no_clone_and_no_agent() {
     let err = s.up(1).unwrap_err();
     assert_eq!(err.exit_code(), 2, "{err}");
     assert!(err.to_string().contains("network.default"), "{err}");
-    assert!(!s.project().join(".devcroft/fleet/a1").exists());
+    assert!(!s.clones().join("a1").exists());
     assert!(!s.state().join("agents/a1").exists());
 }
 
@@ -292,7 +311,7 @@ fn a_project_outside_git_is_refused_before_anything_is_made() {
     assert_eq!(err.exit_code(), 2, "{err}");
     assert!(err.to_string().contains("git repository"), "{err}");
     assert!(!s.state().exists());
-    assert!(!s.project().join(".devcroft").exists());
+    assert!(!s.repo().join(".devcroft").exists());
 }
 
 #[test]
@@ -415,7 +434,7 @@ fn a_real_devbox_agent_builds_its_project_in_its_clone() {
         }
     }
     let _cleanup = Cleanup(
-        project.join(".devcroft/fleet"),
+        Path::new(env!("CARGO_MANIFEST_DIR")).join(".devcroft/fleet"),
         root.join(format!("fleet-{}", manifest.sandbox.name)),
         base.clone(),
     );
@@ -464,7 +483,7 @@ fn rm_refuses_a_running_agent_and_removes_a_stopped_one_with_its_clone() {
     let s = Setup::new("rm", Some(&root), "", true);
     let started = s.up(2).unwrap();
     let m = s.manifest();
-    let clone = |id: &str| s.project().join(".devcroft/fleet").join(id);
+    let clone = |id: &str| s.clones().join(id);
 
     let err = commands::rm(&s.state(), &m, exe(), &s.project(), "a1").unwrap_err();
     assert_eq!(err.exit_code(), 2, "{err}");
@@ -487,7 +506,7 @@ fn rm_refuses_a_running_agent_and_removes_a_stopped_one_with_its_clone() {
     assert!(!root.join(format!("fleet-{}", s.name)).exists());
     assert!(!s.state().exists());
     // Nor empty directories where the clones were.
-    assert!(!s.project().join(".devcroft").exists());
+    assert!(!s.repo().join(".devcroft").exists());
 }
 
 /// Preflight runs before anything is cloned, and names what failed.
@@ -509,7 +528,7 @@ fn preflight_refuses_an_undelegated_cgroup_before_cloning() {
         err.to_string().contains("preflight: cgroup delegation"),
         "{err}"
     );
-    assert!(!s.project().join(".devcroft").exists());
+    assert!(!s.repo().join(".devcroft").exists());
 }
 
 #[test]

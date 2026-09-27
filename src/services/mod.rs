@@ -429,6 +429,19 @@ pub struct ServiceState {
     pub name: String,
     pub health: ServiceHealth,
     pub pid: Option<i64>,
+    /// Whether its readiness probe passes; `None` for a service that
+    /// declares none. Read from process-compose's `has_ready_probe` and
+    /// `is_ready` (`"Ready"`, `"Not Ready"`, or `"-"` without a probe;
+    /// measured against 1.116.0).
+    pub ready: Option<bool>,
+}
+
+impl ServiceState {
+    /// Running, and past its readiness probe if it declares one: what a
+    /// caller waiting to dispatch work needs, as opposed to merely started.
+    pub fn is_ready(&self) -> bool {
+        self.health == ServiceHealth::Running && self.ready != Some(false)
+    }
 }
 
 /// The four states the `services` spec requires be distinguishable,
@@ -529,6 +542,12 @@ impl ServiceState {
             (_, Some(false), _) => ServiceHealth::Exited,
             _ => ServiceHealth::NotStarted,
         };
+        let has_probe = v
+            .get("has_ready_probe")
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(false);
+        let ready = has_probe
+            .then(|| v.get("is_ready").and_then(serde_json::Value::as_str) == Some("Ready"));
         Some(ServiceState {
             name,
             health,
@@ -536,6 +555,7 @@ impl ServiceState {
                 .get("pid")
                 .and_then(serde_json::Value::as_i64)
                 .filter(|p| *p > 0),
+            ready,
         })
     }
 }
@@ -739,6 +759,7 @@ pub fn reconcile(
                         name: name.clone(),
                         health: ServiceHealth::NotStarted,
                         pid: None,
+                        ready: None,
                     });
                 }
             }
@@ -758,11 +779,85 @@ pub fn reconcile(
                     name: name.clone(),
                     health: ServiceHealth::NotStarted,
                     pid: None,
+                    ready: None,
                 })
                 .collect(),
             supervisor_error: Some(format!("supervisor unreachable: {why}")),
         },
     }
+}
+
+/// Why a sandbox's service configuration could not be written, by the
+/// error contract's layer.
+#[derive(Debug)]
+pub enum ConfigError {
+    /// The supervisor socket's path is over the OS's limit: config.
+    SocketPathTooLong(String),
+    /// The environment does not provide the supervisor binary: provider.
+    NoSupervisor(String),
+    Io(std::io::Error),
+}
+
+impl From<std::io::Error> for ConfigError {
+    fn from(e: std::io::Error) -> Self {
+        ConfigError::Io(e)
+    }
+}
+
+impl std::fmt::Display for ConfigError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ConfigError::SocketPathTooLong(m) | ConfigError::NoSupervisor(m) => f.write_str(m),
+            ConfigError::Io(e) => write!(f, "{e}"),
+        }
+    }
+}
+
+/// Write the supervisor config that starts `services` for the sandbox
+/// `sandbox_name` of `project_root`, after checking the two things that
+/// would otherwise fail later and opaquely: a socket path the OS cannot
+/// bind, and an environment without the supervisor binary. Shared by `up`
+/// and by each fleet agent, whose "sandbox name" is its ID.
+pub fn write_config(
+    project_root: &Path,
+    sandbox_name: &str,
+    provider: &str,
+    services: &[ServiceDecl],
+    env: &BTreeMap<String, String>,
+    shell: &Path,
+) -> Result<(), ConfigError> {
+    let socket = socket_path(project_root, sandbox_name);
+    let socket_len = socket.as_os_str().as_encoded_bytes().len();
+    if socket_len > MAX_SOCKET_PATH {
+        return Err(ConfigError::SocketPathTooLong(format!(
+            "the service supervisor's socket path is {socket_len} bytes, over the \
+             {MAX_SOCKET_PATH} the OS allows for a unix socket: {}\n\
+             move the project closer to the filesystem root, or shorten \
+             `[sandbox].name`",
+            socket.display()
+        )));
+    }
+    if resolve_in_env(env).is_none() {
+        let binary = supervisor().binary();
+        let hint = match provider {
+            "devenv" => format!("`packages = [ pkgs.{binary} ];` in devenv.nix"),
+            "devbox" => format!("`devbox add {binary}`"),
+            "nix" => format!("add `pkgs.{binary}` to the dev shell's inputs"),
+            _ => format!("e.g. `flox install {binary}`"),
+        };
+        return Err(ConfigError::NoSupervisor(format!(
+            "{} service(s) are declared but `{binary}` is not in the \
+             resolved environment; add it to the environment manifest \
+             ({hint})",
+            services.len()
+        )));
+    }
+    let config_path = config_path(project_root, sandbox_name);
+    if let Some(dir) = config_path.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
+    std::fs::write(&config_path, supervisor().render_config(services, shell))?;
+    Ok(())
 }
 
 /// Locates `process-compose` through the *resolved environment's* `PATH`,
@@ -1176,12 +1271,32 @@ mod tests {
     /// own listing was consulted, and it cannot report a service it
     /// never accepted. Reconciling against the declared set is what
     /// makes the fourth state produceable.
+    /// Readiness, in the shapes process-compose 1.116.0 was measured to
+    /// report: a probed service is ready only once its probe passes, and
+    /// one without a probe is ready as soon as it runs.
+    #[test]
+    fn readiness_follows_the_probe_and_only_the_probe() {
+        let state = |json: serde_json::Value| ServiceState::from_json(&json).unwrap();
+        let probed_waiting = state(serde_json::json!({"name": "db", "status": "Running",
+            "is_running": true, "is_ready": "Not Ready", "has_ready_probe": true}));
+        let probed_ready = state(serde_json::json!({"name": "db", "status": "Running",
+            "is_running": true, "is_ready": "Ready", "has_ready_probe": true}));
+        let unprobed = state(serde_json::json!({"name": "web", "status": "Running",
+            "is_running": true, "is_ready": "-", "has_ready_probe": false}));
+        assert_eq!(probed_waiting.ready, Some(false));
+        assert!(!probed_waiting.is_ready());
+        assert!(probed_ready.is_ready());
+        assert_eq!(unprobed.ready, None);
+        assert!(unprobed.is_ready());
+    }
+
     #[test]
     fn a_declared_service_the_supervisor_never_saw_is_not_started() {
         let running = ServiceState {
             name: "db".to_string(),
             health: ServiceHealth::Running,
             pid: Some(42),
+            ready: None,
         };
         let report = reconcile(&["db".to_string(), "ghost".to_string()], Ok(vec![running]));
 

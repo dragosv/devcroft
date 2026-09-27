@@ -2,8 +2,8 @@
 //! thin over, and that tests can drive with an injected provider.
 //!
 //! **Each agent works on its own clone of the project** (the
-//! `workspace-isolation` spec), at `<project>/.devcroft/fleet/<id>`: inside
-//! the project's artifact directory, which `init` already ignores. Not in
+//! `workspace-isolation` spec), at `<repo>/.devcroft/fleet/<id>`: in the
+//! repository's artifact directory, made self-ignoring. Not in
 //! devcroft's data dir, where the fleet's state lives, because the baseline
 //! denies that dir to every sandbox. A `git clone --local` hardlinks the
 //! object store, so a clone costs its checkout, not the history. Only
@@ -152,7 +152,8 @@ pub fn up(provider: &dyn ProviderEntry, req: &UpRequest) -> Result<UpOutcome, Fl
         let mut workspace = None;
         let mut refused = None;
         let result = sup.start_with(|id| {
-            let dir = clone_root(req.project_root, id);
+            let dir = clone_root(req.project_root, id)?;
+            ignore_clones(req.project_root)?;
             made_clone = Some(dir.clone());
             let ws = clone_workspace(req.project_root, &dir)?;
             workspace = Some(ws.clone());
@@ -357,25 +358,68 @@ pub fn rm_all(
     std::fs::remove_dir_all(state_dir).map_err(backend)?;
     // The clones' parent, and the artifact dir above it, only if nothing
     // else is in them: `up` keeps its own artifacts in `.devcroft/` too.
-    let fleet_dir = clone_root(project_root, "x");
-    if let Some(fleet_dir) = fleet_dir.parent() {
-        let _ = std::fs::remove_dir(fleet_dir);
-        if let Some(artifacts) = fleet_dir.parent() {
+    if let Ok(dir) = fleet_dir(project_root) {
+        let only_ignore = std::fs::read_dir(&dir)
+            .map(|entries| entries.flatten().all(|e| e.file_name() == ".gitignore"))
+            .unwrap_or(false);
+        if only_ignore {
+            let _ = std::fs::remove_file(dir.join(".gitignore"));
+        }
+        let _ = std::fs::remove_dir(&dir);
+        if let Some(artifacts) = dir.parent() {
             let _ = std::fs::remove_dir(artifacts);
         }
     }
     Ok(removed)
 }
 
-fn clone_root(project_root: &Path, id: &str) -> PathBuf {
-    project_root
+/// The repository holding `project_root`.
+fn repo_top(project_root: &Path) -> io::Result<PathBuf> {
+    let top = Command::new("git")
+        .arg("-C")
+        .arg(project_root)
+        .args(["rev-parse", "--show-toplevel"])
+        .output()?;
+    if !top.status.success() {
+        return Err(io::Error::other(format!(
+            "finding the repository of {}: {}",
+            project_root.display(),
+            String::from_utf8_lossy(&top.stderr).trim()
+        )));
+    }
+    Ok(PathBuf::from(String::from_utf8_lossy(&top.stdout).trim()))
+}
+
+/// Where the clones live: `<repo>/.devcroft/fleet`, at the **repository**
+/// root rather than under the project. A project in a subdirectory (every
+/// sample here) would otherwise have its relative path twice in each
+/// workspace path, and a service supervisor's socket inside it came to 123
+/// bytes against the OS's 103 (measured on `flox-services-sample`).
+fn fleet_dir(project_root: &Path) -> io::Result<PathBuf> {
+    Ok(repo_top(project_root)?
         .join(crate::services::ARTIFACT_DIR)
-        .join("fleet")
-        .join(id)
+        .join("fleet"))
+}
+
+fn clone_root(project_root: &Path, id: &str) -> io::Result<PathBuf> {
+    Ok(fleet_dir(project_root)?.join(id))
+}
+
+/// A `.gitignore` of `*` in the clones' directory: it ignores everything
+/// there, itself included, so a repository whose own ignores do not cover
+/// `.devcroft/` at its root does not list agents' clones as untracked.
+fn ignore_clones(project_root: &Path) -> io::Result<()> {
+    let dir = fleet_dir(project_root)?;
+    std::fs::create_dir_all(&dir)?;
+    let ignore = dir.join(".gitignore");
+    if !ignore.exists() {
+        std::fs::write(ignore, "*\n")?;
+    }
+    Ok(())
 }
 
 fn remove_clone(project_root: &Path, id: &str, workspace: &Path) -> Result<(), FleetError> {
-    let root = clone_root(project_root, id);
+    let root = clone_root(project_root, id).map_err(backend)?;
     if !workspace.starts_with(&root) {
         return Err(FleetError::Config(format!(
             "agent {id}'s workspace {} is not the clone fleet made at {}; left in place",
@@ -446,19 +490,7 @@ fn require_git_repository(project_root: &Path) -> Result<(), FleetError> {
 /// workspace would put the agent at the repository root, with the wrong
 /// manifest or none.
 fn clone_workspace(project_root: &Path, dest: &Path) -> io::Result<PathBuf> {
-    let top = Command::new("git")
-        .arg("-C")
-        .arg(project_root)
-        .args(["rev-parse", "--show-toplevel"])
-        .output()?;
-    if !top.status.success() {
-        return Err(io::Error::other(format!(
-            "finding the repository of {}: {}",
-            project_root.display(),
-            String::from_utf8_lossy(&top.stderr).trim()
-        )));
-    }
-    let top = PathBuf::from(String::from_utf8_lossy(&top.stdout).trim());
+    let top = repo_top(project_root)?;
     let relative = project_root
         .canonicalize()?
         .strip_prefix(&top)

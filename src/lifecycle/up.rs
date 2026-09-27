@@ -1111,52 +1111,21 @@ fn prepare_services(
     // error naming neither the path nor the length. See
     // `services::MAX_SOCKET_PATH` — the per-sandbox subdirectory this
     // path now carries makes it one level deeper than it used to be.
-    let socket = crate::services::socket_path(project_root, sandbox_name);
-    let socket_len = socket.as_os_str().as_encoded_bytes().len();
-    if socket_len > crate::services::MAX_SOCKET_PATH {
-        return Err(UpError::Config(format!(
-            "the service supervisor's socket path is {socket_len} bytes, over the \
-             {} the OS allows for a unix socket: {}\n\
-             move the project closer to the filesystem root, or shorten \
-             `[sandbox].name`",
-            crate::services::MAX_SOCKET_PATH,
-            socket.display()
-        )));
-    }
-    // `process-compose` must come from the project's own environment,
-    // never the host's PATH and never a scanned store path — see
-    // `services::resolve_in_env`. Failing here, at layer `provider`,
-    // beats starting a sandbox whose declared services silently never
-    // come up.
-    if crate::services::resolve_in_env(&resolution.env).is_none() {
-        let binary = crate::services::supervisor().binary();
-        // The example names the provider the manifest actually declares.
-        // It said `flox install` unconditionally, which sent a devenv
-        // user to a command for a tool their project does not use — the
-        // same defect the wrong-provider refusal above had.
-        let hint = match provider {
-            "devenv" => format!("`packages = [ pkgs.{binary} ];` in devenv.nix"),
-            "devbox" => format!("`devbox add {binary}`"),
-            "nix" => format!("add `pkgs.{binary}` to the dev shell's inputs"),
-            _ => format!("e.g. `flox install {binary}`"),
-        };
-        return Err(UpError::Provider(
-            crate::provider::ProviderError::ResolutionFailed(format!(
-                "{} service(s) are declared but `{binary}` is not in the \
-                 resolved environment; add it to the environment manifest \
-                 ({hint})",
-                services.len()
-            )),
-        ));
-    }
-    let config_path = crate::services::config_path(project_root, sandbox_name);
-    if let Some(dir) = config_path.parent() {
-        std::fs::create_dir_all(dir)?;
-    }
-    std::fs::write(
-        &config_path,
-        crate::services::supervisor().render_config(services, shell),
-    )?;
+    crate::services::write_config(
+        project_root,
+        sandbox_name,
+        provider,
+        services,
+        &resolution.env,
+        shell,
+    )
+    .map_err(|e| match e {
+        crate::services::ConfigError::SocketPathTooLong(msg) => UpError::Config(msg),
+        crate::services::ConfigError::NoSupervisor(msg) => {
+            UpError::Provider(crate::provider::ProviderError::ResolutionFailed(msg))
+        }
+        crate::services::ConfigError::Io(e) => UpError::from(e),
+    })?;
     Ok(true)
 }
 
