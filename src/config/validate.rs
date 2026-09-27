@@ -16,7 +16,7 @@ const SECTIONS: &[(&str, &[&str])] = &[
         ],
     ),
     ("filesystem", &["allow", "read", "deny"]),
-    ("network", &["default", "allow", "ports"]),
+    ("network", &["default", "allow", "ports", "services"]),
     ("ssh", &["forward_agent"]),
     ("hooks", &["post_create", "post_start"]),
 ];
@@ -45,6 +45,27 @@ pub fn check_unknown_keys(table: &toml::Table) -> Result<(), ConfigError> {
                         path: format!("{key}.{sub_key}"),
                         suggestion: closest(sub_key, fields),
                     });
+                }
+            }
+            // `network.services.<name>` is keyed by the user's service
+            // names, so only each entry's own fields are schema-checked,
+            // one level further down than everything else.
+            if key == "network"
+                && let Some(services) = sub.get("services").and_then(|v| v.as_table())
+            {
+                const SERVICE_FIELDS: &[&str] = &["port", "expose"];
+                for (name, entry) in services {
+                    let Some(entry) = entry.as_table() else {
+                        continue;
+                    };
+                    for field in entry.keys() {
+                        if !SERVICE_FIELDS.contains(&field.as_str()) {
+                            return Err(ConfigError::UnknownKey {
+                                path: format!("network.services.{name}.{field}"),
+                                suggestion: closest(field, SERVICE_FIELDS),
+                            });
+                        }
+                    }
                 }
             }
         }

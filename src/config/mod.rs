@@ -119,6 +119,27 @@ pub struct Network {
     /// `0.0.0.0` bind on this platform — so this maps to `open_port`, and
     /// binding a non-loopback address stays denied.
     pub ports: Vec<u16>,
+    /// Ports the provider's declared services bind, keyed by service name
+    /// (`network.services.<name>`), and whether each is exposed on the host.
+    ///
+    /// devcroft's own declaration, because the provider's service schema
+    /// (flox's `[services]`) has no port field and devcroft does not own it:
+    /// a port lives in a command string or a `vars` entry, neither of which
+    /// can be parsed reliably (`service-ports`, `add-port-allocation`). A
+    /// declared port is granted like one in `ports`. A name the provider
+    /// does not declare fails at start, rather than doing nothing.
+    pub services: BTreeMap<String, ServicePort>,
+}
+
+/// One service's entry in `network.services`.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct ServicePort {
+    /// The port the service binds, unchanged, inside its sandbox.
+    pub port: u16,
+    /// Reach it from the host through an allocated port. Fleet agents
+    /// only, for now.
+    #[serde(default)]
+    pub expose: bool,
 }
 
 impl Default for Network {
@@ -127,6 +148,7 @@ impl Default for Network {
             default: NetworkDefault::Deny,
             allow: Vec::new(),
             ports: Vec::new(),
+            services: BTreeMap::new(),
         }
     }
 }
@@ -336,6 +358,11 @@ pub fn parse(text: &str) -> Result<(Manifest, Vec<Warning>), ConfigError> {
     }
 
     crate::provider::validate_provider(&raw.env.provider).map_err(ConfigError::InvalidProvider)?;
+    if let Some((name, _)) = raw.network.services.iter().find(|(_, s)| s.port == 0) {
+        return Err(ConfigError::Parse(format!(
+            "network.services.{name}.port: 0 is not a port a service can bind (1-65535)"
+        )));
+    }
     // A manifest that omits the key is fine and gets no output at all —
     // the spec's "Manifest omits the isolation level" scenario rules out
     // a deprecation notice for the common case.
@@ -381,6 +408,46 @@ pub fn parse(text: &str) -> Result<(Manifest, Vec<Warning>), ConfigError> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn network_services_parse_and_are_strictly_checked() {
+        let base = "[sandbox]\nname = \"p\"\n";
+        let (m, _) = parse(&format!(
+            "{base}[network.services.api]\nport = 8710\nexpose = true\n\
+             [network.services.db]\nport = 5432\n"
+        ))
+        .unwrap();
+        assert_eq!(
+            m.network.services["api"],
+            ServicePort {
+                port: 8710,
+                expose: true
+            }
+        );
+        assert_eq!(
+            m.network.services["db"],
+            ServicePort {
+                port: 5432,
+                expose: false
+            }
+        );
+        // Absent: nothing, as before the key existed.
+        assert!(parse(base).unwrap().0.network.services.is_empty());
+
+        // An unknown field is named with its full path.
+        let err = parse(&format!(
+            "{base}[network.services.api]\nport = 1\nexpsoe = true\n"
+        ))
+        .unwrap_err()
+        .to_string();
+        assert!(err.contains("network.services.api.expsoe"), "{err}");
+        // A port is required, and must be one a service can bind.
+        assert!(parse(&format!("{base}[network.services.api]\nexpose = true\n")).is_err());
+        let err = parse(&format!("{base}[network.services.api]\nport = 0\n"))
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("network.services.api.port"), "{err}");
+    }
+
     use super::*;
 
     /// One name cannot both be given a literal and take the host's value.

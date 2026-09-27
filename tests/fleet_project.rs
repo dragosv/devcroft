@@ -189,3 +189,40 @@ fn services_without_a_supervisor_in_the_environment_are_refused_by_name() {
     assert!(matches!(err, PrepareError::Provider(_)), "{err}");
     assert!(err.to_string().contains("process-compose"), "{err}");
 }
+
+/// 5.8: a port declared for a service the environment does not declare is a
+/// typo, and fails as one: at layer config, naming it and what exists,
+/// before anything starts. A service that exists and then fails is a
+/// different outcome (`ServicesOutcome::Failed`, in `tests/fleet_commands.rs`).
+#[test]
+fn a_port_for_a_service_that_does_not_exist_fails_naming_it() {
+    let mut provider = HostUsr::new();
+    provider.services = vec![ServiceDecl {
+        name: "api".into(),
+        command: "true".into(),
+        vars: Default::default(),
+        is_daemon: false,
+        working_dir: None,
+        depends_on: Vec::new(),
+        restart: RestartPolicy::Never,
+        shutdown: Shutdown::Default,
+        readiness: None,
+    }];
+    let err = prepare(
+        &provider,
+        &manifest("[network.services.apl]\nport = 8710\n"),
+        Path::new("/tmp/w"),
+        "a1",
+        exe(),
+        "key",
+        Limits::default(),
+        true,
+    )
+    .unwrap_err();
+    assert!(matches!(err, PrepareError::Config(_)), "{err}");
+    let msg = err.to_string();
+    assert!(
+        msg.contains("'apl'") && msg.contains("declares: api"),
+        "{msg}"
+    );
+}

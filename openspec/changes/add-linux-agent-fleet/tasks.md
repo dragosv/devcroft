@@ -629,7 +629,7 @@ the implementation before it resolves.
 > capabilities had none and tasks are not acceptance criteria. Writing it
 > settled two things these tasks had left ambiguous — see 5.1.
 
-- [ ] 5.1 Declare the port and optional host mapping in **devcroft's own
+- [x] 5.1 Declare the port and optional host mapping in **devcroft's own
       manifest, keyed by service name**, sharing `add-port-allocation`'s
       configuration surface.
       **This replaces "extend the environment schema", which was not
@@ -641,6 +641,14 @@ the implementation before it resolves.
       upstream is not devcroft's to do. The port lives in the command
       string or in `vars`, neither of which devcroft can reliably parse,
       so the declaration has to be devcroft's own.
+      **Built as `[network.services.<name>]`**, with `port` and `expose`.
+      That is `[network]` and keyed by service, as `add-port-allocation`
+      requires; its `var` key can join the same table. A declared port is
+      granted like one in `ports`, with origin `manifest:network.services`
+      and never twice. Unknown fields are named with their full path, port
+      0 and a missing port are refused, and without the table compilation
+      is unchanged. **Proposed syntax, not yet reviewed**: `0.0.1` is
+      unpublished, so changing it costs nothing yet.
 - [x] 5.2 Start each agent's declared service stack under that agent's keeper
       and inside its cgroup leaf; gate agent readiness on those services being
       ready, so a task dispatched to a ready agent does not race its own
@@ -679,9 +687,16 @@ the implementation before it resolves.
       `add-port-allocation` must fail loudly, and a test that only checks
       "it works" would pass equally against an implementation that had
       wrongly copied that change's refusal into fleet.
-- [ ] 5.8 Test: a declared port naming a service the provider does not
+- [x] 5.8 Test: a declared port naming a service the provider does not
       declare fails at `up`, distinguishably from a service that failed
-      to start.
+      to start. `services::check_declared_ports`, shared by fleet and
+      `up`, runs before anything starts (in `up`, before the state dir
+      exists): layer config, exit 2, naming the unmatched service and the
+      ones that exist. A service that exists and fails is
+      `ServicesOutcome::Failed` instead. Checked by a fleet test, and on
+      `up` by hand against a copy of `flox-services-sample` with real flox:
+      exit 2 and no state dir. `expose` is refused in `up` by name, since
+      only fleet's host mapping (5.3) will carry it.
 
 ## 6. Hygiene and follow-up
 

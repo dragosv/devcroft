@@ -346,7 +346,7 @@ pub fn compile(manifest: &Manifest) -> CompiledPolicy {
         .map(|d| AnnotatedValue::new(d.clone(), Origin::Manifest("network.allow")))
         .collect();
 
-    let network_ports: Vec<AnnotatedPort> = manifest
+    let mut network_ports: Vec<AnnotatedPort> = manifest
         .network
         .ports
         .iter()
@@ -355,6 +355,18 @@ pub fn compile(manifest: &Manifest) -> CompiledPolicy {
             origin: Origin::Manifest("network.ports"),
         })
         .collect();
+    // A service's declared port is a port it binds, so it is granted like
+    // one in `ports`, with its own origin. Not twice: a port already listed
+    // there keeps that rule. Nothing is added when the table is absent, so
+    // a manifest without it compiles exactly as before.
+    for service in manifest.network.services.values() {
+        if !network_ports.iter().any(|p| p.value == service.port) {
+            network_ports.push(AnnotatedPort {
+                value: service.port,
+                origin: Origin::Manifest("network.services"),
+            });
+        }
+    }
 
     // What system_read_linux_core/macos used to grant implicitly, replaced
     // with only what the keeper itself needs — see [`KEEPER_SYSTEM_READ`].
@@ -707,6 +719,34 @@ mod tests {
     /// The real functional proof ("self-restriction actually works") lives
     /// in the integration suite (`tests/*.rs`), which spawns the real
     /// binary as its own process — see `use-nono-library` task group 4.
+    /// A service's declared port is a bind grant with its own origin, and
+    /// never a second rule for a port `network.ports` already lists.
+    #[test]
+    fn a_declared_service_port_is_granted_once_with_its_own_origin() {
+        let (manifest, _) = parse(
+            "[sandbox]\nname = \"myproj\"\n[network]\nports = [5432]\n\
+             [network.services.db]\nport = 5432\n[network.services.api]\nport = 8710\n",
+        )
+        .unwrap();
+        let compiled = compile(&manifest);
+        let ports: Vec<(u16, Origin)> = compiled
+            .network_ports
+            .iter()
+            .map(|p| (p.value, p.origin.clone()))
+            .collect();
+        assert_eq!(
+            ports,
+            [
+                (5432, Origin::Manifest("network.ports")),
+                (8710, Origin::Manifest("network.services")),
+            ]
+        );
+        // Without the table, compilation is exactly what it was.
+        let (plain, _) =
+            parse("[sandbox]\nname = \"myproj\"\n[network]\nports = [5432]\n").unwrap();
+        assert_eq!(compile(&plain).network_ports.len(), 1);
+    }
+
     #[test]
     fn network_ports_compile_to_open_port_alongside_a_deny_default() {
         let (manifest, _) =

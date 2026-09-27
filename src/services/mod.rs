@@ -787,6 +787,32 @@ pub fn reconcile(
     }
 }
 
+/// Every name in `network.services` must be a service the environment
+/// declares (`service-ports`: *A declaration names a service that does not
+/// exist*). Checked before anything starts, so a typo fails as a typo
+/// (layer config, naming it) and never as a service that failed to start,
+/// and so the key is never a silent no-op the way `env.vars` once was.
+pub fn check_declared_ports(
+    ports: &BTreeMap<String, crate::config::ServicePort>,
+    declared: &[ServiceDecl],
+) -> Result<(), String> {
+    for name in ports.keys() {
+        if !declared.iter().any(|d| &d.name == name) {
+            let known: Vec<&str> = declared.iter().map(|d| d.name.as_str()).collect();
+            let known = if known.is_empty() {
+                "it declares none".to_string()
+            } else {
+                format!("it declares: {}", known.join(", "))
+            };
+            return Err(format!(
+                "network.services.{name}: the environment declares no service named \
+                 '{name}' ({known})"
+            ));
+        }
+    }
+    Ok(())
+}
+
 /// Why a sandbox's service configuration could not be written, by the
 /// error contract's layer.
 #[derive(Debug)]

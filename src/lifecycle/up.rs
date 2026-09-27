@@ -281,6 +281,25 @@ pub fn up_with_provider(
     // process-tier.
     let resolution = provider.resolve(project_root).map_err(UpError::Provider)?;
 
+    // `network.services` names services the environment must declare, and
+    // is checked here, before any state exists, so a typo fails as a typo
+    // rather than as a service that never started. `expose` needs a host
+    // relay only fleet has so far (`add-port-allocation` P-NEW is where
+    // `up` gets one), so it is refused rather than ignored.
+    crate::services::check_declared_ports(
+        &manifest.network.services,
+        resolution.services.declared(),
+    )
+    .map_err(UpError::Config)?;
+    if let Some((name, _)) = manifest.network.services.iter().find(|(_, s)| s.expose) {
+        return Err(UpError::Config(format!(
+            "network.services.{name}.expose: host mapping is not built for \
+             `devcroft up` yet; reach the service with \
+             `devcroft ssh -L <local>:127.0.0.1:<port> {}` meanwhile",
+            manifest.sandbox.name
+        )));
+    }
+
     // Recorded now so `status` (task 4.3) can later tell whether the
     // environment has drifted since this `up`, and which concrete
     // backend it resolved to, without needing the manifest or project
