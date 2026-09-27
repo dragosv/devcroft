@@ -293,9 +293,9 @@ pub fn up_with_provider(
     .map_err(UpError::Config)?;
     if let Some((name, _)) = manifest.network.services.iter().find(|(_, s)| s.expose) {
         return Err(UpError::Config(format!(
-            "network.services.{name}.expose: host mapping is not built for \
-             `devcroft up` yet; reach the service with \
-             `devcroft ssh -L <local>:127.0.0.1:<port> {}` meanwhile",
+            "network.services.{name}.expose: host mapping is implemented for fleet \
+             agents (`devcroft fleet up`), not yet for `devcroft up`; reach the \
+             service with `devcroft ssh -L <local>:127.0.0.1:<port> {}` meanwhile",
             manifest.sandbox.name
         )));
     }

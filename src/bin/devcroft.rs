@@ -88,6 +88,27 @@ fn main() {
                 .expect("__egress_proxy requires a unix listener fd argument");
             egress_proxy_main(fd, unix_fd);
         }
+        // Hidden: a fleet agent's host-side port mapping. Accepts on the
+        // allocated host port (the inherited listener) and relays each
+        // connection to the agent's ingress socket, which its keeper
+        // bridges to the service inside the agent's namespace.
+        Some("__ingress") => {
+            let fd: RawFd = args
+                .get(2)
+                .and_then(|s| s.parse().ok())
+                .expect("__ingress requires a listener fd argument");
+            let socket = args
+                .get(3)
+                .expect("__ingress requires an ingress socket path");
+            // SAFETY: the supervisor bound this listener and cleared its
+            // CLOEXEC for this process alone.
+            let listener = unsafe { std::net::TcpListener::from_raw_fd(fd) };
+            devcroft::proxy::server::relay_to_host_proxy(
+                listener,
+                std::path::PathBuf::from(socket),
+            );
+            std::process::exit(0);
+        }
         Some("exec") => std::process::exit(cli_exec(&args[2..])),
         Some("shell") => std::process::exit(cli_shell(&args[2..])),
         Some("proxy") => std::process::exit(cli_proxy(&args[2..])),
@@ -171,7 +192,7 @@ fleet (Linux; experimental)
       [--host-root]             (keep the host's root instead of a minimal view)
       [--memory 4G] [--pids N]  (each agent's limits; --cpu-weight/--io-weight 1-10000)
       [--cpu-weight W] [--io-weight W]
-  fleet ls                    every agent: state, memory, CPU, workspace
+  fleet ls                    every agent: state, memory, CPU, host ports, workspace
   fleet inspect <id>          one agent's record, and why it died if it did
   fleet stop <id>             stop one agent, keeping its workspace
   fleet rm <id> | --all       remove stopped agents and their clones (--yes
@@ -2818,8 +2839,18 @@ fn cli_fleet_linux(args: &[String]) -> i32 {
                             .cpu_usec
                             .map(|u| format!("{:.1}s cpu", u as f64 / 1e6))
                             .unwrap_or_else(|| "-".into());
+                        let ports = if a.record.port_mappings.is_empty() {
+                            "-".to_string()
+                        } else {
+                            a.record
+                                .port_mappings
+                                .iter()
+                                .map(|p| format!("{}:{}->{}", p.service, p.host, p.agent))
+                                .collect::<Vec<_>>()
+                                .join(",")
+                        };
                         println!(
-                            "{}\t{state}\t{mem}\t{cpu}\t{}",
+                            "{}\t{state}\t{mem}\t{cpu}\t{ports}\t{}",
                             a.record.id,
                             a.record.workspace.display()
                         );
@@ -2861,6 +2892,19 @@ fn cli_fleet_linux(args: &[String]) -> i32 {
                             .map(|w| w.to_string())
                             .unwrap_or_else(|| "default".into()),
                     );
+                    // `service-ports` 5.4: established, none declared, and
+                    // released are three different answers.
+                    if r.exposes.is_empty() {
+                        println!("mappings\tnone declared");
+                    } else if r.port_mappings.is_empty() {
+                        println!("mappings\treleased ({} declared)", r.exposes.join(", "));
+                    }
+                    for p in &r.port_mappings {
+                        println!(
+                            "mapping\t{}: 127.0.0.1:{} -> {} in the agent",
+                            p.service, p.host, p.agent
+                        );
+                    }
                     // Queried live, only while running: a stopped agent's
                     // supervisor is gone with it.
                     if r.state == devcroft::fleet::supervisor::AgentState::Running
@@ -3759,6 +3803,30 @@ fn keeper_main(fd: RawFd, ssh_fd: RawFd) -> ! {
         std::thread::spawn(move || {
             devcroft::proxy::server::relay_to_host_proxy(listener, socket_path);
         });
+    }
+
+    // A fleet agent's ingress sockets (`fleet::supervisor`, host mapping):
+    // bound by the supervisor before restriction, inherited like the two
+    // listeners below, one per exposed service, each bridged to that
+    // service's port on this namespace's loopback. Close-on-exec before
+    // anything here starts a child, for the reason given below.
+    let ingress: Vec<(RawFd, u16)> = std::env::var("DEVCROFT_INGRESS")
+        .ok()
+        .map(|v| {
+            v.split(',')
+                .filter_map(|pair| pair.split_once(':'))
+                .filter_map(|(fd, port)| Some((fd.parse().ok()?, port.parse().ok()?)))
+                .collect()
+        })
+        .unwrap_or_default();
+    // SAFETY: single-threaded prologue; see the other removals above.
+    unsafe { std::env::remove_var("DEVCROFT_INGRESS") };
+    for (fd, port) in ingress {
+        // SAFETY: the supervisor placed a bound unix listener at `fd` for
+        // this process alone.
+        unsafe { libc::fcntl(fd, libc::F_SETFD, libc::FD_CLOEXEC) };
+        let listener = unsafe { UnixListener::from_raw_fd(fd) };
+        std::thread::spawn(move || devcroft::proxy::server::bridge_unix_to_tcp(listener, port));
     }
 
     // SAFETY: `up` created both listeners before restriction, cleared

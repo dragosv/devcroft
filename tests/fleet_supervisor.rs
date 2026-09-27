@@ -119,6 +119,7 @@ impl Fleet {
             view: true,
             egress_allow: Vec::new(),
             services: Vec::new(),
+            expose: Vec::new(),
         }
     }
 }
@@ -533,7 +534,7 @@ fn each_agent_reaches_only_its_own_allowlist_through_its_own_proxy() {
 
     // Stopping an agent takes its proxy with it.
     sup.stop(&a).unwrap();
-    assert!(!root.join(&fleet.name).join(format!("{a}-proxy")).exists());
+    assert!(!root.join(&fleet.name).join(format!("{a}-host")).exists());
     assert_eq!(
         code(&sock_b, &lb, "", to4),
         "200",

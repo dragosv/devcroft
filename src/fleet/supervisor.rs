@@ -61,6 +61,9 @@ pub struct AgentLaunch {
     /// written for this agent (`services::write_config`, named by its ID).
     /// Empty for none.
     pub services: Vec<String>,
+    /// Services to reach from the host: each is mapped from an allocated
+    /// host port to its declared port inside the agent (`service-ports`).
+    pub expose: Vec<(String, u16)>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -74,7 +77,12 @@ pub enum AgentState {
 /// mappings arrive; none are created yet.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PortMapping {
+    /// The service it reaches.
+    #[serde(default)]
+    pub service: String,
+    /// On the host's loopback, allocated by the OS.
     pub host: u16,
+    /// The service's declared port, inside the agent.
     pub agent: u16,
 }
 
@@ -108,6 +116,11 @@ pub struct AgentRecord {
     /// The services its keeper runs.
     #[serde(default)]
     pub services: Vec<String>,
+    /// The services it asked to expose on the host. Kept apart from
+    /// `port_mappings`, which is emptied when the agent stops, so "none
+    /// declared" and "released" stay distinguishable.
+    #[serde(default)]
+    pub exposes: Vec<String>,
 }
 
 /// A record plus what is true of it right now.
@@ -190,7 +203,7 @@ impl Supervisor {
         match build(&id).and_then(|launch| self.start_in(&id, &dir, &launch)) {
             Ok(()) => Ok(id),
             Err(e) => {
-                for name in [id.clone(), proxy_leaf_name(&id)] {
+                for name in [id.clone(), host_leaf_name(&id)] {
                     if let Some(leaf) = self.node.existing_leaf(&name) {
                         let _ = leaf.kill();
                     }
@@ -226,12 +239,21 @@ impl Supervisor {
         let mut plan = launch.plan.clone();
         let mut provider_env = launch.provider_env.clone();
         let proxy_socket = dir.join("proxy.sock");
+        // Everything host-side that serves this agent (its egress proxy, its
+        // port forwarders) shares one leaf beside the agent's, and dies with
+        // the agent.
+        let host_leaf = if launch.egress_allow.is_empty() && launch.expose.is_empty() {
+            None
+        } else {
+            Some(
+                self.node
+                    .create_leaf(&host_leaf_name(id), &Limits::default())?,
+            )
+        };
         let relay = if launch.egress_allow.is_empty() {
             None
         } else {
-            let proxy_leaf = self
-                .node
-                .create_leaf(&proxy_leaf_name(id), &Limits::default())?;
+            let proxy_leaf = host_leaf.as_ref().expect("created when there is egress");
             let (_, port, token) = crate::proxy::spawn_at(
                 &self.exe,
                 &proxy_socket,
@@ -248,6 +270,52 @@ impl Supervisor {
             provider_env.extend(crate::proxy::client_env(port, &token));
             Some(port)
         };
+
+        // Host mappings (`service-ports`), the egress relay run backwards:
+        // host 127.0.0.1:<allocated> --TCP--> `__ingress` --UDS--> the
+        // keeper --TCP--> 127.0.0.1:<declared>, inside the agent. The UDS is
+        // bound here, before restriction, and inherited, like the control
+        // socket; so the agent gets no route, and the service is neither
+        // involved nor told. The host port is the OS's choice.
+        let first = init::FIRST_INHERITED_FD;
+        let mut ingress_fds: Vec<std::os::fd::OwnedFd> = Vec::new();
+        let mut ingress_env: Vec<String> = Vec::new();
+        let mut mappings = Vec::new();
+        for (k, (service, port)) in launch.expose.iter().enumerate() {
+            let socket = dir.join(format!("ingress-{service}.sock"));
+            let uds = bind_private(&socket)?;
+            let tcp = std::net::TcpListener::bind(("127.0.0.1", 0))?;
+            let host_port = tcp.local_addr()?.port();
+            crate::lifecycle::clear_cloexec(std::os::fd::AsRawFd::as_raw_fd(&tcp))?;
+            let mut cmd = std::process::Command::new(&self.exe);
+            cmd.arg("__ingress")
+                .arg(std::os::fd::AsRawFd::as_raw_fd(&tcp).to_string())
+                .arg(&socket)
+                .stdin(std::process::Stdio::null())
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null());
+            host_leaf
+                .as_ref()
+                .expect("created when there is a mapping")
+                .attach_on_spawn(&mut cmd)?;
+            // SAFETY: setsid only, in the forked child.
+            unsafe {
+                std::os::unix::process::CommandExt::pre_exec(&mut cmd, || {
+                    libc::setsid();
+                    Ok(())
+                });
+            }
+            cmd.spawn()?;
+            // The forwarder has its own copy; ours must not reach later agents.
+            drop(tcp);
+            ingress_env.push(format!("{}:{port}", first + 2 + k as std::os::fd::RawFd));
+            ingress_fds.push(uds.into());
+            mappings.push(PortMapping {
+                service: service.clone(),
+                host: host_port,
+                agent: *port,
+            });
+        }
 
         let env = crate::lifecycle::KeeperEnv {
             env: &provider_env,
@@ -267,6 +335,10 @@ impl Supervisor {
         .into_iter()
         .map(|(k, v)| Ok((lossless(k)?, lossless(v)?)))
         .collect::<io::Result<Vec<_>>>()?;
+        let mut env = env;
+        if !ingress_env.is_empty() {
+            env.push(("DEVCROFT_INGRESS".into(), ingress_env.join(",")));
+        }
 
         let view = if launch.view {
             let root = dir.join("root");
@@ -279,7 +351,6 @@ impl Supervisor {
             None
         };
 
-        let first = init::FIRST_INHERITED_FD;
         let spec = AgentSpec {
             command: vec![
                 self.exe.to_string_lossy().into_owned(),
@@ -304,7 +375,10 @@ impl Supervisor {
         let stdio = Stdio {
             stdout: Some(log.try_clone()?.into()),
             stderr: Some(log.into()),
-            inherit: vec![control.into(), ssh.into()],
+            inherit: [control.into(), ssh.into()]
+                .into_iter()
+                .chain(ingress_fds)
+                .collect(),
         };
 
         let leaf = self.node.create_leaf(id, &launch.limits)?;
@@ -323,12 +397,13 @@ impl Supervisor {
                 state: AgentState::Running,
                 policy_fingerprint: format!("{:016x}", fnv1a64(&plan_json)),
                 view: launch.view,
-                port_mappings: Vec::new(),
+                port_mappings: mappings,
                 attention: false,
                 evidence: None,
                 egress: launch.egress_allow.clone(),
                 limits: launch.limits.clone(),
                 services: launch.services.clone(),
+                exposes: launch.expose.iter().map(|(s, _)| s.clone()).collect(),
             },
         )
     }
@@ -414,9 +489,10 @@ impl Supervisor {
                 )));
             }
         }
-        // Its proxy goes with it: a proxy outliving its agent would hold an
-        // allowlist open for nobody.
-        if let Some(proxy) = self.node.existing_leaf(&proxy_leaf_name(&record.id)) {
+        // Its host-side helpers go with it: a proxy outliving its agent
+        // would hold an allowlist open for nobody, and a forwarder its host
+        // port.
+        if let Some(proxy) = self.node.existing_leaf(&host_leaf_name(&record.id)) {
             proxy.kill()?;
         }
         record.state = AgentState::Stopped;
@@ -468,6 +544,13 @@ impl Supervisor {
         let _ = std::fs::remove_file(self.control_socket(&record.id));
         let _ = std::fs::remove_file(self.ssh_socket(&record.id));
         let _ = std::fs::remove_file(dir.join("proxy.sock"));
+        if let Ok(entries) = std::fs::read_dir(&dir) {
+            for entry in entries.flatten() {
+                if entry.file_name().to_string_lossy().starts_with("ingress-") {
+                    let _ = std::fs::remove_file(entry.path());
+                }
+            }
+        }
         let _ = std::fs::remove_dir(dir.join("root"));
         let mut record = record.clone();
         record.port_mappings.clear();
@@ -517,11 +600,13 @@ fn reap(id: &str, agent: &Agent) -> io::Result<()> {
     )))
 }
 
-/// The cgroup leaf an agent's egress proxy runs in: beside the agent's,
-/// never inside it (D6), so the agent's memory pressure or a `cgroup.kill`
-/// of its leaf cannot take down the component filtering it.
-fn proxy_leaf_name(id: &str) -> String {
-    format!("{id}-proxy")
+/// The cgroup leaf an agent's host-side helpers (its egress proxy, its port
+/// forwarders) run in: beside the agent's, never inside it (D6), so the
+/// agent's memory pressure or a `cgroup.kill` of its leaf cannot take down
+/// the component filtering it. Killed with the agent, which releases its
+/// host ports.
+fn host_leaf_name(id: &str) -> String {
+    format!("{id}-host")
 }
 
 fn id_number(id: &str) -> Option<u64> {

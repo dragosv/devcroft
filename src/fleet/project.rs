@@ -70,13 +70,6 @@ pub fn prepare(
         resolution.services.declared(),
     )
     .map_err(PrepareError::Config)?;
-    if let Some((name, _)) = manifest.network.services.iter().find(|(_, s)| s.expose) {
-        return Err(PrepareError::Config(format!(
-            "network.services.{name}.expose: host mapping for fleet agents is not \
-             built yet (add-linux-agent-fleet 5.3)"
-        )));
-    }
-
     // Exactly `up`'s rule: the shell must come from inside something the
     // sandbox is granted, and its grant is folded into the provider's.
     let shell =
@@ -160,6 +153,13 @@ pub fn prepare(
         view,
         egress_allow: manifest.network.allow.clone(),
         services,
+        expose: manifest
+            .network
+            .services
+            .iter()
+            .filter(|(_, s)| s.expose)
+            .map(|(name, s)| (name.clone(), s.port))
+            .collect(),
     })
 }
 

@@ -735,3 +735,99 @@ fn a_failing_service_is_reported_for_its_agent_which_stays_up() {
     assert_eq!((code, out.trim()), (Some(0), "still-up"));
     commands::rm_all(&s.state(), &s.manifest(), exe(), &s.project()).unwrap();
 }
+
+/// One HTTP GET over a plain TCP connection from the host; the body.
+fn get_from_host(port: u16, path: &str) -> std::io::Result<String> {
+    use std::io::{Read, Write};
+    let mut stream = std::net::TcpStream::connect(("127.0.0.1", port))?;
+    stream.set_read_timeout(Some(std::time::Duration::from_secs(5)))?;
+    write!(stream, "GET {path} HTTP/1.0\r\nHost: localhost\r\n\r\n")?;
+    let mut response = String::new();
+    stream.read_to_string(&mut response)?;
+    Ok(response
+        .split_once("\r\n\r\n")
+        .map(|(_, body)| body.trim().to_owned())
+        .unwrap_or_default())
+}
+
+/// 5.6 and 5.3/5.4: five agents run the same service on the same declared
+/// port, each gets its own host port, each host port reaches the right
+/// agent, and a stopped agent's port is released.
+#[test]
+fn five_agents_one_port_each_host_mapping_reaches_its_own_agent() {
+    let Some(root) = capable_host() else { return };
+    let Some(supervisor_dir) = process_compose_dir() else {
+        eprintln!("skipping: no process-compose in /nix/store");
+        return;
+    };
+    if !Path::new("/usr/bin/python3").exists() {
+        eprintln!("skipping: no /usr/bin/python3");
+        return;
+    }
+    let s = Setup::new(
+        "expose",
+        Some(&root),
+        "\n[network.services.web]\nport = 8000\nexpose = true\n",
+        true,
+    );
+    let provider = WithServices {
+        supervisor_dir,
+        services: vec![service(
+            "web",
+            "exec python3 -m http.server 8000 --bind 127.0.0.1",
+            None,
+        )],
+    };
+    let outcome = s
+        .up_via(&provider, 5, devcroft::fleet::cgroup::Limits::default())
+        .unwrap();
+    let m = s.manifest();
+
+    let mut host_ports = Vec::new();
+    for a in &outcome.started {
+        assert_eq!(a.services, commands::ServicesOutcome::Ready, "{}", a.id);
+        // Each agent's instance serves its own workspace.
+        std::fs::write(a.workspace.join("whoami"), &a.id).unwrap();
+        let record = commands::inspect(&s.state(), &m, exe(), &a.id)
+            .unwrap()
+            .record;
+        assert_eq!(record.exposes, ["web"]);
+        let [mapping] = &record.port_mappings[..] else {
+            panic!("{}: {:?}", a.id, record.port_mappings)
+        };
+        assert_eq!((mapping.service.as_str(), mapping.agent), ("web", 8000));
+        host_ports.push(mapping.host);
+    }
+    // Five distinct host ports for one declared port.
+    let mut distinct = host_ports.clone();
+    distinct.sort();
+    distinct.dedup();
+    assert_eq!(distinct.len(), 5, "{host_ports:?}");
+
+    // From the host, each mapping reaches its own agent and no other.
+    for (a, port) in outcome.started.iter().zip(&host_ports) {
+        assert_eq!(get_from_host(*port, "/whoami").unwrap(), a.id);
+    }
+
+    // Stopping one releases its port and leaves the rest working.
+    commands::stop(&s.state(), &m, exe(), "a1").unwrap();
+    // Released means free: the port can be bound again, which is what lets
+    // a later agent be given it. A refused connection alone would not show
+    // that (a forwarder left running with nothing behind it refuses too).
+    assert!(
+        std::net::TcpListener::bind(("127.0.0.1", host_ports[0])).is_ok(),
+        "a stopped agent's host port is still held"
+    );
+    let a1 = commands::inspect(&s.state(), &m, exe(), "a1")
+        .unwrap()
+        .record;
+    assert!(a1.port_mappings.is_empty());
+    assert_eq!(
+        a1.exposes,
+        ["web"],
+        "declared stays distinguishable from released"
+    );
+    assert_eq!(get_from_host(host_ports[1], "/whoami").unwrap(), "a2");
+
+    commands::rm_all(&s.state(), &m, exe(), &s.project()).unwrap();
+}

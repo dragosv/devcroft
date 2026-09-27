@@ -671,18 +671,44 @@ the implementation before it resolves.
       project's path in each workspace twice, and the supervisor socket
       came to 123 bytes against the OS's 103. Clones now live at the
       repository root.
-- [ ] 5.3 Allocate host ports per agent; release on exit.
-- [ ] 5.4 Report mappings in agent status, distinguishing "no mappings
+- [x] 5.3 Allocate host ports per agent; release on exit.
+      `expose = true` in `[network.services.<name>]` maps an OS-allocated
+      host port to the service's declared port inside the agent, through
+      the egress relay run backwards (`add-port-allocation` P-NEW):
+      host TCP, then `__ingress`, then a UDS the supervisor binds before
+      restriction and the keeper inherits (`DEVCROFT_INGRESS`), then
+      `bridge_unix_to_tcp` to `127.0.0.1:<port>` in the namespace. The agent
+      gets no route. The forwarders live in the agent's `<id>-host` leaf
+      (renamed from `-proxy`: the egress proxy is there too), and dying with
+      the agent is what releases the port. The release test binds the port
+      again rather than checking a refused connect: a forwarder left
+      running with nothing behind it refuses too, which let the first
+      version pass with the port still held.
+- [x] 5.4 Report mappings in agent status, distinguishing "no mappings
       declared" from "mappings not yet established".
+      `fleet ls` has a host-ports column (`api:39653->8710`), and
+      `fleet inspect` prints `mapping`, `none declared` or `released (api
+      declared)`. The record keeps what was declared (`exposes`) apart from
+      what is established (`port_mappings`, emptied on stop). Mappings are
+      established before an agent is recorded running, so a running agent
+      is never between the two.
 - [ ] 5.5 Wire the same schema into the macOS single-developer path, and
       surface the degradation there rather than letting a shared port
       read as a private one.
-- [ ] 5.6 Test: five agents bind the same declared port; each host mapping
-      reaches the correct agent. **The in-namespace half is tested** (three
-      agents, one port, three instances each answering with its own
-      workspace's file); the host mapping half waits for 5.3.
+- [x] 5.6 Test: five agents bind the same declared port; each host mapping
+      reaches the correct agent.
+      `five_agents_one_port_each_host_mapping_reaches_its_own_agent`: five
+      distinct host ports for port 8000, each answering from the host with
+      its own agent's file; stopping one frees its port and leaves the
+      rest working. Mutants that drop the keeper's bridge, or leave the
+      forwarders running, both fail. **With real flox:**
+      `flox-services-sample` with `expose`, two agents, each host port
+      reaching its own agent's `api` on 8710.
 - [ ] 5.7 Test: a service whose command hardcodes its port runs unchanged
-      in every agent, with no warning. **The second half is the
+      in every agent, with no warning. **The first half holds**: every
+      fleet services test hardcodes its port (`http.server 8000`), and
+      none warns. The second half needs `add-port-allocation`, which is
+      not implemented. **The second half is the
       assertion that matters** — the same manifest under
       `add-port-allocation` must fail loudly, and a test that only checks
       "it works" would pass equally against an implementation that had
