@@ -222,9 +222,17 @@ the implementation before it resolves.
       keep the supervisor and each agent's host-side proxy out of the leaves.
       Keeping the supervisor and proxy out is the caller's placement; the
       module only makes leaves.
-- [ ] Apply memory, CPU weight, IO weight and PID limits from configuration.
-      **Applying is done** (`src/fleet/cgroup.rs`, `Limits`); reading them
-      from configuration waits for fleet's config surface.
+- [x] Apply memory, CPU weight, IO weight and PID limits from configuration.
+      **As `fleet up` flags** (`--memory 4G`, `--pids N`, `--cpu-weight W`,
+      `--io-weight W`), validated before anything starts: weights 1-10000,
+      sizes in nono's syntax (`nono::resource::parse_size`), exit 2
+      otherwise. They reach every agent's leaf and its record; `inspect`
+      shows them. An IO weight this host cannot apply is reported by name
+      with its fallback, and only when one was asked for (the spec's
+      *IO controller is unavailable*). Flags rather than a `[fleet]`
+      manifest section so the config schema is untouched; a section can
+      come later if limits should be committed with the project. A mutant
+      that drops the limits fails.
 - [ ] **Wall-clock timeout, which needs no cgroups and is missing entirely.**
       devcroft has no execution limit of any kind today — a runaway agent
       runs until someone notices. A timer plus the escalating

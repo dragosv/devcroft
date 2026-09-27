@@ -169,6 +169,8 @@ fleet (Linux; experimental)
   fleet up --agents N         start N agents, each on its own clone of this project
       [--cgroup-root P]         (a delegated cgroup v2 subtree; or DEVCROFT_FLEET_CGROUP_ROOT)
       [--host-root]             (keep the host's root instead of a minimal view)
+      [--memory 4G] [--pids N]  (each agent's limits; --cpu-weight/--io-weight 1-10000)
+      [--cpu-weight W] [--io-weight W]
   fleet ls                    every agent: state, memory, CPU, workspace
   fleet inspect <id>          one agent's record, and why it died if it did
   fleet stop <id>             stop one agent, keeping its workspace
@@ -2683,16 +2685,39 @@ fn cli_fleet_linux(args: &[String]) -> i32 {
             let mut cgroup_root =
                 std::env::var_os("DEVCROFT_FLEET_CGROUP_ROOT").map(std::path::PathBuf::from);
             let mut view = true;
+            let mut limits = devcroft::fleet::cgroup::Limits::default();
             let mut rest = args[1..].iter();
             while let Some(a) = rest.next() {
-                match a.as_str() {
-                    "--agents" => agents = rest.next().and_then(|n| n.parse::<usize>().ok()),
-                    "--cgroup-root" => cgroup_root = rest.next().map(std::path::PathBuf::from),
-                    "--host-root" => view = false,
-                    _ => {
-                        eprintln!("{USAGE}");
-                        return 2;
+                let parsed = match a.as_str() {
+                    "--agents" => {
+                        agents = rest.next().and_then(|n| n.parse::<usize>().ok());
+                        Ok(())
                     }
+                    "--cgroup-root" => {
+                        cgroup_root = rest.next().map(std::path::PathBuf::from);
+                        Ok(())
+                    }
+                    "--host-root" => {
+                        view = false;
+                        Ok(())
+                    }
+                    "--memory" => fleet_size(rest.next(), a).map(|v| limits.memory_max = Some(v)),
+                    "--pids" => fleet_count(rest.next(), a).map(|v| limits.pids_max = Some(v)),
+                    "--cpu-weight" => {
+                        fleet_weight(rest.next(), a).map(|v| limits.cpu_weight = Some(v))
+                    }
+                    "--io-weight" => {
+                        fleet_weight(rest.next(), a).map(|v| limits.io_weight = Some(v))
+                    }
+                    _ => Err(String::new()),
+                };
+                if let Err(msg) = parsed {
+                    if msg.is_empty() {
+                        eprintln!("{USAGE}");
+                    } else {
+                        eprintln!("devcroft fleet: config: {msg}");
+                    }
+                    return 2;
                 }
             }
             let Some(agents) = agents else {
@@ -2731,10 +2756,16 @@ fn cli_fleet_linux(args: &[String]) -> i32 {
                 exe: &exe,
                 authorized_key_pem: &authorized,
                 state_dir: &state_dir,
+                limits,
             };
             match devcroft::fleet::commands::up(&provider, &req) {
                 Ok(started) => {
-                    for a in &started {
+                    for d in &started.degraded {
+                        eprintln!(
+                            "devcroft fleet: warning: {d} (fallback: the other limits apply)"
+                        );
+                    }
+                    for a in &started.started {
                         println!("{}\t{}", a.id, a.workspace.display());
                     }
                     println!(
@@ -2795,6 +2826,19 @@ fn cli_fleet_linux(args: &[String]) -> i32 {
                     if let Some(u) = a.cpu_usec {
                         println!("cpu\t{:.3}s", u as f64 / 1e6);
                     }
+                    let l = &r.limits;
+                    let limit = |v: Option<String>| v.unwrap_or_else(|| "unlimited".into());
+                    println!(
+                        "limits\tmemory {}, pids {}, cpu weight {}, io weight {}",
+                        limit(l.memory_max.map(nono::resource::format_bytes)),
+                        limit(l.pids_max.map(|n| n.to_string())),
+                        l.cpu_weight
+                            .map(|w| w.to_string())
+                            .unwrap_or_else(|| "default".into()),
+                        l.io_weight
+                            .map(|w| w.to_string())
+                            .unwrap_or_else(|| "default".into()),
+                    );
                     if let Some(e) = r.evidence {
                         println!(
                             "died\t{} OOM kill(s), {} whole-agent OOM kill(s), {} fork(s) refused",
@@ -2858,6 +2902,36 @@ fn cli_fleet_linux(args: &[String]) -> i32 {
             eprintln!("{USAGE}");
             2
         }
+    }
+}
+
+/// `--memory 4G`: a size, in nono's syntax (`K`/`M`/`G` suffixes).
+#[cfg(target_os = "linux")]
+fn fleet_size(value: Option<&String>, flag: &str) -> Result<u64, String> {
+    let v = value.ok_or_else(|| format!("{flag} needs a size, such as 4G"))?;
+    nono::resource::parse_size(v).map_err(|e| format!("{flag} {v}: {e}"))
+}
+
+/// `--pids 512`: a positive count.
+#[cfg(target_os = "linux")]
+fn fleet_count(value: Option<&String>, flag: &str) -> Result<u64, String> {
+    let v = value.ok_or_else(|| format!("{flag} needs a number"))?;
+    match v.parse::<u64>() {
+        Ok(n) if n > 0 => Ok(n),
+        _ => Err(format!("{flag} {v}: expected a positive number")),
+    }
+}
+
+/// `--cpu-weight 200`: cgroup v2's weight range, 1-10000 (100 is the
+/// default), checked here rather than left to an EINVAL at leaf creation.
+#[cfg(target_os = "linux")]
+fn fleet_weight(value: Option<&String>, flag: &str) -> Result<u32, String> {
+    let v = value.ok_or_else(|| format!("{flag} needs a weight, 1-10000"))?;
+    match v.parse::<u32>() {
+        Ok(n) if (1..=10000).contains(&n) => Ok(n),
+        _ => Err(format!(
+            "{flag} {v}: expected a weight from 1 to 10000 (100 is the default)"
+        )),
     }
 }
 

@@ -98,6 +98,9 @@ pub struct AgentRecord {
     /// The hosts its egress proxy allows; empty for no egress.
     #[serde(default)]
     pub egress: Vec<String>,
+    /// The limits its leaf was created with.
+    #[serde(default)]
+    pub limits: Limits,
 }
 
 /// A record plus what is true of it right now.
@@ -316,6 +319,7 @@ impl Supervisor {
                 attention: false,
                 evidence: None,
                 egress: launch.egress_allow.clone(),
+                limits: launch.limits.clone(),
             },
         )
     }
@@ -371,6 +375,11 @@ impl Supervisor {
         }
         std::fs::remove_dir_all(self.agent_dir(id))?;
         Ok(status.record)
+    }
+
+    /// Limits this host cannot apply to any agent, named (`Degraded`).
+    pub fn degraded(&self) -> Vec<super::cgroup::Degraded> {
+        self.node.degraded()
     }
 
     /// Remove the fleet's cgroup node. Fails while any agent's leaf exists.

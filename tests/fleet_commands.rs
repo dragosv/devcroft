@@ -144,6 +144,15 @@ impl Setup {
     }
 
     fn up(&self, agents: usize) -> Result<Vec<commands::Started>, FleetError> {
+        self.up_with(agents, devcroft::fleet::cgroup::Limits::default())
+            .map(|o| o.started)
+    }
+
+    fn up_with(
+        &self,
+        agents: usize,
+        limits: devcroft::fleet::cgroup::Limits,
+    ) -> Result<commands::UpOutcome, FleetError> {
         let manifest = self.manifest();
         let keys = self.base.join("keys");
         std::fs::create_dir_all(&keys).unwrap();
@@ -162,6 +171,7 @@ impl Setup {
                 exe: exe(),
                 authorized_key_pem: &authorized,
                 state_dir: &self.state(),
+                limits,
             },
         )
     }
@@ -329,6 +339,18 @@ fn the_cli_names_what_is_missing_with_the_contracts_exit_codes() {
     let (code, _) = run(&["bogus"]);
     assert_eq!(code, Some(2));
 
+    // Limits are validated before anything starts.
+    for bad in [
+        &["up", "--agents", "1", "--memory", "lots"][..],
+        &["up", "--agents", "1", "--cpu-weight", "0"],
+        &["up", "--agents", "1", "--io-weight", "20000"],
+        &["up", "--agents", "1", "--pids", "-1"],
+    ] {
+        let (code, err) = run(bad);
+        assert_eq!(code, Some(2), "{bad:?}: {err}");
+        assert!(err.contains("config"), "{bad:?}: {err}");
+    }
+
     // Removing agents deletes their clones: never without --yes when
     // nobody is at a terminal to have meant it.
     let (code, err) = run(&["rm", "--all"]);
@@ -409,9 +431,11 @@ fn a_real_devbox_agent_builds_its_project_in_its_clone() {
             exe: exe(),
             authorized_key_pem: &authorized,
             state_dir: &state,
+            limits: devcroft::fleet::cgroup::Limits::default(),
         },
     )
-    .unwrap();
+    .unwrap()
+    .started;
     let agent = &started[0];
     let socket = state.join("agents").join(&agent.id).join("control.sock");
     let repo = env!("CARGO_MANIFEST_DIR");
@@ -462,6 +486,8 @@ fn rm_refuses_a_running_agent_and_removes_a_stopped_one_with_its_clone() {
     assert!(!clone("a2").exists());
     assert!(!root.join(format!("fleet-{}", s.name)).exists());
     assert!(!s.state().exists());
+    // Nor empty directories where the clones were.
+    assert!(!s.project().join(".devcroft").exists());
 }
 
 /// Preflight runs before anything is cloned, and names what failed.
@@ -484,4 +510,47 @@ fn preflight_refuses_an_undelegated_cgroup_before_cloning() {
         "{err}"
     );
     assert!(!s.project().join(".devcroft").exists());
+}
+
+#[test]
+fn limits_given_to_up_reach_every_agents_leaf_and_record() {
+    let Some(root) = capable_host() else { return };
+    let s = Setup::new("limits", Some(&root), "", true);
+    let limits = devcroft::fleet::cgroup::Limits {
+        memory_max: Some(64 << 20),
+        cpu_weight: Some(50),
+        io_weight: Some(50),
+        pids_max: Some(64),
+    };
+    let outcome = s.up_with(2, limits.clone()).unwrap();
+    let m = s.manifest();
+    for a in &outcome.started {
+        let status = commands::inspect(&s.state(), &m, exe(), &a.id).unwrap();
+        assert_eq!(status.record.limits, limits);
+        let leaf = &status.record.cgroup;
+        let read = |f: &str| {
+            std::fs::read_to_string(leaf.join(f))
+                .unwrap()
+                .trim()
+                .to_owned()
+        };
+        assert_eq!(read("memory.max"), (64u64 << 20).to_string());
+        assert_eq!(read("memory.swap.max"), "0");
+        assert_eq!(read("pids.max"), "64");
+        assert_eq!(read("cpu.weight"), "50");
+    }
+    // An IO weight this host cannot apply is reported, by name.
+    let has_io_weight = commands::inspect(&s.state(), &m, exe(), "a1")
+        .unwrap()
+        .record
+        .cgroup
+        .join("io.weight")
+        .exists();
+    assert_eq!(
+        outcome
+            .degraded
+            .contains(&devcroft::fleet::cgroup::Degraded::IoWeight),
+        !has_io_weight
+    );
+    commands::rm_all(&s.state(), &m, exe(), &s.project()).unwrap();
 }

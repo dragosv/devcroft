@@ -54,7 +54,7 @@ const KILL_POLL_INTERVAL: Duration = Duration::from_millis(10);
 
 /// Limits for one agent's leaf. `None` leaves the kernel's default, which
 /// for every one of these is "unlimited" or the default weight.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Limits {
     /// `memory.max`, in bytes. Setting it also sets `memory.swap.max=0`,
     /// without which it is not a cap on a host with swap.

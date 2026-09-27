@@ -93,6 +93,16 @@ pub struct UpRequest<'a> {
     /// Where the fleet's state lives; `lifecycle::fleet_state_dir` in the
     /// CLI.
     pub state_dir: &'a Path,
+    /// Every agent's cgroup limits.
+    pub limits: Limits,
+}
+
+/// What `up` did: the agents it started, and the limits it was asked for
+/// that this host cannot apply (reported, never dropped quietly).
+#[derive(Debug)]
+pub struct UpOutcome {
+    pub started: Vec<Started>,
+    pub degraded: Vec<super::cgroup::Degraded>,
 }
 
 /// One agent `up` started.
@@ -114,7 +124,7 @@ fn node_name(manifest: &Manifest) -> String {
 
 /// Start `agents` agents on fresh clones of the project. Stops at the first
 /// failure; agents already started keep running and are listed in it.
-pub fn up(provider: &dyn ProviderEntry, req: &UpRequest) -> Result<Vec<Started>, FleetError> {
+pub fn up(provider: &dyn ProviderEntry, req: &UpRequest) -> Result<UpOutcome, FleetError> {
     if req.agents == 0 {
         return Err(FleetError::Config("--agents must be at least 1".into()));
     }
@@ -152,7 +162,7 @@ pub fn up(provider: &dyn ProviderEntry, req: &UpRequest) -> Result<Vec<Started>,
                 &ws,
                 req.exe,
                 req.authorized_key_pem,
-                Limits::default(),
+                req.limits.clone(),
                 req.view,
             )
             .map_err(|e| {
@@ -178,7 +188,16 @@ pub fn up(provider: &dyn ProviderEntry, req: &UpRequest) -> Result<Vec<Started>,
             }
         }
     }
-    Ok(started)
+    // Only what was asked for: a host without io.weight is worth saying
+    // so to someone who set an IO weight, and noise to anyone else.
+    let degraded = sup
+        .degraded()
+        .into_iter()
+        .filter(|d| match d {
+            super::cgroup::Degraded::IoWeight => req.limits.io_weight.is_some(),
+        })
+        .collect();
+    Ok(UpOutcome { started, degraded })
 }
 
 /// Check the host can run an agent at all, before cloning anything
@@ -336,6 +355,15 @@ pub fn rm_all(
     }
     sup.remove_node().map_err(backend)?;
     std::fs::remove_dir_all(state_dir).map_err(backend)?;
+    // The clones' parent, and the artifact dir above it, only if nothing
+    // else is in them: `up` keeps its own artifacts in `.devcroft/` too.
+    let fleet_dir = clone_root(project_root, "x");
+    if let Some(fleet_dir) = fleet_dir.parent() {
+        let _ = std::fs::remove_dir(fleet_dir);
+        if let Some(artifacts) = fleet_dir.parent() {
+            let _ = std::fs::remove_dir(artifacts);
+        }
+    }
     Ok(removed)
 }
 
