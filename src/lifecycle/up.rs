@@ -211,7 +211,11 @@ pub fn up_with_provider(
     // adopting a healthy sandbox from the wrong root is precisely the silent
     // failure. Caught by the worktree test, not by review. "Does this state
     // dir belong to me" has to be answered before "should I adopt it".
-    if let Some(meta) = state::read_meta(&paths.meta)?
+    // Read once, before anything rewrites it: besides the project-root
+    // check below, it carries the one per-sandbox fact `up` cannot
+    // re-derive, its port allocations.
+    let previous_meta = state::read_meta(&paths.meta)?;
+    if let Some(meta) = &previous_meta
         && meta.project_root != project_root.to_string_lossy()
     {
         return Err(UpError::Config(format!(
@@ -405,6 +409,8 @@ pub fn up_with_provider(
             shell: Some(shell.path.to_string_lossy().into_owned()),
             proxy_port: proxy.as_ref().map(|(port, _)| *port),
             proxy_token: proxy.as_ref().map(|(_, token)| token.clone()),
+            // Carried forward, not rebuilt: `up_process` reclaims them.
+            allocations: previous_meta.map(|m| m.allocations).unwrap_or_default(),
         },
     )?;
 
@@ -623,6 +629,91 @@ fn up_process(
         None => compiled,
     };
 
+    // Whether services will start: `prepare_services`' own gate, needed
+    // before it runs because isolation and allocation depend on it.
+    let starts_services = !opts.skip_hooks && !resolution.services.declared().is_empty();
+
+    // The port-collision fix (README's own "Why"): a sandbox that
+    // declares ports or services gets its own network namespace, so its
+    // declared ports have a private table instead of the host's shared
+    // one.
+    //
+    // This used to require zero egress, on the reasoning that an
+    // isolated namespace has no route to the host-bound proxy and no
+    // forwarding helper exists. That was measured and turned out wrong:
+    // a *pathname unix socket crosses a network namespace*, so the proxy
+    // gained a unix listener and the keeper relays to it from inside the
+    // namespace. Both properties now hold at once, which is what an agent
+    // actually needs — its own Postgres and its own filtered egress.
+    //
+    // Probed rather than assumed, and only when actually wanted — the
+    // probe forks a real child (`fleet::netns::probe`), which is not
+    // free, so a sandbox that doesn't qualify never pays for it. An
+    // unsupported host degrades rather than fails `up`: the sandbox
+    // still comes up, just back on the host's shared port table, which
+    // is where every sandbox already was before this existed. Degrading
+    // silently would violate CLAUDE.md's "Degraded capabilities are
+    // surfaced, never silent" invariant, so this warns once.
+    let wants_isolation = compiled.wants_network_isolation(starts_services)
+        // The relay binds the proxy's own port number inside the
+        // namespace; if this manifest also declared that number, the
+        // relay would fail to bind and egress would vanish. Isolation is
+        // the half that gets dropped, since the collision it prevents is
+        // less costly than the egress it would break.
+        && match &proxy {
+            Some((port, _)) if compiled.proxy_port_collides_with_declared_ports(*port) => {
+                eprintln!(
+                    "devcroft: warning: network isolation is skipped for this sandbox: \
+                     the egress proxy was assigned port {port}, which this manifest also \
+                     declares in `network.ports` (fallback: shared host port table; \
+                     re-run `up` to draw a different proxy port)"
+                );
+                false
+            }
+            _ => true,
+        };
+    let isolate_network = wants_isolation
+        && match crate::fleet::netns::probe(&exe) {
+            Ok(true) => true,
+            Ok(false) | Err(_) => {
+                warn_network_isolation_degraded(&compiled, starts_services);
+                false
+            }
+        };
+
+    // Port allocation (`add-port-allocation`), only where this sandbox
+    // shares the host's loopback: with its own namespace, a declared port
+    // is private already and allocating would only make it unpredictable.
+    // Checked and chosen here, before the plan, since an allocated port is
+    // a rule the plan must carry, with origin `allocated`.
+    let requests = super::ports::requests(&manifest.network.services);
+    let allocations = if isolate_network || requests.is_empty() {
+        Vec::new()
+    } else {
+        super::ports::check_substitutable(&requests, resolution.services.declared())
+            .map_err(UpError::Config)?;
+        let previous = state::read_meta(&paths.meta)?
+            .map(|m| m.allocations)
+            .unwrap_or_default();
+        let reserved: Vec<u16> = state::recorded_allocations()?
+            .into_iter()
+            .filter(|a| !previous.contains(a))
+            .map(|a| a.port)
+            .collect();
+        let allocated = super::ports::allocate(&requests, &previous, &reserved)?;
+        for change in &allocated.changed {
+            eprintln!("devcroft: note: port allocation changed: {change}");
+        }
+        allocated.allocations
+    };
+    // Recorded now, read-modify-write: everything else in `meta.json` was
+    // just written by `up_with_provider` and is left as it is.
+    if let Some(mut meta) = state::read_meta(&paths.meta)? {
+        meta.allocations = allocations.clone();
+        state::write_meta(&paths.meta, &meta)?;
+    }
+    let compiled = compiled.with_allocated_ports(allocations.iter().map(|a| a.port));
+
     let plan = compiled.to_capability_plan();
     // Validated host-side, before anything is created — the keeper (task
     // group 4) re-derives the identical `CapabilitySet` from the same
@@ -765,53 +856,9 @@ fn up_process(
         resolution,
         &shell.path,
         opts,
+        &allocations,
     )?
     .then_some(manifest.sandbox.name.as_str());
-
-    // The port-collision fix (README's own "Why"): a sandbox that
-    // declares ports or services gets its own network namespace, so its
-    // declared ports have a private table instead of the host's shared
-    // one.
-    //
-    // This used to require zero egress, on the reasoning that an
-    // isolated namespace has no route to the host-bound proxy and no
-    // forwarding helper exists. That was measured and turned out wrong:
-    // a *pathname unix socket crosses a network namespace*, so the proxy
-    // gained a unix listener and the keeper relays to it from inside the
-    // namespace. Both properties now hold at once, which is what an agent
-    // actually needs — its own Postgres and its own filtered egress.
-    //
-    // Probed rather than assumed, and only when actually wanted — the
-    // probe forks a real child (`fleet::netns::probe`), which is not
-    // free, so a sandbox that doesn't qualify never pays for it. An
-    // unsupported host degrades rather than fails `up`: the sandbox
-    // still comes up, just back on the host's shared port table, which
-    // is where every sandbox already was before this existed. Degrading
-    // silently would violate CLAUDE.md's "Degraded capabilities are
-    // surfaced, never silent" invariant, so this warns once.
-    let wants_isolation = compiled.wants_network_isolation(services.is_some())
-        // The relay binds the proxy's own port number inside the
-        // namespace; if this manifest also declared that number, the
-        // relay would fail to bind and egress would vanish. Isolation is
-        // the half that gets dropped, since the collision it prevents is
-        // less costly than the egress it would break.
-        && match &proxy {
-            Some((port, _)) if compiled.proxy_port_collides_with_declared_ports(*port) => {
-                eprintln!(
-                    "devcroft: warning: network isolation is skipped for this sandbox:                      the egress proxy was assigned port {port}, which this manifest also                      declares in `network.ports` (fallback: shared host port table;                      re-run `up` to draw a different proxy port)"
-                );
-                false
-            }
-            _ => true,
-        };
-    let isolate_network = wants_isolation
-        && match crate::fleet::netns::probe(&exe) {
-            Ok(true) => true,
-            Ok(false) | Err(_) => {
-                warn_network_isolation_degraded(&compiled, services.is_some());
-                false
-            }
-        };
 
     // Isolation moves a declared port out of the host's reach, and a user
     // running a dev server has no way to discover that except by the
@@ -897,6 +944,11 @@ fn up_process(
                  shell (fallback: the sandbox runs without it)"
             ),
         }
+    }
+    // Allocated ports reach sessions too (`exec`, `shell`), last so they
+    // win over whatever the provider or the manifest set for the name.
+    for a in &allocations {
+        env.insert(a.var.clone(), a.port.to_string());
     }
     if let Some((port, token)) = &proxy {
         // Userinfo in the proxy URL, not a bespoke header or env var:
@@ -1117,6 +1169,7 @@ fn prepare_services(
     resolution: &Resolution,
     shell: &Path,
     opts: &UpOptions,
+    allocations: &[state::Allocation],
 ) -> Result<bool, UpError> {
     if let ServiceSupport::Unsupported = resolution.services {
         ensure_no_services_declared_for_another_provider(project_root, provider, opts)?;
@@ -1130,11 +1183,15 @@ fn prepare_services(
     // error naming neither the path nor the length. See
     // `services::MAX_SOCKET_PATH` — the per-sandbox subdirectory this
     // path now carries makes it one level deeper than it used to be.
+    // Each allocated port replaces the provider's value for its variable in
+    // the generated config, and nowhere else: not in the provider's
+    // manifest, not in any command string.
+    let services = super::ports::substitute(services, allocations);
     crate::services::write_config(
         project_root,
         sandbox_name,
         provider,
-        services,
+        &services,
         &resolution.env,
         shell,
     )

@@ -158,7 +158,7 @@ pub fn prepare(
             .services
             .iter()
             .filter(|(_, s)| s.expose)
-            .map(|(name, s)| (name.clone(), s.port))
+            .filter_map(|(name, s)| Some((name.clone(), s.port?)))
             .collect(),
     })
 }

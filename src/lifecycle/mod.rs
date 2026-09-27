@@ -9,6 +9,7 @@
 /// (`fix-service-hook-ordering`): the keeper is a separate crate target
 /// and reaches this through the library like any other consumer.
 pub mod hooks;
+pub mod ports;
 mod state;
 // `pub(crate)` for the same reason `up` is: `test_support` re-exports one
 // seam function out of it under the `test-support` feature.
@@ -21,7 +22,9 @@ mod terminate;
 pub(crate) mod up;
 
 pub use hooks::HookError;
-pub use state::{Health, Meta, StatePaths, client_key_paths, fleet_state_dir, health, read_meta};
+pub use state::{
+    Allocation, Health, Meta, StatePaths, client_key_paths, fleet_state_dir, health, read_meta,
+};
 pub use status::{KeeperStatus, SandboxStatus, SandboxSummary, StatusError, logs, ps, status};
 pub use terminate::{GRACE_PERIOD, TerminateError, down, rm};
 pub use up::{KeeperEnv, UpError, UpOptions, UpOutcome, up};

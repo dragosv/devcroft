@@ -199,6 +199,10 @@ pub enum Origin {
     Manifest(&'static str),
     Provider(&'static str),
     Baseline,
+    /// A port devcroft chose for a `network.services.<name>.var` request
+    /// (`add-port-allocation`): distinguishable from a declared one, since
+    /// the user did not choose it and cannot predict it.
+    Allocated,
 }
 
 impl std::fmt::Display for Origin {
@@ -207,6 +211,7 @@ impl std::fmt::Display for Origin {
             Origin::Manifest(key) => write!(f, "manifest:{key}"),
             Origin::Provider(name) => write!(f, "provider:{name}"),
             Origin::Baseline => write!(f, "baseline"),
+            Origin::Allocated => write!(f, "allocated"),
         }
     }
 }
@@ -359,10 +364,10 @@ pub fn compile(manifest: &Manifest) -> CompiledPolicy {
     // one in `ports`, with its own origin. Not twice: a port already listed
     // there keeps that rule. Nothing is added when the table is absent, so
     // a manifest without it compiles exactly as before.
-    for service in manifest.network.services.values() {
-        if !network_ports.iter().any(|p| p.value == service.port) {
+    for port in manifest.network.services.values().filter_map(|s| s.port) {
+        if !network_ports.iter().any(|p| p.value == port) {
             network_ports.push(AnnotatedPort {
-                value: service.port,
+                value: port,
                 origin: Origin::Manifest("network.services"),
             });
         }
@@ -516,6 +521,22 @@ impl CompiledPolicy {
     /// relay silently failing to bind and egress disappearing with it.
     pub fn proxy_port_collides_with_declared_ports(&self, proxy_port: u16) -> bool {
         self.network_ports.iter().any(|p| p.value == proxy_port)
+    }
+
+    /// Grant the ports allocated for this sandbox (`add-port-allocation`),
+    /// with origin `allocated`. Known only once `up` has chosen or reclaimed
+    /// them, like the proxy port, so folded in afterwards rather than being
+    /// part of [`compile`].
+    pub fn with_allocated_ports(mut self, ports: impl IntoIterator<Item = u16>) -> Self {
+        for port in ports {
+            if !self.network_ports.iter().any(|p| p.value == port) {
+                self.network_ports.push(AnnotatedPort {
+                    value: port,
+                    origin: Origin::Allocated,
+                });
+            }
+        }
+        self
     }
 
     /// Fold in the egress proxy's bound port, once `up` has actually

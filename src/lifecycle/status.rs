@@ -362,6 +362,7 @@ mod tests {
                     shell: None,
                     proxy_port: None,
                     proxy_token: None,
+                    allocations: Vec::new(),
                 },
             )
             .unwrap();

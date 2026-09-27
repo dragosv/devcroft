@@ -134,8 +134,18 @@ pub struct Network {
 /// One service's entry in `network.services`.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct ServicePort {
-    /// The port the service binds, unchanged, inside its sandbox.
-    pub port: u16,
+    /// The port the service binds, unchanged, inside a sandbox with its own
+    /// network namespace. Optional when `var` is set: a sandbox without one
+    /// gets an allocated port instead.
+    #[serde(default)]
+    pub port: Option<u16>,
+    /// The variable that carries the service's port (`add-port-allocation`).
+    /// Where sandboxes share the host's loopback, devcroft chooses a free
+    /// port per sandbox and substitutes it for this variable in the
+    /// service's generated config; the service must read its port from it.
+    /// Where a sandbox has its own namespace, nothing is allocated.
+    #[serde(default)]
+    pub var: Option<String>,
     /// Reach it from the host through an allocated port. Fleet agents
     /// only, for now.
     #[serde(default)]
@@ -339,6 +349,14 @@ pub fn load(start: &Path) -> Result<(Manifest, Vec<Warning>), ConfigError> {
 
 /// Parse and validate manifest text directly (used by tests and `init`'s
 /// preview/dry-run path).
+/// `[A-Za-z_][A-Za-z0-9_]*`: a name a shell can expand, which is what an
+/// allocated port's variable has to be for a service command to read it.
+fn is_env_var_name(name: &str) -> bool {
+    let mut chars = name.chars();
+    matches!(chars.next(), Some(c) if c.is_ascii_alphabetic() || c == '_')
+        && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
+}
+
 pub fn parse(text: &str) -> Result<(Manifest, Vec<Warning>), ConfigError> {
     let table = text
         .parse::<toml::Table>()
@@ -358,10 +376,32 @@ pub fn parse(text: &str) -> Result<(Manifest, Vec<Warning>), ConfigError> {
     }
 
     crate::provider::validate_provider(&raw.env.provider).map_err(ConfigError::InvalidProvider)?;
-    if let Some((name, _)) = raw.network.services.iter().find(|(_, s)| s.port == 0) {
-        return Err(ConfigError::Parse(format!(
-            "network.services.{name}.port: 0 is not a port a service can bind (1-65535)"
-        )));
+    for (name, service) in &raw.network.services {
+        if service.port == Some(0) {
+            return Err(ConfigError::Parse(format!(
+                "network.services.{name}.port: 0 is not a port a service can bind (1-65535)"
+            )));
+        }
+        if service.port.is_none() && service.var.is_none() {
+            return Err(ConfigError::Parse(format!(
+                "network.services.{name}: give the service's `port`, a `var` that carries \
+                 an allocated one, or both"
+            )));
+        }
+        if service.expose && service.port.is_none() {
+            return Err(ConfigError::Parse(format!(
+                "network.services.{name}.expose: a host mapping needs the `port` the \
+                 service binds inside its sandbox"
+            )));
+        }
+        if let Some(var) = &service.var
+            && !is_env_var_name(var)
+        {
+            return Err(ConfigError::Parse(format!(
+                "network.services.{name}.var: {var:?} is not an environment variable name \
+                 (letters, digits and `_`, not starting with a digit)"
+            )));
+        }
     }
     // A manifest that omits the key is fine and gets no output at all —
     // the spec's "Manifest omits the isolation level" scenario rules out
@@ -419,14 +459,16 @@ mod tests {
         assert_eq!(
             m.network.services["api"],
             ServicePort {
-                port: 8710,
+                port: Some(8710),
+                var: None,
                 expose: true
             }
         );
         assert_eq!(
             m.network.services["db"],
             ServicePort {
-                port: 5432,
+                port: Some(5432),
+                var: None,
                 expose: false
             }
         );

@@ -246,6 +246,25 @@ pub fn fleet_state_dir(sandbox_name: &str) -> io::Result<PathBuf> {
 /// `pub(super)` so `ps` (status.rs) can enumerate every sandbox directory
 /// — the one thing that needs the root itself rather than one sandbox's
 /// path under it.
+/// Every port recorded by any sandbox on this host, running or not: what a
+/// new allocation must avoid, so one sandbox does not take the port another
+/// holds a record of while it is down.
+pub fn recorded_allocations() -> io::Result<Vec<Allocation>> {
+    let root = data_dir()?;
+    let entries = match std::fs::read_dir(&root) {
+        Ok(e) => e,
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(e) => return Err(e),
+    };
+    let mut out = Vec::new();
+    for entry in entries.flatten() {
+        if let Ok(Some(meta)) = read_meta(&entry.path().join("meta.json")) {
+            out.extend(meta.allocations);
+        }
+    }
+    Ok(out)
+}
+
 pub(super) fn data_dir() -> io::Result<PathBuf> {
     let home = std::env::var("HOME")
         .map_err(|_| io::Error::new(io::ErrorKind::NotFound, "HOME is not set"))?;
@@ -344,6 +363,23 @@ pub struct Meta {
     /// reusable.
     #[serde(default)]
     pub proxy_token: Option<String>,
+    /// Ports devcroft chose for `network.services.<name>.var` requests
+    /// (`add-port-allocation`). The first per-sandbox fact that cannot be
+    /// re-derived from the manifest and the environment, so `up` carries it
+    /// forward from the previous `meta.json` rather than rebuilding it, and
+    /// it is gone only with the state (`rm`). Empty for sandboxes recorded
+    /// before it existed.
+    #[serde(default)]
+    pub allocations: Vec<Allocation>,
+}
+
+/// One allocated port: the service whose generated config receives it, and
+/// the variable carrying it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Allocation {
+    pub service: String,
+    pub var: String,
+    pub port: u16,
 }
 
 fn default_resolved_backend() -> String {
@@ -717,6 +753,7 @@ mod tests {
             shell: None,
             proxy_port: None,
             proxy_token: None,
+            allocations: Vec::new(),
         };
         write_meta(&paths.meta, &meta).unwrap();
         assert_eq!(read_meta(&paths.meta).unwrap(), Some(meta));
@@ -739,6 +776,7 @@ mod tests {
             shell: None,
             proxy_port: None,
             proxy_token: None,
+            allocations: Vec::new(),
         };
         write_meta(&paths.meta, &meta).unwrap();
         assert!(!paths.meta.with_extension("json.tmp").exists());

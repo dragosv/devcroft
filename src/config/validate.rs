@@ -53,7 +53,7 @@ pub fn check_unknown_keys(table: &toml::Table) -> Result<(), ConfigError> {
             if key == "network"
                 && let Some(services) = sub.get("services").and_then(|v| v.as_table())
             {
-                const SERVICE_FIELDS: &[&str] = &["port", "expose"];
+                const SERVICE_FIELDS: &[&str] = &["port", "var", "expose"];
                 for (name, entry) in services {
                     let Some(entry) = entry.as_table() else {
                         continue;
