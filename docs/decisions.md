@@ -796,10 +796,13 @@ retracting a claim after someone demonstrates a bypass.
 ### Security guarantee: one tier, and what it does not cover
 
 devcroft has **one** isolation tier: nono with Landlock on Linux, Seatbelt on
-macOS. It protects against accidents, careless commands, and simple
-exfiltration. It is **not** a defense against a determined attacker who
-controls the code running inside — the entire host kernel syscall surface
-remains reachable, so a kernel bug is an escape.
+macOS. It protects against accidents and careless commands, and it narrows
+where data can go: with an allowlist, a request to a host not on it is
+refused. It does **not** prevent exfiltration, since anything sent to an
+allowed host still leaves (`docs/threat-model.md`). It is **not** a defense
+against a determined attacker who controls the code running inside — the
+entire host kernel syscall surface remains reachable, so a kernel bug is an
+escape.
 
 For a boundary stronger than that, run devcroft inside a VM. That is the
 supported answer rather than a deflection: it is already how the macOS path

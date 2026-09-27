@@ -565,10 +565,11 @@ the implementation before it resolves.
       helper binds the relay **before** restricting, because a keeper that
       starts restricted cannot, and hands it over as
       `DEVCROFT_PROXY_RELAY_FD`.
-- [ ] Attribute requests to agents by listener; include the agent ID in audit
-      logs. **Half done:** one proxy per agent, logging to that agent's
-      `egress.log`, so the listener attributes each request. The agent ID
-      is not in the log lines themselves yet.
+- [x] Attribute requests to agents by listener; include the agent ID in audit
+      logs. One proxy per agent, logging to that agent's `egress.log`, and
+      every record starts `agent=<id>` (`DEVCROFT_EGRESS_LABEL`,
+      `proxy::server::run_labelled`), so a line still attributes its
+      request once it is read anywhere else. `up`'s proxy is unchanged.
 - [ ] Test: a direct socket is refused by the seccomp policy **even though the
       network helper could route it**. The old wording ("no route out except
       the forwarded proxy port") tested the helper's configuration; the point
@@ -579,7 +580,13 @@ the implementation before it resolves.
       bypassing the proxy (`--noproxy '*'`) gets nothing, since the
       namespace has no route. Stopping A removes its proxy and leaves B's
       working.
-- [ ] Revise any documentation claiming exfiltration is prevented.
+- [x] Revise any documentation claiming exfiltration is prevented. One did:
+      `docs/decisions.md` said the tier protects against "simple
+      exfiltration", against `docs/threat-model.md`. It now says the tier
+      narrows where data can go and does not prevent exfiltration, since
+      anything sent to an allowed host leaves. The other mentions
+      (threat-model, known-gaps, comparison, this change's design) already
+      said so.
 
 ## 4. Workspace isolation
 

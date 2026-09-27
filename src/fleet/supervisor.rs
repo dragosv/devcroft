@@ -227,7 +227,12 @@ impl Supervisor {
                 &proxy_socket,
                 &dir.join("egress.log"),
                 &launch.egress_allow,
-                |cmd| proxy_leaf.attach_on_spawn(cmd),
+                |cmd| {
+                    // Every record names the agent, so the log attributes
+                    // requests on its own, wherever it is read.
+                    cmd.env("DEVCROFT_EGRESS_LABEL", id);
+                    proxy_leaf.attach_on_spawn(cmd)
+                },
             )?;
             plan.network_proxy_port = Some(port);
             provider_env.extend(crate::proxy::client_env(port, &token));

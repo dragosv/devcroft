@@ -519,6 +519,15 @@ fn each_agent_reaches_only_its_own_allowlist_through_its_own_proxy() {
     };
     assert!(log(&a).contains(&format!("port={p4}")), "{}", log(&a));
     assert!(log(&b).contains(&format!("port={p3}")), "{}", log(&b));
+    // And every record names its agent, so it attributes the request
+    // wherever the line ends up.
+    for id in [&a, &b] {
+        let text = log(id);
+        assert!(
+            text.lines().all(|l| l.starts_with(&format!("agent={id} "))),
+            "{text}"
+        );
+    }
 
     // Stopping an agent takes its proxy with it.
     sup.stop(&a).unwrap();

@@ -137,6 +137,19 @@ fn splice_unix(client: std::os::unix::net::UnixStream, upstream: TcpStream) {
 }
 
 pub fn run(listener: TcpListener, allow: Vec<String>, log_path: PathBuf, token: String) {
+    run_labelled(listener, allow, log_path, token, None)
+}
+
+/// [`run`], with every log record prefixed `agent=<label> `: a fleet
+/// agent's proxy, whose records must say whose egress they describe even
+/// once they are read somewhere other than that agent's own log file.
+pub fn run_labelled(
+    listener: TcpListener,
+    allow: Vec<String>,
+    log_path: PathBuf,
+    token: String,
+    label: Option<String>,
+) {
     // `new_strict`: an empty allowlist denies rather than allows. `spawn`
     // is only ever called when `CompiledPolicy::wants_egress_proxy()` is
     // true, which already implies a non-empty `network.allow`, but a
@@ -144,12 +157,15 @@ pub fn run(listener: TcpListener, allow: Vec<String>, log_path: PathBuf, token: 
     // for any future caller that forgets to check first.
     let filter = Arc::new(HostFilter::new_strict(&allow));
     let token = Arc::new(token);
-    let log = Arc::new(Mutex::new(
-        std::fs::OpenOptions::new()
-            .append(true)
-            .open(&log_path)
-            .expect("proxy log path was created by spawn() just before this process started"),
-    ));
+    let log = Arc::new(AuditLog {
+        file: Mutex::new(
+            std::fs::OpenOptions::new()
+                .append(true)
+                .open(&log_path)
+                .expect("proxy log path was created by spawn() just before this process started"),
+        ),
+        label,
+    });
 
     for stream in listener.incoming() {
         let Ok(stream) = stream else { continue };
@@ -186,7 +202,7 @@ fn handle_connection(
     mut client: TcpStream,
     filter: &HostFilter,
     token: &str,
-    log: &Mutex<std::fs::File>,
+    log: &AuditLog,
 ) -> io::Result<()> {
     let peer = client
         .peer_addr()
@@ -548,14 +564,24 @@ fn splice(client: TcpStream, upstream: TcpStream) {
     let _ = to_upstream.join();
 }
 
-fn log_line(log: &Mutex<std::fs::File>, line: &str) {
+/// The proxy's audit log, and whose egress it records.
+struct AuditLog {
+    file: Mutex<std::fs::File>,
+    label: Option<String>,
+}
+
+fn log_line(log: &AuditLog, line: &str) {
     // One write per record, appended to a file whose fd is `O_APPEND` —
     // the same discipline `keeper::connection::log_record` and
     // `hooks::run_one` established this session, for the same reason:
     // multiple threads (here) or processes (there) share the file, and a
     // multi-write record can interleave with another writer's.
-    if let Ok(mut f) = log.lock() {
-        let _ = f.write_all(format!("{line}\n").as_bytes());
+    let record = match &log.label {
+        Some(label) => format!("agent={label} {line}\n"),
+        None => format!("{line}\n"),
+    };
+    if let Ok(mut f) = log.file.lock() {
+        let _ = f.write_all(record.as_bytes());
     }
 }
 
