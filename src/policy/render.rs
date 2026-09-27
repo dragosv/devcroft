@@ -52,6 +52,26 @@ pub fn render(compiled: &CompiledPolicy) -> String {
     // supports namespaces at all — only a real `up` probes that, and
     // warns there when it does not.
     writeln!(out, "network.namespace: {}", namespace_summary(compiled)).unwrap();
+    // Only when something is requested, so a manifest without allocation
+    // renders exactly as it did before allocation existed. A request is
+    // never omitted, and a port is never invented: without a recorded one
+    // it is pending, since only `up` chooses it and only where the sandbox
+    // shares the host's loopback.
+    if !compiled.allocations.is_empty() {
+        writeln!(out, "network.allocations:").unwrap();
+        for (service, var, port) in &compiled.allocations {
+            let name = format!("{service}.{var}");
+            match port {
+                Some(port) => writeln!(out, "  {name:<40} {port} (allocated)").unwrap(),
+                None => writeln!(
+                    out,
+                    "  {name:<40} pending: chosen at `up` where this sandbox shares the \
+                     host's loopback"
+                )
+                .unwrap(),
+            }
+        }
+    }
     // `network_proxy_port` is `None` until an actual `up` starts the
     // proxy and folds it in (`CompiledPolicy::with_proxy_port`'s doc) —
     // a fresh `policy --render` against the manifest alone can only ever

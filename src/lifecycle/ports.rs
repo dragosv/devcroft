@@ -92,6 +92,27 @@ pub fn allocate(
     Ok(out)
 }
 
+/// With its own namespace a sandbox allocates nothing, and a request that
+/// gave no `port` still needs its service's port granted: the one the
+/// provider declares for the variable (`vars.<VAR>`), used unchanged.
+/// Without this, a `var`-only entry would work where the loopback is shared
+/// (the allocation is granted) and leave the service unable to bind where
+/// it is not. A value that is not a port grants nothing.
+pub fn declared_ports(
+    services: &BTreeMap<String, ServicePort>,
+    declared: &[ServiceDecl],
+) -> Vec<u16> {
+    services
+        .iter()
+        .filter(|(_, s)| s.port.is_none())
+        .filter_map(|(name, s)| {
+            let var = s.var.as_ref()?;
+            let decl = declared.iter().find(|d| &d.name == name)?;
+            decl.vars.get(var)?.parse().ok()
+        })
+        .collect()
+}
+
 /// Whether a request's service can receive its allocation: its command must
 /// read the variable. Scoped to the one service the request names (every
 /// other service legitimately never mentions it), and decided by looking
@@ -240,6 +261,24 @@ mod tests {
             err.contains("network.services.db.var") && err.contains("5432"),
             "{err}"
         );
+    }
+
+    #[test]
+    fn a_var_only_request_is_granted_the_providers_value() {
+        let declared = [decl("db", "postgres -p $PGPORT")];
+        let entry = |port: Option<u16>| {
+            BTreeMap::from([(
+                "db".to_string(),
+                ServicePort {
+                    port,
+                    var: Some("PGPORT".into()),
+                    expose: false,
+                },
+            )])
+        };
+        assert_eq!(declared_ports(&entry(None), &declared), [5432]);
+        // A declared `port` is the manifest's own grant; nothing to add.
+        assert!(declared_ports(&entry(Some(6000)), &declared).is_empty());
     }
 
     #[test]

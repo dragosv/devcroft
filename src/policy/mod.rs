@@ -261,6 +261,12 @@ pub struct CompiledPolicy {
     /// answer different questions (outbound egress vs local listeners),
     /// which is why a deny-all sandbox can still run a dev server.
     pub network_ports: Vec<AnnotatedPort>,
+    /// `network.services.<name>.var` requests, as (service, variable), and
+    /// the port each was allocated once `up` has recorded one
+    /// (`add-port-allocation`). `None` is pending: before the first `up`,
+    /// after `rm`, or where the sandbox has its own namespace and nothing is
+    /// allocated. Empty when the manifest requests nothing.
+    pub allocations: Vec<(String, String, Option<u16>)>,
     /// The egress proxy's bound port, when domain filtering is active.
     /// Folded in post-hoc by `with_proxy_port` — like a provider's store
     /// grants, this can only be known by actually binding a socket at
@@ -405,6 +411,12 @@ pub fn compile(manifest: &Manifest) -> CompiledPolicy {
         network_block: manifest.network.default == NetworkDefault::Deny,
         network_allow_domain,
         network_ports,
+        allocations: manifest
+            .network
+            .services
+            .iter()
+            .filter_map(|(name, s)| Some((name.clone(), s.var.clone()?, None)))
+            .collect(),
         network_proxy_port: None,
         // Empty from the manifest alone: every entry is folded in by `up`
         // once it knows where the socket will live.
@@ -448,37 +460,23 @@ impl CompiledPolicy {
     /// one — the fix for two sandboxes both binding 5432 (README's own
     /// "Why").
     ///
-    /// Deliberately narrow: `true` only when the manifest asks for zero
-    /// outbound network at all (`network.default = "deny"` and no
-    /// `network.allow` entries) *and* there is something to isolate
-    /// (`network.ports` non-empty, or the caller reports services are
-    /// declared). Both halves are load-bearing, not incidental:
+    /// **Every `network.default = "deny"` sandbox**, with or without
+    /// `network.allow`, and whether or not it declares anything to isolate.
+    /// Filtered egress still works from inside the namespace, through the
+    /// keeper's relay to the proxy's unix socket (`add-egress-proxy` E7),
+    /// and the reason for isolating even a sandbox with no ports is UDP,
+    /// explained in the body below.
     ///
-    /// - **Zero egress, not "filtered egress".** An isolated namespace
-    ///   starts with loopback only — nothing routes it to the real
-    ///   network at all, filtered or not. `add-egress-proxy`'s proxy
-    ///   binds on the *host's* loopback; a sandbox in its own namespace
-    ///   cannot reach it without a forwarding helper (pasta/slirp4netns),
-    ///   which `add-linux-agent-fleet`'s D5 has not resolved. Reusing
-    ///   this for a sandbox with any `network.allow` entry — i.e. when
-    ///   [`Self::wants_egress_proxy`] is also true — would silently
-    ///   break that sandbox's egress instead of isolating its ports, so
-    ///   the two are mutually exclusive by construction: this returns
-    ///   `false` whenever `wants_egress_proxy` would return `true`.
-    ///   `network.default = "allow"` (unfiltered, and today's default
-    ///   for a bare manifest) is refused for the identical reason: an
-    ///   isolated namespace cannot reach *anything* external without
-    ///   that same missing helper, so "allow" cannot be honoured inside
-    ///   one either.
-    /// - **Only when there is something to isolate.** A sandbox binding
-    ///   nothing has nothing that can collide; entering a namespace for
-    ///   it would cost a syscall for no observable benefit.
+    /// **This comment used to describe an earlier, narrower rule** (zero
+    /// egress and something to isolate, "false whenever `wants_egress_proxy`
+    /// would be true"), and it outlived the change to the code by long
+    /// enough to mislead: port allocation's tests were first written on the
+    /// assumption that a sandbox with `network.allow` shares the host's
+    /// loopback, and found it isolated.
     ///
-    /// A sandbox that wants both isolation and any outbound network gets
-    /// neither degraded nor upgraded by this method — it simply returns
-    /// `false`, leaving that sandbox exactly where it was before this
-    /// existed (shared host ports, `add-port-allocation`'s open gap),
-    /// which is a known limitation, not a regression this introduces.
+    /// So a sandbox shares the host's loopback only with
+    /// `network.default = "allow"`, or on a host that cannot create the
+    /// namespace (`up` warns there). That is where port allocation applies.
     pub fn wants_network_isolation(&self, _services_declared: bool) -> bool {
         // Every deny-network sandbox, not only those with something to
         // isolate. That second condition used to be here and was removed
@@ -523,12 +521,42 @@ impl CompiledPolicy {
         self.network_ports.iter().any(|p| p.value == proxy_port)
     }
 
-    /// Grant the ports allocated for this sandbox (`add-port-allocation`),
-    /// with origin `allocated`. Known only once `up` has chosen or reclaimed
-    /// them, like the proxy port, so folded in afterwards rather than being
-    /// part of [`compile`].
-    pub fn with_allocated_ports(mut self, ports: impl IntoIterator<Item = u16>) -> Self {
+    /// Grant service ports known only once the provider is resolved: for a
+    /// `network.services` entry with a `var` and no `port`, in a sandbox
+    /// with its own namespace, the value the provider declares for it
+    /// (`ports::declared_ports`). Origin `manifest:network.services`, since
+    /// the manifest's request is what grants it.
+    pub fn with_service_ports(mut self, ports: impl IntoIterator<Item = u16>) -> Self {
         for port in ports {
+            if !self.network_ports.iter().any(|p| p.value == port) {
+                self.network_ports.push(AnnotatedPort {
+                    value: port,
+                    origin: Origin::Manifest("network.services"),
+                });
+            }
+        }
+        self
+    }
+
+    /// Grant the ports allocated for this sandbox (`add-port-allocation`),
+    /// as (service, variable, port), with origin `allocated`, and record
+    /// each against its request for rendering. Known only once `up` has
+    /// chosen or reclaimed them, like the proxy port, so folded in
+    /// afterwards rather than being part of [`compile`]. An allocation whose
+    /// request is no longer in the manifest is ignored: it grants nothing.
+    pub fn with_allocations(
+        mut self,
+        allocations: impl IntoIterator<Item = (String, String, u16)>,
+    ) -> Self {
+        for (service, var, port) in allocations {
+            let Some(request) = self
+                .allocations
+                .iter_mut()
+                .find(|(s, v, _)| *s == service && *v == var)
+            else {
+                continue;
+            };
+            request.2 = Some(port);
             if !self.network_ports.iter().any(|p| p.value == port) {
                 self.network_ports.push(AnnotatedPort {
                     value: port,
@@ -740,6 +768,51 @@ mod tests {
     /// The real functional proof ("self-restriction actually works") lives
     /// in the integration suite (`tests/*.rs`), which spawns the real
     /// binary as its own process — see `use-nono-library` task group 4.
+    /// `add-port-allocation` 3.4 and 1.3: an allocated and a fixed port
+    /// render distinguishably; the same recorded allocation compiles the
+    /// same way every time; with nothing recorded the request is pending
+    /// and grants nothing; and without a request nothing changes at all.
+    #[test]
+    fn allocations_render_distinguishably_and_never_invent_a_port() {
+        let text = "[sandbox]\nname = \"p\"\n[network]\nports = [5432]\n\
+                    [network.services.api]\nvar = \"API_PORT\"\n";
+        let (manifest, _) = parse(text).unwrap();
+        let recorded = || [("api".to_string(), "API_PORT".to_string(), 23456u16)];
+
+        let with = compile(&manifest).with_allocations(recorded());
+        let rendered = render::render(&with);
+        assert!(rendered.contains("5432") && rendered.contains("manifest:network.ports"));
+        assert!(
+            rendered.contains("23456") && rendered.contains("allocated"),
+            "{rendered}"
+        );
+        assert!(rendered.contains("api.API_PORT"), "{rendered}");
+        assert_eq!(
+            rendered,
+            render::render(&compile(&manifest).with_allocations(recorded())),
+            "the same recorded allocation renders byte-identically"
+        );
+
+        let pending = compile(&manifest);
+        assert!(
+            pending
+                .network_ports
+                .iter()
+                .all(|p| p.origin != Origin::Allocated)
+        );
+        let rendered = render::render(&pending);
+        assert!(
+            rendered.contains("api.API_PORT") && rendered.contains("pending"),
+            "{rendered}"
+        );
+
+        // No request: no section, no rule, and a stale record grants nothing.
+        let (plain, _) = parse("[sandbox]\nname = \"p\"\n[network]\nports = [5432]\n").unwrap();
+        let plain = compile(&plain).with_allocations(recorded());
+        assert!(!render::render(&plain).contains("network.allocations"));
+        assert_eq!(plain.network_ports.len(), 1);
+    }
+
     /// A service's declared port is a bind grant with its own origin, and
     /// never a second rule for a port `network.ports` already lists.
     #[test]

@@ -371,6 +371,12 @@ pub struct Meta {
     /// before it existed.
     #[serde(default)]
     pub allocations: Vec<Allocation>,
+    /// Service ports granted from the provider's declarations
+    /// (`ports::declared_ports`: a `var`-only request in a sandbox with its
+    /// own namespace). Recorded so `policy --render` shows what the backend
+    /// got, since it is known only once the provider has resolved.
+    #[serde(default)]
+    pub service_ports: Vec<u16>,
 }
 
 /// One allocated port: the service whose generated config receives it, and
@@ -754,6 +760,7 @@ mod tests {
             proxy_port: None,
             proxy_token: None,
             allocations: Vec::new(),
+            service_ports: Vec::new(),
         };
         write_meta(&paths.meta, &meta).unwrap();
         assert_eq!(read_meta(&paths.meta).unwrap(), Some(meta));
@@ -777,6 +784,7 @@ mod tests {
             proxy_port: None,
             proxy_token: None,
             allocations: Vec::new(),
+            service_ports: Vec::new(),
         };
         write_meta(&paths.meta, &meta).unwrap();
         assert!(!paths.meta.with_extension("json.tmp").exists());

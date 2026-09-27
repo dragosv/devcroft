@@ -53,6 +53,10 @@ pub struct SandboxStatus {
     /// `None` only when the sandbox declares no services and none are
     /// running; an empty report never occurs.
     pub services: Option<crate::services::ServicesReport>,
+    /// The ports `up` allocated (`add-port-allocation`), as recorded: still
+    /// the sandbox's while it is down, which is why the caller says whether
+    /// anything is listening rather than printing them bare.
+    pub allocations: Vec<super::state::Allocation>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -155,6 +159,10 @@ pub fn status_with_provider(
         })
         .filter(|r| !r.is_empty());
 
+    let allocations = meta
+        .as_ref()
+        .map(|meta| meta.allocations.clone())
+        .unwrap_or_default();
     let isolation = meta.map(|meta| meta.resolved_backend);
 
     let degraded = policy::detect_degraded(&policy::compile(manifest));
@@ -166,6 +174,7 @@ pub fn status_with_provider(
         degraded,
         isolation,
         services,
+        allocations,
     })
 }
 
@@ -363,6 +372,7 @@ mod tests {
                     proxy_port: None,
                     proxy_token: None,
                     allocations: Vec::new(),
+                    service_ports: Vec::new(),
                 },
             )
             .unwrap();

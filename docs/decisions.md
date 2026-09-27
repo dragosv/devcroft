@@ -1369,12 +1369,40 @@ for in the OCI spec, not from gVisor's own netstack — which is
 unavailable under `--rootless` for the reasons the netstack entry above
 records.
 
-**Revisit via:** `add-port-allocation`, which allocates a free loopback
-port per sandbox where the collision exists and surfaces it through
-`status`. It is scoped by resolved network mode rather than by tier, for
-the reason above, and pairs with `add-agent-workload` — that change gives
-N worktrees distinct sandbox *names*; without it they never get as far as
-needing distinct ports.
+**Addressed where the collision remains, by `add-port-allocation`.** A
+`network.services.<name>.var` request gets a free loopback port chosen per
+sandbox wherever the loopback is shared (`network.default = "allow"`, or
+macOS), recorded and reused, substituted into that service's config and
+reported by `status`. What is still true: a service whose command hardcodes
+its port cannot be moved (and is refused at `up`, naming it), a port chosen
+while a sandbox is down can still be lost to another listener (announced
+when it is), and N worktrees still need distinct sandbox names, which is
+`add-agent-workload`'s.
+
+### Moving a service's port by rewriting its command
+
+**Property that fails:** devcroft does not own the command, and cannot parse
+it reliably.
+
+A provider-declared service's command is arbitrary shell the project wrote
+(`postgres -p 5432`, `serve --port=${PORT:-3000}`). Finding the number in it
+means parsing that shell, and changing it means devcroft rewriting project
+code it does not own: a service that then failed would fail in a command
+the user never wrote. `add-port-allocation` substitutes a *variable* the
+service already reads instead, and refuses, naming the service, when the
+service's command never reads it. It looks for the reference and never
+parses a port out of the command.
+
+### Offsetting every declared port by a per-sandbox constant
+
+**Property that fails:** the user cannot predict the result.
+
+Adding, say, 100 per sandbox to every declared port avoids collisions
+without any cooperation, and silently changes the meaning of a number the
+user did write. Every debugging session starts by discovering that 5432 is
+not 5432, and nothing in the manifest says what it is instead. Allocation
+leaves a declared port alone, moves only a port the manifest asked to have
+chosen, and reports the choice.
 
 ### Keeper is a single point of failure per sandbox
 

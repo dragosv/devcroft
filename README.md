@@ -225,6 +225,22 @@ ssh -L 3000:127.0.0.1:3000 -N my-project.devcroft   # then open localhost:3000
 A sandbox with `network.default = "allow"` isn't isolated, and its ports stay
 directly reachable.
 
+Where the loopback *is* shared (`network.default = "allow"`, or macOS), two
+sandboxes of one project would collide on a fixed port. Name the variable the
+service reads its port from, and devcroft picks one per sandbox:
+
+```toml
+[network.services.web]
+var = "PORT"          # the variable in the service's own vars, e.g. flox's web.vars.PORT
+```
+
+`up` chooses a free port, keeps it across restarts (and says so if it ever has
+to change), substitutes it into that service's generated config and into
+sessions, and `status` prints `port PORT=23456 (service web)`. A sandbox with its
+own namespace allocates nothing and keeps the declared port. A service whose
+command hardcodes its port is refused at `up`, naming it, rather than granted a
+port it will never listen on.
+
 **Git worktrees.** A committed manifest carries the same `sandbox.name` into
 every checkout. devcroft binds a sandbox's state to the canonical project root
 and refuses to adopt state created for a different checkout, so two worktrees

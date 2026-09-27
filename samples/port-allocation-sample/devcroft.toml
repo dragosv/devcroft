@@ -1,0 +1,19 @@
+[sandbox]
+name = "port-allocation-sample"
+
+[env]
+provider = "flox"
+
+# Shared loopback on purpose: with `network.default = "deny"` a sandbox gets
+# its own network namespace on Linux, its ports are private, and there is
+# nothing to allocate. `"allow"` is the case where two sandboxes of this one
+# project would both bind 8720 and the second would fail with EADDRINUSE. It
+# is also what every sandbox on macOS looks like.
+[network]
+default = "allow"
+
+# The service's port comes from $WEB_PORT. devcroft chooses a free port for
+# it per sandbox, records it, substitutes it for the provider's 8720, and
+# reports it in `devcroft status`.
+[network.services.web]
+var = "WEB_PORT"

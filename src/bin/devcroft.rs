@@ -2575,6 +2575,23 @@ fn print_status(s: &devcroft::lifecycle::SandboxStatus, provider: &str) {
         }
     }
 
+    // `add-port-allocation`: every allocated port with the variable that
+    // carries it, since nothing can connect to a value it cannot read. A
+    // stopped sandbox keeps its record, but a bare port there would read as
+    // though something were listening on it.
+    let running = matches!(s.keeper, devcroft::lifecycle::KeeperStatus::Healthy { .. });
+    for a in &s.allocations {
+        if running {
+            println!("port {}={} (service {})", a.var, a.port, a.service);
+        } else {
+            println!(
+                "port {}={} (service {}): recorded for this sandbox; nothing is \
+                 listening while it is down",
+                a.var, a.port, a.service
+            );
+        }
+    }
+
     if s.degraded.is_empty() {
         println!("policy: no degraded capabilities on this host");
     } else {
@@ -3264,6 +3281,16 @@ fn compile_with_provider_grants(
         Some(port) => compiled.with_proxy_port(port),
         None => compiled,
     };
+    // Service ports from the provider's declarations, recorded by `up` for
+    // exactly this: the backend got them, so `--render` shows them.
+    let compiled = compiled.with_service_ports(meta.service_ports.iter().copied());
+    // The allocated ports `up` recorded (`add-port-allocation`): granted,
+    // so shown, with the request each answers.
+    let compiled = compiled.with_allocations(
+        meta.allocations
+            .iter()
+            .map(|a| (a.service.clone(), a.var.clone(), a.port)),
+    );
     // Same live-only caveat again, and required by the same invariant that
     // motivates the two above: "nothing goes to the backend that cannot be
     // shown via `policy --render`". `up` grants the service supervisor's
@@ -3576,7 +3603,24 @@ fn resolve_manifest_strict(
     cmd: &str,
 ) -> Result<devcroft::config::Manifest, i32> {
     match discover_manifest(cwd) {
-        Ok((manifest, _)) => {
+        Ok((manifest, project_root)) => {
+            // A sandbox brought up here under another name (`up --name`,
+            // how two worktrees or two sandboxes of one project get
+            // distinct identities) is this project's too: its recorded
+            // state names this project root. It is resolved with the name
+            // overridden, as `up --name` applied it. Without this, `status`
+            // could not report such a sandbox's allocated ports at all.
+            if let Some(name) = name_arg
+                && manifest.sandbox.name != name
+                && recorded_for_this_project(name, &project_root)
+            {
+                return Ok(devcroft::config::Manifest {
+                    sandbox: devcroft::config::Sandbox {
+                        name: name.to_string(),
+                    },
+                    ..manifest
+                });
+            }
             if let Some(name) = name_arg
                 && manifest.sandbox.name != name
             {
@@ -3593,6 +3637,18 @@ fn resolve_manifest_strict(
             Err(2)
         }
     }
+}
+
+/// Whether sandbox `name`'s recorded state was created from `project_root`.
+fn recorded_for_this_project(name: &str, project_root: &std::path::Path) -> bool {
+    let Ok(paths) = devcroft::lifecycle::StatePaths::new(name) else {
+        return false;
+    };
+    let Ok(Some(meta)) = devcroft::lifecycle::read_meta(&paths.meta) else {
+        return false;
+    };
+    let canonical = |p: &std::path::Path| p.canonicalize().unwrap_or_else(|_| p.to_path_buf());
+    canonical(std::path::Path::new(&meta.project_root)) == canonical(project_root)
 }
 
 /// Prints the manifest's validation warnings, one per line, on stderr.

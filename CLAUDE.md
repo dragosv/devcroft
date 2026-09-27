@@ -18,8 +18,8 @@ this crate's workspace); `nix-go-sample` (Go),
 (Kotlin/Gradle — was `gvisor-kotlin-sample`, renamed by
 `remove-gvisor-backend`, which also dropped the `isolation = "hardened"`
 key from its manifest that would otherwise now fail to parse), and
-`flox-services-sample`, `devenv-sample` and `devenv-services-sample`
-(none has application code at all)
+`flox-services-sample`, `devenv-sample`, `devenv-services-sample` and
+`port-allocation-sample` (none has application code at all)
 are non-Rust, so no workspace exclusion applies to them — see each
 sample's own `README.md` for what it demonstrates. `flox-services-sample`
 shows `network.ports` and supervised `[services]` both working — devcroft
@@ -27,6 +27,11 @@ generates its own process-compose config and the keeper owns the
 services' lifetime. It is also the regression case for the shell
 invariant below, because its manifest declares no shell, which is what
 every real flox manifest looks like.
+`port-allocation-sample` is two sandboxes of one project running the same
+service at once where they share the host's loopback: its manifest is
+`network.default = "allow"` on purpose, because every `"deny"` sandbox
+gets its own network namespace on Linux and allocates nothing
+(`add-port-allocation`).
 `nix-probe-sample` is the runnable form of the README's boundary probe,
 and is where that front-page output is measured rather than asserted. It
 is also the sample that established three nix-provider facts the other

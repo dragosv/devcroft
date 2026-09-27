@@ -91,9 +91,15 @@ pub fn prepare(
     let exe_dir = exe.parent().ok_or_else(|| {
         PrepareError::Config(format!("{} has no parent directory", exe.display()))
     })?;
+    // An agent has its own namespace, so nothing is allocated: a `var`-only
+    // request's port is the one the provider declares, unchanged.
     let mut compiled = crate::policy::compile(manifest)
         .with_keeper_exe_grant(exe_dir.to_string_lossy().into_owned())
-        .with_provider_grants(provider.static_name(), &provider_grants);
+        .with_provider_grants(provider.static_name(), &provider_grants)
+        .with_service_ports(crate::lifecycle::ports::declared_ports(
+            &manifest.network.services,
+            resolution.services.declared(),
+        ));
 
     // The agent's own service stack, as `up` prepares a sandbox's: the
     // config in the agent's workspace under its ID, and the supervisor's

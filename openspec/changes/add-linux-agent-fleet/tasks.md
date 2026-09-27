@@ -704,15 +704,21 @@ the implementation before it resolves.
       forwarders running, both fail. **With real flox:**
       `flox-services-sample` with `expose`, two agents, each host port
       reaching its own agent's `api` on 8710.
-- [ ] 5.7 Test: a service whose command hardcodes its port runs unchanged
-      in every agent, with no warning. **The first half holds**: every
-      fleet services test hardcodes its port (`http.server 8000`), and
-      none warns. The second half needs `add-port-allocation`, which is
-      not implemented. **The second half is the
+- [x] 5.7 Test: a service whose command hardcodes its port runs unchanged
+      in every agent, with no warning. **The second half is the
       assertion that matters** — the same manifest under
       `add-port-allocation` must fail loudly, and a test that only checks
       "it works" would pass equally against an implementation that had
       wrongly copied that change's refusal into fleet.
+      `tests/port_allocation_e2e.rs`, test C, with real flox. **Not
+      literally one manifest, and why:** on a host that can create
+      namespaces, `up` shares the loopback only under
+      `network.default = "allow"`, which fleet refuses by design. So the two
+      differ in `network.default` alone, the property that decides whether
+      allocation applies: under `"allow"`, `up` refuses naming the service;
+      under `"deny"`, the same service runs unchanged with no warning in
+      `up` *and* in `fleet up`. A fleet that had copied the refusal fails
+      the second half, and a mutant `up` without it fails the first.
 - [x] 5.8 Test: a declared port naming a service the provider does not
       declare fails at `up`, distinguishably from a service that failed
       to start. `services::check_declared_ports`, shared by fleet and

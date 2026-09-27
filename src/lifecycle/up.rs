@@ -411,6 +411,8 @@ pub fn up_with_provider(
             proxy_token: proxy.as_ref().map(|(_, token)| token.clone()),
             // Carried forward, not rebuilt: `up_process` reclaims them.
             allocations: previous_meta.map(|m| m.allocations).unwrap_or_default(),
+            // Recomputed by `up_process` once isolation is decided.
+            service_ports: Vec::new(),
         },
     )?;
 
@@ -706,13 +708,26 @@ fn up_process(
         }
         allocated.allocations
     };
+    // With a namespace, a `var`-only request's port is the provider's own.
+    let service_ports = if isolate_network {
+        super::ports::declared_ports(&manifest.network.services, resolution.services.declared())
+    } else {
+        Vec::new()
+    };
     // Recorded now, read-modify-write: everything else in `meta.json` was
-    // just written by `up_with_provider` and is left as it is.
+    // just written by `up_with_provider` and is left as it is. Both are
+    // grants `policy --render` must show and can only learn from here.
     if let Some(mut meta) = state::read_meta(&paths.meta)? {
         meta.allocations = allocations.clone();
+        meta.service_ports = service_ports.clone();
         state::write_meta(&paths.meta, &meta)?;
     }
-    let compiled = compiled.with_allocated_ports(allocations.iter().map(|a| a.port));
+    let compiled = compiled.with_service_ports(service_ports);
+    let compiled = compiled.with_allocations(
+        allocations
+            .iter()
+            .map(|a| (a.service.clone(), a.var.clone(), a.port)),
+    );
 
     let plan = compiled.to_capability_plan();
     // Validated host-side, before anything is created — the keeper (task
