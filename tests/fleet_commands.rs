@@ -772,10 +772,13 @@ fn five_agents_one_port_each_host_mapping_reaches_its_own_agent() {
     );
     let provider = WithServices {
         supervisor_dir,
+        // With a probe, "ready" means listening. Without one it only means
+        // started, and under load the first GET below beat the server's
+        // bind (1 run in 10).
         services: vec![service(
             "web",
             "exec python3 -m http.server 8000 --bind 127.0.0.1",
-            None,
+            Some("curl -sf http://127.0.0.1:8000/ >/dev/null"),
         )],
     };
     let outcome = s

@@ -1732,6 +1732,40 @@ pub(crate) fn clear_cloexec(fd: RawFd) -> io::Result<()> {
     Ok(())
 }
 
+/// Let the child `cmd` starts inherit `fds`, at the numbers they have here,
+/// without ever clearing `FD_CLOEXEC` in this process.
+///
+/// **Why not [`clear_cloexec`] then spawn.** In a process with other
+/// threads, clearing it opens a window in which any child another thread
+/// forks and execs inherits the fd *for good*, since nothing closes it at
+/// exec any more. Measured in the fleet supervisor: a stopped agent's host
+/// port stayed bound after its forwarder died, held by an unrelated process
+/// that had inherited the listener. Here the flag is cleared in the forked
+/// child only, where no other process can see it.
+///
+/// **Why the numbers do not move.** The first version `dup2`-ed each fd to
+/// a fixed number (3, 4) in the child. In a busy process that number can be
+/// another fd the child still needs: a later `pre_exec` closure's (measured:
+/// a forwarder's `cgroup.procs` fd was 3, so its self-attach wrote into a
+/// listening socket and died of SIGPIPE, exit 13), or the pipe `std` reports
+/// exec errors on, which made `spawn` return success for a child that then
+/// died. An fd this process holds already has a number nothing else uses.
+pub(crate) fn pass_fds(cmd: &mut Command, fds: &[RawFd]) {
+    let fds = fds.to_vec();
+    // SAFETY: fcntl only, async-signal-safe, on fds this process owns, in
+    // the forked child.
+    unsafe {
+        cmd.pre_exec(move || {
+            for fd in &fds {
+                if libc::fcntl(*fd, libc::F_SETFD, 0) < 0 {
+                    return Err(io::Error::last_os_error());
+                }
+            }
+            Ok(())
+        });
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -94,7 +94,6 @@ pub fn spawn_at(
 ) -> io::Result<(libc::pid_t, u16, String)> {
     let listener = std::net::TcpListener::bind(("127.0.0.1", 0))?;
     let port = listener.local_addr()?.port();
-    crate::lifecycle::clear_cloexec(listener.as_raw_fd())?;
     let token = generate_token();
 
     // The unix listener a network-isolated sandbox reaches the proxy
@@ -111,12 +110,15 @@ pub fn spawn_at(
     let _ = std::fs::remove_file(socket);
     let unix_listener = std::os::unix::net::UnixListener::bind(socket)?;
     std::fs::set_permissions(socket, std::fs::Permissions::from_mode(0o600))?;
-    crate::lifecycle::clear_cloexec(unix_listener.as_raw_fd())?;
 
     std::fs::File::create(log_path)?;
     let log = std::fs::OpenOptions::new().append(true).open(log_path)?;
 
+    // Inheritable in the child alone, never made so here: a fleet
+    // supervisor has other threads forking, and a listener with CLOEXEC
+    // cleared leaks into their children for good (`lifecycle::pass_fds`).
     let mut cmd = Command::new(exe);
+    crate::lifecycle::pass_fds(&mut cmd, &[listener.as_raw_fd(), unix_listener.as_raw_fd()]);
     cmd.arg("__egress_proxy")
         .arg(listener.as_raw_fd().to_string())
         .arg(unix_listener.as_raw_fd().to_string())

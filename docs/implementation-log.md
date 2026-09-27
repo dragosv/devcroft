@@ -1174,3 +1174,26 @@ fds inside `apply`: that first mutant passed, and it tested nothing.
   in use, `bind` returned 7, the number wanted, so `dup2` did nothing, left
   CLOEXEC set, and dropping the listener closed the relay. The keeper then
   found an eventfd at that number, and every agent's egress was refused.
+
+**Two fleet bugs that only appeared under parallel load (2026-09-27).**
+Both were found by running the whole fleet suite in a loop, and both first
+looked like flaky tests.
+
+- **Handing a listener to a child.** The first fix for the proxy leak
+  (above) cleared CLOEXEC in the supervisor and then spawned. With other
+  threads forking, that window let unrelated children keep the listener
+  for good: a stopped agent's host port stayed bound after its forwarder
+  died. The second version passed each fd to the child at a fixed number
+  (`dup2` to 3, 4) in `pre_exec`. In a busy process that number was
+  sometimes another fd the child still needed. One run caught the dead
+  forwarder as a zombie with exit code 13, in the test's own cgroup: its
+  `cgroup.procs` fd had been 3, its self-attach wrote into a listening
+  socket, and SIGPIPE killed it. Where the fd was `std`'s exec-error pipe
+  instead, `spawn` returned success for a child that then died. The fix
+  that held clears CLOEXEC in the child and moves nothing
+  (`lifecycle::pass_fds`): 0 failures in 60 runs, against about 1 in 15.
+- **"Running" is not "ready".** `fleet up` reported a service that exits
+  with 3 as ready. Measured on process-compose 1.116.0, such a service is
+  caught as `Running` before it dies, and without a probe, running counted
+  as ready. A service without a probe must now stay up for a second
+  first, which catches the commonest failure, a service that dies at start.

@@ -136,6 +136,11 @@ pub enum ServicesOutcome {
 /// this is for.
 pub const READY_BUDGET: std::time::Duration = std::time::Duration::from_secs(120);
 
+/// How long a service without a readiness probe must stay up before `up`
+/// calls it ready: long enough to catch one that dies at start, which is
+/// the most common way a service fails.
+const SETTLE: std::time::Duration = std::time::Duration::from_secs(1);
+
 #[derive(Serialize, Deserialize)]
 struct FleetFile {
     cgroup_root: PathBuf,
@@ -342,6 +347,7 @@ fn wait_ready(
         return ServicesOutcome::None;
     }
     let socket = crate::services::socket_path(workspace, id);
+    let mut settled_since: Option<std::time::Instant> = None;
     loop {
         let report = crate::services::reconcile(declared, crate::services::query(&socket));
         let label = |states: &[&crate::services::ServiceState]| {
@@ -361,7 +367,20 @@ fn wait_ready(
         let done =
             |s: &crate::services::ServiceState| s.is_ready() || s.health == ServiceHealth::Exited;
         if report.supervisor_error.is_none() && report.states.iter().all(done) {
-            return ServicesOutcome::Ready;
+            // A probe that passed is evidence. "Running" alone is not: a
+            // service that dies at start is caught running first (measured,
+            // `exit 3` read as `Running` on process-compose 1.116.0), and
+            // was reported Ready. So a service without a probe must stay up
+            // for `SETTLE` first, and a failure meanwhile is reported.
+            if report.states.iter().all(|s| s.ready.is_some()) {
+                return ServicesOutcome::Ready;
+            }
+            let now = std::time::Instant::now();
+            if now.duration_since(*settled_since.get_or_insert(now)) >= SETTLE {
+                return ServicesOutcome::Ready;
+            }
+        } else {
+            settled_since = None;
         }
         if std::time::Instant::now() >= deadline {
             let waiting: Vec<_> = report.states.iter().filter(|s| !done(s)).collect();

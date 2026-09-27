@@ -286,14 +286,22 @@ impl Supervisor {
             let uds = bind_private(&socket)?;
             let tcp = std::net::TcpListener::bind(("127.0.0.1", 0))?;
             let host_port = tcp.local_addr()?.port();
-            crate::lifecycle::clear_cloexec(std::os::fd::AsRawFd::as_raw_fd(&tcp))?;
+            // Inheritable in the forwarder alone: clearing CLOEXEC here would
+            // let a child another thread forks meanwhile keep the listener,
+            // and the host port with it, after this agent is gone (measured).
+            let tcp_fd = std::os::fd::AsRawFd::as_raw_fd(&tcp);
             let mut cmd = std::process::Command::new(&self.exe);
+            crate::lifecycle::pass_fds(&mut cmd, &[tcp_fd]);
             cmd.arg("__ingress")
-                .arg(std::os::fd::AsRawFd::as_raw_fd(&tcp).to_string())
+                .arg(tcp_fd.to_string())
                 .arg(&socket)
                 .stdin(std::process::Stdio::null())
                 .stdout(std::process::Stdio::null())
-                .stderr(std::process::Stdio::null());
+                // Its own log, as the egress proxy has one: a forwarder that
+                // dies is otherwise a host port that refuses, with no reason.
+                .stderr(std::fs::File::create(
+                    dir.join(format!("ingress-{service}.log")),
+                )?);
             host_leaf
                 .as_ref()
                 .expect("created when there is a mapping")
