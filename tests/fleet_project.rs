@@ -76,6 +76,7 @@ fn an_agent_gets_ups_plan_shell_and_hooks_for_its_own_workspace() {
         &provider,
         &manifest(""),
         workspace,
+        "a1",
         exe(),
         "key",
         Limits::default(),
@@ -116,6 +117,7 @@ fn egress_is_network_allow_through_a_proxy_and_never_unfiltered() {
         &HostUsr::new(),
         &manifest("[network]\nallow = [\"crates.io\"]\n"),
         Path::new("/tmp/w"),
+        "a1",
         exe(),
         "key",
         Limits::default(),
@@ -130,6 +132,7 @@ fn egress_is_network_allow_through_a_proxy_and_never_unfiltered() {
         &HostUsr::new(),
         &manifest("[network]\ndefault = \"allow\"\n"),
         Path::new("/tmp/w"),
+        "a1",
         exe(),
         "key",
         Limits::default(),
@@ -144,6 +147,7 @@ fn egress_is_network_allow_through_a_proxy_and_never_unfiltered() {
         &HostUsr::new(),
         &manifest("[network]\nports = [5432]\n"),
         Path::new("/tmp/w"),
+        "a1",
         exe(),
         "key",
         Limits::default(),
@@ -153,7 +157,7 @@ fn egress_is_network_allow_through_a_proxy_and_never_unfiltered() {
 }
 
 #[test]
-fn services_are_refused_by_name_rather_than_dropped() {
+fn services_without_a_supervisor_in_the_environment_are_refused_by_name() {
     let mut provider = HostUsr::new();
     provider.services = vec![ServiceDecl {
         name: "postgres".into(),
@@ -166,19 +170,22 @@ fn services_are_refused_by_name_rather_than_dropped() {
         shutdown: Shutdown::Default,
         readiness: None,
     }];
+    let workspace = std::env::temp_dir().join(format!("fleet-project-svc-{}", std::process::id()));
+    std::fs::create_dir_all(&workspace).unwrap();
     let err = prepare(
         &provider,
         &manifest(""),
-        Path::new("/tmp/w"),
+        &workspace,
+        "a1",
         exe(),
         "key",
         Limits::default(),
         true,
     )
-    .unwrap_err()
-    .to_string();
-    assert!(
-        err.contains("postgres") && err.contains("services"),
-        "{err}"
-    );
+    .unwrap_err();
+    let _ = std::fs::remove_dir_all(&workspace);
+    // Services now run per agent, so what is refused is an environment that
+    // cannot run them: at layer provider, with the fix named.
+    assert!(matches!(err, PrepareError::Provider(_)), "{err}");
+    assert!(err.to_string().contains("process-compose"), "{err}");
 }

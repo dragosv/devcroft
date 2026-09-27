@@ -164,6 +164,15 @@ impl Setup {
         agents: usize,
         limits: devcroft::fleet::cgroup::Limits,
     ) -> Result<commands::UpOutcome, FleetError> {
+        self.up_via(&HostUsr, agents, limits)
+    }
+
+    fn up_via(
+        &self,
+        provider: &dyn ProviderEntry,
+        agents: usize,
+        limits: devcroft::fleet::cgroup::Limits,
+    ) -> Result<commands::UpOutcome, FleetError> {
         let manifest = self.manifest();
         let keys = self.base.join("keys");
         std::fs::create_dir_all(&keys).unwrap();
@@ -172,7 +181,7 @@ impl Setup {
         let authorized = client.public_key().to_openssh().unwrap();
         let fallback = self.base.join("no-cgroup");
         commands::up(
-            &HostUsr,
+            provider,
             &UpRequest {
                 manifest: &manifest,
                 project_root: &self.project(),
@@ -572,4 +581,157 @@ fn limits_given_to_up_reach_every_agents_leaf_and_record() {
         !has_io_weight
     );
     commands::rm_all(&s.state(), &m, exe(), &s.project()).unwrap();
+}
+
+/// The host's `/usr` plus a process-compose from the Nix store, declaring
+/// `services`: the smallest environment that can run a service stack.
+struct WithServices {
+    supervisor_dir: PathBuf,
+    services: Vec<devcroft::provider::ServiceDecl>,
+}
+
+impl ProviderEntry for WithServices {
+    fn resolve(&self, _: &Path) -> Result<Resolution, ProviderError> {
+        Ok(Resolution {
+            env: [(
+                "PATH".to_owned(),
+                format!("{}:/usr/bin", self.supervisor_dir.display()),
+            )]
+            .into(),
+            unset: Vec::new(),
+            read_only_grants: vec!["/usr".to_owned(), "/nix/store".to_owned()],
+            activation_script: None,
+            services: ServiceSupport::Declared(self.services.clone()),
+            ran_activation_hook: false,
+        })
+    }
+    fn fingerprint(&self, _: &Path) -> Result<String, ProviderError> {
+        Ok(String::new())
+    }
+    fn tier(&self) -> Tier {
+        Tier::Closure
+    }
+    fn static_name(&self) -> &'static str {
+        "nix"
+    }
+}
+
+fn process_compose_dir() -> Option<PathBuf> {
+    std::fs::read_dir("/nix/store")
+        .ok()?
+        .flatten()
+        .map(|e| e.path().join("bin"))
+        .find(|bin| {
+            bin.join("process-compose").is_file()
+                && bin
+                    .parent()
+                    .unwrap()
+                    .to_string_lossy()
+                    .contains("process-compose")
+        })
+}
+
+fn service(name: &str, command: &str, probe: Option<&str>) -> devcroft::provider::ServiceDecl {
+    devcroft::provider::ServiceDecl {
+        name: name.into(),
+        command: command.into(),
+        vars: Default::default(),
+        is_daemon: false,
+        working_dir: None,
+        depends_on: Vec::new(),
+        restart: devcroft::provider::RestartPolicy::Never,
+        shutdown: devcroft::provider::Shutdown::Default,
+        readiness: probe.map(|p| devcroft::provider::Readiness {
+            probe: devcroft::provider::Probe::Command(p.into()),
+            initial_delay: 0,
+            period: 1,
+            probe_timeout: 2,
+            success_threshold: 1,
+            failure_threshold: 60,
+        }),
+    }
+}
+
+/// `service-ports`: every agent runs its own instance of the same declared
+/// service on the same port, and `up` returns only once each is ready.
+#[test]
+fn every_agent_runs_its_own_service_on_the_same_port_and_up_waits_for_it() {
+    let Some(root) = capable_host() else { return };
+    let Some(supervisor_dir) = process_compose_dir() else {
+        eprintln!("skipping: no process-compose in /nix/store");
+        return;
+    };
+    if !Path::new("/usr/bin/python3").exists() || !Path::new("/usr/bin/curl").exists() {
+        eprintln!("skipping: no /usr/bin/python3 or /usr/bin/curl");
+        return;
+    }
+    let s = Setup::new("svc", Some(&root), "\n[network]\nports = [8000]\n", true);
+    // Ready only after it has written `probe-ok`, two seconds in: `up`
+    // returning before that would mean it did not wait for readiness.
+    let provider = WithServices {
+        supervisor_dir,
+        services: vec![service(
+            "web",
+            "sleep 2; touch probe-ok; exec python3 -m http.server 8000 --bind 127.0.0.1",
+            Some("test -f probe-ok && curl -sf http://127.0.0.1:8000/ >/dev/null"),
+        )],
+    };
+    let outcome = s
+        .up_via(&provider, 3, devcroft::fleet::cgroup::Limits::default())
+        .unwrap();
+    for a in &outcome.started {
+        assert_eq!(a.services, commands::ServicesOutcome::Ready, "{}", a.id);
+        assert!(
+            a.workspace.join("probe-ok").exists(),
+            "up returned before {}'s service was ready",
+            a.id
+        );
+    }
+    // Three agents, one port number, three instances: each answers with
+    // a file from its own workspace.
+    for a in &outcome.started {
+        let socket = s.state().join("agents").join(&a.id).join("control.sock");
+        let (code, out) = session(
+            &socket,
+            &a.workspace,
+            &format!(
+                "echo {} > whoami; curl -s http://127.0.0.1:8000/whoami",
+                a.id
+            ),
+        );
+        assert_eq!(code, Some(0), "{out}");
+        assert_eq!(out.trim(), a.id);
+    }
+    commands::rm_all(&s.state(), &s.manifest(), exe(), &s.project()).unwrap();
+}
+
+/// A service that fails is reported, by name, for its agent; the agent
+/// stays up and keeps serving sessions.
+#[test]
+fn a_failing_service_is_reported_for_its_agent_which_stays_up() {
+    let Some(root) = capable_host() else { return };
+    let Some(supervisor_dir) = process_compose_dir() else {
+        eprintln!("skipping: no process-compose in /nix/store");
+        return;
+    };
+    let s = Setup::new("svcfail", Some(&root), "", true);
+    let provider = WithServices {
+        supervisor_dir,
+        services: vec![service("broken", "exit 3", None)],
+    };
+    let outcome = s
+        .up_via(&provider, 1, devcroft::fleet::cgroup::Limits::default())
+        .unwrap();
+    let a = &outcome.started[0];
+    match &a.services {
+        commands::ServicesOutcome::Failed(v) => {
+            assert_eq!(v[0].0, "broken", "{v:?}");
+            assert!(v[0].1.contains("exit 3"), "{v:?}");
+        }
+        other => panic!("expected the failure to be reported, got {other:?}"),
+    }
+    let socket = s.state().join("agents").join(&a.id).join("control.sock");
+    let (code, out) = session(&socket, &a.workspace, "echo still-up");
+    assert_eq!((code, out.trim()), (Some(0), "still-up"));
+    commands::rm_all(&s.state(), &s.manifest(), exe(), &s.project()).unwrap();
 }

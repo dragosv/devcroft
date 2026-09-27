@@ -2765,13 +2765,35 @@ fn cli_fleet_linux(args: &[String]) -> i32 {
                             "devcroft fleet: warning: {d} (fallback: the other limits apply)"
                         );
                     }
+                    let mut failed = false;
                     for a in &started.started {
                         println!("{}\t{}", a.id, a.workspace.display());
+                        use devcroft::fleet::commands::ServicesOutcome;
+                        let states = |v: &[(String, String)]| {
+                            v.iter()
+                                .map(|(n, s)| format!("{n}: {s}"))
+                                .collect::<Vec<_>>()
+                                .join(", ")
+                        };
+                        match &a.services {
+                            ServicesOutcome::None => {}
+                            ServicesOutcome::Ready => println!("  services ready"),
+                            ServicesOutcome::Failed(v) => {
+                                failed = true;
+                                eprintln!("  {}: services failed: {}", a.id, states(v));
+                            }
+                            ServicesOutcome::NotReady(v) => {
+                                failed = true;
+                                eprintln!("  {}: services not ready in time: {}", a.id, states(v));
+                            }
+                        }
                     }
                     println!(
                         "each agent works on a clone of HEAD; uncommitted changes are not in it"
                     );
-                    0
+                    // The agents stay up either way; the exit status says
+                    // whether they are all ready for work.
+                    if failed { 1 } else { 0 }
                 }
                 Err(e) => fail(e),
             }
@@ -2839,6 +2861,28 @@ fn cli_fleet_linux(args: &[String]) -> i32 {
                             .map(|w| w.to_string())
                             .unwrap_or_else(|| "default".into()),
                     );
+                    // Queried live, only while running: a stopped agent's
+                    // supervisor is gone with it.
+                    if r.state == devcroft::fleet::supervisor::AgentState::Running
+                        && !r.services.is_empty()
+                    {
+                        let socket = devcroft::services::socket_path(&r.workspace, &r.id);
+                        let report = devcroft::services::reconcile(
+                            &r.services,
+                            devcroft::services::query(&socket),
+                        );
+                        for s in &report.states {
+                            let readiness = match s.ready {
+                                Some(true) => ", ready",
+                                Some(false) => ", not ready",
+                                None => "",
+                            };
+                            println!("service\t{}: {}{readiness}", s.name, s.health.label());
+                        }
+                        if let Some(e) = &report.supervisor_error {
+                            println!("services\t{e}");
+                        }
+                    }
                     if let Some(e) = r.evidence {
                         println!(
                             "died\t{} OOM kill(s), {} whole-agent OOM kill(s), {} fork(s) refused",

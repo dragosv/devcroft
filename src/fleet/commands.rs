@@ -110,7 +110,31 @@ pub struct UpOutcome {
 pub struct Started {
     pub id: String,
     pub workspace: PathBuf,
+    /// How its services came up; `up` returns only once each agent's are
+    /// ready, have failed, or have run out of time.
+    pub services: ServicesOutcome,
 }
+
+/// Where an agent's services stood when `up` stopped waiting for them.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ServicesOutcome {
+    /// It declares none.
+    None,
+    /// Every service is running and past its readiness probe, or is a
+    /// one-shot job that finished cleanly.
+    Ready,
+    /// These failed (or were skipped because a dependency failed). The
+    /// agent stays up, as a sandbox does: a failed service must not take
+    /// the agent's sessions with it.
+    Failed(Vec<(String, String)>),
+    /// Not ready within [`READY_BUDGET`]; each service's state.
+    NotReady(Vec<(String, String)>),
+}
+
+/// How long `up` waits for an agent's services to be ready. Generous: a
+/// database initialising its data directory on first start is the case
+/// this is for.
+pub const READY_BUDGET: std::time::Duration = std::time::Duration::from_secs(120);
 
 #[derive(Serialize, Deserialize)]
 struct FleetFile {
@@ -161,6 +185,7 @@ pub fn up(provider: &dyn ProviderEntry, req: &UpRequest) -> Result<UpOutcome, Fl
                 provider,
                 req.manifest,
                 &ws,
+                id,
                 req.exe,
                 req.authorized_key_pem,
                 req.limits.clone(),
@@ -176,6 +201,7 @@ pub fn up(provider: &dyn ProviderEntry, req: &UpRequest) -> Result<UpOutcome, Fl
             Ok(id) => started.push(Started {
                 id,
                 workspace: workspace.expect("set before a successful start"),
+                services: ServicesOutcome::None,
             }),
             Err(e) => {
                 // The clone was ours; the supervisor removed its own part.
@@ -189,6 +215,19 @@ pub fn up(provider: &dyn ProviderEntry, req: &UpRequest) -> Result<UpOutcome, Fl
             }
         }
     }
+    // Readiness is waited for after every agent has started, so N agents'
+    // databases initialise at once rather than one after another.
+    let deadline = std::time::Instant::now() + READY_BUDGET;
+    for agent in &mut started {
+        let status = sup.inspect(&agent.id).map_err(backend)?;
+        agent.services = wait_ready(
+            &agent.workspace,
+            &agent.id,
+            &status.record.services,
+            deadline,
+        );
+    }
+
     // Only what was asked for: a host without io.weight is worth saying
     // so to someone who set an IO weight, and noise to anyone else.
     let degraded = sup
@@ -288,6 +327,48 @@ fn remedy(error: &str) -> String {
         return error.to_owned();
     };
     format!("{error}\n  {fix}")
+}
+
+/// Poll an agent's service supervisor until its services are ready, one has
+/// failed, or `deadline` passes (`service-ports`: *Agent readiness*).
+fn wait_ready(
+    workspace: &Path,
+    id: &str,
+    declared: &[String],
+    deadline: std::time::Instant,
+) -> ServicesOutcome {
+    use crate::services::ServiceHealth;
+    if declared.is_empty() {
+        return ServicesOutcome::None;
+    }
+    let socket = crate::services::socket_path(workspace, id);
+    loop {
+        let report = crate::services::reconcile(declared, crate::services::query(&socket));
+        let label = |states: &[&crate::services::ServiceState]| {
+            states
+                .iter()
+                .map(|s| (s.name.clone(), s.health.label()))
+                .collect::<Vec<_>>()
+        };
+        let failed: Vec<_> = report
+            .states
+            .iter()
+            .filter(|s| s.health.is_failure() || s.health == ServiceHealth::Skipped)
+            .collect();
+        if !failed.is_empty() {
+            return ServicesOutcome::Failed(label(&failed));
+        }
+        let done =
+            |s: &crate::services::ServiceState| s.is_ready() || s.health == ServiceHealth::Exited;
+        if report.supervisor_error.is_none() && report.states.iter().all(done) {
+            return ServicesOutcome::Ready;
+        }
+        if std::time::Instant::now() >= deadline {
+            let waiting: Vec<_> = report.states.iter().filter(|s| !done(s)).collect();
+            return ServicesOutcome::NotReady(label(&waiting));
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
 }
 
 /// Every agent the fleet has recorded, reconciled against the kernel.

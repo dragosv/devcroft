@@ -118,6 +118,7 @@ impl Fleet {
             limits: Limits::default(),
             view: true,
             egress_allow: Vec::new(),
+            services: Vec::new(),
         }
     }
 }
@@ -362,6 +363,7 @@ fn a_prepared_agent_runs_its_hooks_inside_itself() {
         &HostUsr,
         &manifest,
         &template.workspace,
+        "a1",
         Path::new(env!("CARGO_BIN_EXE_devcroft")),
         &template.authorized_key_pem,
         Limits::default(),

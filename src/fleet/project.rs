@@ -14,9 +14,10 @@
 //! namespace has no route out, and that is the egress boundary (D9's
 //! re-derivation), so unfiltered egress would mean giving it one.
 //!
-//! **What fleet does not carry yet is refused by name**, never dropped:
-//! services (group 5). A manifest asking for them would otherwise start
-//! agents that silently lack what it declared.
+//! **Services run per agent** (`service-ports`): the provider's declared
+//! services get a supervisor config in the agent's own workspace, named by
+//! its ID, and the agent's keeper starts them inside its leaf and its
+//! network namespace. So N agents each bind the same declared port.
 
 use std::path::Path;
 
@@ -48,10 +49,12 @@ impl std::error::Error for PrepareError {}
 /// Resolve `manifest`'s environment for `workspace` and compile the agent's
 /// policy, as `up` does for a sandbox. `exe` is the devcroft binary the
 /// agent runs as its keeper; its directory is granted, as `up` grants it.
+#[allow(clippy::too_many_arguments)]
 pub fn prepare(
     provider: &dyn ProviderEntry,
     manifest: &Manifest,
     workspace: &Path,
+    agent_id: &str,
     exe: &Path,
     authorized_key_pem: &str,
     limits: Limits,
@@ -62,21 +65,6 @@ pub fn prepare(
     let resolution = provider
         .resolve(workspace)
         .map_err(PrepareError::Provider)?;
-    if !resolution.services.declared().is_empty() {
-        let names: Vec<_> = resolution
-            .services
-            .declared()
-            .iter()
-            .map(|s| s.name.as_str())
-            .collect();
-        return Err(PrepareError::Config(format!(
-            "this environment declares services ({}), and fleet agents cannot run \
-             services yet (add-linux-agent-fleet group 5); use `devcroft up` for a \
-             single sandbox with services",
-            names.join(", ")
-        )));
-    }
-
     // Exactly `up`'s rule: the shell must come from inside something the
     // sandbox is granted, and its grant is folded into the provider's.
     let shell =
@@ -98,10 +86,41 @@ pub fn prepare(
     let exe_dir = exe.parent().ok_or_else(|| {
         PrepareError::Config(format!("{} has no parent directory", exe.display()))
     })?;
-    let plan = crate::policy::compile(manifest)
+    let mut compiled = crate::policy::compile(manifest)
         .with_keeper_exe_grant(exe_dir.to_string_lossy().into_owned())
-        .with_provider_grants(provider.static_name(), &provider_grants)
-        .to_capability_plan();
+        .with_provider_grants(provider.static_name(), &provider_grants);
+
+    // The agent's own service stack, as `up` prepares a sandbox's: the
+    // config in the agent's workspace under its ID, and the supervisor's
+    // socket granted (macOS needs it to bind; `up` grants it the same way).
+    let declared = resolution.services.declared();
+    if !declared.is_empty() {
+        crate::services::write_config(
+            workspace,
+            agent_id,
+            provider.static_name(),
+            declared,
+            &resolution.env,
+            &shell.path,
+        )
+        .map_err(|e| match e {
+            crate::services::ConfigError::SocketPathTooLong(m) => PrepareError::Config(m),
+            crate::services::ConfigError::NoSupervisor(m) => {
+                PrepareError::Provider(ProviderError::ResolutionFailed(m))
+            }
+            crate::services::ConfigError::Io(e) => {
+                PrepareError::Provider(ProviderError::ResolutionFailed(e.to_string()))
+            }
+        })?;
+        compiled = compiled.with_unix_socket_bind(
+            crate::services::socket_path(workspace, agent_id)
+                .to_string_lossy()
+                .into_owned(),
+            crate::policy::Origin::Baseline,
+        );
+    }
+    let services: Vec<String> = declared.iter().map(|s| s.name.clone()).collect();
+    let plan = compiled.to_capability_plan();
 
     // `up`'s order, which is load-bearing: the provider's activation script
     // prepares the environment that `post_create` usually depends on. Every
@@ -128,6 +147,7 @@ pub fn prepare(
         limits,
         view,
         egress_allow: manifest.network.allow.clone(),
+        services,
     })
 }
 

@@ -57,6 +57,10 @@ pub struct AgentLaunch {
     /// Hosts the agent may reach, through its own egress proxy. Empty means
     /// no egress at all: the agent's network namespace has no route out.
     pub egress_allow: Vec<String>,
+    /// The services its keeper starts, from a supervisor config already
+    /// written for this agent (`services::write_config`, named by its ID).
+    /// Empty for none.
+    pub services: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -101,6 +105,9 @@ pub struct AgentRecord {
     /// The limits its leaf was created with.
     #[serde(default)]
     pub limits: Limits,
+    /// The services its keeper runs.
+    #[serde(default)]
+    pub services: Vec<String>,
 }
 
 /// A record plus what is true of it right now.
@@ -249,7 +256,8 @@ impl Supervisor {
             ssh_host_key_pem: &host_key,
             ssh_authorized_key_pem: &launch.authorized_key_pem,
             shell: &launch.shell,
-            services: None,
+            // The keeper finds the config by this name under the workspace.
+            services: (!launch.services.is_empty()).then_some(id),
             hooks: &launch.hooks,
             project_root: &launch.workspace,
             sandbox_home: &home,
@@ -320,6 +328,7 @@ impl Supervisor {
                 evidence: None,
                 egress: launch.egress_allow.clone(),
                 limits: launch.limits.clone(),
+                services: launch.services.clone(),
             },
         )
     }

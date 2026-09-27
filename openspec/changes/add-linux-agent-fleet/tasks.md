@@ -641,10 +641,28 @@ the implementation before it resolves.
       upstream is not devcroft's to do. The port lives in the command
       string or in `vars`, neither of which devcroft can reliably parse,
       so the declaration has to be devcroft's own.
-- [ ] 5.2 Start each agent's declared service stack under that agent's keeper
+- [x] 5.2 Start each agent's declared service stack under that agent's keeper
       and inside its cgroup leaf; gate agent readiness on those services being
       ready, so a task dispatched to a ready agent does not race its own
       database coming up.
+      `fleet::project::prepare` writes each agent's supervisor config in its
+      own workspace, named by its ID (`services::write_config`, extracted
+      from `up`), and the keeper starts it. `fleet up` returns once every
+      agent's services are running *and* past their readiness probes
+      (`ServiceState::is_ready`, from process-compose's `has_ready_probe`
+      and `is_ready`), or have failed, or have used up two minutes. Each
+      outcome is per agent. A failed service is named for its agent, which
+      stays up, and the exit status is 1. `fleet inspect` shows each
+      service's live state.
+      **With a real provider:** `flox-services-sample`, two agents, services
+      ready in 4 s. Each agent asking `127.0.0.1:8710` for `whoami` got its
+      own answer. Tested with a probe that passes only two seconds in, which
+      fails if `up` does not wait; a failing service is reported with its
+      agent left serving sessions.
+      **Found on the way:** clones under the project put a subdirectory
+      project's path in each workspace twice, and the supervisor socket
+      came to 123 bytes against the OS's 103. Clones now live at the
+      repository root.
 - [ ] 5.3 Allocate host ports per agent; release on exit.
 - [ ] 5.4 Report mappings in agent status, distinguishing "no mappings
       declared" from "mappings not yet established".
@@ -652,7 +670,9 @@ the implementation before it resolves.
       surface the degradation there rather than letting a shared port
       read as a private one.
 - [ ] 5.6 Test: five agents bind the same declared port; each host mapping
-      reaches the correct agent.
+      reaches the correct agent. **The in-namespace half is tested** (three
+      agents, one port, three instances each answering with its own
+      workspace's file); the host mapping half waits for 5.3.
 - [ ] 5.7 Test: a service whose command hardcodes its port runs unchanged
       in every agent, with no warning. **The second half is the
       assertion that matters** — the same manifest under
