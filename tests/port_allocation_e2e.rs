@@ -359,7 +359,15 @@ fn a_hardcoded_port_is_refused_where_allocated_and_runs_unchanged_with_a_namespa
     );
 
     // Own namespace: nothing allocated, the declared port used unchanged,
-    // no refusal and no warning.
+    // no refusal and no warning. Linux only: off Linux no sandbox gets a
+    // namespace, so `"deny"` shares the loopback and is refused the same way.
+    #[cfg(target_os = "linux")]
+    hardcoded_port_runs_unchanged_with_a_namespace(&root, &name);
+}
+
+#[cfg(target_os = "linux")]
+fn hardcoded_port_runs_unchanged_with_a_namespace(root: &Path, name: &str) {
+    let (root, name) = (root.to_path_buf(), name.to_string());
     write_devcroft_toml_with(&root, &name, "deny", "port = 18782\n");
     let (code, _, err) = run(&root, &["up"]);
     assert_eq!(code, Some(0), "{err}");
@@ -427,7 +435,8 @@ fn a_hardcoded_port_is_refused_where_allocated_and_runs_unchanged_with_a_namespa
 /// allocated, and the service's port is the one the provider declares for
 /// the variable, granted unchanged. Without that, the same manifest that
 /// works where the loopback is shared would leave the service unable to
-/// bind here.
+/// bind here. Linux only: namespaces are the precondition.
+#[cfg(target_os = "linux")]
 #[test]
 fn a_var_only_request_with_a_namespace_uses_the_providers_port() {
     if tooling_missing() {

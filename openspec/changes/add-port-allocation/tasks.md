@@ -207,9 +207,13 @@
       narrow it to what remains (hardcoded-port services, and the
       allocate-then-bind race)
       README "Every branch gets the same port" and `docs/known-gaps.md`'s
-      macOS section. **Not measured on macOS**: implemented portably and
-      tested on Linux under `"allow"`, which shares the loopback the same
-      way.
+      macOS section. First written as "not measured on macOS"; since
+      measured there (macOS 15, arm64): the three platform-independent
+      tests in `tests/port_allocation_e2e.rs` pass with real flox, none
+      skipping. Doing so found the file did not compile off Linux (the
+      fleet half named `fleet::cgroup`, which is Linux-only), breaking
+      every `cargo test` on a Mac; that half and the two namespace
+      scenarios are now `cfg(target_os = "linux")`.
 - [x] 7.2 `docs/decisions.md`: record why commands are not rewritten and
       why ports are not offset — both were considered and both fail on a
       named property, per that file's convention

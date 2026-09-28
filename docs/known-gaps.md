@@ -128,10 +128,11 @@ has, and the useful answer is better than it sounds.
 `[network.services.<name>] var = "PORT"` gets devcroft to choose a free port
 per sandbox, record it, substitute it into that service's generated config
 and into sessions, and report it in `status`. It applies wherever the
-loopback is shared, which is every sandbox on macOS. **Not yet measured on
-macOS:** it is implemented portably and tested end to end on Linux under
-`network.default = "allow"`, which shares the loopback the same way
-(`tests/port_allocation_e2e.rs`). The recipe below is still the answer for
+loopback is shared, which is every sandbox on macOS. Measured on macOS 15
+(arm64) and on Linux under `network.default = "allow"`, which shares the
+loopback the same way (`tests/port_allocation_e2e.rs`: the full allocation
+cycle, two sandboxes of one repository, and the hardcoded-port refusal; the
+two namespace tests are Linux-only). The recipe below is still the answer for
 a dev server a session starts by hand, since a session-scoped allocation
 (one with no service) is not built.
 
