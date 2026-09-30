@@ -100,6 +100,9 @@ fn main() {
             let socket = args
                 .get(3)
                 .expect("__ingress requires an ingress socket path");
+            // Its host port is released the moment its agent is gone.
+            #[cfg(target_os = "linux")]
+            devcroft::fleet::lifeline::watch();
             // SAFETY: the supervisor bound this listener and cleared its
             // CLOEXEC for this process alone.
             let listener = unsafe { std::net::TcpListener::from_raw_fd(fd) };
@@ -338,7 +341,8 @@ fn cli_shell(args: &[String]) -> i32 {
 /// socket. Invoked by a real ssh client via the `ssh-config` block's
 /// `ProxyCommand`, never directly by a user.
 fn cli_proxy(args: &[String]) -> i32 {
-    const USAGE: &str = "devcroft proxy: usage: devcroft proxy [--no-up] <name>.devcroft";
+    const USAGE: &str =
+        "devcroft proxy: usage: devcroft proxy [--no-up] <name>.devcroft | <agent>.<name>.devcroft";
     let no_up = args.iter().any(|a| a == "--no-up");
     let host_args: Vec<&String> = args.iter().filter(|a| *a != "--no-up").collect();
     let &[host] = host_args.as_slice() else {
@@ -346,6 +350,38 @@ fn cli_proxy(args: &[String]) -> i32 {
         return 2;
     };
 
+    // `<agent>.<name>.devcroft`: one agent of a fleet, reached on its own
+    // SSH socket, and never auto-started.
+    match devcroft::ssh::fleet_agent_from_host(host) {
+        Ok(None) => {}
+        Ok(Some((id, fleet))) => {
+            if let Err(e) = ensure_client_keypair() {
+                eprintln!("devcroft proxy: {e}");
+                return 3;
+            }
+            #[cfg(target_os = "linux")]
+            return match devcroft::ssh::proxy_fleet_agent(fleet, id) {
+                Ok(()) => 0,
+                Err(e) => {
+                    eprintln!("devcroft proxy: {e}");
+                    5
+                }
+            };
+            #[cfg(not(target_os = "linux"))]
+            {
+                let _ = (id, fleet);
+                eprintln!(
+                    "devcroft proxy: backend: fleet is Linux-only; on macOS, run devcroft \
+                     inside a Linux VM"
+                );
+                return 4;
+            }
+        }
+        Err(msg) => {
+            eprintln!("devcroft proxy: {msg}");
+            return 2;
+        }
+    }
     let sandbox_name = match devcroft::ssh::sandbox_name_from_host(host) {
         Ok(name) => name.to_string(),
         Err(msg) => {
@@ -2716,6 +2752,12 @@ fn cli_fleet_linux(args: &[String]) -> i32 {
             return 1;
         }
     };
+    let fleet = devcroft::fleet::commands::FleetRef {
+        state_dir: &state_dir,
+        manifest: &manifest,
+        project_root: &project_root,
+        exe: &exe,
+    };
 
     match args.first().map(String::as_str) {
         Some("up") => {
@@ -2836,49 +2878,47 @@ fn cli_fleet_linux(args: &[String]) -> i32 {
                 Err(e) => fail(e),
             }
         }
-        Some("ls") if args.len() == 1 => {
-            match devcroft::fleet::commands::ls(&state_dir, &manifest, &exe) {
-                Ok(agents) if agents.is_empty() => {
-                    println!("no agents");
-                    0
-                }
-                Ok(agents) => {
-                    for a in agents {
-                        let state = match a.record.state {
-                            devcroft::fleet::supervisor::AgentState::Running => "running",
-                            devcroft::fleet::supervisor::AgentState::Stopped => "stopped",
-                        };
-                        let mem = a
-                            .memory_bytes
-                            .map(|b| format!("{} MiB", b / (1 << 20)))
-                            .unwrap_or_else(|| "-".into());
-                        let cpu = a
-                            .cpu_usec
-                            .map(|u| format!("{:.1}s cpu", u as f64 / 1e6))
-                            .unwrap_or_else(|| "-".into());
-                        let ports = if a.record.port_mappings.is_empty() {
-                            "-".to_string()
-                        } else {
-                            a.record
-                                .port_mappings
-                                .iter()
-                                .map(|p| format!("{}:{}->{}", p.service, p.host, p.agent))
-                                .collect::<Vec<_>>()
-                                .join(",")
-                        };
-                        println!(
-                            "{}\t{state}\t{mem}\t{cpu}\t{ports}\t{}",
-                            a.record.id,
-                            a.record.workspace.display()
-                        );
-                    }
-                    0
-                }
-                Err(e) => fail(e),
+        Some("ls") if args.len() == 1 => match devcroft::fleet::commands::ls(&fleet) {
+            Ok(agents) if agents.is_empty() => {
+                println!("no agents");
+                0
             }
-        }
+            Ok(agents) => {
+                for a in agents {
+                    let state = match a.record.state {
+                        devcroft::fleet::supervisor::AgentState::Running => "running",
+                        devcroft::fleet::supervisor::AgentState::Stopped => "stopped",
+                    };
+                    let mem = a
+                        .memory_bytes
+                        .map(|b| format!("{} MiB", b / (1 << 20)))
+                        .unwrap_or_else(|| "-".into());
+                    let cpu = a
+                        .cpu_usec
+                        .map(|u| format!("{:.1}s cpu", u as f64 / 1e6))
+                        .unwrap_or_else(|| "-".into());
+                    let ports = if a.record.port_mappings.is_empty() {
+                        "-".to_string()
+                    } else {
+                        a.record
+                            .port_mappings
+                            .iter()
+                            .map(|p| format!("{}:{}->{}", p.service, p.host, p.agent))
+                            .collect::<Vec<_>>()
+                            .join(",")
+                    };
+                    println!(
+                        "{}\t{state}\t{mem}\t{cpu}\t{ports}\t{}",
+                        a.record.id,
+                        a.record.workspace.display()
+                    );
+                }
+                0
+            }
+            Err(e) => fail(e),
+        },
         Some("inspect") if args.len() == 2 => {
-            match devcroft::fleet::commands::inspect(&state_dir, &manifest, &exe, &args[1]) {
+            match devcroft::fleet::commands::inspect(&fleet, &args[1]) {
                 Ok(a) => {
                     let r = &a.record;
                     println!("id\t{}", r.id);
@@ -2970,8 +3010,7 @@ fn cli_fleet_linux(args: &[String]) -> i32 {
                 return 2;
             }
             if target == "--all" {
-                match devcroft::fleet::commands::rm_all(&state_dir, &manifest, &exe, &project_root)
-                {
+                match devcroft::fleet::commands::rm_all(&fleet) {
                     Ok(ids) => {
                         println!("removed {} agent(s) and the fleet", ids.len());
                         0
@@ -2979,13 +3018,7 @@ fn cli_fleet_linux(args: &[String]) -> i32 {
                     Err(e) => fail(e),
                 }
             } else {
-                match devcroft::fleet::commands::rm(
-                    &state_dir,
-                    &manifest,
-                    &exe,
-                    &project_root,
-                    target,
-                ) {
+                match devcroft::fleet::commands::rm(&fleet, target) {
                     Ok(()) => {
                         println!("removed {target} and its clone");
                         0
@@ -2995,7 +3028,7 @@ fn cli_fleet_linux(args: &[String]) -> i32 {
             }
         }
         Some("stop") if args.len() == 2 => {
-            match devcroft::fleet::commands::stop(&state_dir, &manifest, &exe, &args[1]) {
+            match devcroft::fleet::commands::stop(&fleet, &args[1]) {
                 Ok(()) => {
                     println!("stopped {}", args[1]);
                     0
@@ -3981,6 +4014,9 @@ fn keeper_main(fd: RawFd, ssh_fd: RawFd) -> ! {
 /// which a `NetworkMode::ProxyOnly` self-restriction would itself deny.
 /// Never returns under normal operation.
 fn egress_proxy_main(fd: RawFd, unix_fd: RawFd) -> ! {
+    // A fleet agent's proxy exits with its agent; `up`'s has no lifeline.
+    #[cfg(target_os = "linux")]
+    devcroft::fleet::lifeline::watch();
     let allow: Vec<String> = std::env::var("DEVCROFT_EGRESS_ALLOW")
         .ok()
         .and_then(|s| serde_json::from_str(&s).ok())

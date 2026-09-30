@@ -17,6 +17,15 @@
 //! **The cgroup root is given, not discovered.** Finding the delegated
 //! subtree is systemd's half (D6), which needs a VM. `up` records the root
 //! in `fleet.json`, so `ls` and `stop` do not need it again.
+//!
+//! **A fleet belongs to one project, and one command at a time.** State is
+//! keyed by sandbox name, which two checkouts of one repository share, so
+//! `fleet.json` records the project too, and every command refuses a fleet
+//! recorded for another one, as `up` refuses a sandbox recorded for another
+//! root. And every command holds the fleet's lock (`FleetLock`) for as
+//! long as it reads or changes agent state: without it, two `up`s computed
+//! the same next ID, and an `ls` during an `up` took the half-started
+//! agent's directory for a crashed start and removed it.
 
 use std::io;
 use std::path::{Path, PathBuf};
@@ -144,6 +153,94 @@ const SETTLE: std::time::Duration = std::time::Duration::from_secs(1);
 #[derive(Serialize, Deserialize)]
 struct FleetFile {
     cgroup_root: PathBuf,
+    /// The project the fleet was started for, canonical. Absent in a
+    /// `fleet.json` written before it was recorded, which the next `up`
+    /// fills in.
+    #[serde(default)]
+    project_root: Option<PathBuf>,
+}
+
+/// A fleet's lock, held for a command's whole critical section. `flock`,
+/// like `lifecycle::acquire_lifecycle_lock` and for its reason: the kernel
+/// releases it however the holder dies, so a crashed command never leaves
+/// a fleet locked. **Beside the state directory, not in it**, because
+/// `rm --all` removes that directory while holding the lock.
+struct FleetLock(#[allow(dead_code)] std::fs::File);
+
+fn lock(state_dir: &Path) -> Result<FleetLock, FleetError> {
+    use std::os::fd::AsRawFd;
+    let name = state_dir
+        .file_name()
+        .ok_or_else(|| FleetError::Backend(format!("{} has no name", state_dir.display())))?;
+    let path = state_dir.with_file_name(format!("{}.lock", name.to_string_lossy()));
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(backend)?;
+    }
+    let file = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(&path)
+        .map_err(backend)?;
+    let flock = |op| {
+        // SAFETY: `file` owns a valid fd for the duration of this call.
+        if unsafe { libc::flock(file.as_raw_fd(), op) } == 0 {
+            Ok(())
+        } else {
+            Err(io::Error::last_os_error())
+        }
+    };
+    match flock(libc::LOCK_EX | libc::LOCK_NB) {
+        Ok(()) => {}
+        Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
+            // Said, because the wait can be long: an `up` holds the lock
+            // while it resolves each agent's environment.
+            eprintln!("devcroft fleet: waiting for another fleet command on this fleet to finish");
+            flock(libc::LOCK_EX).map_err(backend)?;
+        }
+        Err(e) => return Err(backend(e)),
+    }
+    Ok(FleetLock(file))
+}
+
+/// `project_root`, canonical where it can be, as the fleet records it.
+fn canonical(project_root: &Path) -> PathBuf {
+    project_root
+        .canonicalize()
+        .unwrap_or_else(|_| project_root.to_path_buf())
+}
+
+/// Refuse a fleet recorded for another project: acting on it would stop,
+/// list or remove another checkout's agents, and `up` would add clones of
+/// this one to them.
+fn ensure_same_project(
+    file: &FleetFile,
+    manifest: &Manifest,
+    project_root: &Path,
+) -> Result<(), FleetError> {
+    match &file.project_root {
+        Some(recorded) if *recorded != canonical(project_root) => Err(FleetError::Config(format!(
+            "the fleet for sandbox '{name}' belongs to a different project\n  \
+             recorded: {recorded}\n   current: {current}\n\
+             two checkouts sharing a `[sandbox].name` share a fleet; remove it from the \
+             recorded project with `devcroft fleet rm --all`, or give this one its own \
+             `[sandbox].name`",
+            name = manifest.sandbox.name,
+            recorded = recorded.display(),
+            current = canonical(project_root).display(),
+        ))),
+        _ => Ok(()),
+    }
+}
+
+fn read_fleet_file(state_dir: &Path) -> Result<Option<FleetFile>, FleetError> {
+    match std::fs::read(state_dir.join("fleet.json")) {
+        Ok(bytes) => serde_json::from_slice(&bytes)
+            .map(Some)
+            .map_err(|e| FleetError::Backend(format!("fleet.json: {e}"))),
+        Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(backend(e)),
+    }
 }
 
 /// The fleet node's name under the cgroup root, one per sandbox name.
@@ -160,9 +257,27 @@ pub fn up(provider: &dyn ProviderEntry, req: &UpRequest) -> Result<UpOutcome, Fl
     require_git_repository(req.project_root)?;
     preflight(req.cgroup_root, req.exe)?;
 
+    let lock = lock(req.state_dir)?;
+    // Checked before anything is written: the first version overwrote
+    // `fleet.json` first, so a second checkout's `up` moved the fleet to
+    // its own cgroup root and added its clones to the first one's agents.
+    if let Some(existing) = read_fleet_file(req.state_dir)? {
+        ensure_same_project(&existing, req.manifest, req.project_root)?;
+        if existing.cgroup_root != req.cgroup_root {
+            return Err(FleetError::Config(format!(
+                "the fleet for sandbox '{}' runs under cgroup root {}, not {}; its agents' \
+                 leaves are there. Pass that root, or remove the fleet with \
+                 `devcroft fleet rm --all` first",
+                req.manifest.sandbox.name,
+                existing.cgroup_root.display(),
+                req.cgroup_root.display(),
+            )));
+        }
+    }
     std::fs::create_dir_all(req.state_dir).map_err(backend)?;
     let fleet_file = serde_json::to_vec_pretty(&FleetFile {
         cgroup_root: req.cgroup_root.to_path_buf(),
+        project_root: Some(canonical(req.project_root)),
     })
     .map_err(|e| FleetError::Backend(e.to_string()))?;
     std::fs::write(req.state_dir.join("fleet.json"), fleet_file).map_err(backend)?;
@@ -220,19 +335,10 @@ pub fn up(provider: &dyn ProviderEntry, req: &UpRequest) -> Result<UpOutcome, Fl
             }
         }
     }
-    // Readiness is waited for after every agent has started, so N agents'
-    // databases initialise at once rather than one after another.
-    let deadline = std::time::Instant::now() + READY_BUDGET;
-    for agent in &mut started {
-        let status = sup.inspect(&agent.id).map_err(backend)?;
-        agent.services = wait_ready(
-            &agent.workspace,
-            &agent.id,
-            &status.record.services,
-            deadline,
-        );
+    let mut declared = Vec::new();
+    for agent in &started {
+        declared.push(sup.inspect(&agent.id).map_err(backend)?.record.services);
     }
-
     // Only what was asked for: a host without io.weight is worth saying
     // so to someone who set an IO weight, and noise to anyone else.
     let degraded = sup
@@ -242,6 +348,18 @@ pub fn up(provider: &dyn ProviderEntry, req: &UpRequest) -> Result<UpOutcome, Fl
             super::cgroup::Degraded::IoWeight => req.limits.io_weight.is_some(),
         })
         .collect();
+    // Every agent is recorded, so the fleet is consistent again: waiting for
+    // services reads no fleet state, and must not keep `ls` waiting for up
+    // to `READY_BUDGET`.
+    drop(sup);
+    drop(lock);
+
+    // Readiness is waited for after every agent has started, so N agents'
+    // databases initialise at once rather than one after another.
+    let deadline = std::time::Instant::now() + READY_BUDGET;
+    for (agent, declared) in started.iter_mut().zip(&declared) {
+        agent.services = wait_ready(&agent.workspace, &agent.id, declared, deadline);
+    }
     Ok(UpOutcome { started, degraded })
 }
 
@@ -298,6 +416,7 @@ pub fn preflight(cgroup_root: &Path, exe: &Path) -> Result<(), FleetError> {
             stdout: Some(devnull),
             stderr: None,
             inherit: Vec::new(),
+            lifeline: None,
         };
         let outcome = init::spawn(exe, &leaf, &spec, stdio)
             .map_err(|e| remedy(&e.to_string()))
@@ -390,72 +509,68 @@ fn wait_ready(
     }
 }
 
+/// Where a fleet is and whose it is: what every command after `up` needs.
+pub struct FleetRef<'a> {
+    /// `lifecycle::fleet_state_dir` in the CLI.
+    pub state_dir: &'a Path,
+    pub manifest: &'a Manifest,
+    /// The project the command runs in, which must be the fleet's.
+    pub project_root: &'a Path,
+    /// The devcroft binary.
+    pub exe: &'a Path,
+}
+
 /// Every agent the fleet has recorded, reconciled against the kernel.
-pub fn ls(
-    state_dir: &Path,
-    manifest: &Manifest,
-    exe: &Path,
-) -> Result<Vec<AgentStatus>, FleetError> {
-    open_existing(state_dir, manifest, exe)?
-        .list()
-        .map_err(backend)
+pub fn ls(fleet: &FleetRef) -> Result<Vec<AgentStatus>, FleetError> {
+    let (_lock, mut sup) = open_existing(fleet)?;
+    sup.list().map_err(backend)
 }
 
 /// Stop one agent. Its workspace stays.
-pub fn stop(state_dir: &Path, manifest: &Manifest, exe: &Path, id: &str) -> Result<(), FleetError> {
-    open_existing(state_dir, manifest, exe)?
-        .stop(id)
-        .map_err(not_found_is_config)
+pub fn stop(fleet: &FleetRef, id: &str) -> Result<(), FleetError> {
+    let (_lock, mut sup) = open_existing(fleet)?;
+    sup.stop(id).map_err(not_found_is_config)
 }
 
 /// One agent, reconciled.
-pub fn inspect(
-    state_dir: &Path,
-    manifest: &Manifest,
-    exe: &Path,
-    id: &str,
-) -> Result<AgentStatus, FleetError> {
-    open_existing(state_dir, manifest, exe)?
-        .inspect(id)
-        .map_err(not_found_is_config)
+pub fn inspect(fleet: &FleetRef, id: &str) -> Result<AgentStatus, FleetError> {
+    let (_lock, mut sup) = open_existing(fleet)?;
+    sup.inspect(id).map_err(not_found_is_config)
 }
 
 /// Remove a stopped agent: its record and its clone. The clone is removed
 /// only where `up` makes clones, so a record naming any other path cannot
-/// make this delete it.
-pub fn rm(
-    state_dir: &Path,
-    manifest: &Manifest,
-    exe: &Path,
-    project_root: &Path,
-    id: &str,
-) -> Result<(), FleetError> {
-    let mut sup = open_existing(state_dir, manifest, exe)?;
-    let record = sup.remove(id).map_err(not_found_is_config)?;
-    remove_clone(project_root, &record.id, &record.workspace)
+/// make this delete it, and that is checked **before** the record goes: a
+/// record removed first leaves a clone nothing names any more.
+pub fn rm(fleet: &FleetRef, id: &str) -> Result<(), FleetError> {
+    let (_lock, mut sup) = open_existing(fleet)?;
+    let status = sup.inspect(id).map_err(not_found_is_config)?;
+    let clone = own_clone(fleet.project_root, id, &status.record.workspace)?;
+    sup.remove(id).map_err(not_found_is_config)?;
+    remove_clone(&clone)
 }
 
 /// Stop and remove every agent, their clones, the fleet's cgroup node and
 /// its state.
-pub fn rm_all(
-    state_dir: &Path,
-    manifest: &Manifest,
-    exe: &Path,
-    project_root: &Path,
-) -> Result<Vec<String>, FleetError> {
-    let mut sup = open_existing(state_dir, manifest, exe)?;
+pub fn rm_all(fleet: &FleetRef) -> Result<Vec<String>, FleetError> {
+    let (lock, mut sup) = open_existing(fleet)?;
+    let project_root = fleet.project_root;
     let mut removed = Vec::new();
     for status in sup.list().map_err(backend)? {
         let id = status.record.id;
+        let clone = own_clone(project_root, &id, &status.record.workspace)?;
         if status.record.state == super::supervisor::AgentState::Running {
             sup.stop(&id).map_err(backend)?;
         }
-        let record = sup.remove(&id).map_err(backend)?;
-        remove_clone(project_root, &record.id, &record.workspace)?;
+        sup.remove(&id).map_err(backend)?;
+        remove_clone(&clone)?;
         removed.push(id);
     }
     sup.remove_node().map_err(backend)?;
-    std::fs::remove_dir_all(state_dir).map_err(backend)?;
+    std::fs::remove_dir_all(fleet.state_dir).map_err(backend)?;
+    // Released only now: a fleet removed while another command waits must
+    // be gone, not half gone, when that command reads it.
+    drop(lock);
     // The clones' parent, and the artifact dir above it, only if nothing
     // else is in them: `up` keeps its own artifacts in `.devcroft/` too.
     if let Ok(dir) = fleet_dir(project_root) {
@@ -518,7 +633,8 @@ fn ignore_clones(project_root: &Path) -> io::Result<()> {
     Ok(())
 }
 
-fn remove_clone(project_root: &Path, id: &str, workspace: &Path) -> Result<(), FleetError> {
+/// The clone `up` made for agent `id`, if `workspace` is inside it.
+fn own_clone(project_root: &Path, id: &str, workspace: &Path) -> Result<PathBuf, FleetError> {
     let root = clone_root(project_root, id).map_err(backend)?;
     if !workspace.starts_with(&root) {
         return Err(FleetError::Config(format!(
@@ -527,7 +643,11 @@ fn remove_clone(project_root: &Path, id: &str, workspace: &Path) -> Result<(), F
             root.display()
         )));
     }
-    match std::fs::remove_dir_all(&root) {
+    Ok(root)
+}
+
+fn remove_clone(root: &Path) -> Result<(), FleetError> {
+    match std::fs::remove_dir_all(root) {
         Ok(()) => Ok(()),
         Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(()),
         Err(e) => Err(backend(e)),
@@ -541,24 +661,26 @@ fn not_found_is_config(e: io::Error) -> FleetError {
     }
 }
 
-fn open_existing(
-    state_dir: &Path,
-    manifest: &Manifest,
-    exe: &Path,
-) -> Result<Supervisor, FleetError> {
-    let bytes = match std::fs::read(state_dir.join("fleet.json")) {
-        Ok(b) => b,
-        Err(e) if e.kind() == io::ErrorKind::NotFound => {
-            return Err(FleetError::Config(format!(
-                "no fleet for sandbox '{}'; start one with `devcroft fleet up --agents N`",
-                manifest.sandbox.name
-            )));
-        }
-        Err(e) => return Err(backend(e)),
+/// The fleet's lock, then its supervisor, for a fleet that must exist and
+/// be this project's. The lock is first in the tuple so it is the last
+/// thing a caller's `let (_lock, sup)` drops.
+fn open_existing(fleet: &FleetRef) -> Result<(FleetLock, Supervisor), FleetError> {
+    let lock = lock(fleet.state_dir)?;
+    let Some(file) = read_fleet_file(fleet.state_dir)? else {
+        return Err(FleetError::Config(format!(
+            "no fleet for sandbox '{}'; start one with `devcroft fleet up --agents N`",
+            fleet.manifest.sandbox.name
+        )));
     };
-    let file: FleetFile =
-        serde_json::from_slice(&bytes).map_err(|e| FleetError::Backend(e.to_string()))?;
-    Supervisor::open(state_dir, &file.cgroup_root, &node_name(manifest), exe).map_err(backend)
+    ensure_same_project(&file, fleet.manifest, fleet.project_root)?;
+    let sup = Supervisor::open(
+        fleet.state_dir,
+        &file.cgroup_root,
+        &node_name(fleet.manifest),
+        fleet.exe,
+    )
+    .map_err(backend)?;
+    Ok((lock, sup))
 }
 
 fn require_git_repository(project_root: &Path) -> Result<(), FleetError> {

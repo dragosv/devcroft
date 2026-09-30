@@ -14,7 +14,9 @@ pub use config::{
     write_managed_section as write_ssh_config,
 };
 pub use keys::{KeyError, ensure_client_keypair, generate_host_key};
-pub use proxy::{ProxyError, proxy, sandbox_name_from_host};
+#[cfg(target_os = "linux")]
+pub use proxy::proxy_fleet_agent;
+pub use proxy::{ProxyError, fleet_agent_from_host, proxy, sandbox_name_from_host};
 
 use russh::keys::PrivateKey;
 use russh::keys::ssh_key::PublicKey;

@@ -913,33 +913,8 @@ fn up_process(
     // interception, so `HTTPS_PROXY` names a plain-`http` CONNECT
     // endpoint, same as every other forward proxy's convention.
     let mut env = resolution.env.clone();
+    apply_manifest_env(manifest, &mut env);
 
-    // `[env.vars]`: literals the manifest sets. **This key parsed, validated
-    // and warned about `$` interpolation for the whole of the project's life
-    // without ever being applied** — found while implementing `forward`
-    // (`own-sandbox-environment`), the same shape of defect as
-    // `ssh.forward_agent`.
-    //
-    // A manifest is committed, so these are configuration and never secrets;
-    // anything whose value lives on the host goes through `forward` below.
-    // Applied *after* the provider so a project can override what activation
-    // set, which is the only ordering that makes the key useful.
-    env.extend(manifest.env.vars.clone());
-
-    // `[env] forward`: names here, values from devcroft's own environment.
-    //
-    // The declared exception to this change's rule that the invoking shell
-    // does not reach the sandbox — and the simple credential path: a key
-    // arrives because the project asked for it in a reviewable file, not
-    // because someone's shell happened to hold it.
-    //
-    // **A missing variable warns rather than fails**, deliberately unlike a
-    // brokered route's missing credential, which fails `up`. The difference is
-    // what the sandbox depends on: a brokered route *is* the mechanism the
-    // workload uses, so starting without it guarantees a confusing failure
-    // later, whereas a forwarded variable is a convenience whose absence is
-    // often correct on a different machine. Failing here would make an
-    // unrelated project unbuildable for want of a variable it never needed.
     // The other half of `ssh.forward_agent`: the variable itself. Without the
     // grants folded into the policy above this would be a path the sandbox can
     // name and not reach — the confusing failure the key existed to avoid.
@@ -949,17 +924,6 @@ fn up_process(
         env.insert("SSH_AUTH_SOCK".to_string(), sock);
     }
 
-    for name in &manifest.env.forward {
-        match std::env::var(name) {
-            Ok(value) => {
-                env.insert(name.clone(), value);
-            }
-            Err(_) => eprintln!(
-                "devcroft: warning: `{name}` is listed in [env] forward but is not set in this \
-                 shell (fallback: the sandbox runs without it)"
-            ),
-        }
-    }
     // Allocated ports reach sessions too (`exec`, `shell`), last so they
     // win over whatever the provider or the manifest set for the name.
     for a in &allocations {
@@ -1745,6 +1709,53 @@ pub(crate) fn clear_cloexec(fd: RawFd) -> io::Result<()> {
         return Err(io::Error::last_os_error());
     }
     Ok(())
+}
+
+/// What the manifest adds to the provider's environment, in `up`'s order:
+/// `[env.vars]`, then `[env] forward`. Shared with fleet, which applies it
+/// to each agent; before that, an agent started from the same manifest as a
+/// sandbox silently had neither.
+pub(crate) fn apply_manifest_env(
+    manifest: &Manifest,
+    env: &mut std::collections::BTreeMap<String, String>,
+) {
+    // `[env.vars]`: literals the manifest sets. **This key parsed, validated
+    // and warned about `$` interpolation for the whole of the project's life
+    // without ever being applied** — found while implementing `forward`
+    // (`own-sandbox-environment`), the same shape of defect as
+    // `ssh.forward_agent`.
+    //
+    // A manifest is committed, so these are configuration and never secrets;
+    // anything whose value lives on the host goes through `forward` below.
+    // Applied *after* the provider so a project can override what activation
+    // set, which is the only ordering that makes the key useful.
+    env.extend(manifest.env.vars.clone());
+
+    // `[env] forward`: names here, values from devcroft's own environment.
+    //
+    // The declared exception to this change's rule that the invoking shell
+    // does not reach the sandbox — and the simple credential path: a key
+    // arrives because the project asked for it in a reviewable file, not
+    // because someone's shell happened to hold it.
+    //
+    // **A missing variable warns rather than fails**, deliberately unlike a
+    // brokered route's missing credential, which fails `up`. The difference is
+    // what the sandbox depends on: a brokered route *is* the mechanism the
+    // workload uses, so starting without it guarantees a confusing failure
+    // later, whereas a forwarded variable is a convenience whose absence is
+    // often correct on a different machine. Failing here would make an
+    // unrelated project unbuildable for want of a variable it never needed.
+    for name in &manifest.env.forward {
+        match std::env::var(name) {
+            Ok(value) => {
+                env.insert(name.clone(), value);
+            }
+            Err(_) => eprintln!(
+                "devcroft: warning: `{name}` is listed in [env] forward but is not set in this \
+                 shell (fallback: the sandbox runs without it)"
+            ),
+        }
+    }
 }
 
 /// Let the child `cmd` starts inherit `fds`, at the numbers they have here,

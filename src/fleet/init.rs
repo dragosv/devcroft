@@ -164,6 +164,10 @@ pub struct Stdio {
     /// they predate it. PID 1 closes its own copies once the command has
     /// them.
     pub inherit: Vec<OwnedFd>,
+    /// A lifeline's write end (`fleet::lifeline`), held by PID 1 alone for
+    /// as long as it lives, and never by the command: PID 1's exit is the
+    /// agent's, so its host-side helpers see EOF exactly then.
+    pub lifeline: Option<OwnedFd>,
 }
 
 /// What crosses the configuration pipe: the spec plus how many fds were
@@ -172,12 +176,15 @@ pub struct Stdio {
 struct ConfigOut<'a> {
     spec: &'a AgentSpec,
     inherited: usize,
+    /// Whether a lifeline follows the inherited fds.
+    lifeline: bool,
 }
 
 #[derive(Deserialize)]
 struct ConfigIn {
     spec: AgentSpec,
     inherited: usize,
+    lifeline: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -195,6 +202,7 @@ pub fn spawn(exe: &Path, leaf: &Leaf, spec: &AgentSpec, stdio: Stdio) -> io::Res
     let config = serde_json::to_vec(&ConfigOut {
         spec,
         inherited: stdio.inherit.len(),
+        lifeline: stdio.lifeline.is_some(),
     })
     .map_err(io::Error::other)?;
     let (config_r, mut config_w) = pipe()?;
@@ -217,6 +225,9 @@ pub fn spawn(exe: &Path, leaf: &Leaf, spec: &AgentSpec, stdio: Stdio) -> io::Res
     }
     for (n, fd) in stdio.inherit.iter().enumerate() {
         plan.push((high(fd)?, FIRST_INHERITED_FD + n as RawFd));
+    }
+    if let Some(fd) = &stdio.lifeline {
+        plan.push((high(fd)?, FIRST_INHERITED_FD + stdio.inherit.len() as RawFd));
     }
     drop((config_r, status_w, devnull, stdio));
     let dups: Vec<(RawFd, RawFd)> = plan.iter().map(|(fd, t)| (fd.as_raw_fd(), *t)).collect();
@@ -445,19 +456,32 @@ fn setup(signals: &libc::sigset_t) -> io::Result<libc::pid_t> {
     config
         .read_to_end(&mut raw)
         .map_err(|e| step("read configuration", e))?;
-    let ConfigIn { spec, inherited } = serde_json::from_slice(&raw)
+    let ConfigIn {
+        spec,
+        inherited,
+        lifeline,
+    } = serde_json::from_slice(&raw)
         .map_err(|e| step("parse configuration", io::Error::other(e)))?;
     // Every fd above the ones this agent was given is something the
     // supervisor leaked (an fd with CLOEXEC cleared for some other child),
     // and it would otherwise reach the agent's command. Measured to matter:
     // an egress proxy's listeners, cleared for the proxy to inherit, would
     // let a process in one agent `accept()` another agent's egress.
-    // SAFETY: closes only descriptors this process does not use; 0-4 and
-    // the inherited range are kept.
+    // The lifeline sits just past the inherited range. PID 1 keeps it for
+    // its whole life, and the command must never get it: a command that
+    // forked something outside the agent (it cannot, but a daemonizing
+    // child of one would be the way) would keep the helpers alive.
+    let lifeline_fd = FIRST_INHERITED_FD + inherited as RawFd;
+    if lifeline {
+        // SAFETY: setting a flag on an fd `spawn` placed.
+        unsafe { libc::fcntl(lifeline_fd, libc::F_SETFD, libc::FD_CLOEXEC) };
+    }
+    // SAFETY: closes only descriptors this process does not use; 0-4, the
+    // inherited range and the lifeline are kept.
     if unsafe {
         libc::syscall(
             libc::SYS_close_range,
-            FIRST_INHERITED_FD as u32 + inherited as u32,
+            FIRST_INHERITED_FD as u32 + inherited as u32 + lifeline as u32,
             u32::MAX,
             0u32,
         )
@@ -503,8 +527,9 @@ fn setup(signals: &libc::sigset_t) -> io::Result<libc::pid_t> {
     super::netns::bring_loopback_up().map_err(|e| step("bring lo up", e))?;
 
     // Bound now, while nothing is restricted, at the fd after the inherited
-    // ones (every fd above those was just closed, so it is free).
-    let relay_fd = FIRST_INHERITED_FD + inherited as RawFd;
+    // ones and the lifeline (every fd above those was just closed, so it is
+    // free).
+    let relay_fd = lifeline_fd + lifeline as RawFd;
     let mut env = spec.env.clone();
     if let Some(port) = spec.relay_port {
         let listener = std::net::TcpListener::bind(("127.0.0.1", port))

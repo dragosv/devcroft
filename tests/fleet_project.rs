@@ -226,3 +226,48 @@ fn a_port_for_a_service_that_does_not_exist_fails_naming_it() {
         "{msg}"
     );
 }
+
+/// An agent gets the manifest's environment as a sandbox does: `[env.vars]`
+/// over the provider's, then `[env] forward` from the invoking shell. The
+/// first version passed the provider's environment alone, so an agent
+/// started from the same manifest silently lacked both.
+#[test]
+fn an_agent_gets_the_manifests_vars_and_forwarded_variables_as_up_does() {
+    let text = "[sandbox]\nname = \"fleet-project\"\n\n\
+                [env]\nprovider = \"nix\"\nforward = [\"HOME\"]\n\n\
+                [env.vars]\nPATH = \"/override/bin\"\nGREETING = \"hi\"\n";
+    let manifest = devcroft::config::parse(text).unwrap().0;
+    let launch = prepare(
+        &HostUsr::new(),
+        &manifest,
+        Path::new("/tmp/w"),
+        "a1",
+        exe(),
+        "key",
+        Limits::default(),
+        true,
+    )
+    .unwrap();
+    let env = &launch.provider_env;
+    assert_eq!(env.get("GREETING").map(String::as_str), Some("hi"));
+    // Over the provider's value, which is what makes the key useful.
+    assert_eq!(env.get("PATH").map(String::as_str), Some("/override/bin"));
+    assert_eq!(env.get("HOME"), std::env::var("HOME").ok().as_ref());
+
+    // What fleet does not carry is refused by name, never dropped.
+    let text = "[sandbox]\nname = \"fleet-project\"\n\n[env]\nprovider = \"nix\"\n\n\
+                [ssh]\nforward_agent = true\n";
+    let err = prepare(
+        &HostUsr::new(),
+        &devcroft::config::parse(text).unwrap().0,
+        Path::new("/tmp/w"),
+        "a1",
+        exe(),
+        "key",
+        Limits::default(),
+        true,
+    )
+    .unwrap_err();
+    assert!(matches!(err, PrepareError::Config(_)), "{err}");
+    assert!(err.to_string().contains("ssh.forward_agent"), "{err}");
+}

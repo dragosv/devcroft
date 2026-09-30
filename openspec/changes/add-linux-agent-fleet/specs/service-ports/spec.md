@@ -143,7 +143,8 @@ agent it belongs to.
 #### Scenario: An agent exits
 
 - **WHEN** an agent stops, cleanly or by crashing
-- **THEN** its host mappings are released
+- **THEN** its host mappings are released when it exits, not when a later
+  fleet command next reconciles its record
 - **AND** a later agent may be allocated the same host port without
   conflict
 

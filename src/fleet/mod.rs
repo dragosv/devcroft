@@ -29,6 +29,8 @@ pub mod cgroup;
 pub mod commands;
 #[cfg(target_os = "linux")]
 pub mod init;
+#[cfg(target_os = "linux")]
+pub mod lifeline;
 pub mod mount;
 pub mod netns;
 #[cfg(target_os = "linux")]

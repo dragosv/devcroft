@@ -475,7 +475,7 @@ the implementation before it resolves.
 ## 2c. The supervisor
 
 - [x] `fleet::Supervisor` (library): agents by stable ID (`a<N>`, never
-      reused), each with a 0700 directory holding its 0600 control and SSH
+      reused — which held only until the highest was removed; see 2d), each with a 0700 directory holding its 0600 control and SSH
       sockets, an ephemeral host key and `record.json`. The record is the
       spec's durable identity (workspace, cgroup, state, policy
       fingerprint, view strategy, port mappings, attention) and holds no
@@ -531,6 +531,72 @@ the implementation before it resolves.
       (`add-agent-interaction`) have their fields and nothing that sets
       them.
 
+## 2d. Adversarial review (2026-09-28)
+
+Eight findings, all confirmed against the code before fixing. The review's
+own run self-skipped every cgroup case (`DEVCROFT_TEST_CGROUP_ROOT` unset);
+these were measured with the devcontainer's delegated subtree
+(`sudo /usr/local/bin/cgroup-delegate enter $$`), and each fix has a
+mutant that fails its test.
+
+- [x] **An agent's helpers outlived it until a later command.** The egress
+      proxy and port forwarders died only when some `ls`/`stop` reconciled,
+      so a crashed agent's host ports stayed allocated to nothing, against
+      `service-ports`' "a mapping SHALL NOT outlive the agent". Now a
+      lifeline (`fleet::lifeline`): a pipe whose write end only the agent's
+      PID 1 holds, off the command's inherited range and close-on-exec, and
+      whose read end each helper blocks on. PID 1's exit is the agent's, so
+      EOF arrives exactly then. `a_crashed_agents_host_port_and_proxy_go_with_it_before_any_command`
+      kills the leaf from outside and runs no command; without the lifeline
+      the port is still held after five seconds.
+- [x] **A crash mid-start orphaned the helpers permanently.** They start
+      before `record.json`, and reconcile's no-record branch killed only the
+      agent's leaf. The same lifeline covers it: the supervisor's own write
+      end is the last writer until PID 1 has one, so a supervisor that dies
+      takes the helpers with it (`a_helper_whose_last_writer_is_gone_exits`).
+      Reconcile now also kills the `-host` leaf, as the backstop.
+- [x] **No per-fleet serialization.** Every fleet command now holds an
+      `flock` beside the state directory (beside, because `rm --all`
+      removes the directory while holding it). `up` releases it before
+      waiting for readiness, so `ls` is not held for up to two minutes.
+      `a_command_during_up_waits_for_it_instead_of_removing_its_agent`: an
+      `ls` inside `up`'s start window, and two concurrent `up`s.
+- [x] **A second checkout with the same name took over the fleet.**
+      `fleet.json` records the canonical project root; every command refuses
+      another project's fleet, and `up` also refuses a different cgroup
+      root, both before writing anything. `rm` checks the clone path before
+      removing the record, not after.
+      `a_second_checkout_with_the_same_name_cannot_take_over_the_fleet`.
+- [x] **`[env.vars]` and `[env] forward` were dropped.** Fleet now applies
+      them through the same function `up` does
+      (`lifecycle::apply_manifest_env`). `ssh.forward_agent` is **refused by
+      name**, not carried: it lends one person's SSH keys to N unattended
+      agents, each needing the socket in its mount view, and `up`'s own
+      Linux half of it is unverified. A decision to take on purpose.
+- [x] **`ssh a17.myrepo.devcroft` had no route.** `devcroft proxy` now reads
+      `<id>.<name>.devcroft` (a sandbox name has no dot, so this is
+      unambiguous) and connects to that agent's SSH socket, never
+      auto-starting anything. Both halves are validated, so a dotted host
+      cannot walk out of the state directory.
+      `an_agent_is_reachable_as_id_dot_name_dot_devcroft_over_real_ssh`, with
+      the real `ssh` client and the generated `ProxyCommand`.
+- [x] **IDs were reused once the highest was removed.** `next_id` now keeps
+      a counter (`last-id`) as well as scanning, written before the agent's
+      directory. `rm --all` ends the fleet and its counter; the spec says so.
+      Agent IDs are also parsed strictly now: `a+5` and `a05` were two more
+      names for agent 5.
+- [x] **The networking spec mandated what the design had measured away.**
+      `agent-networking` is rewritten around the route-less invariant, with
+      the seccomp filter and a probed helper conditional on a topology that
+      supplies a route. D5 and D9 carry a note saying which is shipped.
+
+**Release gates the review asked to keep explicit**, still open and not
+implied by a green run: confined provider provisioning
+(`sandbox-provisioning`; group 4's "resolved runtime paths read-only" and
+"refuse package-manager authority"), and the fixed `/workspace` path (D2a,
+section 2's mount-plan item). The proposal's `cd /workspace` example
+depends on the second.
+
 ## 3. Networking
 
 - [ ] **Spike:** pasta vs slirp4netns — forwarding semantics, throughput, flag
@@ -561,6 +627,11 @@ the implementation before it resolves.
       better candidate.
 - [ ] Install the proxy-only seccomp filter and transfer its listener to the
       host proxy loop **before the keeper starts** (D9's phase-0 gate).
+      **Conditional since 2026-09-28**: required by a topology that gives
+      agents a route (a helper, above), and by nothing shipped. The
+      `agent-networking` spec now says so; it used to require the filter
+      unconditionally, which the route-less implementation could not meet.
+      Stays open as the gate on adopting a helper, not on releasing fleet.
 - [x] Host one proxy instance per agent in the supervisor, outside the sandbox.
       `Supervisor::start_in` spawns `__egress_proxy` for an agent whose
       `network.allow` is non-empty, with its socket and log in the agent's
@@ -579,7 +650,9 @@ the implementation before it resolves.
       `proxy::server::run_labelled`), so a line still attributes its
       request once it is read anywhere else. `up`'s proxy is unchanged.
 - [ ] Test: a direct socket is refused by the seccomp policy **even though the
-      network helper could route it**. The old wording ("no route out except
+      network helper could route it**. Conditional with the filter above; the
+      shipped topology's version of this test is the `--noproxy '*'` case in
+      `each_agent_reaches_only_its_own_allowlist_through_its_own_proxy`. The old wording ("no route out except
       the forwarded proxy port") tested the helper's configuration; the point
       is that the helper is not the boundary, so the test must defeat it.
 - [x] Test: agent B's request to a destination only agent A allows is refused.
@@ -734,9 +807,10 @@ the implementation before it resolves.
 
 - [ ] Confirm the init helper leaves an insertion point between applying the
       sandbox ruleset and starting the workload, for `add-syscall-filtering`.
-      **Reworded: D9 reversed.** This used to add "No filter is implemented in
-      this change", which is no longer true — the proxy-only seccomp filter is
-      now mandatory where egress is granted. What stays deferred is *general*
+      **Reworded: D9 reversed, then made conditional (2026-09-28).** This
+      used to add "No filter is implemented in this change". The proxy-only
+      seccomp filter is required only where an agent's namespace has a
+      route, which no shipped topology gives it (`agent-networking`). What stays deferred is *general*
       syscall-surface hardening, which is what the seam is for.
 - [ ] Integration test that exercises sandbox behaviour, to be run on every
       crate upgrade.

@@ -16,11 +16,19 @@
 //! kernel's answer rather than trusting a record.
 //!
 //! **Start is all or nothing.** Sockets first (bound here, before any
-//! restriction, 0600 in a 0700 directory), then the host key, the cgroup
-//! leaf and the agent. A failure at any step removes what the earlier
-//! steps made. A crash in the middle leaves a directory without a record,
-//! and the next reconcile removes it, so no agent is ever half-started
-//! with endpoints nobody serves.
+//! restriction, 0600 in a 0700 directory), then the host key, the
+//! host-side helpers, the cgroup leaf and the agent. A failure at any step
+//! removes what the earlier steps made. A crash in the middle leaves a
+//! directory without a record, and the next reconcile removes it, so no
+//! agent is ever half-started with endpoints nobody serves. The helpers do
+//! not wait for that reconcile: they exit when their lifeline's last
+//! writer goes (`fleet::lifeline`), which is this process until the
+//! agent's PID 1 holds it, and the agent's PID 1 after.
+//!
+//! **One supervisor per fleet at a time.** Nothing here locks: two
+//! supervisors over one state directory would race for IDs and each
+//! reconcile the other's half-started agents away. `fleet::commands`
+//! holds the fleet's lock around every use.
 
 use std::collections::{BTreeMap, HashMap};
 use std::io;
@@ -241,13 +249,19 @@ impl Supervisor {
         let proxy_socket = dir.join("proxy.sock");
         // Everything host-side that serves this agent (its egress proxy, its
         // port forwarders) shares one leaf beside the agent's, and dies with
-        // the agent.
-        let host_leaf = if launch.egress_allow.is_empty() && launch.expose.is_empty() {
-            None
+        // the agent: each holds the read end of a lifeline whose write end
+        // only the agent's PID 1 keeps (`fleet::lifeline`), so it exits when
+        // the agent does, with no command running to notice. Killing the
+        // leaf at `stop` and at reconcile stays, as the backstop.
+        let (host_leaf, lifeline) = if launch.egress_allow.is_empty() && launch.expose.is_empty() {
+            (None, None)
         } else {
-            Some(
-                self.node
-                    .create_leaf(&host_leaf_name(id), &Limits::default())?,
+            (
+                Some(
+                    self.node
+                        .create_leaf(&host_leaf_name(id), &Limits::default())?,
+                ),
+                Some(super::lifeline::Lifeline::new()?),
             )
         };
         let relay = if launch.egress_allow.is_empty() {
@@ -263,6 +277,8 @@ impl Supervisor {
                     // Every record names the agent, so the log attributes
                     // requests on its own, wherever it is read.
                     cmd.env("DEVCROFT_EGRESS_LABEL", id);
+                    let line = lifeline.as_ref().expect("made with the host leaf");
+                    super::lifeline::attach(cmd, &line.read);
                     proxy_leaf.attach_on_spawn(cmd)
                 },
             )?;
@@ -306,6 +322,10 @@ impl Supervisor {
                 .as_ref()
                 .expect("created when there is a mapping")
                 .attach_on_spawn(&mut cmd)?;
+            super::lifeline::attach(
+                &mut cmd,
+                &lifeline.as_ref().expect("made with the host leaf").read,
+            );
             // SAFETY: setsid only, in the forked child.
             unsafe {
                 std::os::unix::process::CommandExt::pre_exec(&mut cmd, || {
@@ -387,6 +407,10 @@ impl Supervisor {
                 .into_iter()
                 .chain(ingress_fds)
                 .collect(),
+            // Every helper has its read end by now. Moved, not copied: once
+            // PID 1 has it, this process must hold no writer, or a helper
+            // would outlive the agent for as long as this supervisor runs.
+            lifeline: lifeline.map(|line| line.write),
         };
 
         let leaf = self.node.create_leaf(id, &launch.limits)?;
@@ -523,8 +547,14 @@ impl Supervisor {
             };
             match read_record(&dir)? {
                 None => {
-                    if let Some(leaf) = self.node.existing_leaf(&id) {
-                        let _ = leaf.kill();
+                    // Both leaves: a start that died after launching its
+                    // helpers left them in the host leaf, and nothing but
+                    // this can name them now. (Its lifeline has already told
+                    // them to exit; this is the backstop.)
+                    for name in [id.clone(), host_leaf_name(&id)] {
+                        if let Some(leaf) = self.node.existing_leaf(&name) {
+                            let _ = leaf.kill();
+                        }
                     }
                     std::fs::remove_dir_all(&dir)?;
                 }
@@ -576,16 +606,39 @@ impl Supervisor {
         Ok(records)
     }
 
-    /// `a<N>`, one past the highest ever used: an ID is never reused, so
-    /// a stopped agent's record cannot be mistaken for a new agent's.
+    /// `a<N>`, one past the highest ever used: an ID is never reused for
+    /// the fleet's lifetime, so a stopped agent's record, an old
+    /// `a17.<name>.devcroft` in someone's shell history, or a clone path
+    /// cannot come to mean a different agent.
+    ///
+    /// **Recorded, not only scanned.** Scanning the agent directories alone
+    /// handed a removed agent's ID straight back out once the highest one
+    /// was `rm`'d. The scan stays, for a fleet whose counter predates it.
+    /// Written before the agent's directory exists, so a crash between the
+    /// two skips an ID rather than repeating one. `rm --all` ends the fleet,
+    /// counter included; its next `up` is a new fleet.
     fn next_id(&self) -> io::Result<String> {
-        let mut max = 0;
+        let counter = self.state.join("last-id");
+        let mut max = match std::fs::read_to_string(&counter) {
+            Ok(text) => text.trim().parse::<u64>().map_err(|e| {
+                io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("{}: {e}", counter.display()),
+                )
+            })?,
+            Err(e) if e.kind() == io::ErrorKind::NotFound => 0,
+            Err(e) => return Err(e),
+        };
         for entry in std::fs::read_dir(self.agents_dir())? {
             if let Some(n) = entry?.file_name().to_str().and_then(id_number) {
                 max = max.max(n);
             }
         }
-        Ok(format!("a{}", max + 1))
+        let next = max + 1;
+        let tmp = self.state.join("last-id.tmp");
+        std::fs::write(&tmp, format!("{next}\n"))?;
+        std::fs::rename(tmp, counter)?;
+        Ok(format!("a{next}"))
     }
 }
 
@@ -617,8 +670,23 @@ fn host_leaf_name(id: &str) -> String {
     format!("{id}-host")
 }
 
+/// Agent `id`'s SSH socket in the fleet whose state is `state`, without
+/// opening it: what `devcroft proxy <id>.<name>.devcroft` connects to.
+/// `None` for anything that is not an agent ID, so a host name cannot
+/// walk out of the agents directory.
+pub fn agent_ssh_socket(state: &Path, id: &str) -> Option<PathBuf> {
+    id_number(id)?;
+    Some(state.join("agents").join(id).join("ssh.sock"))
+}
+
+/// `a<N>`'s N, only for the spelling `next_id` makes: `u64::from_str`
+/// alone accepts `a+5` and `a05`, two more names for agent 5.
 fn id_number(id: &str) -> Option<u64> {
-    id.strip_prefix('a')?.parse().ok()
+    let digits = id.strip_prefix('a')?;
+    if digits.starts_with('0') || !digits.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    digits.parse().ok()
 }
 
 fn private_dir(path: &Path) -> io::Result<()> {
@@ -692,5 +760,8 @@ mod tests {
         assert_eq!(id_number("a"), None);
         assert_eq!(id_number("b3"), None);
         assert_eq!(id_number("a3x"), None);
+        assert_eq!(id_number("a+5"), None);
+        assert_eq!(id_number("a05"), None);
+        assert_eq!(id_number("a0"), None);
     }
 }

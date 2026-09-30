@@ -149,6 +149,17 @@ impl Setup {
         self.base.join("state")
     }
 
+    /// Run a command after `up` on this fleet, named as the CLI names it.
+    fn cmd<T>(&self, run: impl FnOnce(&commands::FleetRef) -> T) -> T {
+        let (state, manifest, project) = (self.state(), self.manifest(), self.project());
+        run(&commands::FleetRef {
+            state_dir: &state,
+            manifest: &manifest,
+            project_root: &project,
+            exe: exe(),
+        })
+    }
+
     fn manifest(&self) -> devcroft::config::Manifest {
         let text = std::fs::read_to_string(self.project().join("devcroft.toml")).unwrap();
         devcroft::config::parse(&text).unwrap().0
@@ -282,19 +293,18 @@ fn each_agent_works_on_its_own_clone_and_keeps_it_after_stopping() {
     assert!(!s.project().join("mine").exists());
 
     // `ls` and `stop` find the fleet from its state alone.
-    let m = s.manifest();
-    let listed = commands::ls(&s.state(), &m, exe()).unwrap();
+    let listed = s.cmd(commands::ls).unwrap();
     assert!(listed.iter().all(|a| a.record.state == AgentState::Running));
-    commands::stop(&s.state(), &m, exe(), "a1").unwrap();
-    let listed = commands::ls(&s.state(), &m, exe()).unwrap();
+    s.cmd(|f| commands::stop(f, "a1")).unwrap();
+    let listed = s.cmd(commands::ls).unwrap();
     assert_eq!(listed[0].record.state, AgentState::Stopped);
     assert_eq!(listed[1].record.state, AgentState::Running);
     // Stopping an agent does not throw away its work.
     assert!(started[0].workspace.join("mine").is_file());
 
-    let err = commands::stop(&s.state(), &m, exe(), "a9").unwrap_err();
+    let err = s.cmd(|f| commands::stop(f, "a9")).unwrap_err();
     assert_eq!(err.exit_code(), 2, "{err}");
-    commands::stop(&s.state(), &m, exe(), "a2").unwrap();
+    s.cmd(|f| commands::stop(f, "a2")).unwrap();
 }
 
 #[test]
@@ -326,7 +336,7 @@ fn a_project_outside_git_is_refused_before_anything_is_made() {
 #[test]
 fn ls_without_a_fleet_says_how_to_start_one() {
     let s = Setup::new("none", None, "", true);
-    let err = commands::ls(&s.state(), &s.manifest(), exe()).unwrap_err();
+    let err = s.cmd(commands::ls).unwrap_err();
     assert_eq!(err.exit_code(), 2, "{err}");
     assert!(err.to_string().contains("fleet up"), "{err}");
 }
@@ -483,7 +493,16 @@ fn a_real_devbox_agent_builds_its_project_in_its_clone() {
         "the binary did not run: {out}"
     );
     assert!(!out.contains("REPO_READABLE"), "{out}");
-    commands::stop(&state, &manifest, exe(), &agent.id).unwrap();
+    commands::stop(
+        &commands::FleetRef {
+            state_dir: &state,
+            manifest: &manifest,
+            project_root: &project,
+            exe: exe(),
+        },
+        &agent.id,
+    )
+    .unwrap();
 }
 
 #[test]
@@ -491,25 +510,24 @@ fn rm_refuses_a_running_agent_and_removes_a_stopped_one_with_its_clone() {
     let Some(root) = capable_host() else { return };
     let s = Setup::new("rm", Some(&root), "", true);
     let started = s.up(2).unwrap();
-    let m = s.manifest();
     let clone = |id: &str| s.clones().join(id);
 
-    let err = commands::rm(&s.state(), &m, exe(), &s.project(), "a1").unwrap_err();
+    let err = s.cmd(|f| commands::rm(f, "a1")).unwrap_err();
     assert_eq!(err.exit_code(), 2, "{err}");
     assert!(err.to_string().contains("stop it first"), "{err}");
     assert!(clone("a1").is_dir());
 
-    commands::stop(&s.state(), &m, exe(), "a1").unwrap();
-    commands::rm(&s.state(), &m, exe(), &s.project(), "a1").unwrap();
+    s.cmd(|f| commands::stop(f, "a1")).unwrap();
+    s.cmd(|f| commands::rm(f, "a1")).unwrap();
     assert!(!clone("a1").exists());
     assert!(!s.state().join("agents/a1").exists());
-    let listed = commands::ls(&s.state(), &m, exe()).unwrap();
+    let listed = s.cmd(commands::ls).unwrap();
     assert_eq!(listed.len(), 1);
     assert_eq!(listed[0].record.id, started[1].id);
 
     // --all stops what is running and leaves nothing: no clones, no node,
     // no state.
-    let removed = commands::rm_all(&s.state(), &m, exe(), &s.project()).unwrap();
+    let removed = s.cmd(commands::rm_all).unwrap();
     assert_eq!(removed, ["a2"]);
     assert!(!clone("a2").exists());
     assert!(!root.join(format!("fleet-{}", s.name)).exists());
@@ -551,9 +569,8 @@ fn limits_given_to_up_reach_every_agents_leaf_and_record() {
         pids_max: Some(64),
     };
     let outcome = s.up_with(2, limits.clone()).unwrap();
-    let m = s.manifest();
     for a in &outcome.started {
-        let status = commands::inspect(&s.state(), &m, exe(), &a.id).unwrap();
+        let status = s.cmd(|f| commands::inspect(f, &a.id)).unwrap();
         assert_eq!(status.record.limits, limits);
         let leaf = &status.record.cgroup;
         let read = |f: &str| {
@@ -568,7 +585,8 @@ fn limits_given_to_up_reach_every_agents_leaf_and_record() {
         assert_eq!(read("cpu.weight"), "50");
     }
     // An IO weight this host cannot apply is reported, by name.
-    let has_io_weight = commands::inspect(&s.state(), &m, exe(), "a1")
+    let has_io_weight = s
+        .cmd(|f| commands::inspect(f, "a1"))
         .unwrap()
         .record
         .cgroup
@@ -580,7 +598,7 @@ fn limits_given_to_up_reach_every_agents_leaf_and_record() {
             .contains(&devcroft::fleet::cgroup::Degraded::IoWeight),
         !has_io_weight
     );
-    commands::rm_all(&s.state(), &m, exe(), &s.project()).unwrap();
+    s.cmd(commands::rm_all).unwrap();
 }
 
 /// The host's `/usr` plus a process-compose from the Nix store, declaring
@@ -702,7 +720,7 @@ fn every_agent_runs_its_own_service_on_the_same_port_and_up_waits_for_it() {
         assert_eq!(code, Some(0), "{out}");
         assert_eq!(out.trim(), a.id);
     }
-    commands::rm_all(&s.state(), &s.manifest(), exe(), &s.project()).unwrap();
+    s.cmd(commands::rm_all).unwrap();
 }
 
 /// A service that fails is reported, by name, for its agent; the agent
@@ -733,7 +751,7 @@ fn a_failing_service_is_reported_for_its_agent_which_stays_up() {
     let socket = s.state().join("agents").join(&a.id).join("control.sock");
     let (code, out) = session(&socket, &a.workspace, "echo still-up");
     assert_eq!((code, out.trim()), (Some(0), "still-up"));
-    commands::rm_all(&s.state(), &s.manifest(), exe(), &s.project()).unwrap();
+    s.cmd(commands::rm_all).unwrap();
 }
 
 /// One HTTP GET over a plain TCP connection from the host; the body.
@@ -784,16 +802,13 @@ fn five_agents_one_port_each_host_mapping_reaches_its_own_agent() {
     let outcome = s
         .up_via(&provider, 5, devcroft::fleet::cgroup::Limits::default())
         .unwrap();
-    let m = s.manifest();
 
     let mut host_ports = Vec::new();
     for a in &outcome.started {
         assert_eq!(a.services, commands::ServicesOutcome::Ready, "{}", a.id);
         // Each agent's instance serves its own workspace.
         std::fs::write(a.workspace.join("whoami"), &a.id).unwrap();
-        let record = commands::inspect(&s.state(), &m, exe(), &a.id)
-            .unwrap()
-            .record;
+        let record = s.cmd(|f| commands::inspect(f, &a.id)).unwrap().record;
         assert_eq!(record.exposes, ["web"]);
         let [mapping] = &record.port_mappings[..] else {
             panic!("{}: {:?}", a.id, record.port_mappings)
@@ -813,7 +828,7 @@ fn five_agents_one_port_each_host_mapping_reaches_its_own_agent() {
     }
 
     // Stopping one releases its port and leaves the rest working.
-    commands::stop(&s.state(), &m, exe(), "a1").unwrap();
+    s.cmd(|f| commands::stop(f, "a1")).unwrap();
     // Released means free: the port can be bound again, which is what lets
     // a later agent be given it. A refused connection alone would not show
     // that (a forwarder left running with nothing behind it refuses too).
@@ -821,9 +836,7 @@ fn five_agents_one_port_each_host_mapping_reaches_its_own_agent() {
         std::net::TcpListener::bind(("127.0.0.1", host_ports[0])).is_ok(),
         "a stopped agent's host port is still held"
     );
-    let a1 = commands::inspect(&s.state(), &m, exe(), "a1")
-        .unwrap()
-        .record;
+    let a1 = s.cmd(|f| commands::inspect(f, "a1")).unwrap().record;
     assert!(a1.port_mappings.is_empty());
     assert_eq!(
         a1.exposes,
@@ -832,5 +845,218 @@ fn five_agents_one_port_each_host_mapping_reaches_its_own_agent() {
     );
     assert_eq!(get_from_host(host_ports[1], "/whoami").unwrap(), "a2");
 
-    commands::rm_all(&s.state(), &m, exe(), &s.project()).unwrap();
+    s.cmd(commands::rm_all).unwrap();
+}
+
+/// `HostUsr`, slowly: holds `up` between creating an agent's directory and
+/// recording it, the window a concurrent command used to fall into.
+struct Slow;
+
+impl ProviderEntry for Slow {
+    fn resolve(&self, root: &Path) -> Result<Resolution, ProviderError> {
+        std::thread::sleep(std::time::Duration::from_secs(2));
+        HostUsr.resolve(root)
+    }
+    fn fingerprint(&self, root: &Path) -> Result<String, ProviderError> {
+        HostUsr.fingerprint(root)
+    }
+    fn tier(&self) -> Tier {
+        HostUsr.tier()
+    }
+    fn static_name(&self) -> &'static str {
+        HostUsr.static_name()
+    }
+}
+
+/// Fleet commands are serialized per fleet. Without that, an `ls` during an
+/// `up` found the new agent's directory with no record yet, took it for a
+/// crashed start and removed it, and the `up` failed underneath it; and two
+/// `up`s computed the same next ID.
+#[test]
+fn a_command_during_up_waits_for_it_instead_of_removing_its_agent() {
+    let Some(root) = capable_host() else { return };
+    let s = Setup::new("lock", Some(&root), "", true);
+    std::thread::scope(|scope| {
+        let up = scope.spawn(|| s.up_via(&Slow, 1, devcroft::fleet::cgroup::Limits::default()));
+        let dir = s.state().join("agents/a1");
+        for _ in 0..500 {
+            if dir.exists() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert!(dir.exists(), "up never made its agent's directory");
+        assert!(!dir.join("record.json").exists(), "the window was missed");
+        // Blocks until `up` has recorded a1, then sees it running.
+        let listed = s.cmd(commands::ls).unwrap();
+        let ids: Vec<_> = listed.iter().map(|a| a.record.id.as_str()).collect();
+        assert_eq!(ids, ["a1"]);
+        assert_eq!(listed[0].record.state, AgentState::Running);
+        let started = up.join().unwrap().unwrap();
+        assert_eq!(started.started[0].id, "a1");
+    });
+    // Two `up`s at once get different IDs, and both succeed.
+    std::thread::scope(|scope| {
+        let a = scope.spawn(|| s.up_via(&Slow, 1, devcroft::fleet::cgroup::Limits::default()));
+        let b = scope.spawn(|| s.up_via(&Slow, 1, devcroft::fleet::cgroup::Limits::default()));
+        let mut ids = vec![
+            a.join().unwrap().unwrap().started[0].id.clone(),
+            b.join().unwrap().unwrap().started[0].id.clone(),
+        ];
+        ids.sort();
+        assert_eq!(ids, ["a2", "a3"]);
+    });
+    s.cmd(commands::rm_all).unwrap();
+}
+
+/// A fleet belongs to the project that started it. State is keyed by
+/// sandbox name, which two checkouts of one repository share; the first
+/// version let the second's `up` rewrite `fleet.json` and add its clones to
+/// the first's agents, and its `ls`/`stop`/`rm` act on them.
+#[test]
+fn a_second_checkout_with_the_same_name_cannot_take_over_the_fleet() {
+    let Some(root) = capable_host() else { return };
+    let owner = Setup::new("own", Some(&root), "", true);
+    owner.up(1).unwrap();
+    let recorded = std::fs::read(owner.state().join("fleet.json")).unwrap();
+
+    // Another repository whose manifest carries the owner's sandbox name.
+    let other = Setup::new("oth", Some(&root), "", true);
+    std::fs::copy(
+        owner.project().join("devcroft.toml"),
+        other.project().join("devcroft.toml"),
+    )
+    .unwrap();
+    let manifest = owner.manifest();
+    let theirs = commands::FleetRef {
+        state_dir: &owner.state(),
+        manifest: &manifest,
+        project_root: &other.project(),
+        exe: exe(),
+    };
+    let keys = other.base.join("keys");
+    std::fs::create_dir_all(&keys).unwrap();
+    let client =
+        devcroft::ssh::ensure_client_keypair(&keys.join("id"), &keys.join("id.pub")).unwrap();
+    let err = commands::up(
+        &HostUsr,
+        &UpRequest {
+            manifest: &manifest,
+            project_root: &other.project(),
+            cgroup_root: &root,
+            agents: 1,
+            view: true,
+            exe: exe(),
+            authorized_key_pem: &client.public_key().to_openssh().unwrap(),
+            state_dir: &owner.state(),
+            limits: devcroft::fleet::cgroup::Limits::default(),
+        },
+    )
+    .unwrap_err();
+    assert_eq!(err.exit_code(), 2, "{err}");
+    assert!(err.to_string().contains("different project"), "{err}");
+    assert_eq!(
+        std::fs::read(owner.state().join("fleet.json")).unwrap(),
+        recorded,
+        "fleet.json was rewritten before the refusal"
+    );
+    assert!(!other.clones().exists(), "the refused up made a clone");
+    for result in [
+        commands::ls(&theirs).map(drop),
+        commands::stop(&theirs, "a1"),
+        commands::rm(&theirs, "a1"),
+    ] {
+        let err = result.unwrap_err();
+        assert!(err.to_string().contains("different project"), "{err}");
+    }
+    // The owner's agent is untouched, and still the owner's to remove.
+    let listed = owner.cmd(commands::ls).unwrap();
+    assert_eq!(listed[0].record.state, AgentState::Running);
+    owner.cmd(commands::rm_all).unwrap();
+}
+
+/// The proposal's access path, `ssh a17.myrepo.devcroft`, through the same
+/// `ProxyCommand devcroft proxy %n` the generated SSH config uses. `proxy`
+/// used to parse one `<name>.devcroft` and open the ordinary sandbox's
+/// socket, so an agent's SSH listener existed and nothing could reach it.
+/// Run with its own `HOME`, so the proxy finds the fleet where the CLI puts
+/// it and authenticates with that home's client key.
+#[test]
+fn an_agent_is_reachable_as_id_dot_name_dot_devcroft_over_real_ssh() {
+    let Some(root) = capable_host() else { return };
+    if !Path::new("/usr/bin/ssh").exists() {
+        eprintln!("skipping: no /usr/bin/ssh");
+        return;
+    }
+    let s = Setup::new("ssh", Some(&root), "", true);
+    let home = s.base.join("home");
+    let data = home.join(".local/share/devcroft");
+    std::fs::create_dir_all(&data).unwrap();
+    let client = devcroft::ssh::ensure_client_keypair(
+        &data.join("id_ed25519"),
+        &data.join("id_ed25519.pub"),
+    )
+    .unwrap();
+    let state = data.join("_fleet").join(&s.name);
+    let manifest = s.manifest();
+    commands::up(
+        &HostUsr,
+        &UpRequest {
+            manifest: &manifest,
+            project_root: &s.project(),
+            cgroup_root: &root,
+            agents: 2,
+            view: true,
+            exe: exe(),
+            authorized_key_pem: &client.public_key().to_openssh().unwrap(),
+            state_dir: &state,
+            limits: devcroft::fleet::cgroup::Limits::default(),
+        },
+    )
+    .unwrap();
+
+    let ssh = |host: &str| {
+        Command::new("ssh")
+            .env("HOME", &home)
+            .args(["-F", "/dev/null", "-o", "BatchMode=yes"])
+            .args([
+                "-o",
+                "StrictHostKeyChecking=no",
+                "-o",
+                "UserKnownHostsFile=/dev/null",
+            ])
+            .arg("-o")
+            .arg(format!("ProxyCommand {} proxy %n", exe().display()))
+            .arg("-i")
+            .arg(data.join("id_ed25519"))
+            .args([host, "uname -n"])
+            .output()
+            .unwrap()
+    };
+    // Each name reaches its own agent: the hostname is the agent's ID.
+    for id in ["a1", "a2"] {
+        let out = ssh(&format!("{id}.{}.devcroft", s.name));
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), id);
+    }
+    // A stopped agent is named as such, not as a missing sandbox.
+    let fleet = commands::FleetRef {
+        state_dir: &state,
+        manifest: &manifest,
+        project_root: &s.project(),
+        exe: exe(),
+    };
+    commands::stop(&fleet, "a1").unwrap();
+    let out = ssh(&format!("a1.{}.devcroft", s.name));
+    assert!(!out.status.success());
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains("agent a1 of fleet"),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    commands::rm_all(&fleet).unwrap();
 }

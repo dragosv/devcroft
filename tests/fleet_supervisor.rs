@@ -543,3 +543,131 @@ fn each_agent_reaches_only_its_own_allowlist_through_its_own_proxy() {
     assert_eq!(sup.inspect(&b).unwrap().record.egress, ["127.0.0.4"]);
     sup.stop(&b).unwrap();
 }
+
+/// Whether `leaf` holds any process: `cgroup.events` says `populated 1`.
+fn populated(leaf: &Path) -> bool {
+    std::fs::read_to_string(leaf.join("cgroup.events"))
+        .map(|e| e.lines().any(|l| l == "populated 1"))
+        .unwrap_or(false)
+}
+
+/// Poll `done` for up to five seconds.
+fn eventually(mut done: impl FnMut() -> bool) -> bool {
+    for _ in 0..500 {
+        if done() {
+            return true;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    false
+}
+
+/// `service-ports`: "a mapping SHALL NOT outlive the agent it belongs to",
+/// for an agent that crashes rather than being stopped. **No command runs
+/// after the crash**: the helpers used to die only when a later `ls` or
+/// `stop` reconciled, so until then the host port stayed allocated to
+/// nothing. The crash is a `cgroup.kill` of the agent's leaf from outside,
+/// which the supervisor does not see.
+#[test]
+fn a_crashed_agents_host_port_and_proxy_go_with_it_before_any_command() {
+    let Some(root) = capable_host() else { return };
+    let fleet = Fleet::new(&root, "lifeline");
+    let mut launch = fleet.launch("a");
+    launch.egress_allow = vec!["127.0.0.3".into()];
+    launch.expose = vec![("web".into(), 8000)];
+    let mut sup = fleet.open();
+    let id = sup.start(&launch).unwrap();
+
+    let record = sup.inspect(&id).unwrap().record;
+    let [mapping] = &record.port_mappings[..] else {
+        panic!("{:?}", record.port_mappings)
+    };
+    let node = root.join(&fleet.name);
+    let host_leaf = node.join(format!("{id}-host"));
+    let proxy = fleet.state().join("agents").join(&id).join("proxy.sock");
+    // The control: while the agent runs, its helpers do.
+    assert!(populated(&host_leaf));
+    assert!(std::net::TcpListener::bind(("127.0.0.1", mapping.host)).is_err());
+    assert!(UnixStream::connect(&proxy).is_ok());
+
+    std::fs::write(node.join(&id).join("cgroup.kill"), "1").unwrap();
+
+    assert!(
+        eventually(|| !populated(&host_leaf)),
+        "the agent's helpers outlived it"
+    );
+    // Released means bindable, not merely refusing: a forwarder left
+    // running with nothing behind it refuses too.
+    assert!(
+        eventually(|| std::net::TcpListener::bind(("127.0.0.1", mapping.host)).is_ok()),
+        "a crashed agent's host port is still held"
+    );
+    assert!(UnixStream::connect(&proxy).is_err());
+    // And the next command still reconciles the record.
+    assert_eq!(sup.inspect(&id).unwrap().record.state, AgentState::Stopped);
+}
+
+/// The other half of the lifeline: a supervisor that dies after starting an
+/// agent's helpers and before starting the agent (so before any record
+/// exists) holds the only write end, and its death must take the helpers
+/// with it. Dropping the write end is what the kernel does for a process
+/// that dies, so this is that crash without killing the test.
+#[test]
+fn a_helper_whose_last_writer_is_gone_exits() {
+    let dir = std::env::temp_dir().join(format!("devcroft-lifeline-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let socket = dir.join("proxy.sock");
+    let line = devcroft::fleet::lifeline::Lifeline::new().unwrap();
+    let (pid, _, _) = devcroft::proxy::spawn_at(
+        Path::new(env!("CARGO_BIN_EXE_devcroft")),
+        &socket,
+        &dir.join("egress.log"),
+        &["127.0.0.3".to_owned()],
+        |cmd| {
+            devcroft::fleet::lifeline::attach(cmd, &line.read);
+            Ok(())
+        },
+    )
+    .unwrap();
+    let reaped = || {
+        let mut status = 0;
+        // SAFETY: our own child; a valid out-pointer.
+        unsafe { libc::waitpid(pid, &mut status, libc::WNOHANG) == pid }
+    };
+
+    // The control: with a writer alive, the helper stays up.
+    std::thread::sleep(std::time::Duration::from_millis(300));
+    assert!(!reaped(), "the helper exited with its lifeline still held");
+    assert!(UnixStream::connect(&socket).is_ok());
+
+    drop(line);
+    assert!(eventually(reaped), "the helper outlived its last writer");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// IDs are never reused, including the highest one after it is removed:
+/// the first version scanned the agent directories, so removing `a2` and
+/// starting another agent handed `a2` out again, and an old `a2` address
+/// named a different workspace.
+#[test]
+fn a_removed_agents_id_is_not_handed_out_again() {
+    let Some(root) = capable_host() else { return };
+    let fleet = Fleet::new(&root, "ids");
+    let mut sup = fleet.open();
+    assert_eq!(sup.start(&fleet.launch("1")).unwrap(), "a1");
+    assert_eq!(sup.start(&fleet.launch("2")).unwrap(), "a2");
+    sup.stop("a2").unwrap();
+    sup.remove("a2").unwrap();
+    assert_eq!(sup.start(&fleet.launch("3")).unwrap(), "a3");
+
+    // And across a supervisor restart, which has only what is on disk.
+    sup.stop("a3").unwrap();
+    sup.remove("a3").unwrap();
+    drop(sup);
+    let mut sup = fleet.open();
+    assert_eq!(sup.start(&fleet.launch("4")).unwrap(), "a4");
+    for id in ["a1", "a4"] {
+        sup.stop(id).unwrap();
+    }
+}

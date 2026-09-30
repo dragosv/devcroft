@@ -176,14 +176,17 @@ Three things make fleet cheaper than 6/56 suggests:
   post-`fork` race where the child briefly runs uncapped. The wall-clock
   timeout in the same group needs no cgroups at all and is the cheapest
   bound on an unattended agent.
-- **D9's blocking gate may not apply.** Fleet declares that no proxy work
-  starts until a seccomp notification-listener handoff is validated, on the
-  reasoning that a userspace network helper makes proxy variables
-  cooperative. The shipped design has no such helper — the namespace has
-  loopback only and egress is a relay — so egress is already
-  non-cooperative by construction. Re-derive before building either way;
-  if it holds, fleet's hardest phase-0 item disappears, and `sandlock`
-  shows a working handoff sequence if it does not.
+- **D9's blocking gate does not apply to the shipped topology** (re-derived
+  and measured 2026-09-26; spec made to match 2026-09-28). Fleet declared
+  that no proxy work starts until a seccomp notification-listener handoff is
+  validated, on the reasoning that a userspace network helper makes proxy
+  variables cooperative. The shipped design has no such helper, and the
+  route-less namespace turned out to be the boundary for every protocol
+  and address, with Landlock's `NetPort` only a port filter inside it.
+  `agent-networking` now requires that invariant, and makes the filter
+  conditional on a topology that gives agents a route. Adopting a helper
+  reinstates the gate in full; `sandlock` shows a working handoff sequence
+  for that case.
 
 **Two cheap items land here too, and they are not isolation work.** Warm
 keepers and a reusable resolution (fleet's group 2b, taken from ArcBox's

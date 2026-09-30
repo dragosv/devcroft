@@ -147,6 +147,7 @@ fn start(leaf: &Leaf, spec: &AgentSpec) -> (Agent, std::io::PipeReader) {
         stdout: Some(w.into()),
         stderr: None,
         inherit: Vec::new(),
+        lifeline: None,
     };
     let agent = init::spawn(Path::new(env!("CARGO_BIN_EXE_devcroft")), leaf, spec, stdio).unwrap();
     (agent, r)
@@ -556,6 +557,7 @@ fn the_keeper_runs_as_the_agents_command_and_serves_sessions() {
         stdout: None,
         stderr: Some(log_w.into()),
         inherit: vec![control.into(), ssh.into()],
+        lifeline: None,
     };
     let agent = init::spawn(exe, &leaf, &spec, stdio).unwrap();
 

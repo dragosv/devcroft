@@ -191,6 +191,13 @@ manifest and compiles to a blanket network block. This decision is about
 
 ## D5 — Rootless connectivity: slirp4netns baseline, proxy-only by policy
 
+> **Not the shipped topology (2026-09-28).** Agents ship with no helper:
+> the namespace has loopback only, egress is a relay to the proxy's unix
+> socket, and inbound mappings are the same relay run backwards
+> (`service-ports`). What follows is what a topology that *adds* a helper
+> must satisfy, and `agent-networking` now says so normatively: a helper
+> gives agents a route, and a route requires D9's filter.
+
 **Decision.** `slirp4netns` is the MVP baseline, **conditional on a live probe
 of the exact flags fleet needs** (`--disable-host-loopback`, explicit inbound
 forwarding, no automatic port forwarding). `pasta` remains a future option after
@@ -431,6 +438,16 @@ projects open simultaneously collide at N=2, which is precisely what people do
 with devcontainers.
 
 ## D9 — The proxy-only seccomp filter is mandatory; general syscall hardening is not
+
+> **Amended (2026-09-28): mandatory where an agent's namespace has a route,
+> and only there.** The re-derivation below established that the route-less
+> namespace is itself the egress boundary, so the shipped topology needs no
+> filter. The `agent-networking` spec had kept the unconditional wording
+> after that, which an implementation following this design would fail
+> (found by adversarial review). It now states the route-less invariant as
+> the requirement, and makes the filter and a probed helper conditional on
+> a topology that supplies a route. The heading and decision below are kept
+> as written, for the record of what was reversed.
 
 **Decision.** Where runtime egress is requested, fleet installs the narrow
 **proxy-only seccomp-notify filter** `add-egress-proxy` provides. General

@@ -147,10 +147,16 @@ pub fn prepare(
         hooks.push(("post_start", cmd.clone()));
     }
 
+    // `[env.vars]` and `[env] forward`, exactly as `up` applies them, over
+    // the provider's environment. The services config above keeps the
+    // provider's alone, as `up`'s does.
+    let mut env = resolution.env;
+    crate::lifecycle::apply_manifest_env(manifest, &mut env);
+
     Ok(AgentLaunch {
         workspace: workspace.to_path_buf(),
         plan,
-        provider_env: resolution.env,
+        provider_env: env,
         unset: resolution.unset,
         shell: shell.path,
         hooks,
@@ -169,12 +175,27 @@ pub fn prepare(
     })
 }
 
+/// What a manifest can ask of `up` that fleet does not carry, refused by
+/// name: an agent started without it would differ from the sandbox the same
+/// manifest describes, and nothing would say so.
 fn refuse_what_fleet_cannot_carry(manifest: &Manifest) -> Result<(), PrepareError> {
     if manifest.network.default == NetworkDefault::Allow {
         return Err(PrepareError::Config(
             "network.default = \"allow\": a fleet agent's egress goes through its own \
              proxy, to the hosts `network.allow` names, and nowhere else; its network \
              namespace has no route out, which is what makes that the boundary"
+                .to_string(),
+        ));
+    }
+    // Not carried rather than dropped. `up` forwards the agent socket with a
+    // grant and the variable; in a fleet that is one person's SSH keys lent
+    // to N unattended agents, each needing the socket inside its mount view,
+    // and `up`'s own Linux half of it is unverified. A decision to make on
+    // purpose, not a default to inherit.
+    if manifest.ssh.forward_agent {
+        return Err(PrepareError::Config(
+            "ssh.forward_agent = true: fleet does not lend the SSH agent to its agents; \
+             remove the key to start a fleet from this manifest"
                 .to_string(),
         ));
     }

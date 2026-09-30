@@ -259,13 +259,16 @@ matter before touching the relevant change:
   `tests/unix_socket_not_mediated.rs` asserts that gap and passes *because
   it is open*; closing it must correct that test and three documents
   together. The fix is a mount namespace, not seccomp (measured).
-- **Fleet's D9 gate is suspended, not struck.** It declared "no proxy work
-  starts until the seccomp handoff resolves", reasoning that a userspace
-  network helper makes proxy variables cooperative. The shipped design has
-  no such helper — loopback-only namespace, egress via a unix-socket relay
-  — so a workload ignoring `HTTPS_PROXY` is refused by Landlock's
-  `NetPort` and by having no route out. Re-derive before building either
-  way; if it holds, fleet loses its hardest phase-0 item.
+- **Fleet's D9 gate is conditional, not struck.** It declared "no proxy
+  work starts until the seccomp handoff resolves", reasoning that a
+  userspace network helper makes proxy variables cooperative. The shipped
+  design has no such helper — loopback-only namespace, egress via a
+  unix-socket relay — and the re-derivation (design.md D9, measured)
+  found the **route-less namespace is the boundary**, for every protocol
+  and address; Landlock's `NetPort` is only a port filter inside it.
+  `agent-networking` requires that invariant, and requires the filter only
+  of a topology that gives agents a route. Adding slirp4netns or pasta
+  reinstates the gate in full.
 
 `own-policy-baseline` and `use-nono-library` came out of measuring what
 devcroft's compiled profile actually contains: 240 rules it ships and

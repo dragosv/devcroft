@@ -24,6 +24,23 @@ creation to the sandbox library or to an external sandboxing binary.
   step
 - **AND** the fleet feature SHALL NOT silently degrade to unsandboxed execution
 
+#### Scenario: An agent exits with host-side helpers running
+
+- **WHEN** an agent that has host-side helpers (its egress proxy, its port
+  forwarders) exits, however it exits, including a crash no fleet command
+  observes
+- **THEN** those helpers exit with it, without waiting for a later command
+  to reconcile the agent's record
+
+#### Scenario: A start is interrupted after its helpers are launched
+
+- **WHEN** the supervisor dies after launching an agent's host-side helpers
+  and before that agent is recorded
+- **THEN** the helpers exit rather than running on with no record naming
+  them
+- **AND** the next command removes what is left of the start, host-side
+  helpers' cgroup included
+
 ### Requirement: Init helper is single-threaded and re-executed
 
 The supervisor SHALL apply namespace, mount and sandbox setup in a re-executed
@@ -74,6 +91,56 @@ and stop one agent, each identified by a stable agent ID.
 - **WHEN** the operator stops a single agent while others are running
 - **THEN** only that agent's process tree is terminated
 - **AND** other agents remain running and unaffected
+
+#### Scenario: An ID is never reused
+
+- **WHEN** an agent is removed, including the most recently started one, and
+  another agent is started in the same fleet, before or after a supervisor
+  restart
+- **THEN** the new agent gets an ID no agent of that fleet has had
+- **AND** removing the whole fleet ends that fleet, so the IDs of a fleet
+  started afterwards are its own
+
+#### Scenario: Reaching an agent by name
+
+- **WHEN** an SSH client connects to `<id>.<sandbox name>.devcroft` through
+  the `ProxyCommand` devcroft's SSH configuration installs
+- **THEN** it reaches that agent's own SSH endpoint
+- **AND** an agent that is not running is reported as such, by ID and
+  fleet, and is never started by the connection attempt
+
+### Requirement: Fleet commands are serialized per fleet, and a fleet belongs to one project
+
+Every fleet command that reads or changes agent state SHALL hold a per-fleet
+lock for the whole of that work, released by the kernel however the command
+exits. A fleet SHALL record the project it was started for, and every
+command SHALL refuse a fleet recorded for a different project before
+changing anything.
+
+Fleet state is keyed by sandbox name, and two checkouts of one repository
+share a committed manifest and so a name. Without the project check, the
+second checkout's commands act on the first one's agents; without the lock,
+two commands interleave, and one command's half-finished start is
+indistinguishable from a crashed one to the other.
+
+#### Scenario: A command runs while an agent is starting
+
+- **WHEN** a fleet command runs while another is starting an agent in the
+  same fleet
+- **THEN** it waits for that start to finish, saying that it is waiting
+- **AND** it never treats the agent being started as a crashed start
+
+#### Scenario: Two starts at once
+
+- **WHEN** two `fleet up` commands run at once for the same fleet
+- **THEN** both succeed and their agents have distinct IDs
+
+#### Scenario: Another checkout with the same sandbox name
+
+- **WHEN** a fleet command runs in a project other than the one the fleet
+  was started for
+- **THEN** it fails with a configuration error naming both projects
+- **AND** it changes no fleet state, no agent and no clone
 
 ### Requirement: Preflight environment validation
 

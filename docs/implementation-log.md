@@ -1197,3 +1197,32 @@ looked like flaky tests.
   caught as `Running` before it dies, and without a probe, running counted
   as ready. A service without a probe must now stay up for a second
   first, which catches the commonest failure, a service that dies at start.
+
+**An adversarial review of the fleet (2026-09-28): eight findings, all
+real.** The review's own run could not confirm the lifecycle ones: every
+cgroup case self-skipped there, and read as passing. Here they ran inside
+the devcontainer's delegated subtree, and each fix has a mutant that fails
+its test. Full list in `add-linux-agent-fleet` tasks.md §2d. Three are
+worth knowing beyond fleet.
+
+- **"Released at exit" had meant "released at the next command".** An
+  agent's egress proxy and port forwarders died only when a later `ls` or
+  `stop` reconciled and killed their leaf. So a crashed agent's host ports
+  stayed allocated to nothing until someone looked, and a crash during
+  start orphaned them with no record naming them at all. The fix is not a
+  watcher but a pipe nobody writes to (`fleet::lifeline`). The agent's
+  PID 1 holds the write end, and PID 1's exit is by construction the
+  agent's, since a PID namespace dies with its init. The supervisor holds
+  the only other write end until PID 1 has one, so the same EOF covers a
+  supervisor that dies mid-start.
+- **Keying state by sandbox name needs the same guard twice.** `up` already
+  refused a sandbox recorded for another project root (two worktrees share
+  a committed name). Fleet keyed its state the same way without the check,
+  and wrote `fleet.json` before looking at it, so a second checkout's
+  `fleet up` moved the fleet onto its own cgroup root.
+- **A spec can go stale against its own design.** The design's measured
+  D9 re-derivation found the route-less namespace is the egress boundary
+  and the seccomp filter unnecessary without a route. The spec kept
+  requiring the filter, so the shipped implementation failed its own
+  specification while every test passed. It is now rewritten around the
+  invariant, with the filter conditional on a topology that has a route.
