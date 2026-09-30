@@ -110,6 +110,7 @@ CompiledPolicy {
         },
     ],
     network_ports: [],
+    allocations: [],
     network_proxy_port: None,
     unix_socket_bind: [],
     signal_mode: "isolated",

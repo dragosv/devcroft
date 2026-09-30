@@ -20,6 +20,12 @@
 //! A golden pinning the whole artifact is supposed to break when the
 //! baseline changes. What it must never do is break silently, or by more
 //! than the change explains.
+//!
+//! **And once more for a shape change** (`add-port-allocation`): the
+//! compiled policy gained `allocations`, which is empty for any manifest
+//! declaring no service ports, this one included. One line in each golden,
+//! and no rule moved. That commit left both goldens behind, so this test
+//! failed on every platform until it was noticed.
 
 use devcroft::policy::compile;
 
