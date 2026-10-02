@@ -185,7 +185,7 @@ the implementation before it resolves.
       `io.weight` is D6's named degraded capability. On a host with swap
       on, a missing `memory.swap.max` is a refusal: the next task shows
       `memory.max` alone does not cap anything there.
-- [ ] **The child starts inside its leaf: `clone3(CLONE_INTO_CGROUP)` in
+- [x] **The child starts inside its leaf: `clone3(CLONE_INTO_CGROUP)` in
       D2's clone, together with `CLONE_NEWCGROUP`.** Otherwise there is a
       window where the child runs uncapped in the parent's cgroup. The
       reference closes it by having the child write its pid to an inherited
@@ -198,7 +198,13 @@ the implementation before it resolves.
       includes clone3 (5.7).
       **The fallback is built** (`Leaf::attach_on_spawn`, a `pre_exec`
       write); the `clone3` route lands with D2's init helper.
-- [ ] **Every cgroup fd the supervisor opens is `O_CLOEXEC`**, including
+      **Landed with it** (`fleet::init::spawn`: `CLONE_INTO_CGROUP` with the
+      leaf's `O_CLOEXEC` fd, and `CLONE_NEWCGROUP`, in one `clone3`).
+      `an_agent_is_alone_in_its_namespaces_and_holds_nothing` reads
+      `0::/` from inside the agent: its cgroup namespace is rooted at its
+      leaf. The fallback stays for the host-side helpers, which are not
+      cloned by the helper.
+- [x] **Every cgroup fd the supervisor opens is `O_CLOEXEC`**, including
       the leaf fd handed to `clone3`. Agents run as the uid that owns
       every delegated file, so nothing but reachability protects a
       sibling's limits. Measured: an agent in its own cgroupns, with `/sys`
@@ -209,6 +215,13 @@ the implementation before it resolves.
       **Done for `src/fleet/cgroup.rs`**: `Leaf::open_dir` is `O_CLOEXEC`,
       asserted by test, and `attach_on_spawn`'s fd is std's (also
       close-on-exec). The agent-side test waits for the init helper.
+      **Both agent-side halves are tested now.** No cgroupfs fd reaches the
+      agent (`an_agent_is_alone_in_its_namespaces_and_holds_nothing`), and
+      a sibling's interface files are unreachable by path
+      (`an_agent_cannot_reach_a_siblings_limits_by_path`): on the host root,
+      the weaker mount strategy, writing, reading and listing the sibling's
+      leaf all fail and its `memory.max` is unchanged. A mutant granting
+      the agent `/sys/fs/cgroup` for reading fails it.
 - [x] **Leave `memory.high` unset when swap is off.** With
       `memory.swap.max=0`, a program over `memory.high` stalls instead of
       being killed, which looks like a hang rather than a limit. Set
@@ -526,10 +539,14 @@ the implementation before it resolves.
       EEXIST; it is now unique per call.
 - [ ] The systemd user unit (`Delegate=yes`) and finding the delegated
       root from `/proc/self/cgroup` (section 1), on a VM with systemd.
-- [ ] Per-agent workspaces are group 4's clones; today `AgentLaunch`
+- [x] Per-agent workspaces are group 4's clones; today `AgentLaunch`
       takes any directory. Port mappings (group 5) and `attention`
       (`add-agent-interaction`) have their fields and nothing that sets
       them.
+      **Stale, closed 2026-09-30:** `fleet up` gives every agent its own
+      clone (group 4's minimal form) and port mappings are set and released
+      (5.3, 5.4). `attention` still has nothing that sets it, which is
+      `add-agent-interaction`'s to do, not this change's.
 
 ## 2d. Adversarial review (2026-09-28)
 

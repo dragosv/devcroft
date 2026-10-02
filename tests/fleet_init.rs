@@ -637,3 +637,46 @@ fn the_keeper_runs_as_the_agents_command_and_serves_sessions() {
     assert!(UnixStream::connect(&control_path).is_err());
     drop(log_r);
 }
+
+/// Section 1's other half of "every cgroup fd is `O_CLOEXEC`", from the
+/// agent side: a leaked fd is not the only way to a sibling's limits.
+/// Agents run as the uid that owns every delegated file, so the sibling's
+/// `memory.max` is writable by permission bits alone, and **only
+/// reachability protects it**. Measured before this test existed: an agent
+/// holding a leaked leaf fd set a sibling's `memory.max` to 1M through
+/// `openat(fd, "../b/memory.max")`. Here the agent has no fd, and tries the
+/// host path instead, on the host's root (the weaker mount strategy: with a
+/// view, `/sys` is not there at all).
+#[test]
+fn an_agent_cannot_reach_a_siblings_limits_by_path() {
+    let Some(root) = capable_host() else { return };
+    let node = Scratch::new(&root, "sibling");
+    let leaf = node.leaf("a");
+    let sibling = node.leaf("b");
+    let limit = sibling.path().join("memory.max");
+    let before = std::fs::read_to_string(&limit).expect("memory controller enabled in the leaf");
+    let dirs = Dirs::new("sibling");
+    let (code, out) = run(
+        &leaf,
+        &spec(
+            &dirs,
+            &format!(
+                "echo 1048576 > {limit} 2>/dev/null; echo write=$?; \
+                 cat {limit} >/dev/null 2>&1; echo read=$?; \
+                 ls {dir} >/dev/null 2>&1; echo list=$?",
+                limit = limit.display(),
+                dir = sibling.path().display(),
+            ),
+        ),
+    );
+    assert_eq!(code, 0, "{out}");
+    for probe in ["write", "read", "list"] {
+        assert!(
+            out.lines()
+                .any(|l| l.starts_with(&format!("{probe}=")) && l != format!("{probe}=0")),
+            "the agent could {probe} its sibling's cgroup: {out}"
+        );
+    }
+    assert_eq!(std::fs::read_to_string(&limit).unwrap(), before);
+    assert_eq!(leaf.kill().unwrap(), Teardown::Removed);
+}
