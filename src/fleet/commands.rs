@@ -104,6 +104,8 @@ pub struct UpRequest<'a> {
     pub state_dir: &'a Path,
     /// Every agent's cgroup limits.
     pub limits: Limits,
+    /// Every agent's wall-clock limit, from its start; `None` for none.
+    pub timeout: Option<std::time::Duration>,
 }
 
 /// What `up` did: the agents it started, and the limits it was asked for
@@ -311,6 +313,11 @@ pub fn up(provider: &dyn ProviderEntry, req: &UpRequest) -> Result<UpOutcome, Fl
                 req.limits.clone(),
                 req.view,
             )
+            // `prepare` resolves what the manifest says; the deadline is the run's.
+            .map(|mut launch| {
+                launch.timeout = req.timeout;
+                launch
+            })
             .map_err(|e| {
                 let msg = e.to_string();
                 refused = Some(e);
@@ -408,6 +415,7 @@ pub fn preflight(cgroup_root: &Path, exe: &Path) -> Result<(), FleetError> {
             project_root: std::env::temp_dir(),
             relay_port: None,
             view: None,
+            timeout_secs: None,
         };
         let devnull: std::os::fd::OwnedFd = std::fs::File::create("/dev/null")
             .map_err(|e| e.to_string())?
@@ -417,6 +425,7 @@ pub fn preflight(cgroup_root: &Path, exe: &Path) -> Result<(), FleetError> {
             stderr: None,
             inherit: Vec::new(),
             lifeline: None,
+            report: None,
         };
         let outcome = init::spawn(exe, &leaf, &spec, stdio)
             .map_err(|e| remedy(&e.to_string()))

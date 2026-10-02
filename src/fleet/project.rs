@@ -172,6 +172,8 @@ pub fn prepare(
             .filter(|(_, s)| s.expose)
             .filter_map(|(name, s)| Some((name.clone(), s.port?)))
             .collect(),
+        // A property of the run, not of the manifest: `fleet up --timeout`.
+        timeout: None,
     })
 }
 

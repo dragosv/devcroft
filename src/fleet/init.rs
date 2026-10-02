@@ -132,6 +132,23 @@ pub struct AgentSpec {
     /// refuses everything the plan does not grant, but it stays visible.
     #[serde(default)]
     pub view: Option<View>,
+    /// A wall-clock limit, in seconds, enforced by PID 1 (the only process
+    /// that lives exactly as long as the agent, since fleet has no daemon):
+    /// SIGTERM to the command when it passes, and after
+    /// `lifecycle::GRACE_PERIOD` PID 1 exits, which kills everything left.
+    #[serde(default)]
+    pub timeout_secs: Option<u64>,
+}
+
+/// How an agent's PID 1 ended, written to [`Stdio::report`] as one JSON
+/// object. Absent when PID 1 was killed (a `stop`, an OOM kill of the
+/// whole leaf): it reports only an end it saw.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ExitReport {
+    /// The command's exit code, or 128 + the signal that killed it.
+    pub code: i32,
+    /// Whether [`AgentSpec::timeout_secs`] ran out first.
+    pub timed_out: bool,
 }
 
 /// A minimal root for one agent, built from [`AgentSpec::plan`].
@@ -168,6 +185,11 @@ pub struct Stdio {
     /// as long as it lives, and never by the command: PID 1's exit is the
     /// agent's, so its host-side helpers see EOF exactly then.
     pub lifeline: Option<OwnedFd>,
+    /// Where PID 1 writes its [`ExitReport`], held by it alone. A file the
+    /// supervisor opened in the agent's state directory, which the command
+    /// can neither reach (baseline-denied) nor inherit, so the report
+    /// cannot be forged by what it reports on.
+    pub report: Option<OwnedFd>,
 }
 
 /// What crosses the configuration pipe: the spec plus how many fds were
@@ -178,6 +200,8 @@ struct ConfigOut<'a> {
     inherited: usize,
     /// Whether a lifeline follows the inherited fds.
     lifeline: bool,
+    /// Whether a report fd follows that.
+    report: bool,
 }
 
 #[derive(Deserialize)]
@@ -185,6 +209,7 @@ struct ConfigIn {
     spec: AgentSpec,
     inherited: usize,
     lifeline: bool,
+    report: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -203,6 +228,7 @@ pub fn spawn(exe: &Path, leaf: &Leaf, spec: &AgentSpec, stdio: Stdio) -> io::Res
         spec,
         inherited: stdio.inherit.len(),
         lifeline: stdio.lifeline.is_some(),
+        report: stdio.report.is_some(),
     })
     .map_err(io::Error::other)?;
     let (config_r, mut config_w) = pipe()?;
@@ -226,8 +252,10 @@ pub fn spawn(exe: &Path, leaf: &Leaf, spec: &AgentSpec, stdio: Stdio) -> io::Res
     for (n, fd) in stdio.inherit.iter().enumerate() {
         plan.push((high(fd)?, FIRST_INHERITED_FD + n as RawFd));
     }
-    if let Some(fd) = &stdio.lifeline {
-        plan.push((high(fd)?, FIRST_INHERITED_FD + stdio.inherit.len() as RawFd));
+    // PID 1's own fds, right after the inherited range, in this order.
+    let first_kept = FIRST_INHERITED_FD + stdio.inherit.len() as RawFd;
+    for (target, fd) in (first_kept..).zip([&stdio.lifeline, &stdio.report].into_iter().flatten()) {
+        plan.push((high(fd)?, target));
     }
     drop((config_r, status_w, devnull, stdio));
     let dups: Vec<(RawFd, RawFd)> = plan.iter().map(|(fd, t)| (fd.as_raw_fd(), *t)).collect();
@@ -433,10 +461,20 @@ pub fn helper_main() -> i32 {
     let mut status = unsafe { std::fs::File::from_raw_fd(STATUS_FD) };
     let signals = forwarded_signals();
     match setup(&signals) {
-        Ok(main) => {
+        Ok(started) => {
             let _ = writeln!(status, "{}", serde_json::json!({ "ok": true }));
             drop(status);
-            supervise(main, &signals)
+            let timeout = started.timeout_secs.map(std::time::Duration::from_secs);
+            let (code, timed_out) = supervise(started.main, &signals, timeout);
+            if let Some(mut report) = started.report {
+                let _ = writeln!(
+                    report,
+                    "{}",
+                    serde_json::to_string(&ExitReport { code, timed_out })
+                        .expect("ExitReport serializes")
+                );
+            }
+            code
         }
         Err(e) => {
             let _ = writeln!(status, "{}", serde_json::json!({ "error": e.to_string() }));
@@ -445,7 +483,14 @@ pub fn helper_main() -> i32 {
     }
 }
 
-fn setup(signals: &libc::sigset_t) -> io::Result<libc::pid_t> {
+/// What `setup` hands `supervise`: the command, and PID 1's own business.
+struct Started {
+    main: libc::pid_t,
+    report: Option<std::fs::File>,
+    timeout_secs: Option<u64>,
+}
+
+fn setup(signals: &libc::sigset_t) -> io::Result<Started> {
     // Off the supervisor's terminal, as `up` detaches its keeper. A clone
     // child is never a group leader, so this cannot fail with EPERM.
     // SAFETY: no arguments; affects only this process.
@@ -460,6 +505,7 @@ fn setup(signals: &libc::sigset_t) -> io::Result<libc::pid_t> {
         spec,
         inherited,
         lifeline,
+        report,
     } = serde_json::from_slice(&raw)
         .map_err(|e| step("parse configuration", io::Error::other(e)))?;
     // Every fd above the ones this agent was given is something the
@@ -471,17 +517,21 @@ fn setup(signals: &libc::sigset_t) -> io::Result<libc::pid_t> {
     // its whole life, and the command must never get it: a command that
     // forked something outside the agent (it cannot, but a daemonizing
     // child of one would be the way) would keep the helpers alive.
+    // The report fd follows it, kept and hidden the same way.
     let lifeline_fd = FIRST_INHERITED_FD + inherited as RawFd;
-    if lifeline {
-        // SAFETY: setting a flag on an fd `spawn` placed.
-        unsafe { libc::fcntl(lifeline_fd, libc::F_SETFD, libc::FD_CLOEXEC) };
+    let report_fd = lifeline_fd + lifeline as RawFd;
+    for (wanted, fd) in [(lifeline, lifeline_fd), (report, report_fd)] {
+        if wanted {
+            // SAFETY: setting a flag on an fd `spawn` placed.
+            unsafe { libc::fcntl(fd, libc::F_SETFD, libc::FD_CLOEXEC) };
+        }
     }
     // SAFETY: closes only descriptors this process does not use; 0-4, the
-    // inherited range and the lifeline are kept.
+    // inherited range, the lifeline and the report fd are kept.
     if unsafe {
         libc::syscall(
             libc::SYS_close_range,
-            FIRST_INHERITED_FD as u32 + inherited as u32 + lifeline as u32,
+            report_fd as u32 + report as u32,
             u32::MAX,
             0u32,
         )
@@ -529,7 +579,7 @@ fn setup(signals: &libc::sigset_t) -> io::Result<libc::pid_t> {
     // Bound now, while nothing is restricted, at the fd after the inherited
     // ones and the lifeline (every fd above those was just closed, so it is
     // free).
-    let relay_fd = lifeline_fd + lifeline as RawFd;
+    let relay_fd = report_fd + report as RawFd;
     let mut env = spec.env.clone();
     if let Some(port) = spec.relay_port {
         let listener = std::net::TcpListener::bind(("127.0.0.1", port))
@@ -610,7 +660,12 @@ fn setup(signals: &libc::sigset_t) -> io::Result<libc::pid_t> {
         // SAFETY: as above; the relay is the command's now.
         unsafe { libc::close(relay_fd) };
     }
-    Ok(child.id() as libc::pid_t)
+    Ok(Started {
+        main: child.id() as libc::pid_t,
+        // SAFETY: `spawn` placed this fd for PID 1 alone.
+        report: report.then(|| unsafe { std::fs::File::from_raw_fd(report_fd) }),
+        timeout_secs: spec.timeout_secs,
+    })
 }
 
 fn mount_fresh_proc() -> io::Result<()> {
@@ -653,12 +708,51 @@ fn forwarded_signals() -> libc::sigset_t {
 }
 
 /// Reap everything, forward termination signals to `main`, and return its
-/// exit code once it exits (128 + the signal, if one killed it).
-fn supervise(main: libc::pid_t, signals: &libc::sigset_t) -> i32 {
+/// exit code once it exits (128 + the signal, if one killed it), with
+/// whether `timeout` ran out first.
+///
+/// At the deadline `main` gets SIGTERM, as from a `stop`, so the keeper
+/// drains its sessions. If it is still there `GRACE_PERIOD` later, PID 1
+/// returns anyway: its exit kills every process in the namespace, which is
+/// the SIGKILL, and the report says 128 + 9.
+fn supervise(
+    main: libc::pid_t,
+    signals: &libc::sigset_t,
+    timeout: Option<std::time::Duration>,
+) -> (i32, bool) {
+    let began = std::time::Instant::now();
+    let mut timed_out = false;
     loop {
-        // SAFETY: a valid set; the info pointer may be null.
-        let sig = unsafe { libc::sigwaitinfo(signals, std::ptr::null_mut()) };
+        let wait = timeout.map(|t| {
+            let until = if timed_out {
+                t + crate::lifecycle::GRACE_PERIOD
+            } else {
+                t
+            };
+            until.saturating_sub(began.elapsed())
+        });
+        let sig = match wait {
+            // SAFETY: a valid set; the info pointer may be null.
+            None => unsafe { libc::sigwaitinfo(signals, std::ptr::null_mut()) },
+            Some(left) => {
+                let ts = libc::timespec {
+                    tv_sec: left.as_secs() as libc::time_t,
+                    tv_nsec: left.subsec_nanos() as libc::c_long,
+                };
+                // SAFETY: a valid set and timespec; the info pointer may be
+                // null.
+                unsafe { libc::sigtimedwait(signals, std::ptr::null_mut(), &ts) }
+            }
+        };
         if sig < 0 {
+            if io::Error::last_os_error().raw_os_error() == Some(libc::EAGAIN) {
+                if timed_out {
+                    return (128 + libc::SIGKILL, true);
+                }
+                timed_out = true;
+                // SAFETY: signalling our own child.
+                unsafe { libc::kill(main, libc::SIGTERM) };
+            }
             continue;
         }
         if sig != libc::SIGCHLD {
@@ -675,9 +769,10 @@ fn supervise(main: libc::pid_t, signals: &libc::sigset_t) -> i32 {
             }
             if pid == main {
                 let status = ExitStatus::from_raw(status);
-                return status
+                let code = status
                     .code()
                     .unwrap_or_else(|| 128 + status.signal().unwrap_or(0));
+                return (code, timed_out);
             }
         }
     }

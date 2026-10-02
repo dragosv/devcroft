@@ -137,6 +137,7 @@ fn spec(dirs: &Dirs, script: &str) -> AgentSpec {
         project_root: dirs.0.clone(),
         relay_port: None,
         view: None,
+        timeout_secs: None,
     }
 }
 
@@ -148,6 +149,7 @@ fn start(leaf: &Leaf, spec: &AgentSpec) -> (Agent, std::io::PipeReader) {
         stderr: None,
         inherit: Vec::new(),
         lifeline: None,
+        report: None,
     };
     let agent = init::spawn(Path::new(env!("CARGO_BIN_EXE_devcroft")), leaf, spec, stdio).unwrap();
     (agent, r)
@@ -551,6 +553,7 @@ fn the_keeper_runs_as_the_agents_command_and_serves_sessions() {
             root: dirs.1.clone(),
             proxy_socket: None,
         }),
+        timeout_secs: None,
     };
     let (log_r, log_w) = std::io::pipe().unwrap();
     let stdio = Stdio {
@@ -558,6 +561,7 @@ fn the_keeper_runs_as_the_agents_command_and_serves_sessions() {
         stderr: Some(log_w.into()),
         inherit: vec![control.into(), ssh.into()],
         lifeline: None,
+        report: None,
     };
     let agent = init::spawn(exe, &leaf, &spec, stdio).unwrap();
 
@@ -679,4 +683,84 @@ fn an_agent_cannot_reach_a_siblings_limits_by_path() {
     }
     assert_eq!(std::fs::read_to_string(&limit).unwrap(), before);
     assert_eq!(leaf.kill().unwrap(), Teardown::Removed);
+}
+
+/// Run `spec` with a report file, returning the helper's exit code, how long
+/// it took, and the report PID 1 wrote (if it wrote one).
+fn run_reported(
+    leaf: &Leaf,
+    spec: &AgentSpec,
+    report: &Path,
+) -> (i32, Duration, Option<init::ExitReport>) {
+    let began = Instant::now();
+    let stdio = Stdio {
+        stdout: None,
+        stderr: None,
+        inherit: Vec::new(),
+        lifeline: None,
+        report: Some(std::fs::File::create(report).unwrap().into()),
+    };
+    let agent = init::spawn(Path::new(env!("CARGO_BIN_EXE_devcroft")), leaf, spec, stdio).unwrap();
+    let code = agent.wait().unwrap().code().unwrap();
+    let took = began.elapsed();
+    let written = std::fs::read(report).unwrap();
+    (code, took, serde_json::from_slice(&written).ok())
+}
+
+/// A wall-clock limit, enforced by PID 1 because nothing else lives exactly
+/// as long as the agent: fleet has no daemon to hold a timer. At the
+/// deadline the command gets SIGTERM; one that ignores it is ended
+/// `GRACE_PERIOD` later by PID 1's own exit, which kills the namespace.
+/// Either way PID 1's report says so, from a file only PID 1 holds.
+#[test]
+fn a_deadline_ends_the_agent_and_pid_1_reports_it() {
+    let Some(root) = capable_host() else { return };
+    let node = Scratch::new(&root, "deadline");
+    let dirs = Dirs::new("deadline");
+    let report = dirs.0.parent().unwrap().join("exit.json");
+
+    // A command that honours SIGTERM ends at the deadline.
+    let mut s = spec(&dirs, "sleep 30");
+    s.timeout_secs = Some(1);
+    let (code, took, ended) = run_reported(&node.leaf("term"), &s, &report);
+    assert_eq!(code, 128 + libc::SIGTERM);
+    assert!(took < Duration::from_secs(4), "took {took:?}");
+    assert_eq!(
+        ended,
+        Some(init::ExitReport {
+            code: 128 + libc::SIGTERM,
+            timed_out: true
+        })
+    );
+
+    // One that ignores it is ended after the grace period, by PID 1's exit.
+    let mut s = spec(&dirs, "trap '' TERM; sleep 30; echo outlived");
+    s.timeout_secs = Some(1);
+    let (code, took, ended) = run_reported(&node.leaf("kill"), &s, &report);
+    let grace = devcroft::lifecycle::GRACE_PERIOD;
+    assert!(
+        took >= grace && took < grace + Duration::from_secs(4),
+        "took {took:?}"
+    );
+    assert_eq!(code, 128 + libc::SIGKILL);
+    assert_eq!(ended.map(|e| e.timed_out), Some(true));
+
+    // Without a deadline the report is the command's own exit, and the
+    // command holds no descriptor for the report it cannot be allowed to
+    // write.
+    let s = spec(
+        &dirs,
+        // 3 only if no fd of the command's names the report.
+        "n=$(for f in /proc/$$/fd/*; do readlink $f || :; done | grep -c exit.json); \
+         exit $((3 + n))",
+    );
+    let (code, _, ended) = run_reported(&node.leaf("none"), &s, &report);
+    assert_eq!(code, 3);
+    assert_eq!(
+        ended,
+        Some(init::ExitReport {
+            code: 3,
+            timed_out: false
+        })
+    );
 }

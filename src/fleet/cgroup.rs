@@ -236,6 +236,21 @@ impl FleetNode {
         dir.is_dir().then_some(Leaf { dir })
     }
 
+    /// The names of the leaves under this node, whatever made them.
+    pub fn leaf_names(&self) -> io::Result<Vec<String>> {
+        let mut names = Vec::new();
+        for entry in fs::read_dir(&self.dir).map_err(|e| ctx(e, "list leaves", &self.dir))? {
+            let entry = entry?;
+            if entry.file_type()?.is_dir()
+                && let Some(name) = entry.file_name().to_str()
+                && validate_name(name).is_ok()
+            {
+                names.push(name.to_owned());
+            }
+        }
+        Ok(names)
+    }
+
     /// Remove the node. Fails while any leaf remains.
     pub fn remove(self) -> io::Result<()> {
         fs::remove_dir(&self.dir).map_err(|e| ctx(e, "remove fleet node", &self.dir))

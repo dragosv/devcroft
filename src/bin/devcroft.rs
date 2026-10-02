@@ -2717,8 +2717,8 @@ fn cli_fleet(args: &[String]) -> i32 {
 #[cfg(target_os = "linux")]
 fn cli_fleet_linux(args: &[String]) -> i32 {
     const USAGE: &str = "devcroft fleet: usage: devcroft fleet up --agents N \
-                         [--cgroup-root P] [--host-root] | ls | inspect <id> | stop <id> \
-                         | rm <id>|--all [--yes]";
+                         [--cgroup-root P] [--host-root] [--timeout 30m] | ls | inspect <id> \
+                         | stop <id> | rm <id>|--all [--yes]";
     let fail = |e: devcroft::fleet::commands::FleetError| {
         eprintln!("devcroft fleet: {e}");
         e.exit_code()
@@ -2766,6 +2766,7 @@ fn cli_fleet_linux(args: &[String]) -> i32 {
                 std::env::var_os("DEVCROFT_FLEET_CGROUP_ROOT").map(std::path::PathBuf::from);
             let mut view = true;
             let mut limits = devcroft::fleet::cgroup::Limits::default();
+            let mut timeout = None;
             let mut rest = args[1..].iter();
             while let Some(a) = rest.next() {
                 let parsed = match a.as_str() {
@@ -2789,6 +2790,7 @@ fn cli_fleet_linux(args: &[String]) -> i32 {
                     "--io-weight" => {
                         fleet_weight(rest.next(), a).map(|v| limits.io_weight = Some(v))
                     }
+                    "--timeout" => fleet_duration(rest.next(), a).map(|v| timeout = Some(v)),
                     _ => Err(String::new()),
                 };
                 if let Err(msg) = parsed {
@@ -2837,6 +2839,7 @@ fn cli_fleet_linux(args: &[String]) -> i32 {
                 authorized_key_pem: &authorized,
                 state_dir: &state_dir,
                 limits,
+                timeout,
             };
             match devcroft::fleet::commands::up(&provider, &req) {
                 Ok(started) => {
@@ -2984,6 +2987,18 @@ fn cli_fleet_linux(args: &[String]) -> i32 {
                             println!("services\t{e}");
                         }
                     }
+                    if let Some(t) = r.timeout_secs {
+                        println!("timeout\t{t}s from start");
+                    }
+                    // Only PID 1's own report says how it ended; a `stop`
+                    // or a whole-leaf kill leaves none.
+                    match r.exit {
+                        Some(e) if e.timed_out => {
+                            println!("ended\ttimed out (exit {})", e.code)
+                        }
+                        Some(e) => println!("ended\texit {}", e.code),
+                        None => {}
+                    }
                     if let Some(e) = r.evidence {
                         println!(
                             "died\t{} OOM kill(s), {} whole-agent OOM kill(s), {} fork(s) refused",
@@ -3041,6 +3056,26 @@ fn cli_fleet_linux(args: &[String]) -> i32 {
             2
         }
     }
+}
+
+/// `--timeout 30m`: a whole number with a unit, `s`, `m` or `h`. The unit
+/// is required: a bare number's unit is a guess.
+#[cfg(target_os = "linux")]
+fn fleet_duration(value: Option<&String>, flag: &str) -> Result<std::time::Duration, String> {
+    let v = value.ok_or_else(|| format!("{flag} needs a value"))?;
+    let bad = || format!("{flag} {v}: expected a whole number with s, m or h, such as 90s or 2h");
+    let (n, unit) = v.split_at(v.len().saturating_sub(1));
+    let n: u64 = n.parse().map_err(|_| bad())?;
+    let secs = match unit {
+        "s" => n,
+        "m" => n.checked_mul(60).ok_or_else(bad)?,
+        "h" => n.checked_mul(3600).ok_or_else(bad)?,
+        _ => return Err(bad()),
+    };
+    if secs == 0 {
+        return Err(format!("{flag} must be more than zero"));
+    }
+    Ok(std::time::Duration::from_secs(secs))
 }
 
 /// `--memory 4G`: a size, in nono's syntax (`K`/`M`/`G` suffixes).

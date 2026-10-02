@@ -58,7 +58,16 @@ test-support = []
 [dependencies]
 base64 = "0.22.1"
 libc = "0.2.189"
-nono = "0.77.0"
+# Exact, not caret (`add-linux-agent-fleet` D10): nono is pre-1.0 and its
+# minor versions break, and it is the crate that turns the policy into
+# Landlock and Seatbelt rules. A caret lets `cargo update` change what is
+# enforced with no source change at all. An upgrade is scheduled work: bump
+# this, then run the full suite inside a delegated cgroup with the store
+# reachable (CLAUDE.md), so the boundary tests (`process_tier_landlock_boundaries`,
+# `udp_egress_denied`, `abstract_socket_not_reachable`, `unix_socket_not_mediated`,
+# `fleet_init`) run rather than skip. They assert what is refused, not that
+# the types still line up.
+nono = "=0.77.0"
 rand = "0.10.2"
 russh = "0.62.5"
 russh-sftp = "2.4.0"

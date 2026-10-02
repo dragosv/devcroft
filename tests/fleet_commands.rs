@@ -203,6 +203,7 @@ impl Setup {
                 authorized_key_pem: &authorized,
                 state_dir: &self.state(),
                 limits,
+                timeout: None,
             },
         )
     }
@@ -470,6 +471,7 @@ fn a_real_devbox_agent_builds_its_project_in_its_clone() {
             authorized_key_pem: &authorized,
             state_dir: &state,
             limits: devcroft::fleet::cgroup::Limits::default(),
+            timeout: None,
         },
     )
     .unwrap()
@@ -950,6 +952,7 @@ fn a_second_checkout_with_the_same_name_cannot_take_over_the_fleet() {
             authorized_key_pem: &client.public_key().to_openssh().unwrap(),
             state_dir: &owner.state(),
             limits: devcroft::fleet::cgroup::Limits::default(),
+            timeout: None,
         },
     )
     .unwrap_err();
@@ -1011,6 +1014,7 @@ fn an_agent_is_reachable_as_id_dot_name_dot_devcroft_over_real_ssh() {
             authorized_key_pem: &client.public_key().to_openssh().unwrap(),
             state_dir: &state,
             limits: devcroft::fleet::cgroup::Limits::default(),
+            timeout: None,
         },
     )
     .unwrap();
@@ -1059,4 +1063,22 @@ fn an_agent_is_reachable_as_id_dot_name_dot_devcroft_over_real_ssh() {
         String::from_utf8_lossy(&out.stderr)
     );
     commands::rm_all(&fleet).unwrap();
+}
+
+/// `--timeout` takes a whole number with a unit; anything else is a usage
+/// error naming the flag, before anything is cloned or started.
+#[test]
+fn a_timeout_without_a_unit_is_refused_by_the_cli() {
+    let s = Setup::new("tflag", None, "", true);
+    for bad in ["30", "5x", "0s", "m"] {
+        let out = Command::new(exe())
+            .current_dir(s.project())
+            .args(["fleet", "up", "--agents", "1", "--timeout", bad])
+            .output()
+            .unwrap();
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert_eq!(out.status.code(), Some(2), "{bad}: {stderr}");
+        assert!(stderr.contains("--timeout"), "{bad}: {stderr}");
+    }
+    assert!(!s.clones().exists());
 }

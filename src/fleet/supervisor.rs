@@ -72,6 +72,8 @@ pub struct AgentLaunch {
     /// Services to reach from the host: each is mapped from an allocated
     /// host port to its declared port inside the agent (`service-ports`).
     pub expose: Vec<(String, u16)>,
+    /// A wall-clock limit, enforced by the agent's PID 1 (`AgentSpec::timeout_secs`).
+    pub timeout: Option<std::time::Duration>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -129,6 +131,14 @@ pub struct AgentRecord {
     /// declared" and "released" stay distinguishable.
     #[serde(default)]
     pub exposes: Vec<String>,
+    /// Its wall-clock limit, in seconds.
+    #[serde(default)]
+    pub timeout_secs: Option<u64>,
+    /// How it ended, when its PID 1 saw the end: its command's exit, or its
+    /// deadline. Read at retirement from the report only PID 1 could write;
+    /// absent for a `stop` or a kill of the whole leaf.
+    #[serde(default)]
+    pub exit: Option<init::ExitReport>,
 }
 
 /// A record plus what is true of it right now.
@@ -395,6 +405,7 @@ impl Supervisor {
             project_root: launch.workspace.clone(),
             relay_port: relay,
             view,
+            timeout_secs: launch.timeout.map(|t| t.as_secs().max(1)),
         };
         let log = std::fs::OpenOptions::new()
             .create(true)
@@ -411,6 +422,9 @@ impl Supervisor {
             // PID 1 has it, this process must hold no writer, or a helper
             // would outlive the agent for as long as this supervisor runs.
             lifeline: lifeline.map(|line| line.write),
+            // In the agent's state directory, which the baseline denies to
+            // every sandbox, and handed to PID 1 alone.
+            report: Some(std::fs::File::create(dir.join("exit.json"))?.into()),
         };
 
         let leaf = self.node.create_leaf(id, &launch.limits)?;
@@ -436,6 +450,8 @@ impl Supervisor {
                 limits: launch.limits.clone(),
                 services: launch.services.clone(),
                 exposes: launch.expose.iter().map(|(s, _)| s.clone()).collect(),
+                timeout_secs: launch.timeout.map(|t| t.as_secs().max(1)),
+                exit: None,
             },
         )
     }
@@ -527,6 +543,11 @@ impl Supervisor {
         if let Some(proxy) = self.node.existing_leaf(&host_leaf_name(&record.id)) {
             proxy.kill()?;
         }
+        // Written by PID 1 as it ended, so present only when it saw the end;
+        // empty (created at start, never written) when it was killed.
+        record.exit = std::fs::read(self.agent_dir(&record.id).join("exit.json"))
+            .ok()
+            .and_then(|bytes| serde_json::from_slice(&bytes).ok());
         record.state = AgentState::Stopped;
         self.release(&record)
     }
@@ -570,6 +591,25 @@ impl Supervisor {
                     }
                 }
                 Some(_) => {}
+            }
+        }
+
+        // Leaves no running agent owns. The loop above reaches only leaves
+        // that have an agent directory; a supervisor that crashed after
+        // creating a leaf and before (or while) removing the directory left
+        // one with none, and a stop whose `cgroup.kill` did not drain
+        // (`Teardown::LeftBehind`) left one behind a Stopped record. Nothing
+        // but this supervisor creates leaves under its node, and every
+        // command holds the fleet's lock, so a leaf without a Running owner
+        // is never one being started.
+        for name in self.node.leaf_names()? {
+            let owner = name.strip_suffix("-host").unwrap_or(&name);
+            let running = read_record(&self.agent_dir(owner))
+                .ok()
+                .flatten()
+                .is_some_and(|r| r.state == AgentState::Running);
+            if !running && let Some(leaf) = self.node.existing_leaf(&name) {
+                let _ = leaf.kill();
             }
         }
         Ok(())

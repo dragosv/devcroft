@@ -30,7 +30,12 @@ the implementation before it resolves.
       handshake, build a mount plan, become PID 1 and reap, and receive an
       inherited listener. The library removing one reason for re-exec does not
       remove the other five.
-- [ ] Pin the crate to an exact version and record the upgrade policy (D10).
+- [x] Pin the crate to an exact version and record the upgrade policy (D10).
+      `nono = "=0.77.0"` (2026-10-02; `Cargo.lock` unchanged). The policy is
+      beside it in `Cargo.toml`: an upgrade is a bump plus the full suite in
+      a delegated cgroup with the store reachable, so the boundary tests
+      run rather than skip. A caret let `cargo update` change what is
+      enforced with no source change.
 - [ ] Confirm the snapshot layer is the content-addressable `undo` module rather
       than an overlay, and measure agent startup cost at N agents on a
       representative worktree (Open Question 3).
@@ -246,7 +251,7 @@ the implementation before it resolves.
       manifest section so the config schema is untouched; a section can
       come later if limits should be committed with the project. A mutant
       that drops the limits fails.
-- [ ] **Wall-clock timeout, which needs no cgroups and is missing entirely.**
+- [x] **Wall-clock timeout, which needs no cgroups and is missing entirely.**
       devcroft has no execution limit of any kind today — a runaway agent
       runs until someone notices. A timer plus the escalating
       SIGTERM/SIGKILL `state::terminate_and_wait` already implements is
@@ -256,12 +261,25 @@ the implementation before it resolves.
       agent, and `timeout 30 devcroft exec …` only helps a human who is
       watching. Noted from `sandlock`, which exposes it as `-t/--timeout`
       (`docs/prior-art.md`).
+      **Built for fleet agents** (`fleet up --timeout 30m`). Fleet has no
+      daemon, so the only process that lives exactly as long as an agent,
+      its PID 1, holds the timer: SIGTERM to the command at the deadline,
+      and PID 1's own exit after `GRACE_PERIOD`, which kills the namespace.
+      PID 1 writes how the agent ended to an fd only it holds, opened on
+      `exit.json` in the baseline-denied state dir, so `fleet inspect`'s
+      "timed out" cannot be forged by the agent. A `stop` leaves no report.
+      `a_deadline_ends_the_agent_and_pid_1_reports_it` (SIGTERM honoured,
+      SIGTERM ignored, no deadline and no fd in the command) and
+      `an_agent_past_its_deadline_ends_and_is_recorded_as_timed_out`;
+      mutants ignoring the deadline or leaking the report fd fail.
+      **Not built for `up`/`exec`**, whose keeper has no PID 1 of its own;
+      that is a separate change if wanted.
 - [x] Implement teardown via `cgroup.kill` (Linux 5.14+), then poll
       `cgroup.procs` until the kernel has reaped — the reference polls 50
       times at 10ms. Measured: 20 orphaned, SIGTERM-ignoring daemons were
       reaped before the first 1 ms poll, so that budget is generous. Leave the directory behind with a warning rather than
       blocking forever if it does not drain.
-- [ ] **Sweep stale leaves from crashed supervisors** before creating a
+- [x] **Sweep stale leaves from crashed supervisors** before creating a
       new one, confirming the owning pid is gone via `/proc/<pid>` first.
       devcroft already applies exactly this reasoning to pidfiles
       (`state::is_same_process`), so it is the same rule in a second
@@ -273,6 +291,12 @@ the implementation before it resolves.
       empty is retired and its leaf removed; a directory with no record (a
       start interrupted by a crash) is removed with its leaf. Unticked
       until leaves with no directory at all are swept too.
+      **Swept (2026-10-02):** reconcile now kills every leaf whose owner's
+      record is not Running, `-host` leaves included, which covers a leaf
+      with no directory and one left behind a Stopped record by a kill that
+      did not drain. Safe because only the supervisor creates leaves under
+      its node and every command holds the fleet lock.
+      `leaves_no_running_agent_owns_are_swept_and_their_processes_killed`.
 - [x] Read metrics and exit events from the agent's cgroup interface files.
       **Done:** `fleet ls` and `inspect` read `memory.current` and
       `cpu.stat`, and the evidence is kept in the agent's record when it
@@ -294,7 +318,12 @@ the implementation before it resolves.
       `memory.swap.max` refused, and `EBUSY` explained as the
       no-internal-process rule. Finding the delegated root is the systemd
       half, still open.
-- [ ] Test: runaway build in one agent leaves other agents schedulable.
+- [x] Test: runaway build in one agent leaves other agents schedulable.
+      `a_runaway_agent_leaves_its_sibling_schedulable`: A runs a hog per
+      core and tries 200 forks under `pids.max = 32`; B, unlimited, forks 50
+      and answers in seconds. A mutant that never writes `pids.max` fails.
+      CPU share is not asserted: a timing ratio under a parallel run is a
+      flaky test, and `cpu.weight` is already written and read back.
 - [x] Test: stopping an agent with orphaned descendants leaves nothing alive.
       `tests/fleet_cgroup.rs`: five `setsid` daemons ignoring SIGTERM,
       reparented away from the test, all gone after `Leaf::kill`.

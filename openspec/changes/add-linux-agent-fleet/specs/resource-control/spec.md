@@ -91,3 +91,37 @@ distribution and by whether a user manager is present.
 - **THEN** fleet refuses to start with an actionable diagnostic
 - **AND** no agent is started in a state where limits appear configured but do
   not hold
+
+### Requirement: An agent may be given a wall-clock limit
+
+Fleet SHALL accept a wall-clock limit per agent, counted from its start, and
+SHALL enforce it with no fleet command running. At the limit the agent's
+command SHALL receive SIGTERM; if any of the agent remains after the grace
+period, the whole agent SHALL be killed.
+
+How an agent ended SHALL be recorded from evidence the agent cannot write:
+its end as observed by its own init process, never a file or message the
+workload could produce. An agent stopped by the operator, or killed whole,
+SHALL record no such end.
+
+The limit needs no cgroup: it is the cheapest bound on an unattended agent,
+and the only one that catches an agent that is idle but never finishes.
+
+#### Scenario: An agent passes its deadline
+
+- **WHEN** an agent is still running when its wall-clock limit passes
+- **THEN** its command receives SIGTERM, and the agent ends within the grace
+  period whether or not the command honours it
+- **AND** the next command that lists or inspects the agent reports it
+  stopped and timed out
+
+#### Scenario: An agent is stopped before its deadline
+
+- **WHEN** the operator stops an agent that has a wall-clock limit
+- **THEN** it is recorded stopped with no recorded end of its own
+- **AND** it is not reported as timed out
+
+#### Scenario: A malformed limit
+
+- **WHEN** the limit given is not a whole number with a unit, or is zero
+- **THEN** fleet refuses it as a usage error before creating anything

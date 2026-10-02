@@ -120,6 +120,7 @@ impl Fleet {
             egress_allow: Vec::new(),
             services: Vec::new(),
             expose: Vec::new(),
+            timeout: None,
         }
     }
 }
@@ -670,4 +671,140 @@ fn a_removed_agents_id_is_not_handed_out_again() {
     for id in ["a1", "a4"] {
         sup.stop(id).unwrap();
     }
+}
+
+/// Reconcile sweeps every leaf no running agent owns, not only those with an
+/// agent directory: a supervisor that crashed between creating a leaf and
+/// its directory leaves one with none, and a stop whose `cgroup.kill` did
+/// not drain leaves one behind a Stopped record. Each stray here holds a
+/// live process, which is what makes leaving it a leak.
+#[test]
+fn leaves_no_running_agent_owns_are_swept_and_their_processes_killed() {
+    let Some(root) = capable_host() else { return };
+    let fleet = Fleet::new(&root, "sweep");
+    let mut sup = fleet.open();
+    let stopped = sup.start(&fleet.launch("1")).unwrap();
+    let running = sup.start(&fleet.launch("2")).unwrap();
+    sup.stop(&stopped).unwrap();
+    drop(sup);
+
+    let node = devcroft::fleet::cgroup::FleetNode::create(&root, &fleet.name).unwrap();
+    let mut strays = Vec::new();
+    for name in ["a9", "a9-host", stopped.as_str()] {
+        let leaf = node.create_leaf(name, &Limits::default()).unwrap();
+        let mut sleeper = Command::new("sleep");
+        sleeper.arg("60");
+        leaf.attach_on_spawn(&mut sleeper).unwrap();
+        strays.push((name.to_owned(), sleeper.spawn().unwrap()));
+    }
+
+    let mut sup = fleet.open();
+    for (name, mut child) in strays {
+        assert!(
+            !root.join(&fleet.name).join(&name).exists(),
+            "leaf {name} survived reconcile"
+        );
+        assert!(
+            eventually(|| matches!(child.try_wait(), Ok(Some(_)))),
+            "the process in {name} survived"
+        );
+    }
+    // The running agent and its leaf are untouched.
+    assert!(root.join(&fleet.name).join(&running).is_dir());
+    assert_eq!(
+        sup.inspect(&running).unwrap().record.state,
+        AgentState::Running
+    );
+    sup.stop(&running).unwrap();
+}
+
+/// Section 1: a runaway build in one agent leaves the others schedulable.
+/// A runs a CPU hog per core and then tries to fork 200 processes, under
+/// `pids.max = 32` and 64 MiB; B, with no limits, must still be able to
+/// fork 50 processes of its own and answer within seconds. The cap is A's
+/// leaf's alone: a limit that landed on the fleet node, or nowhere, fails
+/// one side or the other. CPU share is deliberately not asserted here
+/// (`cpu.weight` is written and read back by `fleet_cgroup`): a timing
+/// ratio under a parallel test run is a flaky test, not a measurement.
+#[test]
+fn a_runaway_agent_leaves_its_sibling_schedulable() {
+    let Some(root) = capable_host() else { return };
+    let fleet = Fleet::new(&root, "runaway");
+    let mut la = fleet.launch("a");
+    la.limits.pids_max = Some(32);
+    la.limits.memory_max = Some(64 << 20);
+    let lb = fleet.launch("b");
+    let mut sup = fleet.open();
+    let a = sup.start(&la).unwrap();
+    let b = sup.start(&lb).unwrap();
+
+    let (code, out) = session(
+        &sup.control_socket(&a),
+        &la.workspace,
+        "nohup sh -c 'for c in $(seq $(nproc)); do (while :; do :; done) & done; \
+                      i=0; while [ $i -lt 200 ]; do sleep 120 & i=$((i+1)); done; wait' \
+            >/dev/null 2>&1 & echo started",
+    );
+    assert_eq!((code, out.trim()), (Some(0), "started"), "{out}");
+    let events = root.join(&fleet.name).join(&a).join("pids.events");
+    assert!(
+        eventually(|| std::fs::read_to_string(&events)
+            .is_ok_and(|e| e.lines().any(|l| l.starts_with("max ") && l != "max 0"))),
+        "A was never refused a fork, so it was not the runaway this test needs"
+    );
+
+    let begun = std::time::Instant::now();
+    let (code, out) = session(
+        &sup.control_socket(&b),
+        &lb.workspace,
+        // Redirected, or the session would wait for them to close its
+        // output. A fork that fails aborts `sh`, so `forked=50` prints only
+        // if all fifty succeeded.
+        "i=0; while [ $i -lt 50 ]; do sleep 120 >/dev/null 2>&1 & i=$((i+1)); done; \
+         echo forked=$i",
+    );
+    let took = begun.elapsed();
+    assert_eq!(code, Some(0), "{out}");
+    assert_eq!(
+        out.trim(),
+        "forked=50",
+        "B could not fork its own processes: {out}"
+    );
+    assert!(
+        took < std::time::Duration::from_secs(10),
+        "B took {took:?} to fork 50 processes beside a runaway"
+    );
+
+    sup.stop(&a).unwrap();
+    sup.stop(&b).unwrap();
+}
+
+/// `fleet up --timeout`: the agent ends on its own at its deadline, with no
+/// command running, and the next command records why from PID 1's report.
+/// A `stop` records no exit at all, so the two stay distinguishable.
+#[test]
+fn an_agent_past_its_deadline_ends_and_is_recorded_as_timed_out() {
+    let Some(root) = capable_host() else { return };
+    let fleet = Fleet::new(&root, "deadline");
+    let mut timed = fleet.launch("t");
+    timed.timeout = Some(std::time::Duration::from_secs(1));
+    let mut sup = fleet.open();
+    let t = sup.start(&timed).unwrap();
+    let s = sup.start(&fleet.launch("s")).unwrap();
+    assert_eq!(sup.inspect(&t).unwrap().record.timeout_secs, Some(1));
+
+    let leaf = root.join(&fleet.name).join(&t);
+    assert!(
+        eventually(|| !populated(&leaf)),
+        "the agent outlived its deadline"
+    );
+    let record = sup.inspect(&t).unwrap().record;
+    assert_eq!(record.state, AgentState::Stopped);
+    assert_eq!(record.exit.map(|e| e.timed_out), Some(true), "{record:?}");
+
+    // The other agent has no deadline and is still running; stopped, it
+    // records no exit, because PID 1 was killed rather than seeing an end.
+    assert_eq!(sup.inspect(&s).unwrap().record.state, AgentState::Running);
+    sup.stop(&s).unwrap();
+    assert_eq!(sup.inspect(&s).unwrap().record.exit, None);
 }
