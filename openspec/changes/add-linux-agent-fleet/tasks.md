@@ -391,7 +391,7 @@ the implementation before it resolves.
       guard now asks strictly less than the tests assert (namespace
       creation only), and with the feature disabled three of the four
       fail as they should.
-- [ ] Implement the mount plan: read-only system layer with merged-`/usr`
+- [x] Implement the mount plan: read-only system layer with merged-`/usr`
       symlinks, private `/proc`, minimal `/dev`, private `/tmp`, workspace bind.
       **Consume `add-mount-isolation` rather than implementing this
       twice.** That change splits the same work out for the single-sandbox
@@ -413,6 +413,20 @@ the implementation before it resolves.
       stays empty on the host. Mutant: with `HostBind`, 37 processes are
       visible. Leave unticked for the `/workspace` fixed path (D2a), which
       is workspace isolation's (group 4).
+      **`/workspace` landed (2026-10-03).** With a view, the agent's
+      workspace is bound read-write at `/workspace` and nowhere else
+      (`View::workspace`), and every path handed to the agent is rewritten
+      from the host path to `/workspace` at the two places they all pass
+      through: the keeper's environment and the helper's plan, plus the
+      services config on disk (`supervisor::AtWorkspace`, on path
+      boundaries only, so `a1` never rewrites inside `a10`). Host-root keeps
+      the host path and records it (`AgentRecord::inside`); `fleet inspect`
+      shows both. `a_view_shows_the_workspace_at_slash_workspace_and_nowhere_else`
+      (outside `/tmp`, or it would pass vacuously) and the real devbox
+      agent, which now builds at `/workspace`. Mutants: aliasing the host
+      path too fails the first; skipping the rewrite fails the second with
+      `cargo: command not found`. D2a corrected: host-root cannot offer
+      `/workspace` at all.
 - [ ] Verify the agent command, its language runtime, its config directories and
       CA certificates are all present in the constructed view.
       **The runtime half, for one provider:** a real devbox closure builds
@@ -641,7 +655,7 @@ implied by a green run: confined provider provisioning
 (`sandbox-provisioning`; group 4's "resolved runtime paths read-only" and
 "refuse package-manager authority"), and the fixed `/workspace` path (D2a,
 section 2's mount-plan item). The proposal's `cd /workspace` example
-depends on the second.
+depends on the second. **The second is done (2026-10-03).**
 
 ## 3. Networking
 

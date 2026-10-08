@@ -159,6 +159,10 @@ pub struct View {
     pub root: PathBuf,
     /// The agent's egress proxy socket, bound into the view by itself.
     pub proxy_socket: Option<PathBuf>,
+    /// The host directory to show read-write at `mount::WORKSPACE`, and
+    /// nowhere else. The spec's paths must already say `/workspace`.
+    #[serde(default)]
+    pub workspace: Option<PathBuf>,
 }
 
 /// A running agent: its init helper, seen from the supervisor.
@@ -565,6 +569,7 @@ fn setup(signals: &libc::sigset_t) -> io::Result<Started> {
                 &grants,
                 view.proxy_socket.as_deref(),
                 super::mount::ProcMount::Fresh,
+                view.workspace.as_deref(),
             )
             .map_err(|e| step("construct the view", e))?;
         }

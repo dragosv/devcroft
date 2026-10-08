@@ -166,6 +166,12 @@ pub fn make_propagation_private() -> io::Result<()> {
     ))
 }
 
+/// Where a fleet agent sees its own workspace (design D2a), whatever its
+/// clone's path on the host: the same path in every agent, so commands,
+/// prompts and build artifacts do not differ by agent, and the host's
+/// layout stays out of the agent's view.
+pub const WORKSPACE: &str = "/workspace";
+
 /// Which procfs [`construct_view`] puts at `/proc`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ProcMount {
@@ -225,6 +231,7 @@ pub fn construct_view(
     grants: &[crate::policy::ResolvedGrant],
     proxy_socket: Option<&std::path::Path>,
     proc: ProcMount,
+    workspace: Option<&std::path::Path>,
 ) -> io::Result<()> {
     let tmp_path = std::path::Path::new("/tmp");
 
@@ -283,6 +290,13 @@ pub fn construct_view(
     }
 
     for grant in grants {
+        // The workspace bind below supplies everything under `/workspace`.
+        // A grant there was resolved against a host path that is not the
+        // workspace (absent, or a host that has its own `/workspace`), so
+        // binding it would put the wrong directory in the view.
+        if workspace.is_some() && grant.path.starts_with(WORKSPACE) {
+            continue;
+        }
         if grant.path == tmp_path {
             // Handled by mount_private_tmp/finalize_tmp_mode, privately —
             // never a bind of the host's own shared /tmp (task 2.1's own
@@ -306,6 +320,16 @@ pub fn construct_view(
         }
         bind_mount_grant(new_root, &grant.path, grant.mode)
             .map_err(|e| ctx(e, "bind-mounting grant", &grant.path))?;
+    }
+
+    if let Some(source) = workspace {
+        bind_mount_at(
+            new_root,
+            source,
+            std::path::Path::new(WORKSPACE),
+            nono::AccessMode::ReadWrite,
+        )
+        .map_err(|e| ctx(e, "bind-mounting the workspace", source))?;
     }
 
     if let Some(mode) = tmp_mode {
@@ -418,7 +442,20 @@ fn bind_mount_grant(
     source: &std::path::Path,
     mode: nono::AccessMode,
 ) -> io::Result<()> {
-    let relative = source.strip_prefix("/").unwrap_or(source);
+    bind_mount_at(new_root, source, source, mode)
+}
+
+/// [`bind_mount_grant`], with the view's path `at` chosen rather than
+/// copied from the host's: how a fleet agent's workspace lands at
+/// [`WORKSPACE`].
+#[cfg(target_os = "linux")]
+fn bind_mount_at(
+    new_root: &std::path::Path,
+    source: &std::path::Path,
+    at: &std::path::Path,
+    mode: nono::AccessMode,
+) -> io::Result<()> {
+    let relative = at.strip_prefix("/").unwrap_or(at);
     let target = new_root.join(relative);
     if let Some(parent) = target.parent() {
         std::fs::create_dir_all(parent)?;
@@ -892,6 +929,7 @@ pub fn construct_view(
     _grants: &[crate::policy::ResolvedGrant],
     _proxy_socket: Option<&std::path::Path>,
     _proc: ProcMount,
+    _workspace: Option<&std::path::Path>,
 ) -> io::Result<()> {
     Err(io::Error::new(
         io::ErrorKind::Unsupported,

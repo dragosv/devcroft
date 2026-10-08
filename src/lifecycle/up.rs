@@ -1522,6 +1522,7 @@ fn spawn_keeper(
                     // No PID namespace here, so a fresh procfs would be the
                     // host's anyway; see `ProcMount::HostBind`.
                     crate::fleet::mount::ProcMount::HostBind,
+                    None,
                 )?;
                 std::env::set_current_dir(&project_root_owned)?;
             }

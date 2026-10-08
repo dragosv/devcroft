@@ -142,6 +142,9 @@ impl Drop for Fleet {
 
 /// Run `script` in a session on the agent behind `socket`; (exit code,
 /// output).
+/// Where every agent with a view sees its workspace.
+const WORKSPACE: &str = devcroft::fleet::mount::WORKSPACE;
+
 fn session(socket: &Path, cwd: &Path, script: &str) -> (Option<i32>, String) {
     let mut stream = UnixStream::connect(socket).unwrap();
     protocol::write_frame(
@@ -185,7 +188,7 @@ fn agents_start_by_id_serve_as_themselves_and_stop_one_at_a_time() {
     for (id, launch) in [(&a, &la), (&b, &lb)] {
         let (code, out) = session(
             &sup.control_socket(id),
-            &launch.workspace,
+            Path::new(WORKSPACE),
             &format!("cat /proc/sys/kernel/hostname; echo {id} > whoami"),
         );
         assert_eq!(code, Some(0), "{out}");
@@ -222,7 +225,11 @@ fn agents_start_by_id_serve_as_themselves_and_stop_one_at_a_time() {
 
     // Stopping one leaves the other running and reachable.
     sup.stop(&a).unwrap();
-    let (code, out) = session(&sup.control_socket(&b), &lb.workspace, "echo still-here");
+    let (code, out) = session(
+        &sup.control_socket(&b),
+        Path::new(WORKSPACE),
+        "echo still-here",
+    );
     assert_eq!((code, out.trim()), (Some(0), "still-here"));
     let listed = sup.list().unwrap();
     assert_eq!(listed[0].record.state, AgentState::Stopped);
@@ -276,7 +283,11 @@ fn a_restarted_supervisor_adopts_live_agents_and_retires_dead_ones() {
     };
     // The live agent is adopted: still Running, still serving.
     assert_eq!(state(&a), Some(AgentState::Running));
-    let (code, out) = session(&sup.control_socket(&a), &la.workspace, "echo adopted");
+    let (code, out) = session(
+        &sup.control_socket(&a),
+        Path::new(WORKSPACE),
+        "echo adopted",
+    );
     assert_eq!((code, out.trim()), (Some(0), "adopted"));
     // The dead one is reconciled, not reported as running, and its
     // endpoints are released.
@@ -377,7 +388,7 @@ fn a_prepared_agent_runs_its_hooks_inside_itself() {
 
     // The keeper runs the hooks before it accepts sessions, so once a
     // session answers they have run.
-    let (code, _) = session(&sup.control_socket(&id), &launch.workspace, "true");
+    let (code, _) = session(&sup.control_socket(&id), Path::new(WORKSPACE), "true");
     assert_eq!(code, Some(0));
     let log = std::fs::read_to_string(launch.workspace.join("hooks.log")).unwrap();
     assert_eq!(
@@ -412,7 +423,7 @@ fn an_oom_killed_agent_is_retired_with_the_reason() {
         &Frame::Spawn(SpawnRequest {
             cmd: "/usr/bin/python3".into(),
             args: vec!["-c".into(), "b = bytearray(256 << 20)".into()],
-            cwd: launch.workspace.to_string_lossy().into_owned(),
+            cwd: WORKSPACE.into(),
             env: Default::default(),
             pty: None,
         }),
@@ -480,10 +491,10 @@ fn each_agent_reaches_only_its_own_allowlist_through_its_own_proxy() {
     let b = sup.start(&lb).unwrap();
 
     let (sock_a, sock_b) = (sup.control_socket(&a), sup.control_socket(&b));
-    let code = |socket: &Path, launch: &AgentLaunch, extra: &str, url: String| {
+    let code = |socket: &Path, extra: &str, url: String| {
         let (_, out) = session(
             socket,
-            &launch.workspace,
+            Path::new(WORKSPACE),
             &format!("curl -s -o /dev/null --max-time 5 -w '%{{http_code}}' {extra} {url}"),
         );
         out.trim().to_owned()
@@ -498,7 +509,7 @@ fn each_agent_reaches_only_its_own_allowlist_through_its_own_proxy() {
     // meant for the keeper), not the relay, not the relay's fd number.
     let (_, fds) = session(
         &sock_a,
-        &la.workspace,
+        Path::new(WORKSPACE),
         "for f in /proc/$$/fd/*; do readlink $f || :; done; \
          echo relay-var=$(env | grep -c DEVCROFT_PROXY_RELAY_FD)",
     );
@@ -508,14 +519,14 @@ fn each_agent_reaches_only_its_own_allowlist_through_its_own_proxy() {
     );
     assert!(fds.contains("relay-var=0"), "{fds}");
     // Each agent reaches its own allowed host, through its proxy.
-    assert_eq!(code(&sock_a, &la, "", to3.clone()), "200");
-    assert_eq!(code(&sock_b, &lb, "", to4.clone()), "200");
+    assert_eq!(code(&sock_a, "", to3.clone()), "200");
+    assert_eq!(code(&sock_b, "", to4.clone()), "200");
     // And not the other's: B is refused what only A allows, and vice versa.
-    assert_ne!(code(&sock_b, &lb, "", to3.clone()), "200");
-    assert_ne!(code(&sock_a, &la, "", to4.clone()), "200");
+    assert_ne!(code(&sock_b, "", to3.clone()), "200");
+    assert_ne!(code(&sock_a, "", to4.clone()), "200");
     // Around the proxy there is nothing: the namespace has no route out,
     // and 127.0.0.3 inside it is the agent's own loopback.
-    assert_eq!(code(&sock_a, &la, "--noproxy '*'", to3.clone()), "000");
+    assert_eq!(code(&sock_a, "--noproxy '*'", to3.clone()), "000");
 
     // Each proxy logged its own agent's requests.
     let log = |id: &str| {
@@ -537,7 +548,7 @@ fn each_agent_reaches_only_its_own_allowlist_through_its_own_proxy() {
     sup.stop(&a).unwrap();
     assert!(!root.join(&fleet.name).join(format!("{a}-host")).exists());
     assert_eq!(
-        code(&sock_b, &lb, "", to4),
+        code(&sock_b, "", to4),
         "200",
         "B's proxy is independent of A's"
     );
@@ -740,7 +751,7 @@ fn a_runaway_agent_leaves_its_sibling_schedulable() {
 
     let (code, out) = session(
         &sup.control_socket(&a),
-        &la.workspace,
+        Path::new(WORKSPACE),
         "nohup sh -c 'for c in $(seq $(nproc)); do (while :; do :; done) & done; \
                       i=0; while [ $i -lt 200 ]; do sleep 120 & i=$((i+1)); done; wait' \
             >/dev/null 2>&1 & echo started",
@@ -756,7 +767,7 @@ fn a_runaway_agent_leaves_its_sibling_schedulable() {
     let begun = std::time::Instant::now();
     let (code, out) = session(
         &sup.control_socket(&b),
-        &lb.workspace,
+        Path::new(WORKSPACE),
         // Redirected, or the session would wait for them to close its
         // output. A fork that fails aborts `sh`, so `forked=50` prints only
         // if all fifty succeeded.

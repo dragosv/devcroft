@@ -93,6 +93,31 @@ resolved runtime paths read-only, and a private `/tmp`, `/proc` and `/dev`.
 Neither the shared source checkout nor the host path of the agent's clone SHALL
 be mounted separately.
 
+Under the minimal-root strategy the fixed path SHALL be `/workspace`, holding
+the project's directory within the agent's clone. Every path handed to the
+agent that names the workspace's host location (its environment, as the
+provider resolved it; its hooks; its policy; devcroft's own service
+configuration) SHALL be rewritten to name `/workspace` instead, so nothing the
+agent is given points at a path it cannot see. Under the host-root strategy
+the host's root has no `/workspace` to offer, so the workspace stays at its
+host path, and that SHALL be recorded and reported with the strategy.
+
+#### Scenario: The workspace is at /workspace in every agent
+
+- **WHEN** an agent with a minimal root starts
+- **THEN** its working directory is `/workspace`, which is its own clone of
+  the project, writable, and what it writes there lands in that clone on the
+  host
+- **AND** the clone's host path does not exist in the agent's view
+
+#### Scenario: A provider's environment names the workspace's host path
+
+- **WHEN** the provider's resolved environment, captured on the host,
+  contains the workspace's host path (on `PATH`, in a project-root variable)
+- **THEN** the agent receives it with that path rewritten to `/workspace`
+- **AND** only whole paths and path prefixes are rewritten, never another
+  agent's workspace whose path merely begins with the same characters
+
 #### Scenario: Agent works in its workspace
 
 - **WHEN** an agent builds and tests

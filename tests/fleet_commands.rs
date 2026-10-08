@@ -230,6 +230,9 @@ fn exe() -> &'static Path {
     Path::new(env!("CARGO_BIN_EXE_devcroft"))
 }
 
+/// Where every agent with a view sees its workspace.
+const WORKSPACE: &str = devcroft::fleet::mount::WORKSPACE;
+
 fn session(socket: &Path, cwd: &Path, script: &str) -> (Option<i32>, String) {
     let mut stream = UnixStream::connect(socket).unwrap();
     protocol::write_frame(
@@ -278,9 +281,14 @@ fn each_agent_works_on_its_own_clone_and_keeps_it_after_stopping() {
         assert!(a.workspace.join("devcroft.toml").is_file());
 
         let socket = s.state().join("agents").join(&a.id).join("control.sock");
-        let (code, out) = session(&socket, &a.workspace, &format!("echo {} > mine; pwd", a.id));
+        let (code, out) = session(
+            &socket,
+            Path::new(WORKSPACE),
+            &format!("echo {} > mine; pwd", a.id),
+        );
         assert_eq!(code, Some(0), "{out}");
-        assert_eq!(Path::new(out.trim()), a.workspace);
+        // Its workspace is at `/workspace`, whatever its host path.
+        assert_eq!(out.trim(), WORKSPACE);
     }
     // What one agent writes is in its clone only.
     for a in &started {
@@ -481,7 +489,7 @@ fn a_real_devbox_agent_builds_its_project_in_its_clone() {
     let repo = env!("CARGO_MANIFEST_DIR");
     let (code, out) = session(
         &socket,
-        &agent.workspace,
+        Path::new(WORKSPACE),
         &format!(
             "cargo build 2>&1 | tail -1; \
              ./target/debug/citytime 2>&1 | head -1; \
@@ -713,7 +721,7 @@ fn every_agent_runs_its_own_service_on_the_same_port_and_up_waits_for_it() {
         let socket = s.state().join("agents").join(&a.id).join("control.sock");
         let (code, out) = session(
             &socket,
-            &a.workspace,
+            Path::new(WORKSPACE),
             &format!(
                 "echo {} > whoami; curl -s http://127.0.0.1:8000/whoami",
                 a.id
@@ -751,7 +759,7 @@ fn a_failing_service_is_reported_for_its_agent_which_stays_up() {
         other => panic!("expected the failure to be reported, got {other:?}"),
     }
     let socket = s.state().join("agents").join(&a.id).join("control.sock");
-    let (code, out) = session(&socket, &a.workspace, "echo still-up");
+    let (code, out) = session(&socket, Path::new(WORKSPACE), "echo still-up");
     assert_eq!((code, out.trim()), (Some(0), "still-up"));
     s.cmd(commands::rm_all).unwrap();
 }
@@ -1033,7 +1041,8 @@ fn an_agent_is_reachable_as_id_dot_name_dot_devcroft_over_real_ssh() {
             .arg(format!("ProxyCommand {} proxy %n", exe().display()))
             .arg("-i")
             .arg(data.join("id_ed25519"))
-            .args([host, "uname -n"])
+            // The proposal's own form: `ssh a17.myrepo.devcroft 'cd /workspace && …'`.
+            .args([host, "cd /workspace && uname -n && pwd"])
             .output()
             .unwrap()
     };
@@ -1045,7 +1054,10 @@ fn an_agent_is_reachable_as_id_dot_name_dot_devcroft_over_real_ssh() {
             "{}",
             String::from_utf8_lossy(&out.stderr)
         );
-        assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), id);
+        assert_eq!(
+            String::from_utf8_lossy(&out.stdout).trim(),
+            format!("{id}\n{WORKSPACE}")
+        );
     }
     // A stopped agent is named as such, not as a missing sandbox.
     let fleet = commands::FleetRef {

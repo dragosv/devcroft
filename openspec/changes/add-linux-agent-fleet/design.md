@@ -121,6 +121,22 @@ library removing one reason for re-exec does not remove the other five.
 
 ## D2a — Mount view: two strategies, one of them explicitly selected
 
+> **Corrected (2026-10-03).** The decision below says both strategies give
+> the agent its clone at `/workspace`. Only the minimal root can: a rootless
+> agent cannot create a top-level directory in the host's `/`, so under
+> host-root the workspace stays at its host path, recorded as `inside` in
+> the agent's record. And because every provider resolves its environment
+> against the workspace's host path (devbox's `PATH`, flox's `FLOX_ENV_*`),
+> the minimal root also needs that path **rewritten** to `/workspace` in
+> everything the agent is handed. Measured: without the rewrite, a real
+> devbox agent finds no `cargo`. `/workspace` is the project's directory in
+> the clone, which is the clone itself for a project at its repository's
+> root; the alternatives (alias the host path too; resolve provisioning in
+> a namespace where the clone is already at `/workspace`) were weighed and
+> the first was rejected by the spec's "not mounted separately", the second
+> deferred to `sandbox-provisioning`, which would make the rewrite
+> unnecessary.
+
 **Decision.** Both strategies preserve the same three contracts — the agent's
 clone is read-write at the fixed path `/workspace`, provider runtime paths are
 read-only, and workspace files are owned by the real host user. They differ in

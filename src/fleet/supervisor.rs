@@ -100,7 +100,12 @@ pub struct PortMapping {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AgentRecord {
     pub id: String,
+    /// The workspace's path on the host.
     pub workspace: PathBuf,
+    /// Its path inside the agent: `/workspace` with a view, the host path
+    /// without one. Absent in a record from before it was recorded.
+    #[serde(default)]
+    pub inside: Option<PathBuf>,
     pub cgroup: PathBuf,
     pub state: AgentState,
     /// FNV-1a of the compiled plan's JSON: whether two agents, or one
@@ -355,6 +360,31 @@ impl Supervisor {
             });
         }
 
+        // With a view, the agent sees its workspace at `/workspace` and
+        // nowhere else (D2a), but everything below was resolved against the
+        // workspace's host path: the provider's environment (devbox's
+        // `PATH` and `DEVBOX_PROJECT_ROOT`, flox's `FLOX_ENV_*`), the
+        // services config, the plan's grants. So every path handed to the
+        // agent is translated, at the two places they all pass through: the
+        // keeper's environment and the helper's plan. Without a view the
+        // host root is kept, which has no `/workspace` to offer.
+        let at = launch.view.then(|| AtWorkspace::new(&launch.workspace));
+        let translate = |s: String| match &at {
+            Some(at) => at.translate(&s),
+            None => s,
+        };
+        if let Some(at) = &at
+            && !launch.services.is_empty()
+        {
+            let config = crate::services::config_path(&launch.workspace, id);
+            let text = std::fs::read_to_string(&config)?;
+            std::fs::write(&config, at.translate(&text))?;
+        }
+        let inside = match &at {
+            Some(_) => PathBuf::from(super::mount::WORKSPACE),
+            None => launch.workspace.clone(),
+        };
+
         let env = crate::lifecycle::KeeperEnv {
             env: &provider_env,
             unset: &launch.unset,
@@ -371,7 +401,7 @@ impl Supervisor {
         }
         .vars()
         .into_iter()
-        .map(|(k, v)| Ok((lossless(k)?, lossless(v)?)))
+        .map(|(k, v)| Ok((lossless(k)?, translate(lossless(v)?))))
         .collect::<io::Result<Vec<_>>>()?;
         let mut env = env;
         if !ingress_env.is_empty() {
@@ -384,6 +414,7 @@ impl Supervisor {
             Some(View {
                 root,
                 proxy_socket: relay.map(|_| proxy_socket.clone()),
+                workspace: Some(launch.workspace.clone()),
             })
         } else {
             None
@@ -397,12 +428,15 @@ impl Supervisor {
                 (first + 1).to_string(),
             ],
             env,
-            cwd: Some(launch.workspace.clone()),
+            cwd: Some(inside.clone()),
             hostname: id.to_owned(),
             // The effective plan, proxy port included: this is what the
-            // helper turns into the Landlock ruleset.
-            plan: plan.clone(),
-            project_root: launch.workspace.clone(),
+            // helper turns into the Landlock ruleset, inside the view.
+            plan: serde_json::from_str(&translate(
+                serde_json::to_string(&plan).map_err(io::Error::other)?,
+            ))
+            .map_err(io::Error::other)?,
+            project_root: inside.clone(),
             relay_port: relay,
             view,
             timeout_secs: launch.timeout.map(|t| t.as_secs().max(1)),
@@ -439,6 +473,7 @@ impl Supervisor {
             &AgentRecord {
                 id: id.to_owned(),
                 workspace: launch.workspace.clone(),
+                inside: Some(inside),
                 cgroup: leaf.path().to_path_buf(),
                 state: AgentState::Running,
                 policy_fingerprint: format!("{:016x}", fnv1a64(&plan_json)),
@@ -701,6 +736,74 @@ fn reap(id: &str, agent: &Agent) -> io::Result<()> {
     )))
 }
 
+/// Rewrites a workspace's host path to [`super::mount::WORKSPACE`] wherever
+/// it appears as a whole path or a path's prefix.
+///
+/// **On path boundaries only.** The host path of agent `a1`'s workspace is
+/// a prefix of `a10`'s as a string, and `/x/proj` is inside `/y/x/proj`; so
+/// a match must start where a path can (the text's start, or after a
+/// character no path contains, such as `:` in `PATH` or `"` in YAML) and
+/// end where one can (its end, a `/`, or such a character). Both spellings
+/// are rewritten, as given and canonical, since a provider may have used
+/// either.
+///
+/// What this cannot see is a path a provider encoded (hashed, escaped).
+/// Every value measured is a plain prefix (devbox, flox, devcroft's own
+/// services config), and the symlinks inside a workspace are relative or
+/// point into the store, so they resolve the same at `/workspace`.
+struct AtWorkspace {
+    host: Vec<String>,
+}
+
+impl AtWorkspace {
+    fn new(workspace: &Path) -> AtWorkspace {
+        let mut host = vec![workspace.to_string_lossy().into_owned()];
+        if let Ok(canonical) = workspace.canonicalize() {
+            let canonical = canonical.to_string_lossy().into_owned();
+            if !host.contains(&canonical) {
+                host.push(canonical);
+            }
+        }
+        // Longest first, so one spelling never rewrites part of another.
+        host.sort_by_key(|h| std::cmp::Reverse(h.len()));
+        AtWorkspace { host }
+    }
+
+    fn translate(&self, text: &str) -> String {
+        self.host.iter().fold(text.to_owned(), |t, h| {
+            replace_path(&t, h, super::mount::WORKSPACE)
+        })
+    }
+}
+
+/// A character that can be part of a path as written in an environment
+/// variable or a config file.
+fn in_path(c: char) -> bool {
+    c.is_alphanumeric() || matches!(c, '/' | '.' | '_' | '-' | '+' | '~' | '@')
+}
+
+fn replace_path(text: &str, from: &str, to: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    let mut prev: Option<char> = None;
+    while let Some(i) = rest.find(from) {
+        let before = rest[..i].chars().next_back().or(prev);
+        let after = rest[i + from.len()..].chars().next();
+        let starts = before.is_none_or(|c| !in_path(c));
+        let ends = after.is_none_or(|c| c == '/' || !in_path(c));
+        out.push_str(&rest[..i]);
+        if starts && ends {
+            out.push_str(to);
+        } else {
+            out.push_str(from);
+        }
+        prev = from.chars().next_back();
+        rest = &rest[i + from.len()..];
+    }
+    out.push_str(rest);
+    out
+}
+
 /// The cgroup leaf an agent's host-side helpers (its egress proxy, its port
 /// forwarders) run in: beside the agent's, never inside it (D6), so the
 /// agent's memory pressure or a `cgroup.kill` of its leaf cannot take down
@@ -792,6 +895,32 @@ mod tests {
         assert_eq!(fnv1a64(b""), 0xcbf2_9ce4_8422_2325);
         assert_eq!(fnv1a64(b"a"), 0xaf63_dc4c_8601_ec8c);
         assert_eq!(fnv1a64(b"foobar"), 0x8594_4171_f739_67e8);
+    }
+
+    #[test]
+    fn a_workspace_path_is_translated_only_where_it_is_a_whole_path() {
+        let w = "/r/.devcroft/fleet/a1/proj";
+        let t = |s: &str| replace_path(s, w, "/workspace");
+        assert_eq!(t(w), "/workspace");
+        assert_eq!(
+            t(&format!("{w}/.devbox/bin:/usr/bin")),
+            "/workspace/.devbox/bin:/usr/bin"
+        );
+        assert_eq!(t(&format!("/usr/bin:{w}/bin")), "/usr/bin:/workspace/bin");
+        assert_eq!(t(&format!("\"{w}\"")), "\"/workspace\"");
+        assert_eq!(t(&format!("{w} {w}/x")), "/workspace /workspace/x");
+        // Not another agent's, not a longer name, not a path containing it.
+        assert_eq!(
+            t("/r/.devcroft/fleet/a1/proj2"),
+            "/r/.devcroft/fleet/a1/proj2"
+        );
+        assert_eq!(t(&format!("/y{w}")), format!("/y{w}"));
+        assert_eq!(t(&format!("{w}.bak")), format!("{w}.bak"));
+        let a1 = "/r/.devcroft/fleet/a1";
+        assert_eq!(
+            replace_path("/r/.devcroft/fleet/a10/proj", a1, "/workspace"),
+            "/r/.devcroft/fleet/a10/proj"
+        );
     }
 
     #[test]

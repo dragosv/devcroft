@@ -400,6 +400,7 @@ fn with_a_view_an_agent_sees_exactly_its_grants() {
     s.view = Some(View {
         root: dirs.1.clone(),
         proxy_socket: None,
+        workspace: None,
     });
     let (code, out) = run(&leaf, &s);
     assert_eq!(code, 0, "{out}");
@@ -552,6 +553,7 @@ fn the_keeper_runs_as_the_agents_command_and_serves_sessions() {
         view: Some(View {
             root: dirs.1.clone(),
             proxy_socket: None,
+            workspace: None,
         }),
         timeout_secs: None,
     };
@@ -763,4 +765,53 @@ fn a_deadline_ends_the_agent_and_pid_1_reports_it() {
             timed_out: false
         })
     );
+}
+
+/// D2a's fixed path: with a workspace given, the agent sees it read-write
+/// at `/workspace` and **not** at its host path, which is what makes the
+/// path the same in every agent. Outside `/tmp` on purpose: the view's
+/// `/tmp` is a private tmpfs, so a workspace under it would be invisible
+/// at its host path whatever this did, and the test would pass vacuously.
+#[test]
+fn a_view_shows_the_workspace_at_slash_workspace_and_nowhere_else() {
+    let Some(root) = capable_host() else { return };
+    let node = Scratch::new(&root, "ws");
+    let leaf = node.leaf("a");
+    let dirs = Dirs::new("ws");
+    let host = Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!("ws-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&host);
+    std::fs::create_dir_all(&host).unwrap();
+    std::fs::write(host.join("from-host"), "seen\n").unwrap();
+
+    let ws = Path::new(devcroft::fleet::mount::WORKSPACE);
+    let mut s = spec(
+        &dirs,
+        &format!(
+            "pwd; cat from-host; echo written > marker; \
+             test -e {host} && echo HOST_PATH_VISIBLE; \
+             grep -c ' {host} ' /proc/self/mountinfo",
+            host = host.display()
+        ),
+    );
+    s.cwd = Some(ws.to_path_buf());
+    s.project_root = ws.to_path_buf();
+    s.view = Some(View {
+        root: dirs.1.clone(),
+        proxy_socket: None,
+        workspace: Some(host.clone()),
+    });
+    let (code, out) = run(&leaf, &s);
+    let lines: Vec<&str> = out.lines().collect();
+    assert_eq!(lines.first(), Some(&"/workspace"), "{out}");
+    assert_eq!(lines.get(1), Some(&"seen"), "{out}");
+    assert!(!out.contains("HOST_PATH_VISIBLE"), "{out}");
+    // grep -c exits 1 on no match, so the script's status is 1 here.
+    assert_eq!((code, lines.last()), (1, Some(&"0")), "{out}");
+    // Written through `/workspace`, landed in the host directory, as the
+    // real user.
+    assert_eq!(
+        std::fs::read_to_string(host.join("marker")).unwrap(),
+        "written\n"
+    );
+    let _ = std::fs::remove_dir_all(&host);
 }

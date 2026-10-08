@@ -1036,6 +1036,7 @@ fn uds_probe_main(args: &[String]) -> i32 {
             &grants,
             None,
             devcroft::fleet::mount::ProcMount::HostBind,
+            None,
         ) {
             eprintln!("devcroft __uds_probe: constructing view: {e}");
             return 2;
@@ -1519,6 +1520,7 @@ fn mount_view_probe_main(args: &[String]) -> i32 {
         &grants,
         proxy_socket.as_deref(),
         devcroft::fleet::mount::ProcMount::HostBind,
+        None,
     ) {
         eprintln!("constructing view: {e}");
         return 1;
@@ -2926,7 +2928,16 @@ fn cli_fleet_linux(args: &[String]) -> i32 {
                     let r = &a.record;
                     println!("id\t{}", r.id);
                     println!("state\t{:?}", r.state);
-                    println!("workspace\t{}", r.workspace.display());
+                    // Where the agent sees it, then where it is on the host,
+                    // when the two differ (a view puts it at /workspace).
+                    match &r.inside {
+                        Some(inside) if *inside != r.workspace => println!(
+                            "workspace\t{} (host: {})",
+                            inside.display(),
+                            r.workspace.display()
+                        ),
+                        _ => println!("workspace\t{}", r.workspace.display()),
+                    }
                     println!("cgroup\t{}", r.cgroup.display());
                     println!(
                         "view\t{}",
