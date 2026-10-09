@@ -750,8 +750,28 @@ depends on the second. **The second is done (2026-10-03).**
       shared by every agent, so granting one agent's project code authority
       over it is authority over every other agent's toolchain. With no daemon
       socket in any agent there are no per-agent GC roots to manage either.
-- [ ] Refuse, naming the requested authority, any workflow that needs a
+      **Half measured (2026-10-08):** read-only holds (mount `ro` plus
+      Landlock), but the agent sees **all** of `/nix/store`, not its
+      closure, because providers grant the store root
+      (`capture::store_grants`). Not a confidentiality loss (the store is
+      world-readable on the host) but not the spec's "the closure" either.
+      Narrowing means one bind per requisite path; open until measured.
+- [x] Refuse, naming the requested authority, any workflow that needs a
       package-manager daemon or a writable host-global store.
+      **Measured first (2026-10-08), with a real devbox agent.** With the
+      minimal root the daemon socket does not exist in the agent and
+      `/nix/store` is read-only at mount level (`EROFS`) as well as under
+      Landlock. With `--host-root` the agent **did** reach the daemon: Landlock
+      does not mediate unix-socket `connect`, and `nix store add-file --store
+      daemon` added a path to the shared store. So two refusals, each naming
+      the authority: `fleet up --host-root` on a host with the daemon socket
+      (`host_root_is_refused_where_the_nix_daemon_runs`, saying it cannot be
+      confined under that strategy at all), and any grant whose resolved
+      path contains the socket or makes the store writable
+      (`a_grant_reaching_the_daemon_or_writing_the_store_is_refused`).
+      Mutants removing either fail. Inside a minimal-root agent, a runtime
+      install attempt fails on nix's own "cannot connect to daemon" error,
+      which names the socket; devcroft adds nothing there.
 - [ ] Test: concurrent commits across agents, no spurious lock failures.
 - [ ] Test: store GC during an active fleet retains all live paths.
 

@@ -75,3 +75,19 @@ other agent's toolchain.
 - **THEN** it is refused, naming the authority requested
 - **AND** the refusal distinguishes "not granted in this MVP" from "this cannot
   ever work", since the former is a scope decision and the latter is not
+
+#### Scenario: A manifest grant would reach the daemon or write the store
+
+- **WHEN** an agent's policy grants a path containing the package-manager
+  daemon's socket, or grants the host-global store read-write
+- **THEN** the agent does not start, and the refusal names the path and the
+  authority it would have conferred
+
+#### Scenario: The host-root strategy on a host running the daemon
+
+- **WHEN** fleet is asked for the host-root strategy on a host whose
+  package-manager daemon socket exists
+- **THEN** it refuses before creating anything, naming the socket
+- **AND** it says the authority cannot be withheld under that strategy at
+  all (Landlock does not mediate connecting to a unix socket), rather than
+  that it is not yet supported

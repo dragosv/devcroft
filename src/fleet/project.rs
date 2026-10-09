@@ -132,6 +132,7 @@ pub fn prepare(
     }
     let services: Vec<String> = declared.iter().map(|s| s.name.clone()).collect();
     let plan = compiled.to_capability_plan();
+    refuse_package_manager_authority(&plan, workspace)?;
 
     // `up`'s order, which is load-bearing: the provider's activation script
     // prepares the environment that `post_create` usually depends on. Every
@@ -200,6 +201,51 @@ fn refuse_what_fleet_cannot_carry(manifest: &Manifest) -> Result<(), PrepareErro
              remove the key to start a fleet from this manifest"
                 .to_string(),
         ));
+    }
+    Ok(())
+}
+
+/// `workspace-isolation`: an agent SHALL NOT receive a package-manager
+/// daemon socket or a writable host-global store. The view mounts exactly
+/// the plan's grants, so a grant is the only way either reaches an agent
+/// with one, and a manifest asking for `/nix/var` (or `/`) or for `/nix/store`
+/// read-write would hand every agent authority over the store they all share.
+/// Checked on the resolved grants, so a symlink in the project naming
+/// `/nix/var` is caught as well as the literal path.
+///
+/// What `--host-root` exposes without any grant is `fleet up`'s to refuse
+/// (`commands::refuse_host_root_with_a_daemon`): there the socket is visible
+/// whatever the plan says.
+fn refuse_package_manager_authority(
+    plan: &crate::policy::CapabilityPlan,
+    workspace: &Path,
+) -> Result<(), PrepareError> {
+    let socket = Path::new(crate::provider::NIX_DAEMON_SOCKET);
+    let store = Path::new("/nix/store");
+    let grants = plan
+        .resolved_grants(workspace)
+        .map_err(|e| PrepareError::Config(e.to_string()))?;
+    for g in &grants {
+        if socket.starts_with(&g.path) {
+            return Err(PrepareError::Config(format!(
+                "a grant of {} would put the Nix daemon socket ({}) in every agent: \
+                 authority over the store all of them share, which an agent is never \
+                 given. Install what the agent needs through the environment's own \
+                 manifest instead; it is materialized before the agent starts",
+                g.path.display(),
+                socket.display()
+            )));
+        }
+        if g.mode == nono::AccessMode::ReadWrite
+            && (g.path.starts_with(store) || store.starts_with(&g.path))
+        {
+            return Err(PrepareError::Config(format!(
+                "{} is granted read-write, which makes the Nix store writable from every \
+                 agent; agents get their toolchain read-only, so grant it read-only or \
+                 not at all",
+                g.path.display()
+            )));
+        }
     }
     Ok(())
 }

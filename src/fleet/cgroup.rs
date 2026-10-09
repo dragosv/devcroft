@@ -45,11 +45,20 @@ pub const REQUIRED_CONTROLLERS: [&str; 3] = ["cpu", "memory", "pids"];
 /// `CGROUP2_SUPER_MAGIC` from `<linux/magic.h>`, stable kernel ABI.
 const CGROUP2_SUPER_MAGIC: i64 = 0x6367_7270;
 
-/// How long [`Leaf::kill`] waits for the kernel to empty a leaf: 50 polls
-/// of 10 ms, the reference's budget. Measured, 20 orphaned daemons that
-/// ignored SIGTERM were gone before the first 1 ms poll, so this is
-/// generous rather than tight.
-const KILL_POLLS: u32 = 50;
+/// How long [`Leaf::kill`] waits for the kernel to empty a leaf: 500 polls
+/// of 10 ms, five seconds. A leaf that drains returns at the first poll
+/// that sees it empty, so the budget costs nothing when the host is idle.
+///
+/// **It was 50 polls (the reference's budget), and that was measured on an
+/// idle host.** Measured, 20 orphaned daemons were gone before the first
+/// 1 ms poll. But a killed process still has to be scheduled to exit, and
+/// beside one hog per core (`a_runaway_agent_leaves_its_sibling_schedulable`,
+/// running in parallel) a stop overran half a second and reported its
+/// agent's processes "left in place", 1 run in 10. A fleet's host is busy
+/// by definition, since its agents run builds, so the budget has to hold
+/// under load; what it still catches is a process that cannot die at all
+/// (uninterruptible sleep), which no budget would fix.
+const KILL_POLLS: u32 = 500;
 const KILL_POLL_INTERVAL: Duration = Duration::from_millis(10);
 
 /// Limits for one agent's leaf. `None` leaves the kernel's default, which

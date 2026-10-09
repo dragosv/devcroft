@@ -1094,3 +1094,42 @@ fn a_timeout_without_a_unit_is_refused_by_the_cli() {
     }
     assert!(!s.clones().exists());
 }
+
+/// `--host-root` cannot withhold the Nix daemon: Landlock does not mediate
+/// connecting to a unix socket, and a host-root agent was measured adding a
+/// path to the shared store through it. So on a host running the daemon the
+/// strategy is refused, naming the socket, before anything is cloned.
+#[test]
+fn host_root_is_refused_where_the_nix_daemon_runs() {
+    if !Path::new(devcroft::provider::NIX_DAEMON_SOCKET).exists() {
+        eprintln!("skipping: no Nix daemon socket on this host");
+        return;
+    }
+    let s = Setup::new("hostroot", None, "", true);
+    let manifest = s.manifest();
+    let err = commands::up(
+        &HostUsr,
+        &UpRequest {
+            manifest: &manifest,
+            project_root: &s.project(),
+            cgroup_root: &s.base.join("no-cgroup"),
+            agents: 1,
+            view: false,
+            exe: exe(),
+            authorized_key_pem: "unused",
+            state_dir: &s.state(),
+            limits: devcroft::fleet::cgroup::Limits::default(),
+            timeout: None,
+        },
+    )
+    .unwrap_err();
+    assert_eq!(err.exit_code(), 2, "{err}");
+    assert!(
+        err.to_string()
+            .contains(devcroft::provider::NIX_DAEMON_SOCKET),
+        "{err}"
+    );
+    assert!(err.to_string().contains("cannot be confined"), "{err}");
+    assert!(!s.clones().exists());
+    assert!(!s.state().exists());
+}

@@ -271,3 +271,42 @@ fn an_agent_gets_the_manifests_vars_and_forwarded_variables_as_up_does() {
     assert!(matches!(err, PrepareError::Config(_)), "{err}");
     assert!(err.to_string().contains("ssh.forward_agent"), "{err}");
 }
+
+/// `workspace-isolation`: an agent never receives the Nix daemon socket or a
+/// writable store, and a manifest asking for either is refused by name. The
+/// view mounts exactly the plan's grants, so these would otherwise put the
+/// socket (or a writable store) in every agent.
+#[test]
+fn a_grant_reaching_the_daemon_or_writing_the_store_is_refused() {
+    let socket = Path::new(devcroft::provider::NIX_DAEMON_SOCKET);
+    if !socket.exists() {
+        eprintln!("skipping: no Nix daemon socket on this host, so no grant can reach one");
+        return;
+    }
+    let try_prepare = |extra: &str| {
+        prepare(
+            &HostUsr::new(),
+            &manifest(extra),
+            Path::new("/tmp/w"),
+            "a1",
+            exe(),
+            "key",
+            Limits::default(),
+            true,
+        )
+    };
+    for (extra, names) in [
+        (
+            "[filesystem]\nread = [\"/nix/var/nix/daemon-socket\"]\n",
+            "daemon socket",
+        ),
+        ("[filesystem]\nread = [\"/nix\"]\n", "daemon socket"),
+        ("[filesystem]\nallow = [\"/nix/store\"]\n", "store writable"),
+    ] {
+        let err = try_prepare(extra).unwrap_err();
+        assert!(matches!(err, PrepareError::Config(_)), "{extra}: {err}");
+        assert!(err.to_string().contains(names), "{extra}: {err}");
+    }
+    // Reading the store is what every agent does with its toolchain.
+    try_prepare("[filesystem]\nread = [\"/nix/store\"]\n").unwrap();
+}

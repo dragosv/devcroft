@@ -136,6 +136,13 @@ library removing one reason for re-exec does not remove the other five.
 > the first was rejected by the spec's "not mounted separately", the second
 > deferred to `sandbox-provisioning`, which would make the rewrite
 > unnecessary.
+>
+> **And host-root is refused wherever the Nix daemon runs (2026-10-08).**
+> Measured: a host-root agent connected to the daemon socket and added a
+> path to the shared store (`nix store add-file --store daemon`), because
+> Landlock does not mediate connecting to a unix socket. Nothing under that
+> strategy can withhold it, so `fleet up --host-root` refuses on such a
+> host, naming the socket. The minimal root contains no `/nix/var` at all.
 
 **Decision.** Both strategies preserve the same three contracts — the agent's
 clone is read-write at the fixed path `/workspace`, provider runtime paths are

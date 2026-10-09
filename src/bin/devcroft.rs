@@ -1893,7 +1893,7 @@ fn doctor_nix_provider(required: bool) -> bool {
 /// where provider resolution failed on the very next command, which is the
 /// precise outcome the rule exists to prevent.
 fn doctor_nix_store() -> bool {
-    let socket = std::path::Path::new("/nix/var/nix/daemon-socket/socket");
+    let socket = std::path::Path::new(devcroft::provider::NIX_DAEMON_SOCKET);
     if !socket.exists() {
         // No daemon is not the same as no store: a single-user install has
         // none and builds fine, and a host with no Nix at all is already

@@ -257,6 +257,9 @@ pub fn up(provider: &dyn ProviderEntry, req: &UpRequest) -> Result<UpOutcome, Fl
         return Err(FleetError::Config("--agents must be at least 1".into()));
     }
     require_git_repository(req.project_root)?;
+    if !req.view {
+        refuse_host_root_with_a_daemon()?;
+    }
     preflight(req.cgroup_root, req.exe)?;
 
     let lock = lock(req.state_dir)?;
@@ -368,6 +371,30 @@ pub fn up(provider: &dyn ProviderEntry, req: &UpRequest) -> Result<UpOutcome, Fl
         agent.services = wait_ready(&agent.workspace, &agent.id, declared, deadline);
     }
     Ok(UpOutcome { started, degraded })
+}
+
+/// `--host-root` keeps the host's root visible and relies on Landlock for
+/// what is refused, and **Landlock does not mediate connecting to a unix
+/// socket**. So on a host running the Nix daemon every such agent can
+/// connect to it, and measured, one did: `nix store add-file --store daemon`
+/// from inside a host-root agent added a path to the store every agent
+/// shares. `workspace-isolation` says an agent never gets that authority,
+/// and under this strategy nothing can withhold it, so the strategy is
+/// refused here rather than offered with a hole. The default minimal root
+/// has no `/nix/var` in it at all.
+fn refuse_host_root_with_a_daemon() -> Result<(), FleetError> {
+    let socket = Path::new(crate::provider::NIX_DAEMON_SOCKET);
+    if socket.exists() {
+        return Err(FleetError::Config(format!(
+            "--host-root: this host runs the Nix daemon ({}), and an agent on the host's \
+             root can always connect to it, since Landlock does not mediate unix sockets; \
+             that is authority over the store every agent shares. This cannot be \
+             confined under --host-root at all; drop the flag to use the minimal root, \
+             which does not contain the socket",
+            socket.display()
+        )));
+    }
+    Ok(())
 }
 
 /// Check the host can run an agent at all, before cloning anything

@@ -28,6 +28,12 @@ use std::collections::BTreeMap;
 use std::fmt;
 use std::path::Path;
 
+/// The multi-user Nix daemon's socket, which flox, nix and devbox all build
+/// through. Reaching it is authority over the store every sandbox and every
+/// fleet agent on the host shares (`sandbox-provisioning` P2a), which is
+/// why fleet refuses to let an agent reach it.
+pub const NIX_DAEMON_SOCKET: &str = "/nix/var/nix/daemon-socket/socket";
+
 /// Whether this host can materialize a Nix closure at all — the shared
 /// precondition behind every provider test that resolves a *real*
 /// environment, since flox, nix and devbox are all frontends over the same
@@ -51,7 +57,7 @@ use std::path::Path;
 /// the same guard. Like everything else here it is internal API — see the
 /// crate docs.
 pub fn host_can_build_nix_closures() -> bool {
-    let socket = Path::new("/nix/var/nix/daemon-socket/socket");
+    let socket = Path::new(NIX_DAEMON_SOCKET);
     !socket.exists() || std::os::unix::net::UnixStream::connect(socket).is_ok()
 }
 
