@@ -373,6 +373,7 @@ mod tests {
                     proxy_token: None,
                     allocations: Vec::new(),
                     service_ports: Vec::new(),
+                    policy_digest: None,
                 },
             )
             .unwrap();

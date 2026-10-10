@@ -3316,7 +3316,21 @@ fn cli_policy(args: &[String]) -> i32 {
         Ok(m) => m,
         Err(code) => return code,
     };
-    let compiled = compile_with_provider_grants(&manifest);
+    let (compiled, fidelity) = compile_with_provider_grants(&manifest);
+    // Said, never implied: a rendering missing what `up` added is not the
+    // policy, and printing it as one is the bug this exists to prevent. It is
+    // still printed, since most of it is right, but the exit status says it
+    // is not the whole, for a caller that reads only stdout and the status.
+    let incomplete = fidelity.incomplete();
+    if let Some(why) = &incomplete {
+        eprintln!("devcroft policy: incomplete: {why}");
+    }
+    if let Fidelity::FromArtifact(path) = &fidelity {
+        eprintln!(
+            "devcroft policy: from this sandbox's own record, {}",
+            path.display()
+        );
+    }
     // CLAUDE.md's own invariant: "Nothing goes to the backend that cannot
     // be shown via policy --render." That cuts both ways — this command
     // must also never show a policy as fine when it would actually fail
@@ -3333,7 +3347,7 @@ fn cli_policy(args: &[String]) -> i32 {
             .unwrap_or(cwd.clone())
     }) else {
         print!("{}", devcroft::policy::render(&compiled));
-        return 0;
+        return if incomplete.is_some() { 1 } else { 0 };
     };
     if let Err(e) = compiled
         .to_capability_plan()
@@ -3343,7 +3357,7 @@ fn cli_policy(args: &[String]) -> i32 {
         return 2;
     }
     print!("{}", devcroft::policy::render(&compiled));
-    0
+    if incomplete.is_some() { 1 } else { 0 }
 }
 
 /// `policy --render` and `why` are otherwise pure functions of the
@@ -3356,14 +3370,65 @@ fn cli_policy(args: &[String]) -> i32 {
 /// resolved to none.
 fn compile_with_provider_grants(
     manifest: &devcroft::config::Manifest,
-) -> devcroft::policy::CompiledPolicy {
+) -> (devcroft::policy::CompiledPolicy, Fidelity) {
     let compiled = devcroft::policy::compile(manifest);
+    // Inside this sandbox, the state dir is absent (the mount view never
+    // contains it) or denied, so its record cannot be read and "not found"
+    // would read as "no sandbox". The sandbox's own copy is what answers.
+    if let Some(artifact) = own_sandbox_policy(&manifest.sandbox.name) {
+        return match std::fs::read(&artifact)
+            .map_err(|e| e.to_string())
+            .and_then(|b| serde_json::from_slice(&b).map_err(|e| e.to_string()))
+        {
+            Ok(policy) => (policy, Fidelity::FromArtifact(artifact)),
+            Err(e) => (
+                compiled,
+                Fidelity::Unreadable(format!(
+                    "inside sandbox '{}', its policy record {} gave: {e}; \
+                     `devcroft up --recreate` from the host writes it again",
+                    manifest.sandbox.name,
+                    artifact.display()
+                )),
+            ),
+        };
+    }
     let Ok(paths) = devcroft::lifecycle::StatePaths::new(&manifest.sandbox.name) else {
-        return compiled;
+        return (compiled, Fidelity::NoSandbox);
     };
-    let Ok(Some(meta)) = devcroft::lifecycle::read_meta(&paths.meta) else {
-        return compiled;
+    let meta = match devcroft::lifecycle::read_meta(&paths.meta) {
+        Ok(Some(meta)) => meta,
+        // The common case, and its output stays exactly as it was: no
+        // sandbox, so the manifest is the whole policy.
+        Ok(None) => return (compiled, Fidelity::NoSandbox),
+        Err(e) if e.kind() == std::io::ErrorKind::InvalidData => {
+            return (
+                compiled,
+                Fidelity::Malformed(format!("{}: {e}", paths.meta.display())),
+            );
+        }
+        Err(e) => {
+            return (
+                compiled,
+                Fidelity::Unreadable(format!("{}: {e}", paths.meta.display())),
+            );
+        }
     };
+    // The artifact this record's `up` wrote, when its digest proves it is
+    // that `up`'s: `up`'s own compiled policy, so it agrees with what the
+    // backend got, and with the in-sandbox answer, where the reconstruction
+    // below misses the keeper binary's grant.
+    if let Some(digest) = &meta.policy_digest {
+        let artifact = devcroft::services::policy_artifact(
+            std::path::Path::new(&meta.project_root),
+            &manifest.sandbox.name,
+        );
+        if let Ok(bytes) = std::fs::read(&artifact)
+            && devcroft::lifecycle::policy_digest(&bytes) == *digest
+            && let Ok(policy) = serde_json::from_slice(&bytes)
+        {
+            return (policy, Fidelity::Complete);
+        }
+    }
     let compiled = compiled.with_provider_grants(
         provider_static_name(&manifest.env.provider),
         &meta.read_only_grants,
@@ -3394,7 +3459,7 @@ fn compile_with_provider_grants(
     // services must render that grant rather than hide it. Reconstructed
     // from `Meta` — the same source, and the same path function, `up`
     // itself used.
-    if meta.declared_services.is_empty() {
+    let compiled = if meta.declared_services.is_empty() {
         compiled
     } else {
         compiled.with_unix_socket_bind(
@@ -3406,7 +3471,61 @@ fn compile_with_provider_grants(
             .into_owned(),
             devcroft::policy::Origin::Baseline,
         )
+    };
+    (compiled, Fidelity::Complete)
+}
+
+/// Whether a policy `why` or `policy --render` reconstructed is the whole of
+/// what the backend was given (`fix-silent-policy-degradation`). The
+/// manifest alone is not, once a sandbox exists: the provider's store
+/// grants, the proxy port and the services socket are known only to `up`.
+/// The first version returned the manifest-only policy from one `else` arm
+/// for every reason the record could not be had, and inside a sandbox that
+/// meant `why` answered `DENIED` for the provider's own store, exit 0.
+enum Fidelity {
+    /// Folded in from the sandbox's record.
+    Complete,
+    /// No sandbox exists, so the manifest is the whole policy.
+    NoSandbox,
+    /// Read from the sandbox's own copy, as `up` compiled it.
+    FromArtifact(std::path::PathBuf),
+    /// A sandbox exists, but its record could not be read: incomplete.
+    Unreadable(String),
+    /// Its record is there but not valid: incomplete, and a different fix.
+    Malformed(String),
+}
+
+impl Fidelity {
+    /// Why the policy is incomplete, or `None` when it is whole.
+    fn incomplete(&self) -> Option<String> {
+        match self {
+            Fidelity::Complete | Fidelity::NoSandbox | Fidelity::FromArtifact(_) => None,
+            Fidelity::Unreadable(why) => Some(format!(
+                "this sandbox's recorded grants could not be read ({why}), so this answer \
+                 covers only the manifest: the provider's store, the proxy port and the \
+                 service socket are missing from it"
+            )),
+            Fidelity::Malformed(why) => Some(format!(
+                "this sandbox's record is not valid ({why}), so this answer covers only \
+                 the manifest; `devcroft up` writes it again"
+            )),
+        }
     }
+}
+
+/// The policy artifact of the sandbox this process is running in, if it is
+/// running in sandbox `name`: there, `HOME` is that sandbox's own home,
+/// `<project>/.devcroft/<name>/home`, which devcroft sets and nothing else
+/// does, and the artifact sits beside it. On the host `HOME` is the user's,
+/// so this is `None` and a leftover artifact from a removed sandbox is never
+/// read in place of a record that says there is no sandbox.
+fn own_sandbox_policy(name: &str) -> Option<std::path::PathBuf> {
+    let home = std::path::PathBuf::from(std::env::var_os("HOME")?);
+    let dir = home.parent()?;
+    let is_own = home.file_name()? == "home"
+        && dir.file_name()? == name
+        && dir.parent()?.file_name()? == devcroft::services::ARTIFACT_DIR;
+    is_own.then(|| dir.join("policy.json"))
 }
 
 /// `Origin::Provider` takes `&'static str`; the manifest's provider name
@@ -3455,7 +3574,14 @@ fn cli_why(args: &[String]) -> i32 {
         Ok(m) => m,
         Err(code) => return code,
     };
-    let compiled = compile_with_provider_grants(&manifest);
+    let (compiled, fidelity) = compile_with_provider_grants(&manifest);
+    // An inverted verdict is worse than none: an agent acts on it. So an
+    // incomplete policy gives no bare ALLOWED/DENIED, only why it cannot.
+    if let Some(why) = fidelity.incomplete() {
+        println!("UNKNOWN");
+        println!("{why}");
+        return 1;
+    }
 
     if let Some(host) = host {
         print_explanation(&devcroft::policy::why_host(&compiled, &host));

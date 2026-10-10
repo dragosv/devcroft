@@ -131,9 +131,17 @@ first so the fan-out fix is not gated on the tooling design.
 > rule` for a store path the sandbox is actually granted. Wiring an agent to
 > a confidently inverted answer is worse than leaving it with the `EPERM`.
 
-- [ ] 6b.1 Confirm `fix-silent-policy-degradation` has landed and that `why`
+- [x] 6b.1 Confirm `fix-silent-policy-degradation` has landed and that `why`
       from inside a session returns the same verdict and origin as on the
       host. Everything below is unsafe to ship before that.
+      **Confirmed (2026-10-10)** by `tests/policy_view_fidelity_live.rs`: a
+      real nix sandbox, `why` inside a session gives `ALLOWED provider:nix`,
+      and the two `policy --render` outputs are byte-identical.
+      **For 6b.2, a fact its option (b) assumes otherwise:** devcroft's own
+      binary is *already* reachable inside every sandbox. `up` grants the
+      keeper binary's directory (that is how the test runs `devcroft why`
+      inside, and the grant the host's rendering used to hide), so (b) adds
+      no new reach; what it would add is only the instruction to use it.
 - [ ] 6b.2 Decide how the agent reaches `why`, and record the trade:
       **(a)** a hook script that reads the policy artifact directly — no new
       policy surface, answers "what was I granted"; **(b)** grant read+exec

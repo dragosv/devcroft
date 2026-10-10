@@ -152,6 +152,32 @@ pub fn artifact_dir(project_root: &Path, sandbox_name: &str) -> PathBuf {
     project_root.join(ARTIFACT_DIR).join(sandbox_name)
 }
 
+/// The sandbox's compiled policy, origins included, where the sandbox itself
+/// can read it (`fix-silent-policy-degradation`). Inside a sandbox the state
+/// dir does not exist (the mount view never contains it) or is denied, so
+/// `why` and `policy --render` run there could only reconstruct the policy
+/// from the manifest, and answered `DENIED` for the provider's own store.
+pub fn policy_artifact(project_root: &Path, sandbox_name: &str) -> PathBuf {
+    artifact_dir(project_root, sandbox_name).join("policy.json")
+}
+
+/// A `.gitignore` of `*` in the artifact directory: it ignores everything
+/// there, itself included, so `up` writing into the project never leaves
+/// `git status` dirty. Self-contained rather than an entry in the project's
+/// own `.gitignore`: that only works where `.git` sits at the project root,
+/// which is not true of a project in a subdirectory of its repository, and
+/// it means editing a file the user owns. Fleet's clone directory does the
+/// same. Kept if present, so a user who wants to track part of it can.
+pub fn ignore_artifacts(project_root: &Path) -> std::io::Result<()> {
+    let dir = project_root.join(ARTIFACT_DIR);
+    std::fs::create_dir_all(&dir)?;
+    let ignore = dir.join(".gitignore");
+    if !ignore.exists() {
+        std::fs::write(ignore, "*\n")?;
+    }
+    Ok(())
+}
+
 pub fn config_path(project_root: &Path, sandbox_name: &str) -> PathBuf {
     artifact_dir(project_root, sandbox_name).join("services.yaml")
 }

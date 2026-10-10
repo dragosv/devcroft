@@ -377,6 +377,24 @@ pub struct Meta {
     /// got, since it is known only once the provider has resolved.
     #[serde(default)]
     pub service_ports: Vec<u16>,
+    /// FNV-1a of the policy artifact this `up` wrote into the project
+    /// (`services::policy_artifact`), so `why` and `policy --render` on the
+    /// host can tell that artifact is this sandbox's current one before
+    /// preferring it over reconstructing the policy from this record. The
+    /// reconstruction had always missed a grant `up` makes (the keeper
+    /// binary's directory), which the artifact, being `up`'s own compiled
+    /// policy, does not. Absent for a sandbox brought up before it existed.
+    #[serde(default)]
+    pub policy_digest: Option<String>,
+}
+
+/// The digest [`Meta::policy_digest`] records: FNV-1a, 64-bit, stable
+/// across builds, which `std`'s hasher is not.
+pub fn policy_digest(bytes: &[u8]) -> String {
+    let h = bytes.iter().fold(0xcbf2_9ce4_8422_2325u64, |h, b| {
+        (h ^ u64::from(*b)).wrapping_mul(0x0000_0100_0000_01b3)
+    });
+    format!("{h:016x}")
 }
 
 /// One allocated port: the service whose generated config receives it, and
@@ -761,6 +779,7 @@ mod tests {
             proxy_token: None,
             allocations: Vec::new(),
             service_ports: Vec::new(),
+            policy_digest: None,
         };
         write_meta(&paths.meta, &meta).unwrap();
         assert_eq!(read_meta(&paths.meta).unwrap(), Some(meta));
@@ -785,6 +804,7 @@ mod tests {
             proxy_token: None,
             allocations: Vec::new(),
             service_ports: Vec::new(),
+            policy_digest: None,
         };
         write_meta(&paths.meta, &meta).unwrap();
         assert!(!paths.meta.with_extension("json.tmp").exists());

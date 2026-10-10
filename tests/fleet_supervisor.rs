@@ -615,7 +615,14 @@ fn a_crashed_agents_host_port_and_proxy_go_with_it_before_any_command() {
         "a crashed agent's host port is still held"
     );
     assert!(UnixStream::connect(&proxy).is_err());
-    // And the next command still reconciles the record.
+    // And the next command still reconciles the record, once the agent's
+    // own leaf has drained: `cgroup.kill` is asynchronous, and the wait above
+    // was on the helpers' leaf, so under load the agent's could still hold a
+    // dying process and read as Running (1 run in 10 of the fleet loop).
+    assert!(
+        eventually(|| !populated(&node.join(&id))),
+        "the agent's leaf never drained"
+    );
     assert_eq!(sup.inspect(&id).unwrap().record.state, AgentState::Stopped);
 }
 

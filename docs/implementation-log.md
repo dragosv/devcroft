@@ -1226,3 +1226,29 @@ worth knowing beyond fleet.
   requiring the filter, so the shipped implementation failed its own
   specification while every test passed. It is now rewritten around the
   invariant, with the filter conditional on a topology that has a route.
+
+**`why` inverted its answer inside the sandbox, and the host's rendering hid
+a grant (2026-10-10, `fix-silent-policy-degradation`).** Inside a real
+sandbox, `why --path /nix/store --op read` printed `DENIED`, exit 0, where
+the host printed `ALLOWED provider:nix`. The change was written for an
+`EPERM` on `meta.json`; on Linux today the cause is different and worse.
+The mount view never contains the state dir, so the read fails with "not
+found", the very answer a host with no sandbox gets, and no handling of the
+error could tell the two apart. It is a fallthrough written for a legitimate
+case, silently covering an illegitimate one that occurs only where it is
+guaranteed to.
+
+- **The sandbox now reads its own copy.** `up` writes its compiled policy,
+  origins included, to `.devcroft/<name>/policy.json`, from the value the
+  backend's plan comes from. Inside, the view reads it because `HOME` is
+  that sandbox's own home, which devcroft sets.
+- **Writing it exposed a host-side gap.** Diffing the two renderings of one
+  live sandbox, the *inside* one was longer: it had the keeper binary's
+  directory, which `up` grants and the host's reconstruction from `meta.json`
+  never added. "Nothing goes to the backend that cannot be shown via
+  `policy --render`" had been false on the host all along. The host now
+  prefers the artifact when the record names its digest, and the two
+  renderings are asserted byte-identical.
+- **An incomplete answer says so.** An unreadable or malformed record
+  (reported apart, since the fixes differ) gives `UNKNOWN` and exit 1, not
+  a verdict; the no-sandbox answer is unchanged.

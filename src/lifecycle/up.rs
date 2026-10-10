@@ -418,6 +418,7 @@ pub fn up_with_provider(
             allocations: previous_meta.map(|m| m.allocations).unwrap_or_default(),
             // Recomputed by `up_process` once isolation is decided.
             service_ports: Vec::new(),
+            policy_digest: None,
         },
     )?;
 
@@ -820,6 +821,29 @@ fn up_process(
         &paths.profile,
         serde_json::to_string_pretty(&plan).expect("CapabilityPlan serialization is infallible"),
     )?;
+
+    // The same compiled policy, origins included, where this sandbox can
+    // read it (`fix-silent-policy-degradation` D3): from the value the plan
+    // above was derived from, after which nothing changes it, so the two
+    // cannot disagree. Not the plan: it drops origins, and an origin is the
+    // whole of a `why` answer. Fatal, as failing to restrict is: a sandbox
+    // whose policy cannot be inspected from inside it does not meet the
+    // invariant it is started under.
+    crate::services::ignore_artifacts(project_root)?;
+    let policy_artifact = crate::services::policy_artifact(project_root, &manifest.sandbox.name);
+    if let Some(dir) = policy_artifact.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
+    let artifact = serde_json::to_string_pretty(&compiled)
+        .expect("CompiledPolicy serialization is infallible");
+    std::fs::write(&policy_artifact, &artifact)?;
+    // After the artifact, so a record naming a digest always has the file
+    // it names; an `up` that fails between the two leaves the old digest,
+    // which no longer matches, and the host falls back to reconstructing.
+    if let Some(mut meta) = state::read_meta(&paths.meta)? {
+        meta.policy_digest = Some(state::policy_digest(artifact.as_bytes()));
+        state::write_meta(&paths.meta, &meta)?;
+    }
 
     // Listener created BEFORE restriction (CLAUDE.md's listener-before-
     // restriction ordering, proven by the task 1.1/1.2 spike): its fd

@@ -42,14 +42,20 @@ keep its current output unchanged.
 ### Requirement: The compiled policy SHALL be readable from inside its own sandbox
 
 `DEVCROFT_DATA_DIR` is baseline-denied and not overridable, so a process
-inside a sandbox can never read `Meta`. Since every in-sandbox invocation
+inside a sandbox can never read `Meta`. On Linux it is not even present: the
+mount view never contains it, so the read fails with "not found", the same
+answer a host with no sandbox gets, and no handling of the read's error can
+tell the two apart. Since every in-sandbox invocation
 therefore takes the degraded path, honesty alone leaves the in-sandbox query
 permanently unable to answer. `up` SHALL write the compiled policy, with
 origins, where that sandbox can read it.
 
 The location SHALL be inside the project root — the only path a sandbox both
-reads and writes — under the existing artifact directory, and SHALL be
-covered by the ignore entry `init` already writes.
+reads and writes — under the existing artifact directory, and `up` SHALL
+leave it ignored by git whether or not `init` ever ran, without editing a
+file the user owns. (Written as a self-ignoring `.devcroft/.gitignore`: the
+entry `init` writes in the project's own `.gitignore` covers only a project
+at its repository's root.)
 
 #### Scenario: A query from inside the sandbox is complete
 
@@ -77,6 +83,14 @@ covered by the ignore entry `init` already writes.
 - **WHEN** a policy view falls back to the artifact
 - **THEN** it SHALL establish that the artifact belongs to the current
   sandbox instance before using it, and otherwise treat it as absent
+
+#### Scenario: How the artifact is known to be current
+
+- **WHEN** a policy view runs inside a sandbox
+- **THEN** it reads that sandbox's artifact only because its `HOME` is that
+  sandbox's own home, which devcroft sets and which sits beside the artifact
+- **AND** on the host it uses an artifact only where the sandbox's record
+  names that artifact's digest, which `up` writes after the artifact
 
 ### Requirement: The two views SHALL agree
 

@@ -205,6 +205,42 @@ pub enum Origin {
     Allocated,
 }
 
+/// Serialized as its displayed form (`manifest:filesystem.allow`,
+/// `provider:nix`, `baseline`, `allocated`), for the policy artifact
+/// `up` writes where its own sandbox can read it
+/// (`fix-silent-policy-degradation`), so the file reads the way
+/// `policy --render` does.
+impl serde::Serialize for Origin {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        s.collect_str(self)
+    }
+}
+
+/// The inverse of `Serialize`. The two `&'static str` payloads are leaked
+/// from the parsed string: an origin key is a short literal, read once per
+/// distinct key by a short-lived `why` or `policy --render`, so the cost is
+/// bounded by the artifact's size, and the alternative is changing a type
+/// every compile path uses.
+impl<'de> serde::Deserialize<'de> for Origin {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        let text = <String as serde::Deserialize>::deserialize(d)?;
+        let leak = |s: &str| -> &'static str { Box::leak(s.to_owned().into_boxed_str()) };
+        match text.as_str() {
+            "baseline" => Ok(Origin::Baseline),
+            "allocated" => Ok(Origin::Allocated),
+            t => match (t.strip_prefix("manifest:"), t.strip_prefix("provider:")) {
+                (Some(key), _) => Ok(Origin::Manifest(leak(key))),
+                (_, Some(name)) => Ok(Origin::Provider(leak(name))),
+                _ => Err(serde::de::Error::custom(format!("unknown origin {t:?}"))),
+            },
+        }
+    }
+}
+
+fn signal_mode() -> &'static str {
+    SIGNAL_MODE
+}
+
 impl std::fmt::Display for Origin {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -218,7 +254,7 @@ impl std::fmt::Display for Origin {
 
 /// A single compiled value (path or domain) paired with the rule that
 /// produced it, for `policy --render` and `why` to trace back to.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct AnnotatedValue {
     pub value: String,
     pub origin: Origin,
@@ -238,7 +274,7 @@ impl AnnotatedValue {
 /// type rather than making that one generic: ports are the only
 /// non-string rule devcroft compiles, and a type parameter would ripple
 /// through every existing call site to buy nothing here.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct AnnotatedPort {
     pub value: u16,
     pub origin: Origin,
@@ -248,7 +284,7 @@ pub struct AnnotatedPort {
 /// annotations. [`CapabilityPlan::to_capability_set`] projects this down
 /// to the `nono` library's `CapabilitySet` the process tier applies to
 /// itself.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct CompiledPolicy {
     pub sandbox_name: String,
     pub filesystem_allow: Vec<AnnotatedValue>,
@@ -304,6 +340,10 @@ pub struct CompiledPolicy {
     /// under the exec-based process tier — see `SIGNAL_MODE`. Still
     /// meaningful under `use-nono-library`: `CapabilitySet::set_signal_mode`
     /// takes the same value directly.
+    /// Not read back from an artifact: it is the constant `SIGNAL_MODE`
+    /// in every compiled policy, and a `&'static str` field cannot be
+    /// deserialized from input that does not itself live forever.
+    #[serde(skip_deserializing, default = "signal_mode")]
     pub signal_mode: &'static str,
 }
 
@@ -609,6 +649,28 @@ impl CompiledPolicy {
 
 #[cfg(test)]
 mod tests {
+
+    /// The artifact `up` writes for its own sandbox must read back as the
+    /// same policy, origins included, or `why` inside the sandbox answers
+    /// with something other than what the backend was given.
+    #[test]
+    fn a_compiled_policy_round_trips_through_its_artifact_with_origins() {
+        let (manifest, _) = crate::config::parse(
+            "[sandbox]\nname = \"rt\"\n\n[env]\nprovider = \"nix\"\n\n\
+             [filesystem]\nallow = [\".\"]\nread = [\"/opt/x\"]\n\n\
+             [network]\nallow = [\"crates.io\"]\nports = [8080]\n",
+        )
+        .unwrap();
+        let compiled = compile(&manifest)
+            .with_provider_grants("nix", &["/nix/store".to_owned()])
+            .with_proxy_port(4242)
+            .with_unix_socket_bind("/p/.devcroft/rt/services.sock".to_owned(), Origin::Baseline);
+        let json = serde_json::to_string(&compiled).unwrap();
+        assert!(json.contains("\"provider:nix\""), "{json}");
+        let back: CompiledPolicy = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, compiled);
+    }
+
     use super::*;
     use crate::config::parse;
 
