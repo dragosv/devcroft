@@ -434,7 +434,33 @@ const BUILDER_SENTINELS: &[(&str, &str)] = &[
     ("TMPDIR", "/nix/var/nix/builds/"),
     ("TEMP", "/nix/var/nix/builds/"),
     ("TEMPDIR", "/nix/var/nix/builds/"),
+    // **Linux's marker, which the list above lacked.** A sandboxed Linux
+    // build works in `/build`, not under `/nix/var/nix/builds/` (where an
+    // unsandboxed macOS build works, and where every measurement for this
+    // provider was taken). So on Linux all four passed the filter, and
+    // every session got `TMPDIR=/build`, a directory that does not exist
+    // at session time. Measured on the first Linux run of the capture
+    // contract test (`add-devenv-provider` 5b.2).
+    ("TMP", "/build"),
+    ("TMPDIR", "/build"),
+    ("TEMP", "/build"),
+    ("TEMPDIR", "/build"),
 ];
+
+/// Whether `value` still carries the builder's `marker`. A marker ending in
+/// `/` is a directory prefix. Any other is a whole path, matched exactly or
+/// as a parent, so `/build` catches `/build` and `/build/x` but not a real
+/// temp directory such as `/buildkite-agent/tmp`.
+fn carries_marker(value: &str, marker: &str) -> bool {
+    if marker.ends_with('/') {
+        value.starts_with(marker)
+    } else {
+        value == marker
+            || value
+                .strip_prefix(marker)
+                .is_some_and(|rest| rest.starts_with('/'))
+    }
+}
 
 /// Apply [`BUILDER_VARIABLES`] and [`BUILDER_SENTINELS`] to a captured
 /// environment.
@@ -451,7 +477,7 @@ fn strip_builder_variables(env: &mut BTreeMap<String, String>, base: &BTreeMap<S
         .map(|n| (*n).to_string())
         .chain(BUILDER_SENTINELS.iter().filter_map(|(name, marker)| {
             env.get(*name)
-                .filter(|value| value.starts_with(marker))
+                .filter(|value| carries_marker(value, marker))
                 .map(|_| (*name).to_string())
         }))
         .collect();
@@ -1321,6 +1347,22 @@ mod tests {
         )]);
         strip_builder_variables(&mut build_dir, &base);
         assert!(!build_dir.contains_key("TMPDIR"));
+
+        // Linux's sandboxed build dir, the marker the list first lacked.
+        let mut linux = BTreeMap::from([
+            ("TMPDIR".to_string(), "/build".to_string()),
+            ("TMP".to_string(), "/build/sub".to_string()),
+        ]);
+        strip_builder_variables(&mut linux, &base);
+        assert!(linux.is_empty(), "{linux:?}");
+
+        // A real directory that merely begins with the same letters stays.
+        let mut ci = BTreeMap::from([("TMPDIR".to_string(), "/buildkite-agent/tmp".to_string())]);
+        strip_builder_variables(&mut ci, &base);
+        assert_eq!(
+            ci.get("TMPDIR").map(String::as_str),
+            Some("/buildkite-agent/tmp")
+        );
     }
 
     #[test]

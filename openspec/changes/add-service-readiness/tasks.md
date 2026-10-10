@@ -68,4 +68,7 @@
 - [x] 5.1 build, clippy, fmt, doc clean.
 - [x] 5.2 Full suite with devenv on PATH: **497 passed, 0 failed**.
 - [x] 5.3 `openspec validate --all`: 31 passed, 0 failed.
-- [ ] 5.4 Re-run on Linux.
+- [x] 5.4 Re-run on Linux.
+      **Done (2026-10-10, Linux 7.0.14 aarch64):** the readiness tests ran,
+      not skipped (devenv on `PATH`, delegated cgroup, store reachable), and
+      passed, including the fleet's probe-gated readiness.

@@ -359,7 +359,20 @@
       store grant with origin `provider:devbox`; provider resolution adds
       no write grant (`Resolution::read_only_grants` is the only field
       devbox populates beyond `env`/`unset`)
-- [ ] 3.6 **Blocked — not devbox-specific, and not implemented anywhere
+- [x] 3.6 ~~A manifest declaring services under `provider = "devbox"` fails
+      distinguishably from "supports services, none declared".~~
+      **Struck as superseded (2026-10-10), not implemented here.** The
+      premise was that devbox cannot supply services. `add-devbox-services`
+      made that false: devbox now runs its plugins' services, so "declares
+      services but the provider cannot run them" is no longer a devbox
+      state. The case that is still worth refusing, services declared in a
+      *flox* manifest while `env.provider` is something else, is refused by
+      `lifecycle::up::ensure_no_services_declared_for_another_provider`
+      (built by `add-flox-services` 2.4), which is provider-agnostic and
+      names whichever provider is set; it is tested under `nix` by
+      `services_declared_for_another_provider_fail_rather_than_being_ignored`.
+      The blocking note below is kept as the record of why this sat open.
+      **Blocked — not devbox-specific, and not implemented anywhere
       yet.** Investigated rather than skipped: the mechanism this task
       assumes ("a manifest declaring services... fails distinguishably")
       does not exist in the codebase for *any* provider. `devcroft.toml`

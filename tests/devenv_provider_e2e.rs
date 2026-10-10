@@ -427,8 +427,13 @@ fn a_login_shell_resolves_out_of_the_devenv_closure() {
 /// hook had succeeded.
 #[test]
 fn a_hook_denied_by_the_policy_fails_up_at_the_keeper_layer() {
-    let denied =
-        std::env::temp_dir().join(format!("devcroft-devenv-denied-{}", std::process::id()));
+    // Under the real home, which no sandbox is granted on either platform.
+    // It was under the temp dir, which is only denied on macOS (its
+    // symlinked `/tmp`): on Linux the sandbox has a private `/tmp`, so the
+    // write *succeeded*, harmlessly and inside the sandbox, and `up`
+    // rightly came up. Found on this test's first Linux run.
+    let denied = std::path::PathBuf::from(std::env::var("HOME").unwrap())
+        .join(format!(".devcroft-devenv-denied-{}", std::process::id()));
     let _ = std::fs::remove_file(&denied);
     let Some(sandbox) = Sandbox::new(
         "deniedhook",

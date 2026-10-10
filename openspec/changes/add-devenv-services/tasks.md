@@ -160,6 +160,9 @@ test guards on the **capability**, never on the binary:
       every devenv services test ran — the only devenv-related skip is
       the Linux-gated closure-tier measurement, which names its reason.
 - [x] 6.3 `openspec validate --all` passes.
-- [ ] 6.4 Re-run on **Linux**. Everything here is measured on
+- [x] 6.4 Re-run on **Linux**. Everything here is measured on
       aarch64-darwin, and the services path touches process supervision,
       which is where the two platforms differ most.
+      **Done (2026-10-10, Linux 7.0.14 aarch64, devenv 2.4.0 via `nix
+      shell`):** every services test ran and passed. The two failures the
+      same run found are `add-devenv-provider`'s (5b.2), not this change's.

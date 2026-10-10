@@ -227,13 +227,11 @@ seam is deliberately kept), `own-policy-baseline`,
 implemented, tasks.md and all
 — see `docs/implementation-log.md` for what each one found along the way.
 `add-devbox-provider` (a third
-closure-tier environment provider) is implemented too, with one task
-(3.6, a services-loud-failure test) left unchecked. **Its stated blocking
-reason is now stale**: it says the mechanism exists for no provider, but
-`add-flox-services` task 2.4 built it — `prepare_services` calls
-`ensure_no_services_declared_for_another_provider`, covered by
-`services_declared_for_another_provider_fail_rather_than_being_ignored`.
-Re-derive before treating 3.6 as blocked. `remove-gvisor-backend` is now **complete**: its last task waited on
+closure-tier environment provider) is complete: its last task (3.6, a
+services-loud-failure test) was struck as superseded once
+`add-devbox-services` made devbox able to supply services, with the
+cross-provider refusal already covered by
+`services_declared_for_another_provider_fail_rather_than_being_ignored`. `remove-gvisor-backend` is now **complete**: its last task waited on
 `add-backend-capabilities`, which did not exist and has since been written
 (the task was to *rewrite* a change that was never authored, so writing it
 was the resolution). Those plus `add-mvp-core` are the

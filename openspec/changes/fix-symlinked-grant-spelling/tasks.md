@@ -85,6 +85,11 @@
       `cargo doc --no-deps` clean.
 - [x] 4.2 Full suite with devenv on PATH: **488 passed, 0 failed**.
 - [x] 4.3 `openspec validate --all`.
-- [ ] 4.4 Re-run on Linux — this changes what every sandbox is granted,
+- [x] 4.4 Re-run on Linux — this changes what every sandbox is granted,
       and the no-op claim for Linux is the half that cannot be checked on
       macOS.
+      **Done (2026-10-10, Linux 7.0.14 aarch64):** the full suite, with
+      devenv on `PATH` and a delegated cgroup so nothing that could run
+      skipped (4 skips left: Swift, macOS-only, and rsync), passed every
+      test this change touches. The resolver's no-symlink half is the
+      Linux case and held.

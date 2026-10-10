@@ -196,6 +196,25 @@ is the shared probe.
       meaningful — macOS cannot make it, since host binaries execute at
       ungranted paths there (`docs/known-gaps.md`). Everything in this
       change was measured on aarch64-darwin.
+      **Run (2026-10-10, Linux 7.0.14 aarch64, devenv 2.4.0): three
+      failures, all real, and this stays open for the third.**
+      1. `TMP`/`TMPDIR`/`TEMP`/`TEMPDIR` were `/build` in every session: a
+         sandboxed Linux build works there, and the sentinel only knew
+         macOS's `/nix/var/nix/builds/`. **Fixed** (a `/build` sentinel,
+         matched on a path boundary so `/buildkite-agent/tmp` survives).
+      2. `a_hook_denied_by_the_policy_fails_up_at_the_keeper_layer` wrote
+         its "outside the project" file under the temp dir, denied only on
+         macOS; Linux's private `/tmp` let it succeed harmlessly. **Test
+         fixed** (a path under the real home, denied on both).
+      3. **`LOCALE_ARCHIVE` never reaches a session, and neither does
+         anything else a hook exports** (`MANPATH`, `IN_NIX_SHELL`, measured
+         unset in a real session). design.md says running `enterShell` in
+         the sandbox "restores them"; it cannot, because each hook runs in
+         its own shell and exits, the very reason that document gives for
+         devenv's `unset` list not working. Flox hooks are run the same way,
+         so this is not devenv's alone. `the_filtered_capture_still_carries_
+         what_the_real_environment_has` is left failing on purpose rather
+         than told the variable is "restored by the hook".
 
 ## 6. Documentation
 
