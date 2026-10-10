@@ -639,3 +639,35 @@ fn a_probe_that_never_passes_leaves_the_sandbox_usable() {
         "a never-ready service must not make the sandbox unusable: {out:?}"
     );
 }
+
+/// What `enterShell` exports reaches a session. devenv's own `enterShell`
+/// sets `MANPATH` and, on Linux, `LOCALE_ARCHIVE`; the
+/// hook-free capture has none of them, and design.md counted on running the
+/// hook in the sandbox to restore them. It did not, until the keeper read
+/// back what the hook exported: measured unset in a real session on Linux.
+/// The project's own export rides along as a control that does not depend
+/// on what devenv's preamble happens to set.
+#[test]
+fn what_enter_shell_exports_reaches_a_session() {
+    let Some(sandbox) = Sandbox::new("exports", &[], "    export FROM_ENTER_SHELL=yes", true)
+    else {
+        return;
+    };
+    let up = sandbox.run(&["up"]);
+    assert!(up.status.success(), "{up:?}");
+    let out = sandbox.run(&[
+        "exec",
+        "--",
+        "sh",
+        "-c",
+        "echo \"${FROM_ENTER_SHELL-unset}|${MANPATH:+set}|${LOCALE_ARCHIVE:+set}\"",
+    ]);
+    assert!(out.status.success(), "{out:?}");
+    let seen = String::from_utf8_lossy(&out.stdout).trim().to_owned();
+    let fields: Vec<&str> = seen.split('|').collect();
+    assert_eq!(fields[0], "yes", "the project's own export: {seen}");
+    assert_eq!(fields[1], "set", "MANPATH from enterShell: {seen}");
+    if cfg!(target_os = "linux") {
+        assert_eq!(fields[2], "set", "LOCALE_ARCHIVE from enterShell: {seen}");
+    }
+}

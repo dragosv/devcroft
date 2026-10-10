@@ -90,11 +90,105 @@ pub fn run_in_keeper(
     shell: &str,
     project_root: &Path,
     hooks: &[(&'static str, String)],
+    capture: Option<&ActivationCapture>,
 ) -> Result<(), HookError> {
     for (name, cmd) in hooks {
-        run_one_in_keeper(backend, shell, project_root, name, cmd)?;
+        match (*name, capture) {
+            ("activation", Some(capture)) => {
+                let wrapped = capture.wrap(cmd);
+                run_one_in_keeper(backend, shell, project_root, name, &wrapped)?;
+                // Set before the next hook, which runs in what activation
+                // prepared (that is why it runs first).
+                crate::keeper::set_activation_env(capture.read());
+            }
+            _ => run_one_in_keeper(backend, shell, project_root, name, cmd)?,
+        }
     }
     Ok(())
+}
+
+/// How the keeper learns what the activation script exported (see
+/// `keeper::session::EnvOverlay` for why it must).
+///
+/// **The devcroft binary itself dumps the environment**, run by the same
+/// shell right after the script, so it inherits exactly what the script
+/// exported. Not `export -p`, whose format differs between bash (`declare
+/// -x`) and dash (`export NAME='…'`), and not `env`, which a closure need
+/// not contain; the keeper's own binary is always there, its directory
+/// granted. The wrapper's own variables are left unexported, so they are
+/// not in the dump.
+pub struct ActivationCapture {
+    /// The devcroft binary, run as `__env0`.
+    pub exe: std::path::PathBuf,
+    /// Where the dump goes: somewhere the sandbox can write (its home).
+    pub out: std::path::PathBuf,
+    /// The environment the script starts from: the keeper's own.
+    pub before: BTreeMap<String, String>,
+}
+
+impl ActivationCapture {
+    /// `script`, then the dump, then the script's own exit status, so a
+    /// failing script still fails its hook.
+    pub fn wrap(&self, script: &str) -> String {
+        format!(
+            "__devcroft_exe={}\n__devcroft_out={}\n{script}\n__devcroft_rc=$?\n\
+             \"$__devcroft_exe\" __env0 > \"$__devcroft_out\"\nexit $__devcroft_rc\n",
+            shell_quote(&self.exe.to_string_lossy()),
+            shell_quote(&self.out.to_string_lossy()),
+        )
+    }
+
+    /// What the script changed. Empty, with a note in the log, when there
+    /// is no dump: a script that ends in `exit` never reaches it.
+    fn read(&self) -> crate::keeper::EnvOverlay {
+        match std::fs::read(&self.out) {
+            Ok(raw) => {
+                let _ = std::fs::remove_file(&self.out);
+                activation_overlay(
+                    &self.before,
+                    &crate::provider::capture::parse_env_dump(&raw),
+                )
+            }
+            Err(_) => {
+                println!(
+                    "[hook activation] note: it exited before devcroft could read its \
+                     environment, so nothing it exported reaches sessions"
+                );
+                crate::keeper::EnvOverlay::default()
+            }
+        }
+    }
+}
+
+/// Single-quoted for a POSIX shell.
+fn shell_quote(s: &str) -> String {
+    format!("'{}'", s.replace('\'', "'\\''"))
+}
+
+/// Names the shell maintains for itself, and devcroft's own plumbing:
+/// neither is something activation chose to export.
+fn not_activation_state(name: &str) -> bool {
+    matches!(name, "PWD" | "OLDPWD" | "SHLVL" | "_") || name.starts_with("DEVCROFT_")
+}
+
+/// What `after` (the script's exported environment) changed relative to
+/// `before` (what it started from).
+pub fn activation_overlay(
+    before: &BTreeMap<String, String>,
+    after: &BTreeMap<String, String>,
+) -> crate::keeper::EnvOverlay {
+    crate::keeper::EnvOverlay {
+        set: after
+            .iter()
+            .filter(|(k, v)| !not_activation_state(k) && before.get(*k) != Some(*v))
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect(),
+        unset: before
+            .keys()
+            .filter(|k| !not_activation_state(k) && !after.contains_key(*k))
+            .cloned()
+            .collect(),
+    }
 }
 
 fn run_one_in_keeper(
@@ -190,7 +284,7 @@ mod tests {
     }
 
     fn run(dir: &std::path::Path, hooks: &[(&'static str, String)]) -> Result<(), HookError> {
-        run_in_keeper(&LocalSessionBackend, "/bin/sh", dir, hooks)
+        run_in_keeper(&LocalSessionBackend, "/bin/sh", dir, hooks, None)
     }
 
     #[test]

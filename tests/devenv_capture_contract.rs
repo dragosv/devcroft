@@ -217,8 +217,16 @@ fn the_filtered_capture_still_carries_what_the_real_environment_has() {
 
     // Set by `enterShell`, which devcroft runs *inside* the sandbox
     // rather than during capture — so their absence from the capture is
-    // the design working, not a hole.
-    let restored_by_the_hook: &[&str] = &["IN_NIX_SHELL", "MANPATH", "DEVENV_CMDLINE"];
+    // the design working, not a hole. **True only since the keeper reads
+    // back what the hook exported** (`keeper::session::EnvOverlay`):
+    // before, this list asserted a restoration that never happened, and a
+    // session had none of them. `what_enter_shell_exports_reaches_a_session`
+    // is what checks the claim this list makes. `LOCALE_ARCHIVE` is the
+    // Linux one, found on this test's first Linux run. Checked against
+    // `devenv eval enterShell` rather than assumed: this list also held
+    // `IN_NIX_SHELL` and `DEVENV_CMDLINE`, which the hook never mentions
+    // (they are below).
+    let restored_by_the_hook: &[&str] = &["MANPATH", "LOCALE_ARCHIVE"];
     // Shell bookkeeping that belongs to whatever process is running, not
     // to the environment being captured.
     let shell_bookkeeping: &[&str] = &["OLDPWD", "PWD", "SHLVL", "_", "__CF_USER_TEXT_ENCODING"];
@@ -235,7 +243,18 @@ fn the_filtered_capture_still_carries_what_the_real_environment_has() {
     //
     // Listed rather than silently tolerated: if either ever becomes
     // something a project can set, this entry is where that gets noticed.
-    let deliberately_dropped: &[&str] = &["name", "GC_LARGE_ALLOC_WARN_INTERVAL"];
+    //
+    // - `IN_NIX_SHELL` and `DEVENV_CMDLINE` are set by devenv's own shell
+    //   wrapper (`devenv shell`), not by `enterShell`, so no route devcroft
+    //   has would carry them; they say "this is a devenv shell", and a
+    //   devcroft session is not one. They were listed as restored by the
+    //   hook, which was never true.
+    let deliberately_dropped: &[&str] = &[
+        "name",
+        "GC_LARGE_ALLOC_WARN_INTERVAL",
+        "IN_NIX_SHELL",
+        "DEVENV_CMDLINE",
+    ];
 
     let missing: Vec<&String> = truth
         .keys()

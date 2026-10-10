@@ -92,6 +92,22 @@ fn main() {
         // allocated host port (the inherited listener) and relays each
         // connection to the agent's ingress socket, which its keeper
         // bridges to the service inside the agent's namespace.
+        // Hidden: the activation hook's wrapper runs this to report the
+        // environment the script left exported, NUL-separated, to the
+        // keeper (`lifecycle::hooks::ActivationCapture`).
+        Some("__env0") => {
+            use std::io::Write;
+            use std::os::unix::ffi::OsStrExt;
+            let mut out = std::io::stdout().lock();
+            for (k, v) in std::env::vars_os() {
+                let _ = out.write_all(k.as_bytes());
+                let _ = out.write_all(b"=");
+                let _ = out.write_all(v.as_bytes());
+                let _ = out.write_all(b"\0");
+            }
+            let _ = out.flush();
+            std::process::exit(0);
+        }
         Some("__ingress") => {
             let fd: RawFd = args
                 .get(2)
@@ -4024,7 +4040,7 @@ fn keeper_main(fd: RawFd, ssh_fd: RawFd) -> ! {
     // A failure exits before any service starts, so the sandbox does not
     // come up half-provisioned; `up` reports it by reading the line
     // below out of this process's log.
-    if let Err(e) = run_keeper_hooks(&LocalSessionBackend) {
+    if let Err(e) = run_keeper_hooks(&LocalSessionBackend, sandbox_home.as_deref()) {
         eprintln!(
             "{}{e}",
             devcroft::lifecycle::hooks::KEEPER_HOOK_FAILURE_PREFIX
@@ -4241,6 +4257,7 @@ fn start_services_if_requested(registry: Arc<Registry>, backend: Arc<dyn Session
 /// not distinguish them, and does not need to.
 fn run_keeper_hooks(
     backend: &dyn devcroft::keeper::SessionBackend,
+    sandbox_home: Option<&str>,
 ) -> Result<(), devcroft::lifecycle::hooks::HookError> {
     // The order is `up`'s, restated here rather than carried, because it
     // is a property of what the hooks *are* — the provider's script
@@ -4265,7 +4282,41 @@ fn run_keeper_hooks(
     }
     let shell = std::env::var("DEVCROFT_SHELL").unwrap_or_else(|_| "sh".to_string());
     let root = std::env::var("DEVCROFT_SERVICES_ROOT").unwrap_or_else(|_| ".".to_string());
-    devcroft::lifecycle::hooks::run_in_keeper(backend, &shell, std::path::Path::new(&root), &hooks)
+    // What the activation script exports must reach sessions
+    // (`keeper::session::EnvOverlay`). The dump goes in the sandbox's own
+    // home, which it can write; the binary is this one, by the absolute path
+    // `up` and fleet's init helper both exec it by, so no `/proc` is needed.
+    // The home is passed in, not looked up: `keeper_main` removes
+    // `DEVCROFT_SANDBOX_HOME` from the environment while it is still
+    // single-threaded, so it is gone by now (the first version looked it up
+    // here, found nothing, and captured nothing, in every real keeper).
+    let capture = sandbox_home.map(|home| {
+        let exe = std::env::args_os()
+            .next()
+            .map(std::path::PathBuf::from)
+            .filter(|p| p.is_absolute())
+            .or_else(|| std::env::current_exe().ok())
+            .unwrap_or_else(|| std::path::PathBuf::from("devcroft"));
+        devcroft::lifecycle::hooks::ActivationCapture {
+            exe,
+            out: std::path::Path::new(&home).join(".devcroft-activation-env"),
+            before: std::env::vars_os()
+                .map(|(k, v)| {
+                    (
+                        k.to_string_lossy().into_owned(),
+                        v.to_string_lossy().into_owned(),
+                    )
+                })
+                .collect(),
+        }
+    });
+    devcroft::lifecycle::hooks::run_in_keeper(
+        backend,
+        &shell,
+        std::path::Path::new(&root),
+        &hooks,
+        capture.as_ref(),
+    )
 }
 
 /// `down`/`rm` (lifecycle::terminate) signal this process directly, then

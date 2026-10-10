@@ -246,6 +246,18 @@ the sandbox restores them. That is the result that keeps this design
 whole: the hole in the hook-free route is exactly the part the hook
 fills, which is the part devcroft was already going to run.
 
+> **Corrected (2026-10-10), on the first Linux run.** Two parts of the
+> paragraph above were wrong. (1) Running the hook in the sandbox restored
+> nothing: it ran in its own shell and exited, and its exports went with
+> it, for the same reason the next section gives for devenv's `unset`
+> list. A real session had no `MANPATH`. The keeper now reads back what
+> the activation script exported and applies it to everything started
+> after it (`keeper::session::EnvOverlay`), which makes the paragraph's
+> conclusion true. (2) `IN_NIX_SHELL` (and `DEVENV_CMDLINE`) are not set
+> by `enterShell` at all, checked with `devenv eval enterShell`. They come
+> from devenv's own shell wrapper and are dropped on purpose. The Linux
+> run also adds `LOCALE_ARCHIVE`, which `enterShell` does set.
+
 **Where the deny list comes from, and why not devenv's own.** devenv's
 `enterShell` opens by unsetting 26 of those variables by name and
 rewriting `TMP`/`TMPDIR`/`TEMP`/`TEMPDIR` — devenv knows the problem and

@@ -191,7 +191,7 @@ is the shared probe.
       symlinked-grant entry, and in design.md decision 9. **Not fixed
       here**: the fix is dual-spelling grants, which belongs to
       `own-policy-baseline` because it changes every sandbox on the host.
-- [ ] 5b.2 Re-run the full e2e suite on **Linux**, where that gap does not
+- [x] 5b.2 Re-run the full e2e suite on **Linux**, where that gap does not
       exist and where task 5.3's `/usr/bin/gcc`-denied measurement is
       meaningful — macOS cannot make it, since host binaries execute at
       ungranted paths there (`docs/known-gaps.md`). Everything in this
@@ -215,6 +215,20 @@ is the shared probe.
          so this is not devenv's alone. `the_filtered_capture_still_carries_
          what_the_real_environment_has` is left failing on purpose rather
          than told the variable is "restored by the hook".
+      **3 fixed (same day):** the keeper now has the activation script's own
+      shell run devcroft's `__env0` after it, reads back what the script
+      exported, and applies the difference to every later hook, session and
+      the service supervisor (`keeper::session::EnvOverlay`, an overlay at
+      spawn, since the keeper is multi-threaded by then). The first version
+      captured nothing in a real keeper, because the keeper removes
+      `DEVCROFT_SANDBOX_HOME` from its environment before hooks run, which
+      `what_enter_shell_exports_reaches_a_session` caught. Checking the
+      "restored by the hook" list against `devenv eval enterShell` also
+      showed half of it was never the hook's: `IN_NIX_SHELL` and
+      `DEVENV_CMDLINE` come from devenv's shell wrapper and are now dropped
+      on purpose. Applies to flox hooks too: `flox-clap-sample`'s hook
+      `CARGO_HOME` reaches a session, measured. All 20 devenv tests pass on
+      Linux.
 
 ## 6. Documentation
 

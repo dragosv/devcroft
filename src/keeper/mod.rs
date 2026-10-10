@@ -31,7 +31,7 @@ pub use protocol::{
     ExitStatus, Frame, PtySize, QueryResult, SessionSignal, SessionSummary, SpawnRequest,
 };
 pub use registry::{Registry, SessionInfo};
-pub use session::{LocalSessionBackend, SessionBackend};
+pub use session::{EnvOverlay, LocalSessionBackend, SessionBackend, set_activation_env};
 
 use std::io;
 use std::os::unix::net::UnixListener;

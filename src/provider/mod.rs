@@ -9,7 +9,7 @@
 //! fingerprinting are keyed off the provider name, so adding a third
 //! provider touches this file once rather than every call site.
 
-mod capture;
+pub(crate) mod capture;
 mod devbox;
 mod devenv;
 pub(crate) mod flox;

@@ -35,6 +35,45 @@ pub trait SessionBackend: Send + Sync {
     fn spawn(&self, req: &SpawnRequest) -> io::Result<SpawnedSession>;
 }
 
+/// What the provider's activation script changed in its own environment,
+/// applied to everything the keeper starts after it: sessions, devcroft's
+/// own later hooks, and the service supervisor.
+///
+/// **Why this exists.** The activation script (flox's `[hook].on-activate`,
+/// devenv's `enterShell`) runs inside the sandbox in its own shell, which
+/// exits; what it `export`ed went with it. So `LOCALE_ARCHIVE`, `MANPATH`,
+/// or a flox hook's `CARGO_HOME` never reached a session, although the
+/// design counted on the hook to restore them. Measured unset in a real
+/// devenv session on Linux (`add-devenv-provider` 5b.2).
+///
+/// **An overlay applied at spawn, not `set_var` on the keeper.** By the
+/// time hooks run the keeper already has relay threads, and mutating the
+/// environment of a process with other threads is unsound.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct EnvOverlay {
+    pub set: std::collections::BTreeMap<String, String>,
+    pub unset: Vec<String>,
+}
+
+static ACTIVATION_ENV: std::sync::OnceLock<EnvOverlay> = std::sync::OnceLock::new();
+
+/// Record the activation script's changes, once per keeper. A second call
+/// is ignored: the keeper runs its activation script once.
+pub fn set_activation_env(overlay: EnvOverlay) {
+    let _ = ACTIVATION_ENV.set(overlay);
+}
+
+/// Applied before the request's own `env`, so an explicit per-session
+/// value still wins over what activation set.
+fn apply_activation_env(cmd: &mut Command) {
+    if let Some(overlay) = ACTIVATION_ENV.get() {
+        for name in &overlay.unset {
+            cmd.env_remove(name);
+        }
+        cmd.envs(&overlay.set);
+    }
+}
+
 /// Local fork/exec — today's only backend, and the `process` tier's.
 pub struct LocalSessionBackend;
 
@@ -84,6 +123,7 @@ unsafe fn reset_forwarded_signal_dispositions() {
 
 fn spawn_piped(req: &SpawnRequest) -> io::Result<SpawnedSession> {
     let mut cmd = Command::new(&req.cmd);
+    apply_activation_env(&mut cmd);
     cmd.args(&req.args)
         .current_dir(&req.cwd)
         .envs(&req.env)
@@ -148,6 +188,7 @@ fn spawn_pty(req: &SpawnRequest, size: &PtySize) -> io::Result<SpawnedSession> {
     let slave_fd = opened.slave_fd;
 
     let mut cmd = Command::new(&req.cmd);
+    apply_activation_env(&mut cmd);
     cmd.args(&req.args)
         .current_dir(&req.cwd)
         .envs(&req.env)

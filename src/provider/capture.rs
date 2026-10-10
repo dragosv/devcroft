@@ -49,7 +49,7 @@ pub(super) fn canonical_base_env() -> Result<BTreeMap<String, String>, ProviderE
 }
 
 /// Parse `env -0` output: NUL-separated `KEY=VALUE` entries.
-pub(super) fn parse_env_dump(raw: &[u8]) -> BTreeMap<String, String> {
+pub(crate) fn parse_env_dump(raw: &[u8]) -> BTreeMap<String, String> {
     String::from_utf8_lossy(raw)
         .split('\0')
         .filter(|entry| !entry.is_empty())
