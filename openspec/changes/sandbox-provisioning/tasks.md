@@ -76,7 +76,7 @@
       (`hooks::run_activation_script`, called from `up_process` before
       devcroft's own hooks — a `post_create` that depends on the environment
       the script sets up would otherwise run first and fail).
-- [ ] Correct the flox context variables when running the hook. **Not yet
+- [x] Correct the flox context variables when running the hook. **Not yet
       done — the mechanism works without it, which is exactly why it is worth
       keeping on the list rather than assuming it is fine.** Measured, the
       ones that point at the derived directory are `FLOX_ENV`,
@@ -84,8 +84,39 @@
       `FLOX_PROMPT_ENVIRONMENTS`. `FLOX_ENV_PROJECT` is the one that matters —
       hooks use it to find the project root, and uncorrected a hook would
       resolve paths into devcroft's scratch directory.
-- [ ] Check whether `[profile]` scripts run on the same path and need the same
+      **Done (2026-10-10), and the list above was wrong for current flox.**
+      Re-measured by diffing `flox activate -- env` in the project against
+      the derived copy: `FLOX_ENV_DESCRIPTION` and `FLOX_PROMPT_ENVIRONMENTS`
+      do not differ, while two the list missed do: `FLOX_ENV_CACHE` (where
+      flox's own idiom keeps a hook's virtualenv; it sat in a directory keyed
+      by the environment's fingerprint, so every manifest edit discarded it)
+      and `_FLOX_ACTIVE_ENVIRONMENTS`. `flox::restore_project_context` points
+      `FLOX_ENV_PROJECT`, `FLOX_ENV_CACHE` and `_FLOX_ACTIVE_ENVIRONMENTS` back
+      at the project. `FLOX_ENV` and the `run/` paths are left on the derived
+      copy deliberately: both links resolve to the same store path, and the
+      project's own `run/` may never have been built. The in-sandbox hook test
+      (`tests/flox_derived_env.rs`) now records both variables from inside
+      the sandbox under real flox; without the fix it reads
+      `.devcroft/flox-env-…` for both.
+- [x] Check whether `[profile]` scripts run on the same path and need the same
       treatment. **Unmeasured** — do not assume either way.
+      **Measured (2026-10-10, flox in this devcontainer):** they do not. A
+      scratch environment with `[hook].on-activate` and `[profile]` `common`
+      and `bash` scripts, each touching a marker, under devcroft's own call
+      (`flox activate -- env -0`): the hook ran, neither profile script did.
+      Profile scripts initialise interactive shells, and command mode starts
+      none, so they are not a host-side execution path.
+      **The other side of that is a silent drop:** devcroft keeps `[profile]`
+      in the derived copy and never runs it anywhere, so a project relying
+      on it gets nothing in a session and is not told. That breaks the
+      "degraded capabilities are surfaced" rule and is tracked below.
+- [x] Say so when a flox environment declares `[profile]`: devcroft never runs
+      it (sessions are not flox interactive shells), and the project should
+      hear that once at `up` rather than find its aliases missing.
+      **Done:** `flox::profile_warning`, printed once by `up` and once per
+      `fleet up` (not per agent), naming the declared scripts, why, and the
+      fallback (`[vars]`, `[hook].on-activate`; aliases and functions have no
+      equivalent). Unit-tested; checked by hand with the real binary.
 - [ ] Detect a derived environment whose lock has drifted from the project's,
       and re-derive rather than materializing something the project did not
       declare.

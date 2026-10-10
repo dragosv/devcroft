@@ -262,6 +262,13 @@ pub fn up(provider: &dyn ProviderEntry, req: &UpRequest) -> Result<UpOutcome, Fl
     }
     preflight(req.cgroup_root, req.exe)?;
 
+    // Once for the fleet, not once per agent: every clone has the same one.
+    if provider.static_name() == "flox"
+        && let Some(warning) = crate::provider::flox::profile_warning(req.project_root)
+    {
+        eprintln!("devcroft fleet: warning: {warning}");
+    }
+
     let lock = lock(req.state_dir)?;
     // Checked before anything is written: the first version overwrote
     // `fleet.json` first, so a second checkout's `up` moved the fleet to

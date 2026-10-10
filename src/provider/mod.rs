@@ -12,7 +12,7 @@
 mod capture;
 mod devbox;
 mod devenv;
-mod flox;
+pub(crate) mod flox;
 mod nix;
 pub mod swift;
 mod validate;

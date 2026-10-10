@@ -119,6 +119,11 @@ pub fn up(
     // see that function's doc for why the split is drawn exactly here.
     let provider = ProviderKind::from_name(&manifest.env.provider).map_err(UpError::Provider)?;
     advise_or_refuse_swift_without_apple_evidence(manifest, project_root)?;
+    if manifest.env.provider == "flox"
+        && let Some(warning) = crate::provider::flox::profile_warning(project_root)
+    {
+        eprintln!("devcroft: warning: {warning}");
+    }
     up_with_provider(manifest, project_root, opts, &provider)
 }
 

@@ -208,7 +208,13 @@ fn the_hook_runs_inside_the_sandbox_instead() {
         std::env::set_var("DEVCROFT_KEEPER_EXE", env!("CARGO_BIN_EXE_devcroft"));
     }
 
-    let Some((root, marker)) = flox_project("insandbox", Some("touch {MARKER}")) else {
+    // It records what flox told it about the project, which it took from
+    // the capture of the derived copy: before `restore_project_context`,
+    // both named `.devcroft/flox-env-…` rather than the project.
+    let Some((root, marker)) = flox_project(
+        "insandbox",
+        Some(r#"printf '%s\n%s\n' "$FLOX_ENV_PROJECT" "$FLOX_ENV_CACHE" > {MARKER}"#),
+    ) else {
         return;
     };
     // The hook's own commands must come from the closure, not the host.
@@ -236,6 +242,16 @@ fn the_hook_runs_inside_the_sandbox_instead() {
                 marker.exists(),
                 "the hook must still run — inside the sandbox — or every project \
                  whose hook does setup silently breaks"
+            );
+            let seen = std::fs::read_to_string(&marker).unwrap();
+            let lines: Vec<&str> = seen.lines().collect();
+            assert_eq!(
+                lines,
+                [
+                    root.to_string_lossy().into_owned(),
+                    root.join(".flox/cache").to_string_lossy().into_owned()
+                ],
+                "the hook must be told the project, not devcroft's derived copy"
             );
         }
         Ok(other) => panic!("expected Started, got {other:?}"),

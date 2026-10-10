@@ -34,7 +34,10 @@ impl Provider for FloxProvider {
         };
 
         let baseline = capture::canonical_base_env()?;
-        let activated = capture_activated_env(&materialize_from, &baseline)?;
+        let mut activated = capture_activated_env(&materialize_from, &baseline)?;
+        if materialize_from != project_root {
+            restore_project_context(&mut activated, &materialize_from, project_root);
+        }
 
         Ok(Resolution {
             env: capture::changed_env(&baseline, &activated),
@@ -49,6 +52,45 @@ impl Provider for FloxProvider {
             ran_activation_hook: false,
             activation_script,
         })
+    }
+}
+
+/// The flox variables that name *the project* rather than the environment's
+/// contents, pointed back at the project after a capture from the derived
+/// hook-free copy (P2d). Captured as-is they named devcroft's copy, so a
+/// hook resolving the project root through `FLOX_ENV_PROJECT` wrote into
+/// `.devcroft/flox-env-…`, and one keeping a virtualenv under
+/// `FLOX_ENV_CACHE` (flox's documented idiom) kept it in a directory keyed
+/// by the environment's fingerprint, which every manifest edit replaces.
+///
+/// Measured on flox in this devcontainer by diffing `flox activate -- env`
+/// in the project against the derived copy: exactly these three name the
+/// copy's root (`_FLOX_ACTIVE_ENVIRONMENTS` inside JSON). The rest that
+/// differ are paths under `.flox/run/`, which are left alone on purpose:
+/// both `run/` links resolve to the same store path, since the lock is
+/// identical, and the project's own `run/` may never have been built,
+/// because devcroft never activates the environment that has the hook.
+/// The task this closes listed `FLOX_ENV_DESCRIPTION` and
+/// `FLOX_PROMPT_ENVIRONMENTS` too; on this flox they do not differ.
+const PROJECT_CONTEXT_VARS: [&str; 3] = [
+    "FLOX_ENV_PROJECT",
+    "FLOX_ENV_CACHE",
+    "_FLOX_ACTIVE_ENVIRONMENTS",
+];
+
+fn restore_project_context(
+    env: &mut BTreeMap<String, String>,
+    derived: &Path,
+    project_root: &Path,
+) {
+    let (from, to) = (
+        derived.to_string_lossy().into_owned(),
+        project_root.to_string_lossy().into_owned(),
+    );
+    for name in PROJECT_CONTEXT_VARS {
+        if let Some(value) = env.get_mut(name) {
+            *value = value.replace(&from, &to);
+        }
     }
 }
 
@@ -347,6 +389,55 @@ fn activation_hook_script(project_root: &Path) -> Result<Option<String>, Provide
         .filter(|s| !s.trim().is_empty()))
 }
 
+/// The `[profile]` scripts a flox environment declares (`common`, `bash`,
+/// `zsh`, `fish`), in that order; empty when it declares none or the
+/// manifest cannot be read (resolution reports an unreadable manifest).
+///
+/// devcroft never runs them. flox sources them only into an interactive
+/// shell it starts itself, and `flox activate -- env` starts none
+/// (measured: a `[profile]` script left no marker where the hook did), and
+/// a devcroft session is not a flox shell. So what a profile sets (aliases,
+/// prompt, shell functions) is absent from every session, and
+/// `profile_warning` says so once at `up` rather than letting it go
+/// missing silently.
+pub fn declared_profile_scripts(project_root: &Path) -> Vec<&'static str> {
+    let Ok(text) = std::fs::read_to_string(project_root.join(".flox/env/manifest.toml")) else {
+        return Vec::new();
+    };
+    let Ok(parsed) = text.parse::<toml::Table>() else {
+        return Vec::new();
+    };
+    let Some(profile) = parsed.get("profile").and_then(|p| p.as_table()) else {
+        return Vec::new();
+    };
+    ["common", "bash", "zsh", "fish"]
+        .into_iter()
+        .filter(|k| {
+            profile
+                .get(*k)
+                .and_then(|v| v.as_str())
+                .is_some_and(|s| !s.trim().is_empty())
+        })
+        .collect()
+}
+
+/// The one warning `up` (and `fleet up`) print for a declared `[profile]`:
+/// the aspect, why, and the fallback, as every degraded capability is
+/// reported. `None` when nothing is declared.
+pub fn profile_warning(project_root: &Path) -> Option<String> {
+    let scripts = declared_profile_scripts(project_root);
+    if scripts.is_empty() {
+        return None;
+    }
+    Some(format!(
+        "flox [profile] ({}) never runs in devcroft: flox sources it only into its own \
+         interactive shell, and a devcroft session is not one (fallback: variables belong \
+         in [vars] and setup in [hook].on-activate, which do apply; aliases and shell \
+         functions have no equivalent)",
+        scripts.join(", ")
+    ))
+}
+
 fn ensure_environment_present(project_root: &Path) -> Result<(), ProviderError> {
     if project_root.join(".flox").is_dir() {
         Ok(())
@@ -449,6 +540,57 @@ mod tests {
         if let Some(lock) = lock {
             fs::write(env_dir.join("manifest.lock"), lock).unwrap();
         }
+    }
+
+    #[test]
+    fn declared_profile_scripts_are_named_and_empty_ones_are_not() {
+        let root = tempdir("profile");
+        flox_env(
+            &root,
+            "version = 1\n\n[profile]\ncommon = 'alias ll=ls'\nbash = ''\nfish = 'set x 1'\n",
+            None,
+        );
+        assert_eq!(declared_profile_scripts(&root), ["common", "fish"]);
+        let warning = profile_warning(&root).unwrap();
+        assert!(warning.contains("(common, fish)"), "{warning}");
+        assert!(warning.contains("fallback"), "{warning}");
+
+        let none = tempdir("no-profile");
+        flox_env(&none, "version = 1\n", None);
+        assert!(profile_warning(&none).is_none());
+    }
+
+    #[test]
+    fn project_context_points_at_the_project_and_nothing_else_moves() {
+        let derived = Path::new("/p/.devcroft/flox-env-abc");
+        let project = Path::new("/p");
+        let run = "/p/.devcroft/flox-env-abc/.flox/run/x-dev";
+        let mut env: BTreeMap<String, String> = [
+            ("FLOX_ENV_PROJECT", "/p/.devcroft/flox-env-abc".to_owned()),
+            (
+                "FLOX_ENV_CACHE",
+                "/p/.devcroft/flox-env-abc/.flox/cache".to_owned(),
+            ),
+            (
+                "_FLOX_ACTIVE_ENVIRONMENTS",
+                r#"[{"environment":{"path":"/p/.devcroft/flox-env-abc/.flox"}}]"#.to_owned(),
+            ),
+            ("FLOX_ENV", run.to_owned()),
+            ("PATH", format!("{run}/bin:/usr/bin")),
+        ]
+        .into_iter()
+        .map(|(k, v)| (k.to_owned(), v))
+        .collect();
+        restore_project_context(&mut env, derived, project);
+        assert_eq!(env["FLOX_ENV_PROJECT"], "/p");
+        assert_eq!(env["FLOX_ENV_CACHE"], "/p/.flox/cache");
+        assert_eq!(
+            env["_FLOX_ACTIVE_ENVIRONMENTS"],
+            r#"[{"environment":{"path":"/p/.flox"}}]"#
+        );
+        // The environment's contents stay where they were materialized.
+        assert_eq!(env["FLOX_ENV"], run);
+        assert_eq!(env["PATH"], format!("{run}/bin:/usr/bin"));
     }
 
     #[test]
