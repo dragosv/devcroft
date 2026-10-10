@@ -256,6 +256,68 @@ the host now fails with a package manager's unhelpful error, and the sandbox is
 invisible in that message. If a user cannot tell a policy denial from a broken
 hook, the feature costs more than it gives.
 
+## P6 — Measured: what each provider's resolution needs once materialized (2026-10-09)
+
+The spike group asks what confined resolution needs. Measured on this
+devcontainer (nix 2.31.5, Linux 7.0.14) in a user and mount namespace with
+the daemon's socket directory covered by an empty one, no network namespace
+route, and `NIX_REMOTE=daemon`, so any Nix call *must* use the hidden socket
+and fails if it tries (`nix store info` was checked to fail that way).
+
+| Provider | Hook-free resolution | No daemon | No network | Substituted home | Writes |
+|---|---|---|---|---|---|
+| devbox | `devbox shellenv --pure` | works, byte-identical | works | works (only `HOME` and devbox's hash of the env differ) | nothing |
+| flox | `flox activate` on the derived, hook-free copy (P2d) | works, same `PATH` and `FLOX_ENV` | works | works **only with the XDG variables set**: with `HOME` alone flox still wrote its env registry into the real home | its registry in the substituted home; logs and `run/` in the derived copy (`.devcroft/`, the project's) |
+| nix | `nix print-dev-env --json` | **fails** | — | — | the project's own source, into the store |
+| devenv | `devenv build shell`, `devenv eval enterShell`, `devenv eval processes` | **fails** once its own evaluation cache is bypassed | needs its inputs from Nix's fetcher cache, which lives in the real home | **fails**: an empty home means re-downloading nixpkgs | `.devenv/` in the project (its evaluation cache) |
+
+What this establishes:
+
+- **devbox and flox split cleanly.** Materialization (`devbox install`,
+  flox's build of the derived copy) is the trusted half, which needs the
+  daemon and, unless the store already holds everything, the network.
+  Measured: `devbox install` runs no `init_hook`. Resolution is the other
+  half, and needs neither, nor the real home: the minimal set is the
+  project read (and `.devcroft/` written, for flox), `/nix/store` read, and
+  an empty substituted home. That is the opposite of "most of `$HOME`", so
+  the stop condition in the spike group does not trigger.
+- **An unmaterialized environment fails the confined half, not silently.**
+  devbox, run confined on a copy that was never installed, tried to
+  materialize and failed on the network (`cache.nixos.org` unreachable). The
+  error names the network rather than "not materialized", so P5's
+  attribution is devcroft's job: run materialization first, and treat a
+  confined resolution that reaches for the network or the daemon as "not
+  materialized".
+- **nix cannot resolve without store-write authority at all.** Evaluating a
+  local flake copies the project's source tree into the store
+  (`/nix/store/…-source`), taking a store lock to do it, even when every
+  output already exists; read-only local store mode fails on that lock. So
+  nix's resolution *is* its trusted half: one step, holding daemon
+  authority, running the pure evaluator over repository-controlled Nix and
+  no repository-controlled shell. That is the property the proposal already
+  claims for nix, now with the reason it cannot be split further.
+- **devenv is nix's case, not devbox's** (measured with devenv 2.4.0,
+  fetched for the measurement through `nix shell`, since this host has no
+  devenv installed and its tests skip). Every command devcroft runs
+  evaluates the project's `devenv.nix`, and evaluation needs the daemon:
+  `eval enterShell` failed on the hidden socket, and so did
+  `build shell` once `--no-eval-cache` took devenv's own cache out of the
+  way. Without that flag `build shell` *succeeded* confined, because the
+  cache answered without evaluating, which is exactly the kind of result
+  that must not be read as a qualification: it holds only until the next
+  edit to `devenv.nix`. Evaluation also reads Nix's fetcher cache from the
+  real home, so with an empty substituted home devenv re-downloads its
+  nixpkgs input. What devenv does keep is the property that matters: no
+  project shell runs during resolution. The environment is a store file
+  devcroft reads as data, and `enterShell` is captured as a string and run
+  inside the sandbox, so devenv's trusted half is its evaluator, as for nix.
+- **A substituted home has a path-length budget.** flox puts a services
+  socket under `XDG_CACHE_HOME`, and a long substituted home overran the
+  OS's limit for a unix socket path, the same constraint `devenvsvc` hit.
+
+What is still unmeasured: `[profile]` scripts, other devbox plugins, and the
+trusted half's own minimal grants beyond "daemon plus network".
+
 ## Rejected Alternatives
 
 **Keep warning.** Adequate for a developer opening their own repository, useless

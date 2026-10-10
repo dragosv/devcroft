@@ -11,7 +11,7 @@
       split be constructed without flox's help?" — which it can, by deriving a
       hook-free copy of the environment (P2d). The original framing would have
       concluded "refuse flox" from a true premise.
-- [ ] Measure what `flox activate` actually needs when confined: run it under a
+- [x] Measure what `flox activate` actually needs when confined: run it under a
       deny-by-default profile against a real project and add grants until it
       works. Record the minimal set. Candidates to check: the provider's config
       and data directories, `TMPDIR`, the terminal.
@@ -21,13 +21,38 @@
       the daemon" would qualify a profile that hands host-global
       materialization authority to project shell. Measure the *resolver's*
       needs separately (below) and keep the hook's profile without it.
+      **Measured for the hook-free activation (design.md P6, 2026-10-09):**
+      `flox activate` on the derived copy works with no daemon, no network
+      and an empty substituted home, giving the same `PATH` and `FLOX_ENV`.
+      Minimal set: the project and its derived copy read, the derived
+      copy's `.flox/log` and `run/` written, `/nix/store` read, a
+      substituted home **with the XDG variables set** (with `HOME` alone flox
+      wrote its env registry into the real home). The hook itself already
+      runs inside the runtime sandbox (P2d), so it was not part of this.
 - [ ] Measure what a **trusted resolver** needs, separately from the hook: what
       materialization requires when no project code is running. This is the
       half that legitimately holds daemon authority, and the point of measuring
       it apart is to know exactly how much authority the split is protecting.
-- [ ] Qualify the hook-free paths for the two eligible providers —
+      **First answer (P6):** the daemon, plus the network unless the store
+      already holds everything (a never-installed devbox copy, confined,
+      failed on `cache.nixos.org`). `devbox install` runs no `init_hook`.
+      For nix the trusted half is all of resolution: evaluating a local
+      flake writes the project's source into the store. The trusted half's
+      own minimal filesystem grants are not yet measured.
+- [x] Qualify the hook-free paths for the two eligible providers —
       `nix print-dev-env --json` and `devbox shellenv --pure` — as running
       inside the provisioning worker with no daemon connection.
+      **devbox qualifies; nix does not (P6).** `devbox shellenv --pure` with
+      the daemon unreachable, no network and a substituted home was
+      byte-identical to the unconfined run (apart from `HOME` and devbox's
+      hash over it) and wrote nothing. `nix print-dev-env --json` fails even
+      fully warm: the flake's source is copied into the store on every
+      evaluation, and a read-only store fails on that copy's lock.
+      **devenv, the provider this item did not name, measured too:** it is
+      nix's case. Evaluation needs the daemon, and a confined `build shell`
+      that succeeded did so only from devenv's evaluation cache; with
+      `--no-eval-cache` it failed on the hidden socket. It also needs Nix's
+      fetcher cache from the real home. No project shell runs either way.
 - [x] **Establish that flox can be split by devcroft, without upstream.**
       Measured live (design.md P2d): materializing from a derived copy of the
       environment with `[hook]` removed yields a byte-identical locked package
@@ -69,11 +94,14 @@
       project code*. The error must distinguish this from "this provider
       cannot be confined", since the fix is to declare the dependency in
       `[install]` rather than to wait for anything.
-- [ ] Repeat for `devbox`.
+- [x] Repeat for `devbox`.
+      Done with the measurement above.
 - [ ] Confirm the environment can be written to a descriptor the supervisor
       holds, across the boundary, without a shell round trip.
-- [ ] **If the minimal grant set turns out to be most of `$HOME`, stop and
+- [x] **If the minimal grant set turns out to be most of `$HOME`, stop and
       reconsider** — the change would then be confinement in name only.
+      **It did not:** an empty substituted home is enough for both devbox
+      and flox (P6).
 
 ## 1. Provisioning policy
 
