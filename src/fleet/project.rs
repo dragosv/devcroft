@@ -87,6 +87,24 @@ pub fn prepare(
     {
         provider_grants.push(grant.clone());
     }
+    // The closure, not the whole store (`fleet::closure`): what the
+    // environment names, through its links, and the shell, with their
+    // requisites. Degraded rather than refused when it cannot be computed,
+    // since what it narrows is visibility, and said once rather than never.
+    let mut roots = super::closure::roots(resolution.env.values());
+    if let Some(root) = super::closure::root_of(&shell.path) {
+        roots.insert(root);
+    }
+    let provider_grants = match super::closure::narrow(&provider_grants, &roots) {
+        Ok(narrowed) => narrowed,
+        Err(why) => {
+            eprintln!(
+                "devcroft fleet: warning: this agent's store view is not narrowed to its \
+                 closure ({why}) (fallback: it sees all of /nix/store, read-only)"
+            );
+            provider_grants
+        }
+    };
 
     let exe_dir = exe.parent().ok_or_else(|| {
         PrepareError::Config(format!("{} has no parent directory", exe.display()))

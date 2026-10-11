@@ -32,6 +32,26 @@ another instance of that, not a new mechanism.
 
 ## P2 — Provisioning is a separate policy profile, not a variant of the runtime one
 
+> **Deferred by the owner (2026-10-11).** Since P2d, and since the keeper
+> applies what the activation script exports (`keeper::session::EnvOverlay`),
+> a provider's hook runs **inside the runtime keeper, under the runtime
+> policy**, at keeper start. So a hook that needs a registry gets it only if
+> the runtime allowlist grants it, and then every session gets it too, which
+> is the conflation this section argues against. That is today's documented
+> behaviour, kept on purpose for now. Two mechanisms were weighed for when
+> this is taken up:
+>
+> - **A separate process.** `up` runs the hook in a short-lived confined
+>   process under the provisioning profile (own mount view, own proxy
+>   allowlist), captures its exports (`__env0`, as now), then starts the
+>   keeper under the runtime profile. No subset constraint between the two,
+>   and the same on macOS, since each process gets its own Seatbelt profile.
+>   A hook's background processes die with it.
+> - **A two-stage keeper.** Restrict with the provisioning profile, run the
+>   hook, stack the runtime restriction (Landlock layers only narrow) and
+>   switch the proxy's allowlist. One process, but provisioning must be a
+>   superset of runtime, and Seatbelt cannot stack, so macOS would degrade.
+
 **Decision.** The manifest declares two profiles. Runtime policy governs the
 agent; provisioning policy governs activation. Neither is derived from the
 other.

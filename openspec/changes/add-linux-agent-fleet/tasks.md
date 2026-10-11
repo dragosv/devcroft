@@ -740,7 +740,7 @@ depends on the second. **The second is done (2026-10-03).**
       maintenance when the fleet is idle.
 - [ ] Remove or block the upstream remote in agent clones; implement the
       integration step for accepted sessions.
-- [ ] Mount the provider's **resolved runtime paths read-only** into each
+- [x] Mount the provider's **resolved runtime paths read-only** into each
       agent (closure paths for closure-tier providers; devcroft-owned artifact
       paths plus explicit host library grants for qualified artifact-tier ones).
       **Replaces "bind-mount the Nix daemon socket" and "per-agent GC roots",
@@ -756,6 +756,19 @@ depends on the second. **The second is done (2026-10-03).**
       (`capture::store_grants`). Not a confidentiality loss (the store is
       world-readable on the host) but not the spec's "the closure" either.
       Narrowing means one bind per requisite path; open until measured.
+      **Measured and narrowed (2026-10-11).** A closure is 80 store paths
+      (`devbox-citytime-sample`) or 91 (`flox-services-sample`) against 6,886
+      in this host's store; `nix-store -qR` takes ~50 ms. `fleet::closure`
+      collects the store paths the environment names, directly or through a
+      symlink (most arrive through workspace links, devbox's profile and
+      flox's `.flox/run`), plus the resolved shell, and replaces the
+      store-root grant with their requisites, so the view binds those alone.
+      Degrades to the whole store with one warning when `nix-store` is
+      unavailable. Fleet only: `up` keeps the store root. The real devbox
+      agent still builds and runs its project, and a store path made on the
+      host just before (in no closure) is invisible inside it; with the
+      narrowing disabled it is visible. The real-flox services fleet test
+      passes with no degradation warning.
 - [x] Refuse, naming the requested authority, any workflow that needs a
       package-manager daemon or a writable host-global store.
       **Measured first (2026-10-08), with a real devbox agent.** With the

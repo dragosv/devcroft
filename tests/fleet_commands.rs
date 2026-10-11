@@ -487,15 +487,34 @@ fn a_real_devbox_agent_builds_its_project_in_its_clone() {
     let agent = &started[0];
     let socket = state.join("agents").join(&agent.id).join("control.sock");
     let repo = env!("CARGO_MANIFEST_DIR");
+    // A store path in no closure, made on the host just now. With the whole
+    // store in the view (a bind of `/nix/store` itself) it would be visible;
+    // narrowed to the agent's closure (`fleet::closure`) it is not.
+    let unrelated = {
+        let file = base.join("unrelated-store-probe");
+        std::fs::write(&file, format!("{}\n", std::process::id())).unwrap();
+        let out = Command::new("nix-store")
+            .arg("--add")
+            .arg(&file)
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{out:?}");
+        String::from_utf8_lossy(&out.stdout).trim().to_owned()
+    };
     let (code, out) = session(
         &socket,
         Path::new(WORKSPACE),
         &format!(
             "cargo build 2>&1 | tail -1; \
              ./target/debug/citytime 2>&1 | head -1; \
-             cat {repo}/Cargo.toml >/dev/null 2>&1 && echo REPO_READABLE; true"
+             cat {repo}/Cargo.toml >/dev/null 2>&1 && echo REPO_READABLE; \
+             test -e {unrelated} && echo UNRELATED_STORE_PATH_VISIBLE; true"
         ),
     );
+    let _ = Command::new("nix-store")
+        .arg("--delete")
+        .arg(&unrelated)
+        .output();
     assert_eq!(code, Some(0), "{out}");
     assert!(out.contains("Finished"), "the build did not finish: {out}");
     assert!(
@@ -503,6 +522,10 @@ fn a_real_devbox_agent_builds_its_project_in_its_clone() {
         "the binary did not run: {out}"
     );
     assert!(!out.contains("REPO_READABLE"), "{out}");
+    assert!(
+        !out.contains("UNRELATED_STORE_PATH_VISIBLE"),
+        "the agent sees store paths outside its closure: {out}"
+    );
     commands::stop(
         &commands::FleetRef {
             state_dir: &state,
