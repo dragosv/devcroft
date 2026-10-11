@@ -143,13 +143,7 @@ fn spawn_piped(req: &SpawnRequest) -> io::Result<SpawnedSession> {
         });
     }
 
-    let mut child = cmd.spawn().map_err(|e| {
-        spawn_ctx(
-            e,
-            &format!("spawning {:?} in", req.cmd),
-            std::path::Path::new(&req.cwd),
-        )
-    })?;
+    let mut child = cmd.spawn().map_err(|e| spawn_failure(e, req, "spawning"))?;
     let pgid = child.id() as libc::pid_t;
     let stdin = child
         .stdin
@@ -176,6 +170,50 @@ fn spawn_piped(req: &SpawnRequest) -> io::Result<SpawnedSession> {
 /// working directory — and "keeper refused to spawn: No such file or
 /// directory" names none of them; five CI runs on a Linux host were read
 /// before this existed.
+/// A failed spawn, saying which of its two inputs was missing. `ENOENT`
+/// comes back the same for a program that does not exist and a working
+/// directory that does not, and the old message ("spawning \"sh\" in
+/// /project: No such file or directory") read as the directory missing
+/// when it was the program: an environment that provides no `sh` on its
+/// `PATH`, which is a property of the environment, not a failure of the
+/// sandbox.
+fn spawn_failure(e: io::Error, req: &SpawnRequest, step: &str) -> io::Error {
+    if e.kind() == io::ErrorKind::NotFound {
+        let cwd = std::path::Path::new(&req.cwd);
+        if !cwd.is_dir() {
+            return io::Error::new(
+                e.kind(),
+                format!(
+                    "{step} {:?}: its working directory {} does not exist in the sandbox",
+                    req.cmd,
+                    cwd.display()
+                ),
+            );
+        }
+        if !req.cmd.contains('/') {
+            let shell = std::env::var("DEVCROFT_SHELL").ok();
+            return io::Error::new(
+                e.kind(),
+                format!(
+                    "{step} {:?}: not found on the sandbox's PATH; this environment does not \
+                     provide it{}",
+                    req.cmd,
+                    match shell {
+                        Some(sh) =>
+                            format!(" (devcroft's own shell is {sh}, which `devcroft shell` uses)"),
+                        None => String::new(),
+                    }
+                ),
+            );
+        }
+    }
+    spawn_ctx(
+        e,
+        &format!("{step} {:?} in", req.cmd),
+        std::path::Path::new(&req.cwd),
+    )
+}
+
 fn spawn_ctx(e: io::Error, step: &str, what: &std::path::Path) -> io::Error {
     io::Error::new(e.kind(), format!("{step} {}: {e}", what.display()))
 }
@@ -228,13 +266,7 @@ fn spawn_pty(req: &SpawnRequest, size: &PtySize) -> io::Result<SpawnedSession> {
     unsafe {
         libc::close(slave_fd);
     }
-    let child = spawn_result.map_err(|e| {
-        spawn_ctx(
-            e,
-            &format!("spawning {:?} on a pty in", req.cmd),
-            std::path::Path::new(&req.cwd),
-        )
-    })?;
+    let child = spawn_result.map_err(|e| spawn_failure(e, req, "spawning on a pty"))?;
     let pgid = child.id() as libc::pid_t;
 
     Ok(SpawnedSession {
@@ -249,6 +281,31 @@ fn spawn_pty(req: &SpawnRequest, size: &PtySize) -> io::Result<SpawnedSession> {
 
 #[cfg(test)]
 mod tests {
+
+    /// `ENOENT` names which input was missing: a program not on `PATH` read
+    /// as a missing directory before.
+    #[test]
+    fn a_missing_program_and_a_missing_directory_are_told_apart() {
+        let req = |cmd: &str, cwd: &str| SpawnRequest {
+            cmd: cmd.into(),
+            args: Vec::new(),
+            cwd: cwd.into(),
+            env: Default::default(),
+            pty: None,
+        };
+        let program = spawn(&req("devcroft-no-such-program", "/")).err().unwrap();
+        assert!(
+            program
+                .to_string()
+                .contains("not found on the sandbox's PATH"),
+            "{program}"
+        );
+        let dir = spawn(&req("/bin/sh", "/devcroft/no/such/dir"))
+            .err()
+            .unwrap();
+        assert!(dir.to_string().contains("working directory"), "{dir}");
+    }
+
     use super::*;
     use std::collections::BTreeMap;
 

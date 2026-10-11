@@ -25,6 +25,15 @@ stdio, and returns the command's exit code as its own.
 The system SHALL provide `devcroft shell [name]` allocating a pty, running
 the user's shell (respecting `$SHELL` if it is inside the allowed policy,
 else falling back to `/bin/sh`), with window-resize and job-control support.
+The pty is allocated when the client's stdin is a terminal; otherwise the
+shell runs on pipes, as `ssh` decides, so input piped to it ends the session
+at its end.
+
+#### Scenario: Input that is not a terminal
+- **WHEN** `devcroft shell` runs with stdin redirected from a file, a pipe or
+  `/dev/null`
+- **THEN** the shell reads that input and the session ends when it does
+- **AND** no pty is allocated, since there is no terminal to give it
 
 #### Scenario: Resize propagation
 - **WHEN** the terminal window is resized during a shell session
@@ -38,6 +47,12 @@ uncleanly.
 #### Scenario: Ctrl-C reaches the child
 - **WHEN** the user presses Ctrl-C during `exec -- sleep 100`
 - **THEN** the sleep receives SIGINT and devcroft exits 130
+
+#### Scenario: The session ignores a forwarded termination
+- **WHEN** the client forwards SIGTERM or SIGHUP and the session does not
+  exit within the grace period (an interactive shell ignores SIGTERM)
+- **THEN** the client closes the connection and exits `128 + signal`
+- **AND** the keeper reaps the session as for any client that went away
 
 #### Scenario: Client killed mid-session
 - **WHEN** the client process is killed with SIGKILL

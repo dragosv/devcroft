@@ -1,10 +1,10 @@
 //! `devcroft shell` (task 5.2), end to end: the real built binary, a real
-//! keeper spawned by `up`, a real pty inside the sandbox. The client's own
-//! stdin/stdout are piped rather than a real local tty (there is no way to
-//! attach one from a test process), which exercises `RawModeGuard`'s
-//! no-op path — the interesting behavior under test is the pty session
-//! itself and the `$SHELL`-then-`/bin/sh` fallback, not local terminal
-//! handling. See `tests/lifecycle_up.rs` for why this needs
+//! keeper spawned by `up`. A pty only where the client has a terminal, as
+//! `ssh` decides: piped input runs on pipes, so the shell sees its input
+//! end (with a pty it never did, and `devcroft shell </dev/null` hung). The
+//! pty case gets its terminal from `script`, since a test process has none.
+//! Also the `$SHELL`-then-`/bin/sh` fallback, and a client that stops
+//! waiting on a session ignoring a forwarded SIGTERM. See `tests/lifecycle_up.rs` for why this needs
 //! `CARGO_BIN_EXE_devcroft` and why each such test lives in its own
 //! file/process.
 
@@ -20,7 +20,7 @@ fn skip_if_tooling_missing() -> bool {
 }
 
 #[test]
-fn shell_runs_commands_over_a_pty_and_falls_back_when_shell_is_missing() {
+fn shell_runs_commands_ends_with_its_input_and_falls_back_when_shell_is_missing() {
     if skip_if_tooling_missing() {
         eprintln!("skipping: no usable flox here (not on PATH, or no reachable Nix store)");
         return;
@@ -80,7 +80,8 @@ fn shell_runs_commands_over_a_pty_and_falls_back_when_shell_is_missing() {
     );
 
     // Requested shell exists (exec spec's "Interactive shell" requirement):
-    // a real pty session, commands run and their output streams back.
+    // commands run and their output streams back. Piped input, so a piped
+    // session, not a pty.
     //
     // `$SHELL` is the closure's own absolute shell, not a bare `"sh"`. A
     // bare name is resolved by the *sandbox's* `PATH`, whose tail is the
@@ -111,13 +112,12 @@ fn shell_runs_commands_over_a_pty_and_falls_back_when_shell_is_missing() {
         .write_all(b"echo shell-marker-hi\nexit\n")
         .unwrap();
     let out = child.wait_with_output().unwrap();
-    // stderr and the keeper's own log in the message: the pty spawn is
-    // refused *inside* the keeper, and the client sees only an empty
-    // session. Two CI runs (34825300174, 34826398846) showed `got ""` and
+    // stderr and the keeper's own log in the message: a spawn is refused
+    // *inside* the keeper, and the client sees only an empty session. Two CI runs (34825300174, 34826398846) showed `got ""` and
     // nothing else, which is not a diagnosis.
     assert!(
         String::from_utf8_lossy(&out.stdout).contains("shell-marker-hi"),
-        "expected pty output to contain the echoed marker, got stdout={:?} stderr={:?}\n\
+        "expected the session's output to contain the echoed marker, got stdout={:?} stderr={:?}\n\
          keeper log:\n{}",
         String::from_utf8_lossy(&out.stdout),
         String::from_utf8_lossy(&out.stderr),
@@ -152,6 +152,94 @@ fn shell_runs_commands_over_a_pty_and_falls_back_when_shell_is_missing() {
         String::from_utf8_lossy(&out.stderr)
     );
     assert_eq!(out.status.code(), Some(0));
+
+    // The end of the input ends the session. With a pty for piped input it
+    // never did: `devcroft shell </dev/null`, or a script without `exit`,
+    // hung until SIGKILL. Bounded by `timeout` so a regression fails here
+    // rather than hanging the suite.
+    let bounded = |stdin: Stdio, input: &[u8]| {
+        let mut child = Command::new("timeout")
+            .args(["-k", "2", "20", devcroft_bin, "shell"])
+            .arg(&sandbox_name)
+            .env("SHELL", &requested)
+            .current_dir(&project_root)
+            .stdin(stdin)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        if let Some(mut s) = child.stdin.take() {
+            s.write_all(input).unwrap();
+        }
+        child.wait_with_output().unwrap()
+    };
+    let null = bounded(Stdio::null(), b"");
+    assert_eq!(null.status.code(), Some(0), "shell </dev/null: {null:?}");
+    let no_exit = bounded(Stdio::piped(), b"echo no-exit-marker\n");
+    assert_eq!(no_exit.status.code(), Some(0), "{no_exit:?}");
+    assert!(String::from_utf8_lossy(&no_exit.stdout).contains("no-exit-marker"));
+
+    // With a terminal, a pty: `script` gives the client one, and the shell
+    // inside sees a tty.
+    if Command::new("script").arg("--version").output().is_ok() {
+        let mut child = Command::new("timeout")
+            .args(["-k", "2", "30", "script", "-qec"])
+            .arg(format!("{devcroft_bin} shell {sandbox_name}"))
+            .arg("/dev/null")
+            .env("SHELL", &requested)
+            .current_dir(&project_root)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .spawn()
+            .unwrap();
+        child
+            .stdin
+            .take()
+            .unwrap()
+            // A builtin: this environment holds bash and nothing else.
+            .write_all(b"[ -t 0 ] && echo stdin-is-a-$((6*7))-tty\nexit\n")
+            .unwrap();
+        let out = child.wait_with_output().unwrap();
+        assert!(
+            // Computed, so the echoed input cannot satisfy it.
+            String::from_utf8_lossy(&out.stdout).contains("stdin-is-a-42-tty"),
+            "with a terminal the session must be a pty: {:?}",
+            String::from_utf8_lossy(&out.stdout)
+        );
+    } else {
+        eprintln!("skipping the pty case: no `script` (util-linux) to give the client a terminal");
+    }
+
+    // A forwarded SIGTERM the session ignores no longer leaves the client
+    // waiting forever: it gives up after the grace period, exits 143, and
+    // the keeper reaps the session it abandoned.
+    let mut ignoring = Command::new(devcroft_bin)
+        // Builtins only (no `sleep` in this environment): a coprocess that
+        // never writes gives `read` something to wait sixty seconds on.
+        .args([
+            "exec",
+            &sandbox_name,
+            "--",
+            &requested,
+            "-c",
+            "trap '' TERM; coproc { read; }; read -t 60 -u \"${COPROC[0]}\"",
+        ])
+        .current_dir(&project_root)
+        .stdin(Stdio::null())
+        .spawn()
+        .unwrap();
+    std::thread::sleep(std::time::Duration::from_secs(2));
+    let sent = std::time::Instant::now();
+    // SAFETY: signalling our own child by pid.
+    unsafe { libc::kill(ignoring.id() as libc::pid_t, libc::SIGTERM) };
+    let status = ignoring.wait().unwrap();
+    assert_eq!(status.code(), Some(128 + libc::SIGTERM));
+    let took = sent.elapsed();
+    assert!(
+        took >= devcroft::lifecycle::GRACE_PERIOD
+            && took < devcroft::lifecycle::GRACE_PERIOD + std::time::Duration::from_secs(5),
+        "gave up after {took:?}"
+    );
 
     down(&sandbox_name).unwrap();
     let _ = std::fs::remove_dir_all(&paths.root);

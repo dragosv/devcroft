@@ -127,13 +127,20 @@ pub fn shell(sandbox_name: &str, req: &ShellRequest) -> Result<i32, ExecError> {
     let fallback = recorded_shell(sandbox_name).unwrap_or_else(|| FALLBACK_SHELL.to_string());
     let requested_shell = std::env::var("SHELL").unwrap_or_else(|_| fallback.clone());
     let size = terminal_size().unwrap_or(PtySize { rows: 24, cols: 80 });
+    // A pty only for a terminal, as `ssh` decides. With stdin piped or at
+    // EOF, a pty kept the shell from ever seeing the end of its input: the
+    // client's `StdinClosed` dropped the keeper's writer, but the master
+    // stayed open, so `devcroft shell </dev/null` and a piped script without
+    // an `exit` hung forever. On pipes the shell reads its script and exits
+    // at EOF.
+    let interactive = unsafe { libc::isatty(libc::STDIN_FILENO) } != 0;
 
     let spawn_req = SpawnRequest {
         cmd: requested_shell.clone(),
         args: Vec::new(),
         cwd: req.cwd.clone(),
         env: BTreeMap::new(),
-        pty: Some(size),
+        pty: interactive.then_some(size),
     };
 
     let stream = match connect_and_spawn(sandbox_name, &spawn_req) {
@@ -151,7 +158,7 @@ pub fn shell(sandbox_name: &str, req: &ShellRequest) -> Result<i32, ExecError> {
     // path once this falls out of scope. A no-op if stdin isn't actually
     // a tty (e.g. this test process, or `shell` run non-interactively).
     let _raw_mode = RawModeGuard::enable();
-    stream_session(stream, true)
+    stream_session(stream, interactive)
 }
 
 /// Connects to `sandbox_name`'s keeper and sends `spawn_req`, returning
@@ -197,6 +204,10 @@ fn stream_session(stream: UnixStream, pty: bool) -> Result<i32, ExecError> {
     let signal_set = block_forwarded_signals(pty);
 
     let write_half = stream.try_clone().map_err(ExecError::Connect)?;
+    // Held by the signal forwarder so it can end the session from this side
+    // (see `spawn_signal_forwarder`), and the code that ending reports.
+    let giving_up = stream.try_clone().map_err(ExecError::Connect)?;
+    let ended_by_signal = std::sync::Arc::new(std::sync::atomic::AtomicI32::new(0));
     let mut read_half = stream;
 
     let (tx, rx) = mpsc::channel::<Frame>();
@@ -212,7 +223,13 @@ fn stream_session(stream: UnixStream, pty: bool) -> Result<i32, ExecError> {
     };
 
     spawn_stdin_pump(tx.clone());
-    spawn_signal_forwarder(signal_set, tx.clone(), pty);
+    spawn_signal_forwarder(
+        signal_set,
+        tx.clone(),
+        pty,
+        giving_up,
+        ended_by_signal.clone(),
+    );
     drop(tx);
 
     let exit_code = loop {
@@ -226,8 +243,16 @@ fn stream_session(stream: UnixStream, pty: bool) -> Result<i32, ExecError> {
                 let _ = io::stderr().flush();
             }
             Ok(Frame::Exit(status)) => break exit_code_from(status),
-            Ok(_) => {}        // no other frame is expected once a session is running
-            Err(_) => break 1, // connection dropped before Exit arrived
+            Ok(_) => {} // no other frame is expected once a session is running
+            // Connection dropped before Exit arrived: either the keeper went
+            // away, or this side gave up on a session that ignored a
+            // forwarded termination signal.
+            Err(_) => {
+                break match ended_by_signal.load(std::sync::atomic::Ordering::SeqCst) {
+                    0 => 1,
+                    signal => 128 + signal,
+                };
+            }
         }
     };
 
@@ -294,7 +319,23 @@ fn block_forwarded_signals(pty: bool) -> libc::sigset_t {
     set
 }
 
-fn spawn_signal_forwarder(set: libc::sigset_t, tx: mpsc::Sender<Frame>, pty: bool) {
+/// Forwards SIGINT/SIGTERM/SIGHUP to the session, as the exec spec requires.
+///
+/// **And stops waiting on a session that ignores a termination.** SIGTERM
+/// and SIGHUP are forwarded, and if the session has not exited a grace
+/// period later, this side drops the connection and the client exits
+/// `128 + signal`; the keeper then reaps the session, which the spec also
+/// requires of a client that went away. Without it a client was unkillable
+/// short of SIGKILL whenever the session ignored the signal, and an
+/// interactive shell always ignores SIGTERM: `timeout 20 devcroft shell`
+/// was still running five minutes later.
+fn spawn_signal_forwarder(
+    set: libc::sigset_t,
+    tx: mpsc::Sender<Frame>,
+    pty: bool,
+    connection: UnixStream,
+    ended_by_signal: std::sync::Arc<std::sync::atomic::AtomicI32>,
+) {
     thread::spawn(move || {
         loop {
             let mut received: libc::c_int = 0;
@@ -318,6 +359,17 @@ fn spawn_signal_forwarder(set: libc::sigset_t, tx: mpsc::Sender<Frame>, pty: boo
             };
             if tx.send(Frame::Signal(signal)).is_err() {
                 return;
+            }
+            if received == libc::SIGTERM || received == libc::SIGHUP {
+                let connection = connection.try_clone();
+                let ended = ended_by_signal.clone();
+                thread::spawn(move || {
+                    thread::sleep(crate::lifecycle::GRACE_PERIOD);
+                    ended.store(received, std::sync::atomic::Ordering::SeqCst);
+                    if let Ok(c) = connection {
+                        let _ = c.shutdown(std::net::Shutdown::Both);
+                    }
+                });
             }
         }
     });
