@@ -141,8 +141,50 @@ fn the_derived_environment_resolves_to_an_identical_closure() {
         return;
     };
 
+    // Locked first, as a real project is (`flox list` locks without running
+    // the hook, measured), so the copy has a project lock to agree with.
+    let locked = Command::new("flox")
+        .arg("list")
+        .current_dir(&with_hook)
+        .output()
+        .unwrap();
+    assert!(locked.status.success(), "{locked:?}");
+
     let derived = resolved_jq(&with_hook);
     let direct = resolved_jq(&without_hook);
+
+    // flox left the copy's lock exactly as devcroft wrote it: the project's,
+    // with `hook` gone from its embedded manifest. Copied verbatim, the lock
+    // disagreed with the hook-free manifest, and flox re-locked the copy on
+    // activation, which re-resolves (measured: the embedded manifest
+    // rewritten).
+    let read_lock = |dir: &Path| -> serde_json::Value {
+        serde_json::from_str(&std::fs::read_to_string(dir.join(".flox/env/manifest.lock")).unwrap())
+            .unwrap()
+    };
+    let copy = std::fs::read_dir(with_hook.join(".devcroft"))
+        .unwrap()
+        .flatten()
+        .map(|e| e.path())
+        .find(|p| {
+            p.file_name()
+                .unwrap()
+                .to_string_lossy()
+                .starts_with("flox-env-")
+        })
+        .expect("a derived copy");
+    let mut expected = read_lock(&with_hook);
+    expected["manifest"].as_object_mut().unwrap().remove("hook");
+    // Byte-for-byte, not as JSON values: a flox re-lock produces the same
+    // *value* (same pins, hook gone from the embedded manifest), so only
+    // the bytes, devcroft's serializer against flox's, show that flox
+    // rewrote the file. The first version compared values and passed with
+    // the lock copied verbatim, which is exactly the re-lock it is here for.
+    assert_eq!(
+        std::fs::read_to_string(copy.join(".flox/env/manifest.lock")).unwrap(),
+        serde_json::to_string_pretty(&expected).unwrap(),
+        "flox rewrote the derived lock, so it re-locked what devcroft derived"
+    );
 
     assert!(
         derived.is_some(),

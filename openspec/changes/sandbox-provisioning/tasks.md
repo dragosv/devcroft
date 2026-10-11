@@ -117,9 +117,37 @@
       `fleet up` (not per agent), naming the declared scripts, why, and the
       fallback (`[vars]`, `[hook].on-activate`; aliases and functions have no
       equivalent). Unit-tested; checked by hand with the real binary.
-- [ ] Detect a derived environment whose lock has drifted from the project's,
+- [x] Detect a derived environment whose lock has drifted from the project's,
       and re-derive rather than materializing something the project did not
       declare.
+      **Done (2026-10-10), and the drift was real, not hypothetical.**
+      Measured on `flox-clap-sample`: devcroft copied the lock verbatim, but
+      flox embeds the manifest in its lock, and the derived manifest had
+      lost its hook, so flox re-locked the copy on activation (the embedded
+      manifest rewritten). Re-locking re-resolves; the 20 pins happened to
+      survive because flox keeps existing pins for unchanged entries, which
+      is flox's habit, not something devcroft checked. Now: the derived lock
+      is the project's with `hook` gone from its embedded manifest
+      (`lock_without_hook`), which flox then leaves untouched (measured); a
+      reused copy whose pins drifted is derived again; and after activation
+      the copy must pin what the project pins (outputs, derivation, locked
+      URL per package and system) or `up` fails at the provider layer
+      naming the packages (`lock_drift`). The real-flox closure test now
+      compares the derived lock's **bytes**: a re-lock yields the same JSON
+      value, so the first, value-based version passed with the old verbatim
+      copy. `flox list` locks a project without running its hook
+      (measured), which is how the test locks it.
+      **One refinement the full suite forced:** a project whose own lock is
+      behind its manifest (`flox init`, then an edit) makes every copy
+      re-lock, and the first version refused that, with a remedy naming
+      `flox lock`, which flox 1.14 does not have. flox re-locks such a
+      project itself, so that is the project's state, not drift devcroft
+      introduced: it is now a warning naming what is unlocked, with `flox
+      list` as the remedy. Drift is refused only against a lock whose
+      packages match the manifest's `[install]` (`stale_project_lock`).
+      **Not tested end to end:** the refusal itself. Real flox keeps pins on
+      a re-lock, so genuine drift cannot be provoked; `lock_drift` is
+      unit-tested and the branch is a two-way match on it.
 - [ ] Implement the fail-closed diagnostic for what remains genuinely refused:
       activation code that needs materialization authority *while running as
       project code*. The error must distinguish this from "this provider

@@ -36,6 +36,28 @@ impl Provider for FloxProvider {
         let baseline = capture::canonical_base_env()?;
         let mut activated = capture_activated_env(&materialize_from, &baseline)?;
         if materialize_from != project_root {
+            // What activation materialized must be what the project pins,
+            // where the project pins anything consistent to begin with.
+            if let Some(packages) = lock_drift(project_root, &materialize_from)? {
+                match stale_project_lock(project_root)? {
+                    // flox re-locks a stale lock for the project itself, so
+                    // the copy doing so is not drift devcroft introduced; it
+                    // is the project's state, and it is said.
+                    Some(why) => eprintln!(
+                        "devcroft: warning: flox: this project's lock is out of date with \
+                         its manifest ({why}), so the environment was locked afresh and is \
+                         not pinned by the project (fallback: it runs as resolved now; \
+                         `flox list` in the project pins it without running its hook)"
+                    ),
+                    None => {
+                        return Err(ProviderError::ResolutionFailed(format!(
+                            "flox re-locked devcroft's hook-free copy of this environment \
+                             to packages the project's lock does not pin: {packages}. \
+                             Refusing rather than run what the project did not declare"
+                        )));
+                    }
+                }
+            }
             restore_project_context(&mut activated, &materialize_from, project_root);
         }
 
@@ -289,9 +311,25 @@ fn derive_hook_free_env(project_root: &Path) -> Result<std::path::PathBuf, Provi
 
     // Already derived for this exact manifest+lock: reuse it. The
     // fingerprint is what makes this safe — a changed environment gets a
-    // different path rather than hitting this branch.
+    // different path rather than hitting this branch. **Unless its lock has
+    // drifted** from the project's (a copy derived before devcroft wrote a
+    // consistent lock, which flox then re-locked): such a copy could
+    // materialize packages the project does not pin, so it is derived again
+    // rather than trusted.
     if env_dir.join("manifest.toml").is_file() {
-        return Ok(derived);
+        // A stale project lock makes every copy "drift"; re-deriving would
+        // only repeat it, so such a copy is reused and the warning says why.
+        if lock_drift(project_root, &derived)?.is_none()
+            || stale_project_lock(project_root)?.is_some()
+        {
+            return Ok(derived);
+        }
+        std::fs::remove_dir_all(&derived).map_err(|e| {
+            ProviderError::ResolutionFailed(format!(
+                "removing the drifted copy {}: {e}",
+                derived.display()
+            ))
+        })?;
     }
 
     std::fs::create_dir_all(&env_dir).map_err(|e| {
@@ -306,26 +344,137 @@ fn derive_hook_free_env(project_root: &Path) -> Result<std::path::PathBuf, Provi
         ProviderError::ResolutionFailed(format!("writing the derived manifest: {e}"))
     })?;
 
-    // The lock and `env.json` are copied verbatim when present. The lock
-    // is what pins the closure — copying it is what makes the derived
-    // environment resolve to the same packages rather than re-resolving.
+    // The lock pins the closure, and it is copied with one edit: `hook`
+    // removed from the manifest flox embeds in it, so lock and manifest
+    // agree. **Copied verbatim, they did not** (the manifest had lost its
+    // hook), and flox re-locked the copy on activation (measured: the
+    // embedded manifest rewritten). Re-locking re-resolves, and only flox's
+    // habit of keeping existing pins stood between that and materializing
+    // versions the project never declared. With the two consistent, flox
+    // leaves the lock untouched (measured); `lock_drift` checks after
+    // activation either way.
+    let lock_from = source.join("env/manifest.lock");
+    if lock_from.is_file() {
+        let text = std::fs::read_to_string(&lock_from).map_err(|e| {
+            ProviderError::ResolutionFailed(format!("reading {}: {e}", lock_from.display()))
+        })?;
+        std::fs::write(env_dir.join("manifest.lock"), lock_without_hook(&text)?).map_err(|e| {
+            ProviderError::ResolutionFailed(format!("writing the derived lock: {e}"))
+        })?;
+    }
     // `env.json` carries the environment's *name*, which flox surfaces as
     // `FLOX_ENV_DESCRIPTION`; without it the derived environment would
     // report itself under the scratch directory's name.
-    for optional in ["env/manifest.lock", "env.json"] {
-        let from = source.join(optional);
-        if from.is_file() {
-            let to = derived.join(".flox").join(optional);
-            if let Some(parent) = to.parent() {
-                let _ = std::fs::create_dir_all(parent);
-            }
-            std::fs::copy(&from, &to).map_err(|e| {
-                ProviderError::ResolutionFailed(format!("copying {}: {e}", from.display()))
-            })?;
-        }
+    let from = source.join("env.json");
+    if from.is_file() {
+        std::fs::copy(&from, derived.join(".flox/env.json")).map_err(|e| {
+            ProviderError::ResolutionFailed(format!("copying {}: {e}", from.display()))
+        })?;
     }
 
     Ok(derived)
+}
+
+/// The project's lock, with `hook` removed from the manifest flox embeds in
+/// it, so it agrees with the derived manifest. Fails rather than copying an
+/// unreadable lock as-is, which would be the inconsistent copy this exists
+/// to prevent.
+fn lock_without_hook(lock_text: &str) -> Result<String, ProviderError> {
+    let mut lock: serde_json::Value = serde_json::from_str(lock_text)
+        .map_err(|e| ProviderError::ResolutionFailed(format!("parsing the flox lock: {e}")))?;
+    if let Some(manifest) = lock.get_mut("manifest").and_then(|m| m.as_object_mut()) {
+        manifest.remove("hook");
+    }
+    serde_json::to_string_pretty(&lock)
+        .map_err(|e| ProviderError::ResolutionFailed(format!("serialising the derived lock: {e}")))
+}
+
+/// What a lock pins, per package and system: the fields that decide what
+/// gets materialized (`outputs`, `derivation`, `locked_url`). Cosmetic
+/// fields flox may rewrite are left out, so a re-lock that changed nothing
+/// that is built is not called drift.
+fn locked_packages(
+    lock_text: &str,
+) -> Result<std::collections::BTreeMap<(String, String), serde_json::Value>, ProviderError> {
+    let lock: serde_json::Value = serde_json::from_str(lock_text)
+        .map_err(|e| ProviderError::ResolutionFailed(format!("parsing a flox lock: {e}")))?;
+    let field =
+        |p: &serde_json::Value, k: &str| p.get(k).and_then(|v| v.as_str()).unwrap_or("").to_owned();
+    Ok(lock
+        .get("packages")
+        .and_then(|p| p.as_array())
+        .into_iter()
+        .flatten()
+        .map(|p| {
+            (
+                (field(p, "install_id"), field(p, "system")),
+                serde_json::json!({
+                    "outputs": p.get("outputs"),
+                    "derivation": p.get("derivation"),
+                    "locked_url": p.get("locked_url"),
+                }),
+            )
+        })
+        .collect())
+}
+
+/// Why the project's own lock is out of date with its manifest, when the
+/// packages its `[install]` declares are not the ones its lock holds; `None`
+/// when they agree. A descriptor edited in place (a changed version) is not
+/// seen, and then a re-lock shows as drift and is refused, which is the
+/// conservative direction.
+fn stale_project_lock(project_root: &Path) -> Result<Option<String>, ProviderError> {
+    let env = project_root.join(".flox/env");
+    let Ok(lock) = std::fs::read_to_string(env.join("manifest.lock")) else {
+        return Ok(None);
+    };
+    let manifest: toml::Table = std::fs::read_to_string(env.join("manifest.toml"))
+        .map_err(|e| ProviderError::ResolutionFailed(format!("reading the flox manifest: {e}")))?
+        .parse()
+        .map_err(|e| ProviderError::ResolutionFailed(format!("parsing the flox manifest: {e}")))?;
+    let declared: std::collections::BTreeSet<String> = manifest
+        .get("install")
+        .and_then(|i| i.as_table())
+        .map(|t| t.keys().cloned().collect())
+        .unwrap_or_default();
+    let locked: std::collections::BTreeSet<String> = locked_packages(&lock)?
+        .into_keys()
+        .map(|(id, _)| id)
+        .collect();
+    let unlocked: Vec<&String> = declared.difference(&locked).collect();
+    let gone: Vec<&String> = locked.difference(&declared).collect();
+    Ok(match (unlocked.is_empty(), gone.is_empty()) {
+        (true, true) => None,
+        _ => Some(
+            [
+                (!unlocked.is_empty()).then(|| format!("declared but not locked: {unlocked:?}")),
+                (!gone.is_empty()).then(|| format!("locked but no longer declared: {gone:?}")),
+            ]
+            .into_iter()
+            .flatten()
+            .collect::<Vec<_>>()
+            .join("; "),
+        ),
+    })
+}
+
+/// The packages the derived copy's lock pins differently from the
+/// project's, named; `None` when they agree (or the project has no lock).
+fn lock_drift(project_root: &Path, derived: &Path) -> Result<Option<String>, ProviderError> {
+    let read = |p: &Path| std::fs::read_to_string(p.join(".flox/env/manifest.lock")).ok();
+    let (Some(project), Some(copy)) = (read(project_root), read(derived)) else {
+        return Ok(None);
+    };
+    let (want, got) = (locked_packages(&project)?, locked_packages(&copy)?);
+    let differing: Vec<String> = want
+        .keys()
+        .chain(got.keys())
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
+        .filter(|k| want.get(*k) != got.get(*k))
+        .map(|(id, system)| format!("{id} ({system})"))
+        .collect();
+    Ok((!differing.is_empty()).then(|| differing.join(", ")))
 }
 
 /// Remove the `[hook]` table from a flox manifest, leaving everything
@@ -540,6 +689,73 @@ mod tests {
         if let Some(lock) = lock {
             fs::write(env_dir.join("manifest.lock"), lock).unwrap();
         }
+    }
+
+    const LOCK: &str = r#"{
+      "manifest": {"version": 1, "install": {"jq": {}}, "hook": {"on-activate": "x"}},
+      "packages": [
+        {"install_id": "jq", "system": "aarch64-linux", "outputs": {"out": "/nix/store/a-jq"},
+         "locked_url": "u1", "priority": 5}
+      ]
+    }"#;
+
+    #[test]
+    fn the_derived_lock_agrees_with_the_derived_manifest() {
+        let lock: serde_json::Value =
+            serde_json::from_str(&lock_without_hook(LOCK).unwrap()).unwrap();
+        assert!(lock["manifest"].get("hook").is_none());
+        // Nothing else moves: the pins are the project's.
+        assert_eq!(lock["manifest"]["install"]["jq"], serde_json::json!({}));
+        assert_eq!(
+            locked_packages(&lock.to_string()).unwrap(),
+            locked_packages(LOCK).unwrap()
+        );
+        assert!(lock_without_hook("not json").is_err());
+    }
+
+    #[test]
+    fn drift_is_a_change_in_what_is_built_not_in_cosmetics() {
+        let project = tempdir("drift-project");
+        let copy = tempdir("drift-copy");
+        flox_env(&project, "version = 1\n", Some(LOCK));
+        // A cosmetic difference (priority) is not drift.
+        flox_env(
+            &copy,
+            "version = 1\n",
+            Some(&LOCK.replace("\"priority\": 5", "\"priority\": 9")),
+        );
+        assert_eq!(lock_drift(&project, &copy).unwrap(), None);
+        // A different output is, and the package is named.
+        flox_env(&copy, "version = 1\n", Some(&LOCK.replace("a-jq", "b-jq")));
+        assert_eq!(
+            lock_drift(&project, &copy).unwrap().as_deref(),
+            Some("jq (aarch64-linux)")
+        );
+    }
+
+    #[test]
+    fn a_project_lock_behind_its_manifest_is_named_as_stale() {
+        // What `flox init` then an edit leaves: a lock with no packages.
+        let root = tempdir("stale");
+        flox_env(
+            &root,
+            "version = 1\n[install]\njq.pkg-path = \"jq\"\n",
+            Some(r#"{"manifest": {"version": 1}, "packages": []}"#),
+        );
+        let why = stale_project_lock(&root).unwrap().unwrap();
+        assert!(
+            why.contains("declared but not locked") && why.contains("jq"),
+            "{why}"
+        );
+
+        // A lock that holds what the manifest declares is not stale.
+        let current = tempdir("current");
+        flox_env(
+            &current,
+            "version = 1\n[install]\njq.pkg-path = \"jq\"\n",
+            Some(LOCK),
+        );
+        assert_eq!(stale_project_lock(&current).unwrap(), None);
     }
 
     #[test]
