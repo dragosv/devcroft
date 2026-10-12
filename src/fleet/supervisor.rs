@@ -74,6 +74,10 @@ pub struct AgentLaunch {
     pub expose: Vec<(String, u16)>,
     /// A wall-clock limit, enforced by the agent's PID 1 (`AgentSpec::timeout_secs`).
     pub timeout: Option<std::time::Duration>,
+    /// The compiled policy `plan` came from, origins included, written for
+    /// the agent to read (`why` inside it), as `up` writes a sandbox's.
+    /// `None` writes nothing.
+    pub policy: Option<crate::policy::CompiledPolicy>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -384,6 +388,25 @@ impl Supervisor {
             Some(_) => PathBuf::from(super::mount::WORKSPACE),
             None => launch.workspace.clone(),
         };
+        // The agent's compiled policy, where it can read it: what `why` and
+        // `policy --render` answer from inside it. Fleet wrote none, so `why`
+        // in an agent answered from the manifest alone, DENIED for its own
+        // provider's paths (adversarial review). With this agent's proxy
+        // port, and its paths as the agent sees them.
+        if let Some(policy) = &launch.policy {
+            let policy = match relay {
+                Some(port) => policy.clone().with_proxy_port(port),
+                None => policy.clone(),
+            };
+            let artifact = crate::services::artifact_dir(&launch.workspace, id).join("policy.json");
+            if let Some(parent) = artifact.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+            std::fs::write(
+                &artifact,
+                translate(serde_json::to_string_pretty(&policy).map_err(io::Error::other)?),
+            )?;
+        }
 
         let env = crate::lifecycle::KeeperEnv {
             env: &provider_env,
@@ -653,21 +676,7 @@ impl Supervisor {
     /// Record a Stopped agent and release what only a running one needs:
     /// its sockets and its view root. Port mappings go with them.
     fn release(&self, record: &AgentRecord) -> io::Result<()> {
-        let dir = self.agent_dir(&record.id);
-        let _ = std::fs::remove_file(self.control_socket(&record.id));
-        let _ = std::fs::remove_file(self.ssh_socket(&record.id));
-        let _ = std::fs::remove_file(dir.join("proxy.sock"));
-        if let Ok(entries) = std::fs::read_dir(&dir) {
-            for entry in entries.flatten() {
-                if entry.file_name().to_string_lossy().starts_with("ingress-") {
-                    let _ = std::fs::remove_file(entry.path());
-                }
-            }
-        }
-        let _ = std::fs::remove_dir(dir.join("root"));
-        let mut record = record.clone();
-        record.port_mappings.clear();
-        write_record(&dir, &record)
+        release_files(&self.agent_dir(&record.id), record)
     }
 
     fn records(&self) -> io::Result<Vec<AgentRecord>> {
@@ -715,6 +724,72 @@ impl Supervisor {
         std::fs::rename(tmp, counter)?;
         Ok(format!("a{next}"))
     }
+}
+
+/// Record an agent Stopped and remove what only a running one needs: its
+/// sockets, its view root. Its port mappings go with them.
+fn release_files(dir: &Path, record: &AgentRecord) -> io::Result<()> {
+    for socket in ["control.sock", "ssh.sock", "proxy.sock"] {
+        let _ = std::fs::remove_file(dir.join(socket));
+    }
+    if let Ok(entries) = std::fs::read_dir(dir) {
+        for entry in entries.flatten() {
+            if entry.file_name().to_string_lossy().starts_with("ingress-") {
+                let _ = std::fs::remove_file(entry.path());
+            }
+        }
+    }
+    let _ = std::fs::remove_dir(dir.join("root"));
+    let mut record = record.clone();
+    record.port_mappings.clear();
+    write_record(dir, &record)
+}
+
+/// The records of a fleet whose cgroup subtree is gone, every one settled
+/// as Stopped, in ID order.
+///
+/// **No agent of such a fleet can be running**: cgroup v2 cannot remove a
+/// populated cgroup, so a subtree that is gone was emptied first, by a
+/// reboot or by the end of the systemd unit that delegated it. So nothing
+/// here needs, or can have, a `Supervisor`, which opens the fleet's cgroup
+/// node and would fail on the missing root; reconciling is retiring every
+/// Running record, and a directory without a record (a start interrupted)
+/// is removed as reconcile would. The kernel's exit evidence went with the
+/// cgroups and is not recorded.
+pub fn settle_offline(state: &Path) -> io::Result<Vec<AgentRecord>> {
+    let mut records = Vec::new();
+    let dir = state.join("agents");
+    let entries = match std::fs::read_dir(&dir) {
+        Ok(e) => e,
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(records),
+        Err(e) => return Err(e),
+    };
+    for entry in entries {
+        let path = entry?.path();
+        match read_record(&path)? {
+            None => std::fs::remove_dir_all(&path)?,
+            Some(mut record) => {
+                if record.state == AgentState::Running {
+                    record.state = AgentState::Stopped;
+                    release_files(&path, &record)?;
+                    record.port_mappings.clear();
+                }
+                records.push(record);
+            }
+        }
+    }
+    records.sort_by_key(|r| id_number(&r.id));
+    Ok(records)
+}
+
+/// Remove a settled agent's record and directory, for a fleet whose
+/// cgroup subtree is gone (`settle_offline`).
+pub fn forget_offline(state: &Path, id: &str) -> io::Result<AgentRecord> {
+    let dir = state.join("agents").join(id);
+    let record = read_record(&dir)?
+        .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, format!("no agent {id}")))?;
+    std::fs::remove_dir_all(&dir)?;
+    Ok(record)
 }
 
 /// Reap a helper whose leaf has just been emptied. Bounded rather than a

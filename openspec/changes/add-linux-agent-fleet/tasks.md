@@ -689,12 +689,22 @@ were reproduced there, and each fix here has a mutant that fails its test.
       is waited on until its keeper answers a query, after its hooks, and an
       agent whose leaf empties first is reported as not started with the
       hook runner's reason. `an_agent_whose_hook_fails_is_reported_as_not_started`.
-- [ ] 3.6 The fleet's policy is not inspectable: no per-agent artifact, and
-      `why` inside an agent does not find one.
+- [x] **3.6 The fleet's policy was not inspectable.** Each agent now gets
+      `.devcroft/<id>/policy.json`, the compiled policy its plan came from
+      (origins, its own proxy port, paths translated to `/workspace`), and
+      `why`/`policy --render` find it from any `.devcroft/<x>/home`, not only
+      the manifest's sandbox name, which an agent's id never matched.
+      `why_inside_an_agent_answers_from_that_agents_own_policy`; both mutants
+      (no artifact; the name check back) fail it.
 - [ ] 3.7 Subdirectory projects lose `.git`; the concurrent-commit test runs
       git host-side, not in agents.
-- [ ] 3.8 State cannot be recovered when the cgroup subtree is gone (after a
-      reboot): `rm --all` fails on it.
+- [x] **3.8 State could not be recovered when the cgroup subtree was gone**
+      (after a reboot). cgroup v2 cannot remove a populated cgroup, so a
+      missing root means no agent is running: `ls`/`inspect`/`stop`/`rm`/
+      `rm --all` settle the records offline (`supervisor::settle_offline`)
+      without opening the root, and `up` moves the fleet to the current
+      root. `a_fleet_whose_cgroup_subtree_is_gone_can_be_listed_moved_and_removed`;
+      fails with the offline branch disabled.
 - [ ] Decisions still open (review §4): Nix closure retention for live agents,
       default budgets and runtime overhead reservation, and lifecycle versus
       workload (task identity, completion, attention).

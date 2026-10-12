@@ -3551,11 +3551,15 @@ impl Fidelity {
 /// does, and the artifact sits beside it. On the host `HOME` is the user's,
 /// so this is `None` and a leftover artifact from a removed sandbox is never
 /// read in place of a record that says there is no sandbox.
-fn own_sandbox_policy(name: &str) -> Option<std::path::PathBuf> {
+fn own_sandbox_policy(_name: &str) -> Option<std::path::PathBuf> {
     let home = std::path::PathBuf::from(std::env::var_os("HOME")?);
     let dir = home.parent()?;
+    // Any `.devcroft/<x>/home`, not only the manifest's name: a fleet agent's
+    // home is `.devcroft/<agent id>/home` while its manifest names the
+    // project's sandbox, and the first version, matching the name, did not
+    // recognise an agent as inside anything (adversarial review). `HOME`
+    // already says which sandbox this is; the name adds nothing to that.
     let is_own = home.file_name()? == "home"
-        && dir.file_name()? == name
         && dir.parent()?.file_name()? == devcroft::services::ARTIFACT_DIR;
     is_own.then(|| dir.join("policy.json"))
 }

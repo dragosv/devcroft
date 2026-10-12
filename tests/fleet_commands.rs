@@ -1437,3 +1437,105 @@ fn an_agent_whose_hook_fails_is_reported_as_not_started() {
     ok.cmd(commands::rm_all).unwrap();
     let _ = s.cmd(commands::rm_all);
 }
+
+/// A fleet whose cgroup subtree is gone (a reboot, or the end of the
+/// systemd unit that delegated it) can still be listed, moved and removed.
+/// Every command used to reopen the supervisor at the recorded root and
+/// fail there, `rm --all` included, and `up` with the new root refused
+/// because the root differed (adversarial review).
+#[test]
+fn a_fleet_whose_cgroup_subtree_is_gone_can_be_listed_moved_and_removed() {
+    let Some(root) = capable_host() else { return };
+    // A subtree of the delegated root to stand for the one that goes away.
+    let gone = root.join(format!("devcroft-gone-{}", std::process::id()));
+    std::fs::create_dir(&gone).unwrap();
+    let s = Setup::new("gone", Some(&gone), "", true);
+    let started = s.up(1).unwrap();
+    assert_eq!(started[0].failed, None);
+
+    // What a reboot or the unit's end does: everything in it killed, then
+    // the cgroups removed, while the record still says Running.
+    let mut dirs = vec![gone.clone()];
+    let mut i = 0;
+    while i < dirs.len() {
+        for e in std::fs::read_dir(&dirs[i]).unwrap().flatten() {
+            if e.path().is_dir() {
+                dirs.push(e.path());
+            }
+        }
+        i += 1;
+    }
+    for d in dirs.iter().rev() {
+        let _ = std::fs::write(d.join("cgroup.kill"), "1");
+    }
+    std::thread::sleep(std::time::Duration::from_millis(200));
+    for d in dirs.iter().rev() {
+        std::fs::remove_dir(d).unwrap_or_else(|e| panic!("removing {}: {e}", d.display()));
+    }
+
+    // Listed: settled as Stopped, nothing to reach.
+    let listed = s.cmd(commands::ls).unwrap();
+    assert_eq!(listed.len(), 1);
+    assert_eq!(listed[0].record.state, AgentState::Stopped);
+    assert!(s.cmd(|f| commands::inspect(f, "a1")).is_ok());
+
+    // Moved: `up` under a root that exists, now that the recorded one is gone.
+    let manifest = s.manifest();
+    let moved = commands::up(
+        &HostUsr,
+        &UpRequest {
+            manifest: &manifest,
+            project_root: &s.project(),
+            cgroup_root: &root,
+            agents: 1,
+            view: true,
+            exe: exe(),
+            authorized_key_pem: "",
+            state_dir: &s.state(),
+            limits: devcroft::fleet::cgroup::Limits::default(),
+            timeout: None,
+        },
+    )
+    .unwrap();
+    assert_eq!(moved.started[0].id, "a2", "IDs carry on across the move");
+
+    // Removed, the moved agent and the stranded one alike.
+    let removed = s.cmd(commands::rm_all).unwrap();
+    assert_eq!(removed, ["a1", "a2"]);
+    assert!(!s.state().exists());
+    let _ = std::fs::remove_dir(root.join(format!("fleet-{}", s.name)));
+}
+
+#[test]
+fn why_inside_an_agent_answers_from_that_agents_own_policy() {
+    let Some(root) = capable_host() else { return };
+    let s = Setup::new("why", Some(&root), "", true);
+    let started = s.up(1).unwrap();
+    let a = &started[0];
+    let socket = s.state().join("agents").join(&a.id).join("control.sock");
+    // The provider's grant (`/usr`, origin `provider:nix`) is only in the
+    // compiled policy, never in the manifest: answered from the manifest
+    // alone, as `why` in an agent was before it had an artifact, it is DENIED.
+    let (code, out) = session(
+        &socket,
+        Path::new(WORKSPACE),
+        &format!("{} why --path /usr/bin/env --op read 2>&1", exe().display()),
+    );
+    assert_eq!(code, Some(0), "{out}");
+    assert!(out.contains("ALLOWED"), "{out}");
+    assert!(out.contains("provider:nix"), "{out}");
+    assert!(!out.contains("covers only"), "{out}");
+    // The artifact holds the agent's paths as the agent sees them.
+    let (code, out) = session(
+        &socket,
+        Path::new(WORKSPACE),
+        &format!("{} policy --render 2>&1", exe().display()),
+    );
+    assert_eq!(code, Some(0), "{out}");
+    assert!(out.contains(WORKSPACE), "{out}");
+    assert!(
+        !out.contains(&a.workspace.to_string_lossy().into_owned()),
+        "{out}"
+    );
+    s.cmd(|f| commands::stop(f, &a.id)).unwrap();
+}

@@ -150,6 +150,7 @@ pub fn prepare(
     }
     let services: Vec<String> = declared.iter().map(|s| s.name.clone()).collect();
     let plan = compiled.to_capability_plan();
+    let policy = compiled;
     refuse_package_manager_authority(&plan, workspace)?;
 
     // `up`'s order, which is load-bearing: the provider's activation script
@@ -193,6 +194,7 @@ pub fn prepare(
             .collect(),
         // A property of the run, not of the manifest: `fleet up --timeout`.
         timeout: None,
+        policy: Some(policy),
     })
 }
 

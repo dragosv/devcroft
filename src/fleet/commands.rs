@@ -279,7 +279,12 @@ pub fn up(provider: &dyn ProviderEntry, req: &UpRequest) -> Result<UpOutcome, Fl
     // its own cgroup root and added its clones to the first one's agents.
     if let Some(existing) = read_fleet_file(req.state_dir)? {
         ensure_same_project(&existing, req.manifest, req.project_root)?;
-        if existing.cgroup_root != req.cgroup_root {
+        // A root that is gone holds no live agents, so the fleet may move:
+        // its records are settled and the new root recorded. A root that
+        // still exists may hold them, and moving would orphan them.
+        if existing.cgroup_root != req.cgroup_root && !existing.cgroup_root.exists() {
+            super::supervisor::settle_offline(req.state_dir).map_err(backend)?;
+        } else if existing.cgroup_root != req.cgroup_root {
             return Err(FleetError::Config(format!(
                 "the fleet for sandbox '{}' runs under cgroup root {}, not {}; its agents' \
                  leaves are there. Pass that root, or remove the fleet with \
@@ -633,20 +638,48 @@ pub struct FleetRef<'a> {
 
 /// Every agent the fleet has recorded, reconciled against the kernel.
 pub fn ls(fleet: &FleetRef) -> Result<Vec<AgentStatus>, FleetError> {
-    let (_lock, mut sup) = open_existing(fleet)?;
-    sup.list().map_err(backend)
+    match open_existing(fleet)? {
+        (_lock, Some(mut sup)) => sup.list().map_err(backend),
+        (_lock, None) => offline_statuses(fleet.state_dir),
+    }
 }
 
-/// Stop one agent. Its workspace stays.
+/// Stop one agent. Its workspace stays. A fleet whose cgroup subtree is
+/// gone has nothing running to stop; its records are already settled.
 pub fn stop(fleet: &FleetRef, id: &str) -> Result<(), FleetError> {
-    let (_lock, mut sup) = open_existing(fleet)?;
-    sup.stop(id).map_err(not_found_is_config)
+    match open_existing(fleet)? {
+        (_lock, Some(mut sup)) => sup.stop(id).map_err(not_found_is_config),
+        (_lock, None) => offline_status(fleet.state_dir, id).map(drop),
+    }
 }
 
 /// One agent, reconciled.
 pub fn inspect(fleet: &FleetRef, id: &str) -> Result<AgentStatus, FleetError> {
-    let (_lock, mut sup) = open_existing(fleet)?;
-    sup.inspect(id).map_err(not_found_is_config)
+    match open_existing(fleet)? {
+        (_lock, Some(mut sup)) => sup.inspect(id).map_err(not_found_is_config),
+        (_lock, None) => offline_status(fleet.state_dir, id),
+    }
+}
+
+/// Every record of a fleet whose cgroup subtree is gone, settled
+/// (`supervisor::settle_offline`), with no live counters to report.
+fn offline_statuses(state_dir: &Path) -> Result<Vec<AgentStatus>, FleetError> {
+    Ok(super::supervisor::settle_offline(state_dir)
+        .map_err(backend)?
+        .into_iter()
+        .map(|record| AgentStatus {
+            record,
+            memory_bytes: None,
+            cpu_usec: None,
+        })
+        .collect())
+}
+
+fn offline_status(state_dir: &Path, id: &str) -> Result<AgentStatus, FleetError> {
+    offline_statuses(state_dir)?
+        .into_iter()
+        .find(|a| a.record.id == id)
+        .ok_or_else(|| FleetError::Config(format!("no agent {id}")))
 }
 
 /// Remove a stopped agent: its record and its clone. The clone is removed
@@ -655,14 +688,24 @@ pub fn inspect(fleet: &FleetRef, id: &str) -> Result<AgentStatus, FleetError> {
 /// record removed first leaves a clone nothing names any more.
 pub fn rm(fleet: &FleetRef, id: &str) -> Result<(), FleetError> {
     let (_lock, mut sup) = open_existing(fleet)?;
-    let status = sup.inspect(id).map_err(not_found_is_config)?;
+    let status = match &mut sup {
+        Some(sup) => sup.inspect(id).map_err(not_found_is_config)?,
+        None => offline_status(fleet.state_dir, id)?,
+    };
     let clone = own_clone(
         fleet.project_root,
         &fleet.manifest.sandbox.name,
         id,
         &status.record.workspace,
     )?;
-    sup.remove(id).map_err(not_found_is_config)?;
+    match &mut sup {
+        Some(sup) => {
+            sup.remove(id).map_err(not_found_is_config)?;
+        }
+        None => {
+            super::supervisor::forget_offline(fleet.state_dir, id).map_err(not_found_is_config)?;
+        }
+    }
     remove_clone(&clone)
 }
 
@@ -672,7 +715,11 @@ pub fn rm_all(fleet: &FleetRef) -> Result<Vec<String>, FleetError> {
     let (lock, mut sup) = open_existing(fleet)?;
     let project_root = fleet.project_root;
     let mut removed = Vec::new();
-    for status in sup.list().map_err(backend)? {
+    let statuses = match &mut sup {
+        Some(sup) => sup.list().map_err(backend)?,
+        None => offline_statuses(fleet.state_dir)?,
+    };
+    for status in statuses {
         let id = status.record.id;
         let clone = own_clone(
             project_root,
@@ -680,14 +727,24 @@ pub fn rm_all(fleet: &FleetRef) -> Result<Vec<String>, FleetError> {
             &id,
             &status.record.workspace,
         )?;
-        if status.record.state == super::supervisor::AgentState::Running {
-            sup.stop(&id).map_err(backend)?;
+        match &mut sup {
+            Some(sup) => {
+                if status.record.state == super::supervisor::AgentState::Running {
+                    sup.stop(&id).map_err(backend)?;
+                }
+                sup.remove(&id).map_err(backend)?;
+            }
+            None => {
+                super::supervisor::forget_offline(fleet.state_dir, &id).map_err(backend)?;
+            }
         }
-        sup.remove(&id).map_err(backend)?;
         remove_clone(&clone)?;
         removed.push(id);
     }
-    sup.remove_node().map_err(backend)?;
+    // A fleet whose subtree is gone has no node left to remove.
+    if let Some(sup) = sup {
+        sup.remove_node().map_err(backend)?;
+    }
     std::fs::remove_dir_all(fleet.state_dir).map_err(backend)?;
     // Released only now: a fleet removed while another command waits must
     // be gone, not half gone, when that command reads it.
@@ -825,7 +882,13 @@ fn not_found_is_config(e: io::Error) -> FleetError {
 /// The fleet's lock, then its supervisor, for a fleet that must exist and
 /// be this project's. The lock is first in the tuple so it is the last
 /// thing a caller's `let (_lock, sup)` drops.
-fn open_existing(fleet: &FleetRef) -> Result<(FleetLock, Supervisor), FleetError> {
+/// `None` in place of a supervisor when the fleet's cgroup root no longer
+/// exists (after a reboot, or once the systemd unit that delegated it has
+/// ended): no agent can be running then, and commands work on the records
+/// alone (`supervisor::settle_offline`). Every command used to reopen the
+/// supervisor at the recorded root and fail on it, `rm --all` included,
+/// which left a fleet that could not be removed (adversarial review).
+fn open_existing(fleet: &FleetRef) -> Result<(FleetLock, Option<Supervisor>), FleetError> {
     let lock = lock(fleet.state_dir)?;
     let Some(file) = read_fleet_file(fleet.state_dir)? else {
         return Err(FleetError::Config(format!(
@@ -834,6 +897,15 @@ fn open_existing(fleet: &FleetRef) -> Result<(FleetLock, Supervisor), FleetError
         )));
     };
     ensure_same_project(&file, fleet.manifest, fleet.project_root)?;
+    if !file.cgroup_root.exists() {
+        eprintln!(
+            "devcroft fleet: note: this fleet's cgroup subtree {} is gone (a reboot, or \
+             its systemd unit ended), so none of its agents can be running; working \
+             from its records",
+            file.cgroup_root.display()
+        );
+        return Ok((lock, None));
+    }
     let sup = Supervisor::open(
         fleet.state_dir,
         &file.cgroup_root,
@@ -841,7 +913,7 @@ fn open_existing(fleet: &FleetRef) -> Result<(FleetLock, Supervisor), FleetError
         fleet.exe,
     )
     .map_err(backend)?;
-    Ok((lock, sup))
+    Ok((lock, Some(sup)))
 }
 
 fn require_git_repository(project_root: &Path) -> Result<(), FleetError> {
