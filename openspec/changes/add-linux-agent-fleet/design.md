@@ -437,6 +437,17 @@ The three things this buys remain the reason it is the foundation:
 
 ## D7 — Git: shared bare mirror, per-agent clone with `--reference`
 
+> **Corrected again (2026-10-12): copied objects (`--no-hardlinks`), no
+> mirror, no hardlinks.** The note below measured the wrong property. A
+> hardlinked clone survives the source *unlinking* objects, but a hardlinked
+> pack is one inode in the source and in every clone, so an agent that writes
+> its own pack corrupts the user's repository and every sibling (adversarial
+> review: `git fsck` failing in the source and in another clone). An agent's
+> own `.git` is rightly writable to it, so nothing in the sandbox can stop
+> that. Each clone now holds its own copies: more disk, and independence
+> against writes, which is the point. What stands from the note: no mirror,
+> no direct push, integration by fetching from the clone.
+>
 > **Reversed by measurement (2026-10-11): hardlinked `--local` clones, no
 > mirror.** A `--local` clone hardlinks the object files. Measured: a source
 > and two clones took 604 KB together, the same as the source alone (the

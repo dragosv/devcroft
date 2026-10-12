@@ -2870,6 +2870,13 @@ fn cli_fleet_linux(args: &[String]) -> i32 {
                     let mut failed = false;
                     for a in &started.started {
                         println!("{}\t{}", a.id, a.workspace.display());
+                        // Not up: a hook failed, or it never answered. The
+                        // exit status says so, as `up` does for a sandbox.
+                        if let Some(why) = &a.failed {
+                            failed = true;
+                            eprintln!("  {}: did not start: {why}", a.id);
+                            continue;
+                        }
                         use devcroft::fleet::commands::ServicesOutcome;
                         let states = |v: &[(String, String)]| {
                             v.iter()

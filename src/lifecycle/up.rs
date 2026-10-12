@@ -1877,7 +1877,7 @@ fn wait_for_supervisor(socket: &Path) {
 /// check and report success. So readiness is now a `Query` that has to be
 /// answered, which the keeper cannot do until it reaches its accept
 /// loop — after the hooks, after services.
-fn keeper_answers(socket: &Path) -> bool {
+pub(crate) fn keeper_answers(socket: &Path) -> bool {
     let Ok(mut stream) = UnixStream::connect(socket) else {
         return false;
     };
@@ -1925,7 +1925,7 @@ fn keeper_alive(pid: libc::pid_t) -> bool {
 ///
 /// Reads the whole log rather than seeking: it was truncated at this
 /// `up`'s start (`spawn_keeper`), so it holds this run only and is small.
-fn keeper_failure_reason(log: &Path) -> Option<String> {
+pub(crate) fn keeper_failure_reason(log: &Path) -> Option<String> {
     let text = std::fs::read_to_string(log).ok()?;
     text.lines()
         .rev()

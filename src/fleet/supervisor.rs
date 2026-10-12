@@ -274,7 +274,7 @@ impl Supervisor {
             (
                 Some(
                     self.node
-                        .create_leaf(&host_leaf_name(id), &Limits::default())?,
+                        .create_leaf(&host_leaf_name(id), &host_helper_limits())?,
                 ),
                 Some(super::lifeline::Lifeline::new()?),
             )
@@ -802,6 +802,22 @@ fn replace_path(text: &str, from: &str, to: &str) -> String {
     }
     out.push_str(rest);
     out
+}
+
+/// The limits of an agent's helpers' leaf: its proxy, its unix bridge and its
+/// port forwarders. They run outside the agent so the agent cannot take them
+/// down, and that must not make them outside any budget: measured by
+/// adversarial review, 30 connections to an agent's proxy put 93 tasks in an
+/// unlimited helpers' leaf beside an agent capped at 64. The proxy now admits
+/// at most `proxy::server::MAX_CONNECTIONS` at a time (a few threads each, on
+/// the TCP side and on the bridge), which these leave room for; they are the
+/// backstop if anything else grows.
+fn host_helper_limits() -> Limits {
+    Limits {
+        memory_max: Some(256 << 20),
+        pids_max: Some(1024),
+        ..Limits::default()
+    }
 }
 
 /// The cgroup leaf an agent's host-side helpers (its egress proxy, its port

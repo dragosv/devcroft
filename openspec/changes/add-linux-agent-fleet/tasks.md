@@ -657,6 +657,48 @@ implied by a green run: confined provider provisioning
 section 2's mount-plan item). The proposal's `cd /workspace` example
 depends on the second. **The second is done (2026-10-03).**
 
+## 2e. Second adversarial review (2026-10-12, revision 98628f7)
+
+Run by the reviewer on a host with real systemd delegation; the five P1s
+were reproduced there, and each fix here has a mutant that fails its test.
+
+- [x] **3.1 A fleet could delete another fleet's workspace.** Clones were
+      `.devcroft/fleet/<id>`, so two fleets of one monorepo shared `a1`, and
+      `up` armed its cleanup before cloning, so a clone that failed on an
+      existing path removed that path. Clones are now keyed by fleet (a
+      six-hex digest of its name; the name itself would push a service
+      socket to 116 bytes), and the directory is created exclusively before
+      cloning: only what this start made is removed.
+      `two_fleets_in_one_repository_never_share_or_remove_each_others_clones`.
+- [x] **3.2 Hardlinked clones shared writes.** My 2026-10-11 D7 reversal
+      measured survival of the source unlinking objects, not independence
+      from writes: a hardlinked pack is one inode, and an agent writing its
+      own corrupted the source and its siblings. Now `--no-hardlinks`; the
+      git test asserts no object file shares an inode with the source.
+- [x] **3.3 An agent could make its unlimited helpers grow.** The proxy
+      spawned a thread per connection with no cap or header timeout, in a
+      `-host` leaf with no limits. Now `MAX_CONNECTIONS` (128) on the proxy
+      and its unix bridge, a 10 s head timeout, and `memory.max` 256 MiB and
+      `pids.max` 1024 on the helpers' leaf. **Not done:** an aggregate cap
+      across a whole fleet.
+- [x] **3.5 The proxy resolved names it was about to refuse.** Now decided
+      on the name first; only admitted names are resolved
+      (`proxy::server::decide`, unit-tested with the lookup injected).
+- [x] **3.4 `fleet up` reported success before the keeper was usable.** It
+      returned on the init handshake (the keeper was exec'd); now each agent
+      is waited on until its keeper answers a query, after its hooks, and an
+      agent whose leaf empties first is reported as not started with the
+      hook runner's reason. `an_agent_whose_hook_fails_is_reported_as_not_started`.
+- [ ] 3.6 The fleet's policy is not inspectable: no per-agent artifact, and
+      `why` inside an agent does not find one.
+- [ ] 3.7 Subdirectory projects lose `.git`; the concurrent-commit test runs
+      git host-side, not in agents.
+- [ ] 3.8 State cannot be recovered when the cgroup subtree is gone (after a
+      reboot): `rm --all` fails on it.
+- [ ] Decisions still open (review §4): Nix closure retention for live agents,
+      default budgets and runtime overhead reservation, and lifecycle versus
+      workload (task identity, completion, attention).
+
 ## 3. Networking
 
 - [ ] **Spike:** pasta vs slirp4netns — forwarding semantics, throughput, flag

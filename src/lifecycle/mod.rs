@@ -35,4 +35,4 @@ pub use up::{KeeperEnv, UpError, UpOptions, UpOutcome, up};
 // `up`'s private submodule path reachable from outside `lifecycle` at
 // all — `up::clear_cloexec` being `pub(crate)` doesn't help by itself
 // when the `up` module segment itself is private.
-pub(crate) use up::{apply_manifest_env, pass_fds};
+pub(crate) use up::{apply_manifest_env, keeper_answers, keeper_failure_reason, pass_fds};

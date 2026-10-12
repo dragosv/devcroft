@@ -10,9 +10,10 @@ machine's package store.
 
 ### Requirement: Each agent gets an independent clone, not a shared worktree
 
-Each agent SHALL work in its own git clone whose object storage is shared
-with the source repository rather than copied (hardlinked objects, from a
-`--local` clone). Agents SHALL NOT share a git worktree or a ref namespace,
+Each agent SHALL work in its own git clone holding its own copies of the
+objects, sharing no file with the source repository or another clone: a
+shared file (a hardlinked pack) is shared by writes too, and an agent's own
+`.git` is writable to it. Agents SHALL NOT share a git worktree or a ref namespace,
 and SHALL NOT push into the repository they were cloned from: their work is
 integrated by fetching from their clone.
 
@@ -30,8 +31,9 @@ agent, reacts to it.
 #### Scenario: Disk cost
 
 - **WHEN** N agents are created from one repository
-- **THEN** object storage is shared with the source rather than duplicated N
-  times
+- **THEN** each clone's objects are its own copies, and a write through one
+  clone reaches neither the source nor another clone
+- **AND** the disk this costs is the accepted price of that independence
 
 #### Scenario: An agent pushes
 
@@ -41,16 +43,16 @@ agent, reacts to it.
 
 ### Requirement: An agent's clone does not depend on objects another repository can prune
 
-An agent's clone SHALL hold its own references to every object it started
+An agent's clone SHALL hold its own copies of every object it started
 with, so that no maintenance of the source repository can remove objects a
-live clone needs. Automatic garbage collection SHALL be disabled in agent
-clones, since an agent's own repack would give up the shared storage.
+live clone needs.
 
 This replaces a requirement that maintenance not run while agents are live.
 That one managed the hazard of a clone that *references* a mirror's objects,
 where pruning the mirror removes objects a live clone needs and the failure
 surfaces inside the agent long after, as corruption. A hardlinked clone does
-not have that hazard, so there is nothing to schedule around.
+not have that hazard (nor, since 2026-10-12, a copied one), so there is
+nothing to schedule around.
 
 #### Scenario: The source repository is pruned while agents run
 

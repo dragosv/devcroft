@@ -140,9 +140,14 @@ impl Setup {
         self.base.join("repo")
     }
 
-    /// Where fleet clones: under the repository root, not the project.
+    /// Where this fleet clones: under the repository root, not the project,
+    /// in the fleet's own directory (`commands::clone_root`).
     fn clones(&self) -> PathBuf {
-        self.repo().join(".devcroft/fleet")
+        commands::clone_root(&self.project(), &self.name, "a0")
+            .unwrap()
+            .parent()
+            .unwrap()
+            .to_path_buf()
     }
 
     fn state(&self) -> PathBuf {
@@ -1158,12 +1163,12 @@ fn host_root_is_refused_where_the_nix_daemon_runs() {
 }
 
 /// `workspace-isolation`, the git half, on the clones `fleet up` makes.
-/// Each is a `--local` clone (hardlinked objects) rather than D7's
-/// `--reference` to a mirror, which was measured to share as much disk
-/// without depending on another repository's objects: a source that
-/// rewrites its history and prunes everything leaves a clone whole.
+/// Each holds its own copies of the objects (`--no-hardlinks`): a hardlinked
+/// clone shared inodes with the source and its siblings, so a write through
+/// one corrupted all of them (adversarial review). And it depends on
+/// nothing the source can prune.
 #[test]
-fn agent_clones_are_independent_unpushable_gc_free_and_fetchable() {
+fn agent_clones_are_independent_unpushable_and_fetchable() {
     let Some(root) = capable_host() else { return };
     let s = Setup::new("git", Some(&root), "", true);
     let started = s.up(5).unwrap();
@@ -1178,12 +1183,34 @@ fn agent_clones_are_independent_unpushable_gc_free_and_fetchable() {
     };
     let user_refs_before = git(&s.repo(), &["show-ref"]).stdout;
 
-    // Settled: no automatic GC, and a push refused with the reason.
+    // Settled: each clone's objects are its own (no inode shared with the
+    // source, so a write through one cannot reach another), and a push is
+    // refused with the reason.
     let a1 = s.clones().join("a1");
-    assert_eq!(
-        String::from_utf8_lossy(&git(&a1, &["config", "gc.auto"]).stdout).trim(),
-        "0"
-    );
+    {
+        use std::os::unix::fs::MetadataExt;
+        let inodes = |root: &Path| -> std::collections::BTreeSet<(u64, u64)> {
+            let mut out = std::collections::BTreeSet::new();
+            let mut stack = vec![root.join(".git/objects")];
+            while let Some(dir) = stack.pop() {
+                for e in std::fs::read_dir(&dir).into_iter().flatten().flatten() {
+                    let m = e.metadata().unwrap();
+                    if m.is_dir() {
+                        stack.push(e.path());
+                    } else {
+                        out.insert((m.dev(), m.ino()));
+                    }
+                }
+            }
+            out
+        };
+        let source = inodes(&s.repo());
+        assert!(!source.is_empty());
+        assert!(
+            inodes(&a1).is_disjoint(&source),
+            "an agent's clone shares object files with the user's repository"
+        );
+    }
     let push = git(&a1, &["push", "origin", "HEAD"]);
     assert!(!push.status.success());
     assert!(
@@ -1270,4 +1297,143 @@ fn agent_clones_are_independent_unpushable_gc_free_and_fetchable() {
     );
 
     s.cmd(commands::rm_all).unwrap();
+}
+
+/// Two fleets of one repository (two projects in it, two sandbox names)
+/// each have an `a1`, and neither touches the other's clone. The clones
+/// were addressed by agent ID alone, and a start that failed because the
+/// path already existed then removed the existing directory: another fleet's
+/// running agent's workspace (adversarial review, reproduced). Clones are now
+/// keyed by fleet, and only a directory the start itself created is removed.
+#[test]
+fn two_fleets_in_one_repository_never_share_or_remove_each_others_clones() {
+    let Some(root) = capable_host() else { return };
+    let a = Setup::new("twoa", Some(&root), "", true);
+    // A second project in the same repository, with its own name.
+    let proj2 = a.repo().join("proj2");
+    std::fs::create_dir_all(&proj2).unwrap();
+    let name_b = format!("{}b", a.name);
+    std::fs::write(
+        proj2.join("devcroft.toml"),
+        format!("[sandbox]\nname = \"{name_b}\"\n\n[env]\nprovider = \"nix\"\n\n[filesystem]\nread = [\"/proc\"]\n"),
+    )
+    .unwrap();
+    for args in [
+        &["add", "."][..],
+        &[
+            "-c",
+            "user.name=t",
+            "-c",
+            "user.email=t@t",
+            "commit",
+            "-qm",
+            "b",
+        ],
+    ] {
+        assert!(
+            Command::new("git")
+                .arg("-C")
+                .arg(a.repo())
+                .args(args)
+                .status()
+                .unwrap()
+                .success()
+        );
+    }
+    let started_a = a.up(1).unwrap();
+    std::fs::write(started_a[0].workspace.join("work-of-a"), "a").unwrap();
+
+    let manifest_b =
+        devcroft::config::parse(&std::fs::read_to_string(proj2.join("devcroft.toml")).unwrap())
+            .unwrap()
+            .0;
+    let state_b = a.base.join("state-b");
+    let up_b = |exe: &Path| {
+        commands::up(
+            &HostUsr,
+            &UpRequest {
+                manifest: &manifest_b,
+                project_root: &proj2,
+                cgroup_root: &root,
+                agents: 1,
+                view: true,
+                exe,
+                authorized_key_pem: "",
+                state_dir: &state_b,
+                limits: devcroft::fleet::cgroup::Limits::default(),
+                timeout: None,
+            },
+        )
+    };
+    // A directory already at B's would-be clone path is not B's to remove:
+    // the start refuses, and the directory and its contents survive.
+    let b_a1 = commands::clone_root(&proj2, &name_b, "a1").unwrap();
+    std::fs::create_dir_all(&b_a1).unwrap();
+    std::fs::write(b_a1.join("not-yours"), "x").unwrap();
+    let refused = up_b(exe()).unwrap_err();
+    assert!(refused.to_string().contains("already exists"), "{refused}");
+    assert!(
+        b_a1.join("not-yours").is_file(),
+        "a failed start removed a directory it did not make"
+    );
+    std::fs::remove_dir_all(&b_a1).unwrap();
+
+    // B's own a1 is a different directory from A's, and A's work survives.
+    let started_b = up_b(exe()).unwrap().started;
+    assert_ne!(
+        commands::agent_clone_root(&started_a[0].workspace, "a1"),
+        commands::agent_clone_root(&started_b[0].workspace, "a1")
+    );
+    assert!(started_a[0].workspace.join("work-of-a").is_file());
+
+    let fleet_b = commands::FleetRef {
+        state_dir: &state_b,
+        manifest: &manifest_b,
+        project_root: &proj2,
+        exe: exe(),
+    };
+    commands::rm_all(&fleet_b).unwrap();
+    assert!(
+        started_a[0].workspace.join("work-of-a").is_file(),
+        "B's rm removed A's clone"
+    );
+    let node_b = root.join(format!("fleet-{name_b}"));
+    let _ = std::fs::remove_dir(node_b);
+    a.cmd(commands::rm_all).unwrap();
+}
+
+/// `fleet up` reports an agent as up only once its keeper answers, which it
+/// does after its hooks. It returned on the init helper's handshake (the
+/// keeper was exec'd), so with `post_create = "exit 7"` it exited 0 and the
+/// agent was Stopped a second later (adversarial review, reproduced).
+#[test]
+fn an_agent_whose_hook_fails_is_reported_as_not_started() {
+    let Some(root) = capable_host() else { return };
+    let s = Setup::new(
+        "hookfail",
+        Some(&root),
+        "\n[hooks]\npost_create = \"exit 7\"\n",
+        true,
+    );
+    let started = s.up(1).unwrap();
+    let why = started[0]
+        .failed
+        .as_deref()
+        .expect("a failing hook is a failed start");
+    assert!(why.contains("post_create"), "{why}");
+
+    // The control: an agent with no failing hook is up, and serving.
+    let ok = Setup::new(
+        "hookok",
+        Some(&root),
+        "\n[hooks]\npost_create = \"true\"\n",
+        true,
+    );
+    let started = ok.up(1).unwrap();
+    assert_eq!(started[0].failed, None);
+    let socket = ok.state().join("agents/a1/control.sock");
+    let (code, _) = session(&socket, Path::new(WORKSPACE), "true");
+    assert_eq!(code, Some(0));
+    ok.cmd(commands::rm_all).unwrap();
+    let _ = s.cmd(commands::rm_all);
 }

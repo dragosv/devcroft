@@ -597,8 +597,13 @@ fn a_crashed_agents_host_port_and_proxy_go_with_it_before_any_command() {
     let node = root.join(&fleet.name);
     let host_leaf = node.join(format!("{id}-host"));
     let proxy = fleet.state().join("agents").join(&id).join("proxy.sock");
-    // The control: while the agent runs, its helpers do.
+    // The control: while the agent runs, its helpers do, inside a budget of
+    // their own rather than none.
     assert!(populated(&host_leaf));
+    for (file, unlimited) in [("pids.max", "max"), ("memory.max", "max")] {
+        let value = std::fs::read_to_string(host_leaf.join(file)).unwrap();
+        assert_ne!(value.trim(), unlimited, "the helpers' leaf has no {file}");
+    }
     assert!(std::net::TcpListener::bind(("127.0.0.1", mapping.host)).is_err());
     assert!(UnixStream::connect(&proxy).is_ok());
 
@@ -738,7 +743,7 @@ fn leaves_no_running_agent_owns_are_swept_and_their_processes_killed() {
 
 /// Section 1: a runaway build in one agent leaves the others schedulable.
 /// A runs a CPU hog per core and then tries to fork 200 processes, under
-/// `pids.max = 32` and 64 MiB; B, with no limits, must still be able to
+/// a `pids.max` far below its forks (scaled with the CPU count) and 64 MiB; B, with no limits, must still be able to
 /// fork 50 processes of its own and answer within seconds. The cap is A's
 /// leaf's alone: a limit that landed on the fleet node, or nowhere, fails
 /// one side or the other. CPU share is deliberately not asserted here
@@ -749,7 +754,12 @@ fn a_runaway_agent_leaves_its_sibling_schedulable() {
     let Some(root) = capable_host() else { return };
     let fleet = Fleet::new(&root, "runaway");
     let mut la = fleet.launch("a");
-    la.limits.pids_max = Some(32);
+    // Room for the keeper itself, whose async runtime starts a worker per
+    // CPU: a fixed 32 failed on a 22-CPU host before A's shell could start
+    // (adversarial review), on this 12-CPU devcontainer it never did. The
+    // cap still sits far below the 200 forks A attempts.
+    let cpus = std::thread::available_parallelism().map_or(4, |n| n.get()) as u64;
+    la.limits.pids_max = Some(32 + 2 * cpus);
     la.limits.memory_max = Some(64 << 20);
     let lb = fleet.launch("b");
     let mut sup = fleet.open();

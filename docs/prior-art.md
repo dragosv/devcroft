@@ -155,7 +155,12 @@ Checking devcroft against that found something better by accident: a
 devcroft sandbox cannot resolve names *at all* — `gethostbyname` raises
 `gaierror`, because DNS is UDP and an isolated namespace has no route.
 Every name is resolved host-side by the proxy, which then dials the
-addresses it just checked.
+addresses it just checked. **Only names the allowlist admits, since
+2026-10-12.** Until then the proxy resolved first and decided after, so a
+name it was about to refuse still reached the host's resolver: a channel
+out for a sandbox with no route of its own (`<data>.a-domain-it-controls`),
+found by adversarial review. The name is now decided first, and only an
+admitted name is resolved, then checked again with its addresses.
 
 DNS rebinding needs the client to resolve, and it cannot. `known-gaps.md`
 had listed rebinding as an open question; it is now recorded as closed by

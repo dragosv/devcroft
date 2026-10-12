@@ -12,7 +12,7 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 
 use base64::Engine;
-use nono::HostFilter;
+use nono::{FilterResult, HostFilter};
 
 /// Bytes read for the request line plus headers before giving up — a
 /// hostile or confused client gets a fast, bounded failure rather than
@@ -104,9 +104,17 @@ fn splice_tcp_to_unix(client: TcpStream, upstream: std::os::unix::net::UnixStrea
 /// all: it has no route to the host's loopback, but a pathname unix
 /// socket crosses the namespace boundary.
 pub fn bridge_unix_to_tcp(unix: std::os::unix::net::UnixListener, tcp_port: u16) {
+    let open = Arc::new(std::sync::atomic::AtomicUsize::new(0));
     for stream in unix.incoming() {
         let Ok(client) = stream else { continue };
+        // The same admission the TCP side has: this bridge is how a
+        // network-isolated sandbox reaches the proxy, so it is the agent's
+        // way to make a host-side process start threads.
+        let Some(slot) = Slot::take(&open) else {
+            continue;
+        };
         thread::spawn(move || {
+            let _slot = slot;
             let Ok(upstream) = TcpStream::connect(("127.0.0.1", tcp_port)) else {
                 return;
             };
@@ -167,12 +175,25 @@ pub fn run_labelled(
         label,
     });
 
+    let open = Arc::new(std::sync::atomic::AtomicUsize::new(0));
     for stream in listener.incoming() {
         let Ok(stream) = stream else { continue };
+        // Admission before a thread exists for it: past the cap a connection
+        // is closed at once, and logged, rather than holding a thread
+        // (and its pid) until whoever opened it gets round to talking.
+        let Some(slot) = Slot::take(&open) else {
+            let peer = stream
+                .peer_addr()
+                .map(|a| a.to_string())
+                .unwrap_or_default();
+            log_line(&log, &format!("refuse peer={peer} reason=busy"));
+            continue;
+        };
         let filter = Arc::clone(&filter);
         let token = Arc::clone(&token);
         let log = Arc::clone(&log);
         thread::spawn(move || {
+            let _slot = slot;
             let _ = handle_connection(stream, &filter, &token, &log);
         });
     }
@@ -209,7 +230,12 @@ fn handle_connection(
         .map(|a| a.to_string())
         .unwrap_or_else(|_| "unknown".to_string());
 
-    let target = match read_target(&mut client) {
+    // Bounded while the head is read, unbounded once it is: a tunnel may sit
+    // idle as long as its two ends want.
+    client.set_read_timeout(Some(HEAD_TIMEOUT))?;
+    let target = read_target(&mut client);
+    client.set_read_timeout(None)?;
+    let target = match target {
         Ok(Some(t)) => t,
         Ok(None) => return Ok(()), // client closed before sending a full request
         Err(e) => {
@@ -232,23 +258,20 @@ fn handle_connection(
         return Ok(());
     }
 
-    // Resolved *before* the filter decision, but a resolution failure
-    // does not short-circuit into its own refusal here: `check_host` only
-    // needs `resolved_ips` for its link-local step, so an empty list
-    // (from a lookup failure) still lets it decide correctly by name
-    // alone. Deciding on the name first — rather than refusing early on
-    // DNS failure — means a host that was never going to be allowed
-    // reads as "not in network.allow", not as "could not resolve", and
-    // never gets a DNS query issued on its behalf in the first place is
-    // not achievable here (the lookup already ran), but at least its
-    // *failure* doesn't leak a different-shaped refusal than a denied
-    // host that resolves fine would get.
-    let resolved: Vec<IpAddr> = (target.host.as_str(), target.port)
-        .to_socket_addrs()
-        .map(|addrs| addrs.map(|a| a.ip()).collect())
-        .unwrap_or_default();
-
-    let decision = filter.check_host(&target.host, &resolved);
+    // **Decided on the name before any lookup.** It used to resolve first,
+    // so a hostname the allowlist refuses was still sent to the host's
+    // resolver: shown by adversarial review, a CONNECT to a denied name
+    // reached the resolver before the 502. That is a channel out for an
+    // agent with no route of its own (`<data>.a-domain-it-controls`). The
+    // name decides first, as `why --host` does, and only a name the
+    // allowlist admits is resolved, then checked again with its addresses
+    // (the link-local step needs them).
+    let (decision, resolved) = decide(filter, &target.host, || {
+        (target.host.as_str(), target.port)
+            .to_socket_addrs()
+            .map(|addrs| addrs.map(|a| a.ip()).collect())
+            .unwrap_or_default()
+    });
     if !decision.is_allowed() {
         // `FilterResult::reason()` already sanitizes control characters
         // out of the (untrusted, client-supplied) hostname before this
@@ -585,8 +608,99 @@ fn log_line(log: &AuditLog, line: &str) {
     }
 }
 
+/// The allowlist decision for `host`, and the addresses it was made with:
+/// on the name first, and only if the name is admitted, on what `resolve`
+/// returns for it. A name refused by name is never resolved.
+fn decide(
+    filter: &HostFilter,
+    host: &str,
+    resolve: impl FnOnce() -> Vec<IpAddr>,
+) -> (FilterResult, Vec<IpAddr>) {
+    let by_name = filter.check_host(host, &[]);
+    if !by_name.is_allowed() {
+        return (by_name, Vec::new());
+    }
+    let resolved = resolve();
+    (filter.check_host(host, &resolved), resolved)
+}
+
+/// How many connections a proxy (or its unix bridge) serves at once.
+///
+/// The proxy runs outside the agent, in its own leaf, so what an agent makes
+/// it do is not counted against the agent's limits: measured by adversarial
+/// review, 30 connections opened to an agent's proxy put 93 tasks in its
+/// helpers' leaf against the agent's own `pids.max` of 64. A thread per
+/// connection (two while splicing) is fine within a cap; the cap is what
+/// keeps "outside the sandbox" from meaning "outside the budget". The
+/// helpers' leaf has its own limits too (`fleet::supervisor`).
+pub const MAX_CONNECTIONS: usize = 128;
+
+/// One admitted connection; released when dropped.
+struct Slot(Arc<std::sync::atomic::AtomicUsize>);
+
+impl Slot {
+    fn take(open: &Arc<std::sync::atomic::AtomicUsize>) -> Option<Slot> {
+        use std::sync::atomic::Ordering;
+        let prev = open.fetch_add(1, Ordering::SeqCst);
+        if prev >= MAX_CONNECTIONS {
+            open.fetch_sub(1, Ordering::SeqCst);
+            return None;
+        }
+        Some(Slot(Arc::clone(open)))
+    }
+}
+
+impl Drop for Slot {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+    }
+}
+
+/// How long a client has to send its request head. Without one, a
+/// connection that never speaks holds its slot (and its thread) forever.
+const HEAD_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+
 #[cfg(test)]
 mod tests {
+
+    /// A name the allowlist refuses is refused without a lookup: resolving
+    /// it first sent denied names to the host's resolver (adversarial
+    /// review), a channel out for an agent with no route of its own.
+    #[test]
+    fn a_denied_name_is_never_resolved_and_an_allowed_one_is() {
+        let filter = HostFilter::new_strict(&["allowed.example".to_owned()]);
+        let mut looked_up = false;
+        let (decision, addrs) = decide(&filter, "denied.example", || {
+            looked_up = true;
+            vec!["192.0.2.1".parse().unwrap()]
+        });
+        assert!(!decision.is_allowed());
+        assert!(!looked_up, "a denied name reached the resolver");
+        assert!(addrs.is_empty());
+
+        let (decision, addrs) = decide(&filter, "allowed.example", || {
+            vec!["192.0.2.1".parse().unwrap()]
+        });
+        assert!(decision.is_allowed());
+        assert_eq!(
+            addrs.len(),
+            1,
+            "an admitted name is resolved and dialled as checked"
+        );
+    }
+
+    /// Admission stops at the cap and frees a slot when a connection ends.
+    #[test]
+    fn connections_past_the_cap_are_not_admitted_until_one_ends() {
+        let open = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let slots: Vec<Slot> = (0..MAX_CONNECTIONS)
+            .map(|_| Slot::take(&open).unwrap())
+            .collect();
+        assert!(Slot::take(&open).is_none());
+        drop(slots.into_iter().next());
+        assert!(Slot::take(&open).is_some());
+    }
+
     use super::*;
     use std::net::TcpListener as StdListener;
 

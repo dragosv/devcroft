@@ -124,6 +124,10 @@ pub struct Started {
     /// How its services came up; `up` returns only once each agent's are
     /// ready, have failed, or have run out of time.
     pub services: ServicesOutcome,
+    /// Why the agent did not start, when its keeper never answered: a hook
+    /// that failed, or no answer within `READY_BUDGET`. `None` when it is
+    /// up and serving.
+    pub failed: Option<String>,
 }
 
 /// Where an agent's services stood when `up` stopped waiting for them.
@@ -308,8 +312,26 @@ pub fn up(provider: &dyn ProviderEntry, req: &UpRequest) -> Result<UpOutcome, Fl
         let mut workspace = None;
         let mut refused = None;
         let result = sup.start_with(|id| {
-            let dir = clone_root(req.project_root, id)?;
+            let dir = clone_root(req.project_root, &req.manifest.sandbox.name, id)?;
             ignore_clones(req.project_root)?;
+            // **Ownership before cleanup.** The directory is created here,
+            // exclusively, and only then is it ours to remove. The first
+            // version marked it for removal before cloning, so a clone that
+            // failed because the path already existed (another fleet's agent
+            // of the same ID, in the same repository) deleted that agent's
+            // workspace while it ran: measured by adversarial review.
+            if let Some(parent) = dir.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+            std::fs::create_dir(&dir).map_err(|e| {
+                io::Error::new(
+                    e.kind(),
+                    format!(
+                        "{} already exists and is not this start's; left in place: {e}",
+                        dir.display()
+                    ),
+                )
+            })?;
             made_clone = Some(dir.clone());
             let ws = clone_workspace(req.project_root, &dir)?;
             workspace = Some(ws.clone());
@@ -339,6 +361,7 @@ pub fn up(provider: &dyn ProviderEntry, req: &UpRequest) -> Result<UpOutcome, Fl
                 id,
                 workspace: workspace.expect("set before a successful start"),
                 services: ServicesOutcome::None,
+                failed: None,
             }),
             Err(e) => {
                 // The clone was ours; the supervisor removed its own part.
@@ -353,8 +376,11 @@ pub fn up(provider: &dyn ProviderEntry, req: &UpRequest) -> Result<UpOutcome, Fl
         }
     }
     let mut declared = Vec::new();
+    let mut leaves = Vec::new();
     for agent in &started {
-        declared.push(sup.inspect(&agent.id).map_err(backend)?.record.services);
+        let record = sup.inspect(&agent.id).map_err(backend)?.record;
+        declared.push(record.services);
+        leaves.push(record.cgroup);
     }
     // Only what was asked for: a host without io.weight is worth saying
     // so to someone who set an IO weight, and noise to anyone else.
@@ -374,8 +400,12 @@ pub fn up(provider: &dyn ProviderEntry, req: &UpRequest) -> Result<UpOutcome, Fl
     // Readiness is waited for after every agent has started, so N agents'
     // databases initialise at once rather than one after another.
     let deadline = std::time::Instant::now() + READY_BUDGET;
-    for (agent, declared) in started.iter_mut().zip(&declared) {
-        agent.services = wait_ready(&agent.workspace, &agent.id, declared, deadline);
+    for ((agent, declared), leaf) in started.iter_mut().zip(&declared).zip(&leaves) {
+        let dir = req.state_dir.join("agents").join(&agent.id);
+        agent.failed = wait_for_keeper(&dir, leaf, deadline).err();
+        if agent.failed.is_none() {
+            agent.services = wait_ready(&agent.workspace, &agent.id, declared, deadline);
+        }
     }
     Ok(UpOutcome { started, degraded })
 }
@@ -496,6 +526,44 @@ fn remedy(error: &str) -> String {
     format!("{error}\n  {fix}")
 }
 
+/// Wait until the agent's keeper answers a query on its control socket,
+/// which it does only once its hooks have run, as `up` waits for a
+/// sandbox's (`lifecycle::keeper_answers`).
+///
+/// **The init helper's handshake is not this.** It says the keeper was
+/// exec'd, not that it restricted itself, ran its hooks and is serving, and
+/// `fleet up` used to return on it: with `post_create = "exit 7"` it exited
+/// 0, and the agent was Stopped a second later (adversarial review). An
+/// agent whose leaf empties first failed to start, with the hook runner's
+/// reason from its log when there is one.
+fn wait_for_keeper(dir: &Path, leaf: &Path, deadline: std::time::Instant) -> Result<(), String> {
+    let socket = dir.join("control.sock");
+    let populated = || {
+        std::fs::read_to_string(leaf.join("cgroup.events"))
+            .map(|e| e.lines().any(|l| l == "populated 1"))
+            .unwrap_or(false)
+    };
+    loop {
+        if crate::lifecycle::keeper_answers(&socket) {
+            return Ok(());
+        }
+        if !populated() {
+            return Err(
+                crate::lifecycle::keeper_failure_reason(&dir.join("keeper.log")).unwrap_or_else(
+                    || "the agent exited during startup; see its keeper.log".to_string(),
+                ),
+            );
+        }
+        if std::time::Instant::now() >= deadline {
+            return Err(format!(
+                "its keeper did not answer within {}s",
+                READY_BUDGET.as_secs()
+            ));
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+}
+
 /// Poll an agent's service supervisor until its services are ready, one has
 /// failed, or `deadline` passes (`service-ports`: *Agent readiness*).
 fn wait_ready(
@@ -588,7 +656,12 @@ pub fn inspect(fleet: &FleetRef, id: &str) -> Result<AgentStatus, FleetError> {
 pub fn rm(fleet: &FleetRef, id: &str) -> Result<(), FleetError> {
     let (_lock, mut sup) = open_existing(fleet)?;
     let status = sup.inspect(id).map_err(not_found_is_config)?;
-    let clone = own_clone(fleet.project_root, id, &status.record.workspace)?;
+    let clone = own_clone(
+        fleet.project_root,
+        &fleet.manifest.sandbox.name,
+        id,
+        &status.record.workspace,
+    )?;
     sup.remove(id).map_err(not_found_is_config)?;
     remove_clone(&clone)
 }
@@ -601,7 +674,12 @@ pub fn rm_all(fleet: &FleetRef) -> Result<Vec<String>, FleetError> {
     let mut removed = Vec::new();
     for status in sup.list().map_err(backend)? {
         let id = status.record.id;
-        let clone = own_clone(project_root, &id, &status.record.workspace)?;
+        let clone = own_clone(
+            project_root,
+            &fleet.manifest.sandbox.name,
+            &id,
+            &status.record.workspace,
+        )?;
         if status.record.state == super::supervisor::AgentState::Running {
             sup.stop(&id).map_err(backend)?;
         }
@@ -617,6 +695,8 @@ pub fn rm_all(fleet: &FleetRef) -> Result<Vec<String>, FleetError> {
     // The clones' parent, and the artifact dir above it, only if nothing
     // else is in them: `up` keeps its own artifacts in `.devcroft/` too.
     if let Ok(dir) = fleet_dir(project_root) {
+        // This fleet's own directory first, if its clones were all it held.
+        let _ = std::fs::remove_dir(dir.join(fleet_tag(&fleet.manifest.sandbox.name)));
         let only_ignore = std::fs::read_dir(&dir)
             .map(|entries| entries.flatten().all(|e| e.file_name() == ".gitignore"))
             .unwrap_or(false);
@@ -660,22 +740,40 @@ fn fleet_dir(project_root: &Path) -> io::Result<PathBuf> {
 }
 
 /// The clone root of agent `id`, from its recorded workspace: the
-/// `fleet/<id>` directory the workspace sits in. `None` for a workspace that
-/// is not inside one, which `up` never makes.
+/// `fleet/<fleet>/<id>` directory the workspace sits in. `None` for a
+/// workspace that is not inside one, which `up` never makes.
 pub fn agent_clone_root(workspace: &Path, id: &str) -> Option<PathBuf> {
     workspace
         .ancestors()
         .find(|a| {
             a.file_name().is_some_and(|n| n == id)
                 && a.parent()
+                    .and_then(Path::parent)
                     .and_then(|p| p.file_name())
                     .is_some_and(|n| n == "fleet")
         })
         .map(Path::to_path_buf)
 }
 
-fn clone_root(project_root: &Path, id: &str) -> io::Result<PathBuf> {
-    Ok(fleet_dir(project_root)?.join(id))
+/// Agent `id`'s clone, in fleet `fleet`'s own directory.
+///
+/// **Keyed by the fleet, not the ID alone.** Two projects of one monorepo
+/// with different sandbox names are two fleets, each with its own `a1`, and
+/// their clones used to share `.devcroft/fleet/a1`. The fleet appears as a
+/// short digest of its name rather than the name itself: the service
+/// supervisor's socket sits under the workspace, and the name would push it
+/// past the OS's 103-byte limit for a sample here (116 bytes, measured);
+/// six hex characters keep it at 102.
+pub fn clone_root(project_root: &Path, fleet: &str, id: &str) -> io::Result<PathBuf> {
+    Ok(fleet_dir(project_root)?.join(fleet_tag(fleet)).join(id))
+}
+
+/// Six hex characters of FNV-1a over the fleet's name.
+fn fleet_tag(fleet: &str) -> String {
+    let h = fleet.bytes().fold(0xcbf2_9ce4_8422_2325u64, |h, b| {
+        (h ^ u64::from(b)).wrapping_mul(0x0000_0100_0000_01b3)
+    });
+    format!("{:06x}", h & 0xff_ffff)
 }
 
 /// A `.gitignore` of `*` in the clones' directory: it ignores everything
@@ -692,8 +790,13 @@ fn ignore_clones(project_root: &Path) -> io::Result<()> {
 }
 
 /// The clone `up` made for agent `id`, if `workspace` is inside it.
-fn own_clone(project_root: &Path, id: &str, workspace: &Path) -> Result<PathBuf, FleetError> {
-    let root = clone_root(project_root, id).map_err(backend)?;
+fn own_clone(
+    project_root: &Path,
+    fleet: &str,
+    id: &str,
+    workspace: &Path,
+) -> Result<PathBuf, FleetError> {
+    let root = clone_root(project_root, fleet, id).map_err(backend)?;
     if !workspace.starts_with(&root) {
         return Err(FleetError::Config(format!(
             "agent {id}'s workspace {} is not the clone fleet made at {}; left in place",
@@ -762,17 +865,16 @@ fn require_git_repository(project_root: &Path) -> Result<(), FleetError> {
 
 /// What a clone gets once made: no automatic GC, and no push back.
 ///
-/// **Why a `--local` clone, not D7's mirror with `--reference`.** Measured:
-/// a `--local` clone hardlinks the object files, so a source and two clones
-/// took 604 KB together, the same as the source alone, and after the source
-/// rewrote its history and ran `gc --prune=now --aggressive` a clone still
-/// passed `git fsck` with every commit. A `--reference` clone shares as much
-/// disk but *depends* on the mirror's objects, which is the hazard the
-/// "no maintenance while agents are live" requirement exists to manage; a
-/// hardlinked clone has no such dependency to protect.
-///
-/// **Automatic GC is off** all the same: an agent's own repack rewrites its
-/// packs and drops the shared links, safe but no longer cheap.
+/// **Why `--no-hardlinks`: each agent's objects are its own copies.**
+/// A `--local` clone hardlinks them, and the last version kept that,
+/// measured to share the disk and to survive the source *unlinking*
+/// objects (a source pruning everything left a clone whole). That measured
+/// the wrong property. A hardlinked pack is one inode in the source and in
+/// every clone, so an agent that changes its mode and writes it corrupts
+/// the user's repository and every sibling: shown by adversarial review,
+/// `git fsck` failing in the source and in another agent's clone. Landlock
+/// cannot help, since an agent's own `.git` is rightly writable to it. Disk
+/// is the cost, and write independence is the point of a fleet.
 ///
 /// **Pushing is refused**, by a push URL that says why: `origin` is the
 /// user's own repository, so a push would land an agent's work there
@@ -780,32 +882,22 @@ fn require_git_repository(project_root: &Path) -> Result<(), FleetError> {
 /// clone (`fleet inspect` prints the command). Fetching from `origin` is
 /// left alone; inside the agent its path is not in the view anyway.
 fn settle_clone(dest: &Path) -> io::Result<()> {
-    for args in [
-        &["config", "gc.auto", "0"][..],
-        &["config", "maintenance.auto", "false"],
-        &[
-            "remote",
-            "set-url",
-            "--push",
-            "origin",
-            "/devcroft: agents do not push; fetch from the agent's clone (devcroft fleet inspect)",
-        ],
-    ] {
-        let out = Command::new("git")
-            .arg("-C")
-            .arg(dest)
-            .args(args)
-            .output()?;
-        if !out.status.success() {
-            return Err(io::Error::other(format!(
-                "git {} in {}: {}",
-                args.join(" "),
-                dest.display(),
-                String::from_utf8_lossy(&out.stderr).trim()
-            )));
-        }
+    const REFUSAL: &str =
+        "/devcroft: agents do not push; fetch from the agent's clone (devcroft fleet inspect)";
+    let out = Command::new("git")
+        .arg("-C")
+        .arg(dest)
+        .args(["remote", "set-url", "--push", "origin", REFUSAL])
+        .output()?;
+    if out.status.success() {
+        Ok(())
+    } else {
+        Err(io::Error::other(format!(
+            "git remote set-url --push in {}: {}",
+            dest.display(),
+            String::from_utf8_lossy(&out.stderr).trim()
+        )))
     }
-    Ok(())
 }
 
 /// Clone the repository holding `project_root` into `dest`, and return
@@ -835,7 +927,7 @@ fn clone_workspace(project_root: &Path, dest: &Path) -> io::Result<PathBuf> {
         std::fs::create_dir_all(parent)?;
     }
     let out = Command::new("git")
-        .args(["clone", "--local", "--quiet"])
+        .args(["clone", "--no-hardlinks", "--quiet"])
         .arg(&top)
         .arg(dest)
         .output()?;
