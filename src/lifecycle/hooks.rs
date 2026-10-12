@@ -107,6 +107,58 @@ pub fn run_in_keeper(
     Ok(())
 }
 
+/// The activation script alone, wrapped so its exports are captured, and
+/// left for the keeper to adopt (`adopt_activation`): what the provisioning
+/// process runs (`sandbox-provisioning` P2).
+pub fn run_activation(
+    backend: &dyn crate::keeper::SessionBackend,
+    shell: &str,
+    project_root: &Path,
+    script: &str,
+    capture: Option<&ActivationCapture>,
+) -> Result<(), HookError> {
+    let Some(capture) = capture else {
+        return run_one_in_keeper(backend, shell, project_root, "activation", script);
+    };
+    run_one_in_keeper(
+        backend,
+        shell,
+        project_root,
+        "activation",
+        &capture.wrap(script),
+    )?;
+    // The difference is taken here, against what *this* process started the
+    // script from, not by the keeper against its own environment: the two
+    // differ in the proxy variables, and a keeper-side diff would hand every
+    // session the provisioning proxy as though the script had exported it.
+    let overlay = capture.read();
+    std::fs::write(
+        capture.overlay_path(),
+        serde_json::to_vec(&overlay).expect("EnvOverlay serializes"),
+    )
+    .map_err(|e| HookError::Failed {
+        name: "activation",
+        detail: format!("recording what it exported: {e}"),
+    })
+}
+
+/// Apply what the activation script, run in the provisioning process,
+/// exported (`run_activation`'s overlay) to every hook, session and
+/// service the keeper starts.
+pub fn adopt_activation(capture: &ActivationCapture) {
+    let overlay = std::fs::read(capture.overlay_path())
+        .ok()
+        .and_then(|bytes| serde_json::from_slice(&bytes).ok());
+    let _ = std::fs::remove_file(capture.overlay_path());
+    match overlay {
+        Some(overlay) => crate::keeper::set_activation_env(overlay),
+        None => println!(
+            "[hook activation] note: no record of what it exported, so nothing it \
+             exported reaches sessions"
+        ),
+    }
+}
+
 /// How the keeper learns what the activation script exported (see
 /// `keeper::session::EnvOverlay` for why it must).
 ///
@@ -136,6 +188,11 @@ impl ActivationCapture {
             shell_quote(&self.exe.to_string_lossy()),
             shell_quote(&self.out.to_string_lossy()),
         )
+    }
+
+    /// Where the provisioning process leaves the finished overlay.
+    fn overlay_path(&self) -> std::path::PathBuf {
+        self.out.with_file_name(".devcroft-activation-overlay.json")
     }
 
     /// What the script changed. Empty, with a note in the log, when there

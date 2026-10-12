@@ -108,6 +108,7 @@ fn main() {
             let _ = out.flush();
             std::process::exit(0);
         }
+        Some("__provision") => provision_main(),
         Some("__ingress") => {
             let fd: RawFd = args
                 .get(2)
@@ -3358,6 +3359,7 @@ fn cli_policy(args: &[String]) -> i32 {
             .unwrap_or(cwd.clone())
     }) else {
         print!("{}", devcroft::policy::render(&compiled));
+        print!("{}", render_provisioning_of(&compiled, &manifest));
         return if incomplete.is_some() { 1 } else { 0 };
     };
     if let Err(e) = compiled
@@ -3368,7 +3370,19 @@ fn cli_policy(args: &[String]) -> i32 {
         return 2;
     }
     print!("{}", devcroft::policy::render(&compiled));
+    print!("{}", render_provisioning_of(&compiled, &manifest));
     if incomplete.is_some() { 1 } else { 0 }
+}
+
+/// The provisioning section of `policy --render`, from the manifest's
+/// `[provisioning.network]` over the runtime policy's filesystem.
+fn render_provisioning_of(
+    compiled: &devcroft::policy::CompiledPolicy,
+    manifest: &devcroft::config::Manifest,
+) -> String {
+    devcroft::policy::render_provisioning(
+        &compiled.for_provisioning(&manifest.provisioning.network.allow),
+    )
 }
 
 /// `policy --render` and `why` are otherwise pure functions of the
@@ -3982,21 +3996,12 @@ fn maybe_auto_up(sandbox_name: &str, cwd: &std::path::Path) -> Result<(), String
 /// by `up`, before restriction, and inherited across nono's exec — this
 /// is the load-bearing trick the task 1.1/1.2 spike proved out). Never
 /// returns under normal operation.
-fn keeper_main(fd: RawFd, ssh_fd: RawFd) -> ! {
-    // Bound *before* `self_restrict`, and this is the one thing that has
-    // to happen first. A network-isolated sandbox reaches the host's
-    // egress proxy through a unix socket (the only thing that crosses a
-    // network namespace), and something inside the namespace has to
-    // present that as an ordinary TCP proxy endpoint for `HTTP_PROXY` to
-    // mean anything. Binding here rather than after restriction is the
-    // same listener-before-restriction ordering the control and SSH
-    // sockets already rely on — the keeper never needs bind permission
-    // for a socket it already holds.
-    //
-    // Absent when this sandbox is not isolated, in which case
-    // `HTTP_PROXY` points straight at the host proxy's own port and no
-    // relay is needed.
-    let relay = std::env::var("DEVCROFT_PROXY_RELAY_PORT")
+/// The egress relay's listener, bound now if `up` asked for one (or taken
+/// from the fd fleet's init helper bound), with the proxy socket it relays
+/// to. Shared by the keeper and the provisioning process, each of which
+/// must bind it before it restricts itself; see `keeper_main`.
+fn take_relay() -> Option<(std::net::TcpListener, std::path::PathBuf)> {
+    std::env::var("DEVCROFT_PROXY_RELAY_PORT")
         .ok()
         .and_then(|p| p.parse::<u16>().ok())
         .zip(std::env::var("DEVCROFT_PROXY_SOCKET").ok())
@@ -4029,7 +4034,108 @@ fn keeper_main(fd: RawFd, ssh_fd: RawFd) -> ! {
                     None
                 }
             }
+        })
+}
+
+/// What the activation script exports, captured to the sandbox home
+/// (`lifecycle::hooks::ActivationCapture`). Shared by the keeper and the
+/// provisioning process, so the one that runs the script and the one that
+/// adopts its exports agree on where the dump is.
+fn activation_capture(
+    sandbox_home: Option<&str>,
+) -> Option<devcroft::lifecycle::hooks::ActivationCapture> {
+    sandbox_home.map(|home| {
+        let exe = std::env::args_os()
+            .next()
+            .map(std::path::PathBuf::from)
+            .filter(|p| p.is_absolute())
+            .or_else(|| std::env::current_exe().ok())
+            .unwrap_or_else(|| std::path::PathBuf::from("devcroft"));
+        devcroft::lifecycle::hooks::ActivationCapture {
+            exe,
+            out: std::path::Path::new(home).join(".devcroft-activation-env"),
+            before: std::env::vars_os()
+                .map(|(k, v)| {
+                    (
+                        k.to_string_lossy().into_owned(),
+                        v.to_string_lossy().into_owned(),
+                    )
+                })
+                .collect(),
+        }
+    })
+}
+
+/// `__provision`: the provider's activation script, run under the
+/// provisioning policy in its own process (`lifecycle::up::run_provisioning`).
+/// The keeper's startup up to its hooks, and nothing after: bind the relay,
+/// drop devcroft's internals, restrict, move `HOME`, then run the script with
+/// its exports captured for the keeper to adopt. Exits with its status; a
+/// failure is reported on the line `up` reads, as a failing hook in the
+/// keeper is.
+fn provision_main() -> ! {
+    let relay = take_relay();
+    let sandbox_home = std::env::var("DEVCROFT_SANDBOX_HOME").ok();
+    // SAFETY: single-threaded until the relay thread below.
+    unsafe {
+        for internal in [
+            "DEVCROFT_SSH_HOST_KEY",
+            "DEVCROFT_SSH_AUTHORIZED_KEY",
+            "DEVCROFT_SANDBOX_HOME",
+            "DEVCROFT_PROXY_RELAY_FD",
+        ] {
+            std::env::remove_var(internal);
+        }
+    }
+    self_restrict();
+    if let Some(home) = &sandbox_home {
+        // SAFETY: as above; `self_restrict` spawns no thread.
+        unsafe { std::env::set_var("HOME", home) };
+    }
+    if let Some((listener, socket_path)) = relay {
+        std::thread::spawn(move || {
+            devcroft::proxy::server::relay_to_host_proxy(listener, socket_path);
         });
+    }
+    let Ok(script) = std::env::var("DEVCROFT_HOOK_ACTIVATION") else {
+        std::process::exit(0);
+    };
+    let shell = std::env::var("DEVCROFT_SHELL").unwrap_or_else(|_| "sh".to_string());
+    let root = std::env::var("DEVCROFT_SERVICES_ROOT").unwrap_or_else(|_| ".".to_string());
+    let capture = activation_capture(sandbox_home.as_deref());
+    match devcroft::lifecycle::hooks::run_activation(
+        &LocalSessionBackend,
+        &shell,
+        std::path::Path::new(&root),
+        &script,
+        capture.as_ref(),
+    ) {
+        Ok(()) => std::process::exit(0),
+        Err(e) => {
+            println!(
+                "{}{e}",
+                devcroft::lifecycle::hooks::KEEPER_HOOK_FAILURE_PREFIX
+            );
+            std::process::exit(1);
+        }
+    }
+}
+
+fn keeper_main(fd: RawFd, ssh_fd: RawFd) -> ! {
+    // Bound *before* `self_restrict`, and this is the one thing that has
+    // to happen first. A network-isolated sandbox reaches the host's
+    // egress proxy through a unix socket (the only thing that crosses a
+    // network namespace), and something inside the namespace has to
+    // present that as an ordinary TCP proxy endpoint for `HTTP_PROXY` to
+    // mean anything. Binding here rather than after restriction is the
+    // same listener-before-restriction ordering the control and SSH
+    // sockets already rely on — the keeper never needs bind permission
+    // for a socket it already holds.
+    //
+    // Absent when this sandbox is not isolated, in which case
+    // `HTTP_PROXY` points straight at the host proxy's own port and no
+    // relay is needed.
+    let relay = take_relay();
 
     // The keeper's next action, before reconstructing the listener
     // fds or anything else: applies the compiled policy to *this*
@@ -4050,6 +4156,7 @@ fn keeper_main(fd: RawFd, ssh_fd: RawFd) -> ! {
     // after.
     // Read here with the other internals, for the same single-threaded reason.
     let sandbox_home = std::env::var("DEVCROFT_SANDBOX_HOME").ok();
+    let provisioned = std::env::var_os("DEVCROFT_ACTIVATION_PROVISIONED").is_some();
     let ssh_keys = std::env::var("DEVCROFT_SSH_HOST_KEY")
         .ok()
         .zip(std::env::var("DEVCROFT_SSH_AUTHORIZED_KEY").ok());
@@ -4059,6 +4166,7 @@ fn keeper_main(fd: RawFd, ssh_fd: RawFd) -> ! {
         std::env::remove_var("DEVCROFT_SSH_HOST_KEY");
         std::env::remove_var("DEVCROFT_SSH_AUTHORIZED_KEY");
         std::env::remove_var("DEVCROFT_SANDBOX_HOME");
+        std::env::remove_var("DEVCROFT_ACTIVATION_PROVISIONED");
         // Taken above if present; a session has no use for the number.
         std::env::remove_var("DEVCROFT_PROXY_RELAY_FD");
     }
@@ -4177,7 +4285,7 @@ fn keeper_main(fd: RawFd, ssh_fd: RawFd) -> ! {
     // A failure exits before any service starts, so the sandbox does not
     // come up half-provisioned; `up` reports it by reading the line
     // below out of this process's log.
-    if let Err(e) = run_keeper_hooks(&LocalSessionBackend, sandbox_home.as_deref()) {
+    if let Err(e) = run_keeper_hooks(&LocalSessionBackend, sandbox_home.as_deref(), provisioned) {
         eprintln!(
             "{}{e}",
             devcroft::lifecycle::hooks::KEEPER_HOOK_FAILURE_PREFIX
@@ -4395,6 +4503,7 @@ fn start_services_if_requested(registry: Arc<Registry>, backend: Arc<dyn Session
 fn run_keeper_hooks(
     backend: &dyn devcroft::keeper::SessionBackend,
     sandbox_home: Option<&str>,
+    provisioned: bool,
 ) -> Result<(), devcroft::lifecycle::hooks::HookError> {
     // The order is `up`'s, restated here rather than carried, because it
     // is a property of what the hooks *are* — the provider's script
@@ -4414,6 +4523,15 @@ fn run_keeper_hooks(
             Some((name, value))
         })
         .collect();
+    // Before the empty check: with the activation script provisioned and no
+    // hook of the manifest's own, there is nothing left to run, and the
+    // first version returned here without adopting what it exported.
+    let capture = activation_capture(sandbox_home);
+    // The script already ran, under the provisioning policy in its own
+    // process (`up`'s `run_provisioning`): adopt what it exported.
+    if provisioned && let Some(capture) = &capture {
+        devcroft::lifecycle::hooks::adopt_activation(capture);
+    }
     if hooks.is_empty() {
         return Ok(());
     }
@@ -4427,26 +4545,6 @@ fn run_keeper_hooks(
     // `DEVCROFT_SANDBOX_HOME` from the environment while it is still
     // single-threaded, so it is gone by now (the first version looked it up
     // here, found nothing, and captured nothing, in every real keeper).
-    let capture = sandbox_home.map(|home| {
-        let exe = std::env::args_os()
-            .next()
-            .map(std::path::PathBuf::from)
-            .filter(|p| p.is_absolute())
-            .or_else(|| std::env::current_exe().ok())
-            .unwrap_or_else(|| std::path::PathBuf::from("devcroft"));
-        devcroft::lifecycle::hooks::ActivationCapture {
-            exe,
-            out: std::path::Path::new(&home).join(".devcroft-activation-env"),
-            before: std::env::vars_os()
-                .map(|(k, v)| {
-                    (
-                        k.to_string_lossy().into_owned(),
-                        v.to_string_lossy().into_owned(),
-                    )
-                })
-                .collect(),
-        }
-    });
     devcroft::lifecycle::hooks::run_in_keeper(
         backend,
         &shell,

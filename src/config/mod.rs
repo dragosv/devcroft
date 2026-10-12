@@ -21,6 +21,27 @@ pub struct Manifest {
     pub network: Network,
     pub ssh: Ssh,
     pub hooks: Hooks,
+    pub provisioning: Provisioning,
+}
+
+/// The policy a provider's activation script runs under
+/// (`sandbox-provisioning` P2): its own context, separate from the runtime
+/// one sessions get, and **inheriting nothing from it**. A hook that runs
+/// `npm ci` needs a registry; the sandbox it prepares should not keep
+/// reaching it. Only the network differs today: the filesystem is the
+/// runtime one, and the home is already the sandbox's own.
+#[derive(Debug, Clone, PartialEq, Default, Deserialize)]
+#[serde(default)]
+pub struct Provisioning {
+    pub network: ProvisioningNetwork,
+}
+
+/// `[provisioning.network]`: the hosts the activation script may reach,
+/// through its own proxy. Empty is no network at all, not the runtime's.
+#[derive(Debug, Clone, PartialEq, Default, Deserialize)]
+#[serde(default)]
+pub struct ProvisioningNetwork {
+    pub allow: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -195,6 +216,7 @@ struct RawManifest {
     network: Network,
     ssh: Ssh,
     hooks: Hooks,
+    provisioning: Provisioning,
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
@@ -441,6 +463,7 @@ pub fn parse(text: &str) -> Result<(Manifest, Vec<Warning>), ConfigError> {
             network: raw.network,
             ssh: raw.ssh,
             hooks: raw.hooks,
+            provisioning: raw.provisioning,
         },
         warnings,
     ))
@@ -448,6 +471,28 @@ pub fn parse(text: &str) -> Result<(Manifest, Vec<Warning>), ConfigError> {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn provisioning_network_parses_and_inherits_nothing_from_runtime() {
+        let (m, _) = parse(
+            "[sandbox]\nname = \"p\"\n\n[network]\nallow = [\"api.example.com\"]\n\n\
+             [provisioning.network]\nallow = [\"registry.npmjs.org\"]\n",
+        )
+        .unwrap();
+        assert_eq!(m.provisioning.network.allow, ["registry.npmjs.org"]);
+        // Absent, it is empty: not the runtime's allowlist.
+        let (m, _) =
+            parse("[sandbox]\nname = \"p\"\n\n[network]\nallow = [\"a.example\"]\n").unwrap();
+        assert!(m.provisioning.network.allow.is_empty());
+        // Unknown keys are named by their full path.
+        let err =
+            parse("[sandbox]\nname = \"p\"\n\n[provisioning.network]\nalow = []\n").unwrap_err();
+        assert!(
+            err.to_string().contains("provisioning.network.alow"),
+            "{err}"
+        );
+    }
+
     #[test]
     fn network_services_parse_and_are_strictly_checked() {
         let base = "[sandbox]\nname = \"p\"\n";

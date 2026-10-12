@@ -14,7 +14,7 @@ pub use capability_set::{CapabilityPlan, CapabilitySetError, ResolvedGrant};
 pub use degraded::{
     DegradedCapability, backend_support, backend_supported, detect as detect_degraded,
 };
-pub use render::render;
+pub use render::{render, render_provisioning};
 pub use why::{Explanation, Op, why_host, why_path};
 
 use crate::config::{Manifest, NetworkDefault};
@@ -491,6 +491,29 @@ impl CompiledPolicy {
     /// Whether this policy calls for the egress proxy at all: `up` checks
     /// this *before* binding a socket, so a sandbox with domain filtering
     /// off never pays for a proxy process it has nothing to filter.
+    /// The provisioning context's policy (`sandbox-provisioning` P2): this
+    /// one's filesystem, with its network replaced by the manifest's
+    /// `[provisioning.network]` and nothing inherited from the runtime's.
+    /// Blocked, with `allow` reachable only through a proxy of its own
+    /// (`with_proxy_port` once one is running), and no listener ports or
+    /// allocations, which belong to the sandbox's services, not to the
+    /// script that prepares it.
+    pub fn for_provisioning(&self, allow: &[String]) -> CompiledPolicy {
+        CompiledPolicy {
+            network_block: true,
+            network_allow_domain: allow
+                .iter()
+                .map(|d| {
+                    AnnotatedValue::new(d.clone(), Origin::Manifest("provisioning.network.allow"))
+                })
+                .collect(),
+            network_ports: Vec::new(),
+            allocations: Vec::new(),
+            network_proxy_port: None,
+            ..self.clone()
+        }
+    }
+
     pub fn wants_egress_proxy(&self) -> bool {
         self.network_block && !self.network_allow_domain.is_empty()
     }
@@ -649,6 +672,28 @@ impl CompiledPolicy {
 
 #[cfg(test)]
 mod tests {
+
+    /// Provisioning keeps the runtime filesystem and takes nothing of its
+    /// network: not its allowlist, not its ports.
+    #[test]
+    fn the_provisioning_policy_replaces_the_network_and_keeps_the_filesystem() {
+        let (manifest, _) = crate::config::parse(
+            "[sandbox]\nname = \"pv\"\n\n[filesystem]\nread = [\"/opt/x\"]\n\n\
+             [network]\ndefault = \"allow\"\nports = [8080]\n",
+        )
+        .unwrap();
+        let runtime = compile(&manifest).with_provider_grants("nix", &["/nix/store".to_owned()]);
+        let none = runtime.for_provisioning(&[]);
+        assert!(none.network_block && none.network_allow_domain.is_empty());
+        assert!(none.network_ports.is_empty() && !none.wants_egress_proxy());
+        assert_eq!(none.filesystem_read, runtime.filesystem_read);
+        let some = runtime.for_provisioning(&["registry.npmjs.org".to_owned()]);
+        assert!(some.wants_egress_proxy());
+        assert_eq!(
+            some.network_allow_domain[0].origin,
+            Origin::Manifest("provisioning.network.allow")
+        );
+    }
 
     /// The artifact `up` writes for its own sandbox must read back as the
     /// same policy, origins included, or `why` inside the sandbox answers

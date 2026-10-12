@@ -398,6 +398,14 @@ for an environment without running it. Measured:
   working as designed — a hook's commands must come from the closure —
   but it is a real behaviour change for hooks that assumed host access.
 
+  **Since `sandbox-provisioning`'s provisioning process (2026-10-12), the
+  hook's network is not the runtime's.** `up` runs the activation script
+  (flox's hook, devenv's `enterShell`) in `__provision`, under the runtime
+  filesystem and `[provisioning.network] allow` alone, through a proxy of
+  its own; the keeper then adopts what it exported. A hook that needs a
+  registry declares it there, and sessions never get it. Fleet agents
+  still run the hook in their keeper, under the agent's runtime policy.
+
   **That answer is context-dependent, and the contexts are about to
   diverge — do not read the two as contradictory.** Warning is right
   *today*, where provisioning is unconfined either way, so refusing would

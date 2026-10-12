@@ -1028,6 +1028,39 @@ fn up_process(
         }
     }
 
+    // One truncation for both writers: the provisioning process (if any)
+    // writes the activation script's output here, then the keeper appends.
+    std::fs::File::create(&paths.log)?;
+    // The provider's activation script runs first, in its own process,
+    // under the provisioning policy (`sandbox-provisioning` P2): its own
+    // network allowlist, behind its own proxy, inheriting nothing from the
+    // runtime's. The keeper then adopts what it exported.
+    let provisioned = match keeper_hooks
+        .iter()
+        .position(|(name, _)| *name == "activation")
+    {
+        Some(i) => {
+            let (_, script) = keeper_hooks.remove(i);
+            run_provisioning(
+                &exe,
+                paths,
+                project_root,
+                &env,
+                &resolution.unset,
+                &sandbox_home,
+                &compiled,
+                &manifest.provisioning.network.allow,
+                &shell.path,
+                isolate_filesystem,
+                isolate_network,
+                &mount_grants,
+                &script,
+            )?;
+            true
+        }
+        None => false,
+    };
+
     let keeper_pid = spawn_keeper(
         &exe,
         &listener,
@@ -1050,6 +1083,7 @@ fn up_process(
         &mount_grants,
         relay.as_ref().map(|(_, sock)| sock.as_path()),
         &keeper_hooks,
+        provisioned,
     )
     .map_err(|e| UpError::Keeper(e.to_string()))?;
     // Both fds must outlive this function for the child to inherit them
@@ -1411,6 +1445,7 @@ fn spawn_keeper(
     mount_grants: &[policy::ResolvedGrant],
     proxy_socket_for_view: Option<&Path>,
     hooks: &[(&'static str, String)],
+    provisioned: bool,
 ) -> io::Result<libc::pid_t> {
     // The pivot-root scratch directory (`StatePaths::mount_root`'s own
     // doc) must exist and be empty before `pre_exec` runs — created here,
@@ -1440,8 +1475,12 @@ fn spawn_keeper(
     // file — and without it each would carry its own offset and overwrite
     // the other, silently
     // eating exactly the output the spec requires to be there.
-    std::fs::File::create(&paths.log)?;
-    let log = std::fs::OpenOptions::new().append(true).open(&paths.log)?;
+    // Truncated once by `up_process`, before the provisioning process (if
+    // any) writes the activation script's output here; appended from then.
+    let log = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&paths.log)?;
 
     let mut cmd = Command::new(exe);
     cmd.arg("__keeper")
@@ -1523,6 +1562,183 @@ fn spawn_keeper(
     // confirmed live, not assumed, and still true with mount isolation
     // layered on top (`fleet::mount::enter_mount_namespace`'s own doc
     // makes the identical point for its uid/gid mapping).
+    if provisioned {
+        // The activation script already ran, in its own process under the
+        // provisioning policy (`spawn_provisioner`): the keeper adopts what
+        // it exported rather than running it again. After `env_clear`
+        // above, which would otherwise drop it.
+        cmd.env("DEVCROFT_ACTIVATION_PROVISIONED", "1");
+    }
+    confine_on_exec(
+        &mut cmd,
+        Confinement {
+            isolate_filesystem,
+            isolate_network,
+            mount_root,
+            mount_grants,
+            proxy_socket_for_view,
+            project_root: project_root_owned,
+        },
+    );
+
+    let child = cmd.spawn()?;
+    let pid = child.id() as libc::pid_t;
+    // Detach: `up` is a one-shot command, not the keeper's supervisor for
+    // its whole lifetime. Not calling `.wait()` lets the keeper outlive
+    // this process; once `up` exits, the OS reparents it to init, which
+    // reaps it same as any other orphaned daemon.
+    std::mem::forget(child);
+    Ok(pid)
+}
+
+/// Runs the provider's activation script in its own sandboxed process under
+/// the provisioning policy, and waits for it (`sandbox-provisioning` P2).
+///
+/// The keeper used to run it, under the **runtime** policy, so a hook that
+/// needed a registry got it only from the runtime allowlist, and then every
+/// session kept reaching it. Here it gets `[provisioning.network]` alone,
+/// through a proxy of its own that is stopped when it exits, and the same
+/// filesystem and confinement as the keeper. Its exports are left where the
+/// keeper reads them (`hooks::ActivationCapture`), and a failure reads like a
+/// failing hook always has, from the line the hook runner writes to the log.
+#[allow(clippy::too_many_arguments)]
+fn run_provisioning(
+    exe: &Path,
+    paths: &StatePaths,
+    project_root: &Path,
+    env: &std::collections::BTreeMap<String, String>,
+    unset: &[String],
+    sandbox_home: &Path,
+    compiled: &policy::CompiledPolicy,
+    allow: &[String],
+    shell: &Path,
+    isolate_filesystem: bool,
+    isolate_network: bool,
+    mount_grants: &[policy::ResolvedGrant],
+    script: &str,
+) -> Result<(), UpError> {
+    let socket = paths.root.join("provision-proxy.sock");
+    let proxy = if allow.is_empty() {
+        None
+    } else {
+        let (pid, port, token) = crate::proxy::spawn_at(
+            exe,
+            &socket,
+            &paths.root.join("provision-egress.log"),
+            allow,
+            |_| Ok(()),
+        )
+        .map_err(|e| UpError::Keeper(format!("starting the provisioning proxy: {e}")))?;
+        Some((pid, port, token))
+    };
+    let mut provisioning = compiled.for_provisioning(allow);
+    if let Some((_, port, _)) = &proxy {
+        provisioning = provisioning.with_proxy_port(*port);
+    }
+    let plan = provisioning.to_capability_plan();
+
+    // The runtime's proxy variables point at a proxy this process may not
+    // use; its own replace them, or nothing does.
+    let mut env = env.clone();
+    for (key, _) in crate::proxy::client_env(0, "") {
+        env.remove(&key);
+    }
+    if let Some((_, port, token)) = &proxy {
+        env.extend(crate::proxy::client_env(*port, token));
+    }
+    let relay = isolate_network
+        .then(|| proxy.as_ref().map(|(_, port, _)| (*port, socket.clone())))
+        .flatten();
+
+    if isolate_filesystem {
+        let _ = std::fs::remove_dir_all(&paths.mount_root);
+        std::fs::create_dir_all(&paths.mount_root)?;
+    }
+    let log = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&paths.log)?;
+    let hooks = [("activation", script.to_owned())];
+    let mut cmd = Command::new(exe);
+    cmd.arg("__provision")
+        .current_dir(project_root)
+        .env_clear()
+        .envs(
+            KeeperEnv {
+                env: &env,
+                unset,
+                plan: &plan,
+                ssh_host_key_pem: "",
+                ssh_authorized_key_pem: "",
+                shell,
+                services: None,
+                hooks: &hooks,
+                project_root,
+                sandbox_home,
+                relay: relay.as_ref().map(|(port, sock)| (*port, sock.as_path())),
+            }
+            .vars(),
+        )
+        .stdin(Stdio::null())
+        .stdout(log.try_clone()?)
+        .stderr(log);
+    confine_on_exec(
+        &mut cmd,
+        Confinement {
+            isolate_filesystem,
+            isolate_network,
+            mount_root: paths.mount_root.clone(),
+            mount_grants: mount_grants.to_vec(),
+            proxy_socket_for_view: relay.as_ref().map(|(_, sock)| sock.clone()),
+            project_root: project_root.to_path_buf(),
+        },
+    );
+    let status = cmd.status();
+
+    if let Some((pid, _, _)) = proxy {
+        // SAFETY: signalling and reaping our own child.
+        unsafe {
+            libc::kill(pid, libc::SIGTERM);
+            libc::waitpid(pid, std::ptr::null_mut(), 0);
+        }
+        let _ = std::fs::remove_file(&socket);
+    }
+    let status =
+        status.map_err(|e| UpError::Keeper(format!("starting the provisioning process: {e}")))?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(UpError::Keeper(
+            keeper_failure_reason(&paths.log).unwrap_or_else(|| {
+                format!("the activation script's provisioning process exited with {status}")
+            }),
+        ))
+    }
+}
+
+/// Where a sandboxed process `up` spawns is confined before it execs: its
+/// own mount namespace and view, and its network namespace, when the host
+/// has them (`spawn_keeper`'s comments give the order and why it matters).
+/// Shared by the keeper and the provisioning process, which differ only in
+/// the plan they apply to themselves after exec.
+struct Confinement {
+    isolate_filesystem: bool,
+    isolate_network: bool,
+    mount_root: PathBuf,
+    mount_grants: Vec<policy::ResolvedGrant>,
+    proxy_socket_for_view: Option<PathBuf>,
+    project_root: PathBuf,
+}
+
+fn confine_on_exec(cmd: &mut Command, c: Confinement) {
+    let Confinement {
+        isolate_filesystem,
+        isolate_network,
+        mount_root,
+        mount_grants,
+        proxy_socket_for_view,
+        project_root: project_root_owned,
+    } = c;
     unsafe {
         cmd.pre_exec(move || {
             if libc::setsid() < 0 {
@@ -1558,15 +1774,6 @@ fn spawn_keeper(
             Ok(())
         });
     }
-
-    let child = cmd.spawn()?;
-    let pid = child.id() as libc::pid_t;
-    // Detach: `up` is a one-shot command, not the keeper's supervisor for
-    // its whole lifetime. Not calling `.wait()` lets the keeper outlive
-    // this process; once `up` exits, the OS reparents it to init, which
-    // reaps it same as any other orphaned daemon.
-    std::mem::forget(child);
-    Ok(pid)
 }
 
 /// The binary to re-exec as the keeper. Normally `current_exe()`, but that

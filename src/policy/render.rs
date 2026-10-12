@@ -216,6 +216,29 @@ fn namespace_summary(compiled: &CompiledPolicy) -> &'static str {
     }
 }
 
+/// The provisioning context (`sandbox-provisioning` P2): the policy a
+/// provider's activation script runs under, in its own process. Rendered
+/// as its network alone, since that is all that differs from the runtime
+/// policy above, and rendered even when empty: the spec has the effective
+/// provisioning policy shown, not implied, and "none" is the case where
+/// a reader would otherwise assume the runtime's allowlist applies.
+pub fn render_provisioning(provisioning: &CompiledPolicy) -> String {
+    let mut out = String::new();
+    writeln!(out).unwrap();
+    writeln!(
+        out,
+        "provisioning: (the provider's activation script, in its own process; \
+         the filesystem above, and only this network, nothing inherited)"
+    )
+    .unwrap();
+    render_section(
+        &mut out,
+        "provisioning.network.allow_domain",
+        &provisioning.network_allow_domain,
+    );
+    out
+}
+
 fn render_section(out: &mut String, title: &str, values: &[AnnotatedValue]) {
     writeln!(out, "{title}:").unwrap();
     if values.is_empty() {

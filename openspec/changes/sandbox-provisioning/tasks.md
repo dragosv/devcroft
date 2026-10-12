@@ -164,18 +164,46 @@
 
 ## 1. Provisioning policy
 
-- [ ] Add the provisioning profile to the manifest schema.
-- [ ] Define the default profile from the spike's findings.
+- [x] Add the provisioning profile to the manifest schema.
+      `[provisioning.network] allow = [...]` (2026-10-12), unknown keys named by
+      full path. Only the network: the filesystem is the runtime one, and the
+      home is already the sandbox's own.
+- [x] Define the default profile from the spike's findings.
+      The runtime filesystem, and **no network, nothing inherited** from the
+      runtime allowlist (`CompiledPolicy::for_provisioning`). The network
+      spec's "Provisioning inherits nothing by default".
 - [ ] Extend `policy --render` and `why` to cover both profiles with origin
       attribution.
+      **`--render` done (2026-10-12):** a provisioning section with its allowlist
+      and origin `manifest:provisioning.network.allow`, shown even when empty.
+      `why` does not yet answer for the provisioning context.
 - [ ] Report degradation where the backend cannot enforce a declared aspect.
 
 ## 2. Provisioning sandbox
 
-- [ ] Build the provisioning sandbox from the compiled provisioning profile,
+- [x] Build the provisioning sandbox from the compiled provisioning profile,
       reusing the existing sandbox construction path.
-- [ ] Substituted home directory, with declared paths bound in.
-- [ ] Capture the environment across the boundary as data.
+      **Built (2026-10-12) as a separate process**, the mechanism the owner
+      chose: `up` runs `__provision` (`lifecycle::up::run_provisioning`) through
+      the same mount and network confinement as the keeper, under the
+      provisioning plan, with a proxy of its own holding the provisioning
+      allowlist, stopped when it exits. The keeper then starts under the runtime
+      plan and does not run the script again. `provisioning_network.rs`: the
+      hook reaches only the provisioning host, a session only the runtime one,
+      and the hook's exports reach the session; with the hook back in the keeper
+      the hook cannot reach its host. **Enforcement is the proxy each process
+      can reach**, not the plan's domain list: a mutant swapping only the plan's
+      network changed nothing, which is why the test's mutant is the old path.
+- [x] Substituted home directory, with declared paths bound in.
+      The provisioning process gets the sandbox's own home (`.devcroft/<name>/
+      home`), persistent across runs, so a cache written there survives; no
+      declared extra paths yet.
+- [x] Capture the environment across the boundary as data.
+      What the script exported is diffed **in the provisioning process**,
+      against what it started from, and handed to the keeper as JSON
+      (`hooks::run_activation`, `adopt_activation`). A keeper-side diff was the
+      first version and was wrong: the two differ in the proxy variables, so
+      every session would have been handed the provisioning proxy.
 - [ ] Apply the existing baseline diff, store grants and staleness
       fingerprinting to the captured environment, unchanged.
 
@@ -188,7 +216,10 @@
 
 ## 4. Providers
 
-- [ ] Route flox through the provisioning sandbox.
+- [x] Route flox through the provisioning sandbox.
+      A flox hook (and devenv's `enterShell`) runs in the provisioning process.
+      **Not fleet:** a fleet agent's keeper still runs the hook itself, under
+      the agent's runtime policy; fleet builds agents without `up`.
 - [ ] Route devbox through it, keeping the existing lockfile byte-comparison.
 - [ ] Give nix a provisioning profile for inspectability; its resolution path is
       unchanged.
@@ -197,10 +228,17 @@
 
 ## 5. Validation
 
-- [ ] A project whose hook runs a package install still provisions correctly.
+- [x] A project whose hook runs a package install still provisions correctly.
+      Shown for the part that differs, reaching a registry: the hook reaches a
+      provisioning-allowed host (a local server standing in) that the runtime
+      denies. A real `npm ci` was not run.
 - [ ] A hook writing to an undeclared home path does not affect the real home.
 - [ ] A hook attempting to read credentials outside the profile is denied.
-- [ ] Every existing sample still provisions.
+- [x] Every existing sample still provisions.
+      The full suite with the provisioning process in place (2026-10-12),
+      devenv on `PATH` and `--features test-support`: 653 passed, 0 failed,
+      bringing every provider's samples up (flox with a hook, devenv's
+      `enterShell`, devbox, nix). Skipped: Swift (macOS-only) and rsync.
 - [ ] Document the behavioural difference from running activation by hand.
 
 ## 6. Deferred decisions (see design.md)

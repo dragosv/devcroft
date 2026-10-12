@@ -49,7 +49,7 @@ pub trait SessionBackend: Send + Sync {
 /// **An overlay applied at spawn, not `set_var` on the keeper.** By the
 /// time hooks run the keeper already has relay threads, and mutating the
 /// environment of a process with other threads is unsound.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct EnvOverlay {
     pub set: std::collections::BTreeMap<String, String>,
     pub unset: Vec<String>,

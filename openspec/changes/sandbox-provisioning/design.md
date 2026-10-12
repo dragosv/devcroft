@@ -32,6 +32,12 @@ another instance of that, not a new mechanism.
 
 ## P2 — Provisioning is a separate policy profile, not a variant of the runtime one
 
+> **Built (2026-10-12), as a separate process.** The note below recorded
+> the deferral; the owner then chose the first mechanism it weighs. Hooks run
+> in `__provision` under `[provisioning.network]`, through a proxy of their
+> own; the keeper adopts their exports. Fleet agents still run the hook in
+> their keeper.
+>
 > **Deferred by the owner (2026-10-11).** Since P2d, and since the keeper
 > applies what the activation script exports (`keeper::session::EnvOverlay`),
 > a provider's hook runs **inside the runtime keeper, under the runtime
