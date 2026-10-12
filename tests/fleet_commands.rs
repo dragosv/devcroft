@@ -1156,3 +1156,118 @@ fn host_root_is_refused_where_the_nix_daemon_runs() {
     assert!(!s.clones().exists());
     assert!(!s.state().exists());
 }
+
+/// `workspace-isolation`, the git half, on the clones `fleet up` makes.
+/// Each is a `--local` clone (hardlinked objects) rather than D7's
+/// `--reference` to a mirror, which was measured to share as much disk
+/// without depending on another repository's objects: a source that
+/// rewrites its history and prunes everything leaves a clone whole.
+#[test]
+fn agent_clones_are_independent_unpushable_gc_free_and_fetchable() {
+    let Some(root) = capable_host() else { return };
+    let s = Setup::new("git", Some(&root), "", true);
+    let started = s.up(5).unwrap();
+    let git = |dir: &Path, args: &[&str]| {
+        Command::new("git")
+            .arg("-C")
+            .arg(dir)
+            .args(["-c", "user.name=agent", "-c", "user.email=a@a"])
+            .args(args)
+            .output()
+            .unwrap()
+    };
+    let user_refs_before = git(&s.repo(), &["show-ref"]).stdout;
+
+    // Settled: no automatic GC, and a push refused with the reason.
+    let a1 = s.clones().join("a1");
+    assert_eq!(
+        String::from_utf8_lossy(&git(&a1, &["config", "gc.auto"]).stdout).trim(),
+        "0"
+    );
+    let push = git(&a1, &["push", "origin", "HEAD"]);
+    assert!(!push.status.success());
+    assert!(
+        String::from_utf8_lossy(&push.stderr).contains("agents do not push"),
+        "{}",
+        String::from_utf8_lossy(&push.stderr)
+    );
+
+    // Five agents commit, branch and rebase at once: no lock failure, since
+    // no two share a ref namespace or an index.
+    std::thread::scope(|scope| {
+        for a in &started {
+            let clone = s.clones().join(&a.id);
+            let git = &git;
+            scope.spawn(move || {
+                for n in 0..15 {
+                    std::fs::write(clone.join(format!("work-{n}")), "x").unwrap();
+                    for args in [
+                        &["add", "-A"][..],
+                        &["commit", "-qm", "work"],
+                        &["branch", "-f", "topic"],
+                        &["rebase", "-q", "topic"],
+                    ] {
+                        let out = git(&clone, args);
+                        assert!(
+                            out.status.success(),
+                            "{args:?} in {}: {}",
+                            clone.display(),
+                            String::from_utf8_lossy(&out.stderr)
+                        );
+                    }
+                }
+            });
+        }
+    });
+    // Each clone's refs are its own, and the user's repository saw nothing.
+    assert_eq!(git(&s.repo(), &["show-ref"]).stdout, user_refs_before);
+
+    // Integration is a fetch from the clone, as `fleet inspect` prints it.
+    let fetch = git(
+        &s.repo(),
+        &["fetch", "-q", a1.to_str().unwrap(), "HEAD:refs/agents/a1"],
+    );
+    assert!(
+        fetch.status.success(),
+        "{}",
+        String::from_utf8_lossy(&fetch.stderr)
+    );
+    let head = |dir: &Path, r: &str| {
+        String::from_utf8_lossy(&git(dir, &["rev-parse", r]).stdout)
+            .trim()
+            .to_owned()
+    };
+    assert_eq!(head(&s.repo(), "refs/agents/a1"), head(&a1, "HEAD"));
+    // And the path `fleet inspect` prints the fetch from is that clone.
+    assert_eq!(
+        commands::agent_clone_root(&started[0].workspace, "a1").as_deref(),
+        Some(a1.as_path())
+    );
+
+    // The source rewrites its history and prunes everything; a clone, which
+    // holds its own links to the objects it started with, stays whole.
+    for args in [
+        &["checkout", "-q", "--orphan", "rewritten"][..],
+        &["commit", "-q", "--allow-empty", "-m", "fresh"],
+        &["reflog", "expire", "--expire=now", "--all"],
+    ] {
+        assert!(git(&s.repo(), args).status.success(), "{args:?}");
+    }
+    for branch in ["master", "main"] {
+        let _ = git(&s.repo(), &["branch", "-qD", branch]);
+    }
+    let _ = git(&s.repo(), &["update-ref", "-d", "refs/agents/a1"]);
+    assert!(
+        git(&s.repo(), &["gc", "-q", "--prune=now"])
+            .status
+            .success()
+    );
+    let fsck = git(&s.clones().join("a2"), &["fsck", "--no-progress"]);
+    assert!(
+        fsck.status.success(),
+        "{}",
+        String::from_utf8_lossy(&fsck.stderr)
+    );
+
+    s.cmd(commands::rm_all).unwrap();
+}

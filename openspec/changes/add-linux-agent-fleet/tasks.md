@@ -731,15 +731,33 @@ depends on the second. **The second is done (2026-10-03).**
 
 ## 4. Workspace isolation
 
-- [ ] Implement the shared bare mirror and per-agent clone with `--reference`.
+- [x] Implement the shared bare mirror and per-agent clone with `--reference`.
       **A minimal form exists** (`fleet::commands`): a `git clone --local`
       per agent at `<project>/.devcroft/fleet/<id>`, hardlinked objects, no
       alternates, so no GC hazard yet. The mirror, GC control and remote
       handling are still this task's.
-- [ ] Disable automatic GC on the mirror and all clones; add supervisor-driven
+      **Not built, by measurement (2026-10-11):** D7 reversed in favour of the
+      shipped hardlinked `--local` clones, which share as much disk (604 KB
+      for a source and two clones, the same as the source alone) and survive
+      the source pruning everything (`git fsck` clean, every commit), where a
+      `--reference` clone would depend on the mirror. Spec amended.
+- [x] Disable automatic GC on the mirror and all clones; add supervisor-driven
       maintenance when the fleet is idle.
-- [ ] Remove or block the upstream remote in agent clones; implement the
+      **Done for clones** (`gc.auto 0`, `maintenance.auto false`,
+      `fleet::commands::settle_clone`). No mirror, so no supervisor-driven
+      maintenance to schedule: a hardlinked clone does not depend on the
+      source's objects (the requirement is restated around that property).
+- [x] Remove or block the upstream remote in agent clones; implement the
       integration step for accepted sessions.
+      **Done:** the clone's push URL refuses with the reason ("agents do not
+      push; fetch from the agent's clone"); integration is the host fetching
+      from the clone, and `fleet inspect` prints `git fetch <clone>
+      HEAD:refs/agents/<id>`. What is still a design question is what makes a
+      session "accepted"; the mechanism is the fetch.
+      **Found on the way:** a project in a *subdirectory* of its repository
+      (every sample here) has `.git` above its `/workspace`, outside the
+      view, so its agents cannot use git at all. Projects at their
+      repository's root are unaffected.
 - [x] Mount the provider's **resolved runtime paths read-only** into each
       agent (closure paths for closure-tier providers; devcroft-owned artifact
       paths plus explicit host library grants for qualified artifact-tier ones).
@@ -785,7 +803,12 @@ depends on the second. **The second is done (2026-10-03).**
       Mutants removing either fail. Inside a minimal-root agent, a runtime
       install attempt fails on nix's own "cannot connect to daemon" error,
       which names the socket; devcroft adds nothing there.
-- [ ] Test: concurrent commits across agents, no spurious lock failures.
+- [x] Test: concurrent commits across agents, no spurious lock failures.
+      `agent_clones_are_independent_unpushable_gc_free_and_fetchable`: five
+      agents' clones commit, branch and rebase 15 times each at once with no
+      failure; the user's refs are untouched; a push is refused; the host
+      fetches; and a clone passes `fsck` after the source rewrites its history
+      and prunes everything. Not settling the clones fails it.
 - [ ] Test: store GC during an active fleet retains all live paths.
 
 ## 5. Service ports

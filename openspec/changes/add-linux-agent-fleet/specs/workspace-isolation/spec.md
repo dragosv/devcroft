@@ -10,8 +10,11 @@ machine's package store.
 
 ### Requirement: Each agent gets an independent clone, not a shared worktree
 
-Each agent SHALL work in its own git clone, backed by a shared bare mirror for
-object storage. Agents SHALL NOT share a git worktree or a ref namespace.
+Each agent SHALL work in its own git clone whose object storage is shared
+with the source repository rather than copied (hardlinked objects, from a
+`--local` clone). Agents SHALL NOT share a git worktree or a ref namespace,
+and SHALL NOT push into the repository they were cloned from: their work is
+integrated by fetching from their clone.
 
 Worktrees are the obvious choice and the wrong one: they share the object store
 *and* refs. `index.lock` is per-worktree but `packed-refs` is not, and git takes
@@ -27,25 +30,33 @@ agent, reacts to it.
 #### Scenario: Disk cost
 
 - **WHEN** N agents are created from one repository
-- **THEN** object storage is shared through the mirror rather than duplicated N
+- **THEN** object storage is shared with the source rather than duplicated N
   times
 
-### Requirement: Mirror maintenance does not run while agents are live
+#### Scenario: An agent pushes
 
-Automatic garbage collection SHALL be disabled on the shared mirror and on
-agent clones. Maintenance SHALL be supervisor-driven and SHALL NOT run while
-any agent is active.
+- **WHEN** an agent pushes to the repository it was cloned from
+- **THEN** the push is refused, saying that agents do not push and that their
+  work is fetched from their clone
 
-An agent clone references the mirror's objects rather than copying them, so
-pruning the mirror can remove objects a live clone still needs — and the failure
-surfaces inside the agent, long after the prune, as corruption it will try to
-diagnose.
+### Requirement: An agent's clone does not depend on objects another repository can prune
 
-#### Scenario: Maintenance is attempted with agents running
+An agent's clone SHALL hold its own references to every object it started
+with, so that no maintenance of the source repository can remove objects a
+live clone needs. Automatic garbage collection SHALL be disabled in agent
+clones, since an agent's own repack would give up the shared storage.
 
-- **WHEN** mirror maintenance is requested while agents are active
-- **THEN** it does not run
-- **AND** the reason is reported rather than the request being silently dropped
+This replaces a requirement that maintenance not run while agents are live.
+That one managed the hazard of a clone that *references* a mirror's objects,
+where pruning the mirror removes objects a live clone needs and the failure
+surfaces inside the agent long after, as corruption. A hardlinked clone does
+not have that hazard, so there is nothing to schedule around.
+
+#### Scenario: The source repository is pruned while agents run
+
+- **WHEN** the source repository rewrites its history and prunes every
+  unreachable object while agents are running
+- **THEN** each agent's clone stays whole, every commit it had still present
 
 ### Requirement: Agents receive resolved runtime paths read-only, and no package-manager authority
 

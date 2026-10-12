@@ -2955,6 +2955,17 @@ fn cli_fleet_linux(args: &[String]) -> i32 {
                         _ => println!("workspace\t{}", r.workspace.display()),
                     }
                     println!("cgroup\t{}", r.cgroup.display());
+                    // The integration step: the host fetches the agent's work
+                    // from its clone (agents cannot push, `settle_clone`).
+                    if let Some(clone) =
+                        devcroft::fleet::commands::agent_clone_root(&r.workspace, &r.id)
+                    {
+                        println!(
+                            "fetch\tgit fetch {} HEAD:refs/agents/{}",
+                            clone.display(),
+                            r.id
+                        );
+                    }
                     println!(
                         "view\t{}",
                         if r.view { "minimal root" } else { "host root" }

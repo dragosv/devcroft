@@ -437,6 +437,21 @@ The three things this buys remain the reason it is the foundation:
 
 ## D7 — Git: shared bare mirror, per-agent clone with `--reference`
 
+> **Reversed by measurement (2026-10-11): hardlinked `--local` clones, no
+> mirror.** A `--local` clone hardlinks the object files. Measured: a source
+> and two clones took 604 KB together, the same as the source alone (the
+> pack's link count 3), so the disk saving `--reference` was chosen for is
+> there. And after the source rewrote its history and ran `gc
+> --prune=now --aggressive`, a clone still passed `git fsck` with all 30
+> commits: it holds its own links, so nothing another repository prunes can
+> take its objects. A `--reference` clone depends on the mirror's objects,
+> which is the hazard the "no maintenance while agents are live" requirement
+> below exists to manage; the hardlinked clone does not have it. What stays
+> from the decision: independent clones (never worktrees), automatic GC off
+> in each (an agent's own repack would drop the sharing), and no direct
+> push: the clone's push URL refuses with the reason, and integration is the
+> host fetching from the clone.
+
 **Decision.** A single bare mirror per upstream repository; each agent gets its
 own clone referencing it. Automatic GC is disabled on the mirror.
 

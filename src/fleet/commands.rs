@@ -659,6 +659,21 @@ fn fleet_dir(project_root: &Path) -> io::Result<PathBuf> {
         .join("fleet"))
 }
 
+/// The clone root of agent `id`, from its recorded workspace: the
+/// `fleet/<id>` directory the workspace sits in. `None` for a workspace that
+/// is not inside one, which `up` never makes.
+pub fn agent_clone_root(workspace: &Path, id: &str) -> Option<PathBuf> {
+    workspace
+        .ancestors()
+        .find(|a| {
+            a.file_name().is_some_and(|n| n == id)
+                && a.parent()
+                    .and_then(|p| p.file_name())
+                    .is_some_and(|n| n == "fleet")
+        })
+        .map(Path::to_path_buf)
+}
+
 fn clone_root(project_root: &Path, id: &str) -> io::Result<PathBuf> {
     Ok(fleet_dir(project_root)?.join(id))
 }
@@ -745,6 +760,54 @@ fn require_git_repository(project_root: &Path) -> Result<(), FleetError> {
     }
 }
 
+/// What a clone gets once made: no automatic GC, and no push back.
+///
+/// **Why a `--local` clone, not D7's mirror with `--reference`.** Measured:
+/// a `--local` clone hardlinks the object files, so a source and two clones
+/// took 604 KB together, the same as the source alone, and after the source
+/// rewrote its history and ran `gc --prune=now --aggressive` a clone still
+/// passed `git fsck` with every commit. A `--reference` clone shares as much
+/// disk but *depends* on the mirror's objects, which is the hazard the
+/// "no maintenance while agents are live" requirement exists to manage; a
+/// hardlinked clone has no such dependency to protect.
+///
+/// **Automatic GC is off** all the same: an agent's own repack rewrites its
+/// packs and drops the shared links, safe but no longer cheap.
+///
+/// **Pushing is refused**, by a push URL that says why: `origin` is the
+/// user's own repository, so a push would land an agent's work there
+/// unreviewed. Integration goes the other way: the host fetches from the
+/// clone (`fleet inspect` prints the command). Fetching from `origin` is
+/// left alone; inside the agent its path is not in the view anyway.
+fn settle_clone(dest: &Path) -> io::Result<()> {
+    for args in [
+        &["config", "gc.auto", "0"][..],
+        &["config", "maintenance.auto", "false"],
+        &[
+            "remote",
+            "set-url",
+            "--push",
+            "origin",
+            "/devcroft: agents do not push; fetch from the agent's clone (devcroft fleet inspect)",
+        ],
+    ] {
+        let out = Command::new("git")
+            .arg("-C")
+            .arg(dest)
+            .args(args)
+            .output()?;
+        if !out.status.success() {
+            return Err(io::Error::other(format!(
+                "git {} in {}: {}",
+                args.join(" "),
+                dest.display(),
+                String::from_utf8_lossy(&out.stderr).trim()
+            )));
+        }
+    }
+    Ok(())
+}
+
 /// Clone the repository holding `project_root` into `dest`, and return
 /// the project's own directory inside the clone.
 ///
@@ -777,6 +840,7 @@ fn clone_workspace(project_root: &Path, dest: &Path) -> io::Result<PathBuf> {
         .arg(dest)
         .output()?;
     if out.status.success() {
+        settle_clone(dest)?;
         Ok(dest.join(relative))
     } else {
         Err(io::Error::other(format!(
