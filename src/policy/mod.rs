@@ -203,6 +203,11 @@ pub enum Origin {
     /// (`add-port-allocation`): distinguishable from a declared one, since
     /// the user did not choose it and cannot predict it.
     Allocated,
+    /// A fleet agent's whole clone, when its project is a subdirectory of
+    /// the repository (`add-linux-agent-fleet` 3.7): the agent's own copy,
+    /// granted so git works inside it. Never from a manifest, so not
+    /// attributed to one.
+    FleetClone,
 }
 
 /// Serialized as its displayed form (`manifest:filesystem.allow`,
@@ -228,6 +233,7 @@ impl<'de> serde::Deserialize<'de> for Origin {
         match text.as_str() {
             "baseline" => Ok(Origin::Baseline),
             "allocated" => Ok(Origin::Allocated),
+            "fleet:clone" => Ok(Origin::FleetClone),
             t => match (t.strip_prefix("manifest:"), t.strip_prefix("provider:")) {
                 (Some(key), _) => Ok(Origin::Manifest(leak(key))),
                 (_, Some(name)) => Ok(Origin::Provider(leak(name))),
@@ -248,6 +254,7 @@ impl std::fmt::Display for Origin {
             Origin::Provider(name) => write!(f, "provider:{name}"),
             Origin::Baseline => write!(f, "baseline"),
             Origin::Allocated => write!(f, "allocated"),
+            Origin::FleetClone => write!(f, "fleet:clone"),
         }
     }
 }
@@ -663,6 +670,13 @@ impl CompiledPolicy {
     /// baseline task 6.1). `to_capability_set` folds this in like any
     /// other `filesystem_read` grant, so it's rendered and explainable
     /// like every other rule.
+    /// A fleet agent's clone root, read-write: see [`Origin::FleetClone`].
+    pub fn with_fleet_clone_grant(mut self, root: impl Into<String>) -> Self {
+        self.filesystem_allow
+            .push(AnnotatedValue::new(root.into(), Origin::FleetClone));
+        self
+    }
+
     pub fn with_keeper_exe_grant(mut self, exe_dir: impl Into<String>) -> Self {
         self.filesystem_read
             .push(AnnotatedValue::new(exe_dir.into(), Origin::Baseline));

@@ -194,6 +194,8 @@ pub fn prepare(
             .collect(),
         // A property of the run, not of the manifest: `fleet up --timeout`.
         timeout: None,
+        // Where the workspace sits in its repository is the caller's to say.
+        repository: None,
         policy: Some(policy),
     })
 }

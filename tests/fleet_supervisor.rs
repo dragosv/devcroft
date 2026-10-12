@@ -121,6 +121,7 @@ impl Fleet {
             services: Vec::new(),
             expose: Vec::new(),
             timeout: None,
+            repository: None,
             policy: None,
         }
     }

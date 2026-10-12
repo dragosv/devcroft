@@ -353,7 +353,7 @@ pub fn up(provider: &dyn ProviderEntry, req: &UpRequest) -> Result<UpOutcome, Fl
             // `prepare` resolves what the manifest says; the deadline is the run's.
             .map(|mut launch| {
                 launch.timeout = req.timeout;
-                launch
+                launch.in_repository(&dir)
             })
             .map_err(|e| {
                 let msg = e.to_string();

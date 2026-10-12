@@ -94,8 +94,10 @@ Neither the shared source checkout nor the host path of the agent's clone SHALL
 be mounted separately.
 
 Under the minimal-root strategy the fixed path SHALL be `/workspace`, holding
-the project's directory within the agent's clone. Every path handed to the
-agent that names the workspace's host location (its environment, as the
+the agent's whole clone, and the agent SHALL start in its project's directory
+within it: `/workspace` itself for a project at its repository's root,
+`/workspace/<subdir>` for one below it, so git finds the repository either
+way. Every path handed to the agent that names the clone's host location (its environment, as the
 provider resolved it; its hooks; its policy; devcroft's own service
 configuration) SHALL be rewritten to name `/workspace` instead, so nothing the
 agent is given points at a path it cannot see. Under the host-root strategy
@@ -105,10 +107,20 @@ host path, and that SHALL be recorded and reported with the strategy.
 #### Scenario: The workspace is at /workspace in every agent
 
 - **WHEN** an agent with a minimal root starts
-- **THEN** its working directory is `/workspace`, which is its own clone of
-  the project, writable, and what it writes there lands in that clone on the
-  host
+- **THEN** `/workspace` is its own clone of the repository, writable, and
+  what it writes there lands in that clone on the host
+- **AND** its working directory is its project's directory within it
 - **AND** the clone's host path does not exist in the agent's view
+
+#### Scenario: An agent of a subdirectory project can commit
+
+- **WHEN** the project is a subdirectory of its repository and an agent runs
+  git in its working directory
+- **THEN** git finds the clone's repository at `/workspace` and the commit
+  lands in that agent's clone
+- **AND** the clone root is granted read-write with its own origin,
+  `fleet:clone`, so `policy --render` inside the agent shows where it came
+  from
 
 #### Scenario: A provider's environment names the workspace's host path
 

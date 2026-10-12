@@ -696,8 +696,13 @@ were reproduced there, and each fix here has a mutant that fails its test.
       the manifest's sandbox name, which an agent's id never matched.
       `why_inside_an_agent_answers_from_that_agents_own_policy`; both mutants
       (no artifact; the name check back) fail it.
-- [ ] 3.7 Subdirectory projects lose `.git`; the concurrent-commit test runs
-      git host-side, not in agents.
+- [x] **3.7 Subdirectory projects lost `.git`.** The view now mounts the
+      agent's whole clone at `/workspace` and starts it in
+      `/workspace/<subdir>`; the clone root is granted read-write, origin
+      `fleet:clone` (`AgentLaunch::in_repository`, design D2a). The
+      concurrent-commit test now runs git inside the five agents and asserts
+      `--show-toplevel` is `/workspace`; both mutants (no mount; mount without
+      the grant) fail it.
 - [x] **3.8 State could not be recovered when the cgroup subtree was gone**
       (after a reboot). cgroup v2 cannot remove a populated cgroup, so a
       missing root means no agent is running: `ls`/`inspect`/`stop`/`rm`/

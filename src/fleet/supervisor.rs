@@ -74,10 +74,35 @@ pub struct AgentLaunch {
     pub expose: Vec<(String, u16)>,
     /// A wall-clock limit, enforced by the agent's PID 1 (`AgentSpec::timeout_secs`).
     pub timeout: Option<std::time::Duration>,
+    /// The repository the workspace is a subdirectory of, when it is one:
+    /// the agent's own clone, which its view mounts at `/workspace` so git
+    /// finds `.git`. Set by [`AgentLaunch::in_repository`]; `None` mounts
+    /// the workspace itself.
+    pub repository: Option<PathBuf>,
     /// The compiled policy `plan` came from, origins included, written for
     /// the agent to read (`why` inside it), as `up` writes a sandbox's.
     /// `None` writes nothing.
     pub policy: Option<crate::policy::CompiledPolicy>,
+}
+
+impl AgentLaunch {
+    /// Work in `workspace` as a subdirectory of the repository at `root`:
+    /// the view mounts `root` at `/workspace`, the agent starts in its
+    /// project's directory beneath it, and `root` is granted read-write, so
+    /// git finds `.git` and can commit. Without it an agent of a monorepo's
+    /// subproject had no repository at all (adversarial review, 3.7). The
+    /// clone is the agent's own, so what it gains is its own history.
+    /// Nothing changes when the project is the repository's root.
+    pub fn in_repository(mut self, root: &Path) -> Self {
+        if root == self.workspace || !self.workspace.starts_with(root) {
+            return self;
+        }
+        let value = root.to_string_lossy().into_owned();
+        self.plan.filesystem_allow.push(value.clone());
+        self.policy = self.policy.take().map(|p| p.with_fleet_clone_grant(value));
+        self.repository = Some(root.to_path_buf());
+        self
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -372,7 +397,8 @@ impl Supervisor {
         // agent is translated, at the two places they all pass through: the
         // keeper's environment and the helper's plan. Without a view the
         // host root is kept, which has no `/workspace` to offer.
-        let at = launch.view.then(|| AtWorkspace::new(&launch.workspace));
+        let mounted = launch.repository.as_ref().unwrap_or(&launch.workspace);
+        let at = launch.view.then(|| AtWorkspace::new(mounted));
         let translate = |s: String| match &at {
             Some(at) => at.translate(&s),
             None => s,
@@ -385,7 +411,7 @@ impl Supervisor {
             std::fs::write(&config, at.translate(&text))?;
         }
         let inside = match &at {
-            Some(_) => PathBuf::from(super::mount::WORKSPACE),
+            Some(at) => PathBuf::from(at.translate(&launch.workspace.to_string_lossy())),
             None => launch.workspace.clone(),
         };
         // The agent's compiled policy, where it can read it: what `why` and
@@ -437,7 +463,7 @@ impl Supervisor {
             Some(View {
                 root,
                 proxy_socket: relay.map(|_| proxy_socket.clone()),
-                workspace: Some(launch.workspace.clone()),
+                workspace: Some(mounted.clone()),
             })
         } else {
             None

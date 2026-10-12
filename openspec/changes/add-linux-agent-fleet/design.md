@@ -137,6 +137,19 @@ library removing one reason for re-exec does not remove the other five.
 > deferred to `sandbox-provisioning`, which would make the rewrite
 > unnecessary.
 >
+> **And `/workspace` is the whole clone, not the project's directory
+> (2026-10-12).** The paragraph above made `/workspace` the project's
+> directory, which for a subdirectory project left the agent without the
+> clone's `.git`: git failed in every monorepo agent, and the
+> concurrent-commit test never noticed because it ran git host-side
+> (adversarial review 3.7). The view now mounts the clone root and the
+> agent starts in `/workspace/<subdir>`. The clone root is granted
+> read-write under its own origin, `fleet:clone`, since no manifest asked
+> for it; it exposes nothing new, being the agent's own copy. Refusing
+> subdirectory projects, or binding `.git` read-only, were the
+> alternatives, rejected: the first gives up monorepos, the second leaves
+> agents unable to commit.
+>
 > **And host-root is refused wherever the Nix daemon runs (2026-10-08).**
 > Measured: a host-root agent connected to the daemon socket and added a
 > path to the shared store (`nix store add-file --store daemon`), because

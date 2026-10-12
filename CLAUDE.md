@@ -436,7 +436,9 @@ silently granting it.
 
 **Policy is deterministic and inspectable.** Manifest + provider grants +
 baseline compile byte-identically into `<state>/<name>/profile.json`. Every
-rule carries an origin: `manifest:<key>`, `provider:<name>`, or `baseline`.
+rule carries an origin: `manifest:<key>`, `provider:<name>`, or `baseline`
+(plus `allocated` for a chosen port and `fleet:clone` for a fleet agent's
+clone root, neither of which a manifest wrote).
 Nothing goes to the backend that cannot be shown via `policy --render`.
 Baseline denials always win, including devcroft's own data dir.
 

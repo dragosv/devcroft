@@ -237,6 +237,9 @@ fn exe() -> &'static Path {
 
 /// Where every agent with a view sees its workspace.
 const WORKSPACE: &str = devcroft::fleet::mount::WORKSPACE;
+/// Where an agent starts: `Setup`'s project is `proj/` in its repository,
+/// and an agent's view mounts its whole clone at `/workspace` (3.7).
+const PROJECT: &str = "/workspace/proj";
 
 fn session(socket: &Path, cwd: &Path, script: &str) -> (Option<i32>, String) {
     let mut stream = UnixStream::connect(socket).unwrap();
@@ -288,12 +291,12 @@ fn each_agent_works_on_its_own_clone_and_keeps_it_after_stopping() {
         let socket = s.state().join("agents").join(&a.id).join("control.sock");
         let (code, out) = session(
             &socket,
-            Path::new(WORKSPACE),
+            Path::new(PROJECT),
             &format!("echo {} > mine; pwd", a.id),
         );
         assert_eq!(code, Some(0), "{out}");
-        // Its workspace is at `/workspace`, whatever its host path.
-        assert_eq!(out.trim(), WORKSPACE);
+        // Its project is under `/workspace`, whatever its host path.
+        assert_eq!(out.trim(), PROJECT);
     }
     // What one agent writes is in its clone only.
     for a in &started {
@@ -492,6 +495,14 @@ fn a_real_devbox_agent_builds_its_project_in_its_clone() {
     let agent = &started[0];
     let socket = state.join("agents").join(&agent.id).join("control.sock");
     let repo = env!("CARGO_MANIFEST_DIR");
+    // The sample is a subdirectory of this repository, so the agent's view
+    // mounts its whole clone and the sample sits beneath `/workspace` (3.7).
+    let clone = commands::agent_clone_root(&agent.workspace, &agent.id).unwrap();
+    let inside = Path::new(WORKSPACE).join(agent.workspace.strip_prefix(&clone).unwrap());
+    assert_eq!(
+        inside,
+        Path::new("/workspace/samples/devbox-citytime-sample")
+    );
     // A store path in no closure, made on the host just now. With the whole
     // store in the view (a bind of `/nix/store` itself) it would be visible;
     // narrowed to the agent's closure (`fleet::closure`) it is not.
@@ -508,7 +519,7 @@ fn a_real_devbox_agent_builds_its_project_in_its_clone() {
     };
     let (code, out) = session(
         &socket,
-        Path::new(WORKSPACE),
+        &inside,
         &format!(
             "cargo build 2>&1 | tail -1; \
              ./target/debug/citytime 2>&1 | head -1; \
@@ -749,7 +760,7 @@ fn every_agent_runs_its_own_service_on_the_same_port_and_up_waits_for_it() {
         let socket = s.state().join("agents").join(&a.id).join("control.sock");
         let (code, out) = session(
             &socket,
-            Path::new(WORKSPACE),
+            Path::new(PROJECT),
             &format!(
                 "echo {} > whoami; curl -s http://127.0.0.1:8000/whoami",
                 a.id
@@ -787,7 +798,7 @@ fn a_failing_service_is_reported_for_its_agent_which_stays_up() {
         other => panic!("expected the failure to be reported, got {other:?}"),
     }
     let socket = s.state().join("agents").join(&a.id).join("control.sock");
-    let (code, out) = session(&socket, Path::new(WORKSPACE), "echo still-up");
+    let (code, out) = session(&socket, Path::new(PROJECT), "echo still-up");
     assert_eq!((code, out.trim()), (Some(0), "still-up"));
     s.cmd(commands::rm_all).unwrap();
 }
@@ -1219,30 +1230,26 @@ fn agent_clones_are_independent_unpushable_and_fetchable() {
         String::from_utf8_lossy(&push.stderr)
     );
 
-    // Five agents commit, branch and rebase at once: no lock failure, since
-    // no two share a ref namespace or an index.
+    // Five agents commit, branch and rebase at once, each inside itself:
+    // no lock failure, since no two share a ref namespace or an index. Run
+    // in the agents, not host-side on their clones, because the project is
+    // `proj/`, a subdirectory: an agent sees its repository only because
+    // its view mounts the whole clone (3.7). The first version of this test
+    // ran git on the host and so never noticed an agent had no `.git`.
     std::thread::scope(|scope| {
         for a in &started {
-            let clone = s.clones().join(&a.id);
-            let git = &git;
+            let socket = s.state().join("agents").join(&a.id).join("control.sock");
             scope.spawn(move || {
-                for n in 0..15 {
-                    std::fs::write(clone.join(format!("work-{n}")), "x").unwrap();
-                    for args in [
-                        &["add", "-A"][..],
-                        &["commit", "-qm", "work"],
-                        &["branch", "-f", "topic"],
-                        &["rebase", "-q", "topic"],
-                    ] {
-                        let out = git(&clone, args);
-                        assert!(
-                            out.status.success(),
-                            "{args:?} in {}: {}",
-                            clone.display(),
-                            String::from_utf8_lossy(&out.stderr)
-                        );
-                    }
-                }
+                let (code, out) = session(
+                    &socket,
+                    Path::new(PROJECT),
+                    "set -e; g() { git -c user.name=agent -c user.email=a@a \"$@\"; }; \
+                     for n in $(seq 15); do echo x > ../work-$n; g add -A; \
+                     g commit -qm work; g branch -f topic; g rebase -q topic; done; \
+                     git rev-parse --show-toplevel",
+                );
+                assert_eq!(code, Some(0), "{}: {out}", a.id);
+                assert_eq!(out.trim(), WORKSPACE, "{}: {out}", a.id);
             });
         }
     });
@@ -1432,7 +1439,7 @@ fn an_agent_whose_hook_fails_is_reported_as_not_started() {
     let started = ok.up(1).unwrap();
     assert_eq!(started[0].failed, None);
     let socket = ok.state().join("agents/a1/control.sock");
-    let (code, _) = session(&socket, Path::new(WORKSPACE), "true");
+    let (code, _) = session(&socket, Path::new(PROJECT), "true");
     assert_eq!(code, Some(0));
     ok.cmd(commands::rm_all).unwrap();
     let _ = s.cmd(commands::rm_all);
@@ -1518,7 +1525,7 @@ fn why_inside_an_agent_answers_from_that_agents_own_policy() {
     // alone, as `why` in an agent was before it had an artifact, it is DENIED.
     let (code, out) = session(
         &socket,
-        Path::new(WORKSPACE),
+        Path::new(PROJECT),
         &format!("{} why --path /usr/bin/env --op read 2>&1", exe().display()),
     );
     assert_eq!(code, Some(0), "{out}");
@@ -1528,11 +1535,14 @@ fn why_inside_an_agent_answers_from_that_agents_own_policy() {
     // The artifact holds the agent's paths as the agent sees them.
     let (code, out) = session(
         &socket,
-        Path::new(WORKSPACE),
+        Path::new(PROJECT),
         &format!("{} policy --render 2>&1", exe().display()),
     );
     assert_eq!(code, Some(0), "{out}");
     assert!(out.contains(WORKSPACE), "{out}");
+    // `Setup`'s project is a subdirectory, so the clone root is granted, and
+    // under its own origin: the artifact round-trips it (3.7).
+    assert!(out.contains("fleet:clone"), "{out}");
     assert!(
         !out.contains(&a.workspace.to_string_lossy().into_owned()),
         "{out}"
