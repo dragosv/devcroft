@@ -716,8 +716,10 @@ were reproduced there, and each fix here has a mutant that fails its test.
       root. `a_fleet_whose_cgroup_subtree_is_gone_can_be_listed_moved_and_removed`;
       fails with the offline branch disabled.
 - [ ] Decisions still open (review §4): Nix closure retention for live agents,
-      default budgets and runtime overhead reservation, and lifecycle versus
-      workload (task identity, completion, attention).
+      and default budgets and runtime overhead reservation. **Lifecycle versus
+      workload is done** in `add-fleet-tasks`: `fleet run`/`up -- <cmd>` tasks
+      with IDs and observed outcomes, agent-reported attention, progress and
+      claims shown beside them; the always-false `attention` field is gone.
 
 ## 3. Networking
 

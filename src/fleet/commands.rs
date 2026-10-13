@@ -109,6 +109,8 @@ pub struct UpRequest<'a> {
     pub fleet_limits: super::cgroup::FleetLimits,
     /// Every agent's wall-clock limit, from its start; `None` for none.
     pub timeout: Option<std::time::Duration>,
+    /// A command to run as each new agent's first task, once it is up.
+    pub task: Option<Vec<String>>,
 }
 
 /// What `up` did: the agents it started, and the limits it was asked for
@@ -131,6 +133,8 @@ pub struct Started {
     /// that failed, or no answer within `READY_BUDGET`. `None` when it is
     /// up and serving.
     pub failed: Option<String>,
+    /// The task `up` started in it, when given one (`UpRequest::task`).
+    pub task: Option<String>,
 }
 
 /// Where an agent's services stood when `up` stopped waiting for them.
@@ -380,6 +384,7 @@ pub fn up(provider: &dyn ProviderEntry, req: &UpRequest) -> Result<UpOutcome, Fl
                 workspace: workspace.expect("set before a successful start"),
                 services: ServicesOutcome::None,
                 failed: None,
+                task: None,
             }),
             Err(e) => {
                 // The clone was ours; the supervisor removed its own part.
@@ -425,7 +430,46 @@ pub fn up(provider: &dyn ProviderEntry, req: &UpRequest) -> Result<UpOutcome, Fl
             agent.services = wait_ready(&agent.workspace, &agent.id, declared, deadline);
         }
     }
+
+    // The first task, in each agent that is up: after its hooks and its
+    // services, so the task never races its own environment.
+    if let Some(command) = &req.task {
+        let _lock = self::lock(req.state_dir)?;
+        let mut sup = Supervisor::open(
+            req.state_dir,
+            req.cgroup_root,
+            &node_name(req.manifest),
+            req.exe,
+        )
+        .map_err(backend)?;
+        for agent in started.iter_mut().filter(|a| a.failed.is_none()) {
+            match sup.run_task(&agent.id, command) {
+                Ok(task) => agent.task = Some(task.id),
+                Err(e) => agent.failed = Some(format!("its task did not start: {e}")),
+            }
+        }
+    }
     Ok(UpOutcome { started, degraded })
+}
+
+/// Run `command` in agent `id` as its next task (`fleet::task`). Refused
+/// while its last task runs, or when the agent is not running.
+pub fn run(
+    fleet: &FleetRef,
+    id: &str,
+    command: &[String],
+) -> Result<super::task::TaskRecord, FleetError> {
+    match open_existing(fleet)? {
+        (_lock, Some(mut sup)) => sup.run_task(id, command).map_err(|e| match e.kind() {
+            io::ErrorKind::NotFound | io::ErrorKind::ResourceBusy | io::ErrorKind::InvalidInput => {
+                FleetError::Config(e.to_string())
+            }
+            _ => backend(e),
+        }),
+        (_lock, None) => Err(FleetError::Config(format!(
+            "agent {id} is not running: the fleet's cgroup subtree is gone"
+        ))),
+    }
 }
 
 /// `--host-root` keeps the host's root visible and relies on Landlock for
@@ -680,10 +724,9 @@ fn offline_statuses(state_dir: &Path) -> Result<Vec<AgentStatus>, FleetError> {
     Ok(super::supervisor::settle_offline(state_dir)
         .map_err(backend)?
         .into_iter()
-        .map(|record| AgentStatus {
-            record,
-            memory_bytes: None,
-            cpu_usec: None,
+        .map(|record| {
+            let dir = state_dir.join("agents").join(&record.id);
+            AgentStatus::of(record, &dir, None, None)
         })
         .collect())
 }
@@ -994,6 +1037,21 @@ fn settle_clone(dest: &Path) -> io::Result<()> {
 /// clone's root. Cloning the subdirectory's path and using `dest` as the
 /// workspace would put the agent at the repository root, with the wrong
 /// manifest or none.
+/// A `.gitignore` of `*` in the workspace's `.devcroft/`, so the clone's
+/// own git ignores everything devcroft writes there (the agent's home, its
+/// policy, its reports), whatever the project ignores. Without it an
+/// agent's `git add -A` committed them, unless the project happened to
+/// ignore `.devcroft/` itself. `*` covers the file too.
+fn ignore_own_files(workspace: &Path) -> io::Result<()> {
+    let dir = workspace.join(crate::services::ARTIFACT_DIR);
+    std::fs::create_dir_all(&dir)?;
+    let ignore = dir.join(".gitignore");
+    if !ignore.exists() {
+        std::fs::write(ignore, "*\n")?;
+    }
+    Ok(())
+}
+
 fn clone_workspace(project_root: &Path, dest: &Path) -> io::Result<PathBuf> {
     let top = repo_top(project_root)?;
     let relative = project_root
@@ -1018,7 +1076,9 @@ fn clone_workspace(project_root: &Path, dest: &Path) -> io::Result<PathBuf> {
         .output()?;
     if out.status.success() {
         settle_clone(dest)?;
-        Ok(dest.join(relative))
+        let workspace = dest.join(relative);
+        ignore_own_files(&workspace)?;
+        Ok(workspace)
     } else {
         Err(io::Error::other(format!(
             "git clone into {}: {}",

@@ -6,12 +6,17 @@ gain it later.
 
 ## 0. Decide the shape before building
 
-- [ ] 0.1 How an agent raises attention (design.md open question 1). A
+- [x] 0.1 **Decided by `add-fleet-tasks` (D3):** `devcroft agent attention
+      <message>` writes `report.json` beside the sandbox's home, found from
+      `HOME`: no control-socket frame and no grant. Works in any sandbox;
+      fleet lists it, plain sandboxes' `ps`/`status` do not yet (1.3–1.4).
+      Was: how an agent raises attention (design.md open question 1). A
       devcroft subcommand run inside the sandbox is the leading candidate;
       it needs a control-socket frame and lands outside the MVP's closed
       command surface, which is expected for post-MVP work but should be a
       decision rather than a drift.
-- [ ] 0.2 Whether attention carries a severity or kind (open question 2).
+- [x] 0.2 **No** (`add-fleet-tasks` D4): a message and a time.
+      Was: whether attention carries a severity or kind (open question 2).
       Cheaper now than retrofitted; leaning no, per A2.
 - [ ] 0.3 Who implements `ApprovalBackend` (open question 3) — this decides
       whether the approval half works in a fleet or only with an operator

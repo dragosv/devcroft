@@ -144,8 +144,6 @@ pub struct AgentRecord {
     /// and reported, never silently downgraded).
     pub view: bool,
     pub port_mappings: Vec<PortMapping>,
-    /// Set when the agent is blocked on a question (`add-agent-interaction`).
-    pub attention: bool,
     /// Why the agent's processes died, when the kernel recorded a reason
     /// (an OOM kill, refused forks). Read from the leaf before it is
     /// removed, since its counters go with it; absent on a clean stop.
@@ -183,6 +181,45 @@ pub struct AgentStatus {
     pub memory_bytes: Option<u64>,
     /// `cpu.stat: usage_usec`, while running.
     pub cpu_usec: Option<u64>,
+    /// Its most recent task, and what devcroft observed of it.
+    pub task: Option<super::task::TaskRecord>,
+    /// When that task's log last grew.
+    pub last_output_unix: Option<u64>,
+    /// What the agent reported (`fleet::report`), or why it is not shown.
+    pub report: Result<Option<super::report::Report>, String>,
+}
+
+impl AgentStatus {
+    /// `record` with what its directories say about its work.
+    pub(crate) fn of(
+        record: AgentRecord,
+        agent_dir: &Path,
+        memory_bytes: Option<u64>,
+        cpu_usec: Option<u64>,
+    ) -> AgentStatus {
+        let task = super::task::latest(agent_dir).ok().flatten();
+        let last_output_unix = task.as_ref().and_then(|t| {
+            std::fs::metadata(super::task::log_path(agent_dir, &t.id))
+                .and_then(|m| m.modified())
+                .ok()
+                .and_then(|m| m.duration_since(std::time::UNIX_EPOCH).ok())
+                .map(|d| d.as_secs())
+        });
+        let report = super::report::read(&super::report::path(&record.workspace, &record.id));
+        AgentStatus {
+            record,
+            memory_bytes,
+            cpu_usec,
+            task,
+            last_output_unix,
+            report,
+        }
+    }
+
+    /// Whether the agent reported that it needs a human.
+    pub fn needs_attention(&self) -> bool {
+        matches!(&self.report, Ok(Some(r)) if r.attention.is_some())
+    }
 }
 
 pub struct Supervisor {
@@ -528,7 +565,6 @@ impl Supervisor {
                 policy_fingerprint: format!("{:016x}", fnv1a64(&plan_json)),
                 view: launch.view,
                 port_mappings: mappings,
-                attention: false,
                 evidence: None,
                 egress: launch.egress_allow.clone(),
                 limits: launch.limits.clone(),
@@ -546,14 +582,19 @@ impl Supervisor {
         self.reconcile()?;
         let mut out = Vec::new();
         for record in self.records()? {
-            let leaf = (record.state == AgentState::Running)
+            let running = record.state == AgentState::Running;
+            let dir = self.agent_dir(&record.id);
+            // A runner that died with nothing recorded, in a live agent.
+            super::task::settle(&dir, running)?;
+            let leaf = running
                 .then(|| self.node.existing_leaf(&record.id))
                 .flatten();
-            out.push(AgentStatus {
-                memory_bytes: leaf.as_ref().and_then(|l| l.memory_current().ok()),
-                cpu_usec: leaf.as_ref().and_then(|l| l.cpu_usage_usec().ok()),
+            out.push(AgentStatus::of(
                 record,
-            });
+                &dir,
+                leaf.as_ref().and_then(|l| l.memory_current().ok()),
+                leaf.as_ref().and_then(|l| l.cpu_usage_usec().ok()),
+            ));
         }
         Ok(out)
     }
@@ -638,7 +679,116 @@ impl Supervisor {
             .ok()
             .and_then(|bytes| serde_json::from_slice(&bytes).ok());
         record.state = AgentState::Stopped;
+        // Its task, if one ran: devcroft killed it, so devcroft records it.
+        super::task::settle(&self.agent_dir(&record.id), false)?;
         self.release(&record)
+    }
+
+    /// Run `command` in a running agent as its next task, held by a
+    /// host-side runner (`fleet::task`). Refused while its last task runs.
+    /// The agent's previous reports go: a new task starts with none.
+    pub fn run_task(
+        &mut self,
+        id: &str,
+        command: &[String],
+    ) -> io::Result<super::task::TaskRecord> {
+        if command.is_empty() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "no command to run",
+            ));
+        }
+        let status = self.inspect(id)?;
+        if status.record.state != AgentState::Running {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!("agent {id} is not running"),
+            ));
+        }
+        if let Some(task) = status
+            .task
+            .filter(|t| t.outcome == super::task::Outcome::Running)
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::ResourceBusy,
+                format!("agent {id} is running task {}; one task at a time", task.id),
+            ));
+        }
+        let dir = self.agent_dir(id);
+        let task_id = super::task::next_id(&dir)?;
+        let record = &status.record;
+        super::task::write(
+            &dir,
+            &super::task::TaskRecord {
+                id: task_id.clone(),
+                command: command.to_vec(),
+                cwd: record
+                    .inside
+                    .clone()
+                    .unwrap_or_else(|| record.workspace.clone()),
+                started_unix: super::report::now_unix(),
+                ended_unix: None,
+                outcome: super::task::Outcome::Running,
+                runner_pid: None,
+            },
+        )?;
+        super::report::clear(&super::report::path(&record.workspace, id))?;
+
+        // In the agent's helpers' leaf, budgeted and removed with it; made
+        // now if the agent has no other helper.
+        let leaf = match self.node.existing_leaf(&host_leaf_name(id)) {
+            Some(leaf) => leaf,
+            None => self
+                .node
+                .create_leaf(&host_leaf_name(id), &host_helper_limits())?,
+        };
+        let mut cmd = std::process::Command::new(&self.exe);
+        cmd.arg("__task")
+            .arg(self.control_socket(id))
+            .arg(&dir)
+            .arg(&task_id)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::fs::File::create(
+                super::task::tasks_dir(&dir).join(format!("{task_id}.runner.log")),
+            )?);
+        // Its own session: the command that started it may exit, and its
+        // terminal's hangup must not reach the runner.
+        // SAFETY: `setsid` is async-signal-safe.
+        unsafe {
+            std::os::unix::process::CommandExt::pre_exec(&mut cmd, || {
+                if libc::setsid() < 0 {
+                    return Err(io::Error::last_os_error());
+                }
+                Ok(())
+            });
+        }
+        leaf.attach_on_spawn(&mut cmd)?;
+        let mut child = cmd.spawn()?;
+        // Until the runner has recorded itself, so the task this returns
+        // is one a later command can tell is alive. Under the fleet's lock,
+        // so no other command settles it meanwhile.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        loop {
+            let task = super::task::read(&dir, &task_id)?;
+            if task.runner_pid.is_some() || task.outcome != super::task::Outcome::Running {
+                return Ok(task);
+            }
+            if let Some(exit) = child.try_wait()? {
+                return Err(io::Error::other(format!(
+                    "the task runner exited ({exit}) before starting {task_id}; see {}",
+                    super::task::tasks_dir(&dir)
+                        .join(format!("{task_id}.runner.log"))
+                        .display()
+                )));
+            }
+            if std::time::Instant::now() > deadline {
+                return Err(io::Error::other(format!(
+                    "the task runner did not start {task_id} within 5 s"
+                )));
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
     }
 
     /// Make the records match what is alive. A Running agent whose leaf is
@@ -805,6 +955,7 @@ pub fn settle_offline(state: &Path) -> io::Result<Vec<AgentRecord>> {
                     release_files(&path, &record)?;
                     record.port_mappings.clear();
                 }
+                super::task::settle(&path, false)?;
                 records.push(record);
             }
         }

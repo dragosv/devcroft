@@ -37,5 +37,8 @@ pub mod mount;
 pub mod netns;
 #[cfg(target_os = "linux")]
 pub mod project;
+pub mod report;
 #[cfg(target_os = "linux")]
 pub mod supervisor;
+#[cfg(target_os = "linux")]
+pub mod task;

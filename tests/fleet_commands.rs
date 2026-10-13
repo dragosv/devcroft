@@ -200,12 +200,33 @@ impl Setup {
         self.up_full(&HostUsr, agents, Default::default(), fleet_limits)
     }
 
+    fn up_task(&self, agents: usize, task: &[&str]) -> Result<commands::UpOutcome, FleetError> {
+        self.up_all(
+            &HostUsr,
+            agents,
+            Default::default(),
+            Default::default(),
+            Some(task.iter().map(|a| a.to_string()).collect()),
+        )
+    }
+
     fn up_full(
         &self,
         provider: &dyn ProviderEntry,
         agents: usize,
         limits: devcroft::fleet::cgroup::Limits,
         fleet_limits: devcroft::fleet::cgroup::FleetLimits,
+    ) -> Result<commands::UpOutcome, FleetError> {
+        self.up_all(provider, agents, limits, fleet_limits, None)
+    }
+
+    fn up_all(
+        &self,
+        provider: &dyn ProviderEntry,
+        agents: usize,
+        limits: devcroft::fleet::cgroup::Limits,
+        fleet_limits: devcroft::fleet::cgroup::FleetLimits,
+        task: Option<Vec<String>>,
     ) -> Result<commands::UpOutcome, FleetError> {
         let manifest = self.manifest();
         let keys = self.base.join("keys");
@@ -228,6 +249,7 @@ impl Setup {
                 limits,
                 fleet_limits,
                 timeout: None,
+                task,
             },
         )
     }
@@ -515,6 +537,7 @@ fn a_real_devbox_agent_builds_its_project_in_its_clone() {
             limits: devcroft::fleet::cgroup::Limits::default(),
             fleet_limits: Default::default(),
             timeout: None,
+            task: None,
         },
     )
     .unwrap()
@@ -1028,6 +1051,7 @@ fn a_second_checkout_with_the_same_name_cannot_take_over_the_fleet() {
             limits: devcroft::fleet::cgroup::Limits::default(),
             fleet_limits: Default::default(),
             timeout: None,
+            task: None,
         },
     )
     .unwrap_err();
@@ -1091,6 +1115,7 @@ fn an_agent_is_reachable_as_id_dot_name_dot_devcroft_over_real_ssh() {
             limits: devcroft::fleet::cgroup::Limits::default(),
             fleet_limits: Default::default(),
             timeout: None,
+            task: None,
         },
     )
     .unwrap();
@@ -1220,6 +1245,7 @@ fn host_root_is_refused_where_the_nix_daemon_runs() {
             limits: devcroft::fleet::cgroup::Limits::default(),
             fleet_limits: Default::default(),
             timeout: None,
+            task: None,
         },
     )
     .unwrap_err();
@@ -1431,6 +1457,7 @@ fn two_fleets_in_one_repository_never_share_or_remove_each_others_clones() {
                 limits: devcroft::fleet::cgroup::Limits::default(),
                 fleet_limits: Default::default(),
                 timeout: None,
+                task: None,
             },
         )
     };
@@ -1564,6 +1591,7 @@ fn a_fleet_whose_cgroup_subtree_is_gone_can_be_listed_moved_and_removed() {
             limits: devcroft::fleet::cgroup::Limits::default(),
             fleet_limits: Default::default(),
             timeout: None,
+            task: None,
         },
     )
     .unwrap();
@@ -1711,5 +1739,155 @@ fn the_fleets_own_limits_bound_all_its_agents_together() {
     s.up_capped(1, FleetLimits::default()).unwrap();
     assert_eq!(read("pids.max"), "5000");
     assert_eq!(read("cpu.max"), "max 100000");
+    s.cmd(commands::rm_all).unwrap();
+}
+
+/// The agent's latest task once it has ended, within `secs`.
+fn task_end(s: &Setup, id: &str, secs: u64) -> devcroft::fleet::task::TaskRecord {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(secs);
+    loop {
+        let status = s.cmd(|f| commands::inspect(f, id)).unwrap();
+        let task = status.task.expect("a task was started");
+        if task.outcome != devcroft::fleet::task::Outcome::Running {
+            return task;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "{} still running after {secs}s",
+            task.id
+        );
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+}
+
+#[test]
+fn tasks_have_ids_observed_outcomes_and_logs() {
+    use devcroft::fleet::task::Outcome;
+    let Some(root) = capable_host() else { return };
+    let s = Setup::new("task", Some(&root), "", true);
+    let started = s
+        .up_task(
+            1,
+            &["sh", "-c", "echo first; echo \"$DEVCROFT_TASK\"; exit 3"],
+        )
+        .unwrap()
+        .started;
+    assert_eq!(started[0].failed, None);
+    assert_eq!(started[0].task.as_deref(), Some("t1"));
+
+    // Observed: the code the keeper reported, and the output in the log.
+    let t1 = task_end(&s, "a1", 15);
+    assert_eq!(t1.outcome, Outcome::Exited { code: 3 });
+    assert!(t1.ended_unix.is_some());
+    let agent_dir = s.state().join("agents/a1");
+    let log = std::fs::read_to_string(devcroft::fleet::task::log_path(&agent_dir, "t1")).unwrap();
+    assert_eq!(log, "first\nt1\n");
+
+    // The next task is t2; a second while it runs is refused, naming it.
+    let long = ["sleep".to_string(), "30".to_string()];
+    let t2 = s.cmd(|f| commands::run(f, "a1", &long)).unwrap();
+    assert_eq!(t2.id, "t2");
+    let err = s.cmd(|f| commands::run(f, "a1", &long)).unwrap_err();
+    assert_eq!(err.exit_code(), 2, "{err}");
+    assert!(err.to_string().contains("t2"), "{err}");
+
+    // Stopped mid-task: the task ended with its agent, and t1 is as it was.
+    s.cmd(|f| commands::stop(f, "a1")).unwrap();
+    let status = s.cmd(|f| commands::inspect(f, "a1")).unwrap();
+    assert_eq!(status.task.unwrap().outcome, Outcome::EndedWithAgent);
+    assert_eq!(
+        devcroft::fleet::task::read(&agent_dir, "t1")
+            .unwrap()
+            .outcome,
+        Outcome::Exited { code: 3 }
+    );
+    // And a stopped agent runs nothing.
+    let err = s.cmd(|f| commands::run(f, "a1", &long)).unwrap_err();
+    assert_eq!(err.exit_code(), 2, "{err}");
+
+    // devcroft's files in the clone are not the agent's to commit.
+    let status = Command::new("git")
+        .arg("-C")
+        .arg(&started[0].workspace)
+        .args(["status", "--porcelain", "--untracked-files=all"])
+        .output()
+        .unwrap();
+    let status = String::from_utf8_lossy(&status.stdout);
+    assert!(
+        started[0].workspace.join(".devcroft/a1").is_dir(),
+        "the check needs devcroft's files to exist"
+    );
+    assert!(!status.contains(".devcroft"), "{status}");
+    s.cmd(commands::rm_all).unwrap();
+}
+
+#[test]
+fn an_agents_reports_are_shown_beside_what_was_observed() {
+    use devcroft::fleet::report::{ClaimOutcome, escape};
+    use devcroft::fleet::task::Outcome;
+    let Some(root) = capable_host() else { return };
+    let s = Setup::new("report", Some(&root), "", true);
+    let agent = exe().display().to_string();
+    // Reports from inside, under the agent's ordinary deny-by-default policy:
+    // progress, attention (with an escape sequence in it), and a claim of
+    // `done` from a task that then exits 1.
+    let script = format!(
+        "{agent} agent progress step 2 of 3 && \
+         {agent} agent attention \"$(printf 'need a call\\033[2J')\" && \
+         {agent} agent done all green && exit 1"
+    );
+    s.up_task(1, &["sh", "-c", &script]).unwrap();
+    let t1 = task_end(&s, "a1", 15);
+    let status = s.cmd(|f| commands::inspect(f, "a1")).unwrap();
+
+    // Observed and reported, side by side: the exit is 1, the claim `done`.
+    assert_eq!(t1.outcome, Outcome::Exited { code: 1 });
+    let report = status.report.clone().unwrap().expect("the agent reported");
+    assert_eq!(report.task.as_deref(), Some("t1"));
+    assert_eq!(report.claim.as_ref().unwrap().outcome, ClaimOutcome::Done);
+    assert_eq!(report.progress.as_ref().unwrap().message, "step 2 of 3");
+    // The process that raised attention has exited; the flag has not.
+    assert!(status.needs_attention());
+    let message = &report.attention.as_ref().unwrap().message;
+    assert_eq!(message, "need a call\x1b[2J", "kept verbatim");
+    assert_eq!(escape(message), "need a call\\u{1b}[2J", "shown escaped");
+
+    // A new task starts with no reports: t2 says nothing, so any attention
+    // seen while it runs could only be t1's, carried over.
+    let quiet = ["sleep".to_string(), "2".to_string()];
+    let t2 = s.cmd(|f| commands::run(f, "a1", &quiet)).unwrap();
+    let status = s.cmd(|f| commands::inspect(f, "a1")).unwrap();
+    assert_eq!(status.task.as_ref().unwrap().id, t2.id);
+    assert!(
+        !status.needs_attention(),
+        "t1's attention carried over to t2"
+    );
+    assert_eq!(status.report, Ok(None));
+    task_end(&s, "a1", 15);
+
+    // One that raises attention and clears it leaves none.
+    s.cmd(|f| {
+        commands::run(
+            f,
+            "a1",
+            &[
+                "sh".into(),
+                "-c".into(),
+                format!("{agent} agent attention again && {agent} agent attention --clear"),
+            ],
+        )
+    })
+    .unwrap();
+    assert_eq!(task_end(&s, "a1", 15).outcome, Outcome::Exited { code: 0 });
+    let status = s.cmd(|f| commands::inspect(f, "a1")).unwrap();
+    assert!(!status.needs_attention());
+    assert_eq!(status.report.unwrap().unwrap().task.as_deref(), Some("t3"));
+
+    // Outside any sandbox there is nothing to report into.
+    let out = Command::new(exe())
+        .args(["agent", "attention", "from the host"])
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(2), "{out:?}");
     s.cmd(commands::rm_all).unwrap();
 }

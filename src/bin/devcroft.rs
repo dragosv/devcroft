@@ -109,6 +109,22 @@ fn main() {
             std::process::exit(0);
         }
         Some("__provision") => provision_main(),
+        // Hidden: holds one fleet task's keeper session and records how it
+        // ended (`fleet::task`).
+        #[cfg(target_os = "linux")]
+        Some("__task") => {
+            let (Some(socket), Some(dir), Some(id)) = (args.get(2), args.get(3), args.get(4))
+            else {
+                eprintln!("devcroft __task: usage: __task <control socket> <agent dir> <task>");
+                std::process::exit(2);
+            };
+            std::process::exit(devcroft::fleet::task::run(
+                std::path::Path::new(socket),
+                std::path::Path::new(dir),
+                id,
+            ));
+        }
+        Some("agent") => std::process::exit(cli_agent(&args[2..])),
         Some("__ingress") => {
             let fd: RawFd = args
                 .get(2)
@@ -215,11 +231,19 @@ fleet (Linux; experimental)
       [--fleet-memory 16G]      (the whole fleet's limits, every agent and helper
       [--fleet-pids N]           together; kept for the fleet's next `up`)
       [--fleet-cpus 4]
-  fleet ls                    every agent: state, memory, CPU, host ports, workspace
+      [-- <command>]            (run it in each new agent as its first task)
+  fleet run <id> -- <command> run a task in an agent; one at a time
+  fleet ls                    every agent: state, memory, CPU, host ports, task,
+                                attention, workspace
   fleet inspect <id>          one agent's record, and why it died if it did
   fleet stop <id>             stop one agent, keeping its workspace
   fleet rm <id> | --all       remove stopped agents and their clones (--yes
       [--yes]                   non-interactively); --all stops them first
+
+inside an agent or sandbox
+  agent attention <message>   flag that a human is needed (--clear to unflag)
+  agent progress <message>    say what it is doing now
+  agent done|failed [message] claim how its task went (shown as the agent's claim)
 
 ssh
   ssh [name]                  connect over the sandbox's own SSH server
@@ -2739,7 +2763,7 @@ fn cli_fleet(args: &[String]) -> i32 {
 #[cfg(target_os = "linux")]
 fn cli_fleet_linux(args: &[String]) -> i32 {
     const USAGE: &str = "devcroft fleet: usage: devcroft fleet up --agents N \
-                         [--cgroup-root P] [--host-root] [--timeout 30m] [--fleet-memory 16G] [--fleet-pids N] [--fleet-cpus 4] | ls | inspect <id> \
+                         [--cgroup-root P] [--host-root] [--timeout 30m] [--fleet-memory 16G] [--fleet-pids N] [--fleet-cpus 4] [-- <command>] | run <id> -- <command> | ls | inspect <id> \
                          | stop <id> | rm <id>|--all [--yes]";
     let fail = |e: devcroft::fleet::commands::FleetError| {
         eprintln!("devcroft fleet: {e}");
@@ -2790,8 +2814,20 @@ fn cli_fleet_linux(args: &[String]) -> i32 {
             let mut limits = devcroft::fleet::cgroup::Limits::default();
             let mut fleet_limits = devcroft::fleet::cgroup::FleetLimits::default();
             let mut timeout = None;
+            let mut task = None;
             let mut rest = args[1..].iter();
             while let Some(a) = rest.next() {
+                // Everything after `--` is the command each agent runs as
+                // its first task.
+                if a == "--" {
+                    let command: Vec<String> = rest.by_ref().cloned().collect();
+                    if command.is_empty() {
+                        eprintln!("devcroft fleet: config: `--` needs a command after it");
+                        return 2;
+                    }
+                    task = Some(command);
+                    break;
+                }
                 let parsed = match a.as_str() {
                     "--agents" => {
                         agents = rest.next().and_then(|n| n.parse::<usize>().ok());
@@ -2873,6 +2909,7 @@ fn cli_fleet_linux(args: &[String]) -> i32 {
                 limits,
                 fleet_limits,
                 timeout,
+                task,
             };
             match devcroft::fleet::commands::up(&provider, &req) {
                 Ok(started) => {
@@ -2884,6 +2921,9 @@ fn cli_fleet_linux(args: &[String]) -> i32 {
                     let mut failed = false;
                     for a in &started.started {
                         println!("{}\t{}", a.id, a.workspace.display());
+                        if let Some(t) = &a.task {
+                            println!("  task {t} started");
+                        }
                         // Not up: a hook failed, or it never answered. The
                         // exit status says so, as `up` does for a sandbox.
                         if let Some(why) = &a.failed {
@@ -2950,8 +2990,26 @@ fn cli_fleet_linux(args: &[String]) -> i32 {
                             .collect::<Vec<_>>()
                             .join(",")
                     };
+                    let now = devcroft::fleet::report::now_unix();
+                    let task = match &a.task {
+                        None => "-".to_string(),
+                        Some(t) if t.outcome == devcroft::fleet::task::Outcome::Running => {
+                            let output = a
+                                .last_output_unix
+                                .map(|at| format!(", output {} ago", ago(now, at)))
+                                .unwrap_or_else(|| ", no output yet".into());
+                            format!("{} running {}{output}", t.id, ago(now, t.started_unix))
+                        }
+                        Some(t) => format!("{} {}", t.id, t.outcome.short()),
+                    };
+                    // Reported by the agent, beside what devcroft observed.
+                    let attention = match &a.report {
+                        Ok(Some(r)) if r.attention.is_some() => "attention",
+                        Err(_) => "report unreadable",
+                        _ => "-",
+                    };
                     println!(
-                        "{}\t{state}\t{mem}\t{cpu}\t{ports}\t{}",
+                        "{}\t{state}\t{mem}\t{cpu}\t{ports}\t{task}\t{attention}\t{}",
                         a.record.id,
                         a.record.workspace.display()
                     );
@@ -3065,6 +3123,7 @@ fn cli_fleet_linux(args: &[String]) -> i32 {
                             e.oom_kills, e.oom_group_kills, e.forks_denied
                         );
                     }
+                    print_task_and_report(&a, &state_dir);
                     0
                 }
                 Err(e) => fail(e),
@@ -3100,6 +3159,24 @@ fn cli_fleet_linux(args: &[String]) -> i32 {
                     }
                     Err(e) => fail(e),
                 }
+            }
+        }
+        Some("run") if args.len() >= 3 => {
+            let id = &args[1];
+            let command: Vec<String> = match args[2].as_str() {
+                "--" => args[3..].to_vec(),
+                _ => args[2..].to_vec(),
+            };
+            if command.is_empty() {
+                eprintln!("{USAGE}");
+                return 2;
+            }
+            match devcroft::fleet::commands::run(&fleet, id, &command) {
+                Ok(task) => {
+                    println!("{id}\t{}", task.id);
+                    0
+                }
+                Err(e) => fail(e),
             }
         }
         Some("stop") if args.len() == 2 => {
@@ -3593,6 +3670,13 @@ impl Fidelity {
 /// so this is `None` and a leftover artifact from a removed sandbox is never
 /// read in place of a record that says there is no sandbox.
 fn own_sandbox_policy(_name: &str) -> Option<std::path::PathBuf> {
+    own_sandbox_dir().map(|dir| dir.join("policy.json"))
+}
+
+/// The directory of the sandbox this process runs in, beside its home:
+/// `<project>/.devcroft/<x>/`, found from `HOME` (`own_sandbox_policy`'s
+/// rule). `None` outside any sandbox.
+fn own_sandbox_dir() -> Option<std::path::PathBuf> {
     let home = std::path::PathBuf::from(std::env::var_os("HOME")?);
     let dir = home.parent()?;
     // Any `.devcroft/<x>/home`, not only the manifest's name: a fleet agent's
@@ -3602,7 +3686,134 @@ fn own_sandbox_policy(_name: &str) -> Option<std::path::PathBuf> {
     // already says which sandbox this is; the name adds nothing to that.
     let is_own = home.file_name()? == "home"
         && dir.parent()?.file_name()? == devcroft::services::ARTIFACT_DIR;
-    is_own.then(|| dir.join("policy.json"))
+    is_own.then(|| dir.to_path_buf())
+}
+
+/// `devcroft agent …`, run inside a sandbox: what the agent reports about
+/// its own work (`fleet::report`). Written beside its home, needing no
+/// grant; shown by `fleet ls`/`inspect` as reported, never as observed.
+fn cli_agent(args: &[String]) -> i32 {
+    use devcroft::fleet::report::{self, Claim, ClaimOutcome, Note};
+    const USAGE: &str = "devcroft agent: usage, inside a sandbox: devcroft agent \
+                         attention <message> | attention --clear | progress <message> \
+                         | done [message] | failed [message]";
+    let Some(dir) = own_sandbox_dir() else {
+        eprintln!(
+            "devcroft agent: config: not inside a devcroft sandbox (HOME is not a sandbox's \
+             home, `.devcroft/<name>/home`)"
+        );
+        return 2;
+    };
+    let task = std::env::var(report::TASK_ENV).ok();
+    let now = report::now_unix();
+    let (verb, rest) = match args.split_first() {
+        Some((v, rest)) => (v.as_str(), rest),
+        None => {
+            eprintln!("{USAGE}");
+            return 2;
+        }
+    };
+    let message = rest.join(" ");
+    let note = || Note {
+        message: message.clone(),
+        at_unix: now,
+    };
+    let claim = |outcome| Claim {
+        outcome,
+        message: (!message.is_empty()).then(|| message.clone()),
+        at_unix: now,
+    };
+    let change: Box<dyn FnOnce(&mut report::Report)> = match verb {
+        "attention" if rest == ["--clear"] => Box::new(|r| r.attention = None),
+        "attention" if !message.is_empty() => Box::new(|r| r.attention = Some(note())),
+        "progress" if !message.is_empty() => Box::new(|r| r.progress = Some(note())),
+        "done" => Box::new(|r| r.claim = Some(claim(ClaimOutcome::Done))),
+        "failed" => Box::new(|r| r.claim = Some(claim(ClaimOutcome::Failed))),
+        _ => {
+            eprintln!("{USAGE}");
+            return 2;
+        }
+    };
+    match report::update(&dir.join(report::FILE), task.as_deref(), change) {
+        Ok(()) => 0,
+        Err(e) => {
+            eprintln!(
+                "devcroft agent: writing {}: {e}",
+                dir.join(report::FILE).display()
+            );
+            1
+        }
+    }
+}
+
+/// `30s`, `5m`, `2h`: how long before `now` `at` was.
+#[cfg(target_os = "linux")]
+fn ago(now: u64, at: u64) -> String {
+    match now.saturating_sub(at) {
+        s if s < 60 => format!("{s}s"),
+        s if s < 3600 => format!("{}m", s / 60),
+        s => format!("{}h", s / 3600),
+    }
+}
+
+/// `fleet inspect`'s task and report lines: what devcroft observed, then,
+/// separately, what the agent said. The agent's words are escaped.
+#[cfg(target_os = "linux")]
+fn print_task_and_report(
+    a: &devcroft::fleet::supervisor::AgentStatus,
+    state_dir: &std::path::Path,
+) {
+    use devcroft::fleet::report::escape;
+    let now = devcroft::fleet::report::now_unix();
+    if let Some(t) = &a.task {
+        println!("task\t{}: {}", t.id, escape(&t.command.join(" ")));
+        let mut state = t.outcome.to_string();
+        match t.ended_unix {
+            Some(end) => state.push_str(&format!(", after {}", ago(end, t.started_unix))),
+            None => state.push_str(&format!(" for {}", ago(now, t.started_unix))),
+        }
+        if let Some(at) = a.last_output_unix {
+            state.push_str(&format!(", last output {} ago", ago(now, at)));
+        }
+        println!("task state\t{state}");
+        let dir = state_dir.join("agents").join(&a.record.id);
+        println!(
+            "task log\t{}",
+            devcroft::fleet::task::log_path(&dir, &t.id).display()
+        );
+    }
+    match &a.report {
+        Ok(Some(r)) => {
+            if let Some(n) = &r.attention {
+                println!(
+                    "attention\t{} (reported {} ago)",
+                    escape(&n.message),
+                    ago(now, n.at_unix)
+                );
+            }
+            if let Some(n) = &r.progress {
+                println!(
+                    "progress\t{} (reported {} ago)",
+                    escape(&n.message),
+                    ago(now, n.at_unix)
+                );
+            }
+            if let Some(c) = &r.claim {
+                let message = c
+                    .message
+                    .as_deref()
+                    .map(|m| format!(": {}", escape(m)))
+                    .unwrap_or_default();
+                println!(
+                    "agent says\t{}{message} (reported {} ago; not what devcroft observed)",
+                    c.outcome,
+                    ago(now, c.at_unix)
+                );
+            }
+        }
+        Ok(None) => {}
+        Err(why) => println!("report\tnot shown: {why}"),
+    }
 }
 
 /// `Origin::Provider` takes `&'static str`; the manifest's provider name
