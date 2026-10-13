@@ -65,6 +65,10 @@ impl Sandbox {
     /// `locked`: whether to run `nix flake lock` during setup. Failure
     /// paths (missing-lock tests) need a flake *without* one.
     fn new(tag: &str, locked: bool) -> Option<Self> {
+        Self::with_flake(tag, locked, FLAKE_NIX)
+    }
+
+    fn with_flake(tag: &str, locked: bool, flake: &str) -> Option<Self> {
         if !nix_available() {
             eprintln!("skipping: a flakes-enabled nix is not on PATH");
             return None;
@@ -77,7 +81,7 @@ impl Sandbox {
             std::env::temp_dir().join(format!("devcroft-nix-e2e-{tag}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&project_root);
         std::fs::create_dir_all(&project_root).unwrap();
-        std::fs::write(project_root.join("flake.nix"), FLAKE_NIX).unwrap();
+        std::fs::write(project_root.join("flake.nix"), flake).unwrap();
 
         if locked {
             let lock = Command::new("nix")
@@ -199,6 +203,47 @@ fn up_fails_at_provider_layer_when_flake_lock_is_missing() {
     assert_eq!(out.status.code(), Some(3), "{out:?}");
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(stderr.contains("nix flake lock"), "got: {stderr}");
+}
+
+/// Nix used for packaging only: a real package, and no dev shell. Nix's own
+/// default would hand `print-dev-env` that package's build environment,
+/// which succeeds, so without the requirement this project started.
+const PACKAGE_ONLY_FLAKE_NIX: &str = r#"
+{
+  description = "devcroft nix e2e fixture: packaging only";
+  inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+  outputs = { self, nixpkgs }:
+    let
+      systems = [ "x86_64-linux" "aarch64-linux" "x86_64-darwin" "aarch64-darwin" ];
+    in {
+      packages = builtins.listToAttrs (map (system: {
+        name = system;
+        value = { default = (import nixpkgs { inherit system; }).hello; };
+      }) systems);
+    };
+}
+"#;
+
+#[test]
+fn up_fails_at_provider_layer_when_the_flake_declares_no_dev_shell() {
+    let Some(sandbox) = Sandbox::with_flake("noshell", true, PACKAGE_ONLY_FLAKE_NIX) else {
+        return;
+    };
+
+    let out = sandbox.run(&["up"]);
+    assert_eq!(out.status.code(), Some(3), "{out:?}");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("provider"), "got: {stderr}");
+    assert!(
+        stderr.contains("no Nix development environment"),
+        "got: {stderr}"
+    );
+    assert!(stderr.contains("devShells."), "got: {stderr}");
+    // Refused before anything was started.
+    let status = sandbox.run(&["status"]);
+    let status = String::from_utf8_lossy(&status.stdout);
+    assert!(status.contains("keeper: not running"), "{status}");
+    assert!(status.contains("no successful `up` yet"), "{status}");
 }
 
 #[test]

@@ -30,9 +30,11 @@ impl Provider for NixProvider {
         })?;
         ensure_lock_present(project_root)?;
         probe_flake_evaluable(&nix_bin, project_root)?;
+        let system = current_system(&nix_bin)?;
+        ensure_dev_shell_declared(&nix_bin, project_root, &system)?;
 
         let baseline = capture::canonical_base_env()?;
-        let activated = capture_activated_env(&nix_bin, project_root, &baseline)?;
+        let activated = capture_activated_env(&nix_bin, project_root, &system, &baseline)?;
 
         Ok(Resolution {
             env: capture::changed_env(&baseline, &activated),
@@ -146,6 +148,99 @@ fn classify_metadata_failure(stderr: &str) -> ProviderError {
     ProviderError::ResolutionFailed(format!("`nix flake metadata` failed: {}", stderr.trim()))
 }
 
+/// The platform nix resolves `devShells.<system>` for: its own `system`
+/// setting, read from its configuration rather than evaluated, since
+/// `builtins.currentSystem` needs `--impure`, which resolution never passes.
+fn current_system(nix_bin: &Path) -> Result<String, ProviderError> {
+    let output = Command::new(nix_bin)
+        .args(["config", "show", "system"])
+        .output()
+        .map_err(|e| {
+            ProviderError::ResolutionFailed(format!("running `nix config show system`: {e}"))
+        })?;
+    let system = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+    if !output.status.success() || system.is_empty() {
+        return Err(ProviderError::ResolutionFailed(format!(
+            "`nix config show system` did not name this platform: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        )));
+    }
+    Ok(system)
+}
+
+/// The flake must declare `devShells.<system>.default`: a `flake.nix` and a
+/// `flake.lock` are not enough, because a project can use Nix for packaging
+/// alone. Without this check nix falls back on its own, measured: given a
+/// flake with only `packages.<system>.default`, or with a dev shell for
+/// another platform only, `nix print-dev-env .` builds that package's
+/// `-env` derivation, and devcroft started a sandbox in a build
+/// environment nobody declared for development.
+///
+/// The answer is a boolean the flake's own outputs give, through the same
+/// installable `print-dev-env` uses, so a dirty git tree evaluates as it
+/// will there (a pure `builtins.getFlake` refuses one, measured). Only a
+/// flake with no `devShells` at all has to be recognised from nix's error
+/// text; if that wording ever changes the failure stays a resolution
+/// failure rather than a fallback, because `capture_activated_env` names
+/// the shell explicitly too.
+fn ensure_dev_shell_declared(
+    nix_bin: &Path,
+    project_root: &Path,
+    system: &str,
+) -> Result<(), ProviderError> {
+    let output = Command::new(nix_bin)
+        .arg("eval")
+        .arg("--json")
+        .arg("--no-update-lock-file")
+        .arg("--no-write-lock-file")
+        .arg(installable(project_root, "devShells"))
+        .arg("--apply")
+        .arg(format!(
+            "shells: builtins.isAttrs shells && shells ? {} && shells.{}.default or null != null",
+            nix_string(system),
+            nix_string(system)
+        ))
+        .current_dir(project_root)
+        .output()
+        .map_err(|e| ProviderError::ResolutionFailed(format!("running `nix eval`: {e}")))?;
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    match (output.status.success(), stdout.trim()) {
+        (true, "true") => Ok(()),
+        (true, _) => Err(ProviderError::NoDevShell {
+            system: system.to_owned(),
+        }),
+        (false, _) if stderr.contains("does not provide attribute") => {
+            Err(ProviderError::NoDevShell {
+                system: system.to_owned(),
+            })
+        }
+        (false, _) => Err(ProviderError::ResolutionFailed(format!(
+            "checking the flake's `devShells.{system}`: {}",
+            stderr.trim()
+        ))),
+    }
+}
+
+/// `<project_root>#<attr>`, the flake reference nix resolves the same way
+/// for a bare path (a git checkout as `git+file`, otherwise `path:`).
+fn installable(project_root: &Path, attr: &str) -> std::ffi::OsString {
+    let mut s = project_root.as_os_str().to_owned();
+    s.push("#");
+    s.push(attr);
+    s
+}
+
+/// `value` as a Nix string literal, for an attribute name in an `--apply`
+/// expression.
+fn nix_string(value: &str) -> String {
+    let escaped = value
+        .replace('\\', "\\\\")
+        .replace('"', "\\\"")
+        .replace("${", "\\${");
+    format!("\"{escaped}\"")
+}
+
 /// Reads the dev shell's build environment as **structured data**, never
 /// by entering the shell (`fix-provisioning-hooks`).
 ///
@@ -169,14 +264,22 @@ fn classify_metadata_failure(stderr: &str) -> ProviderError {
 /// evaluates. It also removes the shell from the pipeline entirely,
 /// which retires the quoting and multi-line-value fragility that made
 /// this module reject `print-dev-env` in the first place.
+///
+/// The shell is named in full, `devShells.<system>.default`, never left to
+/// nix's default search, which falls through to `packages.<system>.default`
+/// and `defaultPackage.<system>` (see `ensure_dev_shell_declared`).
 fn capture_activated_env(
     nix_bin: &Path,
     project_root: &Path,
+    system: &str,
     base: &BTreeMap<String, String>,
 ) -> Result<BTreeMap<String, String>, ProviderError> {
     let output = Command::new(nix_bin)
         .arg("print-dev-env")
-        .arg(project_root)
+        .arg(installable(
+            project_root,
+            &format!("devShells.{system}.default"),
+        ))
         .arg("--no-update-lock-file")
         .arg("--no-write-lock-file")
         .arg("--json")
@@ -440,6 +543,141 @@ mod tests {
                 hint: "nix flake init"
             }
         );
+    }
+
+    /// A locked flake with no inputs and `outputs` as given, for checks that
+    /// evaluate and never build; `None` where nix cannot run flakes.
+    fn flake_with_outputs(name: &str, outputs: &str) -> Option<(PathBuf, PathBuf)> {
+        let nix = real_nix()?;
+        let root = tempdir(name);
+        // One local input, because nix writes no `flake.lock` for a flake
+        // with none, and `up` requires one.
+        let dep = tempdir(&format!("{name}-input"));
+        fs::write(dep.join("README"), "input\n").unwrap();
+        fs::write(
+            root.join("flake.nix"),
+            format!(
+                "{{ inputs.dep = {{ url = \"path:{}\"; flake = false; }}; \
+                 outputs = {{ self, dep }}: {outputs}; }}",
+                dep.display()
+            ),
+        )
+        .unwrap();
+        let lock = Command::new(&nix)
+            .arg("flake")
+            .arg("lock")
+            .arg(&root)
+            .output()
+            .unwrap();
+        lock.status.success().then_some((nix, root))
+    }
+
+    /// A derivation for `system`, evaluated and never built.
+    fn drv(system: &str, mark: &str) -> String {
+        format!(
+            "derivation {{ name = \"x\"; system = \"{system}\"; builder = \"/bin/sh\"; {mark} = \"yes\"; }}"
+        )
+    }
+
+    /// Nix itself falls back to `packages.<system>.default` when a flake
+    /// has no dev shell (measured: `print-dev-env` built the package's
+    /// `-env` derivation). devcroft refuses instead, at layer `provider`,
+    /// in each shape a missing shell takes.
+    #[test]
+    fn a_flake_without_this_platforms_default_dev_shell_is_refused() {
+        let Some(nix) = real_nix() else { return };
+        let system = current_system(&nix).unwrap();
+        let package = format!("packages.{system}.default = {};", drv(&system, "MARK_PKG"));
+        for (name, outputs) in [
+            // Nix for packaging only: no `devShells` at all.
+            ("packages-only", format!("{{ {package} }}")),
+            // A dev shell, but for another platform only.
+            (
+                "other-platform",
+                format!(
+                    "{{ {package} devShells.bogus-platform.default = {}; }}",
+                    drv("bogus-platform", "MARK_SHELL")
+                ),
+            ),
+            // A dev shell for this platform, but not the default one.
+            (
+                "named-only",
+                format!(
+                    "{{ {package} devShells.{system}.ci = {}; }}",
+                    drv(&system, "MARK_SHELL")
+                ),
+            ),
+        ] {
+            let Some((_, root)) = flake_with_outputs(name, &outputs) else {
+                return;
+            };
+            let err = NixProvider.resolve(&root).unwrap_err();
+            assert_eq!(
+                err,
+                ProviderError::NoDevShell {
+                    system: system.clone()
+                },
+                "{name}"
+            );
+            let msg = err.to_string();
+            assert!(msg.contains("no Nix development environment"), "{msg}");
+            assert!(
+                msg.contains(&format!("devShells.{system}.default")),
+                "{msg}"
+            );
+            let _ = fs::remove_dir_all(&root);
+        }
+    }
+
+    /// The control: a flake that declares this platform's default dev shell
+    /// passes the check (it has no package to fall back to, so what is
+    /// found is the shell).
+    #[test]
+    fn a_declared_default_dev_shell_passes_the_check() {
+        let Some(nix) = real_nix() else { return };
+        let system = current_system(&nix).unwrap();
+        let Some((nix, root)) = flake_with_outputs(
+            "shell-declared",
+            &format!(
+                "{{ devShells.{system}.default = {}; }}",
+                drv(&system, "MARK_SHELL")
+            ),
+        ) else {
+            return;
+        };
+        ensure_dev_shell_declared(&nix, &root, &system).unwrap();
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    /// The second layer: the capture names the shell, so even with the check
+    /// gone a packages-only flake is not resolved through its package. A bare
+    /// `print-dev-env <root>` reaches the package's derivation (here it then
+    /// fails on the fixture's builder, which is the evidence it got there).
+    #[test]
+    fn the_capture_never_reaches_a_package() {
+        let Some(nix) = real_nix() else { return };
+        let system = current_system(&nix).unwrap();
+        let Some((nix, root)) = flake_with_outputs(
+            "capture-no-fallback",
+            &format!(
+                "{{ packages.{system}.default = {}; }}",
+                drv(&system, "MARK_PKG")
+            ),
+        ) else {
+            return;
+        };
+        let base = capture::canonical_base_env().unwrap();
+        let err = capture_activated_env(&nix, &root, &system, &base).unwrap_err();
+        let _ = fs::remove_dir_all(&root);
+        let msg = err.to_string();
+        assert!(msg.contains("does not provide attribute"), "{msg}");
+        assert!(!msg.contains("builder"), "{msg}");
+    }
+
+    #[test]
+    fn nix_string_escapes_what_would_end_or_interpolate() {
+        assert_eq!(nix_string("x86_64-linux"), "\"x86_64-linux\"");
+        assert_eq!(nix_string("a\"b${c}\\"), "\"a\\\"b\\${c}\\\\\"");
     }
 
     #[test]

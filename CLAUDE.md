@@ -377,7 +377,11 @@ for an environment without running it. Measured:
 - **nix**: fixed. `print-dev-env --json` returns the build environment as
   data, `shellHook` included as an inert string. Never evaluated. Note
   that plain `print-dev-env` is *not* a fix — the script it emits ends
-  with `eval "${shellHook:-}"`.
+  with `eval "${shellHook:-}"`. And never hand it a bare flake path: nix's
+  default search falls through to `packages.<system>.default`, so a
+  packaging-only flake used to start in its package's build environment.
+  The shell is named in full, and its absence fails at layer `provider`
+  (`require-nix-devshell`).
 - **devbox**: fixed, and implemented (`add-devbox-provider`). `shellenv
   --pure` does not run `init_hook`, in any variant; `devbox run` does.
   Uses the former.

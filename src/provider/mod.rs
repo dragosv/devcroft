@@ -356,6 +356,13 @@ pub enum ProviderError {
         provider: &'static str,
         hint: &'static str,
     },
+    /// A nix flake that declares no development environment for this
+    /// platform (`devShells.<system>.default`). Distinct from
+    /// [`ProviderError::NoEnvironment`]: the flake is there, but it may
+    /// exist only for packaging, and devcroft does not substitute a
+    /// package's build environment for a development one (nix itself
+    /// would, which is why the shell is named explicitly).
+    NoDevShell { system: String },
     /// The provider has an environment definition but no lockfile pinning
     /// it (e.g. `flake.nix` without `flake.lock`) — distinct from
     /// [`ProviderError::NoEnvironment`] because the fix is "lock it", not
@@ -410,6 +417,12 @@ impl fmt::Display for ProviderError {
             ProviderError::NoEnvironment { provider, hint } => write!(
                 f,
                 "no {provider} environment found in this project; run `{hint}`"
+            ),
+            ProviderError::NoDevShell { system } => write!(
+                f,
+                "this project's flake declares no Nix development environment for {system}: \
+                 it has no `devShells.{system}.default`, and devcroft does not use a package's \
+                 build environment in its place; declare `devShells.{system}.default` in flake.nix"
             ),
             ProviderError::MissingLock { provider, hint } => write!(
                 f,
