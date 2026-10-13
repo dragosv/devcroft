@@ -189,6 +189,24 @@ impl Setup {
         agents: usize,
         limits: devcroft::fleet::cgroup::Limits,
     ) -> Result<commands::UpOutcome, FleetError> {
+        self.up_full(provider, agents, limits, Default::default())
+    }
+
+    fn up_capped(
+        &self,
+        agents: usize,
+        fleet_limits: devcroft::fleet::cgroup::FleetLimits,
+    ) -> Result<commands::UpOutcome, FleetError> {
+        self.up_full(&HostUsr, agents, Default::default(), fleet_limits)
+    }
+
+    fn up_full(
+        &self,
+        provider: &dyn ProviderEntry,
+        agents: usize,
+        limits: devcroft::fleet::cgroup::Limits,
+        fleet_limits: devcroft::fleet::cgroup::FleetLimits,
+    ) -> Result<commands::UpOutcome, FleetError> {
         let manifest = self.manifest();
         let keys = self.base.join("keys");
         std::fs::create_dir_all(&keys).unwrap();
@@ -208,6 +226,7 @@ impl Setup {
                 authorized_key_pem: &authorized,
                 state_dir: &self.state(),
                 limits,
+                fleet_limits,
                 timeout: None,
             },
         )
@@ -256,11 +275,18 @@ fn session(socket: &Path, cwd: &Path, script: &str) -> (Option<i32>, String) {
     .unwrap();
     let mut out = String::new();
     loop {
-        match protocol::read_frame(&mut stream).unwrap() {
-            Frame::SpawnErr { message } => panic!("keeper refused to spawn: {message}"),
-            Frame::Stdout(b) | Frame::Stderr(b) => out.push_str(&String::from_utf8_lossy(&b)),
-            Frame::Exit(status) => return (status.code, out),
-            _ => {}
+        match protocol::read_frame(&mut stream) {
+            Ok(Frame::SpawnErr { message }) => panic!("keeper refused to spawn: {message}"),
+            Ok(Frame::Stdout(b) | Frame::Stderr(b)) => out.push_str(&String::from_utf8_lossy(&b)),
+            Ok(Frame::Exit(status)) => return (status.code, out),
+            Ok(_) => {}
+            // The keeper went away mid-session: its leaf was killed whole
+            // (`memory.oom.group`). Reported as no exit code, never a pass.
+            Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
+                out.push_str("<the keeper's connection closed>");
+                return (None, out);
+            }
+            Err(e) => panic!("reading from the keeper: {e}"),
         }
     }
 }
@@ -487,6 +513,7 @@ fn a_real_devbox_agent_builds_its_project_in_its_clone() {
             authorized_key_pem: &authorized,
             state_dir: &state,
             limits: devcroft::fleet::cgroup::Limits::default(),
+            fleet_limits: Default::default(),
             timeout: None,
         },
     )
@@ -999,6 +1026,7 @@ fn a_second_checkout_with_the_same_name_cannot_take_over_the_fleet() {
             authorized_key_pem: &client.public_key().to_openssh().unwrap(),
             state_dir: &owner.state(),
             limits: devcroft::fleet::cgroup::Limits::default(),
+            fleet_limits: Default::default(),
             timeout: None,
         },
     )
@@ -1061,6 +1089,7 @@ fn an_agent_is_reachable_as_id_dot_name_dot_devcroft_over_real_ssh() {
             authorized_key_pem: &client.public_key().to_openssh().unwrap(),
             state_dir: &state,
             limits: devcroft::fleet::cgroup::Limits::default(),
+            fleet_limits: Default::default(),
             timeout: None,
         },
     )
@@ -1134,6 +1163,37 @@ fn a_timeout_without_a_unit_is_refused_by_the_cli() {
     assert!(!s.clones().exists());
 }
 
+/// `--fleet-cpus` takes a positive number of CPUs to at most three decimals
+/// (`cpu.max` in thousandths); anything else is a usage error naming the
+/// flag. Accepted values get past parsing, to the missing cgroup root.
+#[test]
+fn fleet_cpus_is_a_positive_number_of_cpus() {
+    let s = Setup::new("cpus", None, "", true);
+    let up = |value: &str| {
+        let out = Command::new(exe())
+            .current_dir(s.project())
+            .env_remove("DEVCROFT_FLEET_CGROUP_ROOT")
+            .args(["fleet", "up", "--agents", "1", "--fleet-cpus", value])
+            .output()
+            .unwrap();
+        (
+            out.status.code(),
+            String::from_utf8_lossy(&out.stderr).into_owned(),
+        )
+    };
+    for bad in ["0", "0.000", "-1", "1.2345", "x", ".", "", "1e3"] {
+        let (code, stderr) = up(bad);
+        assert_eq!(code, Some(2), "{bad:?}: {stderr}");
+        assert!(stderr.contains("--fleet-cpus"), "{bad:?}: {stderr}");
+    }
+    for good in ["2", "0.5", ".25", "1.125"] {
+        let (code, stderr) = up(good);
+        assert_eq!(code, Some(4), "{good:?}: {stderr}");
+        assert!(stderr.contains("cgroup"), "{good:?}: {stderr}");
+    }
+    assert!(!s.clones().exists());
+}
+
 /// `--host-root` cannot withhold the Nix daemon: Landlock does not mediate
 /// connecting to a unix socket, and a host-root agent was measured adding a
 /// path to the shared store through it. So on a host running the daemon the
@@ -1158,6 +1218,7 @@ fn host_root_is_refused_where_the_nix_daemon_runs() {
             authorized_key_pem: "unused",
             state_dir: &s.state(),
             limits: devcroft::fleet::cgroup::Limits::default(),
+            fleet_limits: Default::default(),
             timeout: None,
         },
     )
@@ -1368,6 +1429,7 @@ fn two_fleets_in_one_repository_never_share_or_remove_each_others_clones() {
                 authorized_key_pem: "",
                 state_dir: &state_b,
                 limits: devcroft::fleet::cgroup::Limits::default(),
+                fleet_limits: Default::default(),
                 timeout: None,
             },
         )
@@ -1500,6 +1562,7 @@ fn a_fleet_whose_cgroup_subtree_is_gone_can_be_listed_moved_and_removed() {
             authorized_key_pem: "",
             state_dir: &s.state(),
             limits: devcroft::fleet::cgroup::Limits::default(),
+            fleet_limits: Default::default(),
             timeout: None,
         },
     )
@@ -1548,4 +1611,105 @@ fn why_inside_an_agent_answers_from_that_agents_own_policy() {
         "{out}"
     );
     s.cmd(|f| commands::stop(f, &a.id)).unwrap();
+}
+
+#[test]
+fn the_fleets_own_limits_bound_all_its_agents_together() {
+    use devcroft::fleet::cgroup::FleetLimits;
+    let Some(root) = capable_host() else { return };
+    if !Path::new("/usr/bin/python3").exists() {
+        eprintln!("skipping: no /usr/bin/python3 to allocate with");
+        return;
+    }
+    let s = Setup::new("cap", Some(&root), "", true);
+    let cap = 384u64 << 20;
+    let outcome = s
+        .up_capped(
+            2,
+            FleetLimits {
+                memory_max: Some(cap),
+                pids_max: Some(10_000),
+                cpu_millis: Some(1_500),
+            },
+        )
+        .unwrap();
+    let node = root.join(format!("fleet-{}", s.name));
+    let read = |f: &str| {
+        std::fs::read_to_string(node.join(f))
+            .unwrap()
+            .trim()
+            .to_owned()
+    };
+    assert_eq!(read("memory.max"), cap.to_string());
+    assert_eq!(read("memory.swap.max"), "0");
+    assert_eq!(read("pids.max"), "10000");
+    assert_eq!(read("cpu.max"), "150000 100000");
+    // Every agent's leaf is under the node, so all of them are charged to
+    // it (a helpers' leaf, made only for an agent with a proxy, is made by
+    // the same `create_leaf`).
+    for a in &outcome.started {
+        assert!(node.join(&a.id).is_dir(), "{}", a.id);
+    }
+
+    // No per-agent limit at all, so only the fleet's can refuse this. a1
+    // holds 150 MiB, which fits (the control); a2 then asks for 300 MiB,
+    // which no agent's limit stops but the fleet has no room for.
+    let alloc = |mib: u64| {
+        format!(
+            "/usr/bin/python3 -c 'import time; b = bytes([1]) * ({mib} << 20); \
+             open(\"held\", \"w\").write(\"x\"); time.sleep(10)'"
+        )
+    };
+    let socket = |id: &str| s.state().join("agents").join(id).join("control.sock");
+    let a1 = &outcome.started[0];
+    std::thread::scope(|scope| {
+        let holder = scope.spawn(|| session(&socket("a1"), Path::new(PROJECT), &alloc(150)));
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
+        while !a1.workspace.join("held").exists() {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the control allocation never completed"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
+        let (code, out) = session(&socket("a2"), Path::new(PROJECT), &alloc(300));
+        assert_ne!(
+            code,
+            Some(0),
+            "300 MiB fit beside 150 MiB under a 384 MiB cap: {out}"
+        );
+        // The fleet's OOM kill can take either leaf: the control may be the
+        // victim. What it cannot be is both allocations held at once.
+        let _ = holder.join();
+    });
+    let events = read("memory.events");
+    let oom_kills: u64 = events
+        .lines()
+        .find_map(|l| l.strip_prefix("oom_kill "))
+        .and_then(|n| n.parse().ok())
+        .unwrap_or(0);
+    assert!(oom_kills > 0, "{events}");
+    assert!(
+        read("memory.peak").parse::<u64>().unwrap() <= cap,
+        "{}",
+        read("memory.peak")
+    );
+    let _ = s.cmd(commands::rm_all);
+
+    // Kept for the fleet's next `up`, a limit given there replacing only
+    // itself: a node recreated (after a reboot) does not run uncapped.
+    s.up_capped(
+        1,
+        FleetLimits {
+            pids_max: Some(5_000),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    // `rm --all` removed the fleet, so this is a new one: nothing kept.
+    assert_eq!(read("memory.max"), "max");
+    s.up_capped(1, FleetLimits::default()).unwrap();
+    assert_eq!(read("pids.max"), "5000");
+    assert_eq!(read("cpu.max"), "max 100000");
+    s.cmd(commands::rm_all).unwrap();
 }

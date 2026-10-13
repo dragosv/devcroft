@@ -77,6 +77,40 @@ pub struct Limits {
     pub pids_max: Option<u64>,
 }
 
+/// The whole fleet's limits, written on its node rather than on any leaf:
+/// cgroup v2 charges every descendant to an ancestor's `memory.max`,
+/// `pids.max` and `cpu.max`, so these bound every agent and every
+/// helpers' leaf together, however many agents run. Per-agent [`Limits`]
+/// alone let N agents take N times the budget (adversarial review 3.3).
+/// `None` leaves the kernel's default, no cap. No field defaults to a
+/// value: default budgets are an open decision (review §4).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct FleetLimits {
+    /// `memory.max` on the node, in bytes, with `memory.swap.max=0` beside
+    /// it for the reason [`Limits::memory_max`] gives.
+    pub memory_max: Option<u64>,
+    /// `pids.max` on the node: every process and thread in the fleet.
+    pub pids_max: Option<u64>,
+    /// `cpu.max` on the node, in thousandths of a CPU: a ceiling on the
+    /// fleet's CPU time. Not a weight, which only divides CPU between the
+    /// node and its siblings when they compete and caps nothing.
+    pub cpu_millis: Option<u64>,
+}
+
+impl FleetLimits {
+    /// Each limit given in `other`, over this one's.
+    pub fn overridden_by(self, other: FleetLimits) -> FleetLimits {
+        FleetLimits {
+            memory_max: other.memory_max.or(self.memory_max),
+            pids_max: other.pids_max.or(self.pids_max),
+            cpu_millis: other.cpu_millis.or(self.cpu_millis),
+        }
+    }
+}
+
+/// `cpu.max`'s period, the kernel's default: 100 ms.
+const CPU_PERIOD_USEC: u64 = 100_000;
+
 /// A limit this host cannot apply, named rather than dropped.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Degraded {
@@ -220,6 +254,36 @@ impl FleetNode {
         } else {
             vec![Degraded::IoWeight]
         }
+    }
+
+    /// Write the fleet's own limits on its node. Every field is written, a
+    /// `None` as `max`, so the node holds exactly `limits` whatever an
+    /// earlier call left there.
+    pub fn set_fleet_limits(&self, limits: &FleetLimits) -> io::Result<()> {
+        let write = |file: &str, value: String| {
+            let path = self.dir.join(file);
+            fs::write(&path, &value).map_err(|e| ctx(e, &format!("write {value:?} to"), &path))
+        };
+        let or_max = |v: Option<u64>| v.map_or_else(|| "max".to_owned(), |n| n.to_string());
+        match limits.memory_max {
+            Some(bytes) => {
+                write("memory.swap.max", "0".into())?;
+                write("memory.max", bytes.to_string())?;
+            }
+            None => write("memory.max", "max".into())?,
+        }
+        write("pids.max", or_max(limits.pids_max))?;
+        write(
+            "cpu.max",
+            match limits.cpu_millis {
+                // At least the kernel's minimum quota, 1 ms.
+                Some(m) => format!(
+                    "{} {CPU_PERIOD_USEC}",
+                    (m * CPU_PERIOD_USEC / 1000).max(1000)
+                ),
+                None => format!("max {CPU_PERIOD_USEC}"),
+            },
+        )
     }
 
     /// Create a domain leaf for one agent and write its limits. Fails if

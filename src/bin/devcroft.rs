@@ -212,6 +212,9 @@ fleet (Linux; experimental)
       [--host-root]             (keep the host's root instead of a minimal view)
       [--memory 4G] [--pids N]  (each agent's limits; --cpu-weight/--io-weight 1-10000)
       [--cpu-weight W] [--io-weight W]
+      [--fleet-memory 16G]      (the whole fleet's limits, every agent and helper
+      [--fleet-pids N]           together; kept for the fleet's next `up`)
+      [--fleet-cpus 4]
   fleet ls                    every agent: state, memory, CPU, host ports, workspace
   fleet inspect <id>          one agent's record, and why it died if it did
   fleet stop <id>             stop one agent, keeping its workspace
@@ -2736,7 +2739,7 @@ fn cli_fleet(args: &[String]) -> i32 {
 #[cfg(target_os = "linux")]
 fn cli_fleet_linux(args: &[String]) -> i32 {
     const USAGE: &str = "devcroft fleet: usage: devcroft fleet up --agents N \
-                         [--cgroup-root P] [--host-root] [--timeout 30m] | ls | inspect <id> \
+                         [--cgroup-root P] [--host-root] [--timeout 30m] [--fleet-memory 16G] [--fleet-pids N] [--fleet-cpus 4] | ls | inspect <id> \
                          | stop <id> | rm <id>|--all [--yes]";
     let fail = |e: devcroft::fleet::commands::FleetError| {
         eprintln!("devcroft fleet: {e}");
@@ -2785,6 +2788,7 @@ fn cli_fleet_linux(args: &[String]) -> i32 {
                 std::env::var_os("DEVCROFT_FLEET_CGROUP_ROOT").map(std::path::PathBuf::from);
             let mut view = true;
             let mut limits = devcroft::fleet::cgroup::Limits::default();
+            let mut fleet_limits = devcroft::fleet::cgroup::FleetLimits::default();
             let mut timeout = None;
             let mut rest = args[1..].iter();
             while let Some(a) = rest.next() {
@@ -2808,6 +2812,15 @@ fn cli_fleet_linux(args: &[String]) -> i32 {
                     }
                     "--io-weight" => {
                         fleet_weight(rest.next(), a).map(|v| limits.io_weight = Some(v))
+                    }
+                    "--fleet-memory" => {
+                        fleet_size(rest.next(), a).map(|v| fleet_limits.memory_max = Some(v))
+                    }
+                    "--fleet-pids" => {
+                        fleet_count(rest.next(), a).map(|v| fleet_limits.pids_max = Some(v))
+                    }
+                    "--fleet-cpus" => {
+                        fleet_cpus(rest.next(), a).map(|v| fleet_limits.cpu_millis = Some(v))
                     }
                     "--timeout" => fleet_duration(rest.next(), a).map(|v| timeout = Some(v)),
                     _ => Err(String::new()),
@@ -2858,6 +2871,7 @@ fn cli_fleet_linux(args: &[String]) -> i32 {
                 authorized_key_pem: &authorized,
                 state_dir: &state_dir,
                 limits,
+                fleet_limits,
                 timeout,
             };
             match devcroft::fleet::commands::up(&provider, &req) {
@@ -3129,6 +3143,33 @@ fn fleet_duration(value: Option<&String>, flag: &str) -> Result<std::time::Durat
 fn fleet_size(value: Option<&String>, flag: &str) -> Result<u64, String> {
     let v = value.ok_or_else(|| format!("{flag} needs a size, such as 4G"))?;
     nono::resource::parse_size(v).map_err(|e| format!("{flag} {v}: {e}"))
+}
+
+/// `--fleet-cpus 2.5`: CPUs, in thousandths at most, more than zero.
+#[cfg(target_os = "linux")]
+fn fleet_cpus(value: Option<&String>, flag: &str) -> Result<u64, String> {
+    let v = value.ok_or_else(|| format!("{flag} needs a number of CPUs, such as 2 or 0.5"))?;
+    let bad = || format!("{flag} {v}: expected a positive number of CPUs, such as 2 or 0.5");
+    let (whole, frac) = v.split_once('.').unwrap_or((v, ""));
+    if whole.is_empty() && frac.is_empty()
+        || frac.len() > 3
+        || !whole
+            .chars()
+            .chain(frac.chars())
+            .all(|c| c.is_ascii_digit())
+    {
+        return Err(bad());
+    }
+    let whole: u64 = if whole.is_empty() {
+        0
+    } else {
+        whole.parse().map_err(|_| bad())?
+    };
+    let frac: u64 = format!("{frac:0<3}").parse().map_err(|_| bad())?;
+    match whole.checked_mul(1000).and_then(|w| w.checked_add(frac)) {
+        Some(m) if m > 0 => Ok(m),
+        _ => Err(bad()),
+    }
 }
 
 /// `--pids 512`: a positive count.

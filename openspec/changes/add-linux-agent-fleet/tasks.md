@@ -679,8 +679,13 @@ were reproduced there, and each fix here has a mutant that fails its test.
       spawned a thread per connection with no cap or header timeout, in a
       `-host` leaf with no limits. Now `MAX_CONNECTIONS` (128) on the proxy
       and its unix bridge, a 10 s head timeout, and `memory.max` 256 MiB and
-      `pids.max` 1024 on the helpers' leaf. **Not done:** an aggregate cap
-      across a whole fleet.
+      `pids.max` 1024 on the helpers' leaf. The aggregate cap followed:
+      `fleet up --fleet-memory/--fleet-pids/--fleet-cpus` write `memory.max`
+      (with `swap.max` 0), `pids.max` and `cpu.max` on the fleet's node,
+      recorded in `fleet.json` and reapplied by the next `up`; no default
+      (review §4's budgets). `the_fleets_own_limits_bound_all_its_agents_together`:
+      a2's 300 MiB beside a1's 150 MiB is refused under 384 MiB, and fits
+      with the node's `memory.max` not written (the mutant).
 - [x] **3.5 The proxy resolved names it was about to refuse.** Now decided
       on the name first; only admitted names are resolved
       (`proxy::server::decide`, unit-tested with the lookup injected).

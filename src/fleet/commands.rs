@@ -104,6 +104,9 @@ pub struct UpRequest<'a> {
     pub state_dir: &'a Path,
     /// Every agent's cgroup limits.
     pub limits: Limits,
+    /// The whole fleet's, over what it already has: a limit not given
+    /// keeps the one recorded.
+    pub fleet_limits: super::cgroup::FleetLimits,
     /// Every agent's wall-clock limit, from its start; `None` for none.
     pub timeout: Option<std::time::Duration>,
 }
@@ -164,6 +167,11 @@ struct FleetFile {
     /// fills in.
     #[serde(default)]
     project_root: Option<PathBuf>,
+    /// The whole fleet's limits, kept here because the node that holds them
+    /// does not survive a reboot: a fleet recreated on a new node gets them
+    /// back rather than silently running uncapped.
+    #[serde(default)]
+    limits: super::cgroup::FleetLimits,
 }
 
 /// A fleet's lock, held for a command's whole critical section. `flock`,
@@ -274,11 +282,13 @@ pub fn up(provider: &dyn ProviderEntry, req: &UpRequest) -> Result<UpOutcome, Fl
     }
 
     let lock = lock(req.state_dir)?;
+    let mut fleet_limits = req.fleet_limits;
     // Checked before anything is written: the first version overwrote
     // `fleet.json` first, so a second checkout's `up` moved the fleet to
     // its own cgroup root and added its clones to the first one's agents.
     if let Some(existing) = read_fleet_file(req.state_dir)? {
         ensure_same_project(&existing, req.manifest, req.project_root)?;
+        fleet_limits = existing.limits.overridden_by(req.fleet_limits);
         // A root that is gone holds no live agents, so the fleet may move:
         // its records are settled and the new root recorded. A root that
         // still exists may hold them, and moving would orphan them.
@@ -299,6 +309,7 @@ pub fn up(provider: &dyn ProviderEntry, req: &UpRequest) -> Result<UpOutcome, Fl
     let fleet_file = serde_json::to_vec_pretty(&FleetFile {
         cgroup_root: req.cgroup_root.to_path_buf(),
         project_root: Some(canonical(req.project_root)),
+        limits: fleet_limits,
     })
     .map_err(|e| FleetError::Backend(e.to_string()))?;
     std::fs::write(req.state_dir.join("fleet.json"), fleet_file).map_err(backend)?;
@@ -310,6 +321,8 @@ pub fn up(provider: &dyn ProviderEntry, req: &UpRequest) -> Result<UpOutcome, Fl
         req.exe,
     )
     .map_err(backend)?;
+    // Before any agent starts, so none runs outside the fleet's cap.
+    sup.set_fleet_limits(&fleet_limits).map_err(backend)?;
 
     let mut started = Vec::new();
     for _ in 0..req.agents {

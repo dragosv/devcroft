@@ -57,6 +57,28 @@ abandoned.
 - **AND** the missing IO control is named, in the same way any other
   unenforceable aspect is reported
 
+### Requirement: The whole fleet may be given limits of its own
+
+Memory, PID count and CPU time MAY be limited for the fleet as a whole, on
+the cgroup node above every agent's leaf and every helpers' leaf, so the
+kernel charges all of them together however many agents run. A CPU limit
+SHALL be a ceiling (`cpu.max`), not a weight, which caps nothing. The
+fleet's limits SHALL be recorded with the fleet and reapplied by its next
+`up`, so a fleet whose node was recreated does not run without them; a
+limit given to that `up` SHALL replace only itself.
+
+#### Scenario: Agents together exceed the fleet's memory
+
+- **WHEN** the fleet has a memory limit and no agent has one, and agents
+  together allocate more than the fleet's limit
+- **THEN** the kernel refuses the excess within the fleet, though each
+  allocation alone would fit
+
+#### Scenario: The next up keeps what it is not given
+
+- **WHEN** a fleet's `up` gives one fleet limit and a later `up` gives none
+- **THEN** the later `up` reapplies the recorded limit
+
 ### Requirement: Teardown is cgroup-wide and waits for it to complete
 
 Stopping an agent SHALL terminate every process in its leaf, including

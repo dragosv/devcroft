@@ -593,6 +593,11 @@ impl Supervisor {
         Ok(status.record)
     }
 
+    /// The whole fleet's limits, on its node (`FleetLimits`).
+    pub fn set_fleet_limits(&self, limits: &super::cgroup::FleetLimits) -> io::Result<()> {
+        self.node.set_fleet_limits(limits)
+    }
+
     /// Limits this host cannot apply to any agent, named (`Degraded`).
     pub fn degraded(&self) -> Vec<super::cgroup::Degraded> {
         self.node.degraded()
