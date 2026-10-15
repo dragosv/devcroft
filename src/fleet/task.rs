@@ -224,7 +224,16 @@ fn run_inner(control_socket: &Path, agent_dir: &Path, id: &str) -> io::Result<()
         // and an agent's keeper is its main process, so the agent ended
         // (stopped, killed whole, or crashed). Recorded as that, not as
         // lost: measured, a `stop` lost the race to settle it otherwise.
-        Err(e) if e.kind() == io::ErrorKind::UnexpectedEof => Outcome::EndedWithAgent,
+        // A reset is the same end: Linux reports a peer that died with
+        // unread data in its socket as `ECONNRESET`, not EOF.
+        Err(e)
+            if matches!(
+                e.kind(),
+                io::ErrorKind::UnexpectedEof | io::ErrorKind::ConnectionReset
+            ) =>
+        {
+            Outcome::EndedWithAgent
+        }
         Err(e) => Outcome::Lost {
             reason: format!("the agent's keeper session ended without an exit status: {e}"),
         },
