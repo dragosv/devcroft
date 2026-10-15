@@ -95,6 +95,7 @@ pub fn prepare(
     if let Some(root) = super::closure::root_of(&shell.path) {
         roots.insert(root);
     }
+    let store_roots: Vec<String> = roots.iter().cloned().collect();
     let provider_grants = match super::closure::narrow(&provider_grants, &roots) {
         Ok(narrowed) => narrowed,
         Err(why) => {
@@ -196,6 +197,7 @@ pub fn prepare(
         timeout: None,
         // Where the workspace sits in its repository is the caller's to say.
         repository: None,
+        store_roots,
         policy: Some(policy),
     })
 }

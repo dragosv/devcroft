@@ -74,6 +74,9 @@ pub struct AgentLaunch {
     pub expose: Vec<(String, u16)>,
     /// A wall-clock limit, enforced by the agent's PID 1 (`AgentSpec::timeout_secs`).
     pub timeout: Option<std::time::Duration>,
+    /// The store paths its environment names, kept from the garbage
+    /// collector while it runs (`closure::lease`). Empty leases nothing.
+    pub store_roots: Vec<String>,
     /// The repository the workspace is a subdirectory of, when it is one:
     /// the agent's own clone, which its view mounts at `/workspace` so git
     /// finds `.git`. Set by [`AgentLaunch::in_repository`]; `None` mounts
@@ -319,6 +322,20 @@ impl Supervisor {
 
         let home = crate::services::artifact_dir(&launch.workspace, id).join("home");
         std::fs::create_dir_all(&home)?;
+
+        // Its closure, kept from the collector until it stops. Refused
+        // rather than started without: an agent whose toolchain a
+        // `nix-collect-garbage` can remove mid-run is the failure this
+        // exists to prevent.
+        super::closure::lease(
+            &dir.join(GC_ROOTS),
+            &launch.store_roots.iter().cloned().collect(),
+        )
+        .map_err(|why| {
+            io::Error::other(format!(
+                "agent {id}: its store paths could not be kept from garbage collection: {why}"
+            ))
+        })?;
 
         // Egress, when the agent has any: its own proxy, host-side and
         // outside the agent's leaf (D4, D6), reached from inside the
@@ -907,12 +924,18 @@ impl Supervisor {
     }
 }
 
+/// Where an agent's GC roots are (`closure::lease`), in its directory.
+const GC_ROOTS: &str = "gcroots";
+
 /// Record an agent Stopped and remove what only a running one needs: its
-/// sockets, its view root. Its port mappings go with them.
+/// sockets, its view root, its closure's lease. Its port mappings go with
+/// them.
 fn release_files(dir: &Path, record: &AgentRecord) -> io::Result<()> {
     for socket in ["control.sock", "ssh.sock", "proxy.sock"] {
         let _ = std::fs::remove_file(dir.join(socket));
     }
+    // Its closure's lease: a stopped agent runs nothing from the store.
+    let _ = std::fs::remove_dir_all(dir.join(GC_ROOTS));
     if let Ok(entries) = std::fs::read_dir(dir) {
         for entry in entries.flatten() {
             if entry.file_name().to_string_lossy().starts_with("ingress-") {

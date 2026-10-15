@@ -86,6 +86,42 @@ pub fn narrow(grants: &[String], roots: &BTreeSet<String>) -> Result<Vec<String>
         .collect())
 }
 
+/// Keep `roots` in the store while an agent runs: an indirect GC root for
+/// each, as links in `dir`, made through the daemon (review §4.1). Removing
+/// `dir` ends the lease; the collector forgets a root whose link is gone.
+///
+/// **Retention is not materialization authority.** No agent gets the
+/// daemon socket (`workspace-isolation`), which says nothing about whether
+/// the host keeps what an agent runs: the nix provider captures with
+/// `print-dev-env` and keeps no profile, so nothing rooted an agent's
+/// toolchain, and a `nix-collect-garbage` while it ran could remove it.
+/// The roots are the closure's own (`roots`): rooting them keeps their
+/// requisites, which is the whole view an agent gets. Measured: a non-root
+/// user adds indirect roots through the daemon, and `nix-store --delete`
+/// refuses a rooted path until its link is removed.
+pub fn lease(dir: &Path, roots: &BTreeSet<String>) -> Result<(), String> {
+    if roots.is_empty() {
+        return Ok(());
+    }
+    let nix_store = crate::paths::resolve_on_path("nix-store").ok_or("no `nix-store` on PATH")?;
+    std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    let out = std::process::Command::new(nix_store)
+        .arg("--realise")
+        .arg("--add-root")
+        .arg(dir.join("root"))
+        .arg("--indirect")
+        .args(roots)
+        .output()
+        .map_err(|e| format!("running nix-store: {e}"))?;
+    if !out.status.success() {
+        return Err(format!(
+            "nix-store --add-root: {}",
+            String::from_utf8_lossy(&out.stderr).trim()
+        ));
+    }
+    Ok(())
+}
+
 /// A path's store root, for a caller holding one path (the resolved shell).
 pub fn root_of(path: &Path) -> Option<String> {
     store_root_of(path).or_else(|| path.canonicalize().ok().and_then(|p| store_root_of(&p)))

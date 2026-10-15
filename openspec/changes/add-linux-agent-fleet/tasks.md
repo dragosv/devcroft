@@ -715,11 +715,24 @@ were reproduced there, and each fix here has a mutant that fails its test.
       without opening the root, and `up` moves the fleet to the current
       root. `a_fleet_whose_cgroup_subtree_is_gone_can_be_listed_moved_and_removed`;
       fails with the offline branch disabled.
-- [ ] Decisions still open (review §4): Nix closure retention for live agents,
-      and default budgets and runtime overhead reservation. **Lifecycle versus
-      workload is done** in `add-fleet-tasks`: `fleet run`/`up -- <cmd>` tasks
-      with IDs and observed outcomes, agent-reported attention, progress and
-      claims shown beside them; the always-false `attention` field is gone.
+- [x] **Review §4.1, Nix closure retention, done.** Each agent leases its
+      closure's roots (`closure::lease`: indirect GC roots through the
+      daemon, under `agents/<id>/gcroots/`), from start until it stops; a
+      lease that cannot be made refuses the start. Measured on the way: Nix
+      already keeps any store path written in a live process's environment
+      (a `{censored}` runtime root), so the first test, naming its path
+      literally, passed with the lease removed. A path reached only through a
+      link (as devbox's and flox's profiles are reached) is not a runtime
+      root; whether a provider roots it itself is the provider's business,
+      and the lease does not depend on it. The test names its path through a
+      link, and fails with the lease removed.
+      `a_running_agents_closure_is_kept_from_the_garbage_collector`.
+- [x] **Review §4.3, lifecycle versus workload, done** in `add-fleet-tasks`:
+      `fleet run`/`up -- <cmd>` tasks with IDs and observed outcomes,
+      agent-reported attention, progress and claims shown beside them; the
+      always-false `attention` field is gone.
+- [ ] Decision still open (review §4.2): default budgets and runtime
+      overhead reservation.
 
 ## 3. Networking
 

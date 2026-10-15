@@ -104,3 +104,24 @@ other agent's toolchain.
 - **AND** it says the authority cannot be withheld under that strategy at
   all (Landlock does not mediate connecting to a unix socket), rather than
   that it is not yet supported
+
+### Requirement: A running agent's closure is kept from the garbage collector
+
+The host SHALL keep every store path an agent's environment reaches, directly
+or through a link, from being collected while the agent runs, without giving
+the agent any authority over the store. The retention SHALL end when the
+agent stops. When it cannot be established, the agent SHALL NOT start.
+
+Retention is not materialization authority: the agent never reaches the
+daemon, and the host holds the roots on its behalf.
+
+#### Scenario: Garbage collection while an agent runs
+
+- **WHEN** a store path the agent's environment reaches only through a link
+  is deleted from the store while the agent runs
+- **THEN** the deletion is refused, because the path is still alive
+
+#### Scenario: The agent stops
+
+- **WHEN** the agent stops
+- **THEN** its store paths are no longer kept on its account

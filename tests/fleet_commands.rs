@@ -1891,3 +1891,87 @@ fn an_agents_reports_are_shown_beside_what_was_observed() {
     assert_eq!(out.status.code(), Some(2), "{out:?}");
     s.cmd(commands::rm_all).unwrap();
 }
+
+/// The host's `/usr` as the closure, and one store path the environment
+/// names: what the agent's lease must keep.
+struct NamesAStorePath(String);
+
+impl ProviderEntry for NamesAStorePath {
+    fn resolve(&self, _: &Path) -> Result<Resolution, ProviderError> {
+        Ok(Resolution {
+            env: [
+                ("PATH".to_owned(), "/usr/bin".to_owned()),
+                ("AGENT_DATA".to_owned(), self.0.clone()),
+            ]
+            .into(),
+            unset: Vec::new(),
+            read_only_grants: vec!["/usr".to_owned()],
+            activation_script: None,
+            services: ServiceSupport::Unsupported,
+            ran_activation_hook: false,
+        })
+    }
+    fn fingerprint(&self, _: &Path) -> Result<String, ProviderError> {
+        Ok(String::new())
+    }
+    fn tier(&self) -> Tier {
+        Tier::Closure
+    }
+    fn static_name(&self) -> &'static str {
+        "nix"
+    }
+}
+
+/// Review §4.1: nothing kept a running agent's closure from the garbage
+/// collector. **Named through a link, deliberately.** Nix already treats a
+/// store path written in a live process's environment as a root (measured:
+/// `--print-roots` lists it as `{censored}`), so a path the keeper's
+/// environment names literally is kept while it runs, lease or none, and a
+/// first version of this test passed with the lease removed. A path the
+/// environment reaches only through a link, the way devbox's and flox's
+/// profiles are reached, is kept by nothing but the lease.
+#[test]
+fn a_running_agents_closure_is_kept_from_the_garbage_collector() {
+    let Some(root) = capable_host() else { return };
+    if !devcroft::provider::host_can_build_nix_closures()
+        || Command::new("nix-store").arg("--version").output().is_err()
+    {
+        eprintln!("skipping: no usable Nix store");
+        return;
+    }
+    let s = Setup::new("gc", Some(&root), "", true);
+    let file = s.base.join(format!("agent-data-{}", std::process::id()));
+    std::fs::write(&file, "kept while the agent runs\n").unwrap();
+    let out = Command::new("nix-store")
+        .arg("--add")
+        .arg(&file)
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{out:?}");
+    let path = String::from_utf8_lossy(&out.stdout).trim().to_owned();
+    let link = s.base.join("profile");
+    std::os::unix::fs::symlink(&path, &link).unwrap();
+    let delete = || {
+        let _ = Command::new("nix-store").args(["--delete", &path]).output();
+        Path::new(&path).exists()
+    };
+
+    s.up_via(
+        &NamesAStorePath(link.to_string_lossy().into_owned()),
+        1,
+        Default::default(),
+    )
+    .unwrap();
+    assert!(
+        delete(),
+        "the collector removed a running agent's store path"
+    );
+
+    // Stopped, it runs nothing from the store: the lease ends.
+    s.cmd(|f| commands::stop(f, "a1")).unwrap();
+    assert!(
+        !delete(),
+        "a stopped agent still keeps its store path from the collector"
+    );
+    s.cmd(commands::rm_all).unwrap();
+}
