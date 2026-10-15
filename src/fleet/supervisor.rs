@@ -190,6 +190,11 @@ pub struct AgentStatus {
     pub last_output_unix: Option<u64>,
     /// What the agent reported (`fleet::report`), or why it is not shown.
     pub report: Result<Option<super::report::Report>, String>,
+    /// While it runs, what its limits have refused so far (forks, OOM
+    /// kills): a workload at its budget, seen before it dies. Its control
+    /// plane shares that budget, so sessions may fail to start then, while
+    /// `stop`, `rm` and `inspect` work from outside it.
+    pub pressure: Option<super::cgroup::Evidence>,
 }
 
 impl AgentStatus {
@@ -216,6 +221,7 @@ impl AgentStatus {
             task,
             last_output_unix,
             report,
+            pressure: None,
         }
     }
 
@@ -606,12 +612,17 @@ impl Supervisor {
             let leaf = running
                 .then(|| self.node.existing_leaf(&record.id))
                 .flatten();
-            out.push(AgentStatus::of(
+            let mut status = AgentStatus::of(
                 record,
                 &dir,
                 leaf.as_ref().and_then(|l| l.memory_current().ok()),
                 leaf.as_ref().and_then(|l| l.cpu_usage_usec().ok()),
-            ));
+            );
+            status.pressure = leaf
+                .as_ref()
+                .and_then(|l| l.exit_evidence().ok())
+                .filter(|e| !e.is_quiet());
+            out.push(status);
         }
         Ok(out)
     }

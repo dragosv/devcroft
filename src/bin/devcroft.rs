@@ -226,10 +226,12 @@ fleet (Linux; experimental)
   fleet up --agents N         start N agents, each on its own clone of this project
       [--cgroup-root P]         (a delegated cgroup v2 subtree; or DEVCROFT_FLEET_CGROUP_ROOT)
       [--host-root]             (keep the host's root instead of a minimal view)
-      [--memory 4G] [--pids N]  (each agent's limits; --cpu-weight/--io-weight 1-10000)
+      [--memory 4G] [--pids N]  (each agent's limits; pids default 4096, at least 64;
+                                 --cpu-weight/--io-weight 1-10000)
       [--cpu-weight W] [--io-weight W]
       [--fleet-memory 16G]      (the whole fleet's limits, every agent and helper
-      [--fleet-pids N]           together; kept for the fleet's next `up`)
+      [--fleet-pids N]           together; kept for the fleet's next `up`; by
+                                 default 3/4 of memory and pid_max, CPUs - 1)
       [--fleet-cpus 4]
       [-- <command>]            (run it in each new agent as its first task)
   fleet run <id> -- <command> run a task in an agent; one at a time
@@ -2913,6 +2915,26 @@ fn cli_fleet_linux(args: &[String]) -> i32 {
             };
             match devcroft::fleet::commands::up(&provider, &req) {
                 Ok(started) => {
+                    // Every fleet limit as applied; the host-derived ones
+                    // said to be, so a default is never silent.
+                    let l = &started.fleet_limits;
+                    let shown = |name: &str, value: Option<String>| {
+                        let value = value.unwrap_or_else(|| "unlimited".into());
+                        if started.defaulted.contains(&name) {
+                            format!("{name} {value} (default)")
+                        } else {
+                            format!("{name} {value}")
+                        }
+                    };
+                    eprintln!(
+                        "devcroft fleet: fleet limits: {}, {}, {}",
+                        shown("memory", l.memory_max.map(nono::resource::format_bytes)),
+                        shown(
+                            "cpus",
+                            l.cpu_millis.map(|m| format!("{}", m as f64 / 1000.0))
+                        ),
+                        shown("pids", l.pids_max.map(|n| n.to_string())),
+                    );
                     for d in &started.degraded {
                         eprintln!(
                             "devcroft fleet: warning: {d} (fallback: the other limits apply)"
@@ -3121,6 +3143,13 @@ fn cli_fleet_linux(args: &[String]) -> i32 {
                         println!(
                             "died\t{} OOM kill(s), {} whole-agent OOM kill(s), {} fork(s) refused",
                             e.oom_kills, e.oom_group_kills, e.forks_denied
+                        );
+                    }
+                    if let Some(p) = &a.pressure {
+                        println!(
+                            "pressure\t{} fork(s) refused, {} OOM kill(s) so far; sessions may \
+                             not start, `fleet stop` still works",
+                            p.forks_denied, p.oom_kills
                         );
                     }
                     print_task_and_report(&a, &state_dir);

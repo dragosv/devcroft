@@ -118,6 +118,10 @@ pub struct UpRequest<'a> {
 #[derive(Debug)]
 pub struct UpOutcome {
     pub started: Vec<Started>,
+    /// The whole fleet's limits as applied, and which of them were the
+    /// host-derived defaults (`FleetLimits::host_defaults`), to say so.
+    pub fleet_limits: super::cgroup::FleetLimits,
+    pub defaulted: Vec<&'static str>,
     pub degraded: Vec<super::cgroup::Degraded>,
 }
 
@@ -272,6 +276,23 @@ pub fn up(provider: &dyn ProviderEntry, req: &UpRequest) -> Result<UpOutcome, Fl
     if req.agents == 0 {
         return Err(FleetError::Config("--agents must be at least 1".into()));
     }
+    // The control plane's share of the budget it runs in (`PIDS_FLOOR`).
+    for (flag, pids) in [
+        ("--pids", req.limits.pids_max),
+        ("--fleet-pids", req.fleet_limits.pids_max),
+    ] {
+        if let Some(n) = pids.filter(|n| *n < super::cgroup::PIDS_FLOOR) {
+            return Err(FleetError::Config(format!(
+                "{flag} {n} is below {}: an agent's keeper and SSH server share its process \
+                 budget with its workload, and below that a shell cannot be counted on to start",
+                super::cgroup::PIDS_FLOOR
+            )));
+        }
+    }
+    let mut limits = req.limits.clone();
+    limits
+        .pids_max
+        .get_or_insert(super::cgroup::AGENT_PIDS_DEFAULT);
     require_git_repository(req.project_root)?;
     if !req.view {
         refuse_host_root_with_a_daemon()?;
@@ -309,6 +330,10 @@ pub fn up(provider: &dyn ProviderEntry, req: &UpRequest) -> Result<UpOutcome, Fl
             )));
         }
     }
+    // What is neither given nor recorded comes from the host, and is then
+    // recorded like any limit: the next `up` keeps it.
+    let (fleet_limits, defaulted) =
+        fleet_limits.filled_from(super::cgroup::FleetLimits::host_defaults());
     std::fs::create_dir_all(req.state_dir).map_err(backend)?;
     let fleet_file = serde_json::to_vec_pretty(&FleetFile {
         cgroup_root: req.cgroup_root.to_path_buf(),
@@ -364,7 +389,7 @@ pub fn up(provider: &dyn ProviderEntry, req: &UpRequest) -> Result<UpOutcome, Fl
                 id,
                 req.exe,
                 req.authorized_key_pem,
-                req.limits.clone(),
+                limits.clone(),
                 req.view,
             )
             // `prepare` resolves what the manifest says; the deadline is the run's.
@@ -449,7 +474,12 @@ pub fn up(provider: &dyn ProviderEntry, req: &UpRequest) -> Result<UpOutcome, Fl
             }
         }
     }
-    Ok(UpOutcome { started, degraded })
+    Ok(UpOutcome {
+        started,
+        degraded,
+        fleet_limits,
+        defaulted,
+    })
 }
 
 /// Run `command` in agent `id` as its next task (`fleet::task`). Refused

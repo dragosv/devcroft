@@ -156,14 +156,16 @@ question, and the fleet case is the hard one.
 
 ## 0.4 — N agents
 
-**`add-linux-agent-fleet`** (6/56), starting with resource control.
+**`add-linux-agent-fleet`** (68/96 on 2026-10-14; `openspec list` has the
+current count), starting with resource control.
 
 Resource limits first, and not because they are hardest: without cgroups a
 single runaway build starves every other agent, and no amount of isolation
-elsewhere compensates. It is the most likely failure mode at N ≥ 3 and
-currently 0/8.
+elsewhere compensates. It is the most likely failure mode at N ≥ 3. **Built:**
+per-agent limits, a fleet-wide cap on the fleet's own node, and host-derived
+defaults, so a default `fleet up` leaves a quarter of the host to the desktop.
 
-Three things make fleet cheaper than 6/56 suggests:
+Three things made fleet cheaper than its first task count suggested:
 
 - **Its network half is already shipped** and consumed — per-agent
   namespaces, ports, and egress all work today for the single-sandbox

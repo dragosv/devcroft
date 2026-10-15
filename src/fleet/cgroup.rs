@@ -97,7 +97,68 @@ pub struct FleetLimits {
     pub cpu_millis: Option<u64>,
 }
 
+/// Each agent's `pids.max` when none is given: a guard against a fork bomb,
+/// far above what a build needs (review §4.2).
+pub const AGENT_PIDS_DEFAULT: u64 = 4096;
+
+/// The least `pids.max` an agent, or a fleet, may be given. The control
+/// plane shares the agent's budget with its workload: measured, an idle
+/// agent's keeper, PID 1 and SSH server are 6 pids, 8 with a session open,
+/// since the SSH server's runtime is a fixed two workers. Below this a
+/// shell cannot be counted on to start.
+pub const PIDS_FLOOR: u64 = 64;
+
 impl FleetLimits {
+    /// What a fleet gets for any limit it is not given and has not
+    /// recorded (review §4.2): three quarters of the host's memory, every
+    /// CPU it may use but one (at least one), and three quarters of the
+    /// kernel's `pid_max`. So a default `fleet up --agents N` can slow the
+    /// host but not take it: the rest is the desktop's. A value the host
+    /// does not report is left unlimited rather than guessed.
+    pub fn host_defaults() -> FleetLimits {
+        let mem_total = fs::read_to_string("/proc/meminfo").ok().and_then(|m| {
+            m.lines()
+                .find_map(|l| l.strip_prefix("MemTotal:"))
+                .and_then(|v| v.trim().trim_end_matches("kB").trim().parse::<u64>().ok())
+                .map(|kib| kib * 1024)
+        });
+        let cpus = std::thread::available_parallelism()
+            .ok()
+            .map(|n| (n.get() as u64).saturating_sub(1).max(1));
+        let pid_max = fs::read_to_string("/proc/sys/kernel/pid_max")
+            .ok()
+            .and_then(|s| s.trim().parse::<u64>().ok());
+        FleetLimits {
+            // Whole MiB: the kernel rounds `memory.max` down to a page, and
+            // the value recorded has to be the value applied (measured: 3/4
+            // of this host's memory read back 2 KiB lower).
+            memory_max: mem_total.map(|b| b / 4 * 3 / (1 << 20) * (1 << 20)),
+            pids_max: pid_max.map(|n| (n / 4 * 3).max(PIDS_FLOOR)),
+            cpu_millis: cpus.map(|n| n * 1000),
+        }
+    }
+
+    /// Each limit this one does not set, from `defaults`, and the names of
+    /// those that were filled, for saying so.
+    pub fn filled_from(self, defaults: FleetLimits) -> (FleetLimits, Vec<&'static str>) {
+        let mut filled = Vec::new();
+        let mut take = |own: Option<u64>, default: Option<u64>, name| match own {
+            Some(v) => Some(v),
+            None => {
+                if default.is_some() {
+                    filled.push(name);
+                }
+                default
+            }
+        };
+        let limits = FleetLimits {
+            memory_max: take(self.memory_max, defaults.memory_max, "memory"),
+            pids_max: take(self.pids_max, defaults.pids_max, "pids"),
+            cpu_millis: take(self.cpu_millis, defaults.cpu_millis, "cpus"),
+        };
+        (limits, filled)
+    }
+
     /// Each limit given in `other`, over this one's.
     pub fn overridden_by(self, other: FleetLimits) -> FleetLimits {
         FleetLimits {

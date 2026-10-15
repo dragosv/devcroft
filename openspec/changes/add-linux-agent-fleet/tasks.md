@@ -731,8 +731,18 @@ were reproduced there, and each fix here has a mutant that fails its test.
       `fleet run`/`up -- <cmd>` tasks with IDs and observed outcomes,
       agent-reported attention, progress and claims shown beside them; the
       always-false `attention` field is gone.
-- [ ] Decision still open (review §4.2): default budgets and runtime
-      overhead reservation.
+- [x] **Review §4.2, budgets, done** (owner's choice: host-derived caps).
+      Defaults for a fleet given none: memory 3/4 of the host's (whole MiB:
+      the kernel rounds `memory.max` to a page, measured), CPUs minus one,
+      3/4 of `pid_max`; each agent `pids.max` 4096; all said to be defaults
+      and recorded. The control plane's floor is `PIDS_FLOOR` (64), refused
+      below. Its footprint no longer grows with the host: the SSH server's
+      runtime was one worker per CPU (16 pids idle on 12 CPUs, 19 with a
+      session); a fixed two makes it 6 and 8. A workload at its budget is
+      reported live by `inspect` (`pressure`), and `stop` still works.
+      `the_control_plane_fits_its_floor_and_a_budget_below_it_is_refused`,
+      `a_workload_at_its_budget_is_reported_and_still_stopped`, and the
+      defaults in `the_fleets_own_limits_bound_all_its_agents_together`.
 
 ## 3. Networking
 

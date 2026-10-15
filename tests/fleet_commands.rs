@@ -1726,19 +1726,128 @@ fn the_fleets_own_limits_bound_all_its_agents_together() {
 
     // Kept for the fleet's next `up`, a limit given there replacing only
     // itself: a node recreated (after a reboot) does not run uncapped.
-    s.up_capped(
+    let fresh = s
+        .up_capped(
+            1,
+            FleetLimits {
+                pids_max: Some(5_000),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    // `rm --all` removed the fleet, so this is a new one: nothing kept, and
+    // what was not given comes from the host (review §4.2), said to.
+    let host = FleetLimits::host_defaults();
+    let host_memory = host.memory_max.expect("this host reports MemTotal");
+    let host_cpus = host.cpu_millis.expect("this host reports its CPUs");
+    assert_eq!(fresh.defaulted, ["memory", "cpus"]);
+    assert_eq!(read("memory.max"), host_memory.to_string());
+    assert_eq!(read("cpu.max"), format!("{} 100000", host_cpus * 100));
+    // Each agent's process budget has its own default, a fork-bomb guard.
+    let a1_pids = std::fs::read_to_string(node.join("a1/pids.max")).unwrap();
+    assert_eq!(a1_pids.trim(), "4096");
+    // The next `up` keeps all three, the defaults included, and says none
+    // is a default now: they are the fleet's.
+    let again = s.up_capped(1, FleetLimits::default()).unwrap();
+    assert!(again.defaulted.is_empty(), "{:?}", again.defaulted);
+    assert_eq!(read("pids.max"), "5000");
+    assert_eq!(read("memory.max"), host_memory.to_string());
+    s.cmd(commands::rm_all).unwrap();
+}
+
+/// Review §4.2: the control plane shares an agent's process budget with its
+/// workload. Below `PIDS_FLOOR` it cannot be counted on, so it is refused,
+/// before anything is cloned; and the control plane's own footprint no
+/// longer grows with the host's CPU count (the SSH server's runtime was one
+/// worker per CPU: 16 pids idle on 12 CPUs, 19 with a session, measured).
+#[test]
+fn the_control_plane_fits_its_floor_and_a_budget_below_it_is_refused() {
+    use devcroft::fleet::cgroup::{Limits, PIDS_FLOOR};
+    let Some(root) = capable_host() else { return };
+    let s = Setup::new("floor", Some(&root), "", true);
+    let err = s
+        .up_with(
+            1,
+            Limits {
+                pids_max: Some(32),
+                ..Limits::default()
+            },
+        )
+        .unwrap_err();
+    assert_eq!(err.exit_code(), 2, "{err}");
+    assert!(err.to_string().contains(&PIDS_FLOOR.to_string()), "{err}");
+    assert!(!s.clones().exists());
+
+    s.up(1).unwrap();
+    let leaf = root.join(format!("fleet-{}", s.name)).join("a1");
+    let socket = s.state().join("agents/a1/control.sock");
+    let (code, out) = session(
+        &socket,
+        Path::new(PROJECT),
+        "cat /sys/fs/cgroup/pids.current 2>/dev/null; true",
+    );
+    assert_eq!(code, Some(0), "{out}");
+    let with_session: u64 = std::fs::read_to_string(leaf.join("pids.peak"))
+        .or_else(|_| std::fs::read_to_string(leaf.join("pids.current")))
+        .unwrap()
+        .trim()
+        .parse()
+        .unwrap();
+    assert!(
+        with_session <= PIDS_FLOOR / 4,
+        "an agent with one session open peaked at {with_session} pids"
+    );
+    s.cmd(commands::rm_all).unwrap();
+}
+
+/// Review §4.2: what happens when a workload consumes its budget. Its forks
+/// are refused, which `inspect` reports while it runs; and the host side,
+/// acting from outside the agent, still stops it.
+#[test]
+fn a_workload_at_its_budget_is_reported_and_still_stopped() {
+    use devcroft::fleet::cgroup::Limits;
+    let Some(root) = capable_host() else { return };
+    let s = Setup::new("budget", Some(&root), "", true);
+    s.up_with(
         1,
-        FleetLimits {
-            pids_max: Some(5_000),
-            ..Default::default()
+        Limits {
+            pids_max: Some(64),
+            ..Limits::default()
         },
     )
     .unwrap();
-    // `rm --all` removed the fleet, so this is a new one: nothing kept.
-    assert_eq!(read("memory.max"), "max");
-    s.up_capped(1, FleetLimits::default()).unwrap();
-    assert_eq!(read("pids.max"), "5000");
-    assert_eq!(read("cpu.max"), "max 100000");
+    s.cmd(|f| {
+        commands::run(
+            f,
+            "a1",
+            &[
+                "sh".into(),
+                "-c".into(),
+                "for i in $(seq 200); do sleep 60 & done; wait".into(),
+            ],
+        )
+    })
+    .unwrap();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
+    let pressure = loop {
+        let status = s.cmd(|f| commands::inspect(f, "a1")).unwrap();
+        if let Some(p) = status.pressure.filter(|p| p.forks_denied > 0) {
+            break p;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "no refused fork was reported"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    };
+    assert!(pressure.forks_denied > 0);
+    s.cmd(|f| commands::stop(f, "a1")).unwrap();
+    let status = s.cmd(|f| commands::inspect(f, "a1")).unwrap();
+    assert_eq!(status.record.state, AgentState::Stopped);
+    assert_eq!(
+        status.pressure, None,
+        "a stopped agent has no live pressure"
+    );
     s.cmd(commands::rm_all).unwrap();
 }
 

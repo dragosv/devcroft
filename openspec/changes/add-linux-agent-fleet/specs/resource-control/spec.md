@@ -79,6 +79,45 @@ limit given to that `up` SHALL replace only itself.
 - **WHEN** a fleet's `up` gives one fleet limit and a later `up` gives none
 - **THEN** the later `up` reapplies the recorded limit
 
+### Requirement: Budgets have defaults that leave the host usable
+
+A fleet given no limits SHALL be capped from the host: memory at three
+quarters of the host's, CPU at every CPU it may use but one (at least one),
+and processes at three quarters of the kernel's `pid_max`. Each agent SHALL
+get a process limit of 4096 when given none. A default SHALL be reported as
+one when applied, and recorded like a given limit.
+
+#### Scenario: A fleet started with no flags
+
+- **WHEN** `fleet up` is given no limits
+- **THEN** the fleet's node is capped from the host, and `fleet up` says which
+  limits are defaults
+
+### Requirement: The control plane's share is a floor, not a guess
+
+An agent's control plane (its PID 1, keeper and SSH server) shares the
+agent's process budget with its workload, and its footprint SHALL NOT grow
+with the host's CPU count. A process limit below the floor it needs SHALL be
+refused at layer `config` before anything is cloned.
+
+#### Scenario: A process limit below the floor
+
+- **WHEN** `fleet up --pids 32` is run
+- **THEN** it is refused with exit code 2, naming the floor
+
+### Requirement: A workload at its budget is visible, and still stoppable
+
+While an agent runs, what its limits have refused (forks, OOM kills) SHALL be
+reported by `fleet inspect`. Sessions inside it may then fail to start, since
+they share its budget; `stop`, `rm` and `inspect` SHALL still work, since they
+act from outside it.
+
+#### Scenario: A workload exhausts its processes
+
+- **WHEN** a task forks until its agent's process limit refuses it
+- **THEN** `fleet inspect` reports the refused forks while the agent runs
+- **AND** `fleet stop` stops it
+
 ### Requirement: Teardown is cgroup-wide and waits for it to complete
 
 Stopping an agent SHALL terminate every process in its leaf, including

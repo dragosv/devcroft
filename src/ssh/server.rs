@@ -646,6 +646,9 @@ async fn serve(
 /// pre-bound fd (see `up.rs`): non-blocking mode is set here since a
 /// plain inherited `std::os::unix::net::UnixListener` is blocking by
 /// default and tokio requires non-blocking.
+/// The SSH server's runtime workers: fixed, whatever the host's CPU count.
+pub const SSH_WORKER_THREADS: usize = 2;
+
 pub fn spawn(
     std_listener: std::os::unix::net::UnixListener,
     host_key: PrivateKey,
@@ -657,7 +660,18 @@ pub fn spawn(
         return;
     }
     std::thread::spawn(move || {
-        let rt = match tokio::runtime::Runtime::new() {
+        // A fixed pool, not one worker per CPU (`Runtime::new`'s default).
+        // Every thread counts against the agent's `pids.max`, which the
+        // keeper shares with the workload, so the default made the control
+        // plane's footprint grow with the host: on a 22-CPU host an agent
+        // with `pids.max` 32 could not start a shell (adversarial review
+        // §4.2). Two workers serve an editor's connections; measured, an
+        // idle agent went from 16 pids to 6 on a 12-CPU host.
+        let rt = match tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(SSH_WORKER_THREADS)
+            .enable_all()
+            .build()
+        {
             Ok(rt) => rt,
             Err(e) => {
                 eprintln!("devcroft: ssh: starting tokio runtime: {e}");

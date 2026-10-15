@@ -444,10 +444,14 @@ through a per-sandbox proxy; flox, devenv and devbox services with readiness;
 worktree identity; SSH command and pty sessions, `sftp`, `scp` and port
 forwarding; macOS Seatbelt, with its differences reported per capability.
 
+**Experimental, Linux only:** `devcroft fleet`, N agents each on its own clone,
+with per-agent and fleet-wide CPU, memory and PID budgets (host-derived
+defaults) and tasks whose outcomes devcroft observes.
+
 **Not claims today:** containment of hostile code or kernel exploits; undo of
-project changes; CPU, memory or PID budgets; a multi-agent supervisor; a
-credential broker that keeps secrets out of the sandbox; running a project with
-no environment file; Linux-equivalent port isolation on macOS.
+project changes; a credential broker that keeps secrets out of the sandbox;
+running a project with no environment file; Linux-equivalent port isolation on
+macOS.
 
 | Platform | Mechanism | Minimum version | Worth knowing |
 |----------|-----------|-----------------|---------------|
