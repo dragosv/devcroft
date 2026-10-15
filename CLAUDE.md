@@ -407,8 +407,10 @@ for an environment without running it. Measured:
   (flox's hook, devenv's `enterShell`) in `__provision`, under the runtime
   filesystem and `[provisioning.network] allow` alone, through a proxy of
   its own; the keeper then adopts what it exported. A hook that needs a
-  registry declares it there, and sessions never get it. Fleet agents
-  still run the hook in their keeper, under the agent's runtime policy.
+  registry declares it there, and sessions never get it. Fleet agents do
+  the same since 2026-10-15: the script runs in a short-lived agent of its
+  own, in the agent's leaf and view, before the keeper
+  (`Supervisor::provision`).
 
   **That answer is context-dependent, and the contexts are about to
   diverge — do not read the two as contradictory.** Warning is right

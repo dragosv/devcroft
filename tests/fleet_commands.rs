@@ -2084,3 +2084,130 @@ fn a_running_agents_closure_is_kept_from_the_garbage_collector() {
     );
     s.cmd(commands::rm_all).unwrap();
 }
+
+/// A host-side HTTP server answering `200 ok` on `addr`, for the test's life.
+fn serve_ok(addr: &str) -> Option<u16> {
+    use std::io::{Read, Write};
+    let listener = std::net::TcpListener::bind((addr, 0)).ok()?;
+    let port = listener.local_addr().ok()?.port();
+    std::thread::spawn(move || {
+        for mut stream in listener.incoming().flatten() {
+            let mut buf = [0u8; 1024];
+            let _ = stream.read(&mut buf);
+            let _ = stream
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok");
+        }
+    });
+    Some(port)
+}
+
+/// The host's `/usr` as the closure, with an activation script.
+struct WithActivation(String);
+
+impl ProviderEntry for WithActivation {
+    fn resolve(&self, _: &Path) -> Result<Resolution, ProviderError> {
+        Ok(Resolution {
+            env: [("PATH".to_owned(), "/usr/bin".to_owned())].into(),
+            unset: Vec::new(),
+            read_only_grants: vec!["/usr".to_owned()],
+            activation_script: Some(self.0.clone()),
+            services: ServiceSupport::Unsupported,
+            ran_activation_hook: false,
+        })
+    }
+    fn fingerprint(&self, _: &Path) -> Result<String, ProviderError> {
+        Ok(String::new())
+    }
+    fn tier(&self) -> Tier {
+        Tier::Closure
+    }
+    fn static_name(&self) -> &'static str {
+        "nix"
+    }
+}
+
+/// `sandbox-provisioning` P2 for fleet: an agent's activation script runs
+/// in its own short-lived agent under the provisioning policy, as `up` runs
+/// it, not in the keeper under the runtime one. So the script reaches the
+/// provisioning host and not the runtime's; a session the reverse; and
+/// what the script exported still reaches the session.
+#[test]
+fn an_agents_activation_script_provisions_under_its_own_network_policy() {
+    let Some(root) = capable_host() else { return };
+    if !Path::new("/usr/bin/curl").exists() {
+        eprintln!("skipping: no /usr/bin/curl");
+        return;
+    }
+    let (Some(p3), Some(p4)) = (serve_ok("127.0.0.3"), serve_ok("127.0.0.4")) else {
+        eprintln!("skipping: no 127.0.0.3/127.0.0.4 loopback aliases");
+        return;
+    };
+    let s = Setup::new(
+        "prov",
+        Some(&root),
+        "\n[network]\ndefault = \"deny\"\nallow = [\"127.0.0.4\"]\n\n\
+         [provisioning.network]\nallow = [\"127.0.0.3\"]\n",
+        true,
+    );
+    let code = |url: String| {
+        format!("/usr/bin/curl -s -o /dev/null --max-time 5 -w '%{{http_code}}' {url}")
+    };
+    let (to3, to4) = (
+        format!("http://127.0.0.3:{p3}/"),
+        format!("http://127.0.0.4:{p4}/"),
+    );
+    let hook = format!(
+        "{} > hook-reached-3; {} > hook-reached-4; export FROM_THE_HOOK=yes",
+        code(to3.clone()),
+        code(to4.clone())
+    );
+    let started = s
+        .up_via(&WithActivation(hook), 1, Default::default())
+        .unwrap()
+        .started;
+    assert_eq!(started[0].failed, None);
+    let read = |f: &str| {
+        std::fs::read_to_string(started[0].workspace.join(f))
+            .unwrap_or_default()
+            .trim()
+            .to_owned()
+    };
+    let log = std::fs::read_to_string(s.state().join("agents/a1/keeper.log")).unwrap_or_default();
+    assert_eq!(
+        read("hook-reached-3"),
+        "200",
+        "the script could not reach its provisioning host\n{log}"
+    );
+    assert_ne!(
+        read("hook-reached-4"),
+        "200",
+        "the script reached a runtime-only host\n{log}"
+    );
+
+    let socket = s.state().join("agents/a1/control.sock");
+    let (status, out) = session(
+        &socket,
+        Path::new(PROJECT),
+        &format!(
+            "{}; echo; {}; echo; echo \"${{FROM_THE_HOOK-unset}}\"",
+            code(to3),
+            code(to4)
+        ),
+    );
+    assert_eq!(status, Some(0), "{out}");
+    let lines: Vec<&str> = out.lines().collect();
+    assert_eq!(lines.len(), 3, "{out}");
+    assert_ne!(
+        lines[0], "200",
+        "a session reached the provisioning-only host"
+    );
+    assert_eq!(
+        lines[1], "200",
+        "a session could not reach its runtime host: {out}"
+    );
+    assert_eq!(
+        lines[2], "yes",
+        "what the script exported did not reach the session: {out}"
+    );
+    s.cmd(commands::rm_all).unwrap();
+}

@@ -198,6 +198,7 @@ pub fn prepare(
         // Where the workspace sits in its repository is the caller's to say.
         repository: None,
         store_roots,
+        provisioning_allow: manifest.provisioning.network.allow.clone(),
         policy: Some(policy),
     })
 }

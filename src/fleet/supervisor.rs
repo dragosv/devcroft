@@ -74,6 +74,9 @@ pub struct AgentLaunch {
     pub expose: Vec<(String, u16)>,
     /// A wall-clock limit, enforced by the agent's PID 1 (`AgentSpec::timeout_secs`).
     pub timeout: Option<std::time::Duration>,
+    /// `[provisioning.network] allow`: the hosts the provider's activation
+    /// script may reach, through a proxy of its own, while it provisions.
+    pub provisioning_allow: Vec<String>,
     /// The store paths its environment names, kept from the garbage
     /// collector while it runs (`closure::lease`). Empty leases nothing.
     pub store_roots: Vec<String>,
@@ -494,6 +497,23 @@ impl Supervisor {
             )?;
         }
 
+        // The provider's activation script runs before the keeper, in its own
+        // short-lived agent under the provisioning policy, as `up` runs it
+        // (`sandbox-provisioning` P2); the keeper adopts what it exported
+        // and runs only the manifest's hooks. Not for a launch without a
+        // compiled policy, which has no provisioning policy to derive.
+        let activation = launch
+            .policy
+            .as_ref()
+            .and_then(|_| launch.hooks.iter().find(|(name, _)| *name == "activation"))
+            .map(|(_, script)| script.clone());
+        let keeper_hooks: Vec<(&'static str, String)> = launch
+            .hooks
+            .iter()
+            .filter(|(name, _)| activation.is_none() || *name != "activation")
+            .cloned()
+            .collect();
+
         let env = crate::lifecycle::KeeperEnv {
             env: &provider_env,
             unset: &launch.unset,
@@ -503,7 +523,7 @@ impl Supervisor {
             shell: &launch.shell,
             // The keeper finds the config by this name under the workspace.
             services: (!launch.services.is_empty()).then_some(id),
-            hooks: &launch.hooks,
+            hooks: &keeper_hooks,
             project_root: &launch.workspace,
             sandbox_home: &home,
             relay: relay.map(|port| (port, proxy_socket.as_path())),
@@ -515,6 +535,9 @@ impl Supervisor {
         let mut env = env;
         if !ingress_env.is_empty() {
             env.push(("DEVCROFT_INGRESS".into(), ingress_env.join(",")));
+        }
+        if activation.is_some() {
+            env.push(("DEVCROFT_ACTIVATION_PROVISIONED".into(), "1".into()));
         }
 
         let view = if launch.view {
@@ -571,6 +594,9 @@ impl Supervisor {
         };
 
         let leaf = self.node.create_leaf(id, &launch.limits)?;
+        if let Some(script) = &activation {
+            self.provision(id, dir, &leaf, launch, script, &home, at.as_ref(), &inside)?;
+        }
         let agent = init::spawn(&self.exe, &leaf, &spec, stdio)?;
         self.children.insert(id.to_owned(), agent);
 
@@ -597,6 +623,150 @@ impl Supervisor {
                 exit: None,
             },
         )
+    }
+
+    /// Run the provider's activation script for agent `id` as `up` does,
+    /// in a process of its own under the provisioning policy: the runtime
+    /// filesystem, and for network only `[provisioning.network] allow`,
+    /// through a proxy of its own. A short-lived agent in the agent's own
+    /// leaf (so its limits apply), with the agent's view, and gone before
+    /// the keeper starts; what the script exported is left in the agent's
+    /// home for the keeper to adopt. Fails the start when the script fails,
+    /// as `up` fails.
+    #[allow(clippy::too_many_arguments)]
+    fn provision(
+        &self,
+        id: &str,
+        dir: &Path,
+        leaf: &super::cgroup::Leaf,
+        launch: &AgentLaunch,
+        script: &str,
+        home: &Path,
+        at: Option<&AtWorkspace>,
+        inside: &Path,
+    ) -> io::Result<()> {
+        let translate = |s: String| match at {
+            Some(at) => at.translate(&s),
+            None => s,
+        };
+        let policy = launch
+            .policy
+            .as_ref()
+            .expect("provisioning is chosen only with a compiled policy");
+        let socket = dir.join("provision-proxy.sock");
+        let proxy = if launch.provisioning_allow.is_empty() {
+            None
+        } else {
+            Some(crate::proxy::spawn_at(
+                &self.exe,
+                &socket,
+                &dir.join("provision-egress.log"),
+                &launch.provisioning_allow,
+                |cmd| {
+                    cmd.env("DEVCROFT_EGRESS_LABEL", format!("{id} provisioning"));
+                    Ok(())
+                },
+            )?)
+        };
+        let mut provisioning = policy.for_provisioning(&launch.provisioning_allow);
+        if let Some((_, port, _)) = &proxy {
+            provisioning = provisioning.with_proxy_port(*port);
+        }
+        let plan = provisioning.to_capability_plan();
+        // The runtime's proxy variables are not this process's; its own
+        // replace them, or none do.
+        let mut env = launch.provider_env.clone();
+        for (key, _) in crate::proxy::client_env(0, "") {
+            env.remove(&key);
+        }
+        if let Some((_, port, token)) = &proxy {
+            env.extend(crate::proxy::client_env(*port, token));
+        }
+        let relay = proxy.as_ref().map(|(_, port, _)| *port);
+        let hooks = [("activation", script.to_owned())];
+        let vars = crate::lifecycle::KeeperEnv {
+            env: &env,
+            unset: &launch.unset,
+            plan: &plan,
+            ssh_host_key_pem: "",
+            ssh_authorized_key_pem: "",
+            shell: &launch.shell,
+            services: None,
+            hooks: &hooks,
+            project_root: &launch.workspace,
+            sandbox_home: home,
+            relay: relay.map(|port| (port, socket.as_path())),
+        }
+        .vars()
+        .into_iter()
+        .map(|(k, v)| Ok((lossless(k)?, translate(lossless(v)?))))
+        .collect::<io::Result<Vec<_>>>()?;
+
+        let root = dir.join("provision-root");
+        let view = if launch.view {
+            std::fs::create_dir_all(&root)?;
+            Some(View {
+                root: root.clone(),
+                proxy_socket: relay.map(|_| socket.clone()),
+                workspace: Some(
+                    launch
+                        .repository
+                        .as_ref()
+                        .unwrap_or(&launch.workspace)
+                        .clone(),
+                ),
+            })
+        } else {
+            None
+        };
+        let spec = AgentSpec {
+            command: vec![
+                self.exe.to_string_lossy().into_owned(),
+                "__provision".into(),
+            ],
+            env: vars,
+            cwd: Some(inside.to_path_buf()),
+            hostname: id.to_owned(),
+            plan: serde_json::from_str(&translate(
+                serde_json::to_string(&plan).map_err(io::Error::other)?,
+            ))
+            .map_err(io::Error::other)?,
+            project_root: inside.to_path_buf(),
+            relay_port: relay,
+            view,
+            timeout_secs: launch.timeout.map(|t| t.as_secs().max(1)),
+        };
+        let log = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(dir.join("keeper.log"))?;
+        let stdio = Stdio {
+            stdout: Some(log.try_clone()?.into()),
+            stderr: Some(log.into()),
+            inherit: Vec::new(),
+            lifeline: None,
+            report: None,
+        };
+        let status = init::spawn(&self.exe, leaf, &spec, stdio).and_then(|agent| agent.wait());
+
+        if let Some((pid, _, _)) = proxy {
+            // SAFETY: signalling and reaping our own child.
+            unsafe {
+                libc::kill(pid, libc::SIGTERM);
+                libc::waitpid(pid, std::ptr::null_mut(), 0);
+            }
+            let _ = std::fs::remove_file(&socket);
+        }
+        let _ = std::fs::remove_dir(&root);
+        let status = status?;
+        if status.success() {
+            return Ok(());
+        }
+        Err(io::Error::other(
+            crate::lifecycle::keeper_failure_reason(&dir.join("keeper.log")).unwrap_or_else(|| {
+                format!("agent {id}: its activation script's provisioning exited with {status}")
+            }),
+        ))
     }
 
     /// Every recorded agent, reconciled against the kernel first, in ID

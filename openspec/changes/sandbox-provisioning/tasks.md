@@ -218,9 +218,21 @@
 
 - [x] Route flox through the provisioning sandbox.
       A flox hook (and devenv's `enterShell`) runs in the provisioning process.
-      **Not fleet:** a fleet agent's keeper still runs the hook itself, under
-      the agent's runtime policy; fleet builds agents without `up`.
+      **Fleet too (2026-10-15):** an agent's activation script runs in a
+      short-lived agent of its own, in the agent's leaf and view, under the
+      provisioning policy and behind its own proxy, before the keeper, which
+      adopts what it exported (`Supervisor::provision`).
+      `an_agents_activation_script_provisions_under_its_own_network_policy`:
+      the script reaches the provisioning host and not the runtime's, a
+      session the reverse, the export reaches the session; with the script
+      back in the keeper, the provisioning host is refused (502).
 - [ ] Route devbox through it, keeping the existing lockfile byte-comparison.
+      **Re-derived (2026-10-15), still open:** devbox has no activation script
+      to route (`init_hook` never runs), so this is confining devbox's
+      *resolution*, `devbox shellenv --pure`, which P6 measured working
+      confined and byte-identical. It is a larger step than routing a hook:
+      the provisioning policy is compiled from the grants resolution
+      produces, so resolution would need a policy of its own.
 - [ ] Give nix a provisioning profile for inspectability; its resolution path is
       unchanged.
 - [ ] Replace the host-execution warning with an accurate statement of
@@ -258,7 +270,8 @@
       provisioning compilation gets its own proxy and allowlist without new
       machinery. What is missing is only the second context, which is this
       change's own subject. **Done (2026-10-12):** `[provisioning.network]
-      allow`, its own proxy, `tests/provisioning_network.rs`.
+      allow`, its own proxy, `tests/provisioning_network.rs`; fleet agents
+      too since 2026-10-15.
 - [ ] Cache sharing across agents: read-only share plus per-agent overlay.
       **Decide before fleet work**, not after.
 - [ ] macOS fidelity statement.
