@@ -232,8 +232,14 @@
       Shown for the part that differs, reaching a registry: the hook reaches a
       provisioning-allowed host (a local server standing in) that the runtime
       denies. A real `npm ci` was not run.
-- [ ] A hook writing to an undeclared home path does not affect the real home.
-- [ ] A hook attempting to read credentials outside the profile is denied.
+- [x] A hook writing to an undeclared home path does not affect the real home.
+- [x] A hook attempting to read credentials outside the profile is denied.
+      Both in `tests/provisioning_confinement.rs`: the hook's `HOME` is the
+      sandbox's and its write lands there; writing into the real home and
+      reading a probe file there (a stand-in credential the test makes) are
+      both refused. With the provisioning process unconfined (no mount
+      view, no Landlock: how the hook ran before this change) the hook wrote
+      into the real home and the test fails.
 - [x] Every existing sample still provisions.
       The full suite with the provisioning process in place (2026-10-12),
       devenv on `PATH` and `--features test-support`: 653 passed, 0 failed,
@@ -243,7 +249,7 @@
 
 ## 6. Deferred decisions (see design.md)
 
-- [ ] Network during provisioning: a real provisioning allowlist, from
+- [x] Network during provisioning: a real provisioning allowlist, from
       `add-egress-proxy`. Not a binary on/off — see design.md open question 2.
       **No longer deferred-and-unowned: `add-egress-proxy` has shipped, and
       its "Network policy is declared per context" requirement moved into
@@ -251,7 +257,8 @@
       `CompiledPolicy::network_proxy_port` is per-compilation, so a
       provisioning compilation gets its own proxy and allowlist without new
       machinery. What is missing is only the second context, which is this
-      change's own subject.
+      change's own subject. **Done (2026-10-12):** `[provisioning.network]
+      allow`, its own proxy, `tests/provisioning_network.rs`.
 - [ ] Cache sharing across agents: read-only share plus per-agent overlay.
       **Decide before fleet work**, not after.
 - [ ] macOS fidelity statement.
