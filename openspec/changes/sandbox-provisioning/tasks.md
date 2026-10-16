@@ -172,11 +172,18 @@
       The runtime filesystem, and **no network, nothing inherited** from the
       runtime allowlist (`CompiledPolicy::for_provisioning`). The network
       spec's "Provisioning inherits nothing by default".
-- [ ] Extend `policy --render` and `why` to cover both profiles with origin
+- [x] Extend `policy --render` and `why` to cover both profiles with origin
       attribution.
       **`--render` done (2026-10-12):** a provisioning section with its allowlist
       and origin `manifest:provisioning.network.allow`, shown even when empty.
-      `why` does not yet answer for the provisioning context.
+      **`why` done (2026-10-15):** `why --host <h> --provisioning` answers for
+      the activation script; either context's answer names the other's when
+      they differ, and why (`policy::why_host_in_contexts`). A provisioning
+      denial is attributed to `baseline` (its own no-network default), not to
+      `manifest:network.default`, which it first was and which read as though
+      the runtime setting decided it. `--path --provisioning` says the
+      filesystem is shared; `--env --provisioning` is refused.
+      `tests/why_provisioning.rs`; with `--provisioning` ignored, it fails.
 - [ ] Report degradation where the backend cannot enforce a declared aspect.
 
 ## 2. Provisioning sandbox

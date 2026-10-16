@@ -145,8 +145,58 @@ fn matching<'a>(rules: &'a [AnnotatedValue], path: &str) -> Option<&'a Annotated
     rules.iter().find(|r| is_within(path, &r.value))
 }
 
+/// `why --host` in both contexts (`sandbox-provisioning`): the runtime's
+/// answer and the provisioning process's, which share the filesystem but
+/// not the network. Provisioning inherits nothing from `[network] allow`
+/// and has only `[provisioning.network] allow`, so a host can be allowed in
+/// one and refused in the other, and either answer alone misleads whoever
+/// is asking about the other context. Returns `(runtime, provisioning)`.
+pub fn why_host_in_contexts(
+    compiled: &CompiledPolicy,
+    provisioning_allow: &[String],
+    host: &str,
+) -> (Explanation, Explanation) {
+    let mut during = why_host(&compiled.for_provisioning(provisioning_allow), host);
+    // Refused there by devcroft's own default, whatever `[network] default`
+    // says: provisioning has no network but its own allowlist. Attributed
+    // to the manifest's `network.default`, it read as though the runtime
+    // setting decided it.
+    if !during.allowed {
+        during = Explanation {
+            allowed: false,
+            origin: Some(Origin::Baseline),
+            detail: format!(
+                "denied by rule baseline: provisioning has no network but \
+                 [provisioning.network] allow ({host} is not in it)"
+            ),
+        };
+    }
+    (why_host(compiled, host), during)
+}
+
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn a_host_is_answered_in_both_contexts_each_with_its_own_rule() {
+        let (manifest, _) =
+            crate::config::parse("[sandbox]\nname = \"w\"\n\n[network]\ndefault = \"allow\"\n")
+                .unwrap();
+        let compiled = crate::policy::compile(&manifest);
+        let allow = vec!["registry.example".to_string()];
+        // Runtime allows everything; provisioning still only its own list.
+        let (runtime, during) = why_host_in_contexts(&compiled, &allow, "elsewhere.example");
+        assert!(runtime.allowed);
+        assert!(!during.allowed);
+        assert_eq!(during.origin, Some(Origin::Baseline), "{}", during.detail);
+        let (_, during) = why_host_in_contexts(&compiled, &allow, "registry.example");
+        assert!(during.allowed);
+        assert_eq!(
+            during.origin,
+            Some(Origin::Manifest("provisioning.network.allow"))
+        );
+    }
+
     use super::super::compile;
     use super::*;
     use crate::config::parse;

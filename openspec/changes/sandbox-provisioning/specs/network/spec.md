@@ -29,6 +29,15 @@ starts existing, so it is where the requirement becomes testable.
 - **THEN** each context's allowlist is shown with its origin
 - **AND** a context whose network reach exceeds another's is visibly so
 
+#### Scenario: Asking about one context
+
+- **WHEN** the operator asks `why` about a host for the provisioning context,
+  or for runtime
+- **THEN** the answer is that context's, with the rule that decides it
+- **AND** where the other context decides differently, the answer says so and
+  why, so that a host a session reaches and the activation script does not
+  (or the reverse) is not a surprise
+
 #### Scenario: Provisioning inherits nothing by default
 
 - **WHEN** the manifest declares a runtime `network.allow` and no provisioning

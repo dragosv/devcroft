@@ -219,6 +219,7 @@ inspecting
   policy --render [name]      the compiled profile, every rule with its origin
   why --path P --op <mode>    whether one operation is allowed, and which rule decides
   why --host <domain>         the same question for an outbound host
+      [--provisioning]          (asked of the provider's activation script, not a session)
   why --env <NAME>            why a variable is or is not in the sandbox
   doctor                      check this host for what devcroft needs
 
@@ -3859,7 +3860,8 @@ fn provider_static_name(name: &str) -> &'static str {
 /// `devcroft why --host <domain> [name]` (policy spec's "Explainable
 /// decisions" requirement).
 fn cli_why(args: &[String]) -> i32 {
-    const USAGE: &str = "devcroft why: usage: devcroft why --path <p> --op <read|write|readwrite> [name] | devcroft why --host <domain> [name] | devcroft why --env <NAME> [name]";
+    const USAGE: &str = "devcroft why: usage: devcroft why --path <p> --op <read|write|readwrite> [--provisioning] [name] | devcroft why --host <domain> [--provisioning] [name] | devcroft why --env <NAME> [name]";
+    let mut provisioning = false;
     let mut path: Option<String> = None;
     let mut op: Option<String> = None;
     let mut host: Option<String> = None;
@@ -3872,6 +3874,8 @@ fn cli_why(args: &[String]) -> i32 {
             "--op" => op = it.next().cloned(),
             "--host" => host = it.next().cloned(),
             "--env" => env_name = it.next().cloned(),
+            // The provider's activation script's context, not a session's.
+            "--provisioning" => provisioning = true,
             _ if name_arg.is_none() => name_arg = Some(a.clone()),
             _ => {
                 eprintln!("{USAGE}");
@@ -3900,8 +3904,51 @@ fn cli_why(args: &[String]) -> i32 {
         return 1;
     }
 
+    if provisioning && env_name.is_some() {
+        eprintln!(
+            "devcroft why: --env answers for sessions only; the activation script starts \
+             from the same environment"
+        );
+        return 2;
+    }
+
     if let Some(host) = host {
-        print_explanation(&devcroft::policy::why_host(&compiled, &host));
+        // Both contexts, so an answer for one names the other when they
+        // differ: a host a session reaches and the script does not (or the
+        // reverse) is the confusion the split creates.
+        let (runtime, during) = devcroft::policy::why_host_in_contexts(
+            &compiled,
+            &manifest.provisioning.network.allow,
+            &host,
+        );
+        let (asked, other) = if provisioning {
+            (&during, &runtime)
+        } else {
+            (&runtime, &during)
+        };
+        print_explanation(asked);
+        if asked.allowed != other.allowed {
+            let verdict = if other.allowed { "ALLOWED" } else { "DENIED" };
+            // Why the two differ depends on which one allows it.
+            let why = match (provisioning, other.allowed) {
+                (true, true) => {
+                    "provisioning inherits nothing from [network] allow; if the activation \
+                     script needs it, declare it in [provisioning.network] allow"
+                }
+                (true, false) => "sessions never get the provisioning allowlist",
+                (false, true) => "the provider's activation script only, never a session",
+                (false, false) => {
+                    "the activation script inherits nothing from [network] allow; if it needs \
+                     this, declare it in [provisioning.network] allow"
+                }
+            };
+            let context = if provisioning {
+                "at runtime"
+            } else {
+                "during provisioning"
+            };
+            println!("{context}: {verdict} ({}); {why}", other.detail);
+        }
         return 0;
     }
 
@@ -3968,6 +4015,10 @@ fn cli_why(args: &[String]) -> i32 {
         }
     };
     print_explanation(&devcroft::policy::why_path(&compiled, &path, op));
+    if provisioning {
+        // The same rules: provisioning has the runtime's filesystem.
+        println!("provisioning has the same filesystem as runtime, so this is its answer too");
+    }
     0
 }
 
