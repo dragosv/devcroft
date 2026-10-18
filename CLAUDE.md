@@ -19,8 +19,8 @@ this crate's workspace); `nix-go-sample` (Go),
 `remove-gvisor-backend`, which also dropped the `isolation = "hardened"`
 key from its manifest that would otherwise now fail to parse), and
 `flox-services-sample`, `devenv-sample`, `devenv-services-sample`,
-`devenv-claude-sample` and `port-allocation-sample` (none has application
-code at all)
+the eleven `devenv-<agent>-sample`s and `port-allocation-sample` (none has
+application code at all)
 are non-Rust, so no workspace exclusion applies to them — see each
 sample's own `README.md` for what it demonstrates. `flox-services-sample`
 shows `network.ports` and supervised `[services]` both working — devcroft
@@ -30,7 +30,9 @@ invariant below, because its manifest declares no shell, which is what
 every real flox manifest looks like.
 `devenv-claude-sample` is a coding agent (Claude Code, from nixpkgs, so
 `devenv.yaml` sets `allowUnfree`) running inside a sandbox, with only
-`api.anthropic.com` allowed. It depends on the sandbox having a PID
+`api.anthropic.com` allowed; ten siblings do the same for Codex, Gemini CLI,
+OpenCode, Copilot, Aider, Goose, Amp, Cursor, Qwen Code and Crush, each with
+one provider and its host alone (`docs/agents.md` is the matrix). It depends on the sandbox having a PID
 namespace of its own (`add-up-pid-namespace`): the agent is a Bun binary
 that aborts without `/proc`.
 `port-allocation-sample` is two sandboxes of one project running the same

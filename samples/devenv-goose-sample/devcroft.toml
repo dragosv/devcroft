@@ -1,0 +1,20 @@
+[sandbox]
+name = "devenvgoose"
+
+[env]
+provider = "devenv"
+# Keys reach the sandbox from your shell, never from this file.
+forward = ["OPENAI_API_KEY"]
+
+# The agent's own configuration (README.md says why each is needed).
+[env.vars]
+GOOSE_DISABLE_KEYRING = "true"
+GOOSE_PROVIDER = "openai"
+GOOSE_MODEL = "gpt-4o"
+
+[network]
+default = "deny"
+# The agent's API, and nothing else (see README.md for what it also tries).
+allow = [
+  "api.openai.com",
+]

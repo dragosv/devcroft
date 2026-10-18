@@ -1,0 +1,6 @@
+inputs:
+  nixpkgs:
+    url: github:cachix/devenv-nixpkgs/rolling
+# github-copilot-cli is unfree in nixpkgs, so devenv refuses to evaluate it
+# without this.
+allowUnfree: true

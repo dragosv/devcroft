@@ -1,0 +1,14 @@
+[sandbox]
+name = "devenvqwen"
+
+[env]
+provider = "devenv"
+# Keys reach the sandbox from your shell, never from this file.
+forward = ["OPENAI_API_KEY"]
+
+[network]
+default = "deny"
+# The agent's API, and nothing else (see README.md for what it also tries).
+allow = [
+  "dashscope.aliyuncs.com",
+]

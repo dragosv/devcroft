@@ -1,0 +1,18 @@
+[sandbox]
+name = "devenvaider"
+
+[env]
+provider = "devenv"
+# Keys reach the sandbox from your shell, never from this file.
+forward = ["OPENAI_API_KEY"]
+
+# The agent's own configuration (README.md says why each is needed).
+[env.vars]
+AIDER_CHECK_UPDATE = "false"
+
+[network]
+default = "deny"
+# The agent's API, and nothing else (see README.md for what it also tries).
+allow = [
+  "api.openai.com",
+]

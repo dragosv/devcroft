@@ -7,26 +7,28 @@ its own vendor's API through the egress proxy, and is refused there for the
 dummy key it was given. That last step is the test: a refusal from the real
 API means the runtime, the network path and TLS all worked from inside.
 
-A working project to copy is
-[samples/devenv-claude-sample](../samples/devenv-claude-sample/); every
-agent below goes in the same place in `devenv.nix`, with its API host in
-`network.allow` and its key in `[env] forward`.
+Each agent has a sample of its own, linked in the table: the agent in
+`devenv.nix`, its key in `[env] forward`, its API host alone in
+`network.allow`, and its own configuration in `[env.vars]`. Each was brought
+up as committed and refused by its vendor's API for a dummy key. The
+multi-provider agents (OpenCode, Aider, Crush) are set up for the one provider
+they were measured with; their READMEs say what to swap for another.
 
 ## The matrix
 
-| Agent | nixpkgs | Key | Allow | Refused, harmlessly | Needs |
-|---|---|---|---|---|---|
-| Claude Code 2.1.293 | `claude-code` (unfree) | `ANTHROPIC_API_KEY` | `api.anthropic.com` | `http-intake.logs.us5.datadoghq.com` | — |
-| Codex 0.161.0 | `codex` | `CODEX_API_KEY` | `api.openai.com` | `chatgpt.com`, `codeload.github.com` | `exec --skip-git-repo-check` outside a repo |
-| Gemini CLI 0.47.0 | `gemini-cli` | `GEMINI_API_KEY` | `generativelanguage.googleapis.com` | `play.googleapis.com` | `GEMINI_CLI_TRUST_WORKSPACE=true` |
-| OpenCode 1.18.35 | `opencode` | the provider's own (here `OPENAI_API_KEY`) | that provider's host | `models.opencode.ai`, `registry.npmjs.org` | — |
-| GitHub Copilot CLI | `github-copilot-cli` (unfree) | `COPILOT_GITHUB_TOKEN` or `GH_TOKEN` | `api.github.com`, `api.githubcopilot.com` | — | a fine-grained token (`github_pat_…`) |
-| Aider 0.86.1 | `aider-chat` | `OPENAI_API_KEY` | `api.openai.com` | `raw.githubusercontent.com` | `--no-check-update`; a git repo or `--no-git` |
-| Goose 1.49.0 | `goose-cli` | `OPENAI_API_KEY` | `api.openai.com` | — | `GOOSE_DISABLE_KEYRING=true`, `GOOSE_PROVIDER`, `GOOSE_MODEL` |
-| Amp | `amp-cli` (unfree) | `AMP_API_KEY` | `ampcode.com` | — | — |
-| Cursor agent 2026.10.01 | `cursor-cli` (unfree) | `CURSOR_API_KEY` | `api2.cursor.sh` | — | — |
-| Qwen Code 0.23.4 | `qwen-code` | `OPENAI_API_KEY` | `dashscope.aliyuncs.com` | `…rum.aliyuncs.com` | `--auth-type openai` |
-| Crush 0.96.1 | `crush` | `ANTHROPIC_API_KEY` | `api.anthropic.com` | `catwalk.charm.land`, `data.charm.land`, `hyper.charm.land` | — |
+| Agent | Sample | nixpkgs | Key | Allow | Refused, harmlessly | Needs |
+|---|---|---|---|---|---|---|
+| Claude Code 2.1.293 | [devenv-claude-sample](../samples/devenv-claude-sample/) | `claude-code` (unfree) | `ANTHROPIC_API_KEY` | `api.anthropic.com` | `http-intake.logs.us5.datadoghq.com` | — |
+| Codex 0.161.0 | [devenv-codex-sample](../samples/devenv-codex-sample/) | `codex` | `CODEX_API_KEY` | `api.openai.com` | `chatgpt.com`, `api.github.com` | `exec --skip-git-repo-check` outside a repo |
+| Gemini CLI 0.47.0 | [devenv-gemini-sample](../samples/devenv-gemini-sample/) | `gemini-cli` | `GEMINI_API_KEY` | `generativelanguage.googleapis.com` | `play.googleapis.com` | `GEMINI_CLI_TRUST_WORKSPACE=true` |
+| OpenCode 1.18.35 | [devenv-opencode-sample](../samples/devenv-opencode-sample/) | `opencode` | the provider's own (here `OPENAI_API_KEY`) | that provider's host | `models.opencode.ai`, `registry.npmjs.org` | — |
+| GitHub Copilot CLI | [devenv-copilot-sample](../samples/devenv-copilot-sample/) | `github-copilot-cli` (unfree) | `COPILOT_GITHUB_TOKEN` | `api.github.com`, `api.githubcopilot.com` | — | a fine-grained token (`github_pat_…`) |
+| Aider 0.86.1 | [devenv-aider-sample](../samples/devenv-aider-sample/) | `aider-chat` | `OPENAI_API_KEY` | `api.openai.com` | `raw.githubusercontent.com` | `--no-check-update`; a git repo or `--no-git` |
+| Goose 1.49.0 | [devenv-goose-sample](../samples/devenv-goose-sample/) | `goose-cli` | `OPENAI_API_KEY` | `api.openai.com` | — | `GOOSE_DISABLE_KEYRING=true`, `GOOSE_PROVIDER`, `GOOSE_MODEL` |
+| Amp | [devenv-amp-sample](../samples/devenv-amp-sample/) | `amp-cli` (unfree) | `AMP_API_KEY` | `ampcode.com` | — | — |
+| Cursor agent 2026.10.01 | [devenv-cursor-sample](../samples/devenv-cursor-sample/) | `cursor-cli` (unfree) | `CURSOR_API_KEY` | `api2.cursor.sh` | — | — |
+| Qwen Code 0.23.4 | [devenv-qwen-sample](../samples/devenv-qwen-sample/) | `qwen-code` | `OPENAI_API_KEY` | `dashscope.aliyuncs.com` | `api.openai.com`, `…rum.aliyuncs.com` | `--auth-type openai` |
+| Crush 0.96.1 | [devenv-crush-sample](../samples/devenv-crush-sample/) | `crush` (unfree: FSL) | `ANTHROPIC_API_KEY` | `api.anthropic.com` | `api.github.com`, `catwalk.charm.land`, `data.charm.land`, `hyper.charm.land` | — |
 
 "Refused, harmlessly" is what the proxy turned away while the agent still
 reached its API: telemetry, update checks, model catalogues. Allow any of

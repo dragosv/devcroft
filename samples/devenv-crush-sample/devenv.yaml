@@ -1,0 +1,6 @@
+inputs:
+  nixpkgs:
+    url: github:cachix/devenv-nixpkgs/rolling
+# crush's license (FSL) is unfree to nixpkgs, so devenv refuses to
+# evaluate it without this.
+allowUnfree: true
