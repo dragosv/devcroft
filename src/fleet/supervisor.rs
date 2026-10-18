@@ -375,7 +375,10 @@ impl Supervisor {
             None
         } else {
             let proxy_leaf = host_leaf.as_ref().expect("created when there is egress");
-            let (_, port, token) = crate::proxy::spawn_at(
+            // The token stays with the proxy: an agent reaches it only
+            // through the relay and the unix socket, whose bridge presents
+            // it (`up`'s rule, `proxy::server::bridge_unix_to_proxy`).
+            let (_, port, _token) = crate::proxy::spawn_at(
                 &self.exe,
                 &proxy_socket,
                 &dir.join("egress.log"),
@@ -390,7 +393,7 @@ impl Supervisor {
                 },
             )?;
             plan.network_proxy_port = Some(port);
-            provider_env.extend(crate::proxy::client_env(port, &token));
+            provider_env.extend(crate::proxy::client_env(port, ""));
             Some(port)
         };
 
@@ -680,8 +683,8 @@ impl Supervisor {
         for (key, _) in crate::proxy::client_env(0, "") {
             env.remove(&key);
         }
-        if let Some((_, port, token)) = &proxy {
-            env.extend(crate::proxy::client_env(*port, token));
+        if let Some((_, port, _)) = &proxy {
+            env.extend(crate::proxy::client_env(*port, ""));
         }
         let relay = proxy.as_ref().map(|(_, port, _)| *port);
         let hooks = [("activation", script.to_owned())];

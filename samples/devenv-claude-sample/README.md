@@ -6,6 +6,10 @@ agent itself coming from the project's closure rather than from your machine.
 There is no application code here. The subject is the agent: what it takes
 for one to run confined, and what it can and cannot reach once it does.
 
+Ten other agents (Codex, Gemini CLI, OpenCode, Copilot, Aider, Goose, Amp,
+Cursor, Qwen Code, Crush) were run the same way; the matrix of what each
+needs is [docs/agents.md](../../docs/agents.md).
+
 ## Run it
 
 ```sh
@@ -67,9 +71,10 @@ Measured 2026-10-18, each of these stopped an agent before it was fixed:
   start.
 - **A shell by name.** The agent and npm look for `sh` on `PATH` and in
   `SHELL`; devcroft supplies its resolved shell for both.
-- **CA certificates.** Where a provider names the host's bundle, devcroft
-  grants it (`trust-store` in `policy --render`); devenv names one in the
-  store, which is already granted, so nothing is added here.
+- **CA certificates.** devenv's environment names no bundle at all, so
+  devcroft grants the host's system one and sets `SSL_CERT_FILE` to it
+  (`trust-store` in `policy --render`). Claude Code brings its own roots
+  and would not notice; Go and Rust agents (Crush, Codex, Goose) do.
 
 ## What is not covered
 

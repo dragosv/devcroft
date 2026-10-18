@@ -40,6 +40,23 @@ const BUNDLE_VARS: [&str; 6] = [
     "NODE_EXTRA_CA_CERTS",
 ];
 
+/// Where distributions keep the system bundle, for an environment that names
+/// none: Debian/Ubuntu/Arch, Fedora/RHEL, openSUSE, then Alpine and macOS.
+///
+/// **Measured (2026-10-18):** devenv's environment names no bundle at all,
+/// and `/etc/ssl` is not in the view, so every tool that falls back to the
+/// system store failed TLS: Crush (Go, `x509: certificate signed by unknown
+/// authority`), Codex (rustls, `invalid peer certificate: UnknownIssuer`),
+/// Goose (reqwest could not even build its client). Node, Bun and Python's
+/// certifi bundle their own and were unaffected, which is why it went
+/// unnoticed.
+const SYSTEM_BUNDLES: [&str; 4] = [
+    "/etc/ssl/certs/ca-certificates.crt",
+    "/etc/pki/tls/certs/ca-bundle.crt",
+    "/etc/ssl/ca-bundle.pem",
+    "/etc/ssl/cert.pem",
+];
+
 /// Read at most this much of a candidate: Mozilla's bundle is ~220 KiB.
 const MAX_BUNDLE: u64 = 4 * 1024 * 1024;
 
@@ -47,7 +64,8 @@ const MAX_BUNDLE: u64 = 4 * 1024 * 1024;
 pub struct TrustStore {
     /// Canonical paths to grant read-only, each once.
     pub grants: Vec<String>,
-    /// Variables to rewrite to the canonical path they name.
+    /// Variables to set: each to the canonical path it named, or
+    /// `SSL_CERT_FILE` to the host's system bundle when nothing was named.
     pub rewrites: Vec<(String, String)>,
     /// One line each for a bundle named but not granted, and why: `up`
     /// prints them (degraded capabilities are surfaced, never silent).
@@ -67,7 +85,7 @@ impl TrustStore {
 /// bundles it names, given the grants the sandbox already has.
 pub fn resolve(env: &BTreeMap<String, String>, granted: &[String]) -> TrustStore {
     let home = std::env::var_os("HOME").map(std::path::PathBuf::from);
-    resolve_with(env, granted, home.as_deref(), &|p| {
+    resolve_with(env, granted, home.as_deref(), &SYSTEM_BUNDLES, &|p| {
         let canonical = std::fs::canonicalize(p).ok()?;
         let file = std::fs::File::open(&canonical).ok()?;
         if !file.metadata().ok()?.is_file() {
@@ -87,9 +105,33 @@ fn resolve_with(
     env: &BTreeMap<String, String>,
     granted: &[String],
     home: Option<&Path>,
+    system: &[&str],
     read: &dyn Fn(&Path) -> Option<(String, String)>,
 ) -> TrustStore {
     let mut out = TrustStore::default();
+    let named = BUNDLE_VARS
+        .iter()
+        .any(|var| env.get(*var).is_some_and(|v| v.starts_with('/')));
+    if !named {
+        // The first system bundle the host has, as if the environment had
+        // named it in `SSL_CERT_FILE`; the same checks apply. Go, OpenSSL,
+        // rustls's native roots and curl all read that variable.
+        let found = system
+            .iter()
+            .find_map(|p| read(Path::new(p)).map(|(canonical, _)| (*p, canonical)));
+        if let Some((found, canonical)) = found {
+            let mut as_named = env.clone();
+            as_named.insert("SSL_CERT_FILE".to_owned(), found.to_owned());
+            let mut t = resolve_with(&as_named, granted, home, &[], read);
+            // devcroft named it, not the environment, so the variable is set
+            // whether or not the path needed rewriting.
+            if t.refused.is_empty() {
+                t.rewrites.retain(|(k, _)| k != "SSL_CERT_FILE");
+                t.rewrites.push(("SSL_CERT_FILE".to_owned(), canonical));
+            }
+            return t;
+        }
+    }
     for var in BUNDLE_VARS {
         let Some(value) = env.get(var).filter(|v| v.starts_with('/')) else {
             continue;
@@ -177,6 +219,7 @@ mod tests {
             &env,
             &["/nix/store".to_owned(), "/usr/lib".to_owned()],
             Some(Path::new("/home/u")),
+            &SYSTEM_BUNDLES,
             &read,
         )
     }
@@ -207,6 +250,27 @@ mod tests {
             "/nix/store/abc-nss-cacert/etc/ssl/certs/ca-bundle.crt",
         )]);
         assert_eq!(t, TrustStore::default());
+    }
+
+    /// The measured devenv case: nothing named, so the host's system bundle
+    /// is granted and `SSL_CERT_FILE` set to it.
+    #[test]
+    fn with_nothing_named_the_hosts_system_bundle_is_used() {
+        let t = of(&[("PATH", "/nix/store/x/bin")]);
+        assert_eq!(t.grants, ["/etc/ssl/certs/ca-certificates.crt"]);
+        assert_eq!(
+            t.rewrites,
+            [(
+                "SSL_CERT_FILE".to_owned(),
+                "/etc/ssl/certs/ca-certificates.crt".to_owned()
+            )]
+        );
+        // Something named, even one inside a grant: the environment chose.
+        let named = of(&[(
+            "NIX_SSL_CERT_FILE",
+            "/nix/store/abc-nss-cacert/etc/ssl/certs/ca-bundle.crt",
+        )]);
+        assert_eq!(named, TrustStore::default());
     }
 
     /// The guard: a variable is not a way to read an arbitrary host file.

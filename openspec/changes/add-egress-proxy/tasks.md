@@ -169,6 +169,15 @@ brings other capabilities along with it.
       authenticating needs no devcroft-specific proxy support from any
       client. `authorized()` accepts only `Basic`, decodes it, and compares
       the username half in constant time.
+      **Revised (2026-10-18), measured wrong for the clients that matter:**
+      of eleven coding agents run in one sandbox, Gemini CLI, Qwen Code and
+      Cursor's agent sent no `Proxy-Authorization` from userinfo (407), and
+      OpenCode and Amp (Bun) read `<token>@127.0.0.1` as the host. An
+      isolated sandbox now gets a plain proxy URL, and the unix socket's
+      bridge, which every request from one passes through, presents the
+      token (`bridge_unix_to_proxy`). The TCP listener still requires it,
+      and a sandbox that reaches it directly (no network namespace) still
+      gets userinfo. `docs/agents.md`.
 - [x] Refuse with `407 Proxy Authentication Required`, not `502` — a missing
       or wrong credential and a denied host are different facts, and folding
       them into one status would make a misconfigured proxy indistinguishable

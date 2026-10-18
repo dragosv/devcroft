@@ -309,8 +309,13 @@ was first written. Reading that crate's config surfaced a real defect in
 devcroft's own proxy — no authentication on a loopback listener, which
 makes it an open relay lending its sandbox's allowlist to any local
 process — and the defect was **fixed directly in devcroft's own proxy**
-(task group 4a: a per-session token as proxy-URL userinfo, checked before
-the allowlist decision), rather than by importing the crate. Adopting
+(task group 4a: a per-session token, checked before the allowlist
+decision), rather than by importing the crate. **The token no longer
+travels as proxy-URL userinfo inside an isolated sandbox** (2026-10-18):
+five of eleven coding agents could not use it (`docs/agents.md`), so the
+proxy's unix-socket bridge presents it for them
+(`proxy::server::bridge_unix_to_proxy`), and the socket's 0700 directory is
+that path's boundary, as for SSH. The TCP listener's check is unchanged. Adopting
 `nono-proxy` remains open as a *separate* decision for what else it
 brings — credential brokering, approval hooks, audit integrity — and
 should be judged on that trade alone, not as the fix for a gap that no

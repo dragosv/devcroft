@@ -4714,8 +4714,9 @@ fn egress_proxy_main(fd: RawFd, unix_fd: RawFd) -> ! {
             std::process::exit(1);
         }
     };
+    let bridge_token = token.clone();
     std::thread::spawn(move || {
-        devcroft::proxy::server::bridge_unix_to_tcp(unix_listener, tcp_port);
+        devcroft::proxy::server::bridge_unix_to_proxy(unix_listener, tcp_port, bridge_token);
     });
 
     // Set by the fleet supervisor for an agent's proxy; absent for `up`'s.

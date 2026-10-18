@@ -170,7 +170,15 @@ pub fn spawn_at(
 /// hitting a dev server) away from a proxy that would refuse it. Shared by
 /// `up` and fleet, so the two cannot disagree on what a sandbox sees.
 pub fn client_env(port: u16, token: &str) -> Vec<(String, String)> {
-    let endpoint = format!("http://{token}@127.0.0.1:{port}");
+    // An empty token is a client that reaches the proxy through its unix
+    // socket (a network-isolated sandbox's relay), where the bridge presents
+    // the token itself (`server::bridge_unix_to_proxy`): no userinfo, so
+    // clients that mishandle it are not handed one.
+    let endpoint = if token.is_empty() {
+        format!("http://127.0.0.1:{port}")
+    } else {
+        format!("http://{token}@127.0.0.1:{port}")
+    };
     let mut vars: Vec<(String, String)> =
         ["HTTP_PROXY", "http_proxy", "HTTPS_PROXY", "https_proxy"]
             .iter()

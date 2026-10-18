@@ -123,6 +123,102 @@ pub fn bridge_unix_to_tcp(unix: std::os::unix::net::UnixListener, tcp_port: u16)
     }
 }
 
+/// [`bridge_unix_to_tcp`] for the egress proxy's own unix socket, which
+/// presents this process's token on the client's behalf.
+///
+/// **The socket's filesystem permissions are its authentication**, as the
+/// SSH socket's are (CLAUDE.md): it lives in the sandbox's 0700 state
+/// directory and is bound into that one sandbox's view, so whoever can
+/// connect to it is the sandbox itself or its own user, who can read the
+/// token from `meta.json` anyway. The token exists for the TCP listener,
+/// which any local process can reach, and that check is unchanged: this
+/// adds the header a client would have sent, so `handle_connection` decides
+/// exactly as before.
+///
+/// **Why not leave it to the client** (`add-agent-workload`, measured
+/// 2026-10-18, eleven coding agents inside one sandbox): five could not use
+/// a token in the proxy URL's userinfo. Gemini CLI, Qwen Code and Cursor's
+/// agent sent no `Proxy-Authorization` at all and got 407; OpenCode and Amp,
+/// built on Bun, read `<token>@127.0.0.1` as the host name. The userinfo
+/// shape assumed "every standard HTTP client" honours it, and that is false
+/// for the clients this tool exists to run.
+///
+/// Only the first request's head is rewritten, which is all the proxy reads:
+/// a `CONNECT` is one request, and a plain request's connection is spliced
+/// after it.
+pub fn bridge_unix_to_proxy(unix: std::os::unix::net::UnixListener, tcp_port: u16, token: String) {
+    let header = Arc::new(format!(
+        "Proxy-Authorization: Basic {}\r\n",
+        base64::engine::general_purpose::STANDARD.encode(format!("{token}:"))
+    ));
+    let open = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    for stream in unix.incoming() {
+        let Ok(client) = stream else { continue };
+        let Some(slot) = Slot::take(&open) else {
+            continue;
+        };
+        let header = Arc::clone(&header);
+        thread::spawn(move || {
+            let _slot = slot;
+            let Ok(mut upstream) = TcpStream::connect(("127.0.0.1", tcp_port)) else {
+                return;
+            };
+            let mut client = client;
+            let _ = client.set_read_timeout(Some(HEAD_TIMEOUT));
+            let Ok(head) = read_head(&mut client) else {
+                return;
+            };
+            let _ = client.set_read_timeout(None);
+            if io::Write::write_all(&mut upstream, &with_proxy_auth(&head, &header)).is_err() {
+                return;
+            }
+            splice_unix(client, upstream);
+        });
+    }
+}
+
+/// Everything up to and including the blank line ending a request head,
+/// plus whatever arrived with it; at most [`MAX_HEADER_BYTES`] of head.
+fn read_head(client: &mut std::os::unix::net::UnixStream) -> io::Result<Vec<u8>> {
+    let mut buf = Vec::new();
+    let mut chunk = [0u8; 4096];
+    while !buf.windows(4).any(|w| w == b"\r\n\r\n") {
+        if buf.len() > MAX_HEADER_BYTES {
+            break;
+        }
+        let n = io::Read::read(client, &mut chunk)?;
+        if n == 0 {
+            break;
+        }
+        buf.extend_from_slice(&chunk[..n]);
+    }
+    Ok(buf)
+}
+
+/// `head` with any `Proxy-Authorization` the client sent replaced by
+/// `header`, inserted after the request line. A head with no complete
+/// request line is passed through for the proxy to refuse as malformed.
+fn with_proxy_auth(head: &[u8], header: &str) -> Vec<u8> {
+    let Some(end) = head.windows(4).position(|w| w == b"\r\n\r\n") else {
+        return head.to_vec();
+    };
+    let (headers, rest) = head.split_at(end + 2);
+    let mut lines = headers.split_inclusive(|b| *b == b'\n');
+    let Some(request_line) = lines.next() else {
+        return head.to_vec();
+    };
+    let mut out = request_line.to_vec();
+    out.extend_from_slice(header.as_bytes());
+    for line in lines {
+        let is_auth = line.len() >= 20 && line[..20].eq_ignore_ascii_case(b"proxy-authorization:");
+        if !is_auth {
+            out.extend_from_slice(line);
+        }
+    }
+    out.extend_from_slice(rest);
+    out
+}
+
 /// [`splice`]'s shape for a unix client, kept separate rather than made
 /// generic for the same reason [`bridge_unix_to_tcp`] exists.
 fn splice_unix(client: std::os::unix::net::UnixStream, upstream: TcpStream) {
@@ -738,6 +834,26 @@ mod tests {
     #[test]
     fn authorized_rejects_malformed_base64() {
         assert!(!authorized(Some("Basic not-valid-base64!!!"), "secret"));
+    }
+
+    #[test]
+    fn the_unix_bridge_presents_the_token_in_place_of_the_clients() {
+        let header = "Proxy-Authorization: Basic dDo=\r\n";
+        let head = b"CONNECT api.example:443 HTTP/1.1\r\nHost: api.example:443\r\n\
+            proxy-authorization: Basic d3Jvbmc6\r\n\r\nEARLY";
+        assert_eq!(
+            String::from_utf8(with_proxy_auth(head, header)).unwrap(),
+            "CONNECT api.example:443 HTTP/1.1\r\nProxy-Authorization: Basic dDo=\r\n\
+             Host: api.example:443\r\n\r\nEARLY"
+        );
+        // Without one, it is added; an incomplete head is left alone.
+        assert_eq!(
+            String::from_utf8(with_proxy_auth(b"GET http://a/ HTTP/1.1\r\n\r\n", header)).unwrap(),
+            "GET http://a/ HTTP/1.1\r\nProxy-Authorization: Basic dDo=\r\n\r\n"
+        );
+        assert_eq!(with_proxy_auth(b"GET http://a/", header), b"GET http://a/");
+        // What the proxy then checks is this token.
+        assert!(authorized(Some("Basic dDo="), "t"));
     }
 
     #[test]

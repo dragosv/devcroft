@@ -1008,6 +1008,12 @@ fn up_process(
         // matching check). `NO_PROXY` keeps loopback traffic (a test
         // hitting a `network.ports`-granted dev server) away from a proxy
         // that would deny it. Shared with fleet (`proxy::client_env`).
+        //
+        // **Not for an isolated sandbox**, which reaches the proxy only
+        // through its unix socket, where the bridge presents the token
+        // (`proxy::server::bridge_unix_to_proxy`): five of eleven coding
+        // agents measured could not use userinfo, so they get a plain URL.
+        let token = if isolate_network { "" } else { token.as_str() };
         env.extend(crate::proxy::client_env(*port, token));
     }
 
@@ -1741,6 +1747,8 @@ fn run_provisioning(
         env.remove(&key);
     }
     if let Some((_, port, token)) = &proxy {
+        // As the runtime's: through the relay, the bridge presents it.
+        let token = if isolate_network { "" } else { token.as_str() };
         env.extend(crate::proxy::client_env(*port, token));
     }
     let relay = isolate_network
