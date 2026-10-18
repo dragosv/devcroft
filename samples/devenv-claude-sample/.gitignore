@@ -1,0 +1,8 @@
+# devenv's own cache, GC roots and evaluation artifacts (see
+# ../devenv-sample/.gitignore).
+.devenv/
+.devenv.flake.nix
+
+# devcroft's per-sandbox artifacts, the sandbox's own HOME included: where
+# the agent keeps its config and session history.
+.devcroft/

@@ -1,0 +1,12 @@
+[sandbox]
+name = "devenvclaude"
+
+[env]
+provider = "devenv"
+# The key reaches the sandbox from your shell, never from this file.
+forward = ["ANTHROPIC_API_KEY"]
+
+[network]
+default = "deny"
+# The agent's API, and nothing else: its telemetry hosts are refused.
+allow = ["api.anthropic.com"]

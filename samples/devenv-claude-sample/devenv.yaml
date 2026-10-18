@@ -1,0 +1,6 @@
+inputs:
+  nixpkgs:
+    url: github:cachix/devenv-nixpkgs/rolling
+# claude-code is unfree in nixpkgs, so devenv refuses to evaluate it
+# without this.
+allowUnfree: true
