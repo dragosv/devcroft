@@ -208,6 +208,13 @@ pub enum Origin {
     /// granted so git works inside it. Never from a manifest, so not
     /// attributed to one.
     FleetClone,
+    /// The CA bundle the provider's environment names, granted read-only so
+    /// TLS works inside (`crate::trust_store`). Never from a manifest.
+    TrustStore,
+    /// A fleet agent's own procfs, read-only: the fresh instance of the PID
+    /// namespace it is PID 1 of, so it lists the agent's processes and no
+    /// one else's ([`CompiledPolicy::with_agent_proc`]).
+    FleetProc,
 }
 
 /// Serialized as its displayed form (`manifest:filesystem.allow`,
@@ -234,6 +241,8 @@ impl<'de> serde::Deserialize<'de> for Origin {
             "baseline" => Ok(Origin::Baseline),
             "allocated" => Ok(Origin::Allocated),
             "fleet:clone" => Ok(Origin::FleetClone),
+            "trust-store" => Ok(Origin::TrustStore),
+            "fleet:proc" => Ok(Origin::FleetProc),
             t => match (t.strip_prefix("manifest:"), t.strip_prefix("provider:")) {
                 (Some(key), _) => Ok(Origin::Manifest(leak(key))),
                 (_, Some(name)) => Ok(Origin::Provider(leak(name))),
@@ -255,6 +264,8 @@ impl std::fmt::Display for Origin {
             Origin::Baseline => write!(f, "baseline"),
             Origin::Allocated => write!(f, "allocated"),
             Origin::FleetClone => write!(f, "fleet:clone"),
+            Origin::TrustStore => write!(f, "trust-store"),
+            Origin::FleetProc => write!(f, "fleet:proc"),
         }
     }
 }
@@ -491,6 +502,34 @@ impl CompiledPolicy {
             grants
                 .iter()
                 .map(|g| AnnotatedValue::new(g.clone(), Origin::Provider(provider))),
+        );
+        self
+    }
+
+    /// `/proc`, read-only, for a fleet agent alone.
+    ///
+    /// **Measured (`add-agent-workload` 6.3):** Claude Code is a Bun binary
+    /// that aborts in 3 ms without `/proc/self/{maps,cgroup,stat}` and
+    /// `/proc/stat`; Landlock refused every one. A rule on `/proc/self` does
+    /// nothing, since it binds the pid directory of the process that adds it.
+    /// So the grant is `/proc` whole, which is only narrow where procfs is the
+    /// agent's own: every agent is PID 1 of a new PID namespace with a fresh
+    /// procfs (`fleet::init`), mounted before the rules are built, so the rule
+    /// lands on that instance. `up` binds the host's procfs and takes no PID
+    /// namespace, so there this would expose every same-user process's
+    /// `/proc/<pid>/environ`; it must not be called from `up`.
+    pub fn with_agent_proc(mut self) -> Self {
+        self.filesystem_read
+            .push(AnnotatedValue::new("/proc", Origin::FleetProc));
+        self
+    }
+
+    /// The CA bundles `crate::trust_store` resolved, read-only.
+    pub fn with_trust_store(mut self, grants: &[String]) -> Self {
+        self.filesystem_read.extend(
+            grants
+                .iter()
+                .map(|g| AnnotatedValue::new(g.clone(), Origin::TrustStore)),
         );
         self
     }

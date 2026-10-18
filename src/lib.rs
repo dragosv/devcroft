@@ -37,6 +37,7 @@ pub mod proxy;
 pub mod services;
 pub mod shell;
 pub mod ssh;
+pub mod trust_store;
 
 /// The test-only seam, compiled only under the non-default `test-support`
 /// feature.

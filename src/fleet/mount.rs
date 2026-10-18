@@ -318,6 +318,12 @@ pub fn construct_view(
             // see `setup_dev` for the kernel's reason.
             continue;
         }
+        if grant.path == std::path::Path::new("/proc") {
+            // Owned by the `proc` mount below. A fleet agent's `/proc` grant
+            // (`CompiledPolicy::with_agent_proc`) is for its *fresh* procfs;
+            // bound here, the host's would sit under it, one unmount away.
+            continue;
+        }
         bind_mount_grant(new_root, &grant.path, grant.mode)
             .map_err(|e| ctx(e, "bind-mounting grant", &grant.path))?;
     }

@@ -431,7 +431,17 @@ the implementation before it resolves.
       CA certificates are all present in the constructed view.
       **The runtime half, for one provider:** a real devbox closure builds
       and runs the sample inside an agent's view (`tests/fleet_commands.rs`).
-      Config directories and CA certificates are not checked yet.
+      **CA certificates (2026-10-18):** the bundle the provider's environment
+      names is granted read-only at its canonical path, origin `trust-store`,
+      and the variable rewritten to it (`crate::trust_store`; measured: flox's
+      `SSL_CERT_FILE` was a host link into `/etc`, absent from the view, and
+      npm failed TLS). `/proc` is granted on the agent's fresh procfs (origin
+      `fleet:proc`), which a Bun-built agent aborts without; `construct_view`
+      no longer binds a `/proc` grant from the host underneath it.
+      `tests/fleet_project.rs` checks both in the agent's policy; the in-view
+      run needs a delegated cgroup, which this devcontainer could not get
+      (`sudo` wants a password), so it is **not run here**. Config
+      directories are not checked yet.
 - [x] Wire ruleset construction in the parent, namespace-local rule addition in
       the helper, application after mounts.
       **Built differently, after measuring:** the helper builds *and*

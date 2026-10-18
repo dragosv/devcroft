@@ -115,6 +115,56 @@ first so the fan-out fix is not gated on the tooling design.
 - [ ] 6.3 Re-run the probe from proposal.md's Why and record the new
       result in the change — `node` present, credential readable — so the
       before/after is evidence, not assertion
+      **Interim probe (2026-10-18), before any of this change's code**: a
+      flox project with `nodejs`, `network.default = "deny"`, `up` on Linux
+      (Landlock ABI V6, mount view, network namespace). Claude Code 2.1.302,
+      installed the vendor's way (Decision 1's option (e), `npm install -g
+      --prefix $HOME/.local` inside the sandbox, `registry.npmjs.org`
+      allowed). In the order each one stopped it:
+      1. **CA bundle outside the view.** flox sets `SSL_CERT_FILE=
+         /usr/lib/ssl/cert.pem`, a host symlink to `/etc/ssl/certs/…`; `/etc`
+         is not in the view (`ENOENT`), so nixpkgs' node, which trusts
+         OpenSSL's store, fails TLS (`UNABLE_TO_GET_ISSUER_CERT_LOCALLY`).
+         `NODE_OPTIONS=--use-bundled-ca` works around it.
+      2. **No `sh` on `PATH`, and `SHELL=/bin/sh`**, a host path absent from
+         the view. npm's lifecycle scripts `spawn sh` (`ENOENT`); an agent's
+         shell tool does the same. devcroft's resolved shell exists but is
+         on neither.
+      3. **`/proc` is refused, and the agent is a Bun binary that aborts
+         without it** (`SIGABRT` in 3 ms; strace: `/proc/self/maps`,
+         `/proc/self/cgroup`, `/proc/self/stat`, `/proc/stat`,
+         `/proc/sys/vm/overcommit_memory` all `EACCES`). Granting
+         `/proc/self` does nothing (the rule binds the granting process's
+         own pid directory); granting `/proc` makes it run.
+      With all three worked around (and `[filesystem] read = ["/proc"]` as
+      an experiment only — see below), `claude -p` with a dummy key
+      forwarded by `[env] forward = ["ANTHROPIC_API_KEY"]` reached
+      `api.anthropic.com` through the egress proxy and was refused by the API
+      (`Invalid API key`); the proxy refused its telemetry host. So the
+      env-var credential shape already works through `forward`.
+      **Why `/proc` is not simply granted in `up`:** there is no PID
+      namespace there and the host's procfs is bind-mounted, so a `/proc`
+      grant reads every same-user process's `/proc/<pid>/environ`. The
+      default-deny on `/proc` is the protection `docs/known-gaps.md` ("No
+      inter-sandbox process visibility separation") relies on. Fleet agents
+      get a fresh procfs (`ProcMount::Fresh`), where the grant would expose
+      only the agent's own processes, but fleet's plan does not grant it
+      either, so the same agent aborts there too.
+      Also absent, not yet blocking: coreutils and `git` (not in the
+      closure; the host's are denied), `/etc/passwd`, `/etc/localtime`,
+      `/etc/hosts`. Not measurable on this host: the file-shaped
+      credential (no `~/.claude/.credentials.json` here).
+      **Fixed since (2026-10-18), for `up` and fleet alike:** 1, by granting
+      the bundle the environment names (`crate::trust_store`, origin
+      `trust-store`, the variable rewritten to its canonical path; only a PEM
+      certificate bundle outside the home, never from `[env.vars]`); 2, by
+      making the resolved shell `SHELL` and the last `PATH` entry
+      (`KeeperEnv::vars`). Re-run: `npm install` of the agent succeeds with no
+      workaround. 3 is fixed **for fleet only** (`with_agent_proc`, origin
+      `fleet:proc`), by owner decision: `up` needs a PID namespace first
+      (`docs/known-gaps.md`, "An agent built on Bun cannot start in an `up`
+      sandbox"). `tests/agent_runtime_env.rs` covers 1 and 2 through `up`;
+      each fails with its fix removed.
 
 ## 6b. Denial feedback: the agent learns why it was refused
 

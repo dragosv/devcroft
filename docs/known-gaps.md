@@ -981,6 +981,32 @@ seccomp interception of filesystem syscalls, as `sandlock` does. See
 outside the sandbox whose death would break the sandbox's ability to
 compute, which devcroft currently has no component of.
 
+## An agent built on Bun cannot start in an `up` sandbox
+
+Measured 2026-10-18 (`add-agent-workload` 6.3): Claude Code 2.1.302, installed
+by npm inside a flox sandbox, aborts in 3 ms (`SIGABRT`). It is a Bun binary,
+and Bun reads `/proc/self/maps`, `/proc/self/cgroup`, `/proc/self/stat` and
+`/proc/stat` at startup; Landlock refuses all of them, because nothing grants
+`/proc`. A rule on `/proc/self` does not help: it binds the pid directory of
+the process that adds the rule, not of the agent.
+
+Granting `/proc` makes it run, and **that is not done in `up` on purpose.**
+An `up` sandbox takes no PID namespace and bind-mounts the host's procfs, so a
+`/proc` grant would let it read `/proc/<pid>/environ` of every process its user
+owns. The default deny on `/proc` is the protection the "No inter-sandbox
+process visibility separation" section above relies on. A user can still add
+`[filesystem] read = ["/proc"]` knowingly; devcroft will not do it for them.
+
+Fleet agents are not affected: each is PID 1 of its own PID namespace with a
+fresh procfs, so its policy grants `/proc` (origin `fleet:proc`) and the grant
+shows only the agent's own processes. Closing this for `up` means the same
+namespace there, which is a change of its own.
+
+Fixed on the way, for both: a provider's `SSL_CERT_FILE` naming the host's CA
+bundle outside the view (now granted, origin `trust-store`), and no `sh` on
+`PATH` and a `SHELL` naming a host path (devcroft's resolved shell now ends
+`PATH` and is `SHELL`).
+
 ## No cgroup resource limits
 
 A runaway build in one sandbox can affect the whole host — nothing today

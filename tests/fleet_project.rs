@@ -310,3 +310,64 @@ fn a_grant_reaching_the_daemon_or_writing_the_store_is_refused() {
     // Reading the store is what every agent does with its toolchain.
     try_prepare("[filesystem]\nread = [\"/nix/store\"]\n").unwrap();
 }
+
+/// What an agent needs to run inside that a project never declares
+/// (`add-agent-workload` 6.3): its own `/proc`, which a Bun-built agent
+/// aborts without, and the CA bundle its environment names, which the view
+/// would otherwise lack.
+#[test]
+fn an_agent_reads_its_own_proc_and_the_ca_bundle_its_environment_names() {
+    struct WithBundle(HostUsr, String);
+    impl ProviderEntry for WithBundle {
+        fn resolve(&self, root: &Path) -> Result<Resolution, ProviderError> {
+            let mut r = self.0.resolve(root)?;
+            r.env.insert("SSL_CERT_FILE".to_owned(), self.1.clone());
+            Ok(r)
+        }
+        fn fingerprint(&self, root: &Path) -> Result<String, ProviderError> {
+            self.0.fingerprint(root)
+        }
+        fn tier(&self) -> Tier {
+            Tier::Closure
+        }
+        fn static_name(&self) -> &'static str {
+            "nix"
+        }
+    }
+    // The measured host's spelling: a link in `/usr/lib`, which the provider
+    // grants, to a bundle outside every grant.
+    let spelled = "/usr/lib/ssl/cert.pem";
+    let Ok(bundle) = std::fs::canonicalize(spelled) else {
+        eprintln!("skipping: no {spelled} on this host");
+        return;
+    };
+    let bundle = bundle.to_string_lossy().into_owned();
+    if bundle.starts_with("/usr/") {
+        eprintln!("skipping: {spelled} resolves inside /usr, which is already granted");
+        return;
+    }
+    let launch = prepare(
+        &WithBundle(HostUsr::new(), spelled.to_owned()),
+        &manifest(""),
+        Path::new("/tmp/w"),
+        "a1",
+        exe(),
+        "key",
+        Limits::default(),
+        true,
+    )
+    .unwrap();
+    let policy = launch.policy.as_ref().expect("a compiled policy");
+    let origin_of = |path: &str| {
+        policy
+            .filesystem_read
+            .iter()
+            .find(|g| g.value == path)
+            .map(|g| g.origin.to_string())
+    };
+    assert_eq!(origin_of("/proc").as_deref(), Some("fleet:proc"));
+    assert!(launch.plan.filesystem_read.iter().any(|g| g == "/proc"));
+    assert_eq!(origin_of(&bundle).as_deref(), Some("trust-store"));
+    // Pointed at where the grant is mounted, not through the link.
+    assert_eq!(launch.provider_env.get("SSL_CERT_FILE"), Some(&bundle));
+}

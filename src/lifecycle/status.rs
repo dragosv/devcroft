@@ -369,6 +369,7 @@ mod tests {
                     declared_services: Vec::new(),
                     ran_activation_hook: false,
                     shell: None,
+                    trust_store: Vec::new(),
                     proxy_port: None,
                     proxy_token: None,
                     allocations: Vec::new(),

@@ -289,7 +289,7 @@ pub fn up_with_provider(
     // confined to. This step is identical for both tiers — the two-phase
     // execution model (CLAUDE.md) is backend-generic, not just
     // process-tier.
-    let resolution = provider.resolve(project_root).map_err(UpError::Provider)?;
+    let mut resolution = provider.resolve(project_root).map_err(UpError::Provider)?;
 
     // `network.services` names services the environment must declare, and
     // is checked here, before any state exists, so a typo fails as a typo
@@ -394,6 +394,15 @@ pub fn up_with_provider(
     {
         provider_grants.push(grant.clone());
     }
+    // The CA bundle the environment names, where the view would not have it
+    // (`crate::trust_store`): granted with its own origin, and the variable
+    // pointed at the path the grant is mounted at. Before `Meta`, which
+    // records it, and before anything reads the environment.
+    let trust_store = crate::trust_store::resolve(&resolution.env, &provider_grants);
+    for line in &trust_store.refused {
+        eprintln!("devcroft: warning: {line}");
+    }
+    trust_store.rewrite(&mut resolution.env);
 
     state::write_meta(
         &paths.meta,
@@ -413,6 +422,7 @@ pub fn up_with_provider(
                 .collect(),
             ran_activation_hook: resolution.ran_activation_hook,
             shell: Some(shell.path.to_string_lossy().into_owned()),
+            trust_store: trust_store.grants.clone(),
             proxy_port: proxy.as_ref().map(|(port, _)| *port),
             proxy_token: proxy.as_ref().map(|(_, token)| token.clone()),
             // Carried forward, not rebuilt: `up_process` reclaims them.
@@ -433,6 +443,7 @@ pub fn up_with_provider(
         &resolution,
         &shell,
         &provider_grants,
+        &trust_store.grants,
         proxy,
     )
 }
@@ -563,6 +574,7 @@ fn up_process(
     resolution: &Resolution,
     shell: &crate::shell::ResolvedShell,
     provider_grants: &[String],
+    trust_store: &[String],
     proxy: Option<(u16, String)>,
 ) -> Result<UpOutcome, UpError> {
     // The keeper binary itself must be readable+executable inside the
@@ -577,7 +589,8 @@ fn up_process(
         .ok_or_else(|| io::Error::other("devcroft executable path has no parent directory"))?;
     let compiled = policy::compile(manifest)
         .with_keeper_exe_grant(exe_dir.to_string_lossy().into_owned())
-        .with_provider_grants(provider.static_name(), provider_grants);
+        .with_provider_grants(provider.static_name(), provider_grants)
+        .with_trust_store(trust_store);
     // `proxy_port` was already spawned/reused and recorded in `Meta` by
     // the caller (`up`), before this function ever ran — see its own
     // module-level comment for why the proxy has to exist independently
@@ -1248,6 +1261,25 @@ fn prepare_services(
     Ok(true)
 }
 
+/// The environment's `PATH` with the resolved shell's directory appended,
+/// or `None` when it already holds it.
+fn path_ending_in_shell_dir(
+    env: &std::collections::BTreeMap<String, String>,
+    unset: &[String],
+    shell: &Path,
+) -> Option<String> {
+    let dir = shell.parent()?.to_str()?;
+    let path = env
+        .get("PATH")
+        .filter(|_| !unset.iter().any(|k| k == "PATH"))
+        .filter(|p| !p.is_empty());
+    match path {
+        Some(path) if path.split(':').any(|entry| entry == dir) => None,
+        Some(path) => Some(format!("{path}:{dir}")),
+        None => Some(dir.to_owned()),
+    }
+}
+
 /// Everything the keeper reads from its environment, in the order it is
 /// set. `up`'s keeper and a fleet agent's keeper both start from exactly
 /// this, so the two cannot drift: the keeper's only inputs besides its fds
@@ -1293,7 +1325,19 @@ impl KeeperEnv<'_> {
         // ran `up`). `.envs(env)` can only add or override, never remove,
         // so a plain map has no way to represent "unset" at all.
         Vars::default()
+            // devcroft's shell for whatever finds one by name: a `SHELL` lookup
+            // (an agent's shell tool, `os.userInfo`-less runtimes) or `sh` on
+            // `PATH` (npm's lifecycle scripts, `system(3)`-style spawners).
+            // Measured (`add-agent-workload` 6.3): no closure declares `sh`,
+            // and bash, finding no passwd entry inside, invents
+            // `SHELL=/bin/sh`, a host path the view lacks; npm then failed
+            // `spawn sh ENOENT`. `SHELL` comes first so the environment's own
+            // wins; the shell's directory goes *last* on `PATH`, so whatever
+            // the closure provides by the same name is found before it. No
+            // grant: the shell's store path is already one (`crate::shell`).
+            .env("SHELL", shell)
             .envs(env.iter().filter(|(key, _)| !unset.contains(key)))
+            .envs(path_ending_in_shell_dir(env, unset, shell).map(|p| ("PATH", p)))
             // The keeper's very first action (task group 4): deserialize this
             // and self-restrict, before reading anything else from `env`.
             // Same trust boundary the SSH key material below already crosses
@@ -2053,6 +2097,64 @@ pub(crate) fn pass_fds(cmd: &mut Command, fds: &[RawFd]) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The shell's directory ends `PATH`, once, and the environment's own
+    /// `SHELL` and entries come first.
+    #[test]
+    fn the_keeper_env_ends_path_in_the_shell_and_names_it() {
+        let shell = Path::new("/nix/store/abc-bash/bin/sh");
+        let plan = policy::compile(&crate::config::parse("[sandbox]\nname = \"t\"\n").unwrap().0)
+            .to_capability_plan();
+        let vars = |env: &std::collections::BTreeMap<String, String>, unset: &[String]| {
+            let vars = KeeperEnv {
+                env,
+                unset,
+                plan: &plan,
+                ssh_host_key_pem: "",
+                ssh_authorized_key_pem: "",
+                shell,
+                services: None,
+                hooks: &[],
+                project_root: Path::new("/p"),
+                sandbox_home: Path::new("/p/h"),
+                relay: None,
+            }
+            .vars();
+            let last = |k: &str| {
+                vars.iter()
+                    .rev()
+                    .find(|(key, _)| key == k)
+                    .map(|(_, v)| v.to_string_lossy().into_owned())
+            };
+            (last("PATH"), last("SHELL"))
+        };
+        let env = |pairs: &[(&str, &str)]| {
+            pairs
+                .iter()
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect::<std::collections::BTreeMap<_, _>>()
+        };
+
+        let (path, sh) = vars(&env(&[("PATH", "/nix/store/x-node/bin:/usr/bin")]), &[]);
+        assert_eq!(
+            path.as_deref(),
+            Some("/nix/store/x-node/bin:/usr/bin:/nix/store/abc-bash/bin")
+        );
+        assert_eq!(sh.as_deref(), Some("/nix/store/abc-bash/bin/sh"));
+
+        let (path, sh) = vars(
+            &env(&[
+                ("PATH", "/nix/store/abc-bash/bin:/usr/bin"),
+                ("SHELL", "/nix/store/y-zsh/bin/zsh"),
+            ]),
+            &[],
+        );
+        assert_eq!(path.as_deref(), Some("/nix/store/abc-bash/bin:/usr/bin"));
+        assert_eq!(sh.as_deref(), Some("/nix/store/y-zsh/bin/zsh"));
+
+        let (path, _) = vars(&env(&[("PATH", "/usr/bin")]), &["PATH".to_owned()]);
+        assert_eq!(path.as_deref(), Some("/nix/store/abc-bash/bin"));
+    }
 
     /// A flox environment declaring services, with no flox installed —
     /// the declarations are read from the manifest file, so this needs no

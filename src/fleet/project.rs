@@ -62,7 +62,7 @@ pub fn prepare(
 ) -> Result<AgentLaunch, PrepareError> {
     refuse_what_fleet_cannot_carry(manifest)?;
 
-    let resolution = provider
+    let mut resolution = provider
         .resolve(workspace)
         .map_err(PrepareError::Provider)?;
     crate::services::check_declared_ports(
@@ -107,6 +107,15 @@ pub fn prepare(
         }
     };
 
+    // `up`'s CA bundle rule (`crate::trust_store`), against the narrowed
+    // grants: a bundle in the store is in them already, since the
+    // environment names it and its roots are what the closure is built from.
+    let trust_store = crate::trust_store::resolve(&resolution.env, &provider_grants);
+    for line in &trust_store.refused {
+        eprintln!("devcroft fleet: warning: {line}");
+    }
+    trust_store.rewrite(&mut resolution.env);
+
     let exe_dir = exe.parent().ok_or_else(|| {
         PrepareError::Config(format!("{} has no parent directory", exe.display()))
     })?;
@@ -115,6 +124,8 @@ pub fn prepare(
     let mut compiled = crate::policy::compile(manifest)
         .with_keeper_exe_grant(exe_dir.to_string_lossy().into_owned())
         .with_provider_grants(provider.static_name(), &provider_grants)
+        .with_trust_store(&trust_store.grants)
+        .with_agent_proc()
         .with_service_ports(crate::lifecycle::ports::declared_ports(
             &manifest.network.services,
             resolution.services.declared(),

@@ -3609,10 +3609,12 @@ fn compile_with_provider_grants(
             return (policy, Fidelity::Complete);
         }
     }
-    let compiled = compiled.with_provider_grants(
-        provider_static_name(&manifest.env.provider),
-        &meta.read_only_grants,
-    );
+    let compiled = compiled
+        .with_provider_grants(
+            provider_static_name(&manifest.env.provider),
+            &meta.read_only_grants,
+        )
+        .with_trust_store(&meta.trust_store);
     // Same live-only caveat as the provider grants just above: `compile`
     // alone has no way to know the proxy's port, since knowing it means
     // an `up` actually ran one. `meta.proxy_port` is `None` for a

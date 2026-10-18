@@ -335,6 +335,11 @@ pub struct Meta {
     /// what it was already doing.
     #[serde(default)]
     pub shell: Option<String>,
+    /// The CA bundles granted read-only for TLS (`crate::trust_store`),
+    /// recorded so `policy --render` shows them as the backend got them.
+    /// `#[serde(default)]`: an older `meta.json` had none.
+    #[serde(default)]
+    pub trust_store: Vec<String>,
     /// The egress proxy's bound port, when `up` started or reused one for
     /// this sandbox (add-egress-proxy) — `None` when `network.allow` is
     /// empty and no domain filtering was requested. Recorded for the same
@@ -775,6 +780,7 @@ mod tests {
             declared_services: Vec::new(),
             ran_activation_hook: false,
             shell: None,
+            trust_store: Vec::new(),
             proxy_port: None,
             proxy_token: None,
             allocations: Vec::new(),
@@ -800,6 +806,7 @@ mod tests {
             declared_services: Vec::new(),
             ran_activation_hook: false,
             shell: None,
+            trust_store: Vec::new(),
             proxy_port: None,
             proxy_token: None,
             allocations: Vec::new(),
