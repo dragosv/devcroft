@@ -5,3 +5,6 @@
 # devcroft's per-sandbox artifacts, the sandbox's own HOME included: where
 # the agent keeps its config and history.
 .devcroft/
+
+# Aider writes its chat and input history into the project it runs in.
+.aider*

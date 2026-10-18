@@ -36,6 +36,7 @@ Refused by the proxy along the way, without stopping it: `raw.githubusercontent.
 - One provider, OpenAI (`--model gpt-4o`), the one measured. For an Anthropic model, forward `ANTHROPIC_API_KEY` and allow `api.anthropic.com` instead.
 - `AIDER_CHECK_UPDATE=false` in `[env.vars]`: its update check goes to PyPI, which is not allowed.
 - Aider wants a git repository and offers to create one. The sandbox cannot see this repository's `.git` (it is above the project root), so run it in a project of its own, or pass `--no-git` as the example does.
+- Aider writes `.aider.chat.history.md` and `.aider.input.history` into the project root, which is writable; `.gitignore` covers them.
 - `raw.githubusercontent.com` (litellm's model price list) is refused and aider falls back to its bundled copy.
 
 ## Not covered
