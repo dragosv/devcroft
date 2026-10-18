@@ -216,10 +216,42 @@
 
 ## 3. Failure attribution
 
-- [ ] Distinguish policy denial from provider failure in `up`'s output.
-- [ ] Name the denied path or interface.
-- [ ] Test both paths: a hook denied a path it needs, and a hook that is simply
+- [x] Distinguish policy denial from provider failure in `up`'s output.
+      **Done (2026-10-18), `lifecycle::attribution`.** Nothing in the boundary
+      reports a denial, so the evidence is what the script printed, and
+      **devcroft's own policy is the judge**: a line is attributed only when
+      `why_path` (across the absolute, `~/` and project-relative spellings a
+      rule can be written in) refuses the path. Measured first: a confined
+      hook sees `No such file or directory` for what the mount view leaves out
+      (the real home, `/etc/hostname`), `Permission denied` for a create in an
+      ungranted view directory, `Read-only file system` for a write into a
+      read-only grant; none names the sandbox. An `ENOENT` counts only when
+      the host has the path (or the directory a create went into, when no
+      grant lies under it), which is what separates a hidden path from a
+      missing one. A script that fails with nothing attributed is reported as
+      its own failure, with the end of what it printed.
+      **Layer moved from `keeper` to `provider`** (exit 3; the spec's
+      "provisioning layer", `ProviderError::Provisioning`): no keeper has
+      started, and it is the environment that failed to provision.
+      `post_create`/`post_start` failures stay at `keeper`.
+      **Not covered:** a tool that swallows the errno and prints its own
+      message (missed, never misattributed); fleet's provisioning agent
+      (`Supervisor::provision`), whose paths are the agent view's and need
+      translating before the host can be asked about them.
+- [x] Name the denied path or interface.
+      Each path with the rule that refuses it (`denied by rule baseline`, or
+      `not granted by any rule`) and the error the script saw; a host from the
+      provisioning proxy's audit log, which is authoritative, not inferred.
+      With no `[provisioning.network] allow` there is no proxy and no route,
+      so a resolver or no-route failure in the output is attributed to that,
+      and only then.
+- [x] Test both paths: a hook denied a path it needs, and a hook that is simply
       broken.
+      `tests/provisioning_attribution.rs`: a hook reading a file in the real
+      home is told the path and `not granted by any rule`; one failing on its
+      own is not called a denial and its own error is shown. With
+      attribution disabled the first fails; with the host-existence check
+      removed, `what_the_policy_does_not_refuse_is_not_attributed` fails.
 
 ## 4. Providers
 

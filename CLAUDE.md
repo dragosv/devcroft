@@ -410,7 +410,10 @@ for an environment without running it. Measured:
   registry declares it there, and sessions never get it. Fleet agents do
   the same since 2026-10-15: the script runs in a short-lived agent of its
   own, in the agent's leaf and view, before the keeper
-  (`Supervisor::provision`).
+  (`Supervisor::provision`). A script that fails there fails `up` at
+  layer `provider`, not `keeper`, saying whether the policy refused it
+  something (`lifecycle::attribution`); the policy decides that, not the
+  error text, since a confined hook sees a hidden path as plain `ENOENT`.
 
   **That answer is context-dependent, and the contexts are about to
   diverge — do not read the two as contradictory.** Warning is right

@@ -386,6 +386,13 @@ pub enum ProviderError {
     /// The provider's own resolution failed (activation error, unreadable
     /// manifest, etc).
     ResolutionFailed(String),
+    /// The activation script failed in the provisioning process
+    /// (`sandbox-provisioning`): the message says whether the provisioning
+    /// policy refused it something, and names what (`lifecycle::attribution`).
+    /// This layer rather than `keeper`'s, which it was while the script ran in
+    /// the keeper: it is the environment that failed to provision, and no
+    /// keeper has started.
+    Provisioning(String),
 }
 
 impl fmt::Display for ProviderError {
@@ -429,6 +436,7 @@ impl fmt::Display for ProviderError {
                 "no lockfile found for the {provider} environment; run `{hint}`"
             ),
             ProviderError::ResolutionFailed(msg) => write!(f, "provider resolution failed: {msg}"),
+            ProviderError::Provisioning(msg) => write!(f, "provisioning: {msg}"),
         }
     }
 }

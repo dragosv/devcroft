@@ -18,6 +18,7 @@ use crate::config::Manifest;
 use crate::policy;
 use crate::provider::{ProviderError, ProviderKind, Resolution, ServiceSupport};
 
+use super::attribution;
 use super::hooks;
 use super::state::{self, Health, StatePaths};
 use super::terminate::GRACE_PERIOD as TERMINATE_GRACE_PERIOD;
@@ -1695,25 +1696,45 @@ fn run_provisioning(
     );
     let status = cmd.status();
 
-    if let Some((pid, _, _)) = proxy {
+    if let Some((pid, _, _)) = &proxy {
         // SAFETY: signalling and reaping our own child.
         unsafe {
-            libc::kill(pid, libc::SIGTERM);
-            libc::waitpid(pid, std::ptr::null_mut(), 0);
+            libc::kill(*pid, libc::SIGTERM);
+            libc::waitpid(*pid, std::ptr::null_mut(), 0);
         }
         let _ = std::fs::remove_file(&socket);
     }
     let status =
         status.map_err(|e| UpError::Keeper(format!("starting the provisioning process: {e}")))?;
     if status.success() {
-        Ok(())
-    } else {
-        Err(UpError::Keeper(
-            keeper_failure_reason(&paths.log).unwrap_or_else(|| {
-                format!("the activation script's provisioning process exited with {status}")
-            }),
-        ))
+        return Ok(());
     }
+    let failure = keeper_failure_reason(&paths.log).unwrap_or_else(|| {
+        format!("the activation script's provisioning process exited with {status}")
+    });
+    // Whether the policy refused it something, from what it printed and what
+    // its proxy refused (`attribution`'s comment has why both, and why the
+    // policy is the judge). The log was truncated before this process, so it
+    // is this run's; the proxy log only when a proxy ran this time.
+    let output = attribution::script_output(&std::fs::read_to_string(&paths.log)?);
+    let egress = proxy
+        .is_some()
+        .then(|| std::fs::read_to_string(paths.root.join("provision-egress.log")).ok())
+        .flatten();
+    let home = std::env::var_os("HOME").map(std::path::PathBuf::from);
+    let denials = attribution::denials(
+        &output,
+        egress.as_deref(),
+        &provisioning,
+        &attribution::Roots {
+            project: project_root,
+            home: home.as_deref(),
+        },
+        &|p| p.symlink_metadata().is_ok(),
+    );
+    Err(UpError::Provider(ProviderError::Provisioning(
+        attribution::explain(&failure, &denials, &output, &compiled.sandbox_name),
+    )))
 }
 
 /// Where a sandboxed process `up` spawns is confined before it execs: its

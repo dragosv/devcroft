@@ -8,6 +8,7 @@
 /// `pub` because the keeper binary runs them now, not `up`
 /// (`fix-service-hook-ordering`): the keeper is a separate crate target
 /// and reaches this through the library like any other consumer.
+pub(crate) mod attribution;
 pub mod hooks;
 pub mod ports;
 mod state;
