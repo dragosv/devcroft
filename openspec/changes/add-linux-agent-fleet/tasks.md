@@ -436,7 +436,7 @@ the implementation before it resolves.
       and the variable rewritten to it (`crate::trust_store`; measured: flox's
       `SSL_CERT_FILE` was a host link into `/etc`, absent from the view, and
       npm failed TLS). `/proc` is granted on the agent's fresh procfs (origin
-      `fleet:proc`), which a Bun-built agent aborts without; `construct_view`
+      `pid-namespace`), which a Bun-built agent aborts without; `construct_view`
       no longer binds a `/proc` grant from the host underneath it.
       `tests/fleet_project.rs` checks both in the agent's policy; the in-view
       run needs a delegated cgroup, which this devcontainer could not get

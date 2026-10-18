@@ -826,10 +826,18 @@ mechanism is undetermined; only the observable is established.
 `policy --render` is the tool a user would reach for to check, and it agrees
 with them. Whether the same holds on Linux is unmeasured.
 
-## No inter-sandbox process visibility separation
+## No inter-sandbox process visibility separation — fixed on Linux where the host allows
+
+**Fixed by `add-up-pid-namespace` (2026-10-18)** on a Linux host that can
+mount a fresh procfs in a user and PID namespace: the keeper runs under a PID 1
+of its own (fleet's init helper), the view's `/proc` is that namespace's, and a
+session lists the sandbox's processes and nothing else
+(`tests/up_pid_namespace.rs`). Fleet agents always had this. **Still open**
+on macOS, and on a Linux host that masks `/proc` (Docker without `--security-opt
+systempaths=unconfined`), where `up` warns once and the rest of this section
+applies unchanged.
 
 Landlock hides nothing: sandboxes share the host's raw process namespace.
-Fixed by `add-linux-agent-fleet`'s per-agent PID namespaces, not yet built.
 
 What this means in practice turned out narrower than originally assumed,
 though. On a Landlock **ABI V6** host (`doctor` reports the ABI level; this
@@ -981,7 +989,12 @@ seccomp interception of filesystem syscalls, as `sandlock` does. See
 outside the sandbox whose death would break the sandbox's ability to
 compute, which devcroft currently has no component of.
 
-## An agent built on Bun cannot start in an `up` sandbox
+## An agent built on Bun cannot start in an `up` sandbox — fixed where the host allows
+
+**Fixed by `add-up-pid-namespace` (2026-10-18)** wherever the section above is:
+with a procfs of its own, the sandbox is granted `/proc` (origin
+`pid-namespace`), and Claude Code 2.1.302 runs in an `up` sandbox with nothing
+in the manifest for it. What follows is still true of a host that falls back.
 
 Measured 2026-10-18 (`add-agent-workload` 6.3): Claude Code 2.1.302, installed
 by npm inside a flox sandbox, aborts in 3 ms (`SIGABRT`). It is a Bun binary,
@@ -997,10 +1010,9 @@ owns. The default deny on `/proc` is the protection the "No inter-sandbox
 process visibility separation" section above relies on. A user can still add
 `[filesystem] read = ["/proc"]` knowingly; devcroft will not do it for them.
 
-Fleet agents are not affected: each is PID 1 of its own PID namespace with a
-fresh procfs, so its policy grants `/proc` (origin `fleet:proc`) and the grant
-shows only the agent's own processes. Closing this for `up` means the same
-namespace there, which is a change of its own.
+Fleet agents are not affected: each is under a PID 1 of its own PID namespace
+with a fresh procfs, so its policy grants `/proc` (origin `pid-namespace`) and
+the grant shows only the agent's own processes.
 
 Fixed on the way, for both: a provider's `SSL_CERT_FILE` naming the host's CA
 bundle outside the view (now granted, origin `trust-store`), and no `sh` on

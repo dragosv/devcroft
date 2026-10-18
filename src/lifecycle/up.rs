@@ -423,6 +423,8 @@ pub fn up_with_provider(
             ran_activation_hook: resolution.ran_activation_hook,
             shell: Some(shell.path.to_string_lossy().into_owned()),
             trust_store: trust_store.grants.clone(),
+            // Decided by `up_process`, which records it.
+            own_procfs: false,
             proxy_port: proxy.as_ref().map(|(port, _)| *port),
             proxy_token: proxy.as_ref().map(|(_, token)| token.clone()),
             // Carried forward, not rebuilt: `up_process` reclaims them.
@@ -734,12 +736,38 @@ fn up_process(
     } else {
         Vec::new()
     };
+    // A PID namespace of its own, with a fresh procfs, where the host can
+    // give one (`add-up-pid-namespace`): decided here, before the plan,
+    // because the plan grants `/proc` only then (D3, D4). Without one, `/proc`
+    // is the host's and stays ungranted; that is said once.
+    let mount_supported = matches!(crate::fleet::mount::probe(&exe), Ok(true));
+    let own_procfs = cfg!(target_os = "linux")
+        && mount_supported
+        && match crate::fleet::mount::probe_pid_namespace(&exe) {
+            Ok(true) => true,
+            Ok(false) | Err(_) => {
+                eprintln!(
+                    "devcroft: warning: process isolation is unavailable: this host cannot \
+                     mount a fresh /proc in a user and PID namespace (in Docker, run the \
+                     container with `--security-opt systempaths=unconfined`) (fallback: the \
+                     sandbox shares the host's PID namespace and /proc stays ungranted, so a \
+                     runtime that reads its own /proc, such as a Bun-built agent, fails)"
+                );
+                false
+            }
+        };
+    let compiled = if own_procfs {
+        compiled.with_own_procfs()
+    } else {
+        compiled
+    };
     // Recorded now, read-modify-write: everything else in `meta.json` was
-    // just written by `up_with_provider` and is left as it is. Both are
+    // just written by `up_with_provider` and is left as it is. All three are
     // grants `policy --render` must show and can only learn from here.
     if let Some(mut meta) = state::read_meta(&paths.meta)? {
         meta.allocations = allocations.clone();
         meta.service_ports = service_ports.clone();
+        meta.own_procfs = own_procfs;
         state::write_meta(&paths.meta, &meta)?;
     }
     let compiled = compiled.with_service_ports(service_ports);
@@ -784,10 +812,7 @@ fn up_process(
     // decided *here*, before any listener exists or state is written,
     // for the identical reason the deny-overlap check above runs before
     // anything is created.
-    let isolate_filesystem = match (
-        cfg!(target_os = "linux"),
-        matches!(crate::fleet::mount::probe(&exe), Ok(true)),
-    ) {
+    let isolate_filesystem = match (cfg!(target_os = "linux"), mount_supported) {
         (_, true) => true,
         (true, false) => {
             return Err(UpError::Backend(
@@ -1069,6 +1094,7 @@ fn up_process(
                 isolate_network,
                 &mount_grants,
                 &script,
+                own_procfs,
             )?;
             true
         }
@@ -1098,6 +1124,7 @@ fn up_process(
         relay.as_ref().map(|(_, sock)| sock.as_path()),
         &keeper_hooks,
         provisioned,
+        own_procfs,
     )
     .map_err(|e| UpError::Keeper(e.to_string()))?;
     // Both fds must outlive this function for the child to inherit them
@@ -1491,6 +1518,7 @@ fn spawn_keeper(
     proxy_socket_for_view: Option<&Path>,
     hooks: &[(&'static str, String)],
     provisioned: bool,
+    own_procfs: bool,
 ) -> io::Result<libc::pid_t> {
     // The pivot-root scratch directory (`StatePaths::mount_root`'s own
     // doc) must exist and be empty before `pre_exec` runs — created here,
@@ -1614,17 +1642,40 @@ fn spawn_keeper(
         // above, which would otherwise drop it.
         cmd.env("DEVCROFT_ACTIVATION_PROVISIONED", "1");
     }
-    confine_on_exec(
-        &mut cmd,
-        Confinement {
-            isolate_filesystem,
-            isolate_network,
-            mount_root,
-            mount_grants,
-            proxy_socket_for_view,
-            project_root: project_root_owned,
-        },
-    );
+    let confinement = Confinement {
+        isolate_filesystem,
+        isolate_network,
+        mount_root,
+        mount_grants,
+        proxy_socket_for_view,
+        project_root: project_root_owned,
+    };
+    if own_procfs {
+        // The two listeners move to the helper's inherited range, so the
+        // keeper is told where they landed rather than where they were.
+        let first = crate::fleet::init::FIRST_INHERITED_FD;
+        let agent = spawn_through_init(
+            exe,
+            &cmd,
+            vec![
+                "__keeper".to_owned(),
+                first.to_string(),
+                (first + 1).to_string(),
+            ],
+            plan,
+            &confinement,
+            relay.as_ref().map(|(port, _)| *port),
+            log_for(paths)?,
+            vec![
+                dup_fd(listener.as_raw_fd())?,
+                dup_fd(ssh.listener.as_raw_fd())?,
+            ],
+        )?;
+        // PID 1's host pid: `down` signals it, and it forwards the signal to
+        // the keeper; its exit ends everything in the namespace.
+        return Ok(agent.pid() as libc::pid_t);
+    }
+    confine_on_exec(&mut cmd, confinement);
 
     let child = cmd.spawn()?;
     let pid = child.id() as libc::pid_t;
@@ -1661,6 +1712,7 @@ fn run_provisioning(
     isolate_network: bool,
     mount_grants: &[policy::ResolvedGrant],
     script: &str,
+    own_procfs: bool,
 ) -> Result<(), UpError> {
     let socket = paths.root.join("provision-proxy.sock");
     let proxy = if allow.is_empty() {
@@ -1727,18 +1779,32 @@ fn run_provisioning(
         .stdin(Stdio::null())
         .stdout(log.try_clone()?)
         .stderr(log);
-    confine_on_exec(
-        &mut cmd,
-        Confinement {
-            isolate_filesystem,
-            isolate_network,
-            mount_root: paths.mount_root.clone(),
-            mount_grants: mount_grants.to_vec(),
-            proxy_socket_for_view: relay.as_ref().map(|(_, sock)| sock.clone()),
-            project_root: project_root.to_path_buf(),
-        },
-    );
-    let status = cmd.status();
+    let confinement = Confinement {
+        isolate_filesystem,
+        isolate_network,
+        mount_root: paths.mount_root.clone(),
+        mount_grants: mount_grants.to_vec(),
+        proxy_socket_for_view: relay.as_ref().map(|(_, sock)| sock.clone()),
+        project_root: project_root.to_path_buf(),
+    };
+    let status = if own_procfs {
+        log_for(paths).and_then(|log| {
+            spawn_through_init(
+                exe,
+                &cmd,
+                vec!["__provision".to_owned()],
+                &plan,
+                &confinement,
+                relay.as_ref().map(|(port, _)| *port),
+                log,
+                Vec::new(),
+            )
+            .and_then(crate::fleet::init::Agent::wait)
+        })
+    } else {
+        confine_on_exec(&mut cmd, confinement);
+        cmd.status()
+    };
 
     if let Some((pid, _, _)) = &proxy {
         // SAFETY: signalling and reaping our own child.
@@ -1779,6 +1845,88 @@ fn run_provisioning(
     Err(UpError::Provider(ProviderError::Provisioning(
         attribution::explain(&failure, &denials, &output, &compiled.sandbox_name),
     )))
+}
+
+/// `add-up-pid-namespace`: start what `cmd` describes (its environment;
+/// `args` in place of its arguments) as the child of a PID 1 of its own,
+/// through fleet's init helper, which builds the view with a fresh procfs,
+/// applies `plan` to itself, and then starts the command. Design D1 has why
+/// the keeper cannot simply unshare the namespace itself; D2 why this is
+/// fleet's helper rather than a second one.
+#[allow(clippy::too_many_arguments)]
+fn spawn_through_init(
+    exe: &Path,
+    cmd: &Command,
+    args: Vec<String>,
+    plan: &policy::CapabilityPlan,
+    c: &Confinement,
+    relay_port: Option<u16>,
+    log: std::fs::File,
+    inherit: Vec<std::os::fd::OwnedFd>,
+) -> io::Result<crate::fleet::init::Agent> {
+    let text = |s: &std::ffi::OsStr| {
+        s.to_str().map(str::to_owned).ok_or_else(|| {
+            io::Error::other(format!(
+                "{s:?} is not UTF-8, which the init helper requires"
+            ))
+        })
+    };
+    let env = cmd
+        .get_envs()
+        .filter_map(|(k, v)| v.map(|v| (k, v)))
+        .map(|(k, v)| Ok((text(k)?, text(v)?)))
+        .collect::<io::Result<Vec<_>>>()?;
+    let mut command = vec![text(exe.as_os_str())?];
+    command.extend(args);
+    let spec = crate::fleet::init::AgentSpec {
+        command,
+        env,
+        cwd: Some(c.project_root.clone()),
+        // An `up` sandbox has always seen the host's name (D2).
+        hostname: host_name(),
+        plan: plan.clone(),
+        project_root: c.project_root.clone(),
+        relay_port,
+        view: Some(crate::fleet::init::View {
+            root: c.mount_root.clone(),
+            proxy_socket: c.proxy_socket_for_view.clone(),
+            workspace: None,
+        }),
+        timeout_secs: None,
+        host_network: !c.isolate_network,
+    };
+    let stdio = crate::fleet::init::Stdio {
+        stdout: Some(log.try_clone()?.into()),
+        stderr: Some(log.into()),
+        inherit,
+        lifeline: None,
+        report: None,
+    };
+    crate::fleet::init::spawn_in(exe, None, &spec, stdio)
+}
+
+/// The log `up`'s sandboxed processes write to, appended.
+fn log_for(paths: &StatePaths) -> io::Result<std::fs::File> {
+    std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&paths.log)
+}
+
+fn dup_fd(fd: RawFd) -> io::Result<std::os::fd::OwnedFd> {
+    // SAFETY: borrowing an fd this process holds open for the call.
+    unsafe { std::os::fd::BorrowedFd::borrow_raw(fd) }.try_clone_to_owned()
+}
+
+/// This host's name, for a UTS namespace that should not look like one.
+fn host_name() -> String {
+    let mut buf = [0u8; 256];
+    // SAFETY: a valid buffer and its length.
+    if unsafe { libc::gethostname(buf.as_mut_ptr().cast(), buf.len()) } != 0 {
+        return "localhost".to_owned();
+    }
+    let end = buf.iter().position(|b| *b == 0).unwrap_or(buf.len());
+    String::from_utf8_lossy(&buf[..end]).into_owned()
 }
 
 /// Where a sandboxed process `up` spawns is confined before it execs: its

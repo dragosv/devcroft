@@ -370,6 +370,7 @@ mod tests {
                     ran_activation_hook: false,
                     shell: None,
                     trust_store: Vec::new(),
+                    own_procfs: false,
                     proxy_port: None,
                     proxy_token: None,
                     allocations: Vec::new(),

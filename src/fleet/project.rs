@@ -125,7 +125,7 @@ pub fn prepare(
         .with_keeper_exe_grant(exe_dir.to_string_lossy().into_owned())
         .with_provider_grants(provider.static_name(), &provider_grants)
         .with_trust_store(&trust_store.grants)
-        .with_agent_proc()
+        .with_own_procfs()
         .with_service_ports(crate::lifecycle::ports::declared_ports(
             &manifest.network.services,
             resolution.services.declared(),

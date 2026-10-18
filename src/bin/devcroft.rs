@@ -55,6 +55,11 @@ fn main() {
         // Hidden, same reasoning as `__netns_probe`: entering a mount
         // namespace is irreversible for the process that does it.
         Some("__mount_probe") => std::process::exit(mount_probe_main(&args[2..])),
+        Some("__pidns_probe") => std::process::exit(
+            devcroft::fleet::mount::fresh_proc_in_a_new_pid_namespace()
+                .is_err()
+                .into(),
+        ),
         // Hidden: fleet's init helper, PID 1 of an agent's namespaces
         // (`fleet::init`). The supervisor's clone3 execs straight into it.
         #[cfg(target_os = "linux")]
@@ -3615,6 +3620,11 @@ fn compile_with_provider_grants(
             &meta.read_only_grants,
         )
         .with_trust_store(&meta.trust_store);
+    let compiled = if meta.own_procfs {
+        compiled.with_own_procfs()
+    } else {
+        compiled
+    };
     // Same live-only caveat as the provider grants just above: `compile`
     // alone has no way to know the proxy's port, since knowing it means
     // an `up` actually ran one. `meta.proxy_port` is `None` for a

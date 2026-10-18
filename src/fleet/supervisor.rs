@@ -572,6 +572,7 @@ impl Supervisor {
             relay_port: relay,
             view,
             timeout_secs: launch.timeout.map(|t| t.as_secs().max(1)),
+            host_network: false,
         };
         let log = std::fs::OpenOptions::new()
             .create(true)
@@ -735,6 +736,7 @@ impl Supervisor {
             relay_port: relay,
             view,
             timeout_secs: launch.timeout.map(|t| t.as_secs().max(1)),
+            host_network: false,
         };
         let log = std::fs::OpenOptions::new()
             .create(true)

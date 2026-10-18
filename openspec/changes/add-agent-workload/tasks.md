@@ -160,10 +160,10 @@ first so the fan-out fix is not gated on the tooling design.
       certificate bundle outside the home, never from `[env.vars]`); 2, by
       making the resolved shell `SHELL` and the last `PATH` entry
       (`KeeperEnv::vars`). Re-run: `npm install` of the agent succeeds with no
-      workaround. 3 is fixed **for fleet only** (`with_agent_proc`, origin
-      `fleet:proc`), by owner decision: `up` needs a PID namespace first
-      (`docs/known-gaps.md`, "An agent built on Bun cannot start in an `up`
-      sandbox"). `tests/agent_runtime_env.rs` covers 1 and 2 through `up`;
+      workaround. 3 is fixed for fleet and, since `add-up-pid-namespace`, for `up`
+      wherever the host can mount a fresh procfs (`with_own_procfs`, origin
+      `pid-namespace`): Claude Code 2.1.302 runs in an `up` sandbox and
+      `claude -p` reaches the API. `tests/agent_runtime_env.rs` covers 1 and 2 through `up`;
       each fails with its fix removed.
 
 ## 6b. Denial feedback: the agent learns why it was refused

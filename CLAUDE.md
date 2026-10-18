@@ -447,7 +447,7 @@ silently granting it.
 baseline compile byte-identically into `<state>/<name>/profile.json`. Every
 rule carries an origin: `manifest:<key>`, `provider:<name>`, or `baseline`
 (plus `allocated` for a chosen port, `trust-store` for the CA bundle the
-provider's environment names, `fleet:proc` for an agent's own procfs, and
+provider's environment names, `pid-namespace` for a procfs the sandbox owns, and
 `fleet:clone` for a fleet agent's
 clone root, neither of which a manifest wrote).
 Nothing goes to the backend that cannot be shown via `policy --render`.

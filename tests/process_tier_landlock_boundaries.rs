@@ -51,6 +51,9 @@
 //! See `tests/lifecycle_up.rs` for why this needs `CARGO_BIN_EXE_devcroft`
 //! and why each such test lives in its own file/process.
 
+#[path = "common/host_pid.rs"]
+mod host_pid;
+
 use devcroft::config::parse;
 use devcroft::lifecycle::{StatePaths, UpOptions, UpOutcome, down, up};
 use std::net::TcpListener;
@@ -182,7 +185,21 @@ fn process_tier_blocks_cross_process_signals_and_proc_reads() {
         UpOutcome::Started
     );
 
-    // Attack 1: kill() across the (namespace-shared) PID space.
+    // Two regimes, and each has its own correct answer. With a PID namespace
+    // of its own (`add-up-pid-namespace`), the victim has no number inside
+    // the sandbox at all: `kill` finds no such process and `/proc` has no
+    // entry, which is the stronger property. Sharing the host's (a host that
+    // masks `/proc`, or macOS), the victim is addressable and Landlock V6's
+    // signal scoping and the default-deny `/proc` refuse it. Either way the
+    // victim must survive.
+    let own_namespace = host_pid::has_own_pid_namespace(&paths.pidfile);
+    let (signal_refusal, read_refusal) = if own_namespace {
+        ("No such process", "No such file or directory")
+    } else {
+        ("Operation not permitted", "Permission denied")
+    };
+
+    // Attack 1: kill() across the PID space.
     let out = Command::new(devcroft_bin)
         .arg("exec")
         .arg(&sandbox_name)
@@ -200,8 +217,8 @@ fn process_tier_blocks_cross_process_signals_and_proc_reads() {
         String::from_utf8_lossy(&out.stderr)
     );
     assert!(
-        String::from_utf8_lossy(&out.stderr).contains("Operation not permitted"),
-        "expected an EPERM-shaped denial naming the real reason, got stderr={}",
+        String::from_utf8_lossy(&out.stderr).contains(signal_refusal),
+        "expected {signal_refusal:?} (own PID namespace: {own_namespace}), got stderr={}",
         String::from_utf8_lossy(&out.stderr)
     );
     assert!(
@@ -237,8 +254,8 @@ fn process_tier_blocks_cross_process_signals_and_proc_reads() {
             String::from_utf8_lossy(&out.stdout)
         );
         assert!(
-            String::from_utf8_lossy(&out.stderr).contains("Permission denied"),
-            "expected a permission-denied-shaped failure, got stderr={}",
+            String::from_utf8_lossy(&out.stderr).contains(read_refusal),
+            "expected {read_refusal:?} (own PID namespace: {own_namespace}), got stderr={}",
             String::from_utf8_lossy(&out.stderr)
         );
     }

@@ -20,6 +20,9 @@
 //! See `tests/lifecycle_up.rs` for why this needs `CARGO_BIN_EXE_devcroft`
 //! and why each such test lives in its own file/process.
 
+#[path = "common/host_pid.rs"]
+mod host_pid;
+
 use devcroft::config::parse;
 use devcroft::lifecycle::{StatePaths, UpOptions, UpOutcome, down, up};
 use std::path::Path;
@@ -240,6 +243,11 @@ fn a_declared_service_runs_inside_the_sandbox_and_is_reaped_by_down() {
     let pid = report.states[0]
         .pid
         .expect("a running service reports its pid");
+    // The sandbox's numbering, which may be its own PID namespace's
+    // (`add-up-pid-namespace`): signalled as the host numbers it, never as
+    // a bare number that names some other host process.
+    let pid = host_pid::host_pid(&paths.pidfile, pid as i32)
+        .unwrap_or_else(|| panic!("no host process for service pid {pid}"));
     unsafe {
         libc::kill(pid as libc::pid_t, libc::SIGKILL);
     }

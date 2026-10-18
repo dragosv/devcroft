@@ -4,6 +4,8 @@
 //! test and why each such test lives in its own file.
 
 mod common;
+#[path = "common/host_pid.rs"]
+mod host_pid;
 
 use common::for_each_row;
 use devcroft::keeper::protocol::{self, Frame, SpawnRequest};
@@ -54,9 +56,9 @@ fn down_terminates_a_live_session_process_not_just_the_keeper() {
             &mut client,
             &Frame::Spawn(SpawnRequest {
                 cmd: shell,
-                // Prints its own pid first so the test can watch it directly
-                // (host-visible: design.md decision 5, no pid-namespace
-                // separation between sandboxes in MVP).
+                // Prints its own pid first, in the sandbox's numbering: the
+                // sandbox may have a PID namespace of its own
+                // (`add-up-pid-namespace`), so it is translated below.
                 args: vec!["-c".to_string(), "echo $$; sleep 100".to_string()],
                 cwd: project_root.to_str().unwrap().to_string(),
                 env: BTreeMap::new(),
@@ -68,7 +70,7 @@ fn down_terminates_a_live_session_process_not_just_the_keeper() {
             Frame::SpawnOk { .. } => {}
             other => panic!("expected SpawnOk, got {other:?}"),
         }
-        let session_pid: libc::pid_t = loop {
+        let ns_pid: libc::pid_t = loop {
             match protocol::read_frame(&mut client).unwrap() {
                 Frame::Stdout(bytes) => {
                     if let Ok(pid) = String::from_utf8_lossy(&bytes).trim().parse() {
@@ -78,6 +80,8 @@ fn down_terminates_a_live_session_process_not_just_the_keeper() {
                 other => panic!("unexpected frame before pid line: {other:?}"),
             }
         };
+        let session_pid = host_pid::host_pid(&paths.pidfile, ns_pid)
+            .unwrap_or_else(|| panic!("no host process for sandbox pid {ns_pid}"));
         assert!(is_alive(session_pid), "session process should be running");
 
         // Deliberately don't close `client` or read its Exit frame first —

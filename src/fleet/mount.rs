@@ -319,8 +319,8 @@ pub fn construct_view(
             continue;
         }
         if grant.path == std::path::Path::new("/proc") {
-            // Owned by the `proc` mount below. A fleet agent's `/proc` grant
-            // (`CompiledPolicy::with_agent_proc`) is for its *fresh* procfs;
+            // Owned by the `proc` mount below. A sandbox's `/proc` grant
+            // (`CompiledPolicy::with_own_procfs`) is for its *fresh* procfs;
             // bound here, the host's would sit under it, one unmount away.
             continue;
         }
@@ -914,6 +914,71 @@ pub fn probe(exe: &std::path::Path) -> io::Result<bool> {
         .arg("__mount_probe")
         .output()?;
     Ok(out.status.success())
+}
+
+/// Whether this host can give a sandbox a PID namespace with a fresh procfs
+/// (`add-up-pid-namespace` D3): the real thing in a throwaway re-exec
+/// (`__pidns_probe`, [`fresh_proc_in_a_new_pid_namespace`]), as [`probe`]
+/// does for the mount namespace. Docker's default masks `/proc`, and the
+/// kernel then refuses a fresh procfs in a user namespace; that is the case
+/// this exists to catch before a plan grants `/proc`.
+pub fn probe_pid_namespace(exe: &std::path::Path) -> io::Result<bool> {
+    let out = std::process::Command::new(exe)
+        .arg("__pidns_probe")
+        .output()?;
+    Ok(out.status.success())
+}
+
+/// `__pidns_probe`'s body: a user and mount namespace, then a PID namespace
+/// whose first child mounts a fresh procfs. Irreversible for the caller,
+/// which is why it runs in a process nobody minds losing.
+#[cfg(target_os = "linux")]
+pub fn fresh_proc_in_a_new_pid_namespace() -> io::Result<()> {
+    enter_mount_namespace()?;
+    make_propagation_private()?;
+    // SAFETY: no arguments beyond the flag; affects this process only.
+    if unsafe { libc::unshare(libc::CLONE_NEWPID) } != 0 {
+        return Err(io::Error::last_os_error());
+    }
+    // SAFETY: this re-exec'd probe is single-threaded; the child only makes
+    // syscalls and exits.
+    match unsafe { libc::fork() } {
+        -1 => Err(io::Error::last_os_error()),
+        0 => {
+            // SAFETY: static NUL-terminated strings and a null data pointer.
+            let r = unsafe {
+                libc::mount(
+                    c"proc".as_ptr(),
+                    c"/proc".as_ptr(),
+                    c"proc".as_ptr(),
+                    libc::MS_NOSUID | libc::MS_NODEV | libc::MS_NOEXEC,
+                    std::ptr::null(),
+                )
+            };
+            // SAFETY: exiting the forked child without running destructors.
+            unsafe { libc::_exit(if r == 0 { 0 } else { 1 }) }
+        }
+        child => {
+            let mut status = 0;
+            // SAFETY: our own child; `status` is a valid out-pointer.
+            if unsafe { libc::waitpid(child, &mut status, 0) } < 0 {
+                return Err(io::Error::last_os_error());
+            }
+            if libc::WIFEXITED(status) && libc::WEXITSTATUS(status) == 0 {
+                Ok(())
+            } else {
+                Err(io::Error::other("a fresh procfs could not be mounted"))
+            }
+        }
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+pub fn fresh_proc_in_a_new_pid_namespace() -> io::Result<()> {
+    Err(io::Error::new(
+        io::ErrorKind::Unsupported,
+        "PID namespaces are Linux-only",
+    ))
 }
 
 /// The non-Linux counterpart to [`construct_view`], which exists so this

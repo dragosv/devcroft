@@ -365,7 +365,7 @@ fn an_agent_reads_its_own_proc_and_the_ca_bundle_its_environment_names() {
             .find(|g| g.value == path)
             .map(|g| g.origin.to_string())
     };
-    assert_eq!(origin_of("/proc").as_deref(), Some("fleet:proc"));
+    assert_eq!(origin_of("/proc").as_deref(), Some("pid-namespace"));
     assert!(launch.plan.filesystem_read.iter().any(|g| g == "/proc"));
     assert_eq!(origin_of(&bundle).as_deref(), Some("trust-store"));
     // Pointed at where the grant is mounted, not through the link.

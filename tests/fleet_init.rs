@@ -138,6 +138,7 @@ fn spec(dirs: &Dirs, script: &str) -> AgentSpec {
         relay_port: None,
         view: None,
         timeout_secs: None,
+        host_network: false,
     }
 }
 
@@ -556,6 +557,7 @@ fn the_keeper_runs_as_the_agents_command_and_serves_sessions() {
             workspace: None,
         }),
         timeout_secs: None,
+        host_network: false,
     };
     let (log_r, log_w) = std::io::pipe().unwrap();
     let stdio = Stdio {

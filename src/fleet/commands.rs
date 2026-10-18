@@ -572,6 +572,7 @@ pub fn preflight(cgroup_root: &Path, exe: &Path) -> Result<(), FleetError> {
             relay_port: None,
             view: None,
             timeout_secs: None,
+            host_network: false,
         };
         let devnull: std::os::fd::OwnedFd = std::fs::File::create("/dev/null")
             .map_err(|e| e.to_string())?

@@ -340,6 +340,11 @@ pub struct Meta {
     /// `#[serde(default)]`: an older `meta.json` had none.
     #[serde(default)]
     pub trust_store: Vec<String>,
+    /// Whether this sandbox runs in a PID namespace of its own with a fresh
+    /// procfs (`add-up-pid-namespace`), and so is granted `/proc`. Recorded
+    /// for `policy --render`. `#[serde(default)]`: an older sandbox did not.
+    #[serde(default)]
+    pub own_procfs: bool,
     /// The egress proxy's bound port, when `up` started or reused one for
     /// this sandbox (add-egress-proxy) — `None` when `network.allow` is
     /// empty and no domain filtering was requested. Recorded for the same
@@ -781,6 +786,7 @@ mod tests {
             ran_activation_hook: false,
             shell: None,
             trust_store: Vec::new(),
+            own_procfs: false,
             proxy_port: None,
             proxy_token: None,
             allocations: Vec::new(),
@@ -807,6 +813,7 @@ mod tests {
             ran_activation_hook: false,
             shell: None,
             trust_store: Vec::new(),
+            own_procfs: false,
             proxy_port: None,
             proxy_token: None,
             allocations: Vec::new(),

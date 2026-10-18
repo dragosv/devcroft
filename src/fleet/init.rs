@@ -138,6 +138,13 @@ pub struct AgentSpec {
     /// `lifecycle::GRACE_PERIOD` PID 1 exits, which kills everything left.
     #[serde(default)]
     pub timeout_secs: Option<u64>,
+    /// Stay in the caller's network namespace instead of a new one. Fleet
+    /// never does; `up` does for a sandbox that shares the host's loopback
+    /// (`network.default = "allow"`, or no isolation on this host), which
+    /// it did before it had a PID namespace and must keep doing
+    /// (`add-up-pid-namespace` D2).
+    #[serde(default)]
+    pub host_network: bool,
 }
 
 /// How an agent's PID 1 ended, written to [`Stdio::report`] as one JSON
@@ -228,6 +235,18 @@ struct Status {
 /// running `spec`. Returns once the helper has reported that the command
 /// started, or with the helper's own error if it did not.
 pub fn spawn(exe: &Path, leaf: &Leaf, spec: &AgentSpec, stdio: Stdio) -> io::Result<Agent> {
+    spawn_in(exe, Some(leaf), spec, stdio)
+}
+
+/// [`spawn`], with the cgroup leaf optional: `up` has no fleet node, and its
+/// sandbox stays in the cgroup of whoever ran it, as it always has
+/// (`add-up-pid-namespace` D2). Everything else is the same helper.
+pub fn spawn_in(
+    exe: &Path,
+    leaf: Option<&Leaf>,
+    spec: &AgentSpec,
+    stdio: Stdio,
+) -> io::Result<Agent> {
     let config = serde_json::to_vec(&ConfigOut {
         spec,
         inherited: stdio.inherit.len(),
@@ -272,21 +291,28 @@ pub fn spawn(exe: &Path, leaf: &Leaf, spec: &AgentSpec, stdio: Stdio) -> io::Res
     let envp = [std::ptr::null::<libc::c_char>()];
 
     // The leaf fd is `O_CLOEXEC`: the helper holds it only until it execs.
-    let leaf_fd = leaf.open_dir()?;
+    let leaf_fd = leaf.map(Leaf::open_dir).transpose()?;
     let mut pidfd: libc::c_int = -1;
+    let mut flags = libc::CLONE_NEWUSER
+        | libc::CLONE_NEWNS
+        | libc::CLONE_NEWPID
+        | libc::CLONE_NEWIPC
+        | libc::CLONE_NEWUTS
+        | libc::CLONE_NEWCGROUP
+        | libc::CLONE_PIDFD;
+    if !spec.host_network {
+        flags |= libc::CLONE_NEWNET;
+    }
     let args = CloneArgs {
-        flags: (libc::CLONE_NEWUSER
-            | libc::CLONE_NEWNS
-            | libc::CLONE_NEWPID
-            | libc::CLONE_NEWNET
-            | libc::CLONE_NEWIPC
-            | libc::CLONE_NEWUTS
-            | libc::CLONE_NEWCGROUP
-            | libc::CLONE_PIDFD) as u64
-            | CLONE_INTO_CGROUP,
+        flags: flags as u64
+            | if leaf_fd.is_some() {
+                CLONE_INTO_CGROUP
+            } else {
+                0
+            },
         pidfd: &mut pidfd as *mut libc::c_int as u64,
         exit_signal: libc::SIGCHLD as u64,
-        cgroup: leaf_fd.as_raw_fd() as u64,
+        cgroup: leaf_fd.as_ref().map_or(0, |fd| fd.as_raw_fd() as u64),
         ..CloneArgs::default()
     };
 
@@ -323,9 +349,12 @@ pub fn spawn(exe: &Path, leaf: &Leaf, spec: &AgentSpec, stdio: Stdio) -> io::Res
         }
     }
     if ret < 0 {
+        let into = leaf.map_or_else(
+            || "a new PID namespace".to_owned(),
+            |l| l.path().display().to_string(),
+        );
         return Err(io::Error::other(format!(
-            "clone3 into {}: {}",
-            leaf.path().display(),
+            "clone3 into {into}: {}",
             io::Error::last_os_error()
         )));
     }
@@ -579,7 +608,9 @@ fn setup(signals: &libc::sigset_t) -> io::Result<Started> {
     if unsafe { libc::sethostname(spec.hostname.as_ptr().cast(), spec.hostname.len()) } != 0 {
         return Err(step("sethostname", io::Error::last_os_error()));
     }
-    super::netns::bring_loopback_up().map_err(|e| step("bring lo up", e))?;
+    if !spec.host_network {
+        super::netns::bring_loopback_up().map_err(|e| step("bring lo up", e))?;
+    }
 
     // Bound now, while nothing is restricted, at the fd after the inherited
     // ones and the lifeline (every fd above those was just closed, so it is
