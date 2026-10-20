@@ -29,6 +29,7 @@ pub use state::{
 };
 pub use status::{KeeperStatus, SandboxStatus, SandboxSummary, StatusError, logs, ps, status};
 pub use terminate::{GRACE_PERIOD, TerminateError, down, rm};
+pub(crate) use up::is_keeper_internal;
 pub use up::{KeeperEnv, UpError, UpOptions, UpOutcome, up};
 // `pub(crate)`, not part of the public surface: `crate::proxy::spawn`
 // needs the identical fd-inheritance dance `up_process` already does for

@@ -88,7 +88,16 @@ fn down_terminates_a_live_session_process_not_just_the_keeper() {
         // this stands in for a client that's simply still attached when
         // `down` runs, exercising teardown of a live session, not a
         // disconnect.
+        let started = std::time::Instant::now();
         down(&sandbox_name).unwrap();
+        // The session dies on SIGTERM, so `down` has nothing left to wait
+        // for. The keeper used to sleep its whole session grace (2 s)
+        // regardless; the bound is loose on purpose.
+        let took = started.elapsed();
+        assert!(
+            took < Duration::from_millis(1500),
+            "down waited {took:?} for a session already gone"
+        );
 
         let deadline = std::time::Instant::now() + Duration::from_secs(3);
         while is_alive(session_pid) && std::time::Instant::now() < deadline {

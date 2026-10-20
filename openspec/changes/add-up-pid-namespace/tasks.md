@@ -31,9 +31,14 @@
 - [x] 3.3 `down` still ends every process in the sandbox.
       `tests/up_pid_namespace.rs`: a process left running detached is gone
       after `down`, and existed before it; with the PID namespace disabled the
-      test fails. Measured on the way: the keeper takes ~1.9 s to exit on
-      SIGTERM (it waits `SESSION_GRACE` for its sessions), so `down` usually
-      reaches its SIGKILL of PID 1, which now ends the whole namespace.
+      test fails. Measured on the way: the keeper took ~1.9 s to exit on
+      SIGTERM, a fixed `SESSION_GRACE` sleep. **Corrected (2026-10-20):**
+      this note first said `down` therefore usually reached its SIGKILL;
+      it does not, since `down`'s own grace is 5 s. The sleep now waits
+      only while something it signalled is alive (idle `down` 2092 ms →
+      ~110 ms), and a zombie PID 1 no longer counts as running
+      (`state::has_exited`), which had made an in-process `up`'s `down`
+      wait the full 5 s.
       Real agent: Claude Code 2.1.302 runs in an `up` sandbox and `claude -p`
       reaches the API through the proxy.
 - [x] 3.4 The full suite, including `tests/process_tier_landlock_boundaries.rs`.

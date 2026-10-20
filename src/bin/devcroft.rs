@@ -5031,7 +5031,24 @@ fn install_shutdown_handler(registry: Arc<Registry>) {
             }
         }
 
-        std::thread::sleep(SESSION_GRACE);
+        // Until everything signalled is gone, or the grace runs out. This was
+        // a fixed sleep, so every `down` took the whole grace even with
+        // nothing running (measured: 1.9 s for an idle sandbox).
+        let groups: Vec<libc::pid_t> = registry
+            .snapshot()
+            .into_iter()
+            .map(|(_, info)| info.pgid)
+            .chain(service_pgids.iter().copied())
+            .collect();
+        let alive = |pgid: libc::pid_t| {
+            // SAFETY: signal 0 only checks; it delivers nothing.
+            let r = unsafe { libc::kill(-pgid, 0) };
+            r == 0 || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
+        };
+        let deadline = std::time::Instant::now() + SESSION_GRACE;
+        while groups.iter().any(|g| alive(*g)) && std::time::Instant::now() < deadline {
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
 
         for (_, info) in registry.snapshot() {
             unsafe {

@@ -66,6 +66,18 @@ pub fn set_activation_env(overlay: EnvOverlay) {
 /// Applied before the request's own `env`, so an explicit per-session
 /// value still wins over what activation set.
 fn apply_activation_env(cmd: &mut Command) {
+    // devcroft's own plumbing is the keeper's, never a session's: the keeper
+    // reads these after it has threads, so it cannot remove them from its own
+    // environment, and they were reaching every process in the sandbox
+    // (measured: `DEVCROFT_PROXY_SOCKET`, the relay port, the services root,
+    // the resolved shell). Nothing inside reads them; `own-sandbox-
+    // environment`'s rule is that what the sandbox sees is decided. By name,
+    // not prefix: a project's own `DEVCROFT_*` variables are its own.
+    for (name, _) in std::env::vars_os() {
+        if crate::lifecycle::is_keeper_internal(&name.to_string_lossy()) {
+            cmd.env_remove(name);
+        }
+    }
     if let Some(overlay) = ACTIVATION_ENV.get() {
         for name in &overlay.unset {
             cmd.env_remove(name);

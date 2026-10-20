@@ -579,6 +579,32 @@ pub fn is_same_process(pid: libc::pid_t, recorded_start_time: u64) -> bool {
     process_start_time(pid)
         .map(|current| current == recorded_start_time)
         .unwrap_or(false)
+        && !has_exited(pid)
+}
+
+/// Whether `pid` has exited and only its process-table entry is left (`Z`,
+/// or `X` while it is being removed). It keeps its pid and start time until
+/// its parent reaps it, so [`is_same_process`] alone called it running.
+/// Measured: a sandbox brought up from a process that stays alive (a test
+/// calling `up` in-process) left PID 1 a zombie of that process, and `down`
+/// waited its whole grace, then signalled the zombie.
+#[cfg(target_os = "linux")]
+fn has_exited(pid: libc::pid_t) -> bool {
+    std::fs::read_to_string(format!("/proc/{pid}/stat"))
+        .ok()
+        .and_then(|stat| {
+            let after_comm = stat.rfind(')')?;
+            stat[after_comm + 1..]
+                .split_whitespace()
+                .next()
+                .map(str::to_owned)
+        })
+        .is_some_and(|state| state == "Z" || state == "X")
+}
+
+#[cfg(not(target_os = "linux"))]
+fn has_exited(_pid: libc::pid_t) -> bool {
+    false
 }
 
 /// A pidfile alone only proves a process with that pid existed *when it
@@ -689,6 +715,23 @@ fn terminate_and_wait_pid(pid: libc::pid_t, start_time: u64, grace: Duration) {
 
 #[cfg(test)]
 mod tests {
+    /// A child that has exited but is not reaped keeps its pid and start
+    /// time; it is still not the running process its pidfile names.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn an_unreaped_child_is_not_the_same_process() {
+        let child = std::process::Command::new("true").spawn().unwrap();
+        let pid = child.id() as libc::pid_t;
+        let start = process_start_time(pid).unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while !has_exited(pid) && std::time::Instant::now() < deadline {
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert!(has_exited(pid), "the child should be a zombie by now");
+        assert!(!is_same_process(pid, start));
+        drop(child);
+    }
+
     use super::*;
     use std::os::unix::net::UnixListener;
 

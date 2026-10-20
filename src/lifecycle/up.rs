@@ -1294,6 +1294,33 @@ fn prepare_services(
     Ok(true)
 }
 
+/// devcroft's own variables in a keeper's environment, which sessions must
+/// not inherit (`keeper::session`): everything [`KeeperEnv::vars`] adds
+/// besides `SHELL` and `PATH`, which are for sessions, plus what the init
+/// helper and `spawn_keeper` add. Named one by one rather than by prefix,
+/// since a project may name its own variables `DEVCROFT_*` (this repository's
+/// tests do) and a fleet task's process is meant to see `DEVCROFT_TASK`.
+const KEEPER_INTERNAL: [&str; 12] = [
+    "DEVCROFT_CAPABILITY_PLAN",
+    "DEVCROFT_SSH_HOST_KEY",
+    "DEVCROFT_SSH_AUTHORIZED_KEY",
+    "DEVCROFT_SHELL",
+    "DEVCROFT_START_SERVICES",
+    "DEVCROFT_SANDBOX_NAME",
+    "DEVCROFT_SERVICES_ROOT",
+    "DEVCROFT_SANDBOX_HOME",
+    "DEVCROFT_PROXY_RELAY_PORT",
+    "DEVCROFT_PROXY_SOCKET",
+    "DEVCROFT_PROXY_RELAY_FD",
+    "DEVCROFT_ACTIVATION_PROVISIONED",
+];
+
+/// Whether `name` is one of devcroft's own keeper variables (see
+/// `KEEPER_INTERNAL`); the hooks are `DEVCROFT_HOOK_<NAME>`.
+pub(crate) fn is_keeper_internal(name: &str) -> bool {
+    KEEPER_INTERNAL.contains(&name) || name.starts_with("DEVCROFT_HOOK_")
+}
+
 /// The environment's `PATH` with the resolved shell's directory appended,
 /// or `None` when it already holds it.
 fn path_ending_in_shell_dir(
@@ -2253,6 +2280,40 @@ pub(crate) fn pass_fds(cmd: &mut Command, fds: &[RawFd]) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Everything the keeper's environment adds to the provider's is either
+    /// for sessions (`SHELL`, `PATH`) or named internal, so sessions are
+    /// handed none of it; and a project's own `DEVCROFT_*` is not.
+    #[test]
+    fn every_variable_the_keeper_adds_is_session_facing_or_internal() {
+        let plan = policy::compile(&crate::config::parse("[sandbox]\nname = \"t\"\n").unwrap().0)
+            .to_capability_plan();
+        let env = std::collections::BTreeMap::new();
+        let hooks = [("post_start", "true".to_owned())];
+        let vars = KeeperEnv {
+            env: &env,
+            unset: &[],
+            plan: &plan,
+            ssh_host_key_pem: "k",
+            ssh_authorized_key_pem: "k",
+            shell: Path::new("/nix/store/x-bash/bin/sh"),
+            services: Some("t"),
+            hooks: &hooks,
+            project_root: Path::new("/p"),
+            sandbox_home: Path::new("/p/h"),
+            relay: Some((1, Path::new("/s"))),
+        }
+        .vars();
+        for (key, _) in vars {
+            let key = key.to_string_lossy();
+            assert!(
+                key == "SHELL" || key == "PATH" || is_keeper_internal(&key),
+                "{key} reaches sessions"
+            );
+        }
+        assert!(!is_keeper_internal("DEVCROFT_NIX_E2E"));
+        assert!(!is_keeper_internal("DEVCROFT_TASK"));
+    }
 
     /// The shell's directory ends `PATH`, once, and the environment's own
     /// `SHELL` and entries come first.

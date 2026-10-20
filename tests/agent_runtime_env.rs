@@ -128,7 +128,8 @@ fn a_session_finds_sh_by_name_a_real_shell_and_the_ca_bundle() {
         "sh",
         "-c",
         "echo \"SHELL=$SHELL\"; echo \"CERT=$SSL_CERT_FILE\"; \
-         if read -r line < \"$SSL_CERT_FILE\"; then echo CERT_READ; fi",
+         if read -r line < \"$SSL_CERT_FILE\"; then echo CERT_READ; fi; \
+         for v in ${!DEVCROFT_*}; do echo \"LEAKED=$v\"; done",
     ]);
     // What `policy --render` renders from, since this project has no
     // manifest on disk for it to find: the policy artifact `up` wrote, and
@@ -151,6 +152,11 @@ fn a_session_finds_sh_by_name_a_real_shell_and_the_ca_bundle() {
     let meta = meta.expect("up records Meta");
     let shell = meta.shell.expect("up records the shell");
     assert!(out.contains(&format!("SHELL={shell}\n")), "{out}");
+    // devcroft's own plumbing stays the keeper's.
+    assert!(
+        !out.contains("LEAKED="),
+        "devcroft variables reach a session: {out}"
+    );
     // Pointed at where the grant is mounted, and readable there.
     assert!(out.contains(&format!("CERT={bundle}\n")), "{out}");
     assert!(
