@@ -34,6 +34,44 @@ fn flox_available() -> bool {
         // refused`. Guarding only on the binary reports a host that cannot
         // build anything as a devcroft regression.
         && devcroft::provider::host_can_build_nix_closures()
+        && flox_can_resolve()
+}
+
+/// Whether flox can lock a manifest it has never seen, which every test
+/// here needs: each writes a fresh, unlocked `[install]`. A reachable
+/// store is not enough — since flox 1.4 resolution against the catalog
+/// requires a FloxHub login, and without one `flox activate` fails while
+/// `--version`, `init`, `search` and `show` all still succeed. Probed by
+/// resolving, not by `flox auth status`: a login is one way to have the
+/// capability, not the capability. `flox list` locks without building or
+/// activating, so the probe runs no hook. Once per process, since the
+/// tests run in parallel.
+fn flox_can_resolve() -> bool {
+    static CAN_RESOLVE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *CAN_RESOLVE.get_or_init(|| {
+        let dir = std::env::temp_dir().join(format!(
+            "devcroft-flox-derived-probe-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let run = |args: &[&str]| {
+            Command::new("flox")
+                .args(args)
+                .current_dir(&dir)
+                .output()
+                .is_ok_and(|o| o.status.success())
+        };
+        let resolves = run(&["init"])
+            && std::fs::write(
+                dir.join(".flox/env/manifest.toml"),
+                "version = 1\n\n[install]\njq.pkg-path = \"jq\"\n",
+            )
+            .is_ok()
+            && run(&["list"]);
+        let _ = std::fs::remove_dir_all(&dir);
+        resolves
+    })
 }
 
 /// A flox project whose hook leaves evidence on disk if it ever runs.
@@ -96,7 +134,9 @@ fn resolved_jq(root: &Path) -> Option<String> {
 #[test]
 fn a_hook_does_not_run_on_the_host_during_resolution() {
     if !flox_available() {
-        eprintln!("skipping: no usable flox here (not on PATH, or no reachable Nix store)");
+        eprintln!(
+            "skipping: no usable flox here (not on PATH, no reachable Nix store, or cannot resolve packages: FloxHub login)"
+        );
         return;
     }
     let Some((root, marker)) = flox_project("nohost", Some("touch {MARKER}")) else {
@@ -131,7 +171,9 @@ fn a_hook_does_not_run_on_the_host_during_resolution() {
 #[test]
 fn the_derived_environment_resolves_to_an_identical_closure() {
     if !flox_available() {
-        eprintln!("skipping: no usable flox here (not on PATH, or no reachable Nix store)");
+        eprintln!(
+            "skipping: no usable flox here (not on PATH, no reachable Nix store, or cannot resolve packages: FloxHub login)"
+        );
         return;
     }
     let Some((with_hook, _)) = flox_project("closure-hook", Some("touch {MARKER}")) else {
@@ -203,7 +245,9 @@ fn the_derived_environment_resolves_to_an_identical_closure() {
 #[test]
 fn a_project_without_a_hook_takes_the_unchanged_path() {
     if !flox_available() {
-        eprintln!("skipping: no usable flox here (not on PATH, or no reachable Nix store)");
+        eprintln!(
+            "skipping: no usable flox here (not on PATH, no reachable Nix store, or cannot resolve packages: FloxHub login)"
+        );
         return;
     }
     let Some((root, _)) = flox_project("nohook", None) else {
@@ -242,7 +286,9 @@ fn the_hook_runs_inside_the_sandbox_instead() {
         return;
     }
     if !flox_available() {
-        eprintln!("skipping: no usable flox here (not on PATH, or no reachable Nix store)");
+        eprintln!(
+            "skipping: no usable flox here (not on PATH, no reachable Nix store, or cannot resolve packages: FloxHub login)"
+        );
         return;
     }
     // SAFETY: this process runs a single test.

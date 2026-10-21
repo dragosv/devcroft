@@ -175,6 +175,12 @@ cargo test -- --nocapture 2>&1 | grep skipping
 On a devcontainer whose `nix-daemon` is not running that is ~80 tests,
 which is most of the interesting ones.
 
+A reachable store is still not enough for flox: since flox 1.4, resolving
+a manifest that has no lock yet requires a FloxHub login, while `search`,
+`show`, `init` and activating an already-locked environment all work
+without one. `tests/flox_derived_env.rs` writes fresh manifests, so it
+probes by resolving one (`flox list`), not by `flox auth status`.
+
 **After any `Cargo.lock` change**, regenerate the dependency attribution:
 
 ```sh
