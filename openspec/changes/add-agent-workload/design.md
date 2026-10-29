@@ -172,6 +172,30 @@ The remaining UX question — whether a shadowed binary is reported or
 silently loses — is left open deliberately (see Open Questions); it
 changes no requirement here.
 
+**Measured (2026-10-29): the layer needs to contribute PATH entries, not
+an env diff.** Composing a second environment's diff would let the
+agent's layer change the project's build (`CC`, `NIX_CFLAGS_COMPILE`,
+`PKG_CONFIG_PATH`, …), so the question was whether `PATH` alone is
+enough. It is, for all eleven agents in `docs/agents.md`. Spike: a devenv
+project holding only `jq`, from the same `devenv.lock` as the agent
+samples, and a separate `buildEnv` of the eleven agents plus bash,
+coreutils, findutils, grep, sed and git, from the same nixpkgs revision.
+That is the shape of a devenv profile, and it has no environment of its
+own to compose. Each session got `<layer>/bin` appended *after* the
+project's `PATH` and nothing else from the layer. All eleven printed
+their version, and all eleven reached their own vendor's API through
+the proxy and were refused there for a dummy key, the same result as the
+matrix, with the agent no longer in the project's environment. No grant
+was added: the provider's store grant is the whole `/nix/store` root
+(`capture::store_grants`), so a closure-tier layer is already readable.
+That also means a layer adds no rule to `policy --render` unless one is
+added deliberately, for inspectability.
+
+What this does not show: a layer from a provider whose environment is
+not store-backed (artifact tier), a layer whose own tools rely on its
+env diff (none of the eleven did, since nixpkgs wraps them with absolute
+runtime paths), and macOS.
+
 ## Risks / Trade-offs
 
 - **The project-level tooling decision may be wrong for the actual use
