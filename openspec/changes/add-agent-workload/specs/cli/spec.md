@@ -31,20 +31,45 @@ NOT be suppressed by the sandbox being idempotently up.
 - **THEN** the disclosure line is still printed, so exposure is never
   invisible on a subsequent run
 
-### Requirement: doctor reports tooling layer resolvability
-The system SHALL report through `doctor` whether a declared tooling layer
-can be resolved on this host, distinguishing "no tooling layer declared"
-from "declared but not resolvable" and naming the fix in the latter case.
+### Requirement: up accepts a tooling layer per invocation
+The system SHALL accept `--tools <path>` on `up`, naming a tooling layer
+for that invocation in place of the one in the user's configuration. It
+SHALL be a flag, not a new command.
 
-#### Scenario: Tooling layer declared but unresolvable
-- **WHEN** `doctor` runs where a declared tooling layer's provider is
-  unavailable
+#### Scenario: Per-invocation layer
+- **WHEN** `up --tools ~/agents` runs with no user configuration file
+- **THEN** the sandbox comes up with that layer, and `status` names it
+
+### Requirement: up and status name the tooling layer
+The system SHALL print, at `up`, one line naming the tooling layer in
+use, and SHALL show it in `status` together with the layer's binaries
+that the project's `PATH` shadows. Neither SHALL print anything about a
+tooling layer when none is in use.
+
+#### Scenario: Layer named at up
+- **WHEN** `up` brings up a sandbox with a tooling layer
+- **THEN** it prints one line naming the layer's path and provider
+
+#### Scenario: No layer, no line
+- **WHEN** `up` runs with no tooling layer
+- **THEN** its output is unchanged from before this capability
+
+### Requirement: doctor reports tooling layer resolvability
+The system SHALL report through `doctor` whether a configured tooling
+layer can be resolved on this host, distinguishing "no tooling layer
+configured" from "configured but not resolvable" and naming the fix in
+the latter case.
+
+#### Scenario: Tooling layer configured but unresolvable
+- **WHEN** `doctor` runs where the configured tooling layer's provider
+  is unavailable
 - **THEN** it reports the failure and names the fix, rather than leaving
   it to surface as an `up` failure later
 
-#### Scenario: No tooling layer declared
-- **WHEN** `doctor` runs for a project with no `[tools]` section
-- **THEN** it reports that none is declared, and does not treat the
+#### Scenario: No tooling layer configured
+- **WHEN** `doctor` runs with no tooling layer in the user's
+  configuration
+- **THEN** it reports that none is configured, and does not treat the
   absence as a problem
 
 ### Requirement: Project-root conflict is actionable

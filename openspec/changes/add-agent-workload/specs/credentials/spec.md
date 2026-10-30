@@ -10,15 +10,16 @@ a file-based subscription credential — and bounds what each exposes.
 ## ADDED Requirements
 
 ### Requirement: Credentials are opt-in and never implicit
-The system SHALL expose a credential to a sandbox only when the manifest
-explicitly asks for that specific credential. No other manifest key, and
-no tooling or provider declaration, SHALL cause a credential to become
-readable inside the boundary as a side effect. The set of sensitive paths
-denied by baseline SHALL remain denied regardless of any credential
-request.
+The system SHALL expose a credential to a sandbox only when the user's
+configuration explicitly asks for that specific credential, or, for an
+environment variable, when the manifest's existing `[env] forward` names
+it. No other key, and no tooling or provider declaration, SHALL cause a
+credential to become readable inside the boundary as a side effect. The
+set of sensitive paths denied by baseline SHALL remain denied regardless
+of any credential request.
 
 #### Scenario: No credential without an explicit request
-- **WHEN** a manifest declares a tooling layer but requests no credential
+- **WHEN** a tooling layer is in use but no credential is requested
 - **THEN** no credential material is readable inside the sandbox, and the
   compiled policy contains no credential grant
 
@@ -93,7 +94,7 @@ The system SHALL print exactly one line at `up` naming each credential
 exposed and the shape it was delivered in, and SHALL represent a
 file-shaped credential in the rendered policy with its own origin,
 distinguishable from manifest, provider, and tooling grants. Credential
-exposure SHALL NOT be discoverable only by reading the manifest.
+exposure SHALL NOT be discoverable only by reading a configuration file.
 
 #### Scenario: Up discloses the exposure
 - **WHEN** a sandbox with one file-shaped credential comes up
@@ -127,8 +128,8 @@ value SHALL NOT be present in the sandbox's environment, filesystem, or memory.
 This is a stronger guarantee than environment delivery and is not a
 replacement for it: a credential consumed by something other than an HTTP call
 cannot be brokered this way, and must still be delivered directly with its
-exposure stated. A manifest declares which it wants; devcroft does not silently
-choose.
+exposure stated. The credential request declares which it wants; devcroft does
+not silently choose.
 
 The mechanism is the proxy devcroft already runs for egress
 (`add-egress-proxy`), which is why this is expressible at all — the proxy sits
@@ -163,5 +164,5 @@ not reachable by `ptrace` or `/proc/<pid>/mem` from inside.
   through the proxy
 - **THEN** brokering is refused rather than silently downgraded to environment
   delivery
-- **AND** the manifest must ask for direct delivery explicitly, with the
+- **AND** the request must ask for direct delivery explicitly, with the
   exposure that carries

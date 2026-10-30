@@ -57,3 +57,16 @@ credential is missing.
 - **WHEN** a requested credential file does not exist on the host
 - **THEN** `up` fails naming the missing credential, rather than starting
   a sandbox where the agent will fail to authenticate later
+
+### Requirement: A changed tooling layer is stale, not silently applied
+The system SHALL treat a change to the tooling layer — its lock, or
+which layer the user's configuration names — like a change to the
+project environment: a running sandbox keeps the layer it was brought up
+with, `status` reports it stale, and `up --recreate` applies the change.
+A plain `up` against a running sandbox SHALL NOT re-resolve the layer.
+
+#### Scenario: Plain up keeps the recorded layer
+- **WHEN** the layer's lock changes and `up` runs against the running
+  sandbox without `--recreate`
+- **THEN** the sandbox keeps the layer recorded at its `up`, and the
+  output says it is stale and names `--recreate`

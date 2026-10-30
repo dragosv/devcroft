@@ -44,44 +44,95 @@ first so the fan-out fix is not gated on the tooling design.
 
 ## 2. Config surface
 
-- [ ] 2.1 `[tools]` section in `src/config/`, rejecting unknown keys with
-      the full key path like every other section
-- [ ] 2.2 Credential request key, distinguishing env-var shape from
-      single-file shape
-- [ ] 2.3 Reject at parse time: a file-shaped credential naming a
-      directory, and any glob or wildcard — a credential is per named
-      file (`credentials` delta spec)
-- [ ] 2.4 Unit tests for each rejection, asserting layer `config` and
+> **Revised 2026-10-30: the layer and credential requests are the
+> user's, not the project's** (design.md Decisions 1, 2). Nothing in
+> this group or the next two had been started, so they are rewritten
+> rather than struck.
+
+- [ ] 2.1 User configuration file in `src/config/`:
+      `$XDG_CONFIG_HOME/devcroft/config.toml`, falling back to
+      `~/.config/devcroft/config.toml`, on macOS too. Absent is not an
+      error. Unknown keys rejected with the file and the full key path,
+      like every section of `devcroft.toml`. It is devcroft's first user
+      configuration; keep it to the layer and credentials
+- [ ] 2.2 `[tools]` in it: `provider` and `path`. `up --tools <path>`
+      takes precedence over the file (the flag's provider is detected
+      from the directory, or given; decide which while implementing and
+      record it)
+- [ ] 2.3 `devcroft.toml` keeps rejecting `[tools]` and gains no
+      credential key; assert both, since a project-declared layer is the
+      decision this change reversed
+- [ ] 2.4 Credential request in the user configuration, distinguishing
+      env-var shape from single-file shape. Reject at parse time a
+      file-shaped credential naming a directory, and any glob or
+      wildcard — a credential is per named file (`credentials` delta
+      spec)
+- [ ] 2.5 Unit tests for each rejection, asserting layer `config` and
       exit code 2
-- [ ] 2.5 Regression test: a manifest with neither section produces a
-      byte-identical `policy --render` and captured env to before this
-      change — the migration plan's stated invariant
+- [ ] 2.6 Regression test: no user configuration and no `--tools`
+      produces a byte-identical `policy --render` and captured env to
+      before this change — the migration plan's stated invariant. The
+      test must not read the developer's real `~/.config`; point
+      `XDG_CONFIG_HOME` at a temp dir
 
 ## 3. Tooling layer resolution
 
-- [ ] 3.1 Resolve the declared tooling environment host-side at `up`, in
-      the same trusted phase as the project environment; never from
-      inside the boundary
-- [ ] 3.2 Reject a tooling layer with no lock, or one that would pass a
-      host binary through, at layer `provider` exit code 3 — this is the
-      `host`-passthrough guard, not a nicety (design.md decision 1)
-- [ ] 3.3 Compose the tooling env diff and store grants with the project
-      environment at a fixed position, extending the existing
-      "Fixed composition order" requirement rather than adding a parallel
-      rule
-- [ ] 3.4 Tooling grants are read-only and carry their own origin,
-      distinct from `provider:` and `manifest:`
+- [ ] 3.1 Resolve the layer host-side at `up`, in the same trusted phase
+      as the project environment, through the provider's **hook-free**
+      route (`print-dev-env --json`, `shellenv --pure`, `devenv build
+      shell`, the derived flox copy); never from inside the boundary, and
+      the layer's hook never runs, there or later
+- [ ] 3.2 Reject at layer `provider`, exit code 3: a layer with no lock;
+      one naming an artifact-tier provider (`swift`), whatever the
+      project's provider; one that would pass a host binary through. This
+      is the `host`-passthrough guard, not a nicety (design.md Decisions
+      1, 5)
+- [ ] 3.3 Keep only the layer's `PATH` entries, in its provider's order,
+      and place them after the project's and before devcroft's resolved
+      shell (`KeeperEnv::vars`). No other variable from the layer reaches
+      a session. This is a new rule in `tooling`, not an extension of
+      `env-provider`'s "Fixed composition order", which is about
+      resolving before restriction
+- [ ] 3.4 The layer's store root as a read-only grant with origin
+      `tools:<path>`, rendered even where the project's provider grant
+      already covers it, and folded into the grants in `up()` beside the
+      resolved shell's, so `Meta` and the compiled profile cannot
+      disagree
 - [ ] 3.5 `up` fails naming the path if resolving the tooling layer would
       need write access outside the project root
-- [ ] 3.6 Determinism test: repeated resolution of the same two layers
-      yields byte-identical env and rendered policy
-- [ ] 3.7 Test: rendered policy with a tooling layer differs from without
-      it *only* by read-only grants carrying the tooling origin
+- [ ] 3.6 Record the layer's path, provider and lock fingerprint in
+      `Meta`; `policy --render` renders the grant from it. `status`
+      reports stale when the lock changed or the configuration names a
+      different layer or none; `up --recreate` applies it; a plain `up`
+      does not re-resolve
+- [ ] 3.7 `up` prints one line naming the layer; `status` names it and
+      lists the layer's binaries the project's `PATH` shadows. No line,
+      and no warning, when there is no layer or nothing is shadowed
+- [ ] 3.8 Fleet: resolve the layer once per fleet and give every agent
+      the same entries; check they are untouched by the minimal root's
+      `/workspace` rewrite
+- [ ] 3.9 Determinism test: repeated resolution of the same project and
+      layer yields byte-identical env and rendered policy
+- [ ] 3.10 Test: with and without a layer, every session variable other
+      than `PATH` is identical, and `policy --render` differs *only* by
+      the read-only grant carrying the tooling origin
+- [ ] 3.11 Test: a name in both (`git`) resolves to the project's, and
+      `status` names it shadowed
+- [ ] 3.12 Test: a `swift` project with a devenv layer gets the layer's
+      tools (macOS; on Linux, skip naming why)
 
 ## 4. Credentials
 
-- [ ] 4.1 Env-var shape: deliver through the backend's credential
-      mechanism, adding no filesystem grant
+- [ ] 4.0 **Measure before building the file shape**, on a host with a
+      subscription login: (a) does an agent survive a token refresh with
+      its credentials file granted read-only, or does it fail at first
+      expiry; (b) does `claude setup-token` / `CLAUDE_CODE_OAUTH_TOKEN`
+      authenticate a subscription through `[env] forward` with no file
+      grant. Record both in design.md Decision 2. If (b) holds, 4.3–4.4
+      and 7.1 are re-scoped before any code (design.md Decision 2)
+- [ ] 4.1 Env-var shape, requested in the user configuration: delivered
+      as an environment variable, adding no filesystem grant. `[env]
+      forward` in the project is unchanged
 - [ ] 4.2 Assert the secret value never reaches the compiled policy,
       `meta.json`, or the logs — a test, not a code comment
 - [ ] 4.3 File shape: grant exactly one file, read-only, using the
@@ -99,16 +150,20 @@ first so the fan-out fix is not gated on the tooling design.
 ## 5. CLI and doctor
 
 - [ ] 5.1 `doctor`: report tooling-layer resolvability, distinguishing
-      "none declared" from "declared but unresolvable" and naming the fix
-- [ ] 5.2 Confirm no new top-level command — `--name` is a flag, tooling
-      and credentials are manifest sections
+      "none configured" from "configured but unresolvable" and naming
+      the fix
+- [ ] 5.2 Confirm no new top-level command — `--name` and `--tools` are
+      flags, tooling and credentials are user configuration; list
+      `--tools` in `USAGE` (`tests/cli_help_and_version.rs`)
 
 ## 6. End-to-end: an agent actually runs
 
 - [ ] 6.1 Integration test, self-skipping like the other real-tooling
-      tests: a project declaring an agent CLI in `[tools]` comes up and
-      `exec -- <agent> --version` runs it **inside** the sandbox, with
-      that agent absent from the project's own environment manifest
+      tests: an agent CLI in a user tooling layer (via `XDG_CONFIG_HOME`
+      or `--tools`), a project whose committed files mention no agent;
+      `up`, then `exec -- <agent> --version` runs it **inside** the
+      sandbox. The 2026-10-29 spike (design.md Decision 4) is the manual
+      version of this test, with all eleven agents
 - [ ] 6.2 Auth test, both shapes: an env-var key, and a single-file
       credential. Skip honestly rather than faking a token if no
       credential is available in the test environment
