@@ -53,6 +53,12 @@ pub struct UpOptions<'a> {
     /// itself, so a caller that passes none gets exactly the sandbox it got
     /// before layers existed.
     pub tools: Option<&'a crate::tooling::Layer>,
+    /// Variables the user's configuration asks for from the invoking shell
+    /// (`[credentials] env`), as the CLI read them. A name not set in this
+    /// shell fails `up` before any state exists, rather than starting a
+    /// sandbox whose agent fails to authenticate later (`lifecycle` spec:
+    /// "Tooling and credentials resolve before restriction").
+    pub credentials: &'a [String],
 }
 
 #[derive(Debug)]
@@ -324,6 +330,27 @@ pub fn up_with_provider(
         .fingerprint(project_root)
         .map_err(UpError::Provider)?;
 
+    // The user's credential requests, checked here so a missing one fails
+    // before any state exists. A name the manifest also sets in `[env.vars]`
+    // is refused: one is a committed literal, the other the user's secret,
+    // and which wins is not something either reader should have to guess
+    // (the same rule `config::parse` applies within one manifest).
+    for name in opts.credentials {
+        if manifest.env.vars.contains_key(name) {
+            return Err(UpError::Config(format!(
+                "`{name}` is requested by your `[credentials] env` and also set by this \
+                 project's `[env.vars]`; one is your secret and the other a committed value \
+                 — remove it from whichever you did not mean"
+            )));
+        }
+        if std::env::var_os(name).is_none() {
+            return Err(UpError::Config(format!(
+                "`{name}` is requested by your `[credentials] env` but is not set in this \
+                 shell; set it, or remove it from your user configuration"
+            )));
+        }
+    }
+
     // The user's tooling layer, host-side in the same trusted phase and
     // before any state exists, so a layer that cannot be used fails `up` the
     // way the project's environment would. Only its `PATH` entries and its
@@ -464,6 +491,7 @@ pub fn up_with_provider(
             service_ports: Vec::new(),
             policy_digest: None,
             tools: tools.as_ref().map(|(_, record)| record.clone()),
+            credentials: opts.credentials.to_vec(),
         },
     )?;
 
@@ -1040,6 +1068,14 @@ fn up_process(
         );
     }
     apply_manifest_env(manifest, &mut env);
+    // The user's credentials, from this shell (checked present above). Their
+    // values go to the keeper's environment and nowhere else: not `Meta`,
+    // which records the names, not the policy, and not the log.
+    for name in opts.credentials {
+        if let Ok(value) = std::env::var(name) {
+            env.insert(name.clone(), value);
+        }
+    }
 
     // The other half of `ssh.forward_agent`: the variable itself. Without the
     // grants folded into the policy above this would be a path the sandbox can

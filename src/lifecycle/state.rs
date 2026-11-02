@@ -403,6 +403,12 @@ pub struct Meta {
     /// brought up before layers existed.
     #[serde(default)]
     pub tools: Option<ToolsRecord>,
+    /// The names of the user's credentials this `up` delivered
+    /// (`[credentials] env`), never their values: what `up` discloses again
+    /// on every run against this sandbox, so an exposure is never invisible
+    /// because the sandbox was already up.
+    #[serde(default)]
+    pub credentials: Vec<String>,
 }
 
 /// One `up`'s tooling layer, as [`Meta::tools`] records it.
@@ -859,6 +865,7 @@ mod tests {
             service_ports: Vec::new(),
             policy_digest: None,
             tools: None,
+            credentials: Vec::new(),
         };
         write_meta(&paths.meta, &meta).unwrap();
         assert_eq!(read_meta(&paths.meta).unwrap(), Some(meta));
@@ -887,6 +894,7 @@ mod tests {
             service_ports: Vec::new(),
             policy_digest: None,
             tools: None,
+            credentials: Vec::new(),
         };
         write_meta(&paths.meta, &meta).unwrap();
         assert!(!paths.meta.with_extension("json.tmp").exists());

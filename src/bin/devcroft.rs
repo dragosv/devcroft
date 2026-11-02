@@ -2476,21 +2476,47 @@ fn take_tools_flag(args: &[String]) -> Result<(Option<std::path::PathBuf>, Vec<S
     Ok((tools, rest))
 }
 
-/// The tooling layer the user asks for now: `--tools`, else the user
-/// configuration. A configuration error is layer `config` (exit 2); a layer
-/// that cannot be used is layer `provider` (exit 3).
+/// The user configuration and the tooling layer it asks for now: `--tools`,
+/// else its `[tools]`. A configuration error is layer `config` (exit 2); a
+/// layer that cannot be used is layer `provider` (exit 3).
 fn select_tools_layer(
     flag: Option<&std::path::Path>,
     command: &str,
-) -> Result<Option<devcroft::tooling::Layer>, i32> {
+) -> Result<
+    (
+        devcroft::config::UserConfig,
+        Option<devcroft::tooling::Layer>,
+    ),
+    i32,
+> {
     let config = devcroft::config::load_user_config().map_err(|e| {
         eprintln!("devcroft {command}: config: {e}");
         2
     })?;
-    devcroft::tooling::select(flag, &config).map_err(|e| {
+    let layer = devcroft::tooling::select(flag, &config).map_err(|e| {
         eprintln!("devcroft {command}: provider: {e}");
         3
-    })
+    })?;
+    Ok((config, layer))
+}
+
+/// The user's credentials this sandbox was given, one line each, on every
+/// `up` including one against a sandbox already up (`credentials` spec:
+/// "Exposure is disclosed exactly once, and is inspectable"; `cli` spec:
+/// "Disclosure on a repeat up"). Read from `Meta`, so it names what the
+/// sandbox has, not what the configuration asks for now.
+fn print_credential_disclosure(manifest: &devcroft::config::Manifest) {
+    let recorded = devcroft::lifecycle::StatePaths::new(&manifest.sandbox.name)
+        .ok()
+        .and_then(|paths| devcroft::lifecycle::read_meta(&paths.meta).ok().flatten())
+        .map(|meta| meta.credentials)
+        .unwrap_or_default();
+    for name in recorded {
+        println!(
+            "devcroft: credential: {name}, an environment variable from your shell \
+             ([credentials] env); every process in this sandbox can read it"
+        );
+    }
 }
 
 /// The tooling layer `up` composed in, said once (`tooling` spec: "up and
@@ -2587,8 +2613,8 @@ fn cli_up(args: &[String]) -> i32 {
         eprintln!("devcroft up: --recreate is destructive; pass --yes to run non-interactively");
         return 2;
     }
-    let tools = match select_tools_layer(tools_flag.as_deref(), "up") {
-        Ok(layer) => layer,
+    let (user_config, tools) = match select_tools_layer(tools_flag.as_deref(), "up") {
+        Ok(v) => v,
         Err(code) => return code,
     };
 
@@ -2603,6 +2629,7 @@ fn cli_up(args: &[String]) -> i32 {
             recreate,
             skip_hooks,
             tools: tools.as_ref(),
+            credentials: &user_config.credentials,
         },
     ) {
         Ok(outcome) => {
@@ -2615,6 +2642,7 @@ fn cli_up(args: &[String]) -> i32 {
             println!("devcroft: sandbox '{}' is {msg}.", manifest.sandbox.name);
             print_tier(&manifest.env.provider);
             print_tools_layer(&manifest, tools.as_ref(), outcome);
+            print_credential_disclosure(&manifest);
             print_swift_shim_note(&manifest.env.provider, &project_root);
             warn_if_activation_hook_ran(&manifest);
             0
@@ -4159,6 +4187,26 @@ fn cli_why(args: &[String]) -> i32 {
     // slow and needs a working environment, and a user debugging a missing
     // variable may have neither.
     if let Some(name) = env_name {
+        // The user's own request, which the manifest cannot show.
+        let requested = devcroft::config::load_user_config()
+            .map(|c| c.credentials.contains(&name))
+            .unwrap_or(false);
+        if requested && !manifest.env.vars.contains_key(&name) {
+            if std::env::var_os(&name).is_some() {
+                println!("PRESENT");
+                println!(
+                    "forwarded from your shell by `[credentials] env` in your user \
+                     configuration; every process in the sandbox can read it"
+                );
+            } else {
+                println!("ABSENT");
+                println!(
+                    "your `[credentials] env` asks for it, but it is not set in this shell — \
+                     `up` refuses until it is"
+                );
+            }
+            return 0;
+        }
         let declared_forward = manifest.env.forward.contains(&name);
         let declared_literal = manifest.env.vars.get(&name);
         let on_host = std::env::var(&name).ok();

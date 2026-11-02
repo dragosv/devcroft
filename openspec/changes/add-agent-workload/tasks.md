@@ -179,11 +179,29 @@ first so the fan-out fix is not gated on the tooling design.
       authenticate a subscription through `[env] forward` with no file
       grant. Record both in design.md Decision 2. If (b) holds, 4.3–4.4
       and 7.1 are re-scoped before any code (design.md Decision 2)
-- [ ] 4.1 Env-var shape, requested in the user configuration: delivered
+- [x] 4.1 Env-var shape, requested in the user configuration: delivered
       as an environment variable, adding no filesystem grant. `[env]
       forward` in the project is unchanged
-- [ ] 4.2 Assert the secret value never reaches the compiled policy,
+- [x] 4.2 Assert the secret value never reaches the compiled policy,
       `meta.json`, or the logs — a test, not a code comment
+> **The env-var shape landed (2026-11-02): 4.1, 4.2, 4.6, and the env
+> half of 2.4.** `[credentials] env = ["NAME", …]` in the user
+> configuration; names checked at layer `config`, duplicates collapsed.
+> `credentials.file` stays an unknown key until 4.0 is measured, so 2.4
+> stays open for that half. Decided while implementing, from the specs
+> rather than freshly: a requested name this shell does not hold fails
+> `up` at `config` before any state exists (the `lifecycle` requirement
+> says fail, and it is the user's own explicit request, unlike `forward`,
+> which warns); a name the manifest also sets in `[env.vars]` is refused,
+> as within one manifest. `Meta` records the names, never the values, and
+> `up` discloses each one on every run, from `Meta`, so a repeat `up`
+> against a running sandbox names what it has. `why --env` reads the user
+> configuration too, or it would call a delivered credential `ABSENT`.
+> 4.2 is asserted by walking every file under the state dir and the
+> project's `.devcroft/` for the value, with the walk checked to reach
+> `meta.json`. The disclosure covers the user's requests; the project's
+> own `[env] forward` is unchanged and still reviewable in the repository.
+
 - [ ] 4.3 File shape: grant exactly one file, read-only, using the
       backend's per-file grant. Granting the containing directory is
       explicitly not an acceptable implementation
@@ -191,7 +209,7 @@ first so the fan-out fix is not gated on the tooling design.
       unreadable, and the credential file itself is not writable
 - [ ] 4.5 Baseline-denied paths stay denied even when named by a
       credential request
-- [ ] 4.6 `up` prints exactly one disclosure line per exposed credential,
+- [x] 4.6 `up` prints exactly one disclosure line per exposed credential,
       including on a repeat `up` against an already-running sandbox
 - [ ] 4.7 File credentials appear in `policy --render` with a credential
       origin, distinguishable from an ordinary manifest grant

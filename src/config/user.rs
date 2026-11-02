@@ -3,16 +3,17 @@
 //! when that is unset, on every platform.
 //!
 //! **devcroft's first user configuration, and deliberately a small one.** It
-//! holds what belongs to the operator rather than to the project — today, the
-//! tooling layer — and nothing that changes how a project's own manifest is
-//! read. Everything else stays in `devcroft.toml`, so "what does this project
+//! holds what belongs to the operator rather than to the project — the
+//! tooling layer and the credentials it needs — and nothing that changes how a
+//! project's own manifest is read. Everything else stays in `devcroft.toml`, so "what does this project
 //! do" is still answered by the repository.
 //!
 //! Validated as strictly as `devcroft.toml`, and for the same reason: a key
 //! that parses and does nothing is the failure this project refuses to ship.
-//! That is also why the credential request this change specifies is not
-//! accepted yet (task 2.4 waits for group 4): until something delivers it, a
-//! `[credentials]` table is an unknown key, not a silent one.
+//! That is also why only the environment-variable shape of a credential is
+//! accepted: the single-file shape waits on a measurement (`add-agent-workload`
+//! task 4.0), and until something delivers it, `credentials.file` is an
+//! unknown key, not a silent one.
 
 use std::path::{Path, PathBuf};
 
@@ -29,6 +30,12 @@ pub const USER_CONFIG_FILE: &str = "devcroft/config.toml";
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct UserConfig {
     pub tools: Option<ToolsDecl>,
+    /// `[credentials] env`: variables whose values come from the invoking
+    /// shell into every sandbox this user brings up, disclosed at each `up`
+    /// (`credentials` spec). The user's counterpart to a manifest's
+    /// `[env] forward`: the key an agent needs is the operator's, so the
+    /// project's committed file need not name it.
+    pub credentials: Vec<String>,
 }
 
 /// `[tools]`: the directory holding the user's tooling environment, and,
@@ -46,6 +53,13 @@ pub struct ToolsDecl {
 #[serde(default)]
 struct RawUserConfig {
     tools: Option<RawTools>,
+    credentials: RawCredentials,
+}
+
+#[derive(Deserialize, Default)]
+#[serde(default)]
+struct RawCredentials {
+    env: Vec<String>,
 }
 
 #[derive(Deserialize)]
@@ -54,7 +68,7 @@ struct RawTools {
     path: String,
 }
 
-const SECTIONS: &[(&str, &[&str])] = &[("tools", &["provider", "path"])];
+const SECTIONS: &[(&str, &[&str])] = &[("tools", &["provider", "path"]), ("credentials", &["env"])];
 
 /// Where the user configuration lives on this host, or `None` when neither
 /// `XDG_CONFIG_HOME` nor `HOME` says. A relative `XDG_CONFIG_HOME` is ignored,
@@ -112,7 +126,19 @@ pub fn parse_user_config(text: &str, home: &Path) -> Result<UserConfig, ConfigEr
             })?,
         }),
     };
-    Ok(UserConfig { tools })
+    let mut credentials = Vec::new();
+    for name in raw.credentials.env {
+        if !super::is_env_var_name(&name) {
+            return Err(ConfigError::Parse(format!(
+                "credentials.env: {name:?} is not an environment variable name (letters, \
+                 digits and `_`, not starting with a digit)"
+            )));
+        }
+        if !credentials.contains(&name) {
+            credentials.push(name);
+        }
+    }
+    Ok(UserConfig { tools, credentials })
 }
 
 fn check_unknown_keys(table: &toml::Table) -> Result<(), ConfigError> {
@@ -221,13 +247,25 @@ mod tests {
         );
     }
 
-    /// Not accepted until something delivers it (task 2.4 waits for group
-    /// 4): a credential request that parsed and did nothing would be read as
-    /// working.
     #[test]
-    fn a_credential_request_is_not_yet_a_key() {
-        let err = parse("[credentials]\nenv = [\"ANTHROPIC_API_KEY\"]\n").unwrap_err();
-        assert!(matches!(err, ConfigError::UnknownKey { .. }), "{err:?}");
+    fn env_credentials_parse_and_are_checked() {
+        let c =
+            parse("[credentials]\nenv = [\"ANTHROPIC_API_KEY\", \"ANTHROPIC_API_KEY\"]\n").unwrap();
+        assert_eq!(c.credentials, vec!["ANTHROPIC_API_KEY".to_string()]);
+        let err = parse("[credentials]\nenv = [\"1BAD\"]\n").unwrap_err();
+        assert!(err.to_string().contains("credentials.env"), "{err}");
+    }
+
+    /// The file shape is not accepted until something delivers it (task 4.0
+    /// measures what it needs first): a request that parsed and did nothing
+    /// would be read as working.
+    #[test]
+    fn a_file_credential_is_not_yet_a_key() {
+        let err = parse("[credentials]\nfile = \"~/.claude/.credentials.json\"\n").unwrap_err();
+        assert!(
+            matches!(&err, ConfigError::UnknownKey { path, .. } if path == "credentials.file"),
+            "{err:?}"
+        );
     }
 
     #[test]

@@ -1,5 +1,6 @@
-//! `add-agent-workload` task group 3: the user's tooling layer, end to end,
-//! through the real binary against a real devenv. The project and the layer
+//! `add-agent-workload` task groups 3 and 4: what the user's configuration
+//! adds to a sandbox — a tooling layer, and credentials from the invoking
+//! shell — end to end, through the real binary against a real devenv. The project and the layer
 //! are both devenv environments pinned by the agent samples' own
 //! `devenv.lock`, so nothing is fetched and the store already has them.
 //!
@@ -12,6 +13,9 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+
+/// The variable the credential tests request; removed from every other run.
+const CREDENTIAL: &str = "DCT_TEST_CREDENTIAL";
 
 fn devcroft_bin() -> &'static str {
     env!("CARGO_BIN_EXE_devcroft")
@@ -86,13 +90,22 @@ impl Fixture {
     }
 
     fn run(&self, args: &[&str]) -> std::process::Output {
-        Command::new(devcroft_bin())
-            .args(args)
+        self.run_with(CREDENTIAL, None, args)
+    }
+
+    /// `run`, with `name` set to `value` in the invoking shell, or removed
+    /// from it for `None`.
+    fn run_with(&self, name: &str, value: Option<&str>, args: &[&str]) -> std::process::Output {
+        let mut cmd = Command::new(devcroft_bin());
+        cmd.args(args)
             .current_dir(&self.project)
             .env("XDG_CONFIG_HOME", self.root.join("xdg"))
-            .stdin(Stdio::null())
-            .output()
-            .unwrap()
+            .stdin(Stdio::null());
+        match value {
+            Some(v) => cmd.env(name, v),
+            None => cmd.env_remove(name),
+        };
+        cmd.output().unwrap()
     }
 
     fn ok(&self, args: &[&str]) -> String {
@@ -334,4 +347,112 @@ fn doctor_tells_no_layer_from_a_broken_one() {
         "{broken:?}"
     );
     let _ = std::fs::remove_dir_all(&root);
+}
+
+/// Every regular file under `dir`, not following symlinks.
+fn files_under(dir: &Path) -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return out;
+    };
+    for entry in entries.flatten() {
+        let Ok(kind) = entry.file_type() else {
+            continue;
+        };
+        if kind.is_dir() {
+            out.extend(files_under(&entry.path()));
+        } else if kind.is_file() {
+            out.push(entry.path());
+        }
+    }
+    out
+}
+
+/// Tasks 4.1, 4.2 and 4.6: a credential the user's configuration requests
+/// reaches sessions from the invoking shell; `up` names it once, on a repeat
+/// `up` too; and its value is in no file devcroft writes — not `meta.json`,
+/// not the compiled policy, not the policy artifact, not the log.
+#[test]
+fn a_user_credential_reaches_sessions_is_disclosed_and_is_never_written_down() {
+    let Some(f) = Fixture::new("cred") else {
+        return;
+    };
+    f.configure(&format!("[credentials]\nenv = [\"{CREDENTIAL}\"]\n"));
+    let secret = format!(
+        "dct-secret-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    );
+    let up = |args: &[&str]| {
+        let out = f.run_with(CREDENTIAL, Some(&secret), args);
+        assert!(out.status.success(), "{out:?}");
+        String::from_utf8_lossy(&out.stdout).into_owned()
+    };
+    let disclosure = format!("devcroft: credential: {CREDENTIAL},");
+
+    let first = up(&["up"]);
+    assert_eq!(first.matches(&disclosure).count(), 1, "{first}");
+    let again = up(&["up"]);
+    assert!(again.contains("already up"), "{again}");
+    assert_eq!(again.matches(&disclosure).count(), 1, "{again}");
+
+    let inside = f.ok(&["exec", "--", "printenv", CREDENTIAL]);
+    assert_eq!(inside.trim(), secret);
+    let render = f.ok(&["policy", "--render"]);
+    assert!(!render.contains(&secret));
+
+    let state = devcroft::lifecycle::StatePaths::new(&f.name).unwrap().root;
+    let written: Vec<PathBuf> = files_under(&state)
+        .into_iter()
+        .chain(files_under(&f.project.join(".devcroft")))
+        .collect();
+    assert!(
+        written.iter().any(|p| p.ends_with("meta.json")),
+        "the walk must reach the state it is meant to check: {written:?}"
+    );
+    for file in written {
+        let bytes = std::fs::read(&file).unwrap_or_default();
+        assert!(
+            !bytes.windows(secret.len()).any(|w| w == secret.as_bytes()),
+            "the credential's value was written to {}",
+            file.display()
+        );
+    }
+}
+
+/// `lifecycle` spec, "Tooling and credentials resolve before restriction":
+/// a requested credential this shell does not hold fails `up` at layer
+/// `config`, naming it, before any state exists; so does one the project
+/// also sets as a committed literal.
+#[test]
+fn a_credential_the_shell_lacks_or_the_project_sets_fails_up() {
+    let Some(f) = Fixture::new("credmiss") else {
+        return;
+    };
+    f.configure(&format!("[credentials]\nenv = [\"{CREDENTIAL}\"]\n"));
+    let out = f.run(&["up"]);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(2), "{stderr}");
+    assert!(
+        stderr.contains(CREDENTIAL) && stderr.contains("not set"),
+        "{stderr}"
+    );
+    let state = devcroft::lifecycle::StatePaths::new(&f.name).unwrap().root;
+    assert!(!state.exists(), "a refused `up` must leave no state behind");
+
+    std::fs::write(
+        f.project.join("devcroft.toml"),
+        format!(
+            "[sandbox]\nname = {:?}\n\n[env]\nprovider = \"devenv\"\n\n[env.vars]\n{CREDENTIAL} = \"committed\"\n",
+            f.name
+        ),
+    )
+    .unwrap();
+    let out = f.run_with(CREDENTIAL, Some("x"), &["up"]);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(2), "{stderr}");
+    assert!(stderr.contains("[env.vars]"), "{stderr}");
 }

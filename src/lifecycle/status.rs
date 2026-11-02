@@ -377,6 +377,7 @@ mod tests {
                     service_ports: Vec::new(),
                     policy_digest: None,
                     tools: None,
+                    credentials: Vec::new(),
                 },
             )
             .unwrap();

@@ -364,6 +364,7 @@ mod tests {
                 provider: Some("devenv".into()),
                 path: PathBuf::from("/nonexistent/configured"),
             }),
+            ..Default::default()
         };
         let layer = select(Some(&flag), &config).unwrap().unwrap();
         assert_eq!(layer.provider, ProviderKind::Nix);
