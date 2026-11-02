@@ -1,9 +1,13 @@
 mod discovery;
 mod slug;
+mod user;
 mod validate;
 
 pub use discovery::{MANIFEST_FILE_NAME, discover};
 pub use slug::{is_valid_name, slugify};
+pub use user::{
+    ToolsDecl, USER_CONFIG_FILE, UserConfig, load_user_config, parse_user_config, user_config_path,
+};
 
 use serde::Deserialize;
 use std::collections::BTreeMap;
@@ -274,6 +278,18 @@ pub enum ConfigError {
     InvalidIsolationTier {
         name: String,
     },
+    /// A `[tools]` section in `devcroft.toml`. Its own variant rather than a
+    /// bare unknown key, because the reader is likely to have meant it: the
+    /// tooling layer is the user's, never the project's
+    /// (`add-agent-workload` design.md Decision 1), and the message says
+    /// where it goes instead.
+    ToolsInManifest,
+    /// An error in the user configuration file, which is named, since it is
+    /// not the file a reader of the project would look in.
+    InUserConfig {
+        file: String,
+        error: Box<ConfigError>,
+    },
 }
 
 impl fmt::Display for ConfigError {
@@ -332,6 +348,13 @@ impl fmt::Display for ConfigError {
                 "`[sandbox].isolation = \"{name}\"` is not a known isolation tier; \
                  the supported tier is `{ISOLATION_TIER}`"
             ),
+            ConfigError::ToolsInManifest => write!(
+                f,
+                "`[tools]` does not belong in {MANIFEST_FILE_NAME}: a tooling layer is the \
+                 user's, not the project's; put it in ~/.config/{USER_CONFIG_FILE} \
+                 (`$XDG_CONFIG_HOME/{USER_CONFIG_FILE}`), or pass `devcroft up --tools <dir>`"
+            ),
+            ConfigError::InUserConfig { file, error } => write!(f, "{file}: {error}"),
         }
     }
 }
@@ -383,6 +406,9 @@ pub fn parse(text: &str) -> Result<(Manifest, Vec<Warning>), ConfigError> {
     let table = text
         .parse::<toml::Table>()
         .map_err(|e| ConfigError::Parse(e.to_string()))?;
+    if table.contains_key("tools") {
+        return Err(ConfigError::ToolsInManifest);
+    }
     validate::check_unknown_keys(&table)?;
 
     let raw: RawManifest = toml::Value::Table(table)
@@ -888,6 +914,30 @@ mod tests {
                 "provider {name:?} must be rejected by the parser, got {err:?}"
             );
         }
+    }
+
+    /// A project cannot declare a tooling layer (`add-agent-workload`
+    /// design.md Decision 1, the decision that was reversed), and the
+    /// refusal says where one goes instead.
+    #[test]
+    fn a_tools_section_in_the_manifest_is_refused_and_redirected() {
+        let err =
+            parse("[sandbox]\nname = \"myproj\"\n[tools]\npath = \"/opt/agents\"\n").unwrap_err();
+        assert!(matches!(err, ConfigError::ToolsInManifest), "{err:?}");
+        let msg = err.to_string();
+        assert!(
+            msg.contains(USER_CONFIG_FILE) && msg.contains("--tools"),
+            "{msg}"
+        );
+    }
+
+    /// Nor a credential request: it follows the layer to the user's
+    /// configuration, and the manifest's schema gains no such key.
+    #[test]
+    fn the_manifest_gains_no_credential_key() {
+        let err =
+            parse("[sandbox]\nname = \"myproj\"\n[credentials]\nfile = \"/x\"\n").unwrap_err();
+        assert!(matches!(err, ConfigError::UnknownKey { .. }), "{err:?}");
     }
 
     #[test]

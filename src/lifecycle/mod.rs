@@ -24,8 +24,8 @@ pub(crate) mod up;
 
 pub use hooks::HookError;
 pub use state::{
-    Allocation, Health, Meta, StatePaths, client_key_paths, fleet_state_dir, health, policy_digest,
-    read_meta,
+    Allocation, Health, Meta, StatePaths, ToolsRecord, client_key_paths, fleet_state_dir, health,
+    policy_digest, read_meta,
 };
 pub use status::{KeeperStatus, SandboxStatus, SandboxSummary, StatusError, logs, ps, status};
 pub use terminate::{GRACE_PERIOD, TerminateError, down, rm};

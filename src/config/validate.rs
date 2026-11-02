@@ -148,7 +148,7 @@ pub fn check_env(env: &Env) -> Result<(), ConfigError> {
     Ok(())
 }
 
-fn closest(key: &str, candidates: &[&str]) -> Option<String> {
+pub(super) fn closest(key: &str, candidates: &[&str]) -> Option<String> {
     candidates
         .iter()
         .map(|c| (*c, edit_distance(key, c)))

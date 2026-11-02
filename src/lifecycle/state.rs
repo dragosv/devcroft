@@ -396,6 +396,29 @@ pub struct Meta {
     /// policy, does not. Absent for a sandbox brought up before it existed.
     #[serde(default)]
     pub policy_digest: Option<String>,
+    /// The user's tooling layer this `up` composed in (`crate::tooling`),
+    /// recorded so `policy --render` shows its grant as the backend got it
+    /// and `status` can tell when it has changed, however the user
+    /// configuration reads now. `None` with no layer, and for a sandbox
+    /// brought up before layers existed.
+    #[serde(default)]
+    pub tools: Option<ToolsRecord>,
+}
+
+/// One `up`'s tooling layer, as [`Meta::tools`] records it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ToolsRecord {
+    pub path: String,
+    pub provider: String,
+    /// `config` or `flag` (`tooling::Source`): only a layer from the
+    /// configuration goes stale when the configuration changes.
+    pub source: String,
+    pub fingerprint: String,
+    pub grants: Vec<String>,
+    pub path_entries: Vec<String>,
+    /// The layer's names the project's `PATH` provides first.
+    #[serde(default)]
+    pub shadowed: Vec<String>,
 }
 
 /// The digest [`Meta::policy_digest`] records: FNV-1a, 64-bit, stable
@@ -835,6 +858,7 @@ mod tests {
             allocations: Vec::new(),
             service_ports: Vec::new(),
             policy_digest: None,
+            tools: None,
         };
         write_meta(&paths.meta, &meta).unwrap();
         assert_eq!(read_meta(&paths.meta).unwrap(), Some(meta));
@@ -862,6 +886,7 @@ mod tests {
             allocations: Vec::new(),
             service_ports: Vec::new(),
             policy_digest: None,
+            tools: None,
         };
         write_meta(&paths.meta, &meta).unwrap();
         assert!(!paths.meta.with_extension("json.tmp").exists());

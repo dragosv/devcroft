@@ -376,6 +376,7 @@ mod tests {
                     allocations: Vec::new(),
                     service_ports: Vec::new(),
                     policy_digest: None,
+                    tools: None,
                 },
             )
             .unwrap();

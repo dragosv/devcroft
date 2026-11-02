@@ -248,7 +248,7 @@ So the layer contributes **its `PATH` entries and nothing else**:
  │ project          │ tooling layer    │ devcroft's shell   │   first match wins
  └──────────────────┴──────────────────┴────────────────────┘
  every other variable: the project's alone, then [env.vars] as before
- grants: the layer's store root, read-only, origin tools:<path>
+ grants: the layer's store root, read-only, origin tools:<provider>
 ```
 
 - **The project comes first.** A `node` in the layer never shadows the

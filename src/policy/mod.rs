@@ -216,6 +216,10 @@ pub enum Origin {
     /// no one else's ([`CompiledPolicy::with_own_procfs`]). A fleet agent
     /// always; an `up` sandbox where the host allows (`add-up-pid-namespace`).
     PidNamespace,
+    /// The store root of the user's tooling layer, read-only, tagged with the
+    /// provider that resolved it (`crate::tooling`, `add-agent-workload`).
+    /// Never from a manifest: the layer is the user's, not the project's.
+    Tools(&'static str),
 }
 
 /// Serialized as its displayed form (`manifest:filesystem.allow`,
@@ -244,9 +248,14 @@ impl<'de> serde::Deserialize<'de> for Origin {
             "fleet:clone" => Ok(Origin::FleetClone),
             "trust-store" => Ok(Origin::TrustStore),
             "pid-namespace" => Ok(Origin::PidNamespace),
-            t => match (t.strip_prefix("manifest:"), t.strip_prefix("provider:")) {
-                (Some(key), _) => Ok(Origin::Manifest(leak(key))),
-                (_, Some(name)) => Ok(Origin::Provider(leak(name))),
+            t => match (
+                t.strip_prefix("manifest:"),
+                t.strip_prefix("provider:"),
+                t.strip_prefix("tools:"),
+            ) {
+                (Some(key), _, _) => Ok(Origin::Manifest(leak(key))),
+                (_, Some(name), _) => Ok(Origin::Provider(leak(name))),
+                (_, _, Some(name)) => Ok(Origin::Tools(leak(name))),
                 _ => Err(serde::de::Error::custom(format!("unknown origin {t:?}"))),
             },
         }
@@ -267,6 +276,7 @@ impl std::fmt::Display for Origin {
             Origin::FleetClone => write!(f, "fleet:clone"),
             Origin::TrustStore => write!(f, "trust-store"),
             Origin::PidNamespace => write!(f, "pid-namespace"),
+            Origin::Tools(provider) => write!(f, "tools:{provider}"),
         }
     }
 }
@@ -523,6 +533,19 @@ impl CompiledPolicy {
     pub fn with_own_procfs(mut self) -> Self {
         self.filesystem_read
             .push(AnnotatedValue::new("/proc", Origin::PidNamespace));
+        self
+    }
+
+    /// The tooling layer's store root, read-only, with origin
+    /// `tools:<provider>` (`crate::tooling`). Added even where a provider
+    /// grant already covers the same path: the duplicate adds no access, and
+    /// it is what makes the layer visible in `policy --render`.
+    pub fn with_tools_grants(mut self, provider: &'static str, grants: &[String]) -> Self {
+        self.filesystem_read.extend(
+            grants
+                .iter()
+                .map(|g| AnnotatedValue::new(g.clone(), Origin::Tools(provider))),
+        );
         self
     }
 

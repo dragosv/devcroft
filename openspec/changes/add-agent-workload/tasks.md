@@ -49,17 +49,17 @@ first so the fan-out fix is not gated on the tooling design.
 > this group or the next two had been started, so they are rewritten
 > rather than struck.
 
-- [ ] 2.1 User configuration file in `src/config/`:
+- [x] 2.1 User configuration file in `src/config/`:
       `$XDG_CONFIG_HOME/devcroft/config.toml`, falling back to
       `~/.config/devcroft/config.toml`, on macOS too. Absent is not an
       error. Unknown keys rejected with the file and the full key path,
       like every section of `devcroft.toml`. It is devcroft's first user
       configuration; keep it to the layer and credentials
-- [ ] 2.2 `[tools]` in it: `provider` and `path`. `up --tools <path>`
+- [x] 2.2 `[tools]` in it: `provider` and `path`. `up --tools <path>`
       takes precedence over the file (the flag's provider is detected
       from the directory, or given; decide which while implementing and
       record it)
-- [ ] 2.3 `devcroft.toml` keeps rejecting `[tools]` and gains no
+- [x] 2.3 `devcroft.toml` keeps rejecting `[tools]` and gains no
       credential key; assert both, since a project-declared layer is the
       decision this change reversed
 - [ ] 2.4 Credential request in the user configuration, distinguishing
@@ -67,9 +67,9 @@ first so the fan-out fix is not gated on the tooling design.
       file-shaped credential naming a directory, and any glob or
       wildcard — a credential is per named file (`credentials` delta
       spec)
-- [ ] 2.5 Unit tests for each rejection, asserting layer `config` and
+- [x] 2.5 Unit tests for each rejection, asserting layer `config` and
       exit code 2
-- [ ] 2.6 Regression test: no user configuration and no `--tools`
+- [x] 2.6 Regression test: no user configuration and no `--tools`
       produces a byte-identical `policy --render` and captured env to
       before this change — the migration plan's stated invariant. The
       test must not read the developer's real `~/.config`; point
@@ -77,49 +77,98 @@ first so the fan-out fix is not gated on the tooling design.
 
 ## 3. Tooling layer resolution
 
-- [ ] 3.1 Resolve the layer host-side at `up`, in the same trusted phase
+- [x] 3.1 Resolve the layer host-side at `up`, in the same trusted phase
       as the project environment, through the provider's **hook-free**
       route (`print-dev-env --json`, `shellenv --pure`, `devenv build
       shell`, the derived flox copy); never from inside the boundary, and
       the layer's hook never runs, there or later
-- [ ] 3.2 Reject at layer `provider`, exit code 3: a layer with no lock;
+- [x] 3.2 Reject at layer `provider`, exit code 3: a layer with no lock;
       one naming an artifact-tier provider (`swift`), whatever the
       project's provider; one that would pass a host binary through. This
       is the `host`-passthrough guard, not a nicety (design.md Decisions
       1, 5)
-- [ ] 3.3 Keep only the layer's `PATH` entries, in its provider's order,
+- [x] 3.3 Keep only the layer's `PATH` entries, in its provider's order,
       and place them after the project's and before devcroft's resolved
       shell (`KeeperEnv::vars`). No other variable from the layer reaches
       a session. This is a new rule in `tooling`, not an extension of
       `env-provider`'s "Fixed composition order", which is about
       resolving before restriction
-- [ ] 3.4 The layer's store root as a read-only grant with origin
-      `tools:<path>`, rendered even where the project's provider grant
+- [x] 3.4 The layer's store root as a read-only grant with origin
+      `tools:<provider>`, rendered even where the project's provider grant
       already covers it, and folded into the grants in `up()` beside the
       resolved shell's, so `Meta` and the compiled profile cannot
       disagree
-- [ ] 3.5 `up` fails naming the path if resolving the tooling layer would
+- [x] 3.5 `up` fails naming the path if resolving the tooling layer would
       need write access outside the project root
-- [ ] 3.6 Record the layer's path, provider and lock fingerprint in
+- [x] 3.6 Record the layer's path, provider and lock fingerprint in
       `Meta`; `policy --render` renders the grant from it. `status`
       reports stale when the lock changed or the configuration names a
       different layer or none; `up --recreate` applies it; a plain `up`
       does not re-resolve
-- [ ] 3.7 `up` prints one line naming the layer; `status` names it and
+- [x] 3.7 `up` prints one line naming the layer; `status` names it and
       lists the layer's binaries the project's `PATH` shadows. No line,
       and no warning, when there is no layer or nothing is shadowed
 - [ ] 3.8 Fleet: resolve the layer once per fleet and give every agent
       the same entries; check they are untouched by the minimal root's
       `/workspace` rewrite
-- [ ] 3.9 Determinism test: repeated resolution of the same project and
+- [x] 3.9 Determinism test: repeated resolution of the same project and
       layer yields byte-identical env and rendered policy
-- [ ] 3.10 Test: with and without a layer, every session variable other
+- [x] 3.10 Test: with and without a layer, every session variable other
       than `PATH` is identical, and `policy --render` differs *only* by
       the read-only grant carrying the tooling origin
-- [ ] 3.11 Test: a name in both (`git`) resolves to the project's, and
+- [x] 3.11 Test: a name in both (`git`) resolves to the project's, and
       `status` names it shadowed
 - [ ] 3.12 Test: a `swift` project with a devenv layer gets the layer's
       tools (macOS; on Linux, skip naming why)
+
+> **Groups 2 and 3 landed (2026-11-02), except 2.4, 3.8 and 3.12.** What
+> implementing them decided or found:
+>
+> - **2.2, decided: the provider is detected, and `provider` is optional
+>   in the file too.** One rule for both: the file each provider keeps
+>   (`.flox`, `devenv.nix`, `devbox.json`, `flake.nix`, `Package.swift`),
+>   with more than one refused rather than guessed, naming `provider` as
+>   the way to say which (`tooling::detect_provider`). A `provider` given in
+>   the file is validated at layer `config`, like `env.provider`.
+> - **2.4 is deferred to group 4, on purpose.** A credential key that
+>   parses and delivers nothing is the silent no-op this project refuses,
+>   and 4.0 must first measure what the file shape even needs. Until then
+>   `[credentials]` in the user configuration is an unknown key, asserted.
+> - **2.6 is asserted by the no-layer half of the 3.10 test** rather than
+>   against an older binary: no `tools:` rule and no `tools` line at `up`.
+>   Every binary run in `tests/tooling_layer.rs` points `XDG_CONFIG_HOME`
+>   at the test's own directory, and `up` itself reads no user
+>   configuration (the CLI selects the layer and passes it in
+>   `UpOptions::tools`), so every pre-existing test is hermetic by
+>   construction.
+> - **3.4's origin is `tools:<provider>`, not `tools:<path>`**, parallel
+>   to `provider:<name>` and a `&'static str` like it; the path is what
+>   `up` and `status` print. The design's diagram is corrected.
+> - **3.5 holds by construction, not by a check.** A provider's
+>   resolution yields read-only grants and nothing else, and the layer's
+>   go only through `with_tools_grants`, which writes `filesystem_read`;
+>   there is no path by which a layer could ask for write access, so a
+>   check would be one that cannot fire.
+> - **Shadowing compares store paths, not names alone.** The same store
+>   path on both sides (two environments from one nixpkgs) is the same
+>   tool, so it is not reported; the 3.11 test uses `gitMinimal` against
+>   `git` for that reason. Found by the test, which first used `git` on
+>   both sides and saw nothing shadowed.
+> - **flox locks an unlocked manifest instead of refusing it**, unlike
+>   devbox, devenv and nix, so the layer checks `.flox/env/manifest.lock`
+>   itself. And flox's derived hook-free copy lands under the *layer's*
+>   directory (`<layer>/.devcroft/flox-env-*`), which is the user's own
+>   directory and which `rm` does not clean.
+> - **3.8 is open, and larger than it reads.** A fleet agent's store grant
+>   is narrowed to its own closure (`fleet::closure::narrow`), so a layer
+>   must add its closure's roots there too, and "once per fleet" needs
+>   the fleet's supervisor to record the layer. That touches
+>   `add-linux-agent-fleet`'s state as well as this change.
+> - **3.12 needs macOS**; `swift` fails closed on Linux.
+> - Measured on Linux with `tests/tooling_layer.rs` (4 tests, devenv on
+>   `PATH`) and by hand with Claude Code in a devenv layer: `claude -p`
+>   reached `api.anthropic.com` and was refused for a dummy key, and the
+>   layer's `enterShell` never ran.
 
 ## 4. Credentials
 

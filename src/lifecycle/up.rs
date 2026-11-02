@@ -41,13 +41,18 @@ pub enum UpOutcome {
 }
 
 #[derive(Debug, Default, Clone, Copy)]
-pub struct UpOptions {
+pub struct UpOptions<'a> {
     pub recreate: bool,
     /// Lifecycle spec's "Hooks run inside the boundary" requirement: a
     /// failing hook fails `up` unless this is set, in which case hooks
     /// (both `post_create` and `post_start`) are not run at all rather
     /// than run-and-ignored.
     pub skip_hooks: bool,
+    /// The user's tooling layer, already selected (`crate::tooling::select`):
+    /// `up` composes in what it is handed and reads no user configuration
+    /// itself, so a caller that passes none gets exactly the sandbox it got
+    /// before layers existed.
+    pub tools: Option<&'a crate::tooling::Layer>,
 }
 
 #[derive(Debug)]
@@ -319,6 +324,32 @@ pub fn up_with_provider(
         .fingerprint(project_root)
         .map_err(UpError::Provider)?;
 
+    // The user's tooling layer, host-side in the same trusted phase and
+    // before any state exists, so a layer that cannot be used fails `up` the
+    // way the project's environment would. Only its `PATH` entries and its
+    // store grant are kept (`crate::tooling`).
+    let tools = match opts.tools {
+        Some(layer) => {
+            let resolved = crate::tooling::resolve(layer).map_err(UpError::Provider)?;
+            let project_path = resolution
+                .env
+                .get("PATH")
+                .filter(|_| !resolution.unset.iter().any(|k| k == "PATH"))
+                .map(String::as_str);
+            let record = state::ToolsRecord {
+                path: layer.path.to_string_lossy().into_owned(),
+                provider: layer.provider.static_name().to_string(),
+                source: layer.source.as_str().to_string(),
+                fingerprint: resolved.fingerprint.clone(),
+                grants: resolved.grants.clone(),
+                shadowed: crate::tooling::shadowed(project_path, &resolved.path_entries),
+                path_entries: resolved.path_entries,
+            };
+            Some((layer.provider.static_name(), record))
+        }
+        None => None,
+    };
+
     // ssh spec: "0700 state dir" — set on creation (mode only applies to
     // dirs `create_dir_all`/`DirBuilder` actually create, so an
     // already-existing root from before this existed is left alone, same
@@ -432,6 +463,7 @@ pub fn up_with_provider(
             // Recomputed by `up_process` once isolation is decided.
             service_ports: Vec::new(),
             policy_digest: None,
+            tools: tools.as_ref().map(|(_, record)| record.clone()),
         },
     )?;
 
@@ -447,6 +479,7 @@ pub fn up_with_provider(
         &provider_grants,
         &trust_store.grants,
         proxy,
+        tools.as_ref().map(|(origin, record)| (*origin, record)),
     )
 }
 
@@ -578,6 +611,9 @@ fn up_process(
     provider_grants: &[String],
     trust_store: &[String],
     proxy: Option<(u16, String)>,
+    // The tooling layer's origin tag and its record, as `Meta` holds it, so
+    // the grant compiled here is the one `policy --render` reconstructs.
+    tools: Option<(&'static str, &state::ToolsRecord)>,
 ) -> Result<UpOutcome, UpError> {
     // The keeper binary itself must be readable+executable inside the
     // boundary it's about to apply to itself — no baseline group can know
@@ -593,6 +629,10 @@ fn up_process(
         .with_keeper_exe_grant(exe_dir.to_string_lossy().into_owned())
         .with_provider_grants(provider.static_name(), provider_grants)
         .with_trust_store(trust_store);
+    let compiled = match tools {
+        Some((origin, record)) => compiled.with_tools_grants(origin, &record.grants),
+        None => compiled,
+    };
     // `proxy_port` was already spawned/reused and recorded in `Meta` by
     // the caller (`up`), before this function ever ran — see its own
     // module-level comment for why the proxy has to exist independently
@@ -981,6 +1021,24 @@ fn up_process(
     // interception, so `HTTPS_PROXY` names a plain-`http` CONNECT
     // endpoint, same as every other forward proxy's convention.
     let mut env = resolution.env.clone();
+    // The tooling layer's `PATH` entries, after the project's and before the
+    // manifest's `[env.vars]`, which keeps the last word as it always had
+    // (`tooling` spec: "Tooling contributes PATH entries only"). Nothing else
+    // of the layer's environment reaches here. A project that unset `PATH`
+    // gets the layer's alone, rather than the layer silently vanishing with
+    // the variable.
+    let mut unset = resolution.unset.clone();
+    if let Some((_, record)) = tools {
+        let project = env
+            .get("PATH")
+            .filter(|_| !unset.iter().any(|k| k == "PATH"))
+            .cloned();
+        unset.retain(|k| k != "PATH");
+        env.insert(
+            "PATH".to_string(),
+            crate::tooling::compose_path(project.as_deref(), &record.path_entries),
+        );
+    }
     apply_manifest_env(manifest, &mut env);
 
     // The other half of `ssh.forward_agent`: the variable itself. Without the
@@ -1091,7 +1149,7 @@ fn up_process(
                 paths,
                 project_root,
                 &env,
-                &resolution.unset,
+                &unset,
                 &sandbox_home,
                 &compiled,
                 &manifest.provisioning.network.allow,
@@ -1113,7 +1171,7 @@ fn up_process(
         paths,
         project_root,
         &env,
-        &resolution.unset,
+        &unset,
         &sandbox_home,
         &plan,
         SshHandoff {

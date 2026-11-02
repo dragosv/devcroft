@@ -393,6 +393,12 @@ pub enum ProviderError {
     /// the keeper: it is the environment that failed to provision, and no
     /// keeper has started.
     Provisioning(String),
+    /// The user's tooling layer could not be used (`crate::tooling`): not
+    /// found, not locked, not closure-tier, or its own resolution failed.
+    /// Its own variant so the message says it is the *layer* that failed,
+    /// not the project's environment, which a reader would otherwise go and
+    /// inspect.
+    ToolsLayer(String),
 }
 
 impl fmt::Display for ProviderError {
@@ -437,6 +443,7 @@ impl fmt::Display for ProviderError {
             ),
             ProviderError::ResolutionFailed(msg) => write!(f, "provider resolution failed: {msg}"),
             ProviderError::Provisioning(msg) => write!(f, "provisioning: {msg}"),
+            ProviderError::ToolsLayer(msg) => write!(f, "tooling layer: {msg}"),
         }
     }
 }

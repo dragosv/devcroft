@@ -209,7 +209,8 @@ usage: devcroft <command> [args...]
 sandboxes
   init [--force]              write a devcroft.toml for this project
   up [name] [--name <n>]      build the environment, apply the policy, start the sandbox
-      [--recreate]              (--name gives this project root its own sandbox)
+      [--tools <dir>]           (--name gives this project root its own sandbox;
+      [--recreate]               --tools adds your own tooling layer's PATH)
   down [name]                 stop a sandbox, keeping its state
   rm [name] [--yes]           stop a sandbox and delete its state
 
@@ -2398,10 +2399,82 @@ fn take_name_override(args: &[String]) -> Result<(Option<String>, Vec<String>), 
     Ok((name, rest))
 }
 
+/// Extracts `--tools <dir>`: a tooling layer for this invocation, in place of
+/// the user configuration's `[tools]` (`add-agent-workload` design.md
+/// Decision 1). Its provider is detected from the directory
+/// (`tooling::detect_provider`).
+fn take_tools_flag(args: &[String]) -> Result<(Option<std::path::PathBuf>, Vec<String>), String> {
+    let mut rest = Vec::new();
+    let mut tools = None;
+    let mut it = args.iter();
+    while let Some(a) = it.next() {
+        if a == "--tools" {
+            let Some(v) = it.next() else {
+                return Err("--tools requires a directory".to_string());
+            };
+            tools = Some(std::path::PathBuf::from(v));
+        } else if let Some(v) = a.strip_prefix("--tools=") {
+            tools = Some(std::path::PathBuf::from(v));
+        } else {
+            rest.push(a.clone());
+        }
+    }
+    Ok((tools, rest))
+}
+
+/// The tooling layer the user asks for now: `--tools`, else the user
+/// configuration. A configuration error is layer `config` (exit 2); a layer
+/// that cannot be used is layer `provider` (exit 3).
+fn select_tools_layer(
+    flag: Option<&std::path::Path>,
+    command: &str,
+) -> Result<Option<devcroft::tooling::Layer>, i32> {
+    let config = devcroft::config::load_user_config().map_err(|e| {
+        eprintln!("devcroft {command}: config: {e}");
+        2
+    })?;
+    devcroft::tooling::select(flag, &config).map_err(|e| {
+        eprintln!("devcroft {command}: provider: {e}");
+        3
+    })
+}
+
+/// The tooling layer `up` composed in, said once (`tooling` spec: "up and
+/// status name the tooling layer"); nothing when there is none. For a
+/// sandbox that was already up, whether it still has the layer asked for.
+fn print_tools_layer(
+    manifest: &devcroft::config::Manifest,
+    wanted: Option<&devcroft::tooling::Layer>,
+    outcome: devcroft::lifecycle::UpOutcome,
+) {
+    let recorded = devcroft::lifecycle::StatePaths::new(&manifest.sandbox.name)
+        .ok()
+        .and_then(|paths| devcroft::lifecycle::read_meta(&paths.meta).ok().flatten())
+        .and_then(|meta| meta.tools);
+    if let Some(r) = &recorded {
+        println!(
+            "devcroft: tools: {} ({}), on PATH after the project's",
+            r.path, r.provider
+        );
+    }
+    if outcome == devcroft::lifecycle::UpOutcome::AlreadyUp
+        && let Some(reason) = devcroft::tooling::stale_reason(recorded.as_ref(), wanted)
+    {
+        println!("devcroft: tools: stale — {reason}; run `devcroft up --recreate` to apply it");
+    }
+}
+
 fn cli_up(args: &[String]) -> i32 {
-    const USAGE: &str =
-        "devcroft up: usage: devcroft up [name] [--name <n>] [--recreate] [--yes] [--skip-hooks]";
+    const USAGE: &str = "devcroft up: usage: devcroft up [name] [--name <n>] [--tools <dir>] \
+                         [--recreate] [--yes] [--skip-hooks]";
     let (name_override, args) = match take_name_override(args) {
+        Ok(v) => v,
+        Err(msg) => {
+            eprintln!("devcroft up: {msg}");
+            return 2;
+        }
+    };
+    let (tools_flag, args) = match take_tools_flag(&args) {
         Ok(v) => v,
         Err(msg) => {
             eprintln!("devcroft up: {msg}");
@@ -2460,6 +2533,10 @@ fn cli_up(args: &[String]) -> i32 {
         eprintln!("devcroft up: --recreate is destructive; pass --yes to run non-interactively");
         return 2;
     }
+    let tools = match select_tools_layer(tools_flag.as_deref(), "up") {
+        Ok(layer) => layer,
+        Err(code) => return code,
+    };
 
     println!(
         "devcroft: bringing up sandbox '{}'...",
@@ -2471,6 +2548,7 @@ fn cli_up(args: &[String]) -> i32 {
         &devcroft::lifecycle::UpOptions {
             recreate,
             skip_hooks,
+            tools: tools.as_ref(),
         },
     ) {
         Ok(outcome) => {
@@ -2482,6 +2560,7 @@ fn cli_up(args: &[String]) -> i32 {
             };
             println!("devcroft: sandbox '{}' is {msg}.", manifest.sandbox.name);
             print_tier(&manifest.env.provider);
+            print_tools_layer(&manifest, tools.as_ref(), outcome);
             print_swift_shim_note(&manifest.env.provider, &project_root);
             warn_if_activation_hook_ran(&manifest);
             0
@@ -2578,6 +2657,7 @@ fn cli_status(args: &[String]) -> i32 {
     match devcroft::lifecycle::status(&manifest) {
         Ok(s) => {
             print_status(&s, &manifest.env.provider);
+            print_tools_status(&manifest);
             0
         }
         Err(e) => {
@@ -2587,6 +2667,48 @@ fn cli_status(args: &[String]) -> i32 {
                 devcroft::lifecycle::StatusError::Keeper(_) => 5,
             }
         }
+    }
+}
+
+/// The tooling layer in `status`: which, what the project's `PATH` shadows in
+/// it, and whether it is stale. A layer from the user configuration is
+/// compared against the configuration as it reads now; one given with
+/// `--tools` only against itself. Nothing when there is no layer and none is
+/// configured.
+fn print_tools_status(manifest: &devcroft::config::Manifest) {
+    let recorded = devcroft::lifecycle::StatePaths::new(&manifest.sandbox.name)
+        .ok()
+        .and_then(|paths| devcroft::lifecycle::read_meta(&paths.meta).ok().flatten())
+        .and_then(|meta| meta.tools);
+    let wanted = match &recorded {
+        Some(r) if r.source == devcroft::tooling::Source::Flag.as_str() => {
+            Ok(devcroft::tooling::recorded_layer(r))
+        }
+        _ => devcroft::config::load_user_config()
+            .map_err(|e| e.to_string())
+            .and_then(|config| devcroft::tooling::select(None, &config).map_err(|e| e.to_string())),
+    };
+    if let Some(r) = &recorded {
+        println!(
+            "tools: {} ({}), on PATH after the project's",
+            r.path, r.provider
+        );
+        if !r.shadowed.is_empty() {
+            println!(
+                "tools: shadowed by the project's PATH: {}",
+                r.shadowed.join(", ")
+            );
+        }
+    }
+    match wanted {
+        Ok(wanted) => {
+            if let Some(reason) =
+                devcroft::tooling::stale_reason(recorded.as_ref(), wanted.as_ref())
+            {
+                println!("tools: stale — {reason}; run `devcroft up --recreate`");
+            }
+        }
+        Err(e) => println!("tools: unknown — {e}"),
     }
 }
 
@@ -3620,6 +3742,15 @@ fn compile_with_provider_grants(
             &meta.read_only_grants,
         )
         .with_trust_store(&meta.trust_store);
+    // The tooling layer's grant, as `up` compiled it (`Origin::Tools`).
+    let compiled = match meta.tools.as_ref().and_then(|t| {
+        devcroft::provider::ProviderKind::from_name(&t.provider)
+            .ok()
+            .map(|kind| (kind.static_name(), &t.grants))
+    }) {
+        Some((origin, grants)) => compiled.with_tools_grants(origin, grants),
+        None => compiled,
+    };
     let compiled = if meta.own_procfs {
         compiled.with_own_procfs()
     } else {
