@@ -19,7 +19,7 @@ first so the fan-out fix is not gated on the tooling design.
       of one repo, same committed manifest. Without `--name` the second
       `up` fails naming both roots; with distinct `--name` values both
       sandboxes run independently
-- [ ] 1.7 README known gaps / status: note the behavior change — two
+- [x] 1.7 README known gaps / status: note the behavior change — two
       worktrees that silently shared a sandbox now fail loudly
 
 > **Landed. Two things the implementation found, both by running it:**
@@ -198,12 +198,22 @@ first so the fan-out fix is not gated on the tooling design.
 
 ## 5. CLI and doctor
 
-- [ ] 5.1 `doctor`: report tooling-layer resolvability, distinguishing
+- [x] 5.1 `doctor`: report tooling-layer resolvability, distinguishing
       "none configured" from "configured but unresolvable" and naming
       the fix
-- [ ] 5.2 Confirm no new top-level command — `--name` and `--tools` are
+- [x] 5.2 Confirm no new top-level command — `--name` and `--tools` are
       flags, tooling and credentials are user configuration; list
       `--tools` in `USAGE` (`tests/cli_help_and_version.rs`)
+
+> **5.1 resolves the layer, not just its provider's binary** (CLAUDE.md:
+> guard on the capability): `[INFO]` for none configured, `[PASS]` with its
+> `PATH` entry count, `[FAIL]` naming the layer and the fix otherwise.
+> Asserted for the two cases that need no devenv
+> (`doctor_tells_no_layer_from_a_broken_one`). **1.7 needed nothing new**:
+> the README's "Git worktrees" section already states the refusal and
+> `--name`, and 0.0.1 is the first release, so no published version had the
+> old behaviour. The README's agent section now shows the layer, and its
+> command block lists `--tools`.
 
 ## 6. End-to-end: an agent actually runs
 

@@ -1688,6 +1688,7 @@ fn cli_doctor() -> i32 {
     ok &= doctor_backend();
     ok &= doctor_provider();
     ok &= doctor_nix_store();
+    ok &= doctor_tools();
     doctor_listening_sockets();
     doctor_agent_namespaces();
     doctor_ssh_config();
@@ -1833,6 +1834,59 @@ fn doctor_provider() -> bool {
             let devenv = doctor_devenv_provider(false);
             let _ = (flox, nix, devbox, devenv);
             true
+        }
+    }
+}
+
+/// The user's tooling layer (`add-agent-workload` task 5.1): none configured
+/// is not a problem and says so; one configured is resolved, as `up` would,
+/// so a layer that cannot be used fails here, with its fix, rather than at
+/// the next `up`. Resolving rather than probing the provider's binary,
+/// because a binary on `PATH` says nothing about a lock or a store
+/// (CLAUDE.md: guard on the capability, never on the binary).
+fn doctor_tools() -> bool {
+    let config = match devcroft::config::load_user_config() {
+        Ok(config) => config,
+        Err(e) => {
+            println!("[FAIL] tools: {e}");
+            return false;
+        }
+    };
+    let layer = match devcroft::tooling::select(None, &config) {
+        Ok(Some(layer)) => layer,
+        Ok(None) => {
+            println!(
+                "[INFO] tools: no tooling layer configured ({}); `up --tools <dir>` names one \
+                 for a single run",
+                devcroft::config::user_config_path()
+                    .map(|p| p.display().to_string())
+                    .unwrap_or_else(|| format!("~/.config/{}", devcroft::config::USER_CONFIG_FILE))
+            );
+            return true;
+        }
+        Err(e) => {
+            println!("[FAIL] tools: {e}");
+            return false;
+        }
+    };
+    match devcroft::tooling::resolve(&layer) {
+        Ok(resolved) => {
+            println!(
+                "[PASS] tools: {} ({}) resolves, {} PATH entr{} after the project's",
+                layer.path.display(),
+                layer.provider.static_name(),
+                resolved.path_entries.len(),
+                if resolved.path_entries.len() == 1 {
+                    "y"
+                } else {
+                    "ies"
+                }
+            );
+            true
+        }
+        Err(e) => {
+            println!("[FAIL] tools: {e}");
+            false
         }
     }
 }

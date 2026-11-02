@@ -291,3 +291,47 @@ fn a_bad_user_configuration_fails_up_naming_the_file() {
         "{stderr}"
     );
 }
+
+/// Task 5.1: `doctor` tells "none configured", which is not a problem, from
+/// "configured but unusable", which is. Needs no devenv: neither case
+/// resolves anything.
+#[test]
+fn doctor_tells_no_layer_from_a_broken_one() {
+    let root = std::env::temp_dir().join(format!("dct-doctor-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(root.join("devcroft")).unwrap();
+    let doctor = || {
+        let out = Command::new(devcroft_bin())
+            .arg("doctor")
+            .current_dir(&root)
+            .env("XDG_CONFIG_HOME", &root)
+            .stdin(Stdio::null())
+            .output()
+            .unwrap();
+        String::from_utf8_lossy(&out.stdout)
+            .lines()
+            .filter(|l| l.contains("] tools:"))
+            .map(str::to_owned)
+            .collect::<Vec<_>>()
+    };
+
+    let none = doctor();
+    assert!(
+        none.len() == 1 && none[0].starts_with("[INFO] tools: no tooling layer configured"),
+        "{none:?}"
+    );
+
+    std::fs::write(
+        root.join("devcroft/config.toml"),
+        "[tools]\npath = \"/nonexistent-devcroft-layer\"\n",
+    )
+    .unwrap();
+    let broken = doctor();
+    assert!(
+        broken.len() == 1
+            && broken[0].starts_with("[FAIL] tools:")
+            && broken[0].contains("/nonexistent-devcroft-layer"),
+        "{broken:?}"
+    );
+    let _ = std::fs::remove_dir_all(&root);
+}

@@ -299,7 +299,8 @@ prints the same thing:
 sandboxes
   init [--force]              write a devcroft.toml for this project
   up [name] [--name <n>]      build the environment, apply the policy, start the sandbox
-      [--recreate]              (--name gives this project root its own sandbox)
+      [--tools <dir>]           (--name gives this project root its own sandbox;
+      [--recreate]               --tools adds your own tooling layer's PATH)
   down [name]                 stop a sandbox, keeping its state
   rm [name] [--yes]           stop a sandbox and delete its state
 
@@ -391,9 +392,22 @@ devcroft exec review-42 -- cargo test
 devcroft exec review-42 -- ./scripts/run-migration.sh
 ```
 
-An agent can also be installed in the project environment and run inside, but
-its host logins do not follow it in, and there is no credential broker yet: a
-secret you `forward` is visible to every process in the sandbox. Before
+An agent can also run inside. Declare it in an environment of your own — a
+locked flox, devenv, nix or devbox directory — and name it once in
+`~/.config/devcroft/config.toml`:
+
+```toml
+[tools]
+path = "~/agents"
+```
+
+Every sandbox you bring up then has that environment's tools on `PATH`, after
+the project's own, with nothing else of it applied and its hooks never run; the
+project's files never mention it. `up` and `status` say it is there, and
+`policy --render` shows its one read-only rule. ([docs/agents.md](docs/agents.md)
+has eleven agents measured inside, declared in the project instead.) Its host
+logins do not follow it in, and there is no credential broker yet: a secret you
+`forward` is visible to every process in the sandbox. Before
 unattended work: commit, or use a disposable worktree — project writes are real
 and there is no undo; read `devcroft policy --render`; keep grants narrow; and
 treat every allowed network destination as an outbound data channel.
