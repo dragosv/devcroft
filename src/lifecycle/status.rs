@@ -57,7 +57,15 @@ pub struct SandboxStatus {
     /// the sandbox's while it is down, which is why the caller says whether
     /// anything is listening rather than printing them bare.
     pub allocations: Vec<super::state::Allocation>,
+    /// Whether the sandbox needs a human (`agent-attention`), as its agent
+    /// last said — `Err` with why when there is a report devcroft will not
+    /// show. Reported beside the keeper's health, never folded into it.
+    pub attention: Attention,
 }
+
+/// What a sandbox's agent said needs a human, from `devcroft agent
+/// attention` (`fleet::report`): `Ok(None)` when nothing does.
+pub type Attention = Result<Option<crate::fleet::report::Note>, String>;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SandboxSummary {
@@ -68,6 +76,9 @@ pub struct SandboxSummary {
     /// the supervisor's live answer against them exactly as `status`
     /// does — without it, `ps` reports a dead supervisor as no services.
     pub declared_services: Vec<String>,
+    /// As [`SandboxStatus::attention`], so that one `ps` answers which
+    /// sandbox is waiting, rather than a `status` per sandbox.
+    pub attention: Attention,
 }
 
 #[derive(Debug)]
@@ -163,6 +174,10 @@ pub fn status_with_provider(
         .as_ref()
         .map(|meta| meta.allocations.clone())
         .unwrap_or_default();
+    let attention = attention(
+        meta.as_ref().map(|meta| meta.project_root.as_str()),
+        &manifest.sandbox.name,
+    );
     let isolation = meta.map(|meta| meta.resolved_backend);
 
     let degraded = policy::detect_degraded(&policy::compile(manifest));
@@ -175,7 +190,20 @@ pub fn status_with_provider(
         isolation,
         services,
         allocations,
+        attention,
     })
+}
+
+/// The sandbox's attention, read from the report `devcroft agent` writes
+/// beside its home (`fleet::report`'s rule): in the project's artifact
+/// directory, which the sandbox can already write, so raising it needs no
+/// grant. Nothing recorded, no project root, nothing to read.
+fn attention(project_root: Option<&str>, name: &str) -> Attention {
+    let Some(root) = project_root else {
+        return Ok(None);
+    };
+    crate::fleet::report::read(&crate::fleet::report::path(Path::new(root), name))
+        .map(|report| report.and_then(|r| r.attention))
 }
 
 /// The keeper log tail: session spawn/exit records with timestamps
@@ -248,11 +276,13 @@ pub fn ps() -> io::Result<Vec<SandboxSummary>> {
             .map(|m| m.declared_services.clone())
             .unwrap_or_default();
         let project_root = meta.map(|meta| meta.project_root);
+        let attention = attention(project_root.as_deref(), &name);
         out.push(SandboxSummary {
             name,
             keeper,
             project_root,
             declared_services,
+            attention,
         });
     }
     out.sort_by(|a, b| a.name.cmp(&b.name));

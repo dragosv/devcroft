@@ -28,28 +28,44 @@ gain it later.
 
 ## 1. Attention: state and reporting
 
-- [ ] 1.1 Add attention to the sandbox's recorded state: set, cleared, with an
+- [x] 1.1 Add attention to the sandbox's recorded state: set, cleared, with an
       opaque message. Must survive the raising process exiting and not survive
       teardown.
-- [ ] 1.2 The in-sandbox mechanism from 0.1, requiring no policy widening — a
+- [x] 1.2 The in-sandbox mechanism from 0.1, requiring no policy widening — a
       report channel that needs a manifest change to work would go unused in
       the confined sandboxes that most need it.
-- [ ] 1.3 `ps` reports which sandboxes need attention.
-- [ ] 1.4 `status` reports the state and the message verbatim.
-- [ ] 1.5 Attention is orthogonal to health in both: a healthy sandbox needing
+- [x] 1.3 `ps` reports which sandboxes need attention.
+- [x] 1.4 `status` reports the state and the message verbatim.
+- [x] 1.5 Attention is orthogonal to health in both: a healthy sandbox needing
       attention reports both, without either presented as contradicting the
       other.
 
+> **Done for plain sandboxes (2026-11-03).** 1.1–1.2 were already true of
+> the mechanism 0.1 chose: `report.json` beside the sandbox's home survives
+> the agent, `rm` removes it with the artifact directory, and `up
+> --recreate` now clears it; `down` keeps it, as it keeps every other
+> record. **Measured, and not what 0.1 assumed:** `devcroft agent` needs no
+> grant in a plain sandbox only because the keeper's own binary directory
+> is already granted read+exec in every sandbox (`with_keeper_exe_grant`,
+> origin `baseline`) — reachable by absolute path, not on `PATH`. 1.3–1.5:
+> `ps` has a fourth column (`attention`, `-`, or `attention?` for a report
+> it will not show), `status` an `attention:` line beside the keeper's.
+> "Verbatim" is read as fleet already reads it: the message is not changed,
+> only escaped so it cannot drive the terminal.
+
 ## 2. Attention: tests
 
-- [ ] 2.1 An agent raises attention, exits, and the sandbox still reports it.
-- [ ] 2.2 `ps` identifies the one sandbox needing attention among several,
+> `tests/sandbox_attention.rs`, against a real devenv sandbox under the
+> default policy; checked to fail with the `--recreate` clear removed.
+
+- [x] 2.1 An agent raises attention, exits, and the sandbox still reports it.
+- [x] 2.2 `ps` identifies the one sandbox needing attention among several,
       **without querying them individually** — the assertion is about the
       listing, since a per-sandbox check would pass while missing the point.
-- [ ] 2.3 Raising attention succeeds under a deny-by-default policy with no
+- [x] 2.3 Raising attention succeeds under a deny-by-default policy with no
       extra grants.
-- [ ] 2.4 Teardown clears it; a recreated sandbox does not start in it.
-- [ ] 2.5 A failed keeper reports as failed, not as needing attention.
+- [x] 2.4 Teardown clears it; a recreated sandbox does not start in it.
+- [x] 2.5 A failed keeper reports as failed, not as needing attention.
 
 ## 3. Approval: envelope and policy
 

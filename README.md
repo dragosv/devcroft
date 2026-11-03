@@ -311,7 +311,7 @@ running things
 inspecting
   status [name]               whether a sandbox is up, and since when
   logs [name] [--tail N]      the keeper's log
-  ps                          every sandbox on this host
+  ps                          every sandbox on this host, and which need attention
   policy --render [name]      the compiled profile, every rule with its origin
   why --path P --op <mode>    whether one operation is allowed, and which rule decides
   why --host <domain>         the same question for an outbound host

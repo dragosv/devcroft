@@ -221,7 +221,7 @@ running things
 inspecting
   status [name]               whether a sandbox is up, and since when
   logs [name] [--tail N]      the keeper's log
-  ps                          every sandbox on this host
+  ps                          every sandbox on this host, and which need attention
   policy --render [name]      the compiled profile, every rule with its origin
   why --path P --op <mode>    whether one operation is allowed, and which rule decides
   why --host <domain>         the same question for an outbound host
@@ -2811,6 +2811,18 @@ fn print_status(s: &devcroft::lifecycle::SandboxStatus, provider: &str) {
             session_count,
         } => println!("keeper: healthy (uptime {uptime_secs}s, {session_count} session(s))"),
     }
+    // Its own line, beside the keeper's rather than instead of it: waiting
+    // on a human is a healthy sandbox's normal state (`agent-attention`).
+    // The message is the agent's, escaped so it cannot drive the terminal.
+    match &s.attention {
+        Ok(Some(note)) => println!(
+            "attention: {} (reported {} ago)",
+            devcroft::fleet::report::escape(&note.message),
+            ago(devcroft::fleet::report::now_unix(), note.at_unix)
+        ),
+        Ok(None) => {}
+        Err(e) => println!("attention: unknown — {e}"),
+    }
     match s.env_stale {
         Some(true) => {
             let what = if provider == "nix" {
@@ -3536,11 +3548,19 @@ fn cli_ps() -> i32 {
                         session_count,
                     } => format!("healthy (uptime {uptime_secs}s, {session_count} session(s))"),
                 };
+                // A column of its own, so one `ps` answers which sandbox is
+                // waiting on a human; the message is `status`'s to show.
+                let attention = match &s.attention {
+                    Ok(Some(_)) => "attention",
+                    Ok(None) => "-",
+                    Err(_) => "attention?",
+                };
                 println!(
-                    "{}\t{}\t{}",
+                    "{}\t{}\t{}\t{}",
                     s.name,
                     health,
-                    s.project_root.as_deref().unwrap_or("-")
+                    s.project_root.as_deref().unwrap_or("-"),
+                    attention
                 );
                 // Services listed individually, indented under their
                 // sandbox, and labelled — the `cli` spec requires services
@@ -4002,7 +4022,6 @@ fn cli_agent(args: &[String]) -> i32 {
 }
 
 /// `30s`, `5m`, `2h`: how long before `now` `at` was.
-#[cfg(target_os = "linux")]
 fn ago(now: u64, at: u64) -> String {
     match now.saturating_sub(at) {
         s if s < 60 => format!("{s}s"),

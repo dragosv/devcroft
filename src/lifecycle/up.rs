@@ -265,6 +265,15 @@ pub fn up_with_provider(
         // until the next full `down`.
         state::terminate_and_wait(&paths.proxy_pidfile, TERMINATE_GRACE_PERIOD);
         state::clear_runtime_state(&paths)?;
+        // A recreated sandbox does not start out needing attention
+        // (`agent-attention`): what the last one's agent said was about
+        // that sandbox. `down` keeps it, as it keeps everything else; `rm`
+        // takes it with the artifact directory.
+        crate::fleet::report::clear(&crate::fleet::report::path(
+            project_root,
+            &manifest.sandbox.name,
+        ))
+        .map_err(UpError::State)?;
         UpOutcome::Recreated
     } else {
         match state::health(&paths)? {
