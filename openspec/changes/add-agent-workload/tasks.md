@@ -235,12 +235,20 @@ first so the fan-out fix is not gated on the tooling design.
 
 ## 6. End-to-end: an agent actually runs
 
-- [ ] 6.1 Integration test, self-skipping like the other real-tooling
+- [x] 6.1 Integration test, self-skipping like the other real-tooling
       tests: an agent CLI in a user tooling layer (via `XDG_CONFIG_HOME`
       or `--tools`), a project whose committed files mention no agent;
       `up`, then `exec -- <agent> --version` runs it **inside** the
       sandbox. The 2026-10-29 spike (design.md Decision 4) is the manual
       version of this test, with all eleven agents
+      **Done (2026-11-03)**: `tests/tooling_layer.rs`,
+      `every_agent_in_a_user_layer_runs_inside_a_project_that_names_none` —
+      all eleven, in one devenv layer declared in the user configuration
+      (not `--tools`), each resolved from its own package and printing its
+      version inside the sandbox. The project's `devenv.yaml` is written,
+      not copied, since the samples' names `claude-code` in a comment; and
+      `allowUnfree` is the layer's alone. Checked to fail on a wrong
+      binary name before being trusted.
 - [ ] 6.2 Auth test, both shapes: an env-var key, and a single-file
       credential. Skip honestly rather than faking a token if no
       credential is available in the test environment

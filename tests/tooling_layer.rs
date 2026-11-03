@@ -29,13 +29,22 @@ fn devenv_available() -> bool {
         && devcroft::provider::host_can_build_nix_closures()
 }
 
-/// A devenv environment at `dir` with `packages`, pinned by a sample's lock.
-fn devenv_env(dir: &Path, packages: &str, enter_shell: &str) {
+/// A devenv environment at `dir` with `packages`, pinned by the agent
+/// samples' lock. Its `devenv.yaml` is written rather than copied: the
+/// samples' carries a comment naming `claude-code`, and the project of task
+/// 6.1 must name no agent. `allowUnfree` is the layer's, never the project's.
+fn devenv_env(dir: &Path, packages: &str, enter_shell: &str, unfree: bool) {
     std::fs::create_dir_all(dir).unwrap();
     let sample = Path::new(env!("CARGO_MANIFEST_DIR")).join("samples/devenv-claude-sample");
-    for file in ["devenv.yaml", "devenv.lock"] {
-        std::fs::copy(sample.join(file), dir.join(file)).unwrap();
-    }
+    std::fs::copy(sample.join("devenv.lock"), dir.join("devenv.lock")).unwrap();
+    std::fs::write(
+        dir.join("devenv.yaml"),
+        format!(
+            "inputs:\n  nixpkgs:\n    url: github:cachix/devenv-nixpkgs/rolling\n{}",
+            if unfree { "allowUnfree: true\n" } else { "" }
+        ),
+    )
+    .unwrap();
     std::fs::write(
         dir.join("devenv.nix"),
         format!("{{ pkgs, ... }}: {{\n  packages = [ {packages} ];\n  enterShell = ''{enter_shell}'';\n}}\n"),
@@ -52,6 +61,11 @@ struct Fixture {
 
 impl Fixture {
     fn new(tag: &str) -> Option<Self> {
+        // The layer's hook writes a marker it must never get to write.
+        Self::with_layer(tag, "pkgs.ripgrep pkgs.git", "touch $DEVENV_ROOT/hook-ran")
+    }
+
+    fn with_layer(tag: &str, packages: &str, enter_shell: &str) -> Option<Self> {
         if !devenv_available() {
             eprintln!("skipping: devenv or a usable nix store not on this host");
             return None;
@@ -68,13 +82,8 @@ impl Fixture {
         // The project knows nothing of any layer, and has a `git` of its own:
         // a different store path from the layer's, since one store path on
         // both sides is the same tool, not a shadowed one.
-        devenv_env(&project, "pkgs.jq pkgs.gitMinimal", "");
-        // The layer's hook writes a marker it must never get to write.
-        devenv_env(
-            &layer,
-            "pkgs.ripgrep pkgs.git",
-            "touch $DEVENV_ROOT/hook-ran",
-        );
+        devenv_env(&project, "pkgs.jq pkgs.gitMinimal", "", false);
+        devenv_env(&layer, packages, enter_shell, true);
         let name = format!("dctools{tag}{}", std::process::id());
         std::fs::write(
             project.join("devcroft.toml"),
@@ -259,7 +268,7 @@ fn a_changed_layer_is_stale_until_recreate() {
     );
 
     // The layer's definition changes: stale, and a plain `up` keeps it.
-    devenv_env(&f.layer, "pkgs.ripgrep pkgs.git pkgs.fd", "");
+    devenv_env(&f.layer, "pkgs.ripgrep pkgs.git pkgs.fd", "", true);
     let up = f.ok(&["up"]);
     assert!(
         up.contains("already up") && up.contains("tools: stale"),
@@ -455,4 +464,65 @@ fn a_credential_the_shell_lacks_or_the_project_sets_fails_up() {
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert_eq!(out.status.code(), Some(2), "{stderr}");
     assert!(stderr.contains("[env.vars]"), "{stderr}");
+}
+
+/// The eleven agents of `docs/agents.md`: nixpkgs attribute, binary.
+const AGENTS: [(&str, &str); 11] = [
+    ("claude-code", "claude"),
+    ("codex", "codex"),
+    ("gemini-cli", "gemini"),
+    ("opencode", "opencode"),
+    ("github-copilot-cli", "copilot"),
+    ("aider-chat", "aider"),
+    ("goose-cli", "goose"),
+    ("amp-cli", "amp"),
+    ("cursor-cli", "cursor-agent"),
+    ("qwen-code", "qwen"),
+    ("crush", "crush"),
+];
+
+/// Task 6.1, the automated form of design.md Decision 4's spike: every agent
+/// of the matrix in the user's layer, declared the way a user declares it —
+/// in their configuration, not by flag — and each one started **inside** the
+/// sandbox of a project whose files name none of them.
+#[test]
+fn every_agent_in_a_user_layer_runs_inside_a_project_that_names_none() {
+    let packages: Vec<String> = AGENTS.iter().map(|(p, _)| format!("pkgs.{p}")).collect();
+    let Some(f) = Fixture::with_layer("agents", &packages.join(" "), "") else {
+        return;
+    };
+    f.configure(&format!("[tools]\npath = {:?}\n", f.layer_arg()));
+
+    for file in ["devcroft.toml", "devenv.nix", "devenv.yaml"] {
+        let text = std::fs::read_to_string(f.project.join(file)).unwrap();
+        for (package, bin) in AGENTS {
+            assert!(
+                !text.contains(package) && !text.contains(bin),
+                "the project's {file} names {package}:\n{text}"
+            );
+        }
+    }
+
+    let up = f.ok(&["up"]);
+    assert!(up.contains("devcroft: tools: "), "{up}");
+
+    let mut failed = Vec::new();
+    for (package, bin) in AGENTS {
+        // From the agent's own package, which only the layer has.
+        let found = f.ok(&["exec", "--", "sh", "-c", &format!("command -v {bin}")]);
+        if !found.contains(&format!("-{package}-")) {
+            failed.push(format!("{bin}: resolved to {found:?}"));
+            continue;
+        }
+        let out = f.run(&["exec", "--", bin, "--version"]);
+        let printed = String::from_utf8_lossy(&out.stdout);
+        if !out.status.success() || printed.trim().is_empty() {
+            failed.push(format!(
+                "{bin} --version: {}\n{printed}{}",
+                out.status,
+                String::from_utf8_lossy(&out.stderr)
+            ));
+        }
+    }
+    assert!(failed.is_empty(), "{}", failed.join("\n"));
 }
