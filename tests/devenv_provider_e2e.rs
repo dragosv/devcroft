@@ -422,9 +422,15 @@ fn a_login_shell_resolves_out_of_the_devenv_closure() {
 
 /// env-provider spec: "A hook needing host tooling is denied, not
 /// silently granted". The hook writes outside the project root, which the
-/// compiled policy denies, and `up` must fail at layer `keeper` naming
-/// the hook rather than reporting a sandbox that came up as though the
-/// hook had succeeded.
+/// compiled policy denies, and `up` must fail naming the hook rather than
+/// reporting a sandbox that came up as though the hook had succeeded.
+///
+/// **Layer `provider` since `sandbox-provisioning`, not `keeper`, despite
+/// the name** (kept: other changes cite it). The hook now runs in
+/// `__provision`, before any keeper, and a refusal there is attributed by
+/// the policy (`lifecycle::attribution`). This test still expected exit 5
+/// until 2026-11-03; it runs only where devenv is on `PATH`, so the
+/// mismatch went unseen.
 #[test]
 fn a_hook_denied_by_the_policy_fails_up_at_the_keeper_layer() {
     // Under the real home, which no sandbox is granted on either platform.
@@ -447,13 +453,15 @@ fn a_hook_denied_by_the_policy_fails_up_at_the_keeper_layer() {
     let out = sandbox.run(&["up"]);
     assert_eq!(
         out.status.code(),
-        Some(5),
-        "a failing activation hook is a keeper-layer failure (exit 5): {out:?}"
+        Some(3),
+        "a failing activation hook is a provider-layer failure (exit 3): {out:?}"
     );
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
-        stderr.contains("keeper") && stderr.contains("activation"),
-        "the failure must name the layer and the hook, got: {stderr}"
+        stderr.contains("provider: provisioning")
+            && stderr.contains("activation")
+            && stderr.contains("refused"),
+        "the failure must name the layer, the hook and the refusal, got: {stderr}"
     );
     assert!(
         !denied.exists(),
