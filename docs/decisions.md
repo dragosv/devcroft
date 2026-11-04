@@ -349,6 +349,49 @@ The cases this would serve (a foreign repo, bootstrapping a project without
 an environment yet) are correctly solved by `flox init`, not by a degraded
 mode. `up` failing with a `flox init` hint is the right answer.
 
+### Rejected: the host's binary, "just for agents"
+
+**Properties that fail:** 2 (restorable lockfile) and 5 (completeness), the
+same as passthrough, because it is passthrough for one binary.
+
+The shortcut is always the same proposal: the user already has `claude` (or
+`codex`, or `gemini`) on the host, so grant that one file read+exec and put
+it on the sandbox's `PATH`. It fails on what the binary is, not on how it is
+granted. A host-installed agent is host-linked — against the host's libc, or
+a host `node`, or a vendor-managed directory that updates itself — so the
+sandbox's behaviour starts to depend on what that machine happened to
+install last, which no manifest records and no lockfile restores. The
+narrowness of the grant does not change that. It also does not stay narrow:
+the binary's own runtime has to come in after it, which is how one file
+becomes a host toolchain.
+
+It also needs no special case to be wrong, because devcroft has shipped it
+once by accident and measured the result. The keeper's own binary has to be
+executable inside the sandbox it confines, and until 2026-11-03 that grant
+was the binary's **directory**: after a `cargo install`, every tool in
+`~/.cargo/bin` ran inside every sandbox (measured with a sibling binary;
+`tests/sandbox_attention.rs` now asserts it does not). Nobody asked for
+those tools. They came in because "just this one thing from the host" was
+the unit of the grant, and a directory of host binaries is what the host
+put beside it.
+
+What to do instead, all from `add-agent-workload`:
+
+- **The user's tooling layer**: the agent from a closure-tier environment
+  of the user's own (`~/.config/devcroft/config.toml`, `[tools]`), pinned
+  by its lock, on `PATH` after the project's. This is the answer for "my
+  agent, in every project", and it costs one manifest the user already
+  knows how to write.
+- **The project's own environment**, for a team that wants one agent for
+  everyone (what the `devenv-<agent>-sample`s do).
+- **The vendor's installer in `[hooks] post_create`**, into the sandbox's
+  own `HOME`: works this afternoon, is artifact tier at best, and is
+  documented as exactly that.
+
+Revisit if an agent ships as a single static binary with a published
+checksum, pinned somewhere devcroft can verify. That would be a different
+artifact, not this shortcut.
+
 ### Rejected: asdf, proto
 
 **Property that fails:** 2 (restorable lockfile), partially.

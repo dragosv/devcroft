@@ -332,7 +332,7 @@ first so the fan-out fix is not gated on the tooling design.
       keeper binary's directory (that is how the test runs `devcroft why`
       inside, and the grant the host's rendering used to hide), so (b) adds
       no new reach; what it would add is only the instruction to use it.
-- [ ] 6b.2 Decide how the agent reaches `why`, and record the trade:
+- [x] 6b.2 Decide how the agent reaches `why`, and record the trade:
       **(a)** a hook script that reads the policy artifact directly — no new
       policy surface, answers "what was I granted"; **(b)** grant read+exec
       on `current_exe()`, folded into the grants in `up()` the way the
@@ -340,6 +340,25 @@ first so the fan-out fix is not gated on the tooling design.
       but lets an agent run *every* devcroft subcommand inside the sandbox.
       (b) needs its own audit of that surface — `rm`, `up --recreate` — and
       is not a free consequence of (a).
+      **Decided (2026-11-03): (a) ships; (b)'s reach is the status quo,
+      now narrowed and audited.** Measured in a real devenv sandbox:
+      - The grant was the binary's *directory*, so every neighbour ran
+        inside (all of `~/.cargo/bin` after `cargo install`). Narrowed to
+        the file; `tests/sandbox_attention.rs` asserts a sibling is refused.
+      - The surface, run inside: every subcommand acts on the sandbox's
+        own `HOME`, never the host's state dir (baseline-denied and absent
+        from the view). `ps` says `no sandboxes`; `down` and `rm --yes`
+        "succeed" against an empty state and the host's keeper stays
+        healthy; `up --recreate` fails at layer `provider`, after clearing
+        the sandbox's own `report.json`, which the sandbox can write
+        anyway. Misleading, not harmful. `why --path`/`--host` gives the
+        host's verdict per path (6b.1).
+      - Why (a) still ships: a hook is committed (6b.4), and the binary's
+        path is per machine (`target/debug`, `~/.cargo/bin`), so a
+        committed hook cannot name it. The policy artifact is found from
+        `HOME` (`.devcroft/<name>/policy.json`), the same on every machine.
+        Per-path `why` stays available to an agent told where devcroft is,
+        and is not what the hook depends on.
 - [ ] 6b.3 Implement (a) as the shipped path: a denial-triggered hook that
       fires on the agent's tool-failure event, gates on a denial signature so
       ordinary failures pass through untouched, and injects the sandbox's
@@ -376,12 +395,19 @@ first so the fan-out fix is not gated on the tooling design.
       made it unachievable (subscription auth has no env-var form), per
       that file's own convention that a rejection whose premise stops
       holding is revisited rather than defended
-- [ ] 7.2 `docs/decisions.md`: record why a host-binary tooling shortcut
+- [x] 7.2 `docs/decisions.md`: record why a host-binary tooling shortcut
       is rejected, naming the criteria it fails, so it is not proposed
       again as "just for agents"
-- [ ] 7.3 Document the residual credential exposure plainly: in-sandbox
+      **Done (2026-11-03)**: §1, "Rejected: the host's binary, 'just for
+      agents'" — criteria 2 and 5, with the keeper-directory grant as the
+      measured case of the shortcut shipping by accident.
+- [x] 7.3 Document the residual credential exposure plainly: in-sandbox
       code can read an exposed credential; the mitigations are narrowness
       and disclosure, not isolation from the code under edit
+      **Done (2026-11-03)**: `docs/threat-model.md`, "What ships today is
+      custody" — both routes (`[env] forward`, `[credentials] env`), the
+      user's reaching every project, and what egress does and does not
+      bound. `docs/decisions.md` §3 already said the same in one paragraph.
 - [ ] 7.4 README: the fleet-of-agents claim can now be stated as
       supported — but only to the extent tasks 6.1/6.2 actually passed,
       and tier-qualified as always

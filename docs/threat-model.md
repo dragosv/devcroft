@@ -111,6 +111,45 @@ Convergent evidence: this is the same pattern Docker describes for its
 sandboxes. Two independent designs arriving at sentinel-plus-proxy is a signal
 the pattern is table stakes for agent sandboxing, not a differentiator.
 
+### What ships today is custody
+
+The principle above is the target. **What ships hands the sandbox the real
+value.** There are two routes in, and they have the same exposure:
+
+- `[env] forward` in the project's `devcroft.toml`, which names a variable the
+  project needs;
+- `[credentials] env` in the user's own configuration
+  (`~/.config/devcroft/config.toml`), which names a key the user's agent needs
+  and reaches **every** sandbox that user brings up, whatever the project.
+
+Either way the value is in the session's environment, and **every process in
+the sandbox can read it**: the agent, and equally the project code the agent
+runs — a test, a build script, a dependency's `postinstall`. A sandbox cannot
+keep a credential from the code under edit when the agent that needs the
+credential has to run in the same boundary as that code. Running devcroft in a
+VM does not change this; the VM boundary is around both.
+
+What devcroft does about it is narrowness and disclosure, not isolation:
+
+- **Nothing arrives unnamed.** A sandbox inherits no host variable (the
+  `own-sandbox-environment` finding in `docs/known-gaps.md`); a credential is
+  there because a file names it.
+- **Disclosed on every `up`**, one line per user credential, including against
+  a sandbox that is already running, so it is never news afterwards that a
+  freshly cloned repository's code could read your key.
+- **Never written down.** Names are recorded; values are in no file devcroft
+  writes (asserted over the whole state directory and the project's
+  `.devcroft/`).
+- **Egress bounds where it can go.** Under `network.default = "deny"` a key can
+  leave only towards an allowed host. That is a real limit, and only as strong
+  as the allowlist: a host that accepts uploads (a code host, a paste service)
+  is also a way out.
+
+What you can do: give the sandbox a key scoped to what the agent does — a
+project-scoped or rate-limited key, never an organisation admin key — and
+allow the agent's API host alone. Brokering, the principle above, is the
+fix for key-shaped credentials and is not built for either route yet.
+
 ## What a sandbox does not solve
 
 A sandbox bounds local blast radius. It does not bound what the agent is
