@@ -727,13 +727,6 @@ impl CompiledPolicy {
         self
     }
 
-    /// Grant read access to the directory holding *this build* of the
-    /// devcroft binary, with `Origin::Baseline` — the keeper must be able
-    /// to read+exec itself inside the boundary it applies to itself, and
-    /// no baseline group can know where a given build lives (own-policy-
-    /// baseline task 6.1). `to_capability_set` folds this in like any
-    /// other `filesystem_read` grant, so it's rendered and explainable
-    /// like every other rule.
     /// A fleet agent's clone root, read-write: see [`Origin::FleetClone`].
     pub fn with_fleet_clone_grant(mut self, root: impl Into<String>) -> Self {
         self.filesystem_allow
@@ -741,9 +734,21 @@ impl CompiledPolicy {
         self
     }
 
-    pub fn with_keeper_exe_grant(mut self, exe_dir: impl Into<String>) -> Self {
+    /// Grant read access to *this build* of the devcroft binary, with
+    /// `Origin::Baseline` — the keeper must be able to read+exec itself
+    /// inside the boundary it applies to itself, and no baseline group can
+    /// know where a given build lives (own-policy-baseline task 6.1).
+    /// `to_capability_set` folds this in like any other `filesystem_read`
+    /// grant, so it's rendered and explainable like every other rule.
+    ///
+    /// **The file, not its directory.** It was the directory until
+    /// 2026-11-03, which made everything installed beside devcroft — all of
+    /// `~/.cargo/bin` after a `cargo install` — readable and executable in
+    /// every sandbox: host binaries, the access `own-policy-baseline`
+    /// removed, back by a side door (measured: a sibling binary ran).
+    pub fn with_keeper_exe_grant(mut self, exe: impl Into<String>) -> Self {
         self.filesystem_read
-            .push(AnnotatedValue::new(exe_dir.into(), Origin::Baseline));
+            .push(AnnotatedValue::new(exe.into(), Origin::Baseline));
         self
     }
 }

@@ -101,7 +101,7 @@ impl Fleet {
         .unwrap();
         let plan = devcroft::policy::compile(&manifest)
             .with_provider_grants("flox", &["/usr".to_owned()])
-            .with_keeper_exe_grant(exe.parent().unwrap().to_string_lossy().into_owned())
+            .with_keeper_exe_grant(exe.to_string_lossy().into_owned())
             .to_capability_plan();
         let keys = self.base.join("keys");
         std::fs::create_dir_all(&keys).unwrap();

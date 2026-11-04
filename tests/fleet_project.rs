@@ -89,12 +89,12 @@ fn an_agent_gets_ups_plan_shell_and_hooks_for_its_own_workspace() {
         provider.resolved_for.lock().unwrap().as_deref(),
         Some(workspace)
     );
-    // The provider's grant and the keeper binary's directory are both in
-    // the plan, as `up` compiles them.
+    // The provider's grant and the keeper binary are both in the plan, as
+    // `up` compiles them — the binary itself, not its directory.
     assert!(launch.plan.filesystem_read.iter().any(|g| g == "/usr"));
-    let exe_dir = exe().parent().unwrap().to_string_lossy().into_owned();
+    let exe = exe().to_string_lossy().into_owned();
     assert!(
-        launch.plan.filesystem_read.contains(&exe_dir),
+        launch.plan.filesystem_read.contains(&exe),
         "{:?}",
         launch.plan.filesystem_read
     );

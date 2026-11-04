@@ -497,7 +497,7 @@ fn the_keeper_runs_as_the_agents_command_and_serves_sessions() {
     .unwrap();
     let plan = devcroft::policy::compile(&manifest)
         .with_provider_grants("flox", &["/usr".to_owned()])
-        .with_keeper_exe_grant(exe.parent().unwrap().to_string_lossy().into_owned())
+        .with_keeper_exe_grant(exe.to_string_lossy().into_owned())
         .to_capability_plan();
 
     // Exactly the environment `up` gives its keeper, from the same

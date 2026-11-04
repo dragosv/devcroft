@@ -558,9 +558,8 @@ pub fn preflight(cgroup_root: &Path, exe: &Path) -> Result<(), FleetError> {
         let (manifest, _) =
             crate::config::parse("[sandbox]\nname = \"preflight\"\n\n[env]\nprovider = \"nix\"\n")
                 .map_err(|e| e.to_string())?;
-        let exe_dir = exe.parent().unwrap_or(exe).to_string_lossy().into_owned();
         let plan = crate::policy::compile(&manifest)
-            .with_keeper_exe_grant(exe_dir)
+            .with_keeper_exe_grant(exe.to_string_lossy().into_owned())
             .to_capability_plan();
         let spec = AgentSpec {
             command: vec![exe.to_string_lossy().into_owned(), "--version".into()],

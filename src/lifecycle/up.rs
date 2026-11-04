@@ -659,11 +659,8 @@ fn up_process(
     // fact, so it shows up in `policy --render`/`why` like every other
     // grant (own-policy-baseline task 6.1).
     let exe = keeper_exe()?;
-    let exe_dir = exe
-        .parent()
-        .ok_or_else(|| io::Error::other("devcroft executable path has no parent directory"))?;
     let compiled = policy::compile(manifest)
-        .with_keeper_exe_grant(exe_dir.to_string_lossy().into_owned())
+        .with_keeper_exe_grant(exe.to_string_lossy().into_owned())
         .with_provider_grants(provider.static_name(), provider_grants)
         .with_trust_store(trust_store);
     let compiled = match tools {

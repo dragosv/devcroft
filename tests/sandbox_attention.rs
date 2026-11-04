@@ -3,10 +3,10 @@
 //! sandbox. `fleet_commands.rs` covers the same report for fleet agents.
 //!
 //! The agent's side is `devcroft agent attention`, run **inside** the
-//! sandbox by its absolute path: the keeper's own binary directory is
-//! already granted read+exec in every sandbox (`with_keeper_exe_grant`), so
-//! this needs nothing the policy does not already hold. It is not on the
-//! sandbox's `PATH`.
+//! sandbox by its absolute path: the keeper's own binary is already granted
+//! read+exec in every sandbox (`with_keeper_exe_grant`), so this needs
+//! nothing the policy does not already hold. It is not on the sandbox's
+//! `PATH`. The binary, not its directory: the last test here holds that.
 //!
 //! Guards on the capability, never on the binary (CLAUDE.md).
 
@@ -264,5 +264,35 @@ fn a_dead_keeper_is_a_failure_not_attention() {
         (row[1].as_str(), row[3].as_str()),
         ("stale", "attention"),
         "{row:?}"
+    );
+}
+
+/// What makes the agent's side need no grant is the keeper's own grant, and
+/// that grant is the binary alone. It was its directory, which put every
+/// file beside devcroft — all of `~/.cargo/bin` after a `cargo install` —
+/// in every sandbox. `spike` sits beside `devcroft` in the build directory,
+/// so it stands in for those.
+#[test]
+fn the_keeper_binary_is_granted_and_its_neighbours_are_not() {
+    if !capable_host() {
+        return;
+    }
+    let s = Sandbox::new("exe");
+    s.ok(&["up"]);
+    let spike = env!("CARGO_BIN_EXE_spike");
+    let dir = Path::new(devcroft_bin()).parent().unwrap();
+    assert_eq!(
+        Path::new(spike).parent().unwrap(),
+        dir,
+        "spike is a neighbour"
+    );
+
+    s.ok(&["exec", "--", devcroft_bin(), "--version"]);
+    let out = s.run(&["exec", "--", spike]);
+    assert!(!out.status.success(), "a neighbour ran: {out:?}");
+    let listed = s.run(&["exec", "--", "sh", "-c", &format!("ls {}", dir.display())]);
+    assert!(
+        !listed.status.success(),
+        "the directory is readable: {listed:?}"
     );
 }

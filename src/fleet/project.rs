@@ -116,13 +116,10 @@ pub fn prepare(
     }
     trust_store.rewrite(&mut resolution.env);
 
-    let exe_dir = exe.parent().ok_or_else(|| {
-        PrepareError::Config(format!("{} has no parent directory", exe.display()))
-    })?;
     // An agent has its own namespace, so nothing is allocated: a `var`-only
     // request's port is the one the provider declares, unchanged.
     let mut compiled = crate::policy::compile(manifest)
-        .with_keeper_exe_grant(exe_dir.to_string_lossy().into_owned())
+        .with_keeper_exe_grant(exe.to_string_lossy().into_owned())
         .with_provider_grants(provider.static_name(), &provider_grants)
         .with_trust_store(&trust_store.grants)
         .with_own_procfs()
