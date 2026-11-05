@@ -107,18 +107,20 @@ pub fn run_in_keeper(
     Ok(())
 }
 
-/// The activation script alone, wrapped so its exports are captured, and
-/// left for the keeper to adopt (`adopt_activation`): what the provisioning
-/// process runs (`sandbox-provisioning` P2).
+/// The activation script alone, wrapped so its exports are captured: what
+/// the provisioning process runs (`sandbox-provisioning` P2). Returns what
+/// it exported, for the caller to hand on (`up` through a pipe it holds,
+/// fleet through [`record_activation`]); `None` with no capture.
 pub fn run_activation(
     backend: &dyn crate::keeper::SessionBackend,
     shell: &str,
     project_root: &Path,
     script: &str,
     capture: Option<&ActivationCapture>,
-) -> Result<(), HookError> {
+) -> Result<Option<crate::keeper::EnvOverlay>, HookError> {
     let Some(capture) = capture else {
-        return run_one_in_keeper(backend, shell, project_root, "activation", script);
+        return run_one_in_keeper(backend, shell, project_root, "activation", script)
+            .map(|()| None);
     };
     run_one_in_keeper(
         backend,
@@ -131,10 +133,20 @@ pub fn run_activation(
     // script from, not by the keeper against its own environment: the two
     // differ in the proxy variables, and a keeper-side diff would hand every
     // session the provisioning proxy as though the script had exported it.
-    let overlay = capture.read();
+    Ok(Some(capture.read()))
+}
+
+/// Leave `overlay` in the sandbox's home for the keeper to adopt
+/// (`adopt_activation`): fleet's route. `up`'s is a pipe it holds, which
+/// nothing the script left running can reach; this file is in the
+/// sandbox's own home, which it can.
+pub fn record_activation(
+    capture: &ActivationCapture,
+    overlay: &crate::keeper::EnvOverlay,
+) -> Result<(), HookError> {
     std::fs::write(
         capture.overlay_path(),
-        serde_json::to_vec(&overlay).expect("EnvOverlay serializes"),
+        serde_json::to_vec(overlay).expect("EnvOverlay serializes"),
     )
     .map_err(|e| HookError::Failed {
         name: "activation",
@@ -143,7 +155,7 @@ pub fn run_activation(
 }
 
 /// Apply what the activation script, run in the provisioning process,
-/// exported (`run_activation`'s overlay) to every hook, session and
+/// exported (`record_activation`'s file) to every hook, session and
 /// service the keeper starts.
 pub fn adopt_activation(capture: &ActivationCapture) {
     let overlay = std::fs::read(capture.overlay_path())

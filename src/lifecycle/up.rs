@@ -488,6 +488,7 @@ pub fn up_with_provider(
                 .map(|s| s.name.clone())
                 .collect(),
             ran_activation_hook: resolution.ran_activation_hook,
+            activation_provisioned: false,
             shell: Some(shell.path.to_string_lossy().into_owned()),
             trust_store: trust_store.grants.clone(),
             // Decided by `up_process`, which records it.
@@ -868,6 +869,13 @@ fn up_process(
     let mount_grants = plan
         .resolved_grants(project_root)
         .map_err(|e| UpError::Policy(e.to_string()))?;
+    // Neither the activation script (project code, which runs under this
+    // filesystem in provisioning) nor a session may hold package-manager
+    // authority (`sandbox-provisioning` P2b; the policy spec's "A profile
+    // exposing daemon authority to project code is rejected"). Fleet refused
+    // this all along; `up` did not, and a grant of the socket's directory let
+    // a hook query the daemon (measured 2026-11-05).
+    refuse_package_manager_authority(&mount_grants)?;
 
     // Mount isolation fails closed on Linux (design.md M4: "does not
     // fall back to the host's namespace") but degrades like network
@@ -1189,7 +1197,15 @@ fn up_process(
     {
         Some(i) => {
             let (_, script) = keeper_hooks.remove(i);
-            run_provisioning(
+            // Provisioning has no network outside its own proxy, whatever
+            // the runtime's `network.default` says, so it wants a namespace
+            // of its own even when the runtime does not. It took the
+            // runtime's answer: under `default = "allow"` the hook ran in the
+            // host's namespace (measured, the same `/proc/self/ns/net`), with
+            // Landlock closing TCP and nothing closing UDP (task 19).
+            let isolate_provisioning =
+                isolate_network || (!wants_isolation && provisioning_network_isolation(&exe));
+            Some(run_provisioning(
                 &exe,
                 paths,
                 project_root,
@@ -1200,15 +1216,28 @@ fn up_process(
                 &manifest.provisioning.network.allow,
                 &shell.path,
                 isolate_filesystem,
-                isolate_network,
+                isolate_provisioning,
                 &mount_grants,
                 &script,
                 own_procfs,
-            )?;
-            true
+            )?)
         }
-        None => false,
+        None => None,
     };
+    if provisioned.is_some()
+        && let Some(mut meta) = state::read_meta(&paths.meta)?
+    {
+        meta.activation_provisioned = true;
+        state::write_meta(&paths.meta, &meta)?;
+    }
+    if let Some(overlay) = &provisioned {
+        warn_unreachable_exported_path(
+            overlay,
+            env.get("PATH").map(String::as_str),
+            &compiled,
+            project_root,
+        );
+    }
 
     let keeper_pid = spawn_keeper(
         &exe,
@@ -1232,7 +1261,7 @@ fn up_process(
         &mount_grants,
         relay.as_ref().map(|(_, sock)| sock.as_path()),
         &keeper_hooks,
-        provisioned,
+        provisioned.as_ref(),
         own_procfs,
     )
     .map_err(|e| UpError::Keeper(e.to_string()))?;
@@ -1403,7 +1432,7 @@ fn prepare_services(
 /// helper and `spawn_keeper` add. Named one by one rather than by prefix,
 /// since a project may name its own variables `DEVCROFT_*` (this repository's
 /// tests do) and a fleet task's process is meant to see `DEVCROFT_TASK`.
-const KEEPER_INTERNAL: [&str; 12] = [
+const KEEPER_INTERNAL: [&str; 14] = [
     "DEVCROFT_CAPABILITY_PLAN",
     "DEVCROFT_SSH_HOST_KEY",
     "DEVCROFT_SSH_AUTHORIZED_KEY",
@@ -1416,7 +1445,38 @@ const KEEPER_INTERNAL: [&str; 12] = [
     "DEVCROFT_PROXY_SOCKET",
     "DEVCROFT_PROXY_RELAY_FD",
     "DEVCROFT_ACTIVATION_PROVISIONED",
+    ACTIVATION_FD_ENV,
+    ACTIVATION_OVERLAY_ENV,
 ];
+
+/// The provisioning process's end of the pipe its activation script's
+/// exports come back on (`run_provisioning`).
+pub const ACTIVATION_FD_ENV: &str = "DEVCROFT_ACTIVATION_FD";
+
+/// What the activation script exported, as `up` read it, for the keeper to
+/// adopt (`spawn_keeper`).
+pub const ACTIVATION_OVERLAY_ENV: &str = "DEVCROFT_ACTIVATION_OVERLAY";
+
+/// A pipe, both ends close-on-exec: `(read, write)`.
+fn pipe() -> io::Result<(std::os::fd::OwnedFd, std::os::fd::OwnedFd)> {
+    use std::os::fd::FromRawFd;
+    let mut fds = [0 as RawFd; 2];
+    // SAFETY: `fds` is two ints; on success both are fds this process owns.
+    if unsafe { libc::pipe(fds.as_mut_ptr()) } != 0 {
+        return Err(io::Error::last_os_error());
+    }
+    for fd in fds {
+        // SAFETY: an fd just created here.
+        unsafe { libc::fcntl(fd, libc::F_SETFD, libc::FD_CLOEXEC) };
+    }
+    // SAFETY: as above.
+    Ok(unsafe {
+        (
+            std::os::fd::OwnedFd::from_raw_fd(fds[0]),
+            std::os::fd::OwnedFd::from_raw_fd(fds[1]),
+        )
+    })
+}
 
 /// Whether `name` is one of devcroft's own keeper variables (see
 /// `KEEPER_INTERNAL`); the hooks are `DEVCROFT_HOOK_<NAME>`.
@@ -1653,7 +1713,7 @@ fn spawn_keeper(
     mount_grants: &[policy::ResolvedGrant],
     proxy_socket_for_view: Option<&Path>,
     hooks: &[(&'static str, String)],
-    provisioned: bool,
+    provisioned: Option<&crate::keeper::EnvOverlay>,
     own_procfs: bool,
 ) -> io::Result<libc::pid_t> {
     // The pivot-root scratch directory (`StatePaths::mount_root`'s own
@@ -1771,12 +1831,17 @@ fn spawn_keeper(
     // confirmed live, not assumed, and still true with mount isolation
     // layered on top (`fleet::mount::enter_mount_namespace`'s own doc
     // makes the identical point for its uid/gid mapping).
-    if provisioned {
+    if let Some(overlay) = provisioned {
         // The activation script already ran, in its own process under the
-        // provisioning policy (`spawn_provisioner`): the keeper adopts what
+        // provisioning policy (`run_provisioning`): the keeper adopts what
         // it exported rather than running it again. After `env_clear`
-        // above, which would otherwise drop it.
+        // above, which would otherwise drop it. As data `up` read from a
+        // pipe it held, never from a file the sandbox can write.
         cmd.env("DEVCROFT_ACTIVATION_PROVISIONED", "1");
+        cmd.env(
+            ACTIVATION_OVERLAY_ENV,
+            serde_json::to_string(overlay).expect("EnvOverlay serializes"),
+        );
     }
     let confinement = Confinement {
         isolate_filesystem,
@@ -1849,7 +1914,7 @@ fn run_provisioning(
     mount_grants: &[policy::ResolvedGrant],
     script: &str,
     own_procfs: bool,
-) -> Result<(), UpError> {
+) -> Result<crate::keeper::EnvOverlay, UpError> {
     let socket = paths.root.join("provision-proxy.sock");
     let proxy = if allow.is_empty() {
         None
@@ -1894,6 +1959,16 @@ fn run_provisioning(
         .append(true)
         .open(&paths.log)?;
     let hooks = [("activation", script.to_owned())];
+    // What the script exported comes back on this pipe, written by devcroft's
+    // own code in the provisioning process after the script has finished;
+    // the script never holds the write end (`provision_main`). Read on a
+    // thread, so an environment larger than the pipe's buffer cannot block
+    // the writer while this waits for it to exit.
+    let (exports, exports_w) = pipe()?;
+    let reader = std::thread::spawn(move || {
+        let mut buf = Vec::new();
+        std::io::Read::read_to_end(&mut std::fs::File::from(exports), &mut buf).map(|_| buf)
+    });
     let mut cmd = Command::new(exe);
     cmd.arg("__provision")
         .current_dir(project_root)
@@ -1926,6 +2001,11 @@ fn run_provisioning(
         project_root: project_root.to_path_buf(),
     };
     let status = if own_procfs {
+        // It lands first in the helper's inherited range.
+        cmd.env(
+            ACTIVATION_FD_ENV,
+            crate::fleet::init::FIRST_INHERITED_FD.to_string(),
+        );
         log_for(paths).and_then(|log| {
             spawn_through_init(
                 exe,
@@ -1935,14 +2015,25 @@ fn run_provisioning(
                 &confinement,
                 relay.as_ref().map(|(port, _)| *port),
                 log,
-                Vec::new(),
+                vec![exports_w],
             )
             .and_then(crate::fleet::init::Agent::wait)
         })
     } else {
+        cmd.env(ACTIVATION_FD_ENV, exports_w.as_raw_fd().to_string());
+        pass_fds(&mut cmd, &[exports_w.as_raw_fd()]);
         confine_on_exec(&mut cmd, confinement);
-        cmd.status()
+        let status = cmd.status();
+        drop(exports_w);
+        status
     };
+    // Every write end is closed once the process has exited, so this ends.
+    let exported = reader
+        .join()
+        .map_err(|_| UpError::Keeper("reading what the activation script exported".into()))?
+        .map_err(|e| {
+            UpError::Keeper(format!("reading what the activation script exported: {e}"))
+        })?;
 
     if let Some((pid, _, _)) = &proxy {
         // SAFETY: signalling and reaping our own child.
@@ -1955,7 +2046,16 @@ fn run_provisioning(
     let status =
         status.map_err(|e| UpError::Keeper(format!("starting the provisioning process: {e}")))?;
     if status.success() {
-        return Ok(());
+        // Nothing on the pipe is a script with no capture; anything else is
+        // the overlay, or not what this binary writes.
+        if exported.is_empty() {
+            return Ok(crate::keeper::EnvOverlay::default());
+        }
+        return serde_json::from_slice(&exported).map_err(|e| {
+            UpError::Keeper(format!(
+                "what the activation script exported came back malformed: {e}"
+            ))
+        });
     }
     let failure = keeper_failure_reason(&paths.log).unwrap_or_else(|| {
         format!("the activation script's provisioning process exited with {status}")
@@ -2125,6 +2225,114 @@ fn confine_on_exec(cmd: &mut Command, c: Confinement) {
             Ok(())
         });
     }
+}
+
+/// Once, at `up`: the `PATH` entries the activation script exported that
+/// the sandbox cannot read (`sandbox-provisioning` task 23). The policy was
+/// compiled before the script ran and nothing it exports can widen it, so
+/// a directory it adds outside the grants is on every session's `PATH` and
+/// finds nothing there: silently, unless this says so. Judged by the policy
+/// (`why_resolved`), so a directory in the project, or in the sandbox's own
+/// home, which is in the project, never draws it. Only what the script
+/// added, against `before`: a provider's own `PATH` ends in host
+/// directories the policy does not grant, which is no news from the script.
+fn warn_unreachable_exported_path(
+    overlay: &crate::keeper::EnvOverlay,
+    before: Option<&str>,
+    compiled: &policy::CompiledPolicy,
+    project_root: &Path,
+) {
+    let home = std::env::var_os("HOME").map(PathBuf::from);
+    let unreachable =
+        unreachable_exported_path(overlay, before, compiled, project_root, home.as_deref());
+    if unreachable.is_empty() {
+        return;
+    }
+    eprintln!(
+        "devcroft: warning: the activation script put {} on PATH, which the policy does \
+         not grant, so sessions find nothing there (fallback: the entry stays on PATH and is \
+         skipped; grant it in [filesystem] read, or provide those commands through the \
+         environment itself)",
+        unreachable.join(", ")
+    );
+}
+
+/// [`warn_unreachable_exported_path`]'s decision, apart from its printing.
+fn unreachable_exported_path<'a>(
+    overlay: &'a crate::keeper::EnvOverlay,
+    before: Option<&str>,
+    compiled: &policy::CompiledPolicy,
+    project_root: &Path,
+    home: Option<&Path>,
+) -> Vec<&'a str> {
+    let Some(path) = overlay.set.get("PATH") else {
+        return Vec::new();
+    };
+    path.split(':')
+        .filter(|dir| dir.starts_with('/'))
+        .filter(|dir| !before.is_some_and(|b| b.split(':').any(|d| d == *dir)))
+        .filter(|dir| {
+            !policy::why_resolved(
+                compiled,
+                Path::new(dir),
+                project_root,
+                home,
+                policy::Op::Read,
+            )
+            .allowed
+        })
+        .collect()
+}
+
+/// Whether the provisioning process can have a network namespace of its own,
+/// for a sandbox whose runtime asked for none; when it cannot, the one
+/// warning that says what is lost (`sandbox-provisioning` task 19). A
+/// runtime that asked and could not has warned already, for the same cause.
+fn provisioning_network_isolation(exe: &Path) -> bool {
+    if matches!(crate::fleet::netns::probe(exe), Ok(true)) {
+        return true;
+    }
+    // Seatbelt's outbound deny covers UDP (`warn_network_isolation_degraded`
+    // has the measurement), so on macOS nothing is lost.
+    if !cfg!(target_os = "macos") {
+        eprintln!(
+            "devcroft: warning: provisioning's network isolation is degraded on this host: \
+             unprivileged network namespaces are unavailable (fallback: the activation \
+             script's network is denied for TCP, outside its proxy, but not for UDP, which \
+             Landlock does not mediate)"
+        );
+    }
+    false
+}
+
+/// `up`'s refusal of a grant that hands package-manager authority to the
+/// sandbox. The profile is misconfigured, which is the user's to fix — not a
+/// provider that cannot be confined — and the message says which.
+fn refuse_package_manager_authority(grants: &[policy::ResolvedGrant]) -> Result<(), UpError> {
+    use policy::PackageManagerAuthority as Authority;
+    let (grant, what) = match policy::package_manager_authority(grants) {
+        None => return Ok(()),
+        Some(Authority::DaemonSocket { grant }) => (
+            grant,
+            format!(
+                "would put the Nix daemon socket ({}) in the sandbox",
+                crate::provider::NIX_DAEMON_SOCKET
+            ),
+        ),
+        Some(Authority::WritableStore { grant }) => (
+            grant,
+            "makes the Nix store writable from the sandbox".into(),
+        ),
+    };
+    Err(UpError::Policy(format!(
+        "a grant of {} {what}, and with it to the provider's activation script, which is \
+         project code: authority over the store every environment on this host reads from. \
+         Neither provisioning nor a session is ever given that. This is the manifest's to \
+         fix, not a limit of the provider: remove the grant (or make the store read-only), \
+         and declare what the project needs in its environment, which is materialized \
+         before any project code runs",
+        grant.display()
+    )))
 }
 
 /// The binary to re-exec as the keeper. Normally `current_exe()`, but that
@@ -2382,6 +2590,35 @@ pub(crate) fn pass_fds(cmd: &mut Command, fds: &[RawFd]) {
 
 #[cfg(test)]
 mod tests {
+    /// Only what the script added, and only what the policy refuses: a
+    /// provider's `PATH` that already ends in the host's `/usr/bin` (flox's,
+    /// nix's) is not the script's news, and the project is granted.
+    #[test]
+    fn only_an_added_ungranted_path_entry_is_named() {
+        let compiled =
+            policy::compile(&crate::config::parse("[sandbox]\nname = \"t\"\n").unwrap().0)
+                .with_provider_grants("nix", &["/nix/store".to_owned()]);
+        let before = "/nix/store/x-env/bin:/usr/bin:/bin";
+        let overlay = crate::keeper::EnvOverlay {
+            set: [(
+                "PATH".to_owned(),
+                format!("/opt/nowhere/bin:/work/p/node_modules/.bin:{before}"),
+            )]
+            .into(),
+            unset: Vec::new(),
+        };
+        let root = Path::new("/work/p");
+        assert_eq!(
+            unreachable_exported_path(&overlay, Some(before), &compiled, root, None),
+            ["/opt/nowhere/bin"]
+        );
+        assert_eq!(
+            unreachable_exported_path(&overlay, None, &compiled, root, None),
+            ["/opt/nowhere/bin", "/usr/bin", "/bin"],
+            "without what it started from, the host's own entries would be named"
+        );
+    }
+
     use super::*;
 
     /// Everything the keeper's environment adds to the provider's is either

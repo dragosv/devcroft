@@ -323,6 +323,11 @@ pub struct Meta {
     /// "no hook" until the next `up` records the truth.
     #[serde(default)]
     pub ran_activation_hook: bool,
+    /// Whether this `up` ran the provider's activation script in the
+    /// provisioning process, confined (`sandbox-provisioning` task 30), so
+    /// `up` can say what that reached rather than say nothing.
+    #[serde(default)]
+    pub activation_provisioned: bool,
     /// The absolute POSIX shell this `up` resolved out of the sandbox's
     /// own closure (`shell::resolve`).
     ///
@@ -856,6 +861,7 @@ mod tests {
             resolved_backend: "process".to_string(),
             declared_services: Vec::new(),
             ran_activation_hook: false,
+            activation_provisioned: false,
             shell: None,
             trust_store: Vec::new(),
             own_procfs: false,
@@ -885,6 +891,7 @@ mod tests {
             resolved_backend: "process".to_string(),
             declared_services: Vec::new(),
             ran_activation_hook: false,
+            activation_provisioned: false,
             shell: None,
             trust_store: Vec::new(),
             own_procfs: false,

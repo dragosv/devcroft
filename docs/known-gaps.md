@@ -1026,20 +1026,83 @@ caps CPU or memory per sandbox. Planned: cgroup v2 scope units per keeper
 on Linux; no macOS equivalent exists. Also fleet's subject
 (`add-linux-agent-fleet` task group 1).
 
-## Provisioning runs on the host — with one exception now closed
+## Provisioning: project shell is confined, resolution is not
 
-Resolving a provider environment happens before any boundary exists. For
-flox, whose `[hook].on-activate` is arbitrary project shell, devcroft now
-materializes from a derived hook-free copy of the environment and runs the
-hook *inside* the sandbox instead, so no project code executes unconfined.
-The rest of provisioning still runs host-side; `sandbox-provisioning` is
-the change that moves it. An upstream request that would make the flox
-split a supported contract rather than devcroft's inference is drafted at
-[flox-confined-activation-issue.md](flox-confined-activation-issue.md).
+What changed (`sandbox-provisioning`): no provider runs project shell on the
+host any more. The activation script — flox's `[hook].on-activate`,
+devenv's `enterShell` — runs in a process of its own, inside the sandbox's
+filesystem policy, with no network except `[provisioning.network] allow`
+through a proxy of its own. devbox's `init_hook` never runs, and nix's
+`shellHook` comes back as data and never runs. The keeper adopts what the
+script exported. `policy --render` shows the provisioning context and `up`
+says what it ran under.
 
-The nix provider does not have even the historical version of this gap: it
-reads the dev shell's environment as structured data and never evaluates
-the `shellHook`.
+**What still runs host-side is resolution itself**, before any boundary
+exists, and `policy --render` names it per provider ("resolution: …"):
+`nix print-dev-env --json`, `devenv build shell`/`eval`, flox activating a
+hook-free copy of the environment, `devbox shellenv --pure`. Two of those
+evaluate the repository's own Nix (`flake.nix`, `devenv.nix`). They run no
+project shell, and they do hold the Nix daemon's authority to realise
+packages. The constraint there is Nix's evaluator, which devcroft relies on
+rather than enforces. That half of provisioning cannot be confined without
+taking the daemon away from it, and the daemon is what materialization
+needs (design.md P6 measured each provider).
+
+**Project code never holds package-manager authority**, and that is
+enforced:
+- the mount view never contains the daemon's socket;
+- `up` refuses at layer `config` a manifest grant that would put the socket,
+  or a writable store, in the sandbox — measured, before this check a grant
+  of `/nix/var/nix/daemon-socket` let a devenv `enterShell` query the daemon;
+- a hook that tries to install a package fails at layer `provider`, told to
+  declare it in the environment instead, not to grant anything.
+
+### How this differs from running the hook by hand
+
+A hook that worked in your shell can behave differently here, by design:
+
+- **`HOME` is the sandbox's** (`.devcroft/<name>/home`, kept across runs).
+  A write to `~/.gitconfig`, `~/.npmrc` or a symlink dropped in `~`
+  succeeds and lands there; your real home is untouched. A *read* of a file
+  only your real home has finds nothing.
+- **No network unless declared.** `npm ci` or `pip install` in a hook needs
+  its registry in `[provisioning.network] allow`. That allowlist is not the
+  runtime's: sessions do not get it, and the hook does not get
+  `[network] allow`.
+- **Host tools are not there.** The hook's commands come from the
+  environment's closure; `/usr/bin` and `/etc` are not in the view. Neither
+  is `/etc/nix/nix.conf`, so `nix` called from a hook runs with defaults.
+- **It cannot install packages**, as above: declare them instead.
+- **Its background processes end with it** on a host that gives the sandbox
+  a PID namespace; elsewhere they outlive provisioning, still confined, and
+  lose the provisioning network when its proxy stops.
+- **What it exports reaches sessions** — except a `PATH` entry the policy
+  does not grant, which `up` names once instead of leaving it to fail
+  silently.
+
+When a hook fails, `up` says whether the policy refused it something, and
+names what, or says the failure is the script's own.
+
+### macOS: the same structure, not yet measured there
+
+Everything above was measured on Linux. On macOS the provisioning process
+gets its own Seatbelt profile, compiled from the same policy. These are the
+differences the platform implies — each **unmeasured** for provisioning on a
+real Mac:
+
+- **No mount view.** An ungranted path is refused (`Operation not
+  permitted`), not hidden, so a hook sees a refusal rather than a missing
+  file. Attribution handles both spellings.
+- **The daemon's socket is refused on the network axis, not by absence.**
+  Seatbelt treats a unix-socket `connect()` as network activity, and
+  provisioning always denies the network outside its proxy. So the socket
+  should be unreachable there whatever the runtime's `network.default` is
+  (see "Unix sockets are not mediated by Landlock", macOS half).
+- **No PID namespace**, so the background-process case above is the macOS
+  behaviour.
+- **Home substitution is by environment** on both platforms; on macOS the
+  real home is refused rather than absent, with the caveat in "A
+  home-relative `filesystem` grant has no effect on macOS".
 
 ## A `filesystem.allow` grant for a nonexistent path is silently dropped
 

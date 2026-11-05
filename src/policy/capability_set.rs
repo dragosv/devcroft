@@ -76,6 +76,42 @@ pub struct ResolvedGrant {
     pub mode: AccessMode,
 }
 
+/// A grant that would hand package-manager authority to whatever runs under
+/// it (`sandbox-provisioning` P2a/P2b; `workspace-isolation` for fleet).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PackageManagerAuthority {
+    /// The grant contains the Nix daemon's socket.
+    DaemonSocket { grant: PathBuf },
+    /// The grant makes the Nix store, or part of it, writable.
+    WritableStore { grant: PathBuf },
+}
+
+/// The first resolved grant that would put the Nix daemon socket, or a
+/// writable store, in reach of the sandbox. The mount view holds exactly the
+/// grants, so a grant is the only way either arrives; checked on resolved
+/// grants, so a symlink naming `/nix/var` counts as the path it names.
+/// Measured (2026-11-05): a manifest granting `/nix/var/nix/daemon-socket`
+/// read let a devenv `enterShell` query the daemon from inside provisioning.
+pub fn package_manager_authority(grants: &[ResolvedGrant]) -> Option<PackageManagerAuthority> {
+    let socket = Path::new(crate::provider::NIX_DAEMON_SOCKET);
+    let store = Path::new("/nix/store");
+    grants.iter().find_map(|g| {
+        if socket.starts_with(&g.path) {
+            Some(PackageManagerAuthority::DaemonSocket {
+                grant: g.path.clone(),
+            })
+        } else if g.mode == AccessMode::ReadWrite
+            && (g.path.starts_with(store) || store.starts_with(&g.path))
+        {
+            Some(PackageManagerAuthority::WritableStore {
+                grant: g.path.clone(),
+            })
+        } else {
+            None
+        }
+    })
+}
+
 impl CompiledPolicy {
     /// Drop this compiled policy's origin annotations, keeping only what
     /// the keeper needs to actually restrict itself.

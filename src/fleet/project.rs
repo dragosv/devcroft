@@ -253,32 +253,25 @@ fn refuse_package_manager_authority(
     plan: &crate::policy::CapabilityPlan,
     workspace: &Path,
 ) -> Result<(), PrepareError> {
-    let socket = Path::new(crate::provider::NIX_DAEMON_SOCKET);
-    let store = Path::new("/nix/store");
     let grants = plan
         .resolved_grants(workspace)
         .map_err(|e| PrepareError::Config(e.to_string()))?;
-    for g in &grants {
-        if socket.starts_with(&g.path) {
-            return Err(PrepareError::Config(format!(
-                "a grant of {} would put the Nix daemon socket ({}) in every agent: \
-                 authority over the store all of them share, which an agent is never \
-                 given. Install what the agent needs through the environment's own \
-                 manifest instead; it is materialized before the agent starts",
-                g.path.display(),
-                socket.display()
-            )));
-        }
-        if g.mode == nono::AccessMode::ReadWrite
-            && (g.path.starts_with(store) || store.starts_with(&g.path))
-        {
-            return Err(PrepareError::Config(format!(
-                "{} is granted read-write, which makes the Nix store writable from every \
-                 agent; agents get their toolchain read-only, so grant it read-only or \
-                 not at all",
-                g.path.display()
-            )));
-        }
+    use crate::policy::PackageManagerAuthority as Authority;
+    match crate::policy::package_manager_authority(&grants) {
+        Some(Authority::DaemonSocket { grant }) => Err(PrepareError::Config(format!(
+            "a grant of {} would put the Nix daemon socket ({}) in every agent: \
+             authority over the store all of them share, which an agent is never \
+             given. Install what the agent needs through the environment's own \
+             manifest instead; it is materialized before the agent starts",
+            grant.display(),
+            crate::provider::NIX_DAEMON_SOCKET
+        ))),
+        Some(Authority::WritableStore { grant }) => Err(PrepareError::Config(format!(
+            "{} is granted read-write, which makes the Nix store writable from every \
+             agent; agents get their toolchain read-only, so grant it read-only or \
+             not at all",
+            grant.display()
+        ))),
+        None => Ok(()),
     }
-    Ok(())
 }

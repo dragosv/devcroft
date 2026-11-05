@@ -148,15 +148,47 @@
       **Not tested end to end:** the refusal itself. Real flox keeps pins on
       a re-lock, so genuine drift cannot be provoked; `lock_drift` is
       unit-tested and the branch is a two-way match on it.
-- [ ] Implement the fail-closed diagnostic for what remains genuinely refused:
+- [x] Implement the fail-closed diagnostic for what remains genuinely refused:
       activation code that needs materialization authority *while running as
       project code*. The error must distinguish this from "this provider
       cannot be confined", since the fix is to declare the dependency in
       `[install]` rather than to wait for anything.
+      **Done (2026-11-05).** Measured first, with the host's own `nix` run
+      by its store path from a devenv `enterShell`: `nix build`, `nix
+      profile install`, `nix-env -i` and `nix-store --realise` all print
+      `remounting /nix/store writable: Operation not permitted`, and
+      against the daemon `cannot connect to socket at '/nix/var/nix/
+      daemon-socket/socket'`. Attribution had read the first as
+      `/nix/store (write): not granted by any rule` with "grant what it
+      needs in devcroft.toml" as the remedy, the one grant P2a forbids.
+      Now `Denial::PackageManager`: named as package-manager authority,
+      remedy "declare them in the environment", and "not a provider that
+      cannot be confined". **Found on the way, and closed: `up` never
+      refused a manifest grant of the socket.** Fleet did; with `read =
+      ["/nix/var/nix/daemon-socket"]` a devenv hook queried the daemon
+      (`Store URL: daemon`). `up` now refuses it, and a writable store, at
+      layer `config` before anything runs (`policy::package_manager_authority`,
+      shared with fleet) — the policy spec's "A profile exposing daemon
+      authority to project code is rejected". Both in
+      `tests/provisioning_attribution.rs`, each failing with its fix removed.
 - [x] Repeat for `devbox`.
       Done with the measurement above.
-- [ ] Confirm the environment can be written to a descriptor the supervisor
+- [x] Confirm the environment can be written to a descriptor the supervisor
       holds, across the boundary, without a shell round trip.
+      **Done (2026-11-05), by making it true:** the overlay went through
+      `.devcroft-activation-overlay.json` in the sandbox's own home, which
+      the hook can write, and which a background process it left could
+      rewrite before the keeper read it (no PID namespace). Now `up` holds a
+      pipe; `__provision` sets the write end close-on-exec before the script
+      starts, writes the overlay after it ends, and `up` reads it as JSON
+      and hands it to the keeper in its environment
+      (`DEVCROFT_ACTIVATION_OVERLAY`, keeper-internal). Nothing is
+      evaluated: the dump is `__env0`'s NUL-separated data, as before.
+      Discarding what the pipe carries fails
+      `what_enter_shell_exports_reaches_a_session` and
+      `the_hook_reaches_provisionings_hosts_and_sessions_reach_runtimes`.
+      **Fleet keeps the file** (`hooks::record_activation`): its e2e needs
+      sudo here, so moving it would ship unverified.
 - [x] **If the minimal grant set turns out to be most of `$HOME`, stop and
       reconsider** — the change would then be confinement in name only.
       **It did not:** an empty substituted home is enough for both devbox
@@ -184,7 +216,16 @@
       the runtime setting decided it. `--path --provisioning` says the
       filesystem is shared; `--env --provisioning` is refused.
       `tests/why_provisioning.rs`; with `--provisioning` ignored, it fails.
-- [ ] Report degradation where the backend cannot enforce a declared aspect.
+- [x] Report degradation where the backend cannot enforce a declared aspect.
+      **Done (2026-11-05), and it was a real gap.** Provisioning took the
+      runtime's network isolation, so under `network.default = "allow"` the
+      hook ran in the host's network namespace (measured: the same
+      `/proc/self/ns/net`), with Landlock closing TCP and nothing closing
+      UDP, and no warning, since the runtime asked for nothing. Provisioning
+      now gets its own namespace whenever the host can give one; where it
+      cannot, one warning names what is lost (UDP; not on macOS, where
+      Seatbelt covers it). `provisioning_gets_its_own_network_namespace_…`
+      fails with the old behaviour.
 
 ## 2. Provisioning sandbox
 
@@ -211,8 +252,21 @@
       (`hooks::run_activation`, `adopt_activation`). A keeper-side diff was the
       first version and was wrong: the two differ in the proxy variables, so
       every session would have been handed the provisioning proxy.
-- [ ] Apply the existing baseline diff, store grants and staleness
+- [x] Apply the existing baseline diff, store grants and staleness
       fingerprinting to the captured environment, unchanged.
+      **Done (2026-11-05).** The baseline diff is applied as before, in
+      the provisioning process against what the script started from
+      (`activation_overlay`). Staleness: the overlay is never persisted,
+      so every keeper start re-runs the script, and the fingerprint covers
+      the script's definition — open question 5 answered by that, not by
+      fingerprinting the output. Grants: nothing the script exports can
+      widen the policy, which is compiled before it runs; what it *could*
+      do is put an ungranted directory on `PATH`, where sessions find
+      nothing, silently. `up`, now holding the overlay as data, names such
+      entries once, judged by the policy and only for what the script
+      added (`an_exported_path_the_policy_does_not_grant_is_named_at_up`;
+      the host-directory case unit-tested, since devenv's own `PATH` holds
+      none).
 
 ## 3. Failure attribution
 
@@ -272,10 +326,24 @@
       confined and byte-identical. It is a larger step than routing a hook:
       the provisioning policy is compiled from the grants resolution
       produces, so resolution would need a policy of its own.
-- [ ] Give nix a provisioning profile for inspectability; its resolution path is
+- [x] Give nix a provisioning profile for inspectability; its resolution path is
       unchanged.
-- [ ] Replace the host-execution warning with an accurate statement of
+      **Done (2026-11-05), for every provider, not nix alone.** `policy
+      --render`'s provisioning section adds `provisioning.package_manager:
+      none` (the policy spec's own entry for that authority) and a
+      `resolution:` entry, origin `provider:<name>`: what it runs, what of
+      the repository it evaluates, and that it holds the Nix daemon —
+      host-side, before any boundary, so not confined by this policy.
+      Swift's says no package manager and no project file. Unit-tested.
+- [x] Replace the host-execution warning with an accurate statement of
       provisioning's reach.
+      **Done (2026-11-05).** That warning cannot fire any more — no provider
+      runs a hook host-side — and is kept only as the guard for one that
+      would. Where a script ran in provisioning, `up` prints what it ran
+      under (its filesystem policy and network) at the process tier,
+      "accident protection, not a boundary for code written to escape",
+      and points at `policy --render` for resolution. Not on an `up` that
+      started nothing (`up_states_what_the_activation_script_ran_under`).
 
 ## 5. Validation
 
@@ -296,7 +364,10 @@
       devenv on `PATH` and `--features test-support`: 653 passed, 0 failed,
       bringing every provider's samples up (flox with a hook, devenv's
       `enterShell`, devbox, nix). Skipped: Swift (macOS-only) and rsync.
-- [ ] Document the behavioural difference from running activation by hand.
+- [x] Document the behavioural difference from running activation by hand.
+      **Done (2026-11-05):** `docs/known-gaps.md`, "Provisioning: project
+      shell is confined, resolution is not", which replaces the stale
+      "Provisioning runs on the host" entry.
 
 ## 6. Deferred decisions (see design.md)
 
@@ -313,4 +384,9 @@
       too since 2026-10-15.
 - [ ] Cache sharing across agents: read-only share plus per-agent overlay.
       **Decide before fleet work**, not after.
-- [ ] macOS fidelity statement.
+- [x] macOS fidelity statement.
+      **Written (2026-11-05), unmeasured:** the same file's macOS
+      subsection states what the platform implies — refused rather than
+      hidden paths, the daemon socket refused on Seatbelt's network axis,
+      no PID namespace, home by environment — each marked unmeasured for
+      provisioning on a real Mac.

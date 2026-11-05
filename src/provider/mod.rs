@@ -497,6 +497,17 @@ libraries, so behavior depends on this host)"
     }
 }
 
+/// What a provider's resolution runs and with what authority
+/// ([`ProviderKind::resolution_reach`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ResolutionReach {
+    pub runs: &'static str,
+    /// What from the repository is interpreted, and how.
+    pub evaluates: &'static str,
+    /// Package-manager authority it holds, if any.
+    pub authority: Option<&'static str>,
+}
+
 /// The validated, canonical provider names devcroft can actually resolve.
 /// Everything downstream that needs to run *a* provider (as opposed to
 /// merely validating the manifest's `env.provider` string) goes through
@@ -547,6 +558,48 @@ impl ProviderKind {
             ProviderKind::Devbox => "devbox",
             ProviderKind::Devenv => "devenv",
             ProviderKind::Swift => "swift",
+        }
+    }
+
+    /// What this provider's resolution reaches: the trusted half of
+    /// provisioning, which runs host-side at `up` before any boundary
+    /// exists, and is therefore *not* governed by the provisioning policy
+    /// (`sandbox-provisioning` P2b, P6). Rendered by `policy --render` so
+    /// that what holds package-manager authority is inspectable rather
+    /// than implied — and so that it is visibly not the activation script.
+    pub fn resolution_reach(self) -> ResolutionReach {
+        const DAEMON: Option<&str> =
+            Some("the Nix daemon, to realise packages; the store stays read-only to every sandbox");
+        match self {
+            ProviderKind::Flox => ResolutionReach {
+                runs: "`flox activate` on a copy of the environment with `[hook]` removed \
+                       (.devcroft/flox-env-*)",
+                evaluates: "the manifest and lock, as data; no project shell — `[hook]` runs in \
+                            provisioning, `[profile]` never",
+                authority: DAEMON,
+            },
+            ProviderKind::Nix => ResolutionReach {
+                runs: "`nix flake metadata`, then `nix print-dev-env --json` on the named devShell",
+                evaluates: "flake.nix, the repository's Nix, in Nix's own evaluator; no project \
+                            shell — `shellHook` is returned as data and never run",
+                authority: DAEMON,
+            },
+            ProviderKind::Devbox => ResolutionReach {
+                runs: "`devbox shellenv --pure`",
+                evaluates: "devbox.json and devbox.lock, as data; `init_hook` never runs",
+                authority: DAEMON,
+            },
+            ProviderKind::Devenv => ResolutionReach {
+                runs: "`devenv build shell`, `devenv eval enterShell`, `devenv eval processes`",
+                evaluates: "devenv.nix, the repository's Nix, in Nix's own evaluator; no project \
+                            shell — `enterShell` runs in provisioning",
+                authority: DAEMON,
+            },
+            ProviderKind::Swift => ResolutionReach {
+                runs: "`swift -print-target-info`, `xcode-select -p`, `xcrun`",
+                evaluates: "no project file: Package.swift is not opened",
+                authority: None,
+            },
         }
     }
 

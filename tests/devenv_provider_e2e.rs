@@ -679,3 +679,69 @@ fn what_enter_shell_exports_reaches_a_session() {
         assert_eq!(fields[2], "set", "LOCALE_ARCHIVE from enterShell: {seen}");
     }
 }
+
+/// `sandbox-provisioning` task 23: `up` holds what `enterShell` exported as
+/// data, so a `PATH` entry it added that the policy does not grant is named
+/// once at `up` rather than found missing in a session. A directory in the
+/// project draws nothing, nor does what devenv's own `PATH` already held.
+#[test]
+fn an_exported_path_the_policy_does_not_grant_is_named_at_up() {
+    let Some(sandbox) = Sandbox::new(
+        "pathwarn",
+        &[],
+        "    export PATH=/opt/devcroft-nowhere/bin:$DEVENV_ROOT/tools/bin:$PATH",
+        true,
+    ) else {
+        return;
+    };
+    let up = sandbox.run(&["up"]);
+    assert!(up.status.success(), "{up:?}");
+    let stderr = String::from_utf8_lossy(&up.stderr);
+    let warnings: Vec<&str> = stderr
+        .lines()
+        .filter(|l| l.contains("activation script put"))
+        .collect();
+    assert_eq!(warnings.len(), 1, "exactly one warning:\n{stderr}");
+    assert!(
+        warnings[0].contains("/opt/devcroft-nowhere/bin"),
+        "{stderr}"
+    );
+    assert!(
+        !warnings[0].contains("tools/bin"),
+        "the project is granted: {stderr}"
+    );
+    assert!(
+        !warnings[0].contains("/usr/bin"),
+        "not the script's: {stderr}"
+    );
+}
+
+/// `sandbox-provisioning` task 30: where the activation script ran, `up`
+/// says what it ran under, at the strength the tier has, and says nothing
+/// of the kind for an `up` that started nothing. Every devenv project has a
+/// script — devenv's own `enterShell` preamble is one, even when the project
+/// writes none — so the case of no script is not a devenv one.
+#[test]
+fn up_states_what_the_activation_script_ran_under() {
+    let Some(with) = Sandbox::new("reach", &[], "    true", true) else {
+        return;
+    };
+    let up = with.run(&["up"]);
+    assert!(up.status.success(), "{up:?}");
+    let stdout = String::from_utf8_lossy(&up.stdout);
+    let line = stdout
+        .lines()
+        .find(|l| l.starts_with("devcroft: provisioning:"))
+        .unwrap_or_else(|| panic!("no provisioning line:\n{stdout}"));
+    assert!(line.contains("ran inside the sandbox"), "{line}");
+    assert!(line.contains("no network"), "{line}");
+    assert!(
+        line.contains("not a boundary for code written to escape"),
+        "{line}"
+    );
+    let again = with.run(&["up"]);
+    assert!(
+        !String::from_utf8_lossy(&again.stdout).contains("devcroft: provisioning:"),
+        "an `up` that started nothing ran nothing"
+    );
+}

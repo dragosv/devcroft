@@ -2456,6 +2456,37 @@ fn warn_if_activation_hook_ran(manifest: &devcroft::config::Manifest) {
     );
 }
 
+/// What the activation script ran under, once at `up`, when it ran
+/// (`sandbox-provisioning` task 30; env-provider spec, "Provisioning
+/// confinement is claimed at its actual strength"). This replaced the
+/// warning above as the line `up` prints about project shell: no provider
+/// runs a hook on the host any more, so that one cannot fire, and is kept
+/// only as the guard for a provider that would.
+fn print_provisioning_reach(manifest: &devcroft::config::Manifest) {
+    let Ok(paths) = devcroft::lifecycle::StatePaths::new(&manifest.sandbox.name) else {
+        return;
+    };
+    let ran = devcroft::lifecycle::read_meta(&paths.meta)
+        .ok()
+        .flatten()
+        .is_some_and(|m| m.activation_provisioned);
+    if !ran {
+        return;
+    }
+    let allow = &manifest.provisioning.network.allow;
+    let network = if allow.is_empty() {
+        "no network".to_string()
+    } else {
+        format!("a network of {} only", allow.join(", "))
+    };
+    println!(
+        "devcroft: provisioning: the activation script ran inside the sandbox, under its \
+         filesystem policy and {network}, at the process tier: accident protection, not a \
+         boundary for code written to escape. Resolution itself ran host-side; \
+         `devcroft policy --render` shows what each reached."
+    );
+}
+
 /// The guarantee tier, printed once at `up` and on every `status`
 /// (`docs/decisions.md` §1: "the tier is always visible in `status` and
 /// once at `up`", and devcroft "does not market two different guarantees
@@ -2733,6 +2764,9 @@ fn cli_up(args: &[String]) -> i32 {
             print_credential_disclosure(&manifest);
             print_swift_shim_note(&manifest.env.provider, &project_root);
             warn_if_activation_hook_ran(&manifest);
+            if outcome != devcroft::lifecycle::UpOutcome::AlreadyUp {
+                print_provisioning_reach(&manifest);
+            }
             0
         }
         Err(e) => {
@@ -3854,6 +3888,7 @@ fn render_provisioning_of(
 ) -> String {
     devcroft::policy::render_provisioning(
         &compiled.for_provisioning(&manifest.provisioning.network.allow),
+        devcroft::provider::ProviderKind::from_name(&manifest.env.provider).ok(),
     )
 }
 
@@ -4867,6 +4902,20 @@ fn activation_capture(
 fn provision_main() -> ! {
     let relay = take_relay();
     let sandbox_home = std::env::var("DEVCROFT_SANDBOX_HOME").ok();
+    // Where what the script exported goes: a pipe `up` holds the other end
+    // of. Close-on-exec at once, so the script, and anything it leaves
+    // running, never holds it (`sandbox-provisioning` P3). Absent under
+    // fleet, which still uses a file in the sandbox's home.
+    let exports = std::env::var(devcroft::lifecycle::ACTIVATION_FD_ENV)
+        .ok()
+        .and_then(|n| n.parse::<RawFd>().ok())
+        .map(|fd| {
+            // SAFETY: an fd `up` passed this process for this purpose.
+            unsafe {
+                libc::fcntl(fd, libc::F_SETFD, libc::FD_CLOEXEC);
+                <std::fs::File as std::os::fd::FromRawFd>::from_raw_fd(fd)
+            }
+        });
     // SAFETY: single-threaded until the relay thread below.
     unsafe {
         for internal in [
@@ -4874,6 +4923,7 @@ fn provision_main() -> ! {
             "DEVCROFT_SSH_AUTHORIZED_KEY",
             "DEVCROFT_SANDBOX_HOME",
             "DEVCROFT_PROXY_RELAY_FD",
+            devcroft::lifecycle::ACTIVATION_FD_ENV,
         ] {
             std::env::remove_var(internal);
         }
@@ -4900,7 +4950,23 @@ fn provision_main() -> ! {
         std::path::Path::new(&root),
         &script,
         capture.as_ref(),
-    ) {
+    )
+    .and_then(|overlay| {
+        let (Some(overlay), Some(capture)) = (overlay, &capture) else {
+            return Ok(());
+        };
+        match exports {
+            Some(mut pipe) => std::io::Write::write_all(
+                &mut pipe,
+                &serde_json::to_vec(&overlay).expect("EnvOverlay serializes"),
+            )
+            .map_err(|e| devcroft::lifecycle::hooks::HookError::Failed {
+                name: "activation",
+                detail: format!("handing what it exported to `up`: {e}"),
+            }),
+            None => devcroft::lifecycle::hooks::record_activation(capture, &overlay),
+        }
+    }) {
         Ok(()) => std::process::exit(0),
         Err(e) => {
             println!(
@@ -4948,6 +5014,11 @@ fn keeper_main(fd: RawFd, ssh_fd: RawFd) -> ! {
     // Read here with the other internals, for the same single-threaded reason.
     let sandbox_home = std::env::var("DEVCROFT_SANDBOX_HOME").ok();
     let provisioned = std::env::var_os("DEVCROFT_ACTIVATION_PROVISIONED").is_some();
+    // What the provisioned script exported, as `up` read it from the pipe
+    // only it held; absent under fleet, which leaves a file instead.
+    let provisioned_overlay = std::env::var(devcroft::lifecycle::ACTIVATION_OVERLAY_ENV)
+        .ok()
+        .map(|json| serde_json::from_str::<devcroft::keeper::EnvOverlay>(&json));
     let ssh_keys = std::env::var("DEVCROFT_SSH_HOST_KEY")
         .ok()
         .zip(std::env::var("DEVCROFT_SSH_AUTHORIZED_KEY").ok());
@@ -4958,6 +5029,7 @@ fn keeper_main(fd: RawFd, ssh_fd: RawFd) -> ! {
         std::env::remove_var("DEVCROFT_SSH_AUTHORIZED_KEY");
         std::env::remove_var("DEVCROFT_SANDBOX_HOME");
         std::env::remove_var("DEVCROFT_ACTIVATION_PROVISIONED");
+        std::env::remove_var(devcroft::lifecycle::ACTIVATION_OVERLAY_ENV);
         // Taken above if present; a session has no use for the number.
         std::env::remove_var("DEVCROFT_PROXY_RELAY_FD");
     }
@@ -5076,7 +5148,12 @@ fn keeper_main(fd: RawFd, ssh_fd: RawFd) -> ! {
     // A failure exits before any service starts, so the sandbox does not
     // come up half-provisioned; `up` reports it by reading the line
     // below out of this process's log.
-    if let Err(e) = run_keeper_hooks(&LocalSessionBackend, sandbox_home.as_deref(), provisioned) {
+    if let Err(e) = run_keeper_hooks(
+        &LocalSessionBackend,
+        sandbox_home.as_deref(),
+        provisioned,
+        provisioned_overlay,
+    ) {
         eprintln!(
             "{}{e}",
             devcroft::lifecycle::hooks::KEEPER_HOOK_FAILURE_PREFIX
@@ -5296,6 +5373,7 @@ fn run_keeper_hooks(
     backend: &dyn devcroft::keeper::SessionBackend,
     sandbox_home: Option<&str>,
     provisioned: bool,
+    overlay: Option<serde_json::Result<devcroft::keeper::EnvOverlay>>,
 ) -> Result<(), devcroft::lifecycle::hooks::HookError> {
     // The order is `up`'s, restated here rather than carried, because it
     // is a property of what the hooks *are* — the provider's script
@@ -5321,8 +5399,20 @@ fn run_keeper_hooks(
     let capture = activation_capture(sandbox_home);
     // The script already ran, under the provisioning policy in its own
     // process (`up`'s `run_provisioning`): adopt what it exported.
-    if provisioned && let Some(capture) = &capture {
-        devcroft::lifecycle::hooks::adopt_activation(capture);
+    match overlay {
+        Some(Ok(overlay)) => devcroft::keeper::set_activation_env(overlay),
+        Some(Err(e)) => {
+            return Err(devcroft::lifecycle::hooks::HookError::Failed {
+                name: "activation",
+                detail: format!("what it exported reached the keeper malformed: {e}"),
+            });
+        }
+        None if provisioned => {
+            if let Some(capture) = &capture {
+                devcroft::lifecycle::hooks::adopt_activation(capture);
+            }
+        }
+        None => {}
     }
     if hooks.is_empty() {
         return Ok(());

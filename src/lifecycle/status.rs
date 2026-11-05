@@ -398,6 +398,7 @@ mod tests {
                     resolved_backend: "process".to_string(),
                     declared_services: Vec::new(),
                     ran_activation_hook: false,
+                    activation_provisioned: false,
                     shell: None,
                     trust_store: Vec::new(),
                     own_procfs: false,

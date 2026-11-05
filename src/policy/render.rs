@@ -222,7 +222,10 @@ fn namespace_summary(compiled: &CompiledPolicy) -> &'static str {
 /// policy above, and rendered even when empty: the spec has the effective
 /// provisioning policy shown, not implied, and "none" is the case where
 /// a reader would otherwise assume the runtime's allowlist applies.
-pub fn render_provisioning(provisioning: &CompiledPolicy) -> String {
+pub fn render_provisioning(
+    provisioning: &CompiledPolicy,
+    provider: Option<crate::provider::ProviderKind>,
+) -> String {
     let mut out = String::new();
     writeln!(out).unwrap();
     writeln!(
@@ -236,6 +239,33 @@ pub fn render_provisioning(provisioning: &CompiledPolicy) -> String {
         "provisioning.network.allow_domain",
         &provisioning.network_allow_domain,
     );
+    // The policy spec's "Package-manager authority renders separately from
+    // filesystem grants": its own entry, never a write grant on the store.
+    writeln!(
+        out,
+        "provisioning.package_manager: none — the activation script is project code, and \
+         neither it nor a session holds the Nix daemon or a writable store; `up` refuses \
+         a grant that would give either    baseline"
+    )
+    .unwrap();
+    if let Some(provider) = provider {
+        let reach = provider.resolution_reach();
+        let name = provider.static_name();
+        writeln!(
+            out,
+            "resolution: host-side at `up`, before any boundary exists, so not confined by \
+             this policy    provider:{name}"
+        )
+        .unwrap();
+        writeln!(out, "  runs:       {}", reach.runs).unwrap();
+        writeln!(out, "  evaluates:  {}", reach.evaluates).unwrap();
+        writeln!(
+            out,
+            "  authority:  {}",
+            reach.authority.unwrap_or("no package manager")
+        )
+        .unwrap();
+    }
     out
 }
 
@@ -255,6 +285,39 @@ mod tests {
     use super::super::{Origin, compile};
     use super::*;
     use crate::config::parse;
+
+    /// The policy spec's "Package-manager authority renders separately from
+    /// filesystem grants", and task 29: every provider's resolution says what
+    /// it runs and what authority it holds, apart from the filesystem, and
+    /// the store is never a write grant.
+    #[test]
+    fn package_manager_authority_is_its_own_entry_per_provider() {
+        use crate::provider::ProviderKind;
+        let (manifest, _) = parse("[sandbox]\nname = \"p\"\n").unwrap();
+        let compiled = compile(&manifest).with_provider_grants("nix", &["/nix/store".to_owned()]);
+        for kind in [
+            ProviderKind::Flox,
+            ProviderKind::Nix,
+            ProviderKind::Devbox,
+            ProviderKind::Devenv,
+            ProviderKind::Swift,
+        ] {
+            let out = render_provisioning(&compiled.for_provisioning(&[]), Some(kind));
+            assert!(out.contains("provisioning.package_manager: none"), "{out}");
+            assert!(
+                out.contains(&format!("provider:{}", kind.static_name())),
+                "{kind:?}: {out}"
+            );
+            let daemon = out.contains("authority:  the Nix daemon");
+            assert_eq!(daemon, kind != ProviderKind::Swift, "{kind:?}: {out}");
+        }
+        let runtime = render(&compiled);
+        let allow = runtime.split("filesystem.read:").next().unwrap();
+        assert!(
+            !allow.contains("/nix/store"),
+            "never a write grant:\n{runtime}"
+        );
+    }
 
     #[test]
     fn render_shows_manifest_and_baseline_origins() {

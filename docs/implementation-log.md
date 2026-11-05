@@ -1264,3 +1264,24 @@ matched. `why_resolved` resolves each rule first, `.` against the project
 root and `~` against the host's home, as the backend does. Inside the
 sandbox, the home `~` refers to is the host's, not the sandbox's own
 `HOME`, so the policy artifact now records it.
+
+**Two provisioning promises were not kept by `up`, and fleet kept one of
+them all along (2026-11-05, `sandbox-provisioning` tasks 12 and 19).**
+Both were found by measuring the claim rather than the mechanism.
+
+- **Daemon authority.** The design's rule is that project code never holds
+  the Nix daemon. The mount view enforced that only for what nobody granted:
+  a manifest with `read = ["/nix/var/nix/daemon-socket"]` let a devenv
+  `enterShell` query the daemon from provisioning (`Store URL: daemon`).
+  Fleet refused that grant from its first version; `up` never had the
+  check. It now shares fleet's (`policy::package_manager_authority`) and
+  refuses at layer `config`. The same measurement showed that attribution
+  told a hook which ran `nix build` to "grant what it needs", with `/nix/store
+  (write)` as the path: the one grant the design forbids, offered as the
+  remedy.
+- **Provisioning's network.** Provisioning has no network outside its own
+  proxy, but it took the runtime's decision about a namespace. Under
+  `network.default = "allow"` the runtime asks for none, so the hook ran in
+  the host's network namespace: Landlock closed TCP, nothing closed UDP, and
+  nothing warned. It now gets a namespace of its own, and a warning where
+  the host cannot give one.

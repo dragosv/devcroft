@@ -30,7 +30,9 @@ pub use state::{
 pub use status::{KeeperStatus, SandboxStatus, SandboxSummary, StatusError, logs, ps, status};
 pub use terminate::{GRACE_PERIOD, TerminateError, down, rm};
 pub(crate) use up::is_keeper_internal;
-pub use up::{KeeperEnv, UpError, UpOptions, UpOutcome, up};
+pub use up::{
+    ACTIVATION_FD_ENV, ACTIVATION_OVERLAY_ENV, KeeperEnv, UpError, UpOptions, UpOutcome, up,
+};
 // `pub(crate)`, not part of the public surface: `crate::proxy::spawn`
 // needs the identical fd-inheritance dance `up_process` already does for
 // the control/SSH sockets, and re-exporting through here is what makes

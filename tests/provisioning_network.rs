@@ -174,3 +174,74 @@ fn the_hook_reaches_provisionings_hosts_and_sessions_reach_runtimes() {
     // processes.
     assert_eq!(lines[2], "yes", "{out:?}");
 }
+
+/// Task 19: provisioning has no network outside its proxy whatever the
+/// runtime declares, so it gets a namespace of its own even when the runtime
+/// is `network.default = "allow"` and gets none. It took the runtime's
+/// answer before: measured, the hook ran in the host's network namespace,
+/// with Landlock closing TCP and nothing closing UDP. The hook still reaches
+/// its own allowed host, through the relay that a namespace needs.
+#[test]
+fn provisioning_gets_its_own_network_namespace_under_a_runtime_that_allows_all() {
+    if !devcroft::policy::backend_supported() || !cfg!(target_os = "linux") {
+        eprintln!("skipping: needs Landlock and network namespaces");
+        return;
+    }
+    if !Path::new("/usr/bin/curl").exists() {
+        eprintln!("skipping: no /usr/bin/curl");
+        return;
+    }
+    let Some(store) = store_path_with_a_shell() else {
+        eprintln!("skipping: no /nix/store path with a shell on this host");
+        return;
+    };
+    let Some(p3) = serve_ok("127.0.0.3") else {
+        eprintln!("skipping: no 127.0.0.3 loopback alias");
+        return;
+    };
+    let host_ns = std::fs::read_link("/proc/self/ns/net").unwrap();
+    unsafe { std::env::set_var("DEVCROFT_KEEPER_EXE", env!("CARGO_BIN_EXE_devcroft")) };
+
+    let project = PathBuf::from(format!("/tmp/dcprovns{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&project);
+    std::fs::create_dir_all(&project).unwrap();
+    let project = project.canonicalize().unwrap();
+    let name = format!("e2eprovns{}", std::process::id());
+    let (manifest, _) = parse(&format!(
+        "[sandbox]\nname = {name:?}\n\n[network]\ndefault = \"allow\"\n\n\
+         [provisioning.network]\nallow = [\"127.0.0.3\"]\n"
+    ))
+    .unwrap();
+    let paths = StatePaths::new(&name).unwrap();
+    let _ = std::fs::remove_dir_all(&paths.root);
+    let row = Row {
+        store,
+        hook: format!(
+            "readlink /proc/self/ns/net > hook-netns 2>/dev/null; \
+             /usr/bin/curl -s -o /dev/null --max-time 5 -w '%{{http_code}}' \
+             http://127.0.0.3:{p3}/ > hook-reached-3"
+        ),
+    };
+    let outcome = up_with_provider(&manifest, &project, &UpOptions::default(), &row);
+    let hook_ns = std::fs::read_to_string(project.join("hook-netns")).unwrap_or_default();
+    let reached = std::fs::read_to_string(project.join("hook-reached-3")).unwrap_or_default();
+    let _ = down(&name);
+    let _ = std::fs::remove_dir_all(&paths.root);
+    let _ = std::fs::remove_dir_all(&project);
+
+    assert!(outcome.is_ok(), "{outcome:?}");
+    if hook_ns.trim().is_empty() {
+        eprintln!("skipping the namespace half: no /proc in the view on this host");
+    } else {
+        assert_ne!(
+            hook_ns.trim(),
+            host_ns.to_string_lossy(),
+            "the hook ran in the host's network namespace"
+        );
+    }
+    assert_eq!(
+        reached.trim(),
+        "200",
+        "its own allowed host, through the relay"
+    );
+}

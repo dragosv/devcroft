@@ -151,3 +151,105 @@ fn a_hook_that_is_simply_broken_is_not_blamed_on_the_policy() {
     // The provider's own error, as it printed it.
     assert!(msg.contains("unknown key `colour`"), "{msg}");
 }
+
+/// Task 12: a hook that realises packages itself — the host's own `nix`,
+/// reached by its store path, which the sandbox can read — is told it reached
+/// for package-manager authority and to declare the package, not to grant
+/// something: before, `/nix/store (write)` read as "not granted by any rule"
+/// with "grant what it needs" as the remedy, which is the one grant P2a
+/// forbids.
+#[test]
+fn a_hook_that_installs_a_package_is_told_to_declare_it() {
+    let Some(nix) = devcroft_test_nix() else {
+        eprintln!("skipping: no nix in /nix/store on this host");
+        return;
+    };
+    let hook =
+        format!("{nix} --extra-experimental-features nix-command build --no-link nixpkgs#hello");
+    let Some((msg, log)) = failing_up("install", hook) else {
+        return;
+    };
+    assert!(
+        msg.contains("package-manager authority"),
+        "must be named as package-manager authority: {msg}\nlog:\n{log}"
+    );
+    assert!(msg.contains("declare them in the environment"), "{msg}");
+    assert!(
+        msg.contains("not a provider that cannot be confined"),
+        "{msg}"
+    );
+    assert!(
+        !msg.contains("/nix/store (write): not granted"),
+        "must not read as a grant to add: {msg}"
+    );
+}
+
+/// The policy spec's "A profile exposing daemon authority to project code is
+/// rejected": a manifest that grants the daemon socket's directory fails
+/// `up` at layer `config` before the hook runs. Measured before this check
+/// (2026-11-05): with that grant, a devenv `enterShell` queried the daemon.
+#[test]
+fn a_grant_of_the_daemon_socket_is_refused_before_any_hook_runs() {
+    if !devcroft::policy::backend_supported() {
+        eprintln!("skipping: this host has no usable Landlock/Seatbelt support");
+        return;
+    }
+    let Some(store) = store_path_with_a_shell() else {
+        eprintln!("skipping: no /nix/store path with a shell on this host");
+        return;
+    };
+    unsafe { std::env::set_var("DEVCROFT_KEEPER_EXE", env!("CARGO_BIN_EXE_devcroft")) };
+    let pid = std::process::id();
+    let project = PathBuf::from(format!("/tmp/dcprovattrsock{pid}"));
+    let _ = std::fs::remove_dir_all(&project);
+    std::fs::create_dir_all(&project).unwrap();
+    let project = project.canonicalize().unwrap();
+    let name = format!("e2eprovattrsock{pid}");
+    let paths = StatePaths::new(&name).unwrap();
+    let _ = std::fs::remove_dir_all(&paths.root);
+
+    for grant in [
+        "read = [\"/nix/var/nix/daemon-socket\"]",
+        "allow = [\".\", \"/nix/var\"]",
+        "allow = [\".\", \"/nix/store\"]",
+    ] {
+        let (manifest, _) = parse(&format!(
+            "[sandbox]\nname = {name:?}\n\n[filesystem]\n{grant}\n"
+        ))
+        .unwrap();
+        let marker = project.join("hook-ran");
+        let outcome = up_with_provider(
+            &manifest,
+            &project,
+            &UpOptions::default(),
+            &Row {
+                store: store.clone(),
+                hook: format!("touch {}", marker.display()),
+            },
+        );
+        let _ = down(&name);
+        match outcome {
+            Err(UpError::Policy(msg)) => {
+                assert!(
+                    msg.contains("not a limit of the provider"),
+                    "{grant}: {msg}"
+                );
+                assert!(msg.contains("project code"), "{grant}: {msg}");
+            }
+            other => panic!("{grant}: expected a config-layer refusal, got {other:?}"),
+        }
+        assert!(!marker.exists(), "{grant}: the hook ran");
+    }
+    let _ = std::fs::remove_dir_all(&paths.root);
+    let _ = std::fs::remove_dir_all(&project);
+}
+
+/// The host's own `nix`, by its store path.
+fn devcroft_test_nix() -> Option<String> {
+    let path = std::env::split_paths(&std::env::var_os("PATH")?)
+        .map(|d| d.join("nix"))
+        .find(|p| p.is_file())?;
+    let real = path.canonicalize().ok()?;
+    real.starts_with("/nix/store")
+        .then(|| real.display().to_string())
+}

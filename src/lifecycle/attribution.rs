@@ -112,6 +112,11 @@ pub(crate) enum Denial {
     },
     /// No allowlist, so no network at all; `seen` is the line that says so.
     NoNetwork { seen: String },
+    /// The script tried to realise packages itself: the Nix daemon's socket,
+    /// or a write into the store. Never granted to project code whatever the
+    /// manifest says (`sandbox-provisioning` P2b), so this is not "grant
+    /// it": the fix is to declare the package. `seen` is the line.
+    PackageManager { seen: String },
 }
 
 #[derive(Clone, Copy)]
@@ -194,6 +199,7 @@ pub(crate) fn denials(
             Denial::Path { path, .. } => path.clone(),
             Denial::Host { host, port, .. } => format!("{host}:{port}"),
             Denial::NoNetwork { .. } => String::new(),
+            Denial::PackageManager { .. } => "package-manager".to_owned(),
         };
         if !found.iter().any(|f| key(f) == key(&d)) {
             found.push(d);
@@ -217,6 +223,14 @@ pub(crate) fn denials(
             else {
                 continue;
             };
+            // Before the policy is asked: `/nix/store` (write) reads as merely
+            // "not granted", and a grant is exactly the wrong remedy.
+            if materializes(path, errno) {
+                push(Denial::PackageManager {
+                    seen: line.trim().to_owned(),
+                });
+                continue;
+            }
             if let Some(d) = path_denial(path, errno, seen, policy, roots, on_host) {
                 push(d);
             }
@@ -252,6 +266,19 @@ pub(crate) fn denials(
         }
     }
     found
+}
+
+/// Whether an error on `path` is the script reaching for package-manager
+/// authority. Measured (2026-11-05), the host's own `nix` run from a confined
+/// hook prints `cannot connect to socket at '/nix/var/nix/daemon-socket/
+/// socket': No such file or directory` against the daemon, and `remounting
+/// /nix/store writable: Operation not permitted` when it falls back to the
+/// local store — `nix build`, `nix profile install`, `nix-env -i` and
+/// `nix-store --realise` alike. A store path that is merely missing is not
+/// this: it is a store path that was never realised, or was collected.
+fn materializes(path: &str, errno: Errno) -> bool {
+    is_within(path, "/nix/var/nix")
+        || (is_within(path, "/nix/store") && !matches!(errno, Errno::Missing))
 }
 
 fn path_denial(
@@ -367,15 +394,40 @@ pub(crate) fn explain(failure: &str, denials: &[Denial], output: &str, sandbox: 
                 "the network: provisioning has none, since [provisioning.network] \
                  allow is empty (the script saw \"{seen}\")"
             ),
+            Denial::PackageManager { seen } => format!(
+                "package-manager authority: the script tried to realise packages \
+                 itself (it saw \"{seen}\"). The script is project code, and project \
+                 code never holds the Nix daemon or a writable store, whatever the \
+                 manifest grants"
+            ),
         });
     }
     if denials.len() > SHOWN {
         msg.push_str(&format!("\n  - and {} more", denials.len() - SHOWN));
     }
+    if denials
+        .iter()
+        .any(|d| matches!(d, Denial::PackageManager { .. }))
+    {
+        msg.push_str(
+            "\nfor packages, declare them in the environment (flox `[install]`, devenv or \
+             devbox `packages`, the flake's devShell): they are then materialized before \
+             any project code runs. This is not a provider that cannot be confined, and \
+             there is nothing to wait for",
+        );
+    }
+    if denials
+        .iter()
+        .any(|d| !matches!(d, Denial::PackageManager { .. }))
+    {
+        msg.push_str(
+            "\ngrant what else it needs in devcroft.toml ([filesystem], or \
+             [provisioning.network] allow for a host); `devcroft why --provisioning` \
+             explains each",
+        );
+    }
     msg.push_str(&format!(
-        "\ngrant what it needs in devcroft.toml ([filesystem], or [provisioning.network] \
-         allow for a host); `devcroft why --provisioning` explains each; \
-         `devcroft logs {sandbox}` has the script's output"
+        "\n`devcroft logs {sandbox}` has the script's output"
     ));
     msg
 }
@@ -439,8 +491,7 @@ mod tests {
         let found = of("cat: /home/u/.npmrc: No such file or directory\n\
              /nix/store/abc-bash/bin/bash: line 3: /home/u/newfile: No such file or directory\n\
              mkdir: cannot create directory '/opt': Permission denied\n\
-             /nix/store/abc-bash/bin/bash: line 3: /usr/dcm: Read-only file system\n\
-             touch: cannot touch '/nix/store/dcm': Read-only file system\n");
+             /nix/store/abc-bash/bin/bash: line 3: /usr/dcm: Read-only file system\n");
         let found: Vec<_> = found.iter().map(path).collect();
         assert_eq!(
             found,
@@ -449,8 +500,50 @@ mod tests {
                 ("/home/u/newfile", false),
                 ("/opt", false),
                 ("/usr/dcm", true),
-                ("/nix/store/dcm", true),
             ]
+        );
+    }
+
+    /// Task 12: the two lines the host's own `nix` printed from a confined
+    /// hook (2026-11-05). Each is package-manager authority, not a path to
+    /// grant, and the message says to declare the package instead — before
+    /// this, `/nix/store (write)` read as "not granted", with "grant what it
+    /// needs in devcroft.toml" as the remedy.
+    #[test]
+    fn reaching_for_the_package_manager_is_named_as_that() {
+        for line in [
+            "error: remounting /nix/store writable: Operation not permitted",
+            "error: cannot connect to socket at '/nix/var/nix/daemon-socket/socket': \
+             No such file or directory",
+            "touch: cannot touch '/nix/store/dcm': Read-only file system",
+        ] {
+            let found = of(line);
+            assert!(
+                matches!(&found[..], [Denial::PackageManager { .. }]),
+                "{line}: {found:?}"
+            );
+            let msg = explain("hook `activation` failed", &found, line, "t");
+            assert!(msg.contains("declare them in the environment"), "{msg}");
+            assert!(
+                msg.contains("not a provider that cannot be confined"),
+                "{msg}"
+            );
+            assert!(
+                !msg.contains("grant what else"),
+                "no grant to suggest: {msg}"
+            );
+        }
+        // A store path that is simply absent was never realised: not this.
+        assert_eq!(of("cat: /nix/store/abc-x/y: No such file or directory"), []);
+        // Alongside another refusal, both remedies.
+        let both = of(
+            "error: remounting /nix/store writable: Operation not permitted\n\
+                       mkdir: cannot create directory '/opt': Permission denied\n",
+        );
+        let msg = explain("hook `activation` failed", &both, "", "t");
+        assert!(
+            msg.contains("declare them") && msg.contains("grant what else"),
+            "{msg}"
         );
     }
 
