@@ -947,9 +947,12 @@ fn up_process(
     if let Some(dir) = policy_artifact.parent() {
         std::fs::create_dir_all(dir)?;
     }
-    let artifact = serde_json::to_string_pretty(&compiled)
-        .expect("CompiledPolicy serialization is infallible");
+    let artifact = crate::services::PolicyArtifact::new(compiled.clone()).to_json();
     std::fs::write(&policy_artifact, &artifact)?;
+    // Beside it, the binary the denial hook runs (`services::EXE_LINK`).
+    if let Some(dir) = policy_artifact.parent() {
+        crate::services::link_keeper_exe(dir, &keeper_exe()?)?;
+    }
     // After the artifact, so a record naming a digest always has the file
     // it names; an `up` that fails between the two leaves the old digest,
     // which no longer matches, and the host falls back to reconstructing.

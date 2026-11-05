@@ -83,3 +83,38 @@ generic failure.
   another project root
 - **THEN** the error names both project roots and instructs the user to
   pass `--name`, with a stable exit code
+
+### Requirement: init --agent writes the denial hook
+`init` SHALL accept `--agent <agent>`, which writes that agent's denial
+hook into the project for the user to commit, registering it in the
+agent's own project settings by merging into them, every existing key
+kept. A settings file it cannot parse SHALL be refused and left
+unchanged, and an agent with no hook wired SHALL be refused as not yet
+supported. Nothing SHALL write the hook at `up`.
+
+#### Scenario: The user's settings survive
+- **WHEN** the project already has agent settings
+- **THEN** `init --agent` adds the hook once, keeps every other key, and
+  refuses a file that is not valid JSON without touching it
+
+#### Scenario: An unwired agent is refused
+- **WHEN** `init --agent` names an agent no hook is wired for
+- **THEN** it fails at layer `config`, saying the agent is not yet
+  supported, and writes nothing
+
+### Requirement: The denial hook speaks only for the policy
+The hook SHALL add context to a failed tool call only when the sandbox's
+compiled policy refuses a path or host that the failure names, deciding by
+the policy rather than by the error text, and SHALL stay silent for every
+other failure and outside any sandbox.
+
+#### Scenario: A path the sandbox hides is explained
+- **WHEN** a tool call inside the sandbox fails on a path no rule grants,
+  with the same "no such file or directory" a missing file gives
+- **THEN** the hook names the path as not granted, and states what the
+  sandbox grants and that the user changes it with `up --recreate`
+
+#### Scenario: A genuinely missing file is not
+- **WHEN** a tool call fails on a path inside the grants that does not
+  exist, or fails for any reason the policy did not cause
+- **THEN** the hook adds nothing

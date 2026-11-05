@@ -359,23 +359,57 @@ first so the fan-out fix is not gated on the tooling design.
         `HOME` (`.devcroft/<name>/policy.json`), the same on every machine.
         Per-path `why` stays available to an agent told where devcroft is,
         and is not what the hook depends on.
-- [ ] 6b.3 Implement (a) as the shipped path: a denial-triggered hook that
+      **Amended (2026-11-05), while implementing 6b.3:** the hook does run
+      devcroft after all, through a link `up` writes beside the sandbox's
+      home (`.devcroft/<name>/devcroft`, `services::EXE_LINK`), so the
+      committed script names `$HOME/../devcroft` — the same on every machine,
+      which was the objection. Forced by a measured fact: a path the mount
+      view hides fails `ENOENT`, exactly like a missing file, so only the
+      policy can tell the two apart (6b.6), and a POSIX script cannot
+      evaluate it. The artifact is still what is read; the link adds no
+      reach, since the binary was already granted.
+- [x] 6b.3 Implement (a) as the shipped path: a denial-triggered hook that
       fires on the agent's tool-failure event, gates on a denial signature so
       ordinary failures pass through untouched, and injects the sandbox's
       grants plus the instruction to diagnose **before** asking the user for
       permission.
-- [ ] 6b.4 Wiring delivery: `devcroft init --agent` writes it once and the
+      **Done (2026-11-05)**: `src/agent_hook.rs`, run as `devcroft agent
+      hook claude-code` on Claude Code's `PostToolUseFailure` (its
+      documented input; output `hookSpecificOutput.additionalContext`). The
+      error text only nominates — a refusal- or missing-shaped message, the
+      paths and hosts it names — and the policy decides
+      (`policy::why_resolved`, `why_host`). The context is phrased as fact,
+      since Claude Code's documentation warns that imperative, system-styled
+      injected text reads as prompt injection. To judge a `~` rule inside,
+      the artifact now records the host's home (`services::PolicyArtifact`).
+      **Found on the way, and fixed: `why --path` inverted for every
+      absolute path in the project** — compared against written rules
+      (`.`), `$PWD/src` came back `DENIED / not granted by any rule`, on the
+      host and inside. `why_resolved` resolves the rules first, as the
+      backend does; asserted inside a sandbox by `tests/denial_hook.rs`.
+- [x] 6b.4 Wiring delivery: `devcroft init --agent` writes it once and the
       user commits it. Rejected alternatives, recorded rather than
       re-litigated: silently generating it at `up` (devcroft's requirement
       appearing unasked in the user's tree — the same criticism
       `decouple-service-supervisor` levelled at the process-compose
       coupling), and requiring the user to hand-install it.
-- [ ] 6b.5 State the limitation in the change rather than discovering it
+      **Done (2026-11-05)**: `init --agent claude-code` writes
+      `.claude/hooks/devcroft-denial.sh` and merges one entry into
+      `.claude/settings.json`, key order kept; once only; an unparseable
+      file is refused untouched. On a project with a manifest it writes the
+      hook alone. Registered in exec form, `sh` + the script, because
+      `/bin/sh` is not in the sandbox's view and exec form resolves on
+      `PATH`, where devcroft's shell is. The script is silent outside a
+      sandbox, so committing it costs a host-side user nothing.
+- [x] 6b.5 State the limitation in the change rather than discovering it
       later: this is **agent-specific by necessity**. devcroft cannot rewrite
       the `EPERM` a tool sees — it comes from the kernel through whatever
       binary the agent ran — so an interception point is required, and the
       agent's own hook system is the only one available. Per-agent wiring,
       not a general mechanism.
+      **Done (2026-11-05)**: stated in `src/agent_hook.rs`'s module doc, and
+      `init --agent <other>` refuses as not yet supported. The gate itself is
+      agent-neutral; only the input and output shapes are Claude Code's.
 - [ ] 6b.7 Adopt ArcBox's credential-forwarding shape, which is better than
       this change's current plan and costs nothing to copy: forward only
       `ANTHROPIC_*`/`CLAUDE_*`, for that session only, never written into any
@@ -384,9 +418,18 @@ first so the fan-out fix is not gated on the tooling design.
       with it: a project with a real microVM boundary states that OAuth
       credentials are *deliberately not copied in*, so subscription auth is
       unsolved there too, not merely unsolved here.
-- [ ] 6b.6 Test that the gate is real: an ordinary failure (a genuinely
+- [x] 6b.6 Test that the gate is real: an ordinary failure (a genuinely
       missing file) must **not** trigger the sandbox explanation. A hook that
       fires on everything teaches the agent to ignore it.
+      **Done (2026-11-05)**: `tests/denial_hook.rs`, inside a real devenv
+      sandbox, on errors the sandbox itself produced: `/etc/hostname`
+      (hidden, `ENOENT`) and a write to the store (read-only) are explained;
+      a missing file at the root, under `src/`, in `$HOME` and in `/tmp`, a
+      mode-000 file, `false` and a nonzero exit are not. Two mutations
+      checked: firing regardless of the policy, and firing on every
+      `ENOENT`, each fail it. **Not measured: Claude Code itself running the
+      hook** — that needs a login this host lacks; the test feeds the
+      documented input, which is the gap to close on a logged-in host.
 
 ## 7. Docs
 

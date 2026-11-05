@@ -298,6 +298,7 @@ prints the same thing:
 ```console
 sandboxes
   init [--force]              write a devcroft.toml for this project
+      [--agent claude-code]     (also the hook telling the agent when the policy refused it)
   up [name] [--name <n>]      build the environment, apply the policy, start the sandbox
       [--tools <dir>]           (--name gives this project root its own sandbox;
       [--recreate]               --tools adds your own tooling layer's PATH)

@@ -161,6 +161,51 @@ pub fn policy_artifact(project_root: &Path, sandbox_name: &str) -> PathBuf {
     artifact_dir(project_root, sandbox_name).join("policy.json")
 }
 
+/// What [`policy_artifact`] holds: the compiled policy, plus the host's home,
+/// which a `~` rule means and which the sandbox cannot learn — its `HOME` is
+/// its own. Without it, a path a `~` rule grants could not be told from one
+/// nothing grants (`policy::why_resolved`). Readers of the bare policy
+/// ignore the extra key.
+#[derive(serde::Serialize, serde::Deserialize)]
+pub struct PolicyArtifact {
+    #[serde(flatten)]
+    pub policy: crate::policy::CompiledPolicy,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub home: Option<PathBuf>,
+}
+
+impl PolicyArtifact {
+    /// This host's home, as `up` resolves `~` for the backend.
+    pub fn new(policy: crate::policy::CompiledPolicy) -> Self {
+        PolicyArtifact {
+            policy,
+            home: std::env::var_os("HOME").map(PathBuf::from),
+        }
+    }
+
+    pub fn to_json(&self) -> String {
+        serde_json::to_string_pretty(self).expect("PolicyArtifact serialization is infallible")
+    }
+}
+
+/// The name of the link to devcroft's own binary beside a sandbox's home.
+/// The binary's path differs per machine (`target/debug`, `~/.cargo/bin`),
+/// so a hook committed with the project (`devcroft init --agent`) cannot
+/// name it; it names `$HOME/../devcroft`, which is the same everywhere.
+/// Granted already: the binary is (`with_keeper_exe_grant`), and the link
+/// sits in the project.
+pub const EXE_LINK: &str = "devcroft";
+
+/// Point `<dir>/devcroft` at `exe`, replacing what is there.
+pub fn link_keeper_exe(dir: &Path, exe: &Path) -> std::io::Result<()> {
+    let link = dir.join(EXE_LINK);
+    match std::fs::remove_file(&link) {
+        Err(e) if e.kind() != std::io::ErrorKind::NotFound => return Err(e),
+        _ => {}
+    }
+    std::os::unix::fs::symlink(exe, link)
+}
+
 /// A `.gitignore` of `*` in the artifact directory: it ignores everything
 /// there, itself included, so `up` writing into the project never leaves
 /// `git status` dirty. Self-contained rather than an entry in the project's

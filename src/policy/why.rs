@@ -141,6 +141,66 @@ pub fn why_host(compiled: &CompiledPolicy, host: &str) -> Explanation {
     }
 }
 
+/// [`why_path`] for an absolute path, as the backend decides it: every rule
+/// resolved first, `.`-rooted against `project_root` and `~`-rooted against
+/// `home`, the way `up` resolves them before restricting. `why_path`
+/// compares written forms, and no written rule is an absolute path inside
+/// the project, so an absolute path there came back `DENIED / not granted
+/// by any rule` — the verdict inverted, for the project root itself. A
+/// `~` rule with no `home` to resolve against is left out.
+///
+/// `path` must be absolute; `..` and `.` in it are resolved lexically.
+pub fn why_resolved(
+    compiled: &CompiledPolicy,
+    path: &std::path::Path,
+    project_root: &std::path::Path,
+    home: Option<&std::path::Path>,
+    op: Op,
+) -> Explanation {
+    let resolve = |rules: &[AnnotatedValue]| -> Vec<AnnotatedValue> {
+        rules
+            .iter()
+            .filter_map(|r| {
+                let value = if r.value == "~" {
+                    home?.to_path_buf()
+                } else if let Some(rest) = r.value.strip_prefix("~/") {
+                    home?.join(rest)
+                } else {
+                    project_root.join(&r.value)
+                };
+                Some(AnnotatedValue {
+                    value: lexical(&value).to_string_lossy().into_owned(),
+                    origin: r.origin.clone(),
+                })
+            })
+            .collect()
+    };
+    let resolved = CompiledPolicy {
+        filesystem_allow: resolve(&compiled.filesystem_allow),
+        filesystem_read: resolve(&compiled.filesystem_read),
+        filesystem_deny: resolve(&compiled.filesystem_deny),
+        ..compiled.clone()
+    };
+    why_path(&resolved, &lexical(path).to_string_lossy(), op)
+}
+
+/// `path` with `.` dropped and `..` applied, without touching the
+/// filesystem: a path hidden from the sandbox cannot be canonicalized.
+fn lexical(path: &std::path::Path) -> std::path::PathBuf {
+    use std::path::Component;
+    let mut out = std::path::PathBuf::new();
+    for c in path.components() {
+        match c {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                out.pop();
+            }
+            other => out.push(other),
+        }
+    }
+    out
+}
+
 fn matching<'a>(rules: &'a [AnnotatedValue], path: &str) -> Option<&'a AnnotatedValue> {
     rules.iter().find(|r| is_within(path, &r.value))
 }
@@ -176,6 +236,40 @@ pub fn why_host_in_contexts(
 
 #[cfg(test)]
 mod tests {
+
+    /// The inversion this exists for: the project root, named absolutely,
+    /// is the default grant — not `not granted by any rule`.
+    #[test]
+    fn an_absolute_path_is_judged_against_resolved_rules() {
+        use std::path::Path;
+        let (manifest, _) = crate::config::parse(
+            "[sandbox]\nname = \"w\"\n\n[filesystem]\nread = [\"~/.cargo\"]\n",
+        )
+        .unwrap();
+        let compiled = crate::policy::compile(&manifest);
+        let (root, home) = (Path::new("/work/p"), Some(Path::new("/home/u")));
+        let at = |p: &str, op| why_resolved(&compiled, Path::new(p), root, home, op);
+
+        assert!(at("/work/p/src/x.rs", Op::Write).allowed);
+        assert!(
+            !at("/work/p/../q/x", Op::Read).allowed,
+            "`..` leaves the root"
+        );
+        assert!(at("/home/u/.cargo/registry", Op::Read).allowed);
+        assert!(!at("/home/u/.cargo/registry", Op::Write).allowed);
+        let ssh = at("/home/u/.ssh/id_ed25519", Op::Read);
+        assert_eq!(ssh.origin, Some(Origin::Baseline), "{}", ssh.detail);
+        assert!(!at("/etc/shadow", Op::Read).allowed);
+        // Without a home, a `~` rule cannot match anything.
+        let no_home = why_resolved(
+            &compiled,
+            Path::new("/home/u/.cargo/registry"),
+            root,
+            None,
+            Op::Read,
+        );
+        assert!(!no_home.allowed);
+    }
 
     #[test]
     fn a_host_is_answered_in_both_contexts_each_with_its_own_rule() {

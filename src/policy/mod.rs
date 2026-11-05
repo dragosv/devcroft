@@ -15,7 +15,7 @@ pub use degraded::{
     DegradedCapability, backend_support, backend_supported, detect as detect_degraded,
 };
 pub use render::{render, render_provisioning};
-pub use why::{Explanation, Op, why_host, why_host_in_contexts, why_path};
+pub use why::{Explanation, Op, why_host, why_host_in_contexts, why_path, why_resolved};
 
 use crate::config::{Manifest, NetworkDefault};
 use crate::paths::{SENSITIVE_PATHS, is_within};

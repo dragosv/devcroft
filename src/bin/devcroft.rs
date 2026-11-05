@@ -208,6 +208,7 @@ usage: devcroft <command> [args...]
 
 sandboxes
   init [--force]              write a devcroft.toml for this project
+      [--agent claude-code]     (also the hook telling the agent when the policy refused it)
   up [name] [--name <n>]      build the environment, apply the policy, start the sandbox
       [--tools <dir>]           (--name gives this project root its own sandbox;
       [--recreate]               --tools adds your own tooling layer's PATH)
@@ -253,6 +254,7 @@ inside an agent or sandbox
   agent attention <message>   flag that a human is needed (--clear to unflag)
   agent progress <message>    say what it is doing now
   agent done|failed [message] claim how its task went (shown as the agent's claim)
+  agent hook claude-code      the hook `init --agent` wires; reads Claude Code's JSON
 
 ssh
   ssh [name]                  connect over the sandbox's own SSH server
@@ -623,15 +625,37 @@ fn ignore_artifact_dir(project_root: &std::path::Path) {
 }
 
 fn cli_init(args: &[String]) -> i32 {
-    const USAGE: &str = "devcroft init: usage: devcroft init [--force]";
-    let force = match args {
-        [] => false,
-        [flag] if flag == "--force" => true,
-        _ => {
-            eprintln!("{USAGE}");
-            return 2;
+    const USAGE: &str = "devcroft init: usage: devcroft init [--force] [--agent claude-code]";
+    let mut force = false;
+    let mut agent: Option<&str> = None;
+    let mut it = args.iter();
+    while let Some(a) = it.next() {
+        match a.as_str() {
+            "--force" => force = true,
+            "--agent" => match it.next() {
+                Some(name) => agent = Some(name),
+                None => {
+                    eprintln!("{USAGE}");
+                    return 2;
+                }
+            },
+            _ => {
+                eprintln!("{USAGE}");
+                return 2;
+            }
         }
-    };
+    }
+    if let Some(name) = agent
+        && name != "claude-code"
+    {
+        // Per agent by necessity (`devcroft::agent_hook`): each has its own
+        // hook system, and only one is wired so far.
+        eprintln!(
+            "devcroft init: config: --agent {name:?} is not yet supported; the denial hook \
+             is wired for claude-code only"
+        );
+        return 2;
+    }
 
     let cwd = match std::env::current_dir() {
         Ok(dir) => dir,
@@ -642,6 +666,10 @@ fn cli_init(args: &[String]) -> i32 {
     };
 
     let manifest_path = cwd.join(devcroft::config::MANIFEST_FILE_NAME);
+    // The agent's hook alone, for a project that already has a manifest.
+    if manifest_path.exists() && !force && agent.is_some() {
+        return init_claude_code_hook(&cwd);
+    }
     if manifest_path.exists() && !force {
         eprintln!(
             "devcroft init: {} already exists; use --force to overwrite",
@@ -874,6 +902,66 @@ fn cli_init(args: &[String]) -> i32 {
     } else {
         println!("devcroft: no .flox/ environment found; run `flox init` before `devcroft up`.");
     }
+    match agent {
+        Some(_) => init_claude_code_hook(&cwd),
+        None => 0,
+    }
+}
+
+/// `init --agent claude-code`: the denial hook (`devcroft::agent_hook`),
+/// written once for the user to commit — never generated at `up`, which
+/// would put devcroft's requirement in the user's tree unasked.
+fn init_claude_code_hook(project_root: &std::path::Path) -> i32 {
+    use devcroft::agent_hook::{CLAUDE_CODE_SCRIPT, CLAUDE_CODE_SCRIPT_BODY, claude_code_settings};
+    let settings_path = project_root.join(".claude/settings.json");
+    let existing = match std::fs::read_to_string(&settings_path) {
+        Ok(text) => Some(text),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+        Err(e) => {
+            eprintln!("devcroft init: reading {}: {e}", settings_path.display());
+            return 1;
+        }
+    };
+    let settings = match claude_code_settings(existing.as_deref()) {
+        Ok(s) => s,
+        Err(why) => {
+            eprintln!(
+                "devcroft init: config: {} is {why}; left as it is, and no hook written",
+                settings_path.display()
+            );
+            return 2;
+        }
+    };
+    let script = project_root.join(CLAUDE_CODE_SCRIPT);
+    let write = |path: &std::path::Path, text: &str| {
+        path.parent()
+            .map_or(Ok(()), std::fs::create_dir_all)
+            .and_then(|()| std::fs::write(path, text))
+            .map_err(|e| eprintln!("devcroft init: writing {}: {e}", path.display()))
+    };
+    if write(&script, CLAUDE_CODE_SCRIPT_BODY).is_err() {
+        return 1;
+    }
+    println!("devcroft: wrote {}", script.display());
+    match settings {
+        Some(text) => {
+            if write(&settings_path, &text).is_err() {
+                return 1;
+            }
+            println!(
+                "devcroft: added the hook to {} (PostToolUseFailure)",
+                settings_path.display()
+            );
+        }
+        None => println!(
+            "devcroft: {} already runs the hook",
+            settings_path.display()
+        ),
+    }
+    println!(
+        "devcroft: commit both. Inside the sandbox, a tool call the policy refuses now tells \
+         Claude Code what was refused and what the sandbox grants; other failures are untouched."
+    );
     0
 }
 
@@ -3971,7 +4059,7 @@ fn cli_agent(args: &[String]) -> i32 {
     use devcroft::fleet::report::{self, Claim, ClaimOutcome, Note};
     const USAGE: &str = "devcroft agent: usage, inside a sandbox: devcroft agent \
                          attention <message> | attention --clear | progress <message> \
-                         | done [message] | failed [message]";
+                         | done [message] | failed [message] | hook claude-code";
     let Some(dir) = own_sandbox_dir() else {
         eprintln!(
             "devcroft agent: config: not inside a devcroft sandbox (HOME is not a sandbox's \
@@ -3988,6 +4076,9 @@ fn cli_agent(args: &[String]) -> i32 {
             return 2;
         }
     };
+    if verb == "hook" {
+        return agent_hook(&dir, rest);
+    }
     let message = rest.join(" ");
     let note = || Note {
         message: message.clone(),
@@ -4019,6 +4110,65 @@ fn cli_agent(args: &[String]) -> i32 {
             1
         }
     }
+}
+
+/// `devcroft agent hook claude-code`: Claude Code's `PostToolUseFailure`
+/// hook, run by the script `init --agent claude-code` writes
+/// (`devcroft::agent_hook`). Silent, exit 0, for every failure the policy
+/// did not cause. A failure of the hook itself exits 1, which Claude Code
+/// shows the user rather than the model.
+fn agent_hook(dir: &std::path::Path, args: &[String]) -> i32 {
+    if args != ["claude-code"] {
+        eprintln!(
+            "devcroft agent: usage: devcroft agent hook claude-code (reads the hook's JSON on stdin)"
+        );
+        return 2;
+    }
+    let fail = |why: String| {
+        eprintln!("devcroft agent hook: {why}");
+        1
+    };
+    let mut input = String::new();
+    if let Err(e) = std::io::Read::read_to_string(&mut std::io::stdin(), &mut input) {
+        return fail(format!("reading stdin: {e}"));
+    }
+    let input: serde_json::Value = match serde_json::from_str(&input) {
+        Ok(v) => v,
+        Err(e) => return fail(format!("stdin is not the hook's JSON: {e}")),
+    };
+    let artifact = dir.join("policy.json");
+    let artifact: devcroft::services::PolicyArtifact = match std::fs::read(&artifact)
+        .map_err(|e| e.to_string())
+        .and_then(|b| serde_json::from_slice(&b).map_err(|e| e.to_string()))
+    {
+        Ok(a) => a,
+        Err(e) => return fail(format!("{}: {e}", artifact.display())),
+    };
+    // `<project>/.devcroft/<name>/`: the project is two levels up.
+    let (Some(project_root), Ok(home), Ok(cwd)) = (
+        dir.parent().and_then(|d| d.parent()),
+        std::env::var("HOME"),
+        std::env::current_dir(),
+    ) else {
+        return fail("cannot place this sandbox's project root, HOME or cwd".into());
+    };
+    // The tool's cwd, where the hook was given one.
+    let cwd = input
+        .get("cwd")
+        .and_then(|c| c.as_str())
+        .map(std::path::PathBuf::from)
+        .unwrap_or(cwd);
+    let sb = devcroft::agent_hook::Sandbox {
+        policy: &artifact.policy,
+        project_root,
+        host_home: artifact.home.as_deref(),
+        home: std::path::Path::new(&home),
+        cwd: &cwd,
+    };
+    if let Some(out) = devcroft::agent_hook::claude_code(&sb, &input) {
+        println!("{out}");
+    }
+    0
 }
 
 /// `30s`, `5m`, `2h`: how long before `now` `at` was.
@@ -4268,7 +4418,6 @@ fn cli_why(args: &[String]) -> i32 {
         eprintln!("{USAGE}");
         return 2;
     };
-    let path = normalize_path_for_policy(&path);
     let op = match op.as_str() {
         "read" => devcroft::policy::Op::Read,
         "write" => devcroft::policy::Op::Write,
@@ -4278,7 +4427,42 @@ fn cli_why(args: &[String]) -> i32 {
             return 2;
         }
     };
-    print_explanation(&devcroft::policy::why_path(&compiled, &path, op));
+    // An absolute path is judged as the backend judges it, against resolved
+    // rules: compared to their written forms, every absolute path inside the
+    // project came back DENIED. Inside a sandbox `.` is two levels above
+    // its own directory, and `~` the host's home its artifact records,
+    // never the sandbox's `HOME`.
+    let resolved_against = if std::path::Path::new(&path).is_absolute() {
+        match &fidelity {
+            Fidelity::FromArtifact(artifact) => own_sandbox_dir()
+                .and_then(|d| Some(d.parent()?.parent()?.to_path_buf()))
+                .map(|root| {
+                    let home = std::fs::read(artifact)
+                        .ok()
+                        .and_then(|b| {
+                            serde_json::from_slice::<devcroft::services::PolicyArtifact>(&b).ok()
+                        })
+                        .and_then(|a| a.home);
+                    (root, home)
+                }),
+            _ => discover_manifest(&cwd)
+                .ok()
+                .map(|(_, root)| (root, std::env::var_os("HOME").map(Into::into))),
+        }
+    } else {
+        None
+    };
+    let explanation = match resolved_against {
+        Some((root, home)) => devcroft::policy::why_resolved(
+            &compiled,
+            std::path::Path::new(&path),
+            &root,
+            home.as_deref(),
+            op,
+        ),
+        None => devcroft::policy::why_path(&compiled, &normalize_path_for_policy(&path), op),
+    };
+    print_explanation(&explanation);
     if provisioning {
         // The same rules: provisioning has the runtime's filesystem.
         println!("provisioning has the same filesystem as runtime, so this is its answer too");

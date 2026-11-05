@@ -74,6 +74,28 @@ agents, stopped the rest, and each is fixed:
 Earlier, from the same measurement: devcroft's resolved shell is now `SHELL`
 and the last entry on `PATH`, since agents and npm look for `sh` by name.
 
+## When the policy refuses
+
+A refused tool call reaches the agent as the kernel's bare error, and a path
+the sandbox hides reads as plain "no such file or directory". The likely
+inference is wrong: the file does not exist, or the task needs `sudo`.
+
+For Claude Code, `devcroft init --agent claude-code` writes a hook, to be
+committed with the project, for its `PostToolUseFailure` event. When a failed call names a path or
+host that the sandbox's policy refuses, it tells the agent so, names
+what the sandbox grants, and says that the user changes the policy with
+`up --recreate`. The policy decides, not the message: a missing file inside
+the grants, or any other failure, gets nothing added. Outside a sandbox the
+script does nothing.
+
+The other ten agents have no hook yet. Each has its own hook system, so this
+is wiring per agent, not one mechanism. `devcroft why` works for every agent,
+run inside as `$HOME/../devcroft why --path <p> --op read`.
+
+Not measured: Claude Code itself running the hook, which needs a login. The
+test feeds the hook the event's documented input, built from errors that the
+sandbox itself produced.
+
 ## Not measured
 
 - **A real key.** Every run used a dummy one, so a full conversation, tool

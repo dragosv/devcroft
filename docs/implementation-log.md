@@ -1252,3 +1252,15 @@ guaranteed to.
 - **An incomplete answer says so.** An unreadable or malformed record
   (reported apart, since the fixes differ) gives `UNKNOWN` and exit 1, not
   a verdict; the no-sandbox answer is unchanged.
+
+**`why --path` inverted for every absolute path in the project
+(2026-11-05, `add-agent-workload` 6b.3).** Found while building the
+denial hook on top of it: `why --path "$PWD/src" --op write` printed
+`DENIED / not granted by any rule`, on the host and inside, for the
+project's default grant. `why_path` compares a path with the rules as
+written, and no written rule is absolute inside the project: the default
+is `.`. Every test asked with a relative path, which is the one form that
+matched. `why_resolved` resolves each rule first, `.` against the project
+root and `~` against the host's home, as the backend does. Inside the
+sandbox, the home `~` refers to is the host's, not the sandbox's own
+`HOME`, so the policy artifact now records it.

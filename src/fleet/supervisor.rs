@@ -496,8 +496,11 @@ impl Supervisor {
             }
             std::fs::write(
                 &artifact,
-                translate(serde_json::to_string_pretty(&policy).map_err(io::Error::other)?),
+                translate(crate::services::PolicyArtifact::new(policy).to_json()),
             )?;
+            if let Some(parent) = artifact.parent() {
+                crate::services::link_keeper_exe(parent, &self.exe)?;
+            }
         }
 
         // The provider's activation script runs before the keeper, in its own
