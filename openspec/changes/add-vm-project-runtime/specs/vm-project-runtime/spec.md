@@ -12,6 +12,48 @@ launch, without selecting the native runtime as fallback.
 - **THEN** the target mismatch is reported before project execution
 - **AND** no Darwin binary is attempted in the guest or run on the host instead
 
+### Requirement: Runtime kind is a user-owned decision
+
+Repository content SHALL NOT select or imply native execution. Native execution
+SHALL require a user-owned grant bound to project identity. Without one, launch
+SHALL use a qualified VM row or refuse, naming the grant, and SHALL NOT prompt
+without a terminal. Status SHALL show the runtime and who selected it.
+
+#### Scenario: A repository declares a Darwin-only provider
+
+- **WHEN** an unreviewed project's manifest names `swift` and no grant exists
+- **THEN** it does not reach the native path
+- **AND** launch refuses, naming the grant that would allow it
+
+#### Scenario: No VM row is qualified on this host
+
+- **WHEN** a project without a grant is opened on an unqualified host
+- **THEN** launch refuses rather than falling back to native execution
+
+#### Scenario: An instance predates the rule
+
+- **WHEN** an existing native instance is restarted
+- **THEN** it keeps its runtime and status reports it as native
+
+### Requirement: Editor clients are classified by what a guest can do to them
+
+The untrusted-project claim SHALL cover only terminal SSH, SFTP and guest-served
+editor paths. A client whose remote can execute code on the host SHALL require a
+user-owned trusted-editor grant, and `ssh-config` SHALL emit no entry for a
+project without one. Generated client configuration SHALL offer no agent, X11 or
+remote forwarding.
+
+#### Scenario: A project is not marked trusted
+
+- **WHEN** `ssh-config` runs for that instance
+- **THEN** no editor-facing host entry is emitted
+- **AND** the output names the guest-served editor path and the grant
+
+#### Scenario: A guest replaces its SSH server
+
+- **WHEN** a modified server asks the client for agent or X11 forwarding
+- **THEN** the generated client configuration does not offer them
+
 ### Requirement: Readiness requires a compatible instance-bound handshake
 
 The controller SHALL verify launch artifacts and accept a handshake bound to the

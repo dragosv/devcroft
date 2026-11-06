@@ -21,8 +21,9 @@ target and identity and SHALL NOT replace an invalid explicit selection by fallb
 ### Requirement: Local adaptation does not modify shared environments
 
 The system SHALL permit policy-authorized dependency installation in private guest
-state, retain it across restart and distinguish it from a verified definition.
-Administrative setup SHALL NOT gain host or sibling authority.
+state through an explicit setup window, retain it across restart and distinguish
+it from a verified definition. Administrative setup SHALL NOT gain host or sibling
+authority.
 
 #### Scenario: A system library is installed interactively
 
@@ -30,6 +31,18 @@ Administrative setup SHALL NOT gain host or sibling authority.
 - **THEN** that instance can use it after restart
 - **AND** sibling environments and the shared base remain unchanged
 - **AND** the installation alone does not make the instance fleet-eligible
+
+### Requirement: A base declares how its system packages are pinned
+
+A base SHALL declare whether a saved recipe can pin its system packages by content
+hash. A base that cannot SHALL remain usable locally and SHALL be reported as
+unable to reach strict fleet eligibility.
+
+#### Scenario: A base installs from a mutable mirror
+
+- **WHEN** a saved recipe depends on a package the base cannot pin by hash
+- **THEN** status reports that the recipe cannot reach strict eligibility
+- **AND** local use continues
 
 ### Requirement: Definitions can be saved externally without granting authority
 
@@ -52,9 +65,28 @@ origin context, target and definition revision; grants SHALL remain separate.
 ### Requirement: Dev Containers support is bounded by effective configuration
 
 The image adapter SHALL resolve a platform digest, merge supported image metadata
-and project fields, and validate the effective configuration before setup. It
-SHALL honor the supported field/lifecycle profile documented in the design and
-refuse every unsupported operative field by path, including inherited metadata.
+and project fields, and validate the effective configuration before setup. Every
+key of the pinned schema SHALL have a published class: honored, ignored with one
+warning, or refused by field path. Refusal SHALL cover fields needing host
+authority or an execution the profile does not perform, including inherited
+metadata. Keys outside the pinned schema SHALL be ignored with one warning.
+
+#### Scenario: An official image carries container-scoped metadata
+
+- **WHEN** image metadata holds `capAdd`, `securityOpt` or baked Feature records
+- **THEN** those fields are ignored with one warning naming them
+- **AND** the image runs, since they confer no host authority
+
+#### Scenario: The project requests forwarded ports
+
+- **WHEN** the effective configuration contains `forwardPorts`
+- **THEN** one warning names explicit SSH local forwarding as the way to reach them
+- **AND** the environment is not refused for it
+
+#### Scenario: An image has no variant for the guest architecture
+
+- **WHEN** the digest resolves to no manifest for the Linux target
+- **THEN** the image is refused by name, with no emulation
 
 #### Scenario: Image metadata requests a privileged mount
 
@@ -70,9 +102,9 @@ refuse every unsupported operative field by path, including inherited metadata.
 
 ### Requirement: Lifecycle phases execute only in the guest with durable results
 
-Supported creation phases SHALL run in order once per successful creation and
-the start phase on each start. Failure SHALL identify the phase and prevent a
-false project-ready result. Retry of arbitrary partially executed lifecycle code
+Supported creation phases SHALL run in order once per successful creation, as
+setup, and the start phase SHALL run on each start under runtime policy. Failure
+SHALL identify the phase and prevent a false project-ready result. Retry of arbitrary partially executed lifecycle code
 SHALL require an explicit operation.
 
 #### Scenario: Post-create fails after writing files

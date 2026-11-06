@@ -12,10 +12,17 @@ project toolchains or use the operator's package daemon for project execution.
 - **THEN** it runs in a confined preparation VM for the selected Linux target
 - **AND** host checkout, host daemon and sibling writable state are unavailable
 
+#### Scenario: A provider lock does not cover the Linux target
+
+- **WHEN** the selected definition is locked only for another system
+- **THEN** preparation refuses by name before evaluating project code
+- **AND** it does not re-lock the definition silently
+
 ### Requirement: Bootstrap identity derives from user-trusted distribution
 
-The controller SHALL verify helper/kernel/init/runtime against a user-trusted
-manifest and SHALL NOT accept repository-declared bootstrap paths as authority.
+The controller SHALL verify helper/kernel/init/runtime and the preparation image
+against a user-trusted manifest and SHALL NOT accept repository-declared bootstrap
+paths as authority.
 Host confinement SHALL precede the first guest instruction on every VMM path.
 
 #### Scenario: Project provides a kernel and a matching self-declared hash
@@ -41,12 +48,50 @@ hold read-only access enforced outside the guest and a retention lease.
 - **WHEN** preparation or publication is interrupted
 - **THEN** no partially written artifact becomes a reusable cache entry
 
+### Requirement: Preparation sees declared inputs and its outputs stay in their namespace
+
+A preparation job SHALL receive only its declared input set, hashed into the
+recipe identity. A provider that cannot enumerate its inputs SHALL use the whole
+selected source as that set. Published output SHALL be served only within its
+project namespace, unless it was obtained as a fixed-output artifact or verified
+against a signature the user trusts.
+
+#### Scenario: A file outside the declared set changes
+
+- **WHEN** a branch changes a file that is not in the declared input set
+- **THEN** that file was never present in the preparation VM
+- **AND** the artifact remains valid for both sources
+
+#### Scenario: A provider cannot enumerate its inputs
+
+- **WHEN** a flake imports repository files the definition does not list
+- **THEN** the whole selected source is its input set
+- **AND** the artifact is not reused for a different source
+
+#### Scenario: Another project has an identical definition
+
+- **WHEN** it requests an environment matching another project's published output
+- **THEN** that output is not served to it
+
 ### Requirement: Effective authority requires user scope
 
 Project and imported definition requests SHALL be constrained by user-owned
-grants and runtime hard limits. The rendered plan SHALL include phase, origin,
-host descriptors/devices, guest grants, channels and credential reference names.
-Unsupported required requests SHALL be refused by name.
+grants and runtime hard limits. With no grant, preparation and setup SHALL use the
+versioned exploration profile, which SHALL give runtime nothing and carry no
+credentials. The rendered plan SHALL include phase, origin, host descriptors and
+devices, guest grants, channels and credential reference names. Unsupported
+required requests SHALL be refused by name.
+
+#### Scenario: First open of a project with no user grants
+
+- **WHEN** no grant exists for the project
+- **THEN** preparation and setup use the exploration profile, rendered with its origin
+- **AND** runtime receives nothing from it and no credential is delivered
+
+#### Scenario: The proxy refuses a destination during local work
+
+- **WHEN** a guest request is refused
+- **THEN** the refused host is reported so it can become a declared request
 
 #### Scenario: Manifest requests home and global credentials
 
@@ -57,10 +102,11 @@ Unsupported required requests SHALL be refused by name.
 ### Requirement: Every host channel is bounded and instance-scoped
 
 The initial runtime SHALL expose only its declared control, SSH and proxy
-channels, with bounded framing, authenticated instance/phase association and
-timeouts. NIC, TSI, arbitrary host-connect and implicit SSH reverse/agent/X11
-forwarding SHALL be unavailable. Host proxy policy SHALL mediate actual network
-destinations, including host-local and private addresses.
+channels, with bounded framing and timeouts. Instance association SHALL derive
+from the channel the controller created, never from a guest assertion, and phase
+SHALL be host-held proxy state. NIC, TSI, arbitrary host-connect and implicit SSH
+reverse/agent/X11 forwarding SHALL be unavailable. Host proxy policy SHALL mediate
+actual network destinations, including host-local and private addresses.
 
 #### Scenario: Client ignores proxy variables or forges another instance ID
 
@@ -73,24 +119,55 @@ destinations, including host-local and private addresses.
 - **WHEN** the proxy resolves or reconnects to that address
 - **THEN** the connection is refused instead of reaching a host service
 
-### Requirement: Setup authority is revoked before runtime admission
+### Requirement: Setup authority ends on the host
 
-Setup completion SHALL terminate setup descendants, revoke its credentials and
-close its active proxy streams before runtime starts. Runtime SHALL receive its
-own policy, not the union of setup and runtime permissions.
+Setup completion SHALL switch the channel to runtime policy and close streams
+opened under setup, on the host, before runtime starts. Creation-time setup SHALL
+end with a guest reboot. Runtime SHALL receive its own policy, not the union of
+setup and runtime permissions. The system SHALL NOT claim that guest policy
+separates setup from runtime once setup has had guest root.
 
 #### Scenario: Hook leaves a background process with an open connection
 
-- **WHEN** setup completes
-- **THEN** the descendant and connection lose setup authority
-- **AND** unsuccessful cleanup prevents runtime admission
+- **WHEN** creation-time setup completes
+- **THEN** the host closes the connection and the reboot ends the process
+- **AND** failure to complete either prevents runtime admission
+
+#### Scenario: A guest reports that cleanup succeeded
+
+- **WHEN** a guest claims setup's processes are gone
+- **THEN** that claim is not what admits runtime
+
+### Requirement: Setup windows reopen setup explicitly
+
+A setup window SHALL be a host operation on a running instance. It SHALL apply
+setup policy to the instance's channel and provide an administrative session that
+keeper sessions cannot create. It SHALL end on request or timeout and SHALL be
+visible in status.
+
+#### Scenario: A session tries to install a system package
+
+- **WHEN** no setup window is open
+- **THEN** the session lacks the authority and cannot obtain it through the keeper
+- **AND** the setup window is the documented way to perform the install
+
+#### Scenario: A window is opened on an instance holding credentials
+
+- **WHEN** direct credentials have been delivered to that instance
+- **THEN** opening the window names that exposure before egress widens
 
 ### Requirement: Credentials are not reusable base-image contents
 
 Devcroft SHALL deliver authorized direct credentials only after boot and SHALL
-NOT persist their values in launch configuration, logs or shared artifacts.
+NOT persist their values in launch configuration, logs or shared artifacts. They
+SHALL be stated per instance and SHALL NOT be inherited through project identity.
 Shared-base preparation in this phase SHALL exclude personal credentials and
 ordinary local session disks. Status SHALL disclose direct guest exposure.
+
+#### Scenario: A new instance of a known project
+
+- **WHEN** it is created from an external branch fetched into the same checkout
+- **THEN** it receives no credential merely because project identity matches
 
 #### Scenario: User requests promotion of a disk used with credentials
 

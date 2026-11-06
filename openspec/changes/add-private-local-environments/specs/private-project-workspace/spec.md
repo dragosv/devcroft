@@ -9,8 +9,22 @@ The guest SHALL NOT receive a writable mount of the original checkout.
 #### Scenario: Checkout contains dirty tracked and untracked files
 
 - **WHEN** the default ordinary-Git import is requested
-- **THEN** tracked working-tree changes and non-ignored untracked files are included
+- **THEN** tracked working-tree changes are included
+- **AND** untracked files stay out and are named with the way to select them
 - **AND** ignored exclusions and non-preservation of staging state are reported
+
+#### Scenario: The repository does not ignore a local secrets file
+
+- **WHEN** a user's `.env` is untracked and no project rule ignores it
+- **THEN** default import leaves it out
+- **AND** selecting untracked files still applies the user's global excludes and
+  the sensitive-path list
+
+#### Scenario: History holds other refs and a token in a remote URL
+
+- **WHEN** the default import rebuilds guest metadata
+- **THEN** only history reachable from HEAD is present
+- **AND** no stash, reflog or URL userinfo reaches the guest
 
 #### Scenario: Source changes while being captured
 
@@ -37,9 +51,23 @@ enforce size/type/path bounds without following outside-root links.
 
 ### Requirement: Export is staged and cannot overwrite host administrative state
 
-Export SHALL create a bounded staged patch/file bundle tied to the import base.
-It SHALL validate paths and host filesystem collisions, exclude Git administrative
-metadata, and SHALL NOT automatically apply changes or run host project code.
+Export SHALL create a bounded staged bundle tied to its base, carrying guest
+commits as a validated series with messages and authorship. It SHALL validate
+paths and host filesystem collisions, exclude Git administrative metadata, and
+SHALL NOT automatically apply changes, run host project code or invoke host Git on
+guest metadata. Each export SHALL record what it covered and the next SHALL
+default to that point.
+
+#### Scenario: The guest committed several changes
+
+- **WHEN** export runs
+- **THEN** the staged bundle holds a series with each message and author
+- **AND** the host never reads guest Git metadata directly
+
+#### Scenario: A second export after the first was applied
+
+- **WHEN** the user exports again from the same instance
+- **THEN** the bundle covers only work since the previous export
 
 #### Scenario: Guest exports traversal paths or a replacement Git config
 
@@ -61,3 +89,39 @@ restart. Removal SHALL NOT delete the host checkout or external definition.
 
 - **WHEN** the instance stops and restarts
 - **THEN** the edits remain available at the guest workspace and export endpoint
+
+### Requirement: Refresh brings host changes into a running workspace
+
+An explicit refresh SHALL import a new snapshot and merge it in the guest, leaving
+conflicts there, without changing environment adaptations. It SHALL NOT discard
+guest work, SHALL NOT change the host checkout, and SHALL drop direct credentials
+until they are restated.
+
+#### Scenario: The host branch advanced while the guest has local work
+
+- **WHEN** the user refreshes
+- **THEN** conflicts remain in the guest for the user to resolve
+- **AND** no guest work is discarded and the host checkout is unchanged
+
+### Requirement: Destructive operations name unexported work
+
+`rm` and `up --recreate` SHALL state that the guest workspace may be the only copy
+of unexported work, with counts labelled guest-reported or unknown. Non-interactive
+use SHALL require `--yes`.
+
+#### Scenario: The instance is stopped
+
+- **WHEN** `rm` runs and the guest cannot report
+- **THEN** unexported work is reported as unknown rather than none
+
+### Requirement: The definition that prepared an instance is recorded
+
+The controller SHALL record the digest of the definition that prepared an instance.
+Editing a definition inside the guest SHALL NOT change that instance's environment
+or any evidence.
+
+#### Scenario: A definition is edited through a guest session
+
+- **WHEN** the user edits the workspace copy of a definition
+- **THEN** the instance's recorded environment is unchanged
+- **AND** the edit takes effect only through export or save and a new preparation

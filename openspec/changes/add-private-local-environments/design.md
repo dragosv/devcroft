@@ -30,11 +30,24 @@ project setup. Language manifests may suggest a profile, never silently select a
 different toolchain or count as a complete definition. Choose the actual base
 catalog in the packaging task; no guessed package versions are specced here.
 
+How a base installs system packages is open, and the choice is constrained: a
+saved recipe must be able to pin them by content hash, or that base cannot reach
+fleet (`gate-vm-fleet-on-verified-environments` F1). A base declares which it is.
+The catalog also owns the exploration profile's host list
+(`add-vm-project-runtime` R4).
+
 ### L2 — Private workspace is the first and only workspace mode in this change
 
 Import a content-identified snapshot into `/workspace`. For ordinary Git projects
-include tracked working-tree contents (including local edits/deletions) and
-non-ignored untracked files; exclude ignored files unless explicitly selected.
+include tracked working-tree contents, including local edits and deletions. Leave
+untracked and ignored files out by default and name them with the way to select
+them: a project-controlled `.gitignore` must not decide which of the user's local
+files enter a VM that may be hostile, and a local `.env` is ignored only if the
+repository chose to ignore it. Selected untracked files still pass the user's
+global excludes, read from user config as data, and the baseline's sensitive-path
+list; a sensitive path has to be selected by name. History is what HEAD reaches: no
+other refs, stashes or reflogs, and remote URLs lose any userinfo. More is an
+explicit choice.
 Report included/excluded paths and that staging/index state is not preserved as
 an active index. Never omit dirty state silently or represent a HEAD-only clone
 as the current checkout. Concurrent host changes fail snapshot consistency or
@@ -54,9 +67,13 @@ snapshot avoids the unsupported history semantics. Monorepo subproject roots
 are explicit; parent configs are not discovered automatically. Non-Git roots use
 an explicit file snapshot and exclusions, with no invented Git history.
 
-Export first produces a staged patch/file bundle outside the original checkout,
-including additions, deletions, binary contents and mode changes plus the import
-base identity. Validate paths, sizes, symlink targets, `.git` administrative paths
+Export first produces a staged bundle outside the original checkout: a commit
+series with messages and authorship where the guest has commits, file changes
+otherwise, including additions, deletions, binary contents and mode changes, plus
+the base identity. A confined worker turns guest history into that series, so the
+host receives patches and never guest metadata. Each export records what it
+covered and the next defaults to that point, so a second export does not repeat
+the first. Validate paths, sizes, symlink targets, `.git` administrative paths
 and case/normalization collisions for the host filesystem. No export command
 runs hooks, applies changes or invokes Git on guest metadata on the host.
 An optional later apply operation requires an explicit request and a base/conflict
@@ -65,9 +82,13 @@ project scripts remain code; staging is not a declaration that they are safe.
 
 ### L3 — Adaptation is private and persistence is explicit
 
-Local setup may install system dependencies with guest administrative authority
-scoped by the user, while ordinary sessions use their declared guest identity.
-This cannot change shared bases, host packages or siblings. `down` and restart
+Local setup installs system dependencies with guest administrative authority
+through the setup window of `add-vm-project-runtime` R5, while ordinary sessions
+use their declared guest identity and cannot elevate. This cannot change shared
+bases, host packages or siblings. Inside the guest it is one trust domain: what a
+window installs runs alongside the project's code, and no claim separates them.
+A session that discovers a missing library does not gain authority; the user opens
+a window, installs, and closes it. `down` and restart
 preserve local adaptations, workspace and service data; clean rebuild creates a
 different instance. Status does not pretend to identify every undeclared disk
 change: local state is unverified until a separate definition is reconstructed.
@@ -96,36 +117,81 @@ Read relevant `devcontainer.metadata` as well as the project JSON; implement and
 test merge behavior from the pinned upstream specification before claiming
 compatibility. Metadata cannot smuggle an otherwise refused requirement.
 
+An `image` named by tag is resolved once, and the digest is recorded in controller
+state and shown; re-creation uses the recorded digest until the user re-resolves
+it. An image with no variant for the guest architecture is refused by name, with
+no emulation. A private registry is refused in this phase, because preparation
+holds no credentials.
+
 Initial supported operative fields: `image`, `containerEnv`, `remoteEnv`, guest
 `containerUser`/`remoteUser`, and `onCreateCommand`, `updateContentCommand`,
 `postCreateCommand`, `postStartCommand`. Honor supported lifecycle ordering:
 creation phases once per successful creation, start phase on each start; failures
 are recorded, never marked complete, and explicit retries disclose possible
-partial side effects. Guest users must resolve; privileges require the scoped
+partial side effects. The three creation commands run as creation-time setup.
+`postStartCommand` runs under runtime policy, because a start opens no setup
+window. Guest users must resolve; privileges require the scoped
 setup/runtime grant and cannot confer host authority. Environment substitutions
 are limited to documented guest values and explicit user-owned bindings; arbitrary
 host `${localEnv:...}` access is refused.
 
-Accept display-only `name` and editor `customizations` as non-executed metadata
-with clear status. `workspaceFolder` is accepted only when matching `/workspace`.
-Reject `build`, `dockerFile`, `features`, Compose configuration, `initializeCommand`,
-`postAttachCommand`, `mounts`, `workspaceMount`, `runArgs`, `privileged`, extra
-capabilities/devices, automatic port publication and unimplemented lifecycle or
-environment options by field path. Unknown operative fields fail closed. For
-port access use explicit SSH local forwarding; do not silently ignore requested
-`forwardPorts`. Unsupported shell-based environment probes are refused.
+Every key of the pinned schema has one class in a published table. Refusal is for
+what needs host authority or an execution this profile does not perform; a field
+that only concerns a container boundary, which does not exist here, is not a
+reason to refuse an environment. `add-devcontainer-provider` D6 measured the
+consequence: `mcr.microsoft.com/devcontainers/rust:1` carries `capAdd` and
+`securityOpt` in its metadata, and refusing them on the merged result would refuse
+every `devcontainers/*` image. That image is the acceptance fixture.
 
-This deliberately narrow profile may reject many popular images/configurations.
-Publish fixtures for its supported fields and refusals instead of advertising
-full Dev Containers support. Image-only local operation cannot pass the strict
+- **Honored:** the supported fields above, and `workspaceFolder` when it matches
+  `/workspace`.
+- **Ignored with one warning naming the field:** display-only `name`, editor
+  `customizations`, `forwardPorts` and `portsAttributes` (SSH local forwarding
+  covers them, as `docs/decisions.md` §3 says), `capAdd`, `securityOpt` and `init`,
+  and `overrideCommand`, `updateRemoteUserUID`, `shutdownAction` and `waitFor`.
+- **Refused by field path:** `build`, `dockerFile`, `features`, Compose
+  configuration, `initializeCommand`, `postAttachCommand`, `mounts`,
+  `workspaceMount`, `runArgs`, `privileged`, devices, and unsupported shell-based
+  environment probes.
+
+Feature `id` entries in image metadata record what was baked in; they are not
+requests. Keys outside the pinned schema are ignored with one warning, because the
+file is shared with other tools, as D6 decided.
+
+This deliberately narrow profile still rejects many configurations. Measure it
+against real `devcontainer.json` files and official images, and publish that
+result with fixtures for its fields and refusals, instead of advertising full Dev
+Containers support. Image-only local operation cannot pass the strict
 fleet gate without a supported reconstructible environment recipe; this phase
 does not build Dockerfiles even when a recipe is supplied.
 
+### L6 — The workspace stays in step with the host on request
+
+An explicit refresh imports a new host snapshot beside the workspace and merges it
+in the guest, leaving conflicts there for the user and adaptations untouched. It
+never runs host Git on guest data. It drops direct credentials until they are
+restated, because it brings in source they were not stated for
+(`add-vm-project-runtime` R4).
+
+The definition that prepared an instance is recorded by digest in controller
+state. Editing a definition in the guest changes neither the instance's
+environment nor any evidence: export or save is the way out, and a new preparation
+is the way back in.
+
+The guest workspace can be the only copy of unexported work, which is new: under
+the native path `rm` never touched source. `rm` and `up --recreate` say so in their
+confirmation, with counts labelled guest-reported when the guest is up and
+"unknown" when it is not, since the host does not mount guest disks. A guest can
+under-report, which harms only its own work. `--yes` stays the non-interactive form.
+
 ## Risks / Trade-offs
 
-- Private workspace adds transfer/export friction → report location and Remote-SSH
-  endpoint prominently, preserve local work and stage export without overwrites.
-- Dirty/untracked files may contain sensitive data → show import scope and allow
+- Private workspace adds transfer/export friction → report location and the editor
+  path for the project's trust class prominently, preserve local work and stage
+  export without overwrites.
+- Leaving untracked files out can omit something a build needs → the import report
+  names them and a selection adds them. An omission fails visibly; a leak does not.
+- Dirty tracked files may contain sensitive data → show import scope and allow
   explicit exclusions; never import ignored files or outside-root targets implicitly.
 - Git and archive data attack parsers → bounded transfer and isolated interpretation;
   adversarial fixtures cover paths, symlinks and concurrent changes.
@@ -138,7 +204,8 @@ does not build Dockerfiles even when a recipe is supplied.
 
 Add only the VM path after runtime qualification. Before shipping this as default
 UX, reconcile `add-manifestless-mode`'s no-base/error and fixed-precedence rules,
-and `add-devcontainer-provider`'s host extraction/read-only process rootfs model.
+and `add-devcontainer-provider`'s host extraction/read-only process rootfs model
+and its D6 table, where the process tier and the VM may answer differently.
 Retain their native scope and historical measurements; do not mark their tasks
 complete because a separate VM implementation exists. Existing local sandboxes
 and files are not moved automatically. Rollback preserves disks and export access.
@@ -146,5 +213,7 @@ and files are not moved automatically. Rollback preserves disks and export acces
 ## Open Questions
 
 Choose the versioned base catalog and public CLI spelling before implementation
-of help/output. Broader Git layouts and Dev Containers fields require separate
+of help/output. The base's package mechanism is undecided: it must satisfy
+hash-pinned inputs, and the fixture in `evaluate-microvm-runtimes` Stage C does not
+decide it. Broader Git layouts and Dev Containers fields require separate
 compatibility work. None permits a weaker implicit fallback in this profile.

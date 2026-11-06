@@ -10,9 +10,11 @@ turn unverified integration assumptions into a product dependency.
 - Exercise identical guest artifacts per architecture in both a declared
   closure environment and an adaptable local environment.
 - Gate comparison on confinement before guest execution, private state,
-  controlled host channels, real keeper/SSH/services, and crash recovery.
-- Measure cold preparation, warm reuse and 1/4/8-instance workloads with raw
-  results, failed and unavailable rows visible.
+  controlled host channels, real keeper/SSH/services, editor paths and crash
+  recovery, and on the five backend criteria `remove-gvisor-backend` recorded.
+- Record numeric no-go thresholds before density measurements start.
+- Measure cold preparation, warm reuse, source import, per-agent setup and
+  1/4/8-instance workloads with raw results, failed and unavailable rows visible.
 - Produce an adoption decision that may select neither candidate. No production
   backend, public default change, or stronger isolation claim ships here.
 
@@ -35,5 +37,6 @@ scripts; isolated from the default Rust dependency/build path. Reuses keeper,
 SSH and service code where demonstrated, without prematurely generalizing
 `SessionBackend`. Feeds `add-vm-project-runtime`.
 
-Sources and cross-change triage: [adversarial review](adversarial-review.md).
-No benchmark or new upstream-source verification is claimed by this proposal.
+Sources and cross-change triage: [adversarial review](adversarial-review.md),
+which records the upstream facts re-read at the pins on 2026-11-06. No boot or
+benchmark is claimed by this proposal.
