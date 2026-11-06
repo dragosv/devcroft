@@ -274,7 +274,9 @@ Proceed when that trade is wanted, not because the auth defect requires it.
 
 ## 6. Downstream
 
-- [ ] `sandbox-provisioning`: replace the deferred on/off network decision with
+- [x] `sandbox-provisioning`: replace the deferred on/off network decision with
       a real provisioning allowlist.
+      **Done there (2026-10-12), archived 2026-11-06:** `[provisioning.network]
+      allow`, with its own proxy (`tests/provisioning_network.rs`).
 - [ ] `add-linux-agent-fleet`: its `agent-networking` requirements assume this
       proxy exists; confirm they are satisfied rather than restated.
