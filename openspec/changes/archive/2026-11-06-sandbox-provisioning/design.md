@@ -231,7 +231,7 @@ which means tracking that format: a future flox schema change could alter where
 hooks live or add a second place project code can run, and this would need to
 follow. A supported API would make the split flox's contract rather than
 devcroft's inference. The request at
-[docs/flox-confined-activation-issue.md](../../../docs/flox-confined-activation-issue.md)
+[docs/flox-confined-activation-issue.md](../../../../docs/flox-confined-activation-issue.md)
 is therefore still worth filing — but it is now an ergonomics and
 maintenance-burden ask, not a blocker.
 
@@ -459,7 +459,7 @@ the runtime policy to fit provisioning, which is backwards.
    specifies, not a fallback.
 
    The unblocking path is upstream, drafted at
-   [docs/flox-confined-activation-issue.md](../../../docs/flox-confined-activation-issue.md).
+   [docs/flox-confined-activation-issue.md](../../../../docs/flox-confined-activation-issue.md).
    Until it lands, this change ships with Flox-with-a-hook blocked and the
    other two providers eligible — which is a real, useful subset, not a
    stalemate.

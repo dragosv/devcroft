@@ -31,7 +31,7 @@ what the agent itself gets. This change moves provisioning to the same
 process-tier boundary as everything else. It does **not** make devcroft safe for
 running code written to escape — the process tier is accident protection and the
 full host kernel surface stays reachable. See
-[docs/threat-model.md](../../../docs/threat-model.md), "Two use cases". Wording
+[docs/threat-model.md](../../../../docs/threat-model.md), "Two use cases". Wording
 in this change and in `up`'s output must not imply otherwise.
 
 The hook is not an abuse of the format. It is where people put everything Nix
@@ -91,4 +91,4 @@ an unreviewed repository is interpreted host-side.
   separate the two fails closed rather than receiving either as a fallback —
   which today means Flox environments with `hook.on-activate` (P2c). The
   upstream request that would unblock them is drafted at
-  [docs/flox-confined-activation-issue.md](../../../docs/flox-confined-activation-issue.md).
+  [docs/flox-confined-activation-issue.md](../../../../docs/flox-confined-activation-issue.md).

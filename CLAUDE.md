@@ -232,7 +232,7 @@ openspec status --change <change> --json       # artifact state, paths, what's n
 openspec instructions <artifact> --change <c> --json   # how to write an artifact
 ```
 
-`openspec validate --all` currently reports **18 passed, 0 failed**.
+`openspec validate --all` currently reports **40 passed, 0 failed**.
 `add-nix-provider` (nix flakes as a second closure-tier environment
 provider, alongside flox), `add-hardened-tier` (whose tier dispatch
 `remove-gvisor-backend` deleted; its backend-generic `SessionBackend`
@@ -434,18 +434,16 @@ for an environment without running it. Measured:
   something (`lifecycle::attribution`); the policy decides that, not the
   error text, since a confined hook sees a hidden path as plain `ENOENT`.
 
-  **That answer is context-dependent, and the contexts are about to
-  diverge — do not read the two as contradictory.** Warning is right
-  *today*, where provisioning is unconfined either way, so refusing would
-  block a user from something their own shell does identically. Under
-  `sandbox-provisioning` the promise changes to "activation is confined",
-  and flox-with-a-hook cannot keep it: materialization needs `nix-daemon`
-  authority, the hook is project code, and flox cannot separate them — so
-  there it **fails closed at layer `provider`** rather than silently
-  handing project shell a host-global capability (that change's P2b/P2c).
-  Same measured fact, different promise, opposite correct behaviour. The
-  upstream request that would collapse the two back together is drafted
-  at `docs/flox-confined-activation-issue.md`.
+  **`sandbox-provisioning` is archived (2026-11-06).** Its planned
+  "flox-with-a-hook fails closed" branch never shipped, because the
+  derived hook-free copy separated what flox cannot. The hook runs
+  confined and never holds daemon authority. What still runs host-side
+  with the daemon is resolution itself, the evaluator over
+  repository-controlled definitions. It was measured not to work without
+  the daemon for any provider (that change's design.md P6, P6a), and
+  `policy --render` states it. `docs/flox-confined-activation-issue.md`
+  is still the upstream request that would make the derived copy
+  unnecessary.
 
 The rule for any new provider: prefer the entry point that hands back an
 environment over the one that runs a command inside it, since the latter

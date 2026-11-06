@@ -205,16 +205,24 @@ Fold what survives into fleet and close the change.
 
 ## 0.5 — provisioning inside the boundary
 
-**`sandbox-provisioning`** (4/37).
+**`sandbox-provisioning`** — done, archived 2026-11-06, ahead of the fleet
+work it was ordered after.
 
-The largest remaining architectural change, and deliberately not earlier.
-Provider resolution still runs host-side, before any boundary exists —
-with one exception already closed, flox's activation hook. Everything
-above works without this; nothing above is *safe* against a hostile
-repository without it.
-
-It is ordered after the fleet work because the fleet claim is what devcroft
-is for, and because this change's own dependency graph is the deepest here.
+What it delivered: no provider runs project shell host-side. flox's
+`[hook].on-activate` and devenv's `enterShell` run in a provisioning process
+of their own, under the runtime filesystem policy and
+`[provisioning.network] allow` through its own proxy, with no daemon
+authority. Fleet agents get the same. devbox's `init_hook` was already
+captured as data. What it did not, and by measurement cannot: resolution
+itself (`nix print-dev-env`, `devenv build`, `devbox shellenv --pure`, flox's
+build of the derived copy) still runs host-side with the Nix daemon, because
+no resolver works without it on a project it has not resolved (design.md
+P6, P6a). That residue is an evaluator over repository-controlled
+definitions, not project shell. `policy --render`'s `resolution:` entry
+states it, and `docs/known-gaps.md` says how a hook behaves differently
+here from one run by hand. The one decision it left for fleet, a cache
+shared read-only with a layer per agent, is a requirement and four tasks
+in `add-linux-agent-fleet`.
 
 **`add-devenv-provider` landed here, and its open question closed the
 easy way.** devenv's criterion-4 answer was measured rather than assumed:
