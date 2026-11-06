@@ -2220,6 +2220,7 @@ fn confine_on_exec(cmd: &mut Command, c: Confinement) {
                     crate::fleet::mount::ProcMount::HostBind,
                     None,
                 )?;
+                crate::fleet::mount::return_to_host_identity()?;
                 std::env::set_current_dir(&project_root_owned)?;
             }
             Ok(())

@@ -31,10 +31,15 @@
 //! every leftover process in the namespace with it.
 //!
 //! The helper also mounts a **fresh `/proc`**, since without one a PID
-//! namespace hides nothing (the inherited procfs still lists the host). And
-//! it starts the command with `SECBIT_NOROOT`: the helper is uid 0 in its
-//! user namespace, and without that bit anything it execs would hold every
-//! capability there.
+//! namespace hides nothing (the inherited procfs still lists the host).
+//! Once its setup is done it **returns to the user's own uid**, in a nested
+//! user namespace mapping that uid onto its 0
+//! (`fleet::mount::return_to_host_identity`). Only uid 0 keeps capabilities
+//! across `execve`, which the setup needs, but a command that saw itself as
+//! root broke programs that refuse root, `mariadbd` among them. It still
+//! starts the command with `SECBIT_NOROOT`, which no longer matters once the
+//! uid is not 0, and is kept for the case of devcroft run as real root,
+//! where the uid stays 0.
 //!
 //! **The mount view is optional per agent** ([`AgentSpec::view`]),
 //! which is D2a's choice made explicit. With one, the helper builds
@@ -642,6 +647,10 @@ fn setup(signals: &libc::sigset_t) -> io::Result<Started> {
         env.push(("DEVCROFT_PROXY_RELAY_FD".into(), relay_fd.to_string()));
     }
 
+    // Last thing that needs uid 0's map writes, and before Landlock, which
+    // would refuse them. From here on PID 1 and the command are the user.
+    super::mount::return_to_host_identity().map_err(|e| step("return to the host's uid", e))?;
+
     // Resolved now, inside the view: the rules must bind to the inodes the
     // agent will see, its private /tmp and devpts included.
     let caps = spec
@@ -673,7 +682,9 @@ fn setup(signals: &libc::sigset_t) -> io::Result<Started> {
     // SAFETY: `prctl` only, in the forked child of this single-threaded
     // process. With NOROOT set, uid 0 gains no capabilities across the
     // exec, so the command starts with none; LOCKED keeps it from undoing
-    // that.
+    // that. Since `return_to_host_identity` the uid is 0 here only when
+    // devcroft itself runs as root; for anyone else the exec already drops
+    // them.
     unsafe {
         cmd.pre_exec(|| {
             let bits = SECBIT_NOROOT | SECBIT_NOROOT_LOCKED;

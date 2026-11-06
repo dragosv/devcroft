@@ -108,6 +108,60 @@ fn write_id_map(path: &str, contents: &str) -> io::Result<()> {
     std::fs::File::create(path)?.write_all(contents.as_bytes())
 }
 
+/// Gives the sandbox back the user's own uid and gid, once the setup that
+/// needed uid 0 is done. Call it last, after every mount, `sethostname`
+/// and the loopback ioctl, and before Landlock, which would refuse the
+/// map writes.
+///
+/// **Why the setup's identity is not kept.** [`enter_mount_namespace_with_network`]
+/// and fleet's init helper map `0 → uid`, because only uid 0 keeps its
+/// capabilities across `execve` in a user namespace. Every process after
+/// that saw itself as root, and some programs refuse to run as root:
+/// `mariadbd` exits with "Please consult the Knowledge Base to find out
+/// how to run mysqld as root!" (measured, a devbox mariadb project), and
+/// postgres's `initdb` refuses root too. So this enters a nested user
+/// namespace mapping the user's own uid onto the setup's 0 (`uid 0 1`).
+/// Files are still owned by the real user on the host, and `id` inside
+/// matches `id` outside.
+///
+/// Nothing after this needs a capability: `apply_auto` needs none, and
+/// signalling and reaping a child of the same uid need none. A process
+/// whose outer uid is already 0 (devcroft run as root) is left as it is,
+/// since that is its own identity.
+#[cfg(target_os = "linux")]
+pub fn return_to_host_identity() -> io::Result<()> {
+    let uid = outer_id("/proc/self/uid_map")?;
+    let gid = outer_id("/proc/self/gid_map")?;
+    if uid == 0 {
+        return Ok(());
+    }
+    if unsafe { libc::unshare(libc::CLONE_NEWUSER) } != 0 {
+        return Err(io::Error::last_os_error());
+    }
+    write_id_map("/proc/self/setgroups", "deny")?;
+    write_id_map("/proc/self/uid_map", &format!("{uid} 0 1"))?;
+    write_id_map("/proc/self/gid_map", &format!("{gid} 0 1"))?;
+    Ok(())
+}
+
+/// The id that uid (or gid) 0 of this process's user namespace stands for
+/// in its parent, from a `uid_map`/`gid_map` line `0 <outer> <count>`.
+#[cfg(target_os = "linux")]
+fn outer_id(map: &str) -> io::Result<u32> {
+    let text = std::fs::read_to_string(map)?;
+    text.lines()
+        .find_map(|line| {
+            let mut fields = line.split_whitespace();
+            (fields.next()? == "0").then(|| fields.next()?.parse().ok())?
+        })
+        .ok_or_else(|| io::Error::other(format!("{map} maps nothing onto 0: {text:?}")))
+}
+
+#[cfg(not(target_os = "linux"))]
+pub fn return_to_host_identity() -> io::Result<()> {
+    Ok(())
+}
+
 #[cfg(not(target_os = "linux"))]
 pub fn enter_mount_namespace() -> io::Result<()> {
     enter_mount_namespace_with_network(false)

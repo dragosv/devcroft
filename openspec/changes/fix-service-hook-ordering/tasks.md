@@ -141,8 +141,10 @@
       script, not devcroft. **`mariadbd` then refuses to start, for a
       reason this change does not own:** inside a sandbox with its own
       user namespace the session is uid 0 (`0 <uid> 1` maps), and mariadb
-      will not run as root. See `docs/implementation-log.md`
-      (2026-11-06).
+      will not run as root. **Fixed since, outside this change**
+      (`fleet::mount::return_to_host_identity`, `docs/implementation-log.md`
+      2026-11-06). With `network.ports = [3306]` declared, the same project
+      answers `select version()` from inside.
 - [x] 2.6 **The manifest-hook case, which is the one users write**: a
       project declaring `hooks.post_create` and a service asserts the
       hook completed first. Use a hook that is *slow to start* — one that

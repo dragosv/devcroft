@@ -200,3 +200,87 @@ fn a_sandbox_sees_only_its_own_processes_and_down_ends_them() {
     );
     assert!(after.is_empty(), "still running after down: {after:?}");
 }
+
+/// A session in a sandbox with its own user namespace is the user, not
+/// root. The setup maps `0 → uid`, since only uid 0 keeps its capabilities
+/// across `execve` there, and every session used to inherit that and report
+/// uid 0. `mariadbd` refuses to run as root, and so does postgres's
+/// `initdb` (`fleet::mount::return_to_host_identity`). Checked from both
+/// sides: the uid a session reports, and the owner a file it creates has on
+/// the host.
+#[test]
+fn a_session_is_the_users_own_uid_not_root() {
+    if !devcroft::policy::backend_supported() {
+        eprintln!("skipping: this host has no usable Landlock/Seatbelt support");
+        return;
+    }
+    let exe = Path::new(env!("CARGO_BIN_EXE_devcroft"));
+    if !matches!(devcroft::fleet::mount::probe_pid_namespace(exe), Ok(true)) {
+        eprintln!("skipping: this host cannot mount a fresh /proc in a user+PID namespace");
+        return;
+    }
+    let Some(store) = store_path_with_a_shell() else {
+        eprintln!("skipping: no /nix/store path with a shell on this host");
+        return;
+    };
+    // SAFETY: this process runs a single test.
+    unsafe { std::env::set_var("DEVCROFT_KEEPER_EXE", exe) };
+    // SAFETY: plain getters.
+    let (uid, gid) = unsafe { (libc::getuid(), libc::getgid()) };
+    if uid == 0 {
+        eprintln!("skipping: run as root, whose own identity is 0");
+        return;
+    }
+
+    let pid = std::process::id();
+    let project = PathBuf::from(format!("/tmp/dcupuid{pid}"));
+    let _ = std::fs::remove_dir_all(&project);
+    std::fs::create_dir_all(&project).unwrap();
+    let project = project.canonicalize().unwrap();
+    let name = format!("e2eupuid{pid}");
+    let (manifest, _) = parse(&format!(
+        "[sandbox]\nname = {name:?}\n\n[network]\ndefault = \"deny\"\n"
+    ))
+    .unwrap();
+    let paths = StatePaths::new(&name).unwrap();
+    let _ = std::fs::remove_dir_all(&paths.root);
+
+    let outcome = up_with_provider(&manifest, &project, &UpOptions::default(), &Row { store });
+    let session = Command::new(exe)
+        .current_dir(&project)
+        .args([
+            "exec",
+            &name,
+            "--",
+            "sh",
+            "-c",
+            "echo \"$UID $EUID\"; : > made-inside",
+        ])
+        .output()
+        .unwrap();
+    let made = std::fs::metadata(project.join("made-inside"));
+    let log = std::fs::read_to_string(&paths.log).unwrap_or_default();
+    let downed = down(&name);
+    let _ = std::fs::remove_dir_all(&paths.root);
+    let _ = std::fs::remove_dir_all(&project);
+
+    assert_eq!(
+        outcome.unwrap_or_else(|e| panic!("up: {e}\nlog:\n{log}")),
+        UpOutcome::Started
+    );
+    downed.unwrap_or_else(|e| panic!("down: {e}"));
+    let out = String::from_utf8_lossy(&session.stdout);
+    assert!(
+        session.status.success(),
+        "{out}{}",
+        String::from_utf8_lossy(&session.stderr)
+    );
+    assert_eq!(
+        out.trim(),
+        format!("{uid} {uid}"),
+        "a session must report the user's own uid, not 0"
+    );
+    use std::os::unix::fs::MetadataExt;
+    let made = made.expect("the session's file must exist on the host");
+    assert_eq!((made.uid(), made.gid()), (uid, gid));
+}

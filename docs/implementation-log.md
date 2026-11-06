@@ -1325,8 +1325,29 @@ devbox mariadb project then fails at `mariadbd`: "Please consult the
 Knowledge Base to find out how to run mysqld as root!". That applies to
 every `network.default = "deny"` sandbox on Linux, which is the default.
 postgres's `initdb` refuses root the same way, by its documentation, not
-measured here. A candidate fix, not built: once the mounts are done, a
-nested user namespace that maps the real uid back (`<uid> 0 1`) just
-before the command runs, in `up`'s pre-exec path and in the init helper.
-That gives back the host uid without needing capabilities after the
-exec.
+measured here. **Fixed the same day**
+(`fleet::mount::return_to_host_identity`). Once the mounts,
+`sethostname` and the loopback ioctl are done, a nested user namespace
+maps the user's own uid back onto the setup's 0 (`<uid> 0 1`). This
+happens in the init helper before Landlock, which would refuse the map
+writes, and at the end of `up`'s pre-exec path. Nothing after that needs
+a capability. Measured: the same mariadb project then answers `select
+version()` from inside, once `network.ports = [3306]` is declared.
+Without the port, Landlock's port filter refuses the bind, as it should.
+`id` inside now matches the host's. `tests/up_pid_namespace.rs` asserts
+the session's `$UID`/`$EUID`, and the host owner of a file it creates,
+and read `"0 0"` with the call removed. Not exercised here: `up`'s
+pre-exec path, taken only on a host that cannot mount a fresh procfs,
+and fleet, whose tests need sudo. Both run the same function.
+**One consequence, caught by the suite:** a hook that runs `nix build`
+behaves differently as the user. As uid 0 it wrote into `/nix/store` and
+was refused, and attribution named that as package-manager authority. As
+the user, nix finds `/nix/var/nix` hidden, says `'/nix/var/nix' does not
+exist`, and falls back to a chroot store in the sandbox's own home. That
+message carries no errno, so attribution called the failure "the
+script's own" (`a_hook_that_installs_a_package_is_told_to_declare_it`).
+It now reads "does not exist" as a missing path, and the policy still
+decides. Worth knowing: with `cache.nixos.org` in `[provisioning.network]
+allow`, such a hook could realise packages into that private chroot
+store. That is not daemon authority and not host-global, since it is the
+sandbox's own home, but it is a slow way round declaring them.

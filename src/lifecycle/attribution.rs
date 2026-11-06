@@ -126,12 +126,17 @@ enum Errno {
     ReadOnly,
 }
 
-const ERRNOS: [(&str, &str, Errno); 4] = [
+const ERRNOS: [(&str, &str, Errno); 5] = [
     (
         "no such file or directory",
         "No such file or directory",
         Errno::Missing,
     ),
+    // How nix reports a path it looked for and did not find, rather than an
+    // errno: `warning: '/nix/var/nix' does not exist, so Nix will use '…'
+    // as a chroot store`. A hidden path, so `Missing`, and the policy still
+    // decides whether it is one.
+    ("does not exist", "does not exist", Errno::Missing),
     ("permission denied", "Permission denied", Errno::Access),
     (
         "operation not permitted",
@@ -274,7 +279,10 @@ pub(crate) fn denials(
 /// socket': No such file or directory` against the daemon, and `remounting
 /// /nix/store writable: Operation not permitted` when it falls back to the
 /// local store — `nix build`, `nix profile install`, `nix-env -i` and
-/// `nix-store --realise` alike. A store path that is merely missing is not
+/// `nix-store --realise` alike. Those were measured as uid 0. Since the
+/// sandbox is the user's own uid (`fleet::mount::return_to_host_identity`),
+/// nix finds `/nix/var/nix` hidden and says so, `'/nix/var/nix' does not
+/// exist`, before falling back to a chroot store in the sandbox's home. A store path that is merely missing is not
 /// this: it is a store path that was never realised, or was collected.
 fn materializes(path: &str, errno: Errno) -> bool {
     is_within(path, "/nix/var/nix")
@@ -379,7 +387,7 @@ pub(crate) fn explain(failure: &str, denials: &[Denial], output: &str, sandbox: 
                     None => "not granted by any rule".to_owned(),
                 };
                 let what = if *write { " (write)" } else { "" };
-                let hidden = if *seen == "No such file or directory" {
+                let hidden = if matches!(*seen, "No such file or directory" | "does not exist") {
                     ", so the sandbox does not show it,"
                 } else {
                     ""
@@ -516,6 +524,8 @@ mod tests {
             "error: cannot connect to socket at '/nix/var/nix/daemon-socket/socket': \
              No such file or directory",
             "touch: cannot touch '/nix/store/dcm': Read-only file system",
+            "warning: '/nix/var/nix' does not exist, so Nix will use \
+             '/tmp/p/.devcroft/s/home/.local/share/nix/root' as a chroot store",
         ] {
             let found = of(line);
             assert!(
