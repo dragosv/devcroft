@@ -29,7 +29,7 @@
       substituted home **with the XDG variables set** (with `HOME` alone flox
       wrote its env registry into the real home). The hook itself already
       runs inside the runtime sandbox (P2d), so it was not part of this.
-- [ ] Measure what a **trusted resolver** needs, separately from the hook: what
+- [x] Measure what a **trusted resolver** needs, separately from the hook: what
       materialization requires when no project code is running. This is the
       half that legitimately holds daemon authority, and the point of measuring
       it apart is to know exactly how much authority the split is protecting.
@@ -37,8 +37,18 @@
       already holds everything (a never-installed devbox copy, confined,
       failed on `cache.nixos.org`). `devbox install` runs no `init_hook`.
       For nix the trusted half is all of resolution: evaluating a local
-      flake writes the project's source into the store. The trusted half's
-      own minimal filesystem grants are not yet measured.
+      flake writes the project's source into the store.
+      **Measured (design.md P6a, 2026-11-06)** by tracing each command on a
+      never-resolved copy, re-running it in a view of only the traced
+      paths, and removing one grant at a time. Writes: the project's own
+      directory (`.devbox/`, `.devenv/`), `/tmp`, and a home that can be
+      empty for all three. Reads: `/nix/store`, `/etc/ssl`, and for devbox
+      and nix the host's `/usr` (and `/etc/nix` for nix). devbox needs the
+      network on any project it has not resolved, however warm the store.
+      **Found along the way:** P6's confined devbox result was answered
+      from devbox's `.nix-print-dev-env-cache`. Cold, the same command
+      connects to the daemon. That is the cache trap P6 recorded for
+      devenv, and task 28 inherits it.
 - [x] Qualify the hook-free paths for the two eligible providers —
       `nix print-dev-env --json` and `devbox shellenv --pure` — as running
       inside the provisioning worker with no daemon connection.

@@ -1285,3 +1285,17 @@ Both were found by measuring the claim rather than the mechanism.
   the host's network namespace: Landlock closed TCP, nothing closed UDP, and
   nothing warned. It now gets a namespace of its own, and a warning where
   the host cannot give one.
+
+**A confined devbox resolution was a cache hit, measured as a
+qualification (2026-11-06, `sandbox-provisioning` task 3).** P6 recorded
+that `devbox shellenv --pure` ran with the daemon hidden and no network,
+byte-identical, and called devbox's split clean. Measuring the *trusted*
+half, on a copy never resolved, showed why the confined run needed
+neither: it read `.devbox/.nix-print-dev-env-cache` and ran `nix` only
+for `--version`. Cold, the same command connects to the daemon and runs
+`print-dev-env` and `profile install`. That is the trap P6 had already
+recorded for devenv's evaluation cache, missed for the provider P6
+qualified. The trusted half itself turned out small. It writes the
+project's own directory, `/tmp` and a home that can be empty. It reads the
+store, `/etc/ssl` and the host's `/usr`, plus `/etc/nix` for nix.
+`design.md` P6a has the table.

@@ -307,6 +307,9 @@ What this establishes:
   project read (and `.devcroft/` written, for flox), `/nix/store` read, and
   an empty substituted home. That is the opposite of "most of `$HOME`", so
   the stop condition in the spike group does not trigger.
+  **Qualified by P6a:** devbox's confined resolution was answered from
+  `.devbox/.nix-print-dev-env-cache`, and holds only while that cache
+  matches the lockfile.
 - **An unmaterialized environment fails the confined half, not silently.**
   devbox, run confined on a copy that was never installed, tried to
   materialize and failed on the network (`cache.nixos.org` unreachable). The
@@ -341,8 +344,77 @@ What this establishes:
   socket under `XDG_CACHE_HOME`, and a long substituted home overran the
   OS's limit for a unix socket path, the same constraint `devenvsvc` hit.
 
-What is still unmeasured: `[profile]` scripts, other devbox plugins, and the
-trusted half's own minimal grants beyond "daemon plus network".
+What is still unmeasured: `[profile]` scripts and other devbox plugins.
+
+### P6a — Measured: what the trusted half needs (2026-11-06)
+
+The other half of the table above: the command devcroft runs, on a project
+copy that had never been resolved, so materialization and evaluation
+actually happen. First traced (`strace -f`, file and connect calls), then
+re-run in a view holding only the traced paths (a mount namespace on an
+empty, read-only root; `/proc`, `/dev` and a writable `/tmp` always
+present). One grant at a time was then removed. "Works" means the output
+devcroft reads was byte-identical to an unconfined run, apart from `HOME`
+and devbox's hash over the environment. Environment as devcroft passes it:
+`HOME` and the canonical `PATH` only. Same host as P6: nix 2.31.5, devbox
+0.18.0, devenv 2.4.0, store warm for every package involved.
+
+| Provider | Command | Read | Written | Daemon | Network | Real home |
+|---|---|---|---|---|---|---|
+| devbox | `shellenv --pure` | `/usr` (devbox, the host's `nix`, `sh`), `/etc/ssl` (`/etc/resolv.conf` for DNS), `/nix/store` | project (`.devbox/`), `/tmp` | yes | **yes, always** | no |
+| nix | `print-dev-env --json` (and `flake metadata`, `eval`) | `/usr`, `/etc/nix`, `/nix/store`, project | `/tmp` | yes | no | no |
+| devenv | `build shell` | `/nix/store` | project (`.devenv/`), `/tmp`, a home (`~/.local/share/devenv`) | yes | unless the real `~/.cache/nix` is granted | no, given network |
+
+What this establishes:
+
+- **None of the three needs the real home.** devcroft passes the real one,
+  and it is read and written (`~/.cache/nix`'s SQLite caches, devbox's
+  `~/.local/state/devbox`, devenv's `~/.local/share/devenv`), but an empty
+  writable home gave identical output for all three. For nix nothing is
+  lost: with every input locked and in the store, an empty home and no
+  network still worked. For devenv the real `~/.cache/nix` is what the
+  network replaces, the P6 finding seen from the other side: with neither,
+  it fails evaluating `config.cachix.enable`.
+- **devbox goes to the network on a project it has not resolved, however
+  warm the store.** With every package in the store, the real home and
+  `~/.cache/nix` granted, and no network, it refused: "Error connecting to
+  the internet and no cached environment found". devbox itself, not nix,
+  checks `cache.nixos.org` (a `HEAD` on the `.narinfo`, failing on the TLS
+  roots when `/etc/ssl` is absent). The cache it means is the project's
+  `.devbox/.nix-print-dev-env-cache`.
+- **The P6 devbox result was a cache hit, the trap P6 recorded for devenv.**
+  The warm `shellenv --pure` that needed no daemon was answered from that
+  same file. Traced, a warm run makes no connection and runs `nix` only for
+  `--version`. A cold one connects to the daemon four times and runs
+  `path-info`, `print-dev-env`, `profile list` and `profile install`. So
+  "devbox qualifies confined" holds while the cache matches `devbox.lock`,
+  and a confined resolution after an edit is a trusted one again. Task 28
+  has to treat it that way, as P6 already says of an unmaterialized
+  environment.
+- **A view must not leave `/nix/var/nix` writable.** In the first attempt
+  the view's own empty root was writable, and nix chose a local store over
+  the daemon (`Store URL: local`). It then failed on a store-path lock
+  under the read-only bind. Any confined resolver has to present `/nix`
+  read-only or pin `NIX_REMOTE=daemon`. Otherwise a grant shape decides
+  which authority nix uses.
+- **nix's resolution depends on the host's `nix.conf`.** Without
+  `/etc/nix`, `print-dev-env` fails because `nix-command` is disabled. devbox
+  passes its experimental features on the command line, and devenv carries
+  its own evaluator, so neither reads it.
+- **devenv needs no host file outside the store.** It ran with only
+  `/nix/store`, the socket, `/etc/ssl`, `/etc/resolv.conf` and a home.
+  Neither `/usr` nor `/etc/nix` was granted.
+- **devbox spawns `devbox upload-telemetry` during resolution.** Its
+  connections were not told apart from devbox's own here, and devcroft
+  sets neither `DEVBOX_NO_TELEMETRY` nor `DO_NOT_TRACK`. This is host-side
+  reach, not project code, but it belongs in the same account as the
+  `resolution:` entry of `policy --render`.
+
+How much authority the split protects is the daemon, the network
+(always for devbox, conditionally for devenv) and a writable project
+directory. No host file is written outside the project, `/tmp` and a home
+the resolver could be given empty. The host files read are its own binary
+and `nix`, `/etc/ssl` and, for nix, `/etc/nix`.
 
 ## Rejected Alternatives
 
