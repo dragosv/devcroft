@@ -69,8 +69,10 @@ an unreviewed repository is interpreted host-side.
 
 - Affected specs: `env-provider`, `policy`, `network` (the per-context
   requirement inherited from `add-egress-proxy`)
-- Affects the flox and devbox providers. The nix provider gains a provisioning
-  profile for consistency but its resolution path is unchanged.
+- Affects the flox and devenv providers, whose activation scripts now run in
+  provisioning. devbox and nix gain a provisioning profile for consistency,
+  but their resolution path is unchanged. Neither runs project shell, and
+  neither can resolve without the daemon (design.md P6, P6a).
 - Linux first. On macOS the same structure applies with the platform's sandbox
   backend, at whatever fidelity that backend allows; the degradation is reported
   rather than silent.

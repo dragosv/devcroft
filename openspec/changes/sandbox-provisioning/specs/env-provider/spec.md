@@ -186,5 +186,12 @@ be granted a writable store or a daemon connection as a fallback.
 - **WHEN** a provider offers a documented path that returns the environment
   without running project activation code (`nix print-dev-env --json`,
   `devbox shellenv --pure`)
-- **THEN** that path is used, inside the provisioning worker
+- **THEN** that path is used, as the trusted, host-side half of resolution,
+  never in the provisioning worker
 - **AND** the project's own activation script is never evaluated
+
+Measured for both providers named (design.md P6, P6a). Neither path can
+run without the daemon on a project it has not resolved, and the
+provisioning worker never holds the daemon. On a project it has
+resolved, devbox's answers from its own cache, so confining that run
+would confine a file read the host-side run had already done.

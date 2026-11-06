@@ -388,9 +388,9 @@ What this establishes:
   `--version`. A cold one connects to the daemon four times and runs
   `path-info`, `print-dev-env`, `profile list` and `profile install`. So
   "devbox qualifies confined" holds while the cache matches `devbox.lock`,
-  and a confined resolution after an edit is a trusted one again. Task 28
-  has to treat it that way, as P6 already says of an unmaterialized
-  environment.
+  and a confined resolution after an edit is a trusted one again. This is
+  why task 28 was struck: a confined run would only read back what the
+  host-side run had just written.
 - **A view must not leave `/nix/var/nix` writable.** In the first attempt
   the view's own empty root was writable, and nix chose a local store over
   the daemon (`Store URL: local`). It then failed on a store-path lock

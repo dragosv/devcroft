@@ -329,7 +329,20 @@
       the script reaches the provisioning host and not the runtime's, a
       session the reverse, the export reaches the session; with the script
       back in the keeper, the provisioning host is refused (502).
-- [ ] Route devbox through it, keeping the existing lockfile byte-comparison.
+- [x] ~~Route devbox through it, keeping the existing lockfile byte-comparison.~~
+      **Struck as superseded by measurement (2026-11-06, owner's decision).**
+      P6a: on a project not yet resolved, `shellenv --pure` holds the
+      daemon and the network, which the worker never does. On one already
+      resolved, it reads `.devbox/.nix-print-dev-env-cache`. Routing it
+      would therefore mean running it host-side, then confining a second
+      run that only reads back what the first wrote. devbox runs no
+      project shell either way (`init_hook` is captured as data and runs
+      in the sandbox). The env-provider scenario "Hook-free capture" said
+      "inside the provisioning worker" and now says host-side, matching
+      its neighbour "A provider evaluates repository-controlled
+      definitions", which already permitted exactly this for devbox and
+      nix. Nothing in the code changes. devbox's resolution was host-side
+      and is stated in `policy --render`'s `resolution:` entry (task 29).
       **Re-derived (2026-10-15), still open:** devbox has no activation script
       to route (`init_hook` never runs), so this is confining devbox's
       *resolution*, `devbox shellenv --pure`, which P6 measured working
