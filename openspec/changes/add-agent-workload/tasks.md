@@ -252,7 +252,7 @@ first so the fan-out fix is not gated on the tooling design.
 - [ ] 6.2 Auth test, both shapes: an env-var key, and a single-file
       credential. Skip honestly rather than faking a token if no
       credential is available in the test environment
-- [ ] 6.3 Re-run the probe from proposal.md's Why and record the new
+- [x] 6.3 Re-run the probe from proposal.md's Why and record the new
       result in the change — `node` present, credential readable — so the
       before/after is evidence, not assertion
       **Interim probe (2026-10-18), before any of this change's code**: a
@@ -305,6 +305,27 @@ first so the fan-out fix is not gated on the tooling design.
       `pid-namespace`): Claude Code 2.1.302 runs in an `up` sandbox and
       `claude -p` reaches the API. `tests/agent_runtime_env.rs` covers 1 and 2 through `up`;
       each fails with its fix removed.
+      **Re-run with this change's code (2026-11-06), the after half.** The
+      project was a devenv one whose committed files name no agent:
+      `ripgrep` and `jq`, with `network.default = "deny"` and only
+      `api.anthropic.com` allowed. The agent came from a user tooling layer
+      in `XDG_CONFIG_HOME`'s `config.toml` (`[tools] path`, the
+      `devenv-claude-sample` environment). The key was a dummy, delivered
+      by `[credentials] env = ["ANTHROPIC_API_KEY"]`, not by the project's
+      `forward`. `up` printed one line for the layer and one for the
+      credential, with no workaround anywhere. Inside: `claude` resolved
+      to the layer's store path (2.1.293). `sh` and `SHELL` were closure
+      paths. `SSL_CERT_FILE` named a readable bundle. `/proc` was the
+      sandbox's own (pid 1 is devcroft, 5 pids visible). The key was
+      present. `claude -p` reached the API, and the API refused the key
+      (`Invalid API key`). Before → after, per stop: the CA bundle,
+      `sh`, `/proc` and the credential route all work with nothing granted
+      by hand, and the agent comes from a declared, locked environment
+      instead of `npm install` inside the sandbox. **`node` is not on
+      `PATH`, and does not need to be:** the nixpkgs package carries its
+      own runtime, so the probe's "`node` present" now reads "the agent
+      present". **Still unmeasured:** the file-shaped credential (4.0,
+      6.2), and a key the API accepts.
 
 ## 6b. Denial feedback: the agent learns why it was refused
 
