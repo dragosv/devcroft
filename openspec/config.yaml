@@ -2,6 +2,23 @@ schema: spec-driven
 
 # Project context. Shown to AI when creating artifacts.
 context: |
+  ## Planning scope (2026-11-06)
+
+  The context below describes the existing native/process runtime, not proof
+  that the proposed 1.0 VM workflow is implemented. The owner requested an
+  adversarial review of the two 2026-11-05 root-level exports. Resulting changes:
+  evaluate-microvm-runtimes -> add-vm-project-runtime ->
+  add-private-local-environments -> gate-vm-fleet-on-verified-environments.
+  Their explicitly VM-scoped contracts reopen host-side materialization,
+  local reproducibility-at-entry and the no-VM-manager non-goal. They do not
+  strengthen the current process-tier guarantee or migrate existing state.
+  For VM planning, use their design/specs and the adversarial-review.md in
+  evaluate-microvm-runtimes; do not reapply the historical non-goals below as
+  a veto on the requested experiments. Pinned inputs are not trusted code.
+  The owner confirmed strict reconstructible definitions for VM fleet and an
+  initial Dev Containers subset of pinned image plus guest lifecycle; Dockerfile,
+  Features and Compose are separate future changes.
+
   ## Purpose
 
   devcroft provides isolated, reproducible development environments built on
