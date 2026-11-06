@@ -1299,3 +1299,34 @@ qualified. The trusted half itself turned out small. It writes the
 project's own directory, `/tmp` and a home that can be empty. It reads the
 store, `/etc/ssl` and the host's `/usr`, plus `/etc/nix` for nix.
 `design.md` P6a has the table.
+
+**Hooks before services, measured with a margin (2026-11-06,
+`fix-service-hook-ordering` group 2).** The fix moved the manifest's
+hooks into the keeper ahead of `start_services_if_requested`, and the
+activation script has since moved out of the keeper altogether, into
+`__provision`. The test makes each hook spend a second before writing a
+nanosecond timestamp, and the service writes one as it starts. Three runs
+gave 45 to 71 ms after `post_create`. With the keeper's two calls swapped,
+it read −974 ms. Two things about the first version of the test are worth
+keeping. The keeper log's whole-second stamps cannot show a margin like
+that at all. And the teardown check used `pgrep -f` on the service's
+command string, which after `exec` is no longer any process's command
+line, so it could never have reported a survivor. It also matched the
+shell that ran the test.
+
+**Inside its own user namespace, a session is root, and some services
+refuse to run as root (2026-11-06, found by `fix-service-hook-ordering`
+2.5).** Every sandbox with a network or PID namespace of its own maps
+`0 <uid> 1` (`fleet::mount`, `fleet::netns`, `fleet::init`). The mapping
+is needed for the setup itself: fleet's init helper keeps its
+capabilities across `execve` only as uid 0, and `SECBIT_NOROOT` takes them
+from what it starts. The session that inherits it reports `uid=0`. A
+devbox mariadb project then fails at `mariadbd`: "Please consult the
+Knowledge Base to find out how to run mysqld as root!". That applies to
+every `network.default = "deny"` sandbox on Linux, which is the default.
+postgres's `initdb` refuses root the same way, by its documentation, not
+measured here. A candidate fix, not built: once the mounts are done, a
+nested user namespace that maps the real uid back (`<uid> 0 1`) just
+before the command runs, in `up`'s pre-exec path and in the init helper.
+That gives back the host uid without needing capabilities after the
+exec.

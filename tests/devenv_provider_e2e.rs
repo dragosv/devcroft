@@ -745,3 +745,92 @@ fn up_states_what_the_activation_script_ran_under() {
         "an `up` that started nothing ran nothing"
     );
 }
+
+/// `fix-service-hook-ordering` tasks 2.1, 2.3, 2.6 and 2.7: every hook
+/// completes before the first service starts, observed from the times
+/// each one recorded itself rather than inferred from the service coming
+/// up, which a racing order also produces.
+///
+/// The hooks are slow to start on purpose, each sourcing a file and
+/// sleeping before it writes anything. A one-liner beat process-compose's
+/// boot by 9 ms before the fix, so a test built on one passed against the
+/// race too. With a second of work ahead of the timestamp, a service
+/// started in parallel stamps first by about that second.
+#[test]
+fn every_hook_completes_before_the_first_service_starts() {
+    // The service's `sleep` carries a duration no other process has, so
+    // the absence check below finds this service and nothing else: after
+    // `exec`, its command line is the `sleep` alone.
+    let token = format!("sleep 600.{}", std::process::id());
+    let Some(sandbox) = Sandbox::with_processes(
+        "hookorder",
+        &format!(
+            r#"  enterShell = ''
+    sleep 1
+    date +%s%N > activation-done
+  '';
+  processes.stamp.exec = "date +%s%N > service-started; exec {token}";"#
+        ),
+    ) else {
+        return;
+    };
+    let root = &sandbox.project_root;
+    std::fs::write(
+        root.join("slow-start.sh"),
+        "sleep 1\ndate +%s%N > post-create-done\n",
+    )
+    .unwrap();
+    let manifest = std::fs::read_to_string(root.join("devcroft.toml")).unwrap();
+    std::fs::write(
+        root.join("devcroft.toml"),
+        format!("{manifest}\n[hooks]\npost_create = \". ./slow-start.sh\"\n"),
+    )
+    .unwrap();
+
+    let out = sandbox.run(&["up"]);
+    assert!(out.status.success(), "{out:?}");
+
+    let started = root.join("service-started");
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    while !started.exists() && std::time::Instant::now() < deadline {
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+    let stamp = |name: &str| -> i128 {
+        let text = std::fs::read_to_string(root.join(name))
+            .unwrap_or_else(|e| panic!("{name} was never written: {e}"));
+        text.trim()
+            .parse()
+            .unwrap_or_else(|e| panic!("{name} holds {text:?}: {e}"))
+    };
+    let service = stamp("service-started");
+    for hook in ["activation-done", "post-create-done"] {
+        let margin_ms = (service - stamp(hook)) / 1_000_000;
+        // The margin, not only the sign (task 2.7): printed so a run
+        // records it, and asserted positive. Ordering is one sequence in
+        // the keeper, so what is left is process-compose's own start-up.
+        eprintln!("{hook}: the first service started {margin_ms} ms after it");
+        assert!(
+            margin_ms > 0,
+            "the service started {} ms before `{hook}` finished",
+            -margin_ms
+        );
+    }
+
+    // Task 2.3, by process absence: `down` leaves no service behind,
+    // hooks or not. Found first, so the absence is not that of a pattern
+    // that never matched.
+    let live = || {
+        Command::new("pgrep")
+            .args(["-f", &token])
+            .output()
+            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+            .unwrap_or_default()
+    };
+    assert!(!live().is_empty(), "the service must be found while up");
+    assert!(sandbox.run(&["down"]).status.success());
+    let survivors = live();
+    assert!(
+        survivors.is_empty(),
+        "no service process may outlive `down`, but these did: {survivors}"
+    );
+}
