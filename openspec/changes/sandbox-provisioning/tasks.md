@@ -405,8 +405,17 @@
       change's own subject. **Done (2026-10-12):** `[provisioning.network]
       allow`, its own proxy, `tests/provisioning_network.rs`; fleet agents
       too since 2026-10-15.
-- [ ] Cache sharing across agents: read-only share plus per-agent overlay.
+- [x] Cache sharing across agents: read-only share plus per-agent overlay.
       **Decide before fleet work**, not after.
+      **Decided (2026-11-06, owner): shared.** The shared layer is written once,
+      before any agent exists, by a fleet-level provisioning run. It is
+      immutable and versioned by environment fingerprint and script. Each
+      agent writes to its own layer, and nothing is promoted back. Where an
+      overlay cannot be had, the fallback is one copy per agent, warned,
+      never a shared writable directory. Rules and the overlay measurement
+      are in design.md, open question 3. Implementation is
+      `add-linux-agent-fleet` 4.x, with a requirement in its
+      `workspace-isolation` spec.
 - [x] macOS fidelity statement.
       **Written (2026-11-05), unmeasured:** the same file's macOS
       subsection states what the platform implies — refused rather than

@@ -621,11 +621,14 @@ to allowlisted destinations" and size the allowlist accordingly.
    networking, shared PIDs, or absent resource control — a host below the floor
    refuses fleet, consistent with D5's and D6's preflights.
 
-4. **Shared cache policy.** A shared writable package cache is a channel between
-   agents that are otherwise isolated. Decide whether read-only sharing plus
-   per-agent overlays is needed, or whether per-agent caches are affordable.
-   This interacts with `sandbox-provisioning`'s identical open question and
-   should be settled once, in whichever lands first.
+4. **~~Shared cache policy.~~ — DECIDED (2026-11-06, owner), in
+   `sandbox-provisioning` (design.md, open question 3), as this item asked:
+   shared read-only, plus a writable layer per agent.** The shared layer is
+   written once by a fleet-level provisioning run, before any agent exists.
+   It is immutable and versioned, and nothing is promoted into it from an
+   agent's layer. Where no overlay can be mounted, each agent gets a copy,
+   with a warning. The requirement is in `workspace-isolation`; the tasks
+   are 4.x.
 
 **Resolved since the previous version of this list.** The D1/D4 API shape is
 confirmed against the pinned library; pasta-vs-slirp4netns has a named baseline

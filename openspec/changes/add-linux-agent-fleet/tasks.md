@@ -907,6 +907,28 @@ were reproduced there, and each fix here has a mutant that fails its test.
       fetches; and a clone passes `fsck` after the source rewrites its history
       and prunes everything. Not settling the clones fails it.
 - [ ] Test: store GC during an active fleet retains all live paths.
+- [ ] Shared provisioning home (spec "Agents share a package cache
+      read-only…", decided 2026-11-06 in `sandbox-provisioning` design.md
+      open question 3). Run the activation script once per fleet, before
+      the first agent, into a home stored under the fleet's state and keyed
+      by environment fingerprint and script. Then each agent's home is an
+      overlay of that layer under the agent's own upper layer.
+      `Supervisor::provision` currently runs the script once per agent, and
+      becomes the fleet-level run.
+- [ ] Probe overlay availability by behaviour: mount, then write through
+      the overlay, where the agent's layer lives. Measured on this
+      devcontainer: a tmpfs upper works; on the overlayfs root the mount
+      fails; on the workspace filesystem (`fuseblk`) the mount succeeds
+      read-only, even with `userxattr`. Fall back to a per-agent copy, with
+      one warning; never fall back to a shared writable directory.
+- [ ] Remove a shared layer once no agent uses it. An agent keeps its
+      layer when the environment changes, so removal follows agent
+      lifetimes, not `up`.
+- [ ] Test: agent A's write, change or delete in its home is invisible
+      to agent B and leaves the shared layer unchanged. A fetch in the
+      activation script runs once for N agents. With the overlay forced
+      unavailable, the copy fallback warns and no directory is shared
+      writable.
 
 ## 5. Service ports
 

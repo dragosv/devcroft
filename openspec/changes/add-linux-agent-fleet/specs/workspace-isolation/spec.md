@@ -105,6 +105,57 @@ other agent's toolchain.
   all (Landlock does not mediate connecting to a unix socket), rather than
   that it is not yet supported
 
+### Requirement: Agents share a package cache read-only, each writing to its own layer
+
+Agents SHALL share one provisioning home read-only. Each agent's home SHALL be
+that shared layer under a writable layer of the agent's own. An agent SHALL
+NOT be able to write the shared layer, or read another agent's layer.
+
+The shared layer SHALL be written only by a fleet-level provisioning run that
+completes before any agent of the fleet starts. That run executes the
+project's activation script under the provisioning policy. The layer SHALL NOT
+change while an agent uses it. It is identified by the environment fingerprint
+and the activation script, and a change to either SHALL produce a new layer.
+Nothing SHALL be copied from an agent's layer into the shared one.
+
+Where an overlay cannot be mounted with a writable upper layer, each agent
+SHALL receive its own copy of the shared layer instead. `up` SHALL print one
+warning naming the reason. It SHALL NOT fall back to a shared writable
+directory.
+
+This is `sandbox-provisioning`'s open question 3, decided by the owner. The
+Nix store is out of its scope, because it is already shared read-only and only
+the daemon writes it. Caches inside the project are out of scope too, because
+each agent has its own clone.
+
+#### Scenario: One download serves every agent
+
+- **WHEN** a fleet of N agents starts on a project whose activation script
+  fetches dependencies into the home
+- **THEN** the fetch happens once, in the fleet-level provisioning run
+- **AND** every agent sees its result in its own home
+
+#### Scenario: An agent writes into its cache
+
+- **WHEN** an agent adds, changes or deletes a file in its home
+- **THEN** the change lands in that agent's own layer
+- **AND** no other agent sees it, and the shared layer is unchanged
+
+#### Scenario: The environment changes while agents run
+
+- **WHEN** the environment fingerprint or the activation script changes and a
+  new agent starts
+- **THEN** a new shared layer is built for it
+- **AND** agents already running keep the layer they started with
+
+#### Scenario: The host cannot give an agent a writable overlay
+
+- **WHEN** mounting an overlay and writing through it fails where the agent's
+  layer would live
+- **THEN** each agent receives its own copy of the shared layer
+- **AND** `up` prints one warning naming the reason
+- **AND** no directory is writable by more than one agent
+
 ### Requirement: A running agent's closure is kept from the garbage collector
 
 The host SHALL keep every store path an agent's environment reaches, directly

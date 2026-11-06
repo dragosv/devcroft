@@ -472,10 +472,46 @@ the runtime policy to fit provisioning, which is backwards.
    leaves egress open, which is confinement in name only for the fleet use case.
    Do not ship this change with a binary network on/off and call the problem
    solved.
-3. **Cache sharing across agents.** A shared package cache is the difference
-   between one download and N. But a shared writable cache is also a channel
-   between agents that are otherwise isolated. Read-only sharing plus a
-   per-agent overlay is the likely answer; needs a decision before fleet.
+3. **~~Cache sharing across agents.~~ — DECIDED (2026-11-06, owner): shared,
+   read-only, with a writable layer per agent.** A shared package cache is
+   the difference between one download and N. But a shared writable cache is
+   also a channel between agents that are otherwise isolated. The decision
+   keeps the first and closes the second, under these rules:
+
+   - **The shared layer is written once, before any agent exists.** A
+     fleet-level provisioning run writes it: the project's activation
+     script at the fleet's base, under the provisioning policy and
+     allowlist. That code is the code every agent would run at that point,
+     so it is not one agent writing for another. No agent ever writes it.
+   - **It is immutable once agents use it, and versioned.** Its key is the
+     environment fingerprint and the activation script. A change builds a
+     new layer next to the old one, and agents already running keep theirs.
+     An overlay's lower layer must not change under a mounted view. A layer
+     no agent uses is removed.
+   - **Each agent writes only to its own layer**, and no agent sees another's.
+     Nothing is ever promoted from an agent's layer into the shared one,
+     because promotion is the channel itself.
+   - **Scope: the provisioning home**, where language package managers keep
+     their caches (`~/.cargo`, `~/.npm`, the Go module cache, `~/.cache`).
+     It does not cover the Nix store, which is already shared read-only and
+     written only by the daemon (P2a). It does not cover caches inside the
+     project either (`node_modules`, `target/`), which live in each agent's
+     own clone.
+   - **Where an overlay cannot be had, each agent gets a copy, with one
+     warning.** The fallback is a copy of the shared layer per agent: still
+     one download, N copies on disk. It is never a shared writable directory.
+
+   **Measured on this devcontainer (kernel 7.2, rootless `unshare -rm`):**
+   an overlay works with its upper layer on tmpfs. With the upper on the
+   container's overlayfs root, the mount itself fails. With it on the
+   workspace filesystem (`fuseblk`, where agent directories live), the
+   mount succeeds but is read-only, even with `userxattr`. So availability
+   has to be probed by mounting and then writing, as fleet's other
+   preflights do, not inferred from the kernel version. A tmpfs upper is
+   not the default: it puts every cache write into the agent's memory
+   budget and loses it on restart, which a user would not expect from a
+   cache. Implementation belongs to `add-linux-agent-fleet`, whose
+   identical open question this settles (its design.md, open question 4).
 4. **macOS fidelity.** Seatbelt's ability to substitute a home directory and
    confine activation differs from Landlock's. Decide the honest degradation
    statement rather than claiming parity.
