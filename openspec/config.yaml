@@ -10,14 +10,23 @@ context: |
   evaluate-microvm-runtimes -> add-vm-project-runtime ->
   add-private-local-environments -> gate-vm-fleet-on-verified-environments.
   Their explicitly VM-scoped contracts reopen host-side materialization,
-  local reproducibility-at-entry and the no-VM-manager non-goal. They do not
+  local reproducibility-at-entry, the no-VM-manager non-goal, the one-tier and
+  not-a-security-boundary framing, "environment resolves once at up" and the
+  policy inputs, since project requests now meet user-owned grants. They do not
   strengthen the current process-tier guarantee or migrate existing state.
   For VM planning, use their design/specs and the adversarial-review.md in
   evaluate-microvm-runtimes; do not reapply the historical non-goals below as
-  a veto on the requested experiments. Pinned inputs are not trusted code.
+  a veto on the requested experiments. That waiver covers experiments, not
+  adoption: remove-gvisor-backend's backend criteria still apply, and a no-go
+  report removes this section. Pinned inputs are not trusted code.
   The owner confirmed strict reconstructible definitions for VM fleet and an
   initial Dev Containers subset of pinned image plus guest lifecycle; Dockerfile,
   Features and Compose are separate future changes.
+  Applied from the second review at the owner's request, not individually
+  confirmed: native execution needs a user-owned per-project grant, untrusted
+  projects use a terminal or guest-served editor with Remote-SSH reserved for
+  trusted ones, and fleet admission rests on environment evidence from a reference
+  revision. The base package mechanism is open, constrained to hash-pinned inputs.
 
   ## Purpose
 

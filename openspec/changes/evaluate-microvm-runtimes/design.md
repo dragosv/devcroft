@@ -4,7 +4,8 @@ The later [local-to-fleet export](../../../local-to-fleet-workflow-2026-11-05.md
 extends the [microVM exploration](../../../devcroft-1.0-microvm-exploration-2026-11-05.md):
 both closure-backed and interactively adaptable Linux environments matter.
 Neither export contains runtime evidence. Upstream API descriptions are input
-hypotheses, not the results of this change.
+hypotheses, not the results of this change. Some were re-read at the pins on
+2026-11-06 (adversarial review); reading code is not a result either.
 
 ## Goals / Non-Goals
 
@@ -28,17 +29,28 @@ Never silently substitute stable libkrun 1.x or the hvi version used by hull.
 
 Rows: macOS ARM64, Linux ARM64 and Linux x86-64, each on real compatible
 hardware. Unavailable hardware is `not-run`, never a pass or inferred support.
-macOS Intel, emulation and nested virtualization are outside the experiment.
+macOS Intel and emulation are outside the experiment. Nested virtualization does
+not qualify a bare-metal row, but fleet hosts are often cloud VMs, so it is run
+where a host exists and reported under its own label. A missing nested row is
+`not-run`, not "unsupported".
 Keep CPU/RAM allocations and artifact hashes equal within each host row;
 cross-host absolute measurements are not an apples-to-apples ranking.
+
+Name where each row's regressions will run. A row the project cannot rerun, on CI
+or on a named machine, cannot become a supported row later. On a supported row a
+required VM test fails when it cannot run, because a skip reads as a pass.
 
 ### E2 — Minimal transport before the complete workload
 
 Stage A boots a common kernel/initramfs, raw immutable runtime disk and private
 state disk. Check READY, command I/O and exit, half-close, bounded timeouts,
 cold restart and read-only enforcement. No NIC, TSI or general host socket
-passthrough. hvi's reported host-initiated bridge may need a bounded reverse
-stream protocol; bidirectional application traffic is a result to demonstrate.
+passthrough. hvi's `agent_sock` is host-initiated on fixed port 1024 at the pin,
+so control, SSH and egress share one stream unless a second path is demonstrated.
+That multiplexer and its reverse streams are hvi adapter code: count them as cost
+and probe them as a host parser. Bidirectional application traffic is a result to
+demonstrate. hvi accepts at most four disks; record how runtime, closure, tooling
+and state fit, and what a writable base adds.
 
 Stage B adds the real keeper, SSH exec/shell/PTY/resize/signals, SFTP and a
 guest-loopback forward. Use a pinned fixture with a real build, many small files,
@@ -46,17 +58,34 @@ Postgres or Redis readiness and persistent data. Run two instances on the same
 guest service port. An agent reaching a dummy-key API rejection proves only
 transport/TLS; a completed agent task is a separate test.
 
+Stage B also connects real clients, because a private workspace has no host view:
+a terminal SSH client and a guest-served editor over a local forward, which are
+the untrusted-project paths, and VS Code Remote-SSH as a separately labelled
+trusted-project row (`add-vm-project-runtime` R8). A closure guest may lack the
+FHS layout a prebuilt editor server expects; if so, that is a result to record,
+not a fixture to change quietly.
+
 Stage C uses a versioned writable-base fixture: install a native dependency in
-the guest, build/test, restart, then reconstruct from its saved recipe in a
-fresh VM. This prevents optimizing for an immutable demo while missing local
-adoption. A Nix flake is the initial closure fixture, not a claim that all
-providers have qualified for Linux target resolution.
+the guest through a setup window, build/test, restart, then reconstruct from its
+saved recipe in a fresh VM. The recipe pins that dependency by content hash and
+reconstruction follows the fetch and offline stages of
+`gate-vm-fleet-on-verified-environments` F2, so a floating input fails here too.
+The fixture names the package mechanism it used; that does not choose the
+product's, which stays open in `add-private-local-environments`. This prevents
+optimizing for an immutable demo while missing local adoption. A Nix flake is the
+initial closure fixture, not a claim that all providers have qualified for Linux
+target resolution.
 
 ### E3 — Confinement is a gate, not a benchmark variant
 
 Trace resource opening, thread creation, restriction and first vCPU execution.
-Verify the exports' warning that libkrun `build()` may start vCPUs; a restriction
-applied only before `run()` is not accepted without contrary pinned evidence.
+At the libkrun pin, on Linux, `VmmBuilder::build()` reaches `Vmm::start_vcpus`,
+which sends `VcpuEvent::Resume`, and `run()` only loops the event manager. A
+restriction applied between `build()` and `run()` is therefore too late, whatever
+`docs/vm-lifecycle.md` says at the same pin. On macOS `resume_vcpus` is a no-op, so
+the start point there is read from `start_threaded` and traced, not assumed. hvi's
+documents do not place the first guest instruction relative to its confinement
+either, so it gets the same trace.
 For hvi/macOS begin with its own confinement; do not stack a second Seatbelt
 initialization. Judge effective authority, including inherited descriptors,
 not use of the same library name on both adapters.
@@ -74,7 +103,8 @@ excluded from the qualifying comparison.
 ### E4 — Measure the entire lifecycle
 
 Use 1, 4 and 8 successful instances; record launch-to-READY and project-ready,
-first materialization and cache reuse, build time, CPU idle, physical/logical
+first materialization and cache reuse, source import per instance, per-agent
+setup, one clean verification run, build time, CPU idle, physical/logical
 storage, peak host memory and memory after build/idle. Include all helpers and
 proxy processes, plus builder overhead separately. Report controlled
 allocate/touch/free and real-build recovery separately. Do not sum RSS as PSS.
@@ -89,16 +119,32 @@ bias. Resource exhaustion at 8 is an outcome, not a row to hide.
 Align disk flush/durability guarantees. The common kernel includes page reporting
 so libkrun may exercise it; absence of an equivalent hvi device is recorded,
 not artificially concealed. Account for image duplication across two overlapping
-environments as well as reuse of one image by identical instances.
+environments as well as reuse of one image by identical instances, and for the
+per-project cache namespaces of `add-vm-project-runtime` R3, which forbid reuse
+of preparation output between projects.
 
 ### E5 — Selection has an explicit no-go outcome
 
 Rank correctness and isolation first, then post-build density, maintenance and
 startup/I/O. Publish per-row passes, failures, skipped tests, patches, unsupported
 features and costs. A conditional platform-specific recommendation is allowed;
-an unmeasured platform cannot inherit it. Hard product performance thresholds
-and release OS support need owner acceptance once measurements exist. Their
-absence prevents a release decision, not collection of useful evidence.
+an unmeasured platform cannot inherit it.
+
+The owner records numeric no-go thresholds before density collection starts:
+memory per instance after build, cold preparation, per-agent launch and storage
+per environment. Stages A and B may run without them; task 4.1 does not. A
+threshold changed after results exist keeps its original value in the report,
+with the reason, so a result cannot quietly move its own bar. Release OS support
+is decided with the same evidence.
+
+Report every candidate against the five criteria `remove-gvisor-backend` recorded:
+composition with the sandboxing core, what fleet needs, real toolchains, a
+boundary its own authors will call one, and Rust library access. The fourth is
+not a formality. hvi says it assumes a hostile guest and has had no external
+audit; libkrun's security model makes no such claim and hands confinement to the
+integrator. An unmet criterion stays visible with the owner's decision on it.
+Adoption also revisits the libkrun entry in `docs/decisions.md`, whose revisit
+condition this plan meets.
 
 ## Risks / Trade-offs
 
@@ -122,5 +168,6 @@ runtime implementation. A no-go leaves the native runtime intact.
 Empirical: libkrun pre-vCPU confinement, hvi reverse transport, guest memory
 recovery, provider profile relocation and host suspend recovery. These are
 tasks to measure, not questions the owner can answer from preference.
-Release decisions: target hardware budget, minimum OS versions and numerical
-performance SLOs. Do not invent them to declare an experiment a winner.
+Owner decisions: target hardware budget, minimum OS versions and the numeric
+thresholds of E5. Thresholds are set before density collection and are never
+derived from the results to declare an experiment a winner.

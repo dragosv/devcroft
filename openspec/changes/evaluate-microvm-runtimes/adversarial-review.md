@@ -90,17 +90,72 @@ Brokerul de credențiale, snapshotul live, checkoutul host read-write, clonarea
 direct din URL, orchestrarea remote și paritatea tuturor providerilor rămân
 extensii separate. Ele nu sunt promise indirect de aceste specificații.
 
-Catalogul inițial de baze, sintaxa CLI finală, pragurile de performanță și
-versiunile OS de release trebuie alese înainte de release; nu blochează
-specificarea proprietăților și experimentelor. Nu există date pentru alegerea
-VMM-ului în acest review.
+Catalogul inițial de baze, sintaxa CLI finală și versiunile OS de release trebuie
+alese înainte de release; nu blochează specificarea proprietăților și
+experimentelor. Pragurile numerice se fixează înainte de colectarea densității
+(a doua trecere, mai jos). Nu există date pentru alegerea VMM-ului în acest review.
+
+## A doua trecere: review al specificațiilor
+
+A doua trecere, tot din 2026-11-06, a contestat specificațiile rezultate din
+prima, față de cod, planurile existente și sursele upstream fixate. Nici ea nu
+include boot sau benchmark. Înlocuiește rândurile „Verificare o dată, apoi orice
+branch” și „Suport Dev Containers este o funcție mică” din tabelul de mai sus.
+
+| Contraexemplu | Corecție | Destinație |
+| --- | --- | --- |
+| Un `devcroft.toml` ostil trimite `up` pe calea nativă, cu rezolvare pe host și credențiale | Runtime-ul e decizia utilizatorului; nativ cere grant per proiect | `add-vm-project-runtime` R7 |
+| Un remote compromis execută cod local prin Remote-SSH, pe setările implicite | Revendicarea pentru cod neîncrezut acoperă terminalul și editorul servit din guest | R8, R1 |
+| `apt install` dintr-o sesiune nu poate funcționa: keeper-ul e restricționat, iar R5 era într-un singur sens | Fereastră de setup operată de host; guest-ul e un singur domeniu de încredere după root | R5, L3 |
+| Un PR cu același lockfile otrăvește artefactul reutilizat de `main` | Intrări de pregătire declarate, în hash; cache separat pe proiect | R3, F3 |
+| Fleet-ul e refuzat tocmai pentru sarcina „repară testul roșu” | Dovada mediului vine de pe o revizie de referință; verificările per sursă doar raportează | F3, F4 |
+| `curl .../latest` trece prin CONNECT, iar „strict” nu are ce detecta | Etapă de fetch cu hash-uri, apoi build cu rețeaua tăiată de host | F1, F2 |
+| `fetch` din clona agentului ar rula Git pe host peste metadate guest | Livrare ca serie de commituri în staging, per agent | F5, L2 |
+| `devcontainers/rust:1` are `capAdd` în metadata, deci profilul refuza imaginile oficiale | Trei clase de câmpuri; refuz doar pentru autoritate pe host | L5 |
+| Fără granturi, intersecția din R4 e goală și `pip install` eșuează | Profil de explorare versionat și refuzuri raportate | R4 |
+| `.gitignore`-ul repo-ului decidea dacă `.env` intră în VM | Fișierele neurmărite stau afară implicit; istoricul e cel din HEAD | L2 |
+| Exportul repeta munca, nu exista re-import, `rm` ștergea singura copie | Refresh, export care avansează, avertizare despre muncă neexportată | L2, L6 |
+| Pragurile se stabileau după rezultate, contrar exportului §15.7 | Praguri înregistrate înainte de colectarea densității | E5 |
+
+Corecții mai mici sunt în aceleași documente: cine e controllerul, identitatea
+instanței derivată din canal, straturile de eroare, recalificarea providerilor
+pentru Linux, obligațiile de distribuție (R9) și planurile în curs de reconciliat.
+
+Trei poziții sunt recomandări ale review-ului, aplicate când proprietarul a cerut
+corecțiile, fără confirmare individuală:
+
+- nativul cere un grant explicit per proiect;
+- „neîncrezut” înseamnă terminal sau editor servit din guest, iar Remote-SSH e
+  pentru proiecte marcate de încredere;
+- admiterea în fleet se bazează pe dovada mediului de pe o revizie de referință,
+  iar verificările per sursă blochează numai eșecurile de mediu.
+
+Rămâne deschis mecanismul prin care o bază instalează pachete de sistem. Singura
+constrângere fixată: o rețetă trebuie să le poată fixa prin hash, altfel baza
+rămâne locală.
+
+Exportul citează trei documente care nu există nici în `git log --all`:
+`firecracker-vs-libkrun.md`, `libkrun-spike-strategy.md` și
+`microsandbox-investigation.md`. Nu pot fi reconciliate până nu sunt găsite.
 
 ## Limitele verificării surselor
 
-Commiturile upstream din export au fost păstrate ca puncte de pornire pentru
-spike. Accesarea linkurilor GitHub fixate pentru hvi și libkrun prin browserul
-de cercetare a eșuat (`Cache miss`) în această sesiune; nu le declar reverificate.
-Referința Dev Containers publică nu a returnat conținut tehnic util. Prin urmare,
-afirmațiile despre API-uri rămân ipoteze atribuite exporturilor, cu reverificare
-obligatorie în experiment. Cerințele de produs sunt decizii propuse, nu afirmații
-că acele API-uri le îndeplinesc deja.
+La prima trecere, linkurile GitHub fixate au eșuat (`Cache miss`). La a doua au
+funcționat, iar acestea sunt afirmațiile verificate la pinuri:
+
+- libkrun, Linux: `build()` ajunge la `start_vcpus`, care trimite `Resume`, iar
+  `run()` doar rulează bucla de evenimente. `docs/vm-lifecycle.md` spune contrariul.
+- libkrun, macOS: `resume_vcpus` nu face nimic, iar `start_threaded` nu a fost
+  citit, deci momentul pornirii rămâne nedeterminat.
+- libkrun, securitate: documentul nu revendică o graniță pentru cod neîncrezut și
+  cere confinarea VMM-ului de către integrator.
+- hvi: presupune guest ostil, nu are audit extern, acceptă maximum patru discuri,
+  iar `agent_sock` e inițiat de host, pe portul fix 1024. Sursa confinării nu a
+  fost citită, doar documentele.
+- VS Code Remote-SSH: avertismentul Microsoft și demonstrația Calif au fost citite
+  prin articolul Calif, nu direct din Marketplace.
+
+Celelalte afirmații despre API-uri rămân ipoteze atribuite exporturilor, cu
+reverificare obligatorie în experiment. Referința Dev Containers publică nu a
+returnat conținut tehnic util la prima trecere. Cerințele de produs sunt decizii
+propuse, nu afirmații că acele API-uri le îndeplinesc deja.

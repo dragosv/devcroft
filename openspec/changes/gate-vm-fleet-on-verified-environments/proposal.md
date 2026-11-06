@@ -2,19 +2,25 @@
 
 A working local disk, lockfile or image digest does not demonstrate that a fresh
 agent can reconstruct the project's environment. Fleet needs evidence tied to
-the exact definition and source context it will launch, without inheriting
-interactive state or another agent's credentials.
+the exact environment it will launch, without inheriting interactive state or
+another agent's credentials, and without refusing the ordinary task of fixing code
+that does not pass yet.
 
 ## What Changes
 
-- Require an explicit reconstructible definition, pinned recoverable inputs,
+- Require an explicit reconstructible definition, hash-pinned recoverable inputs,
   declared setup/services and a non-empty verification workload for VM fleet.
 - Reconstruct in a separate clean VM using only declared inputs and eligible
-  immutable caches; preserve the exploratory local instance.
-- Bind host-owned evidence to environment, source context, policy, tooling,
-  runtime compatibility and verification identity; invalidate changed inputs.
-- Recheck eligibility at launch and gate every agent on its own setup/readiness
-  for its exact source. Share immutable bases, never mutable service data.
+  immutable caches, with a fetch stage followed by a build stage the host keeps
+  offline; preserve the exploratory local instance.
+- Bind host-owned environment evidence to the environment identity and a reference
+  revision; invalidate it when environment inputs change, not on every commit.
+- Recheck eligibility at launch and run per-source setup and checks for every
+  agent. Environment-class failures stop that agent; project-class failures are
+  reported and the task still starts. Share immutable bases, never mutable
+  service data.
+- Deliver each agent's work as a staged commit series; nothing on the host fetches
+  from a guest clone.
 - Keep snapshot continuity, filesystem identity and verified reconstruction as
   distinct claims. A digest-only image is local-usable but insufficient for
   this gate, as confirmed by the user on 2026-11-06.
@@ -27,13 +33,15 @@ interactive state or another agent's credentials.
 ### New Capabilities
 
 - `verified-fleet-environment`: reconstruction evidence, identity and staleness,
-  transactional admission and per-agent startup checks.
+  transactional admission, per-agent startup checks and result delivery.
 
 ### Modified Capabilities
 
 None for the current native fleet. The existing `agent-supervisor` and
 `workspace-isolation` plans must be reconciled when adding VM dispatch; their
-shared host Git mirror is not inherited as a VM authorization mechanism.
+shared host Git mirror is not inherited as a VM authorization mechanism, and
+integrating work by fetching from an agent's clone cannot run on the host against
+guest metadata.
 
 ## Impact
 
