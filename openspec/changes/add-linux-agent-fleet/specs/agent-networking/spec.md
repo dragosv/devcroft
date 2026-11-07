@@ -39,8 +39,12 @@ The enforcement is that nothing else is reachable.
 - **WHEN** a process inside an agent opens a socket to a destination other
   than its proxy relay or a declared listener port inside its own
   namespace, over TCP or UDP, to a loopback or a non-loopback address
-- **THEN** the attempt fails at the kernel level
-- **AND** it fails whether or not proxy environment variables were set
+- **THEN** nothing reaches beyond the agent's namespace: a TCP connect is
+  refused at the kernel level, and a UDP datagram to a non-loopback address
+  fails with no route
+- **AND** a UDP datagram to a loopback address is delivered, if at all,
+  only to the agent's own loopback, never to the host's
+- **AND** this holds whether or not proxy environment variables were set
 
 #### Scenario: Proxy is unavailable
 

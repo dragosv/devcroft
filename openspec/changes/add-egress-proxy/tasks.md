@@ -307,5 +307,28 @@ Proceed when that trade is wanted, not because the auth defect requires it.
       a real provisioning allowlist.
       **Done there (2026-10-12), archived 2026-11-06:** `[provisioning.network]
       allow`, with its own proxy (`tests/provisioning_network.rs`).
-- [ ] `add-linux-agent-fleet`: its `agent-networking` requirements assume this
+- [x] `add-linux-agent-fleet`: its `agent-networking` requirements assume this
       proxy exists; confirm they are satisfied rather than restated.
+      **Confirmed (2026-11-07), against the code and fleet's own tests,
+      which need sudo and skip on this devcontainer:**
+      - *Proxy-only, fails closed*: `each_agent_reaches_only_its_own_allowlist_through_its_own_proxy`
+        (`--noproxy '*'` gets `000`), and
+        `egress_is_network_allow_through_a_proxy_and_never_unfiltered`
+        (`allow` refused). A dead proxy leaves nothing, structurally: the
+        relay goes to its unix socket and the namespace has no route.
+      - *No route*: same test. The shipped topology has no helper, so the
+        two helper scenarios have nothing to refuse.
+      - *Identity from the endpoint*: one proxy per agent, on that agent's
+        socket. The request carries no field the proxy reads as identity,
+        and each log line's `agent=` comes from the proxy.
+      - *Host only through mappings*: the same test's destinations are
+        host listeners on 127.0.0.3/.4, unreachable around the proxy.
+      **Measured for the one scenario no test covers, direct UDP**, in an
+      `up` deny sandbox, which has the same route-less namespace: UDP to
+      1.1.1.1 and 8.8.8.8 got `Network is unreachable`, TCP to 1.1.1.1 got
+      `Permission denied` (Landlock), and there are 0 routes. UDP to
+      127.0.0.53 *was sent*, onto the sandbox's own loopback. The spec said
+      a direct socket "to a loopback … address" fails at the kernel level,
+      which is false for UDP. It now says what was measured: nothing leaves
+      the namespace, and a loopback datagram stays on the agent's own
+      loopback.
