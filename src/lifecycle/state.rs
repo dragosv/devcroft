@@ -338,6 +338,10 @@ pub struct Meta {
     /// created before the field existed is not re-run.
     #[serde(default)]
     pub post_create_pending: bool,
+    /// The user written into the sandbox's view (`fleet::mount::Identity`),
+    /// recorded so `policy --render` shows the rules it needed.
+    #[serde(default)]
+    pub identity: Option<crate::fleet::mount::Identity>,
     /// The absolute POSIX shell this `up` resolved out of the sandbox's
     /// own closure (`shell::resolve`).
     ///
@@ -873,6 +877,7 @@ mod tests {
             ran_activation_hook: false,
             activation_provisioned: false,
             post_create_pending: false,
+            identity: None,
             shell: None,
             trust_store: Vec::new(),
             own_procfs: false,
@@ -904,6 +909,7 @@ mod tests {
             ran_activation_hook: false,
             activation_provisioned: false,
             post_create_pending: false,
+            identity: None,
             shell: None,
             trust_store: Vec::new(),
             own_procfs: false,

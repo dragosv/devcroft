@@ -362,3 +362,134 @@ fn a_real_build_succeeds_from_the_devbox_closure_with_the_host_toolchain_denied(
         );
     }
 }
+
+/// `add-devbox-services` 2.3: a devbox `postgresql` project comes up, its
+/// service is reported ready only once the plugin's `pg_isready` probe
+/// passes, answers a query from inside, and is gone after `down`.
+///
+/// The data directory comes from `post_create`, since the plugin creates
+/// it in no hook (`devbox info postgresql`: "To initialize the database run
+/// `initdb`"), and the hook is idempotent because `down` clears state and
+/// the next `up` is a first create again. It checks `PG_VERSION`, not the
+/// directory: `devbox install` creates `$PGDATA` empty, so a directory test
+/// skipped `initdb` on the very first `up`. Three things this needed from
+/// devcroft, each measured failing before: a session that is not root
+/// (`initdb` refuses root), an `/etc/passwd` naming the user (`initdb`
+/// and `psql` look the uid up), and `/bin/sh` and `/etc/hosts` in the view
+/// (`initdb` runs `postgres -V` through `popen`, and postgres listens on
+/// `localhost`).
+#[test]
+fn a_postgres_service_comes_up_ready_and_answers_from_inside() {
+    let Some(sandbox) = Sandbox::new("pg", &["postgresql@latest", "process-compose@latest"], true)
+    else {
+        return;
+    };
+    let root = &sandbox.project_root;
+    let manifest = std::fs::read_to_string(root.join("devcroft.toml")).unwrap();
+    std::fs::write(
+        root.join("devcroft.toml"),
+        format!(
+            "{manifest}\n[network]\nports = [5432]\n\n\
+             [hooks]\npost_create = \"[ -f \\\"$PGDATA/PG_VERSION\\\" ] || initdb\"\n"
+        ),
+    )
+    .unwrap();
+
+    let up = sandbox.run(&["up"]);
+    assert!(up.status.success(), "{up:?}");
+
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+    let mut last = String::new();
+    while std::time::Instant::now() < deadline {
+        last = String::from_utf8_lossy(&sandbox.run(&["status"]).stdout).into_owned();
+        if last
+            .lines()
+            .any(|l| l.starts_with("service postgresql:") && l.ends_with(", ready"))
+        {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(500));
+    }
+    assert!(
+        last.lines()
+            .any(|l| l.starts_with("service postgresql:") && l.ends_with(", ready")),
+        "postgres never reported ready:\n{last}\nlogs:\n{}",
+        String::from_utf8_lossy(&sandbox.run(&["logs"]).stdout)
+    );
+
+    let query = sandbox.run(&[
+        "exec",
+        "--",
+        "sh",
+        "-c",
+        "psql -h \"$PGHOST\" -d postgres -Atc 'select 40 + 2'",
+    ]);
+    assert_eq!(
+        String::from_utf8_lossy(&query.stdout).trim(),
+        "42",
+        "{query:?}"
+    );
+
+    let pgdata = root.join(".devbox/virtenv/postgresql/data");
+    assert!(sandbox.run(&["down"]).status.success());
+    let survivors = Command::new("pgrep")
+        .args([
+            "-f",
+            &format!("postgres -k {}", pgdata.parent().unwrap().display()),
+        ])
+        .output()
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        .unwrap_or_default();
+    assert!(
+        survivors.is_empty(),
+        "postgres outlived `down`: {survivors}"
+    );
+}
+
+/// `add-devbox-services` 2.1, the sentinel from 0.1 as a test: across a
+/// whole `up` of a project whose plugins declare services, the project's
+/// `init_hook` never runs host-side. It does run, once, in the sandbox
+/// (2c.1), so it writes twice: a marker inside the project, which proves it
+/// ran, and a sentinel outside every grant, which only a host-side run could
+/// write. Resolution reads the plugins' service files and runs `shellenv`;
+/// neither may be what runs the hook.
+#[test]
+fn a_services_project_runs_its_init_hook_only_inside_the_sandbox() {
+    let Some(sandbox) = Sandbox::new(
+        "sentinel",
+        &["postgresql@latest", "process-compose@latest"],
+        true,
+    ) else {
+        return;
+    };
+    let root = &sandbox.project_root;
+    let sentinel = PathBuf::from(format!("/var/tmp/devcroft-sentinel-{}", std::process::id()));
+    let _ = std::fs::remove_file(&sentinel);
+    if std::fs::write(&sentinel, "").is_err() {
+        eprintln!("skipping: /var/tmp is not writable here, so the sentinel would prove nothing");
+        return;
+    }
+    std::fs::remove_file(&sentinel).unwrap();
+    std::fs::write(
+        root.join("devbox.json"),
+        format!(
+            r#"{{"packages": ["postgresql@latest", "process-compose@latest"],
+  "shell": {{"init_hook": ["echo ran >> inside-marker", "echo ran >> {} || true"]}}}}"#,
+            sentinel.display()
+        ),
+    )
+    .unwrap();
+
+    let up = sandbox.run(&["up"]);
+    let inside = std::fs::read_to_string(root.join("inside-marker")).unwrap_or_default();
+    let outside = sentinel.exists();
+    let _ = std::fs::remove_file(&sentinel);
+
+    assert!(up.status.success(), "{up:?}");
+    assert_eq!(
+        inside.lines().count(),
+        1,
+        "the hook must run exactly once, in the sandbox"
+    );
+    assert!(!outside, "the init_hook ran outside the sandbox");
+}

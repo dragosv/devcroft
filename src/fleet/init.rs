@@ -175,6 +175,9 @@ pub struct View {
     /// nowhere else. The spec's paths must already say `/workspace`.
     #[serde(default)]
     pub workspace: Option<PathBuf>,
+    /// The user written into the view (`mount::Identity`).
+    #[serde(default)]
+    pub identity: Option<super::mount::Identity>,
 }
 
 /// A running agent: its init helper, seen from the supervisor.
@@ -604,6 +607,7 @@ fn setup(signals: &libc::sigset_t) -> io::Result<Started> {
                 view.proxy_socket.as_deref(),
                 super::mount::ProcMount::Fresh,
                 view.workspace.as_deref(),
+                view.identity.as_ref(),
             )
             .map_err(|e| step("construct the view", e))?;
         }

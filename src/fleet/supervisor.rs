@@ -553,6 +553,9 @@ impl Supervisor {
                 root,
                 proxy_socket: relay.map(|_| proxy_socket.clone()),
                 workspace: Some(mounted.clone()),
+                // Not yet for agents (add-linux-agent-fleet task): `up`'s
+                // sandboxes get one, fleet's tests need sudo to verify it.
+                identity: None,
             })
         } else {
             None
@@ -722,6 +725,7 @@ impl Supervisor {
                         .unwrap_or(&launch.workspace)
                         .clone(),
                 ),
+                identity: None,
             })
         } else {
             None

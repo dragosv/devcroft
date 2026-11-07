@@ -284,3 +284,109 @@ fn a_session_is_the_users_own_uid_not_root() {
     let made = made.expect("the session's file must exist on the host");
     assert_eq!((made.uid(), made.gid()), (uid, gid));
 }
+
+/// The view names its user (`fleet::mount::Identity`): an `/etc/passwd`
+/// with the user's own uid, the sandbox's home and devcroft's shell; an
+/// `/etc/hosts` resolving `localhost`; `/bin/sh` runnable. Each one is a
+/// rule with origin `identity` in the policy artifact. A path the manifest
+/// grants itself is the host's, not written: here `/etc/hosts`.
+#[test]
+fn the_view_names_its_user_and_a_granted_path_stays_the_hosts() {
+    if !devcroft::policy::backend_supported() {
+        eprintln!("skipping: this host has no usable Landlock/Seatbelt support");
+        return;
+    }
+    let exe = Path::new(env!("CARGO_BIN_EXE_devcroft"));
+    if !matches!(devcroft::fleet::mount::probe_pid_namespace(exe), Ok(true)) {
+        eprintln!("skipping: this host cannot mount a fresh /proc in a user+PID namespace");
+        return;
+    }
+    let Some(store) = store_path_with_a_shell() else {
+        eprintln!("skipping: no /nix/store path with a shell on this host");
+        return;
+    };
+    // SAFETY: this process runs a single test.
+    unsafe { std::env::set_var("DEVCROFT_KEEPER_EXE", exe) };
+    // SAFETY: a plain getter.
+    let uid = unsafe { libc::getuid() };
+
+    let pid = std::process::id();
+    let project = PathBuf::from(format!("/tmp/dcupident{pid}"));
+    let _ = std::fs::remove_dir_all(&project);
+    std::fs::create_dir_all(&project).unwrap();
+    let project = project.canonicalize().unwrap();
+    let name = format!("e2eupident{pid}");
+    let (manifest, _) = parse(&format!(
+        "[sandbox]\nname = {name:?}\n\n[network]\ndefault = \"deny\"\n\n\
+         [filesystem]\nread = [\"/etc/hosts\"]\n"
+    ))
+    .unwrap();
+    let paths = StatePaths::new(&name).unwrap();
+    let _ = std::fs::remove_dir_all(&paths.root);
+
+    let outcome = up_with_provider(&manifest, &project, &UpOptions::default(), &Row { store });
+    let session = Command::new(exe)
+        .current_dir(&project)
+        .args([
+            "exec",
+            &name,
+            "--",
+            "sh",
+            "-c",
+            "while read -r l; do echo \"passwd $l\"; done < /etc/passwd; \
+             while read -r l; do echo \"hosts $l\"; done < /etc/hosts; \
+             /bin/sh -c 'echo bin-sh-ran'",
+        ])
+        .output()
+        .unwrap();
+    let artifact = std::fs::read_to_string(devcroft::services::policy_artifact(&project, &name))
+        .unwrap_or_default();
+    let log = std::fs::read_to_string(&paths.log).unwrap_or_default();
+    let downed = down(&name);
+    let _ = std::fs::remove_dir_all(&paths.root);
+    let _ = std::fs::remove_dir_all(&project);
+
+    assert_eq!(
+        outcome.unwrap_or_else(|e| panic!("up: {e}\nlog:\n{log}")),
+        UpOutcome::Started
+    );
+    downed.unwrap_or_else(|e| panic!("down: {e}"));
+    let out = String::from_utf8_lossy(&session.stdout);
+    assert!(
+        session.status.success(),
+        "{out}{}",
+        String::from_utf8_lossy(&session.stderr)
+    );
+    let home = devcroft::services::artifact_dir(&project, &name).join("home");
+    let user_line = out
+        .lines()
+        .find_map(|l| l.strip_prefix("passwd "))
+        .expect("an /etc/passwd line");
+    let fields: Vec<&str> = user_line.split(':').collect();
+    assert_eq!(fields[2], uid.to_string(), "{user_line}");
+    assert_eq!(fields[5], home.display().to_string(), "{user_line}");
+    assert!(fields[6].starts_with("/nix/store/"), "{user_line}");
+    assert!(out.contains("bin-sh-ran"), "{out}");
+    // Granted by the manifest, so the host's file, unchanged.
+    let host_hosts: Vec<String> = std::fs::read_to_string("/etc/hosts")
+        .unwrap()
+        .lines()
+        .map(|l| format!("hosts {l}"))
+        .collect();
+    let seen: Vec<&str> = out.lines().filter(|l| l.starts_with("hosts ")).collect();
+    assert_eq!(seen, host_hosts, "{out}");
+
+    let policy: devcroft::policy::CompiledPolicy = serde_json::from_str(&artifact).unwrap();
+    let identity: Vec<&str> = policy
+        .filesystem_read
+        .iter()
+        .filter(|g| g.origin == devcroft::policy::Origin::Identity)
+        .map(|g| g.value.as_str())
+        .collect();
+    assert!(identity.contains(&"/etc/passwd"), "{identity:?}");
+    assert!(identity.contains(&"/bin/sh"), "{identity:?}");
+    assert!(
+        !identity.contains(&"/etc/hosts"),
+        "a path the manifest granted is not written: {identity:?}"
+    );
+}

@@ -54,10 +54,15 @@
 
 ## 2. Tests
 
-- [ ] 2.1 The sentinel test from 0.1, as a test.
+- [x] 2.1 The sentinel test from 0.1, as a test.
+      `a_services_project_runs_its_init_hook_only_inside_the_sandbox`
+      (`tests/devbox_provider_e2e.rs`): across a full `up` of a
+      `postgresql` project, the `init_hook` writes its in-project marker
+      exactly once (the in-sandbox run, 2c.1) and never the sentinel in
+      `/var/tmp`, which only a host-side run could reach.
 - [x] 2.2 Unit: each surveyed field maps; an unknown field refuses naming
       plugin, process and field.
-- [ ] 2.3 E2E: a `postgresql` project comes up, the service is ready only
+- [x] 2.3 E2E: a `postgresql` project comes up, the service is ready only
       once its probe passes, and is reaped at `down`. **Blocked upstream,
       not by this change.** Measured: the declarations translate
       correctly — `is_daemon`, `shutdown.command`, `restart: always` and
@@ -69,6 +74,20 @@
       failure to devenv's postgres, which is the useful part — the same
       cause reached through a second provider. Re-run when the upstream
       ask lands.
+      **Done on Linux (2026-11-07)**:
+      `a_postgres_service_comes_up_ready_and_answers_from_inside`
+      (`tests/devbox_provider_e2e.rs`). The service is reported `, ready`
+      only once `pg_isready` passes, `select 40 + 2` answers from inside,
+      and nothing survives `down`. The `shmget` blocker above is macOS-only,
+      since Landlock does not mediate SysV IPC, and stays open there. On
+      Linux it took four fixes in devcroft, each measured failing first.
+      Sessions had been uid 0, which `initdb` refuses. The view had no
+      `/etc/passwd`, `/bin/sh` or `/etc/hosts`, now written by devcroft
+      with origin `identity`. A failed `post_create` was never run again.
+      And `up`'s `status` did not show readiness at all
+      (`docs/implementation-log.md`, 2026-11-06/07). `initdb` runs in
+      `post_create`, guarded by `PG_VERSION`, because `devbox install`
+      creates `$PGDATA` empty.
 
       Recorded separately, because a first reading called it an ordering
       bug and it is not: devbox's postgresql plugin creates the data
@@ -129,13 +148,21 @@
       the hook's spawn. Invisible for flox and devenv, whose services do
       not depend on hook output; fatal for a database whose datadir the
       hook creates. Not fixed.
-- [ ] 2c.3 `mysql_install_db` needs hostname resolution, which a
+- [x] 2c.3 `mysql_install_db` needs hostname resolution, which a
       deny-all network policy refuses. **Not a defect** — the sandbox
       working as designed. Needs a documented answer before the `mysql`
       plugin can be called supported. The sandbox working as designed,
       but it means the mariadb path needs a documented answer (the
       script's own `--force`, or a manifest that grants what it needs)
       before this plugin can be called supported.
+      **Answered by devcroft instead (2026-11-07).** "Hostname resolution"
+      was `/etc/hosts` missing from the view, not the network. Now that
+      the view has one (`localhost` and the hostname on loopback, origin
+      `identity`), the plugin's `setup_db.sh` installs the system tables,
+      and the same project answers `select current_user()` with only
+      `network.ports = [3306]` declared. Not a test: it needs the network
+      for the package, as postgres does, and postgres covers the
+      mechanism.
 
 ## 3. Documentation
 

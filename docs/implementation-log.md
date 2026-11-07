@@ -1368,3 +1368,34 @@ A recovery that finds it set runs `post_create` again. It defaults to
 the retry, and no second run once the hook has succeeded. It failed with
 the flag ignored. Fleet is unaffected, since every agent is new and always
 runs it.
+
+**The view held no user, no `/bin/sh` and no `localhost` (2026-11-07,
+found by `add-devbox-services` 2.3).** A devbox postgres project, with
+sessions no longer root, still failed three more times, each for
+something the mount view left out because nothing granted it. `initdb`
+and `psql` could not look up uid 1000 (`/etc/passwd`). process-compose
+had been logging `Failed get user` all along. `initdb` could not run
+`postgres -V`, because `popen()` starts `/bin/sh` by absolute path. And
+postgres could not listen on `localhost` (`/etc/hosts`), the same
+failure `mysql_install_db` had hit as "hostname resolution"
+(`add-devbox-services` 2c.3, recorded then as the sandbox working as
+designed). None of them was a host file worth granting. The host's
+`passwd` points tools at the real home, and its `/bin/sh` is a host
+binary, which `own-policy-baseline` keeps out. So devcroft writes them
+(`fleet::mount::Identity`): the user with their own ids, the sandbox's
+home and devcroft's resolved shell; `localhost` and the hostname on
+loopback; `/bin/sh` and `/usr/bin/env` as links into the closure. Each
+one is a read rule with origin `identity`, because Landlock binds rules
+to inodes and needs one for a file only the view contains. That also
+makes them visible in `policy --render`. A path the manifest grants is
+left as the host's. Measured afterwards: the postgres project comes up
+ready and answers a query (`a_postgres_service_comes_up_ready_and_answers_from_inside`,
+which fails in 1.5 s with the identity turned off), and the mariadb
+project needs no grant beyond its port. Two further findings on the way.
+`up`'s `status` dropped readiness, which fleet's showed, so a postgres
+whose `pg_isready` had not passed read the same as one that had. It now
+says `, ready` / `, not ready`. And `devbox install` creates `$PGDATA`
+empty, so a `post_create` guarded by `[ -d "$PGDATA" ]` skips `initdb` on
+the first `up`. Fleet agents do not get the identity yet (their `View`
+passes `None`); that is an `add-linux-agent-fleet` task, because fleet's
+tests need sudo.

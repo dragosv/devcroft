@@ -1178,6 +1178,7 @@ fn uds_probe_main(args: &[String]) -> i32 {
             None,
             devcroft::fleet::mount::ProcMount::HostBind,
             None,
+            None,
         ) {
             eprintln!("devcroft __uds_probe: constructing view: {e}");
             return 2;
@@ -1661,6 +1662,7 @@ fn mount_view_probe_main(args: &[String]) -> i32 {
         &grants,
         proxy_socket.as_deref(),
         devcroft::fleet::mount::ProcMount::HostBind,
+        None,
         None,
     ) {
         eprintln!("constructing view: {e}");
@@ -2979,11 +2981,24 @@ fn print_status(s: &devcroft::lifecycle::SandboxStatus, provider: &str) {
                 // keeps reporting the last pid after a service dies, and
                 // printing it next to "failed" reads as though something
                 // is still there to inspect.
+                // Readiness as fleet's `ls` shows it, only for a service
+                // with a probe (`add-service-readiness`): without this an
+                // `up` sandbox reported a postgres whose `pg_isready` had
+                // not passed exactly as one that had.
+                let readiness = match svc.ready {
+                    Some(true) => ", ready",
+                    Some(false) => ", not ready",
+                    None => "",
+                };
                 match svc.pid {
                     Some(pid) if svc.health == devcroft::services::ServiceHealth::Running => {
-                        println!("service {}: {} pid={pid}", svc.name, svc.health.label())
+                        println!(
+                            "service {}: {} pid={pid}{readiness}",
+                            svc.name,
+                            svc.health.label()
+                        )
                     }
-                    _ => println!("service {}: {}", svc.name, svc.health.label()),
+                    _ => println!("service {}: {}{readiness}", svc.name, svc.health.label()),
                 }
             }
             // A supervisor that never came up, or died, is the failure
@@ -3980,6 +3995,10 @@ fn compile_with_provider_grants(
         compiled.with_own_procfs()
     } else {
         compiled
+    };
+    let compiled = match &meta.identity {
+        Some(identity) => compiled.with_identity(&identity.write),
+        None => compiled,
     };
     // Same live-only caveat as the provider grants just above: `compile`
     // alone has no way to know the proxy's port, since knowing it means

@@ -921,6 +921,14 @@ were reproduced there, and each fix here has a mutant that fails its test.
       fails; on the workspace filesystem (`fuseblk`) the mount succeeds
       read-only, even with `userxattr`. Fall back to a per-agent copy, with
       one warning; never fall back to a shared writable directory.
+- [ ] Give agents the view's identity (`fleet::mount::Identity`, 2026-11-07):
+      `/etc/passwd`, `/etc/group`, `/etc/hosts`, `/bin/sh`, `/usr/bin/env`,
+      each with a read rule of origin `identity`, which `up`'s sandboxes
+      have. Fleet's two `View`s pass `None` today, so an agent cannot look
+      itself up (`git` committer identity, `ssh`), run `popen()`, or resolve
+      `localhost`. The view code is shared and tested through `up`; the
+      supervisor needs to build the identity from the agent's home and its
+      resolved shell, and `fleet::project`'s plan needs `with_identity`.
 - [ ] Remove a shared layer once no agent uses it. An agent keeps its
       layer when the environment changes, so removal follows agent
       lifetimes, not `up`.

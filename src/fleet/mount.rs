@@ -226,6 +226,93 @@ pub fn make_propagation_private() -> io::Result<()> {
 /// layout stays out of the agent's view.
 pub const WORKSPACE: &str = "/workspace";
 
+/// Who the sandbox's user is, written into its view: an `/etc/passwd` and
+/// `/etc/group` naming only that user, an `/etc/hosts` naming `localhost`
+/// and the sandbox's hostname on its loopback, and `/bin/sh` (and
+/// `/usr/bin/env`, where the closure has one) pointing at devcroft's own
+/// resolved shell.
+///
+/// **Why the view needs them at all.** It holds only what is granted, and
+/// none of these is: so `getpwuid` failed for every program that asks who
+/// it runs as (`initdb`, `psql`, `ssh`, git's committer identity, and
+/// process-compose itself, which logged `Failed get user`), and `system()`,
+/// `popen()` and every `#!/usr/bin/env` script failed for the absolute
+/// path glibc and the kernel use, and nothing resolved `localhost`, so
+/// postgres could not listen and `mysql_install_db` could not resolve the
+/// hostname. `initdb` and postgres hit all three (measured, a devbox
+/// postgres project). **Why synthesized rather than the host's.** The
+/// host's `passwd` names the real home, where tools would then look
+/// instead of the sandbox's, and the host's `/bin/sh` is a host binary,
+/// which `own-policy-baseline` keeps out. These files expose nothing of
+/// the host but the user's name and ids, which every process already has.
+///
+/// Each path is a read rule with origin `identity`
+/// ([`crate::policy::CompiledPolicy::with_identity`]), so it is in
+/// `policy --render`, and Landlock, which binds rules to inodes, can let
+/// the keeper read what only the view contains. A path a grant already
+/// covers is left out of [`Identity::write`] by its caller, so a manifest that
+/// grants the host's `/etc/passwd` gets the host's.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct Identity {
+    pub user: String,
+    pub uid: u32,
+    pub gid: u32,
+    pub home: std::path::PathBuf,
+    pub shell: std::path::PathBuf,
+    /// An `env` from the closure, for `/usr/bin/env`.
+    pub env: Option<std::path::PathBuf>,
+    /// The name the sandbox sees as its hostname, for `/etc/hosts`.
+    #[serde(default)]
+    pub hostname: String,
+    /// The paths of the four above that this view writes; the rest a grant
+    /// already supplies.
+    pub write: Vec<std::path::PathBuf>,
+}
+
+impl Identity {
+    pub const PASSWD: &'static str = "/etc/passwd";
+    pub const GROUP: &'static str = "/etc/group";
+    pub const HOSTS: &'static str = "/etc/hosts";
+    pub const SH: &'static str = "/bin/sh";
+    pub const ENV: &'static str = "/usr/bin/env";
+
+    /// Every path this identity can supply, before any is left out.
+    pub fn candidates(&self) -> Vec<std::path::PathBuf> {
+        let mut paths = vec![Self::PASSWD, Self::GROUP, Self::HOSTS, Self::SH];
+        if self.env.is_some() {
+            paths.push(Self::ENV);
+        }
+        paths.into_iter().map(std::path::PathBuf::from).collect()
+    }
+
+    fn passwd(&self) -> String {
+        format!(
+            "{}:x:{}:{}::{}:{}\nnobody:x:65534:65534::/:{}\n",
+            self.user,
+            self.uid,
+            self.gid,
+            self.home.display(),
+            self.shell.display(),
+            self.shell.display(),
+        )
+    }
+
+    /// Loopback only: an `up` sandbox with a network namespace has its own,
+    /// and one without shares the host's, where these are the same names.
+    fn hosts(&self) -> String {
+        let names = if self.hostname.is_empty() || self.hostname == "localhost" {
+            "localhost".to_owned()
+        } else {
+            format!("localhost {}", self.hostname)
+        };
+        format!("127.0.0.1 {names}\n::1 {names}\n")
+    }
+
+    fn group(&self) -> String {
+        format!("{}:x:{}:\nnogroup:x:65534:\n", self.user, self.gid)
+    }
+}
+
 /// Which procfs [`construct_view`] puts at `/proc`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ProcMount {
@@ -286,8 +373,11 @@ pub fn construct_view(
     proxy_socket: Option<&std::path::Path>,
     proc: ProcMount,
     workspace: Option<&std::path::Path>,
+    identity: Option<&Identity>,
 ) -> io::Result<()> {
     let tmp_path = std::path::Path::new("/tmp");
+    let synthesized =
+        |p: &std::path::Path| identity.is_some_and(|i| i.write.iter().any(|w| w == p));
 
     mount_tmpfs(new_root)?;
 
@@ -372,6 +462,10 @@ pub fn construct_view(
             // see `setup_dev` for the kernel's reason.
             continue;
         }
+        if synthesized(&grant.path) {
+            // Written below, from `identity`: its rule is for that file.
+            continue;
+        }
         if grant.path == std::path::Path::new("/proc") {
             // Owned by the `proc` mount below. A sandbox's `/proc` grant
             // (`CompiledPolicy::with_own_procfs`) is for its *fresh* procfs;
@@ -404,6 +498,10 @@ pub fn construct_view(
     setup_dev(new_root).map_err(|e| ctx(e, "setting up /dev", new_root))?;
     setup_merged_usr_compat(new_root)
         .map_err(|e| ctx(e, "recreating merged-/usr symlinks", new_root))?;
+    if let Some(identity) = identity {
+        write_identity(new_root, identity)
+            .map_err(|e| ctx(e, "writing the sandbox user's identity", new_root))?;
+    }
 
     // M3: the sandbox's own proxy socket, granted here explicitly and
     // never through the generic `grants` loop above — the surrounding
@@ -899,6 +997,56 @@ fn setup_merged_usr_compat(new_root: &std::path::Path) -> io::Result<()> {
     Ok(())
 }
 
+/// [`Identity`]'s files in the view, before the pivot. After the
+/// merged-`/usr` symlinks, so `/bin/sh` lands where `/bin` points
+/// (`usr/bin` on a merged host).
+#[cfg(target_os = "linux")]
+fn write_identity(new_root: &std::path::Path, identity: &Identity) -> io::Result<()> {
+    for path in &identity.write {
+        let target = in_view(new_root, path)?;
+        if std::fs::symlink_metadata(&target).is_ok() {
+            continue;
+        }
+        if let Some(parent) = target.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        match path.to_str() {
+            Some(Identity::PASSWD) => std::fs::write(&target, identity.passwd())?,
+            Some(Identity::GROUP) => std::fs::write(&target, identity.group())?,
+            Some(Identity::HOSTS) => std::fs::write(&target, identity.hosts())?,
+            Some(Identity::SH) => std::os::unix::fs::symlink(&identity.shell, &target)?,
+            Some(Identity::ENV) => match &identity.env {
+                Some(env) => std::os::unix::fs::symlink(env, &target)?,
+                None => continue,
+            },
+            _ => {
+                return Err(io::Error::other(format!(
+                    "{} is not an identity path",
+                    path.display()
+                )));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// `path`, as it lands under `new_root`: a symlinked first component
+/// (`/bin -> usr/bin`) is followed within the view, never on the host.
+#[cfg(target_os = "linux")]
+fn in_view(new_root: &std::path::Path, path: &std::path::Path) -> io::Result<std::path::PathBuf> {
+    let relative = path.strip_prefix("/").map_err(io::Error::other)?;
+    let mut components = relative.components();
+    let Some(first) = components.next() else {
+        return Ok(new_root.to_path_buf());
+    };
+    let head = new_root.join(first);
+    let head = match std::fs::read_link(&head) {
+        Ok(target) => new_root.join(target.strip_prefix("/").unwrap_or(&target)),
+        Err(_) => head,
+    };
+    Ok(head.join(components.as_path()))
+}
+
 /// `pivot_root` into `new_root`, then detach the old root.
 ///
 /// `libc` has no safe wrapper for `pivot_root(2)` (unlike `mount`/
@@ -1055,6 +1203,7 @@ pub fn construct_view(
     _proxy_socket: Option<&std::path::Path>,
     _proc: ProcMount,
     _workspace: Option<&std::path::Path>,
+    _identity: Option<&Identity>,
 ) -> io::Result<()> {
     Err(io::Error::new(
         io::ErrorKind::Unsupported,

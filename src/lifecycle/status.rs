@@ -400,6 +400,7 @@ mod tests {
                     ran_activation_hook: false,
                     activation_provisioned: false,
                     post_create_pending: false,
+                    identity: None,
                     shell: None,
                     trust_store: Vec::new(),
                     own_procfs: false,

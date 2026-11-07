@@ -219,6 +219,11 @@ pub enum Origin {
     /// no one else's ([`CompiledPolicy::with_own_procfs`]). A fleet agent
     /// always; an `up` sandbox where the host allows (`add-up-pid-namespace`).
     PidNamespace,
+    /// A file only the sandbox's view contains, naming its user:
+    /// `/etc/passwd`, `/etc/group`, `/etc/hosts`, `/bin/sh`, `/usr/bin/env`
+    /// ([`CompiledPolicy::with_identity`], `fleet::mount::Identity`).
+    /// Written by devcroft, never bound from the host.
+    Identity,
     /// The store root of the user's tooling layer, read-only, tagged with the
     /// provider that resolved it (`crate::tooling`, `add-agent-workload`).
     /// Never from a manifest: the layer is the user's, not the project's.
@@ -251,6 +256,7 @@ impl<'de> serde::Deserialize<'de> for Origin {
             "fleet:clone" => Ok(Origin::FleetClone),
             "trust-store" => Ok(Origin::TrustStore),
             "pid-namespace" => Ok(Origin::PidNamespace),
+            "identity" => Ok(Origin::Identity),
             t => match (
                 t.strip_prefix("manifest:"),
                 t.strip_prefix("provider:"),
@@ -279,6 +285,7 @@ impl std::fmt::Display for Origin {
             Origin::FleetClone => write!(f, "fleet:clone"),
             Origin::TrustStore => write!(f, "trust-store"),
             Origin::PidNamespace => write!(f, "pid-namespace"),
+            Origin::Identity => write!(f, "identity"),
             Origin::Tools(provider) => write!(f, "tools:{provider}"),
         }
     }
@@ -536,6 +543,16 @@ impl CompiledPolicy {
     pub fn with_own_procfs(mut self) -> Self {
         self.filesystem_read
             .push(AnnotatedValue::new("/proc", Origin::PidNamespace));
+        self
+    }
+
+    /// The files `fleet::mount::Identity` writes into the view, read-only,
+    /// with origin `identity`: Landlock binds rules to inodes, so a file
+    /// only the view contains still needs one for the keeper to read it.
+    pub fn with_identity<P: AsRef<std::path::Path>>(mut self, paths: &[P]) -> Self {
+        self.filesystem_read.extend(paths.iter().map(|p| {
+            AnnotatedValue::new(p.as_ref().to_string_lossy().into_owned(), Origin::Identity)
+        }));
         self
     }
 

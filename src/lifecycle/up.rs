@@ -494,6 +494,8 @@ pub fn up_with_provider(
             activation_provisioned: false,
             // Carried forward: only a responsive keeper clears it.
             post_create_pending,
+            // Decided by `up_process`, which records it.
+            identity: None,
             shell: Some(shell.path.to_string_lossy().into_owned()),
             trust_store: trust_store.grants.clone(),
             // Decided by `up_process`, which records it.
@@ -856,6 +858,26 @@ fn up_process(
             .iter()
             .map(|a| (a.service.clone(), a.var.clone(), a.port)),
     );
+
+    // Who the sandbox's user is, in its view (`fleet::mount::Identity`):
+    // only where there is a view, and only for the paths no grant covers.
+    let identity = (cfg!(target_os = "linux") && mount_supported).then(|| {
+        sandbox_identity(
+            &compiled,
+            &resolution.env,
+            provider_grants,
+            shell,
+            &crate::services::artifact_dir(project_root, &manifest.sandbox.name).join("home"),
+        )
+    });
+    let compiled = match &identity {
+        Some(identity) => compiled.with_identity(&identity.write),
+        None => compiled,
+    };
+    if let Some(mut meta) = state::read_meta(&paths.meta)? {
+        meta.identity = identity.clone();
+        state::write_meta(&paths.meta, &meta)?;
+    }
 
     let plan = compiled.to_capability_plan();
     // Validated host-side, before anything is created — the keeper (task
@@ -1229,6 +1251,7 @@ fn up_process(
                 &mount_grants,
                 &script,
                 own_procfs,
+                identity.as_ref(),
             )?)
         }
         None => None,
@@ -1274,6 +1297,7 @@ fn up_process(
         &keeper_hooks,
         provisioned.as_ref(),
         own_procfs,
+        identity.as_ref(),
     )
     .map_err(|e| UpError::Keeper(e.to_string()))?;
     // Both fds must outlive this function for the child to inherit them
@@ -1731,6 +1755,7 @@ fn spawn_keeper(
     hooks: &[(&'static str, String)],
     provisioned: Option<&crate::keeper::EnvOverlay>,
     own_procfs: bool,
+    identity: Option<&crate::fleet::mount::Identity>,
 ) -> io::Result<libc::pid_t> {
     // The pivot-root scratch directory (`StatePaths::mount_root`'s own
     // doc) must exist and be empty before `pre_exec` runs — created here,
@@ -1866,6 +1891,7 @@ fn spawn_keeper(
         mount_grants,
         proxy_socket_for_view,
         project_root: project_root_owned,
+        identity: identity.cloned(),
     };
     if own_procfs {
         // The two listeners move to the helper's inherited range, so the
@@ -1930,6 +1956,7 @@ fn run_provisioning(
     mount_grants: &[policy::ResolvedGrant],
     script: &str,
     own_procfs: bool,
+    identity: Option<&crate::fleet::mount::Identity>,
 ) -> Result<crate::keeper::EnvOverlay, UpError> {
     let socket = paths.root.join("provision-proxy.sock");
     let proxy = if allow.is_empty() {
@@ -2015,6 +2042,7 @@ fn run_provisioning(
         mount_grants: mount_grants.to_vec(),
         proxy_socket_for_view: relay.as_ref().map(|(_, sock)| sock.clone()),
         project_root: project_root.to_path_buf(),
+        identity: identity.cloned(),
     };
     let status = if own_procfs {
         // It lands first in the helper's inherited range.
@@ -2145,6 +2173,7 @@ fn spawn_through_init(
             root: c.mount_root.clone(),
             proxy_socket: c.proxy_socket_for_view.clone(),
             workspace: None,
+            identity: c.identity.clone(),
         }),
         timeout_secs: None,
         host_network: !c.isolate_network,
@@ -2183,6 +2212,77 @@ fn host_name() -> String {
     String::from_utf8_lossy(&buf[..end]).into_owned()
 }
 
+/// The sandbox's user for its view: the host user's name and ids, the
+/// sandbox's own home and devcroft's resolved shell, and an `env` from the
+/// closure where the environment's `PATH` has one inside a provider grant
+/// (the guard `shell::resolve` uses: a provider's `PATH` ends in the
+/// host's directories). `write` leaves out any path a grant already
+/// covers, so a manifest granting the host's `/etc/passwd` gets that file.
+fn sandbox_identity(
+    compiled: &policy::CompiledPolicy,
+    env: &std::collections::BTreeMap<String, String>,
+    provider_grants: &[String],
+    shell: &crate::shell::ResolvedShell,
+    home: &Path,
+) -> crate::fleet::mount::Identity {
+    use crate::fleet::mount::Identity;
+    // SAFETY: plain getters.
+    let (uid, gid) = unsafe { (libc::getuid(), libc::getgid()) };
+    let user = host_user_name(uid).unwrap_or_else(|| "devcroft".to_owned());
+    let env_bin = env.get("PATH").and_then(|path| {
+        path.split(':')
+            .map(|dir| Path::new(dir).join("env"))
+            .find(|candidate| {
+                candidate.is_file()
+                    && provider_grants
+                        .iter()
+                        .any(|g| candidate.starts_with(Path::new(g)))
+            })
+    });
+    let mut identity = Identity {
+        user,
+        uid,
+        gid,
+        home: home.to_path_buf(),
+        shell: shell.path.clone(),
+        env: env_bin,
+        // An `up` sandbox sees the host's name (no UTS namespace of its own).
+        hostname: host_name(),
+        write: Vec::new(),
+    };
+    let granted = |p: &Path| {
+        compiled
+            .filesystem_read
+            .iter()
+            .chain(&compiled.filesystem_allow)
+            .any(|g| Path::new(&g.value) == p)
+    };
+    identity.write = identity
+        .candidates()
+        .into_iter()
+        .filter(|p| !granted(p))
+        .collect();
+    identity
+}
+
+/// The host's name for `uid`, read before any restriction, from the host's
+/// own `/etc/passwd` through libc.
+fn host_user_name(uid: libc::uid_t) -> Option<String> {
+    // SAFETY: `getpwuid` returns a pointer into static storage or null;
+    // the name is copied out before anything else can call it, and `up` is
+    // single-threaded here.
+    unsafe {
+        let pw = libc::getpwuid(uid);
+        if pw.is_null() || (*pw).pw_name.is_null() {
+            return None;
+        }
+        std::ffi::CStr::from_ptr((*pw).pw_name)
+            .to_str()
+            .ok()
+            .map(str::to_owned)
+    }
+}
+
 /// Where a sandboxed process `up` spawns is confined before it execs: its
 /// own mount namespace and view, and its network namespace, when the host
 /// has them (`spawn_keeper`'s comments give the order and why it matters).
@@ -2195,6 +2295,7 @@ struct Confinement {
     mount_grants: Vec<policy::ResolvedGrant>,
     proxy_socket_for_view: Option<PathBuf>,
     project_root: PathBuf,
+    identity: Option<crate::fleet::mount::Identity>,
 }
 
 fn confine_on_exec(cmd: &mut Command, c: Confinement) {
@@ -2205,6 +2306,7 @@ fn confine_on_exec(cmd: &mut Command, c: Confinement) {
         mount_grants,
         proxy_socket_for_view,
         project_root: project_root_owned,
+        identity,
     } = c;
     unsafe {
         cmd.pre_exec(move || {
@@ -2235,6 +2337,7 @@ fn confine_on_exec(cmd: &mut Command, c: Confinement) {
                     // host's anyway; see `ProcMount::HostBind`.
                     crate::fleet::mount::ProcMount::HostBind,
                     None,
+                    identity.as_ref(),
                 )?;
                 crate::fleet::mount::return_to_host_identity()?;
                 std::env::set_current_dir(&project_root_owned)?;

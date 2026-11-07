@@ -466,9 +466,11 @@ silently granting it.
 baseline compile byte-identically into `<state>/<name>/profile.json`. Every
 rule carries an origin: `manifest:<key>`, `provider:<name>`, or `baseline`
 (plus `allocated` for a chosen port, `trust-store` for the CA bundle the
-provider's environment names, `pid-namespace` for a procfs the sandbox owns, and
-`fleet:clone` for a fleet agent's
-clone root, neither of which a manifest wrote).
+provider's environment names, `pid-namespace` for a procfs the sandbox owns,
+`fleet:clone` for a fleet agent's clone root, `tools:<provider>` for the
+user's tooling layer, and `identity` for the `/etc/passwd`, `/etc/group`,
+`/etc/hosts`, `/bin/sh` and `/usr/bin/env` devcroft writes into the view
+(`fleet::mount::Identity`). None of these is written by a manifest).
 Nothing goes to the backend that cannot be shown via `policy --render`.
 Baseline denials always win, including devcroft's own data dir.
 
