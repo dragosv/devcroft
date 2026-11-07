@@ -143,8 +143,18 @@ What's left is an ordinary resident TCP proxy.)
       one platform the requirement was written for. Wired up in
       `cli_up` via `print_degraded_capabilities`; the macOS half stays
       unverifiable from this devcontainer, same caveat as the item below.
-- [ ] Replace any documentation claiming domain filtering works today, and any
+- [x] Replace any documentation claiming domain filtering works today, and any
       claiming exfiltration is prevented.
+      **Reconciled (2026-11-07).** The task predates the proxy, which made
+      the first half true. Checked across README and `docs/`:
+      `known-gaps.md`'s section "Domain filtering: enforced on Linux, and
+      now measured enforced on macOS too" and `decisions.md`'s superseded
+      note on "Cooperative network filtering" already state it. No
+      document claims exfiltration is prevented: `threat-model.md` and
+      `decisions.md` both say the policy constrains destinations, not
+      what is sent to them. The one stale line was CLAUDE.md's
+      limitations bullet, which still said "cooperative" and "no process
+      visibility separation". Corrected.
 - [ ] **Found while wiring `policy::degraded`, needs a macOS host to
       settle:** that module's existing claim ("macOS Seatbelt has no
       equivalent mandatory redirection") predates this change and was

@@ -618,6 +618,10 @@ mechanism exists — the decision should be **revisited, not defended**.
   rather than an ordering. `ready.notify` and `ready.timeout` stay
   refused: devcroft will not simulate systemd's READY protocol, and will
   not approximate a wall-clock deadline with attempt thresholds.
-- Known limitations are published, not hidden: no inter-sandbox process
-  visibility separation in MVP, cooperative/platform-dependent network
-  filtering, no cgroup resource limits.
+- Known limitations are published, not hidden (`docs/known-gaps.md`): on
+  macOS, and on a Linux host that cannot mount a fresh procfs, no
+  inter-sandbox process visibility separation (Linux otherwise has a PID
+  namespace per sandbox, `add-up-pid-namespace`); no cgroup resource
+  limits outside fleet; egress bounded to destinations, not content. Do
+  not describe domain filtering as cooperative: it is enforced on Linux
+  and was measured enforced on macOS (`add-egress-proxy`).
