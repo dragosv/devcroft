@@ -328,6 +328,16 @@ pub struct Meta {
     /// `up` can say what that reached rather than say nothing.
     #[serde(default)]
     pub activation_provisioned: bool,
+    /// `post_create` was handed to the keeper and has not been seen to
+    /// succeed. Set before the keeper starts, cleared once it answers, which
+    /// it does only after its hooks ran. A recovery that finds it set runs
+    /// `post_create` again: the create it belongs to never finished, so the
+    /// "once, after the first successful `up`" rule has not been met. It used
+    /// to be skipped, and the next `up` reported a healthy sandbox that its
+    /// own setup had never completed. Defaults to `false`, so a sandbox
+    /// created before the field existed is not re-run.
+    #[serde(default)]
+    pub post_create_pending: bool,
     /// The absolute POSIX shell this `up` resolved out of the sandbox's
     /// own closure (`shell::resolve`).
     ///
@@ -862,6 +872,7 @@ mod tests {
             declared_services: Vec::new(),
             ran_activation_hook: false,
             activation_provisioned: false,
+            post_create_pending: false,
             shell: None,
             trust_store: Vec::new(),
             own_procfs: false,
@@ -892,6 +903,7 @@ mod tests {
             declared_services: Vec::new(),
             ran_activation_hook: false,
             activation_provisioned: false,
+            post_create_pending: false,
             shell: None,
             trust_store: Vec::new(),
             own_procfs: false,

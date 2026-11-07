@@ -471,6 +471,9 @@ pub fn up_with_provider(
     }
     trust_store.rewrite(&mut resolution.env);
 
+    let post_create_pending = previous_meta
+        .as_ref()
+        .is_some_and(|m| m.post_create_pending);
     state::write_meta(
         &paths.meta,
         &state::Meta {
@@ -489,6 +492,8 @@ pub fn up_with_provider(
                 .collect(),
             ran_activation_hook: resolution.ran_activation_hook,
             activation_provisioned: false,
+            // Carried forward: only a responsive keeper clears it.
+            post_create_pending,
             shell: Some(shell.path.to_string_lossy().into_owned()),
             trust_store: trust_store.grants.clone(),
             // Decided by `up_process`, which records it.
@@ -1170,11 +1175,15 @@ fn up_process(
             keeper_hooks.push(("activation", script.clone()));
         }
         // Lifecycle spec: `post_create` runs once, after the *first*
-        // successful `up` or after `--recreate` — `Recovered` means state
-        // already existed (so it ran back when that was `Started`), and
-        // `AlreadyUp` returned above without spawning anything.
-        // `post_start` runs on every keeper start, so it always runs here.
-        if matches!(outcome, UpOutcome::Started | UpOutcome::Recreated)
+        // successful `up` or after `--recreate`. `Recovered` means state
+        // already existed, which implies it ran only if that earlier `up`
+        // got past it: `post_create_pending` says it did not (a failing
+        // hook, a keeper killed mid-hook). `AlreadyUp` returned above
+        // without spawning anything. `post_start` runs on every keeper
+        // start, so it always runs here.
+        let unfinished = matches!(outcome, UpOutcome::Recovered)
+            && state::read_meta(&paths.meta)?.is_some_and(|m| m.post_create_pending);
+        if (matches!(outcome, UpOutcome::Started | UpOutcome::Recreated) || unfinished)
             && let Some(cmd) = &manifest.hooks.post_create
         {
             keeper_hooks.push(("post_create", cmd.clone()));
@@ -1224,10 +1233,12 @@ fn up_process(
         }
         None => None,
     };
-    if provisioned.is_some()
+    let post_create_handed = keeper_hooks.iter().any(|(name, _)| *name == "post_create");
+    if (provisioned.is_some() || post_create_handed)
         && let Some(mut meta) = state::read_meta(&paths.meta)?
     {
-        meta.activation_provisioned = true;
+        meta.activation_provisioned |= provisioned.is_some();
+        meta.post_create_pending = post_create_handed;
         state::write_meta(&paths.meta, &meta)?;
     }
     if let Some(overlay) = &provisioned {
@@ -1283,6 +1294,11 @@ fn up_process(
             e.to_string()
         })
     })?;
+    // Responsive means its hooks succeeded: `post_create` is done.
+    if post_create_handed && let Some(mut meta) = state::read_meta(&paths.meta)? {
+        meta.post_create_pending = false;
+        state::write_meta(&paths.meta, &meta)?;
+    }
 
     // **And then wait for the supervisor's own socket, when there is one.**
     //

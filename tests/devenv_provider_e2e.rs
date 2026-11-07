@@ -834,3 +834,57 @@ fn every_hook_completes_before_the_first_service_starts() {
         "no service process may outlive `down`, but these did: {survivors}"
     );
 }
+
+/// A `post_create` that failed runs again on the next `up`. The rule is
+/// "once, after the first successful `up`", and recovery used to read any
+/// existing state as that success: the second `up` reported "recovered",
+/// exited 0, and the sandbox came up without its setup ever having
+/// completed. Measured on a devbox postgres project whose `initdb` hook
+/// failed. Once it has succeeded, it is not run again.
+#[test]
+fn a_failed_post_create_runs_again_on_the_next_up() {
+    let Some(sandbox) = Sandbox::new("pcretry", &[], "", true) else {
+        return;
+    };
+    let root = &sandbox.project_root;
+    let manifest = std::fs::read_to_string(root.join("devcroft.toml")).unwrap();
+    std::fs::write(
+        root.join("devcroft.toml"),
+        format!(
+            "{manifest}\n[hooks]\npost_create = \"test -f ready && echo >> post-create-ran\"\n"
+        ),
+    )
+    .unwrap();
+    let ran = || {
+        std::fs::read_to_string(root.join("post-create-ran"))
+            .map(|s| s.lines().count())
+            .unwrap_or(0)
+    };
+
+    let first = sandbox.run(&["up"]);
+    assert_eq!(first.status.code(), Some(5), "{first:?}");
+    assert_eq!(ran(), 0);
+
+    std::fs::write(root.join("ready"), "").unwrap();
+    let second = sandbox.run(&["up"]);
+    assert!(second.status.success(), "{second:?}");
+    assert_eq!(ran(), 1, "the failed post_create must run on the next up");
+
+    // Done now: a keeper lost and recovered does not run it again.
+    let pidfile = devcroft::lifecycle::StatePaths::new(&sandbox.name)
+        .unwrap()
+        .pidfile;
+    let pid: i32 = std::fs::read_to_string(pidfile)
+        .ok()
+        .and_then(|s| s.split_whitespace().next()?.parse().ok())
+        .expect("a pidfile for the running keeper");
+    unsafe { libc::kill(pid, libc::SIGKILL) };
+    std::thread::sleep(std::time::Duration::from_millis(300));
+    let third = sandbox.run(&["up"]);
+    assert!(third.status.success(), "{third:?}");
+    assert!(
+        String::from_utf8_lossy(&third.stdout).contains("recovered"),
+        "{third:?}"
+    );
+    assert_eq!(ran(), 1, "a post_create that succeeded must not run again");
+}

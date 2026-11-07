@@ -1351,3 +1351,20 @@ decides. Worth knowing: with `cache.nixos.org` in `[provisioning.network]
 allow`, such a hook could realise packages into that private chroot
 store. That is not daemon authority and not host-global, since it is the
 sandbox's own home, but it is a slow way round declaring them.
+
+**A failed `post_create` was never run again (2026-11-07, found by
+`add-devbox-services` 2.3).** The rule is "once, after the first
+successful `up`", and `up` implemented it as "only when the outcome is
+`Started` or `Recreated`". The reasoning, written beside it, was that a
+`Recovered` sandbox had been `Started` before, so the hook must have run.
+It had run, and failed. A devbox postgres project whose `post_create =
+"initdb"` failed exited 5. The next `up` printed "recovered from stale
+state", exited 0, and reported a healthy keeper whose setup had never
+completed. `Meta.post_create_pending` is now set before the keeper starts
+and cleared once it answers, which it does only after its hooks succeed.
+A recovery that finds it set runs `post_create` again. It defaults to
+`false`, so sandboxes created before the field existed are not re-run.
+`a_failed_post_create_runs_again_on_the_next_up` covers both halves:
+the retry, and no second run once the hook has succeeded. It failed with
+the flag ignored. Fleet is unaffected, since every agent is new and always
+runs it.
