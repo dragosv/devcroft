@@ -101,7 +101,26 @@ What's left is an ordinary resident TCP proxy.)
       `no_proxy` exempt loopback so a `network.ports`-granted dev server
       stays reachable without needing an allowlist entry for `localhost`
       (`up_process`'s env assembly, right before `spawn_keeper`).
-- [ ] Measure against real package managers rather than assuming.
+- [x] Measure against real package managers rather than assuming.
+      **Measured (2026-11-07)**, Linux, a devenv `network.default = "deny"`
+      sandbox, nothing set by hand: the proxy variables are devcroft's own.
+      Each manager fetched from its registry, with only those hosts allowed:
+      curl (`example.com`, 200), npm (`npm view left-pad version`), pip
+      (`pip download six`, `pypi.org` + `files.pythonhosted.org`), git
+      (`ls-remote` on `github.com`), go (`go mod download`,
+      `proxy.golang.org` + `sum.golang.org`) and cargo (`cargo fetch`,
+      `index.crates.io` + `static.crates.io`). Per manager, how a host
+      off the list reads: curl, git and cargo print `CONNECT tunnel failed,
+      response 502`; npm prints `E502 Bad Gateway - GET <url>`, after
+      retrying, so the proxy logs three refusals; go prints `Bad Gateway`
+      with the URL. **pip hides it:** `No matching distribution found for
+      six (from versions: none)`, naming neither the host nor the
+      refusal. An agent would read that as a package that does not exist.
+      The proxy log (`refuse … host=… reason=host … is not in the
+      allowlist`) and `why --host` remain the way to see it. A client
+      that ignores the proxy (`curl --noproxy '*'`) gets `Could not
+      resolve host`: the namespace has no DNS and no route, which is the
+      boundary (design.md D9).
 
 ## 4. Diagnostics
 
