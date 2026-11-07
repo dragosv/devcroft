@@ -51,10 +51,24 @@ def sha(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8", "replace")).hexdigest()[:16]
 
 
+# Every target devcroft ships for. `cargo tree` resolves for the host alone
+# unless told otherwise, so the file used to depend on where it was
+# generated: a Mac dropped the Linux keyring/dbus tail (48 crates), and an
+# aarch64 Linux host dropped `curve25519-dalek-derive`, which only
+# x86_64's SIMD backend uses. The union is the same file everywhere.
+TARGETS = [
+    "x86_64-unknown-linux-gnu",
+    "aarch64-unknown-linux-gnu",
+    "x86_64-apple-darwin",
+    "aarch64-apple-darwin",
+]
+
+
 def shipped_packages() -> set[str]:
     """`name vX.Y.Z` ids for normal (non-dev, non-build) dependencies."""
+    targets = [arg for t in TARGETS for arg in ("--target", t)]
     out = subprocess.run(
-        ["cargo", "tree", "-e", "normal", "--prefix", "none", "--format", "{p}"],
+        ["cargo", "tree", "-e", "normal", *targets, "--prefix", "none", "--format", "{p}"],
         capture_output=True,
         text=True,
         check=True,

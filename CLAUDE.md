@@ -187,22 +187,24 @@ probes by resolving one (`flox list`), not by `flox auth status`.
 python3 scripts/gen-third-party-licenses.py   # rewrites THIRD-PARTY-LICENSES.md
 ```
 
-**Regenerate it on Linux, not macOS.** The generator reads `cargo tree -e
-normal`, which resolves for the *host* target — so running it on a Mac
-silently drops every Linux-only dependency from a file that exists for
-Apache-2.0 §4(a) compliance. Measured: the committed file lists 335
-dependencies; regenerating it on macOS produces 287, quietly losing the
-Linux keyring/dbus tail (`aes`, `async-io`, `async-broadcast`, and 45
-others). Nothing errors, and the diff looks like a legitimate shrink.
-Adding `--target x86_64-unknown-linux-gnu` reproduces the committed set from
-a Mac if you have to.
+**It is the same file on every host, since 2026-11-07.** The generator
+used to read `cargo tree -e normal`, which resolves for the *host* target
+alone, so the file depended on where it was generated. On a Mac it dropped
+the Linux keyring/dbus tail (287 instead of 335: `aes`, `async-io`,
+`async-broadcast` and 45 others). On aarch64 Linux it dropped
+`curve25519-dalek-derive`, which only x86_64's SIMD backend uses. Nothing
+erred either time, and each diff looked like a legitimate shrink. It now
+passes `--target` for each of the four targets devcroft ships for
+(`TARGETS` in the script) and takes the union: 339 dependencies, the old
+335 plus the macOS-only `core-foundation` and `security-framework` pairs,
+which the x86_64-Linux file had always left out.
 
 devcroft is **Apache-2.0** (`LICENSE-APACHE` + `NOTICE`), matching nono
 and the sigstore crates it links rather than the Rust-conventional dual
 `MIT OR Apache-2.0` — a dual license would let a user take MIT and no
 patent grant while changing none of their real obligations, since nono,
 russh and every `sigstore-*` are Apache-2.0-only and linked regardless.
-189 of the 335 shipped dependencies are Apache-2.0, whose §4(a) requires
+264 of the 339 shipped dependencies list Apache-2.0, whose §4(a) requires
 recipients get a copy of the License.
 The generator's non-obvious part: `nono`, `russh` and every `sigstore-*`
 declare Apache-2.0 but vendor no license file, so it substitutes the

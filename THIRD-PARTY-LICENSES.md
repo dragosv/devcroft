@@ -4,7 +4,7 @@ devcroft is distributed under Apache-2.0 (see `LICENSE-APACHE` and `NOTICE`). A 
 
 **Generated file — do not edit by hand.** Regenerate with `python3 scripts/gen-third-party-licenses.py` after any `Cargo.lock` change. Scope is normal dependencies only; dev- and build-dependencies are excluded because they are not present in a shipped binary.
 
-335 dependencies, 74 distinct license texts.
+339 dependencies, 74 distinct license texts.
 
 ## Dependencies
 
@@ -56,6 +56,8 @@ devcroft is distributed under Apache-2.0 (see `LICENSE-APACHE` and `NOTICE`). A 
 | `concurrent-queue` | 2.5.0 | Apache-2.0 OR MIT | [a60eea8175145316](#license-text-a60eea8175145316) |
 | `const-oid` | 0.10.2 | Apache-2.0 OR MIT | [a9040321c3712d8f](#license-text-a9040321c3712d8f) |
 | `const-oid` | 0.9.6 | Apache-2.0 OR MIT | [a9040321c3712d8f](#license-text-a9040321c3712d8f) |
+| `core-foundation` | 0.10.1 | MIT OR Apache-2.0 | [a60eea8175145316](#license-text-a60eea8175145316) |
+| `core-foundation-sys` | 0.8.7 | MIT OR Apache-2.0 | [a60eea8175145316](#license-text-a60eea8175145316) |
 | `cpubits` | 0.1.1 | MIT OR Apache-2.0 | [a9040321c3712d8f](#license-text-a9040321c3712d8f) |
 | `cpufeatures` | 0.2.17 | MIT OR Apache-2.0 | [a9040321c3712d8f](#license-text-a9040321c3712d8f) |
 | `cpufeatures` | 0.3.0 | MIT OR Apache-2.0 | [a9040321c3712d8f](#license-text-a9040321c3712d8f) |
@@ -243,6 +245,8 @@ devcroft is distributed under Apache-2.0 (see `LICENSE-APACHE` and `NOTICE`). A 
 | `scrypt` | 0.12.0 | MIT OR Apache-2.0 | [a9040321c3712d8f](#license-text-a9040321c3712d8f) |
 | `sec1` | 0.8.1 | Apache-2.0 OR MIT | [a9040321c3712d8f](#license-text-a9040321c3712d8f) |
 | `secret-service` | 4.0.0 | MIT OR Apache-2.0 | [a60eea8175145316](#license-text-a60eea8175145316) |
+| `security-framework` | 3.7.0 | MIT OR Apache-2.0 | [a60eea8175145316](#license-text-a60eea8175145316) |
+| `security-framework-sys` | 2.17.0 | MIT OR Apache-2.0 | [a60eea8175145316](#license-text-a60eea8175145316) |
 | `serde` | 1.0.229 | MIT OR Apache-2.0 | [62c7a1e35f564068](#license-text-62c7a1e35f564068) |
 | `serde_bytes` | 0.11.19 | MIT OR Apache-2.0 | [62c7a1e35f564068](#license-text-62c7a1e35f564068) |
 | `serde_core` | 1.0.229 | MIT OR Apache-2.0 | [62c7a1e35f564068](#license-text-62c7a1e35f564068) |
@@ -6108,7 +6112,7 @@ THE SOFTWARE.
 
 ### License text a60eea8175145316
 
-Applies to: `async-channel`, `async-executor`, `async-fs`, `async-io`, `async-lock`, `async-task`, `atomic-waker`, `base64`, `bitflags`, `blocking`, `bstr`, `cfg-if`, and 55 more
+Applies to: `async-channel`, `async-executor`, `async-fs`, `async-io`, `async-lock`, `async-task`, `atomic-waker`, `base64`, `bitflags`, `blocking`, `bstr`, `cfg-if`, and 59 more
 
 ```
                               Apache License

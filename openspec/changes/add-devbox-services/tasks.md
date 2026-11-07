@@ -147,12 +147,21 @@
       user can find out.
 - [x] 3.3 `CLAUDE.md`, `README.md`: three providers supervise services.
 - [x] 3.4 `docs/implementation-log.md`: what group 0 measured.
-- [ ] 3.5 Regenerate `THIRD-PARTY-LICENSES.md` **on Linux** — the new
+- [x] 3.5 Regenerate `THIRD-PARTY-LICENSES.md` **on Linux** — the new
       dependency changes it, and the generator silently drops the
       Linux-only tail when run on macOS (CLAUDE.md). Not done here, and
       it is the one item that cannot be: this machine is a Mac, and
       running it would quietly lose 48 dependencies from a file that
       exists for Apache-2.0 §4(a) compliance.
+      **Done (2026-11-07), and "on Linux" turned out not to be enough.**
+      `serde_norway` was already in the file. Regenerating it on this
+      aarch64 Linux host dropped `curve25519-dalek-derive`, a dependency
+      only on x86_64 (curve25519's SIMD backend), because `cargo tree`
+      resolves for the host's architecture, not only its OS. The
+      generator now takes the union over the four shipped targets, so the
+      file is the same wherever it is generated: 339 dependencies, the
+      old 335 plus the macOS-only `core-foundation` and
+      `security-framework` pairs, which the file had never listed.
 
 ## 4. Verification
 
