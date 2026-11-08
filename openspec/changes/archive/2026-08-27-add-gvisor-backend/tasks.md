@@ -182,5 +182,5 @@ of history.
       rather than confirmed (see task group 5's note and design.md
       decision 4). A full `up` at `isolation = "hardened"`, `exec`, the
       SSH round trip, and a live `[services]` declaration all now work
-      end to end — see `openspec/changes/add-flox-services/tasks.md`
+      end to end — see `openspec/changes/archive/2026-11-08-add-flox-services/tasks.md`
       task 6.5 for the complete record.

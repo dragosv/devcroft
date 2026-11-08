@@ -1,7 +1,7 @@
 # README draft — hardened tier removal
 
 Drop-in replacement for the tier table section. Trim to taste; the detail lives
-in `openspec/changes/remove-gvisor-backend/design.md`.
+in `openspec/changes/archive/2026-11-08-remove-gvisor-backend/design.md`.
 
 > **Not yet applied.** This is the draft for task 3's README item, kept beside
 > the change rather than merged into `README.md`, which still describes the

@@ -129,7 +129,7 @@ defend. Verified live after removal: a full `up` at `isolation =
 "hardened"`, including one declaring `[services]`, completes end to end
 — `exec`, the SSH round trip, and a real `process-compose` running under
 `runsc exec` all confirmed working. See `src/gvisor/runner.rs`'s module
-doc and `openspec/changes/add-flox-services/tasks.md` task 6.5 for the
+doc and `openspec/changes/archive/2026-11-08-add-flox-services/tasks.md` task 6.5 for the
 full evidence trail, and `docs/decisions.md`'s netstack rejection entry
 for the corresponding correction to what this tier's guarantee actually
 is.

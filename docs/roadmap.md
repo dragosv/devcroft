@@ -60,9 +60,9 @@ validated; deterministic, inspectable policy.
 
 ## 0.2 — the boundary is what the documentation says
 
-**Status: implemented.** Both items below are done; what is left for
-`0.1.0` is the publish steps themselves (roadmap correction, archiving
-the two changes, cutting the version), not further code.
+**Status: implemented.** Both items below are done, and both changes
+are archived (2026-11-08); what is left for `0.1.0` is cutting and
+publishing the version, not further code.
 
 **`add-mount-isolation`** (21/21, done). **This is the release that gets
 cut as `0.1.0`**, per the numbering rule above: it is the first point at

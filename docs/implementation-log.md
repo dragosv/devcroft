@@ -84,7 +84,7 @@ health rather than assuming it (7.3).
 (`Provider` trait, host-side activation capture, store grants, staleness
 fingerprinting). `init` and `doctor` both learned about it; see
 [samples/nix-flake-sample](../samples/nix-flake-sample/) for a working
-example and `openspec/changes/add-nix-provider/` for the full spec. This
+example and `openspec/changes/archive/2026-11-08-add-nix-provider/` for the full spec. This
 also closed a real, pre-existing gap that predated nix entirely: `policy
 --render`/`why` never showed *any* provider's store grants before this
 (`Origin::Provider` existed since MVP with no caller) — fixed for flox
@@ -140,7 +140,7 @@ read-write still failed identically), and Landlock cannot mediate
 `mount()` in any current ABI, so no grant could have fixed it. This had
 never been exercised against a real unprivileged user namespace before
 today; see `src/gvisor/runner.rs`'s module doc and
-`openspec/changes/add-flox-services/tasks.md` task 6.5 for the full
+`openspec/changes/archive/2026-11-08-add-flox-services/tasks.md` task 6.5 for the full
 evidence trail.
 
 With both fixes in, and two more real bugs caught by the same live run
@@ -368,7 +368,7 @@ both narrowed what the change originally assumed devbox needed:
   with a package outside devbox's stdenv (ripgrep), so the claim is
   falsifiable rather than assumed.
 
-Both are recorded in `openspec/changes/add-devbox-provider/design.md`
+Both are recorded in `openspec/changes/archive/2026-11-08-add-devbox-provider/design.md`
 decisions 1a and 1b, corrected in place rather than left standing next to
 their own contradiction.
 

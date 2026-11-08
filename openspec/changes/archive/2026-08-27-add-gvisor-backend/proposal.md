@@ -6,7 +6,7 @@
 > never be stacked — this backend could only ever be an *alternative* to
 > the process tier, not a strengthening of it. The code is recoverable at
 > the tag `gvisor-backend-last`; the findings worth keeping are in
-> `openspec/changes/remove-gvisor-backend/design.md` (G1-G3), and the
+> `openspec/changes/archive/2026-11-08-remove-gvisor-backend/design.md` (G1-G3), and the
 > criteria a future backend would have to meet are in its `design.md` too.
 > This directory is kept as the record of what was built and measured —
 > its "Status: in progress" line below is history, not current state, and

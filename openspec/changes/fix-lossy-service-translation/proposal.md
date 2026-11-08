@@ -42,7 +42,7 @@ as unmeasured.
 ### Modified Capabilities
 
 - (none — `openspec/specs/` holds no synced specs. The `services` capability
-  this pressures lives in the unarchived `add-flox-services`, and this change
+  this pressures lives in the archived `add-flox-services`, and this change
   adds a requirement adjacent to its `reconcile` guarantee rather than
   altering it.)
 
