@@ -242,7 +242,7 @@ openspec status --change <change> --json       # artifact state, paths, what's n
 openspec instructions <artifact> --change <c> --json   # how to write an artifact
 ```
 
-`openspec validate --all` currently reports **20 passed, 0 failed**.
+`openspec validate --all` currently reports **19 passed, 0 failed**.
 `add-nix-provider` (nix flakes as a second closure-tier environment
 provider, alongside flox), `add-hardened-tier` (whose tier dispatch
 `remove-gvisor-backend` deleted; its backend-generic `SessionBackend`
