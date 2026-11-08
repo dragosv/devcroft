@@ -242,7 +242,7 @@ openspec status --change <change> --json       # artifact state, paths, what's n
 openspec instructions <artifact> --change <c> --json   # how to write an artifact
 ```
 
-`openspec validate --all` currently reports **40 passed, 0 failed**.
+`openspec validate --all` currently reports **38 passed, 0 failed**.
 `add-nix-provider` (nix flakes as a second closure-tier environment
 provider, alongside flox), `add-hardened-tier` (whose tier dispatch
 `remove-gvisor-backend` deleted; its backend-generic `SessionBackend`
@@ -258,7 +258,10 @@ cross-provider refusal already covered by
 `services_declared_for_another_provider_fail_rather_than_being_ignored`. `remove-gvisor-backend` is now **complete**: its last task waited on
 `add-backend-capabilities`, which did not exist and has since been written
 (the task was to *rewrite* a change that was never authored, so writing it
-was the resolution). Those plus `add-mvp-core` are the
+was the resolution). `add-devbox-services` is archived
+(2026-11-08), like `sandbox-provisioning` without syncing its specs,
+for the same reason: the base capability specs still live in
+unarchived changes. Those plus `add-mvp-core` are the
 changes actually implemented; run `openspec list` for the rest, which are
 in flight or not started.
 
