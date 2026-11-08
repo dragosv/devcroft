@@ -228,6 +228,12 @@
       else — a builtin does not satisfy `Command::new("pwd")`. Declared as
       `capabilities().external_utils` rather than rewritten through `sh -c`,
       which would have changed what the test asserts.
+      **Blocker cleared (2026-11-08, `add-nix-free-test-row` 6.1).** On a
+      Linux host with no `/nix` at all, `DEVCROFT_TEST_PROVIDER=test` runs
+      every fixture test green, while the default row fails there as
+      designed. So the remaining 17 files can migrate without turning a
+      daemon-less host red, provided that host's job selects the row
+      (group 6.1). Until each one moves, it still skips there.
 - [ ] 4.3 Leave the 7 provider-contract files hardcoded and real:
       `flox_derived_env`, `flox_env_capture_is_deterministic`, `nix_provider_e2e`,
       `nix_env_capture_is_deterministic`, `devbox_provider_e2e`,

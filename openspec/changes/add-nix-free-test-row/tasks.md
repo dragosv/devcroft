@@ -109,9 +109,19 @@
       → **Dissolved**: `brush` is MIT, not GPL-2.0, and the generator scopes
       itself to `cargo tree -e normal`, so a dev-dependency never enters the
       attribution file. Verified in the script and by regenerating.
-- [ ] 3.4 Verify 1.1 and 1.2 on Linux, not by analogy with macOS. **Neither
+- [x] 3.4 Verify 1.1 and 1.2 on Linux, not by analogy with macOS. **Neither
       half of this change has been run on Linux**, and the two platforms
       share no artifact.
+      → **Done (2026-11-08, aarch64 Linux).** With
+      `DEVCROFT_TEST_PROVIDER=test`, the row resolves its shell inside the
+      one grant it declares (its own directory, never `/nix/store`), and
+      every fixture test passes on it: `matrix_lifecycle`'s four (`shell`,
+      `stale`, `lifecycle`, and the no-branching-on-a-row-name check),
+      `exec_up` (exit code, cwd, SIGINT), `lifecycle_up`,
+      `lifecycle_recreate`, `lifecycle_status`,
+      `lifecycle_down_kills_sessions` and `worktree_identity`'s two. 11 of
+      11, each printing `provider matrix [...]: test ok`, so none returned
+      early.
 
 > **A limitation the row surfaced — since closed.** `status_with_provider`
 > gives `status` the injection point `up` already had, so the row now answers
@@ -143,8 +153,11 @@
       `capabilities().external_utils` is now true for this row, and
       `tests/exec_up.rs` runs on it. Services remain out: process-compose has
       no Rust reimplementation to take the same route.
-- [ ] 4.2 If it does: `capabilities().services` reports it, so a neutral
-      services test gates on the capability and not on the row's name.
+- [x] ~~4.2 If it does: `capabilities().services` reports it, so a neutral
+      services test gates on the capability and not on the row's name.~~
+      → **Not applicable**: 4.1 decided the row ships no process-compose,
+      so it reports `services = false` and services tests skip it by
+      capability.
 
 ## 5. Wire it in, and say what it is not
 
@@ -184,10 +197,28 @@
 
 ## 6. Unblock the migration this exists for
 
-- [ ] 6.1 Confirm on a daemon-less host that `DEVCROFT_TEST_PROVIDER=test`
+- [x] 6.1 Confirm on a daemon-less host that `DEVCROFT_TEST_PROVIDER=test`
       runs the neutral surface green. That is the condition
       `add-test-runtime-fixture` group 4 was waiting on.
-- [ ] 6.2 Hand back to that change's group 4, and record there that the
+      → **Done (2026-11-08), on a host made Nix-less rather than found
+      Nix-less.** A user namespace mapped to root mounts an empty tmpfs over
+      `/nix`, and a nested one maps back to uid 1000, so the run is the
+      user's own and has no `/nix` at all: `nix`, `devbox` and `flox` are
+      not on `PATH` and there is no store and no daemon socket. All 11
+      fixture tests pass there on the row. The control, same namespace,
+      default row: `exec_up` **fails** at `tests/common/mod.rs` (the default
+      row being unavailable is a failure, never a skip), which is exactly
+      what migrating without this row would have done to such a host.
+      Reproduce with
+      `unshare -rm sh -c 'mount -t tmpfs none /nix && exec unshare --user
+      --map-user=$UID --map-group=$GID sh -c "DEVCROFT_TEST_PROVIDER=test
+      cargo test --features test-support"'`.
+- [x] 6.2 Hand back to that change's group 4, and record there that the
       blocker is cleared — including whether the devcontainer's ~80
       currently-skipping tests now run rather than skip, which is the number
       that motivated all of this.
+      → **Recorded in `add-test-runtime-fixture` 4.2.** The honest answer
+      to the number: not yet. The row unblocks migration, it does not do
+      it. The 5 files already migrated run on a daemon-less host under the
+      row; the other 17 neutral files still hardcode a provider and still
+      skip there, until each moves to `fixture_for()`.
