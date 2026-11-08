@@ -368,7 +368,8 @@ Long-lived **services** — databases, dev servers — are declared in the
 provider's own manifest and supervised by the sandbox's keeper, so parallel
 sandboxes get their own instances. Supported for flox, devenv and devbox (whose
 services come from its plugins, a deliberate call recorded in
-[docs/decisions.md](docs/decisions.md)); nix has no service concept. A service
+[docs/decisions.md](docs/decisions.md), and shown in
+[samples/devbox-services-sample](samples/devbox-services-sample/)); nix has no service concept. A service
 that declares a readiness probe is reported ready only once it passes, and a
 dependent waits for that. A provider field devcroft cannot carry is refused by
 name, never dropped.

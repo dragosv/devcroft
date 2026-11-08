@@ -19,6 +19,7 @@ this crate's workspace); `nix-go-sample` (Go),
 `remove-gvisor-backend`, which also dropped the `isolation = "hardened"`
 key from its manifest that would otherwise now fail to parse), and
 `flox-services-sample`, `devenv-sample`, `devenv-services-sample`,
+`devbox-services-sample`,
 the eleven `devenv-<agent>-sample`s and `port-allocation-sample` (none has
 application code at all)
 are non-Rust, so no workspace exclusion applies to them — see each
@@ -78,6 +79,13 @@ that exposes *both* a hook-free way to get the environment
 runs it **inside** the sandbox rather than engineering around its
 absence the way `flox::derive_hook_free_env` does. The sample's
 `enterShell` writes a marker you can look for after `up`.
+`devbox-services-sample` completes the set of three, and is the one
+whose service the project never wrote: its postgres is the package's
+devbox plugin, read from `.devbox/virtenv/<package>/process-compose.yaml`.
+It is also the hardest service any sample runs, and what it needed
+(non-root sessions, and `/etc/passwd`, `/bin/sh`, `/etc/hosts` written
+into the view with origin `identity`) is in its README. Linux only for
+now: postgres needs `shmget`, which Seatbelt refuses.
 
 `swift-spm-sample` (Swift/SwiftPM) is the odd one out on every axis, and
 each difference is deliberate rather than incidental — read its README

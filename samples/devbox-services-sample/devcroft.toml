@@ -1,0 +1,24 @@
+[sandbox]
+# Short on purpose, like `devenvsvc`: the supervisor's socket lives at
+# `<project>/.devcroft/<name>/services.sock`, and the OS caps a unix
+# socket path at 103 bytes.
+name = "devboxsvc"
+
+[env]
+provider = "devbox"
+
+# Nothing in this file declares a service. `postgresql` comes from the
+# package's devbox plugin (see README.md, "Where the service comes from").
+#
+# Egress stays denied; the one loopback port postgres listens on is
+# granted. An ungranted port stays denied on Linux.
+[network]
+default = "deny"
+ports = [5432]
+
+# The plugin creates no database: `devbox info postgresql` says to run
+# `initdb`. It runs once, inside the sandbox. The guard checks
+# PG_VERSION, not the directory, because `devbox install` creates
+# $PGDATA empty, so a directory test would skip initdb on the first `up`.
+[hooks]
+post_create = '[ -f "$PGDATA/PG_VERSION" ] || initdb'

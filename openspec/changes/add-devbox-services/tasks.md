@@ -169,9 +169,15 @@
 - [x] 3.1 `docs/decisions.md`: the entry moves to built, **keeping** the
       contract argument as recorded reasoning — it was decided against,
       not refuted.
-- [ ] 3.2 Where a service nobody wrote comes from, in the docs and in a
+- [x] 3.2 Where a service nobody wrote comes from, in the docs and in a
       sample (design.md decision 4). For devbox this is the only place a
       user can find out.
+      `samples/devbox-services-sample` (2026-11-08): a postgres from the
+      plugin alone, its README tracing it from `devbox.json` to the
+      generated `process-compose.yaml`, measured on Linux (ready, answers,
+      nothing survives `down`). Pointed to from `README.md`,
+      `docs/decisions.md` and the devenv services sample, whose "devbox's
+      are refused" was stale.
 - [x] 3.3 `CLAUDE.md`, `README.md`: three providers supervise services.
 - [x] 3.4 `docs/implementation-log.md`: what group 0 measured.
 - [x] 3.5 Regenerate `THIRD-PARTY-LICENSES.md` **on Linux** — the new
@@ -196,4 +202,11 @@
 - [x] 4.2 Full suite with devbox and devenv on PATH: **503 passed, 0 failed**.
 - [x] 4.3 `openspec validate --all`: 32 passed, 0 failed.
 - [x] 4.4 No new source file — the provider grew in place.
-- [ ] 4.5 Re-run on Linux.
+- [x] 4.5 Re-run on Linux.
+      **Done (2026-11-08, aarch64 Linux devcontainer)**: `cargo test
+      --features test-support`, **758 passed, 0 failed**, and no devbox
+      test skipped: every `devbox_provider_e2e` test ran, including 2.1
+      and 2.3. 147 other tests skipped, for reasons unrelated to this
+      change: devenv not usable here (38), flox resolution needing a
+      FloxHub login (24+), fleet's cgroup delegation needing sudo (47).
+      `openspec validate --all`: 39 passed, 0 failed.

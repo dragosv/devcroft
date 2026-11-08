@@ -5,9 +5,10 @@ The devenv counterpart to
 the same shape: one real service on one granted loopback port, so the two
 providers can be compared field for field.
 
-flox and devenv are the only two providers whose services devcroft
-supervises. nix has no service concept; devbox's are refused for a
-measured reason (`docs/decisions.md`). If you want the devenv provider
+devcroft supervises services for flox, devenv and devbox; nix has no
+service concept. devbox's come from its packages' plugins rather than
+from anything the project writes, which
+[samples/devbox-services-sample](../devbox-services-sample/) shows. If you want the devenv provider
 itself — the hook, the capture, the closure — read
 [samples/devenv-sample](../devenv-sample/) first. This one is only about
 services.

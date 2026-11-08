@@ -285,6 +285,12 @@ Reading never goes through `devbox services ls`. A full `up` on a
 `postgresql` project runs the project's `init_hook` zero times,
 sentinel-measured.
 
+Because a user cannot see where such a service comes from by reading
+their own project, that is documented where they will look:
+[samples/devbox-services-sample](../samples/devbox-services-sample/)
+traces its postgres from `devbox.json` to the plugin's generated
+`process-compose.yaml`.
+
 **A limit this ran into, which turned out not to be structural after
 all** — recorded as structural first, and corrected here.
 Measured end to end with the `mysql` plugin (mariadb) plus a Go client:
