@@ -5,14 +5,21 @@
 //! both directions, not just that the process starts. See
 //! `tests/lifecycle_up.rs` for why this needs `CARGO_BIN_EXE_devcroft`
 //! and why each such test lives in its own file/process.
+//!
+//! **Neutral surface** (`test-runtime-fixture`): the bridge and auto-up
+//! are claims about `proxy` and the keeper, not about a provider. The two
+//! tests that need a sandbox used to `flox init` one purely to get past
+//! `up`; they now run on whichever row is selected.
 
-use devcroft::config::parse;
-use devcroft::lifecycle::{StatePaths, UpOptions, UpOutcome, client_key_paths, down, up};
+mod common;
+
+use common::for_each_row;
+use devcroft::lifecycle::{StatePaths, UpOptions, UpOutcome, client_key_paths, down};
 use russh::client;
 use russh::keys::PrivateKey;
 use russh::keys::key::PrivateKeyWithHashAlg;
 use std::pin::Pin;
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 use std::sync::Arc;
 use std::task::{Context, Poll};
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
@@ -65,53 +72,42 @@ impl AsyncWrite for ChildPipe {
     }
 }
 
-#[tokio::test]
-async fn proxy_bridges_a_real_ssh_handshake_through_its_stdio() {
+#[test]
+fn proxy_bridges_a_real_ssh_handshake_through_its_stdio() {
     if !devcroft::policy::backend_supported() {
         eprintln!("skipping: this host has no usable Landlock/Seatbelt support");
         return;
     }
-    if Command::new("flox").arg("--version").output().is_err()
-        || !devcroft::provider::host_can_build_nix_closures()
-    {
-        eprintln!("skipping: no usable flox here (not on PATH, or no reachable Nix store)");
-        return;
-    }
-
     unsafe {
         std::env::set_var("DEVCROFT_KEEPER_EXE", env!("CARGO_BIN_EXE_devcroft"));
     }
-    let devcroft_bin = env!("CARGO_BIN_EXE_devcroft");
 
-    let project_root =
-        std::env::temp_dir().join(format!("devcroft-proxy-up-e2e-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&project_root);
-    std::fs::create_dir_all(&project_root).unwrap();
-    let init = Command::new("flox")
-        .arg("init")
-        .current_dir(&project_root)
-        .output()
-        .unwrap();
-    if !init.status.success() {
-        eprintln!(
-            "skipping: flox init failed: {}",
-            String::from_utf8_lossy(&init.stderr)
+    for_each_row("proxybridge", |fx| {
+        let sandbox_name = fx.sandbox_name().to_string();
+        let paths = StatePaths::new(&sandbox_name).unwrap();
+        let _ = std::fs::remove_dir_all(&paths.root);
+        let _ = std::fs::remove_file(&paths.lifecycle_lock);
+
+        assert_eq!(
+            fx.bring_up(&UpOptions::default())
+                .unwrap_or_else(|e| panic!("row {}: up failed: {e}", fx.name())),
+            UpOutcome::Started,
+            "row {}",
+            fx.name()
         );
-        return;
-    }
 
-    let sandbox_name = format!("e2eproxy{}", std::process::id());
-    let (manifest, _) = parse(&format!("[sandbox]\nname = {sandbox_name:?}\n")).unwrap();
-    let paths = StatePaths::new(&sandbox_name).unwrap();
-    let _ = std::fs::remove_dir_all(&paths.root);
-    let _ = std::fs::remove_file(&paths.lifecycle_lock);
+        tokio::runtime::Runtime::new()
+            .unwrap()
+            .block_on(handshake_through_proxy(&sandbox_name));
 
-    assert_eq!(
-        up(&manifest, &project_root, &UpOptions::default()).unwrap(),
-        UpOutcome::Started
-    );
+        down(&sandbox_name).unwrap();
+    });
+}
 
-    let mut child = tokio::process::Command::new(devcroft_bin)
+/// A real SSH handshake and public-key authentication, carried entirely
+/// over a `devcroft proxy --no-up` subprocess's stdio.
+async fn handshake_through_proxy(sandbox_name: &str) {
+    let mut child = tokio::process::Command::new(env!("CARGO_BIN_EXE_devcroft"))
         .arg("proxy")
         .arg("--no-up")
         .arg(format!("{sandbox_name}.devcroft"))
@@ -153,11 +149,6 @@ async fn proxy_bridges_a_real_ssh_handshake_through_its_stdio() {
     drop(handle);
     let _ = child.start_kill();
     let _ = child.wait().await;
-
-    down(&sandbox_name).unwrap();
-    let _ = std::fs::remove_dir_all(&paths.root);
-    let _ = std::fs::remove_file(&paths.lifecycle_lock);
-    let _ = std::fs::remove_dir_all(&project_root);
 }
 
 #[tokio::test]
@@ -204,57 +195,52 @@ async fn proxy_rejects_a_host_without_the_devcroft_suffix() {
 /// `tests/exec_auto_up.rs`; this only needs to confirm the wiring, not
 /// re-prove the mechanism, so it stops as soon as the sandbox is
 /// confirmed healthy rather than driving a full handshake.
-#[tokio::test]
-async fn proxy_brings_up_a_cold_sandbox_automatically() {
+#[test]
+fn proxy_brings_up_a_cold_sandbox_automatically() {
     if !devcroft::policy::backend_supported() {
         eprintln!("skipping: this host has no usable Landlock/Seatbelt support");
         return;
     }
-    if Command::new("flox").arg("--version").output().is_err()
-        || !devcroft::provider::host_can_build_nix_closures()
-    {
-        eprintln!("skipping: no usable flox here (not on PATH, or no reachable Nix store)");
-        return;
-    }
-
     unsafe {
         std::env::set_var("DEVCROFT_KEEPER_EXE", env!("CARGO_BIN_EXE_devcroft"));
     }
-    let devcroft_bin = env!("CARGO_BIN_EXE_devcroft");
 
-    let project_root =
-        std::env::temp_dir().join(format!("devcroft-proxy-auto-up-e2e-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&project_root);
-    std::fs::create_dir_all(&project_root).unwrap();
-    let init = Command::new("flox")
-        .arg("init")
-        .current_dir(&project_root)
-        .output()
-        .unwrap();
-    if !init.status.success() {
-        eprintln!(
-            "skipping: flox init failed: {}",
-            String::from_utf8_lossy(&init.stderr)
-        );
-        return;
-    }
+    for_each_row("proxyauto", |fx| {
+        // Auto-up is the CLI resolving the provider from `devcroft.toml`;
+        // a row reachable only through the injection seam has no provider
+        // there to resolve.
+        if !fx.capabilities().cli_drivable {
+            eprintln!(
+                "skipping row {}: not drivable through the CLI, which auto-up is",
+                fx.name()
+            );
+            return;
+        }
+        let sandbox_name = fx.sandbox_name().to_string();
+        let paths = StatePaths::new(&sandbox_name).unwrap();
+        let _ = std::fs::remove_dir_all(&paths.root);
+        let _ = std::fs::remove_file(&paths.lifecycle_lock);
+        let project_root = fx.project_root().to_path_buf();
 
-    let sandbox_name = format!("e2eproxyauto{}", std::process::id());
-    std::fs::write(
-        project_root.join("devcroft.toml"),
-        format!("[sandbox]\nname = {sandbox_name:?}\n"),
-    )
-    .unwrap();
-    let paths = StatePaths::new(&sandbox_name).unwrap();
-    let _ = std::fs::remove_dir_all(&paths.root);
-    let _ = std::fs::remove_file(&paths.lifecycle_lock);
+        tokio::runtime::Runtime::new()
+            .unwrap()
+            .block_on(auto_up_through_proxy(&sandbox_name, &project_root, &paths));
 
-    // No `up` anywhere above: a cold sandbox, `proxy` targets it without
-    // `--no-up`.
-    let mut child = tokio::process::Command::new(devcroft_bin)
+        down(&sandbox_name).unwrap();
+    });
+}
+
+/// No `up` anywhere: `proxy` targets a cold sandbox without `--no-up`, and
+/// the sandbox must become healthy on its own.
+async fn auto_up_through_proxy(
+    sandbox_name: &str,
+    project_root: &std::path::Path,
+    paths: &StatePaths,
+) {
+    let mut child = tokio::process::Command::new(env!("CARGO_BIN_EXE_devcroft"))
         .arg("proxy")
         .arg(format!("{sandbox_name}.devcroft"))
-        .current_dir(&project_root)
+        .current_dir(project_root)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -262,10 +248,10 @@ async fn proxy_brings_up_a_cold_sandbox_automatically() {
         .unwrap();
     drop(child.stdin.take()); // immediate EOF; nothing else this test needs to send
 
-    let deadline = tokio::time::Instant::now() + tokio::time::Duration::from_secs(10);
+    // Generous: a real provider row resolves its environment on this `up`.
+    let deadline = tokio::time::Instant::now() + tokio::time::Duration::from_secs(60);
     loop {
-        if let devcroft::lifecycle::Health::Healthy(_) =
-            devcroft::lifecycle::health(&paths).unwrap()
+        if let devcroft::lifecycle::Health::Healthy(_) = devcroft::lifecycle::health(paths).unwrap()
         {
             break;
         }
@@ -283,9 +269,4 @@ async fn proxy_brings_up_a_cold_sandbox_automatically() {
     // own.
     let _ = child.start_kill();
     let _ = child.wait().await;
-
-    down(&sandbox_name).unwrap();
-    let _ = std::fs::remove_dir_all(&paths.root);
-    let _ = std::fs::remove_file(&paths.lifecycle_lock);
-    let _ = std::fs::remove_dir_all(&project_root);
 }

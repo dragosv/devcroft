@@ -14,25 +14,24 @@
 //! acquire it always finds the first's keeper already healthy and
 //! reports `AlreadyUp` instead.
 //!
-//! Uses `up` directly (not the CLI subprocess) so both calls run as real
-//! concurrent threads inside one test process, genuinely racing for the
-//! same lock rather than merely running one after another.
+//! Both calls run as real concurrent threads inside one test process,
+//! genuinely racing for the same lock rather than merely running one after
+//! another.
+//!
+//! **Neutral surface** (`test-runtime-fixture`): the lock is lifecycle
+//! code, not provider code. It used to build a flox environment purely to
+//! get past `up`; the row now supplies whatever environment it is.
 
-use devcroft::config::parse;
-use devcroft::lifecycle::{StatePaths, UpOptions, UpOutcome, down, up};
-use std::process::Command;
-use std::sync::{Arc, Barrier};
+mod common;
+
+use common::for_each_row;
+use devcroft::lifecycle::{StatePaths, UpOptions, UpOutcome, down};
+use std::sync::Barrier;
 
 #[test]
 fn two_concurrent_up_calls_for_the_same_sandbox_never_both_start_a_keeper() {
     if !devcroft::policy::backend_supported() {
         eprintln!("skipping: this host has no usable Landlock/Seatbelt support");
-        return;
-    }
-    if Command::new("flox").arg("--version").output().is_err()
-        || !devcroft::provider::host_can_build_nix_closures()
-    {
-        eprintln!("skipping: no usable flox here (not on PATH, or no reachable Nix store)");
         return;
     }
 
@@ -41,73 +40,56 @@ fn two_concurrent_up_calls_for_the_same_sandbox_never_both_start_a_keeper() {
         std::env::set_var("DEVCROFT_KEEPER_EXE", env!("CARGO_BIN_EXE_devcroft"));
     }
 
-    let project_root =
-        std::env::temp_dir().join(format!("devcroft-concurrent-up-e2e-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&project_root);
-    std::fs::create_dir_all(&project_root).unwrap();
-    let init = Command::new("flox")
-        .arg("init")
-        .current_dir(&project_root)
-        .output()
-        .unwrap();
-    if !init.status.success() {
-        eprintln!(
-            "skipping: flox init failed: {}",
-            String::from_utf8_lossy(&init.stderr)
+    for_each_row("concurrent", |fx| {
+        let paths = StatePaths::new(fx.sandbox_name()).unwrap();
+        let _ = std::fs::remove_dir_all(&paths.root);
+        let _ = std::fs::remove_file(&paths.lifecycle_lock);
+
+        // A barrier, not just "spawn both threads immediately": makes both
+        // threads call `up` at as close to the same instant as possible,
+        // maximizing the chance either would have won the race the lock now
+        // prevents — spawning without one lets the OS schedule them far
+        // enough apart that the bug this test exists to catch could hide.
+        let barrier = Barrier::new(2);
+        let row: &dyn common::ProviderFixture = fx;
+        let outcomes: Vec<UpOutcome> = std::thread::scope(|scope| {
+            let handles: Vec<_> = (0..2)
+                .map(|_| {
+                    scope.spawn(|| {
+                        barrier.wait();
+                        row.bring_up(&UpOptions::default())
+                    })
+                })
+                .collect();
+            handles
+                .into_iter()
+                .map(|h| {
+                    h.join()
+                        .unwrap()
+                        .unwrap_or_else(|e| panic!("row {}: up failed: {e}", row.name()))
+                })
+                .collect()
+        });
+
+        let started_count = outcomes
+            .iter()
+            .filter(|o| **o == UpOutcome::Started)
+            .count();
+        assert_eq!(
+            started_count,
+            1,
+            "row {}: exactly one of the two racing `up` calls must report Started \
+             (the other must see the first's keeper and report AlreadyUp); \
+             outcomes were: {outcomes:?}",
+            row.name()
         );
-        return;
-    }
+        assert!(
+            outcomes.contains(&UpOutcome::AlreadyUp),
+            "row {}: the loser of the race must report AlreadyUp, not also Started; \
+             outcomes were: {outcomes:?}",
+            row.name()
+        );
 
-    let sandbox_name = format!("e2econcurrent{}", std::process::id());
-    let (manifest, _) = parse(&format!("[sandbox]\nname = {sandbox_name:?}\n")).unwrap();
-    let paths = StatePaths::new(&sandbox_name).unwrap();
-    let _ = std::fs::remove_dir_all(&paths.root);
-    let _ = std::fs::remove_file(&paths.lifecycle_lock);
-
-    // A barrier, not just "spawn both threads immediately": makes both
-    // threads call `up` at as close to the same instant as possible,
-    // maximizing the chance either would have won the race the lock now
-    // prevents — spawning without one lets the OS schedule them far
-    // enough apart that the bug this test exists to catch could hide.
-    let barrier = Arc::new(Barrier::new(2));
-    let handles: Vec<_> = (0..2)
-        .map(|_| {
-            let manifest = manifest.clone();
-            let project_root = project_root.clone();
-            let barrier = Arc::clone(&barrier);
-            std::thread::spawn(move || {
-                barrier.wait();
-                up(&manifest, &project_root, &UpOptions::default())
-            })
-        })
-        .collect();
-
-    let outcomes: Vec<UpOutcome> = handles
-        .into_iter()
-        .map(|h| {
-            h.join()
-                .unwrap()
-                .unwrap_or_else(|e| panic!("up failed: {e}"))
-        })
-        .collect();
-
-    let started_count = outcomes
-        .iter()
-        .filter(|o| **o == UpOutcome::Started)
-        .count();
-    assert_eq!(
-        started_count, 1,
-        "exactly one of the two racing `up` calls must report Started \
-         (the other must see the first's keeper and report AlreadyUp); \
-         outcomes were: {outcomes:?}"
-    );
-    assert!(
-        outcomes.contains(&UpOutcome::AlreadyUp),
-        "the loser of the race must report AlreadyUp, not also Started; outcomes were: {outcomes:?}"
-    );
-
-    down(&sandbox_name).unwrap();
-    let _ = std::fs::remove_dir_all(&paths.root);
-    let _ = std::fs::remove_file(&paths.lifecycle_lock);
-    let _ = std::fs::remove_dir_all(&project_root);
+        down(fx.sandbox_name()).unwrap();
+    });
 }

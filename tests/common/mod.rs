@@ -88,7 +88,7 @@ pub struct ProviderCapabilities {
 /// point is handing tests a `&mut dyn ProviderFixture`. Construction is
 /// [`fixture_for`]/[`for_each_row`] instead; the trait carries only what a
 /// test asks of a row it already has.
-pub trait ProviderFixture {
+pub trait ProviderFixture: Sync {
     /// The row's name, for reporting. Tests must not branch on it.
     fn name(&self) -> &'static str;
 
@@ -906,9 +906,14 @@ pub fn for_each_row(tag: &str, body: impl Fn(&mut dyn ProviderFixture)) {
                          devcroft's suite defaults to a real Nix environment on purpose. \
                          It will not fall back to something cheaper behind your back; \
                          select another row explicitly with \
-                         DEVCROFT_TEST_PROVIDER=flox|devbox|swift|all."
+                         DEVCROFT_TEST_PROVIDER=test (no Nix needed, with --features \
+                         test-support) or flox|devbox|swift|all."
                     );
                 }
+                // One line, whatever the provider printed: flox's errors
+                // run to four lines, and a matrix entry that wraps reads as
+                // the rows after it having vanished.
+                let reason = reason.split_whitespace().collect::<Vec<_>>().join(" ");
                 report.push(format!("{name} skip({reason})"));
             }
         }

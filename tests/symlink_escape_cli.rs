@@ -14,7 +14,17 @@
 //! the unit tests in `capability_set.rs` — the bug was in what a real
 //! filesystem call (`canonicalize`) revealed that a lexical check on the
 //! manifest string could not.
+//!
+//! The `up` half is on the **neutral surface** (`test-runtime-fixture`):
+//! the escape is refused while compiling the policy, whatever the
+//! provider. It used to `flox init` a project purely to get past provider
+//! resolution; it now runs on whichever row is selected, and calls `up`
+//! in-process rather than through the binary -- an injected row is not
+//! reachable from the CLI. `policy --render` still goes through the binary.
 
+mod common;
+
+use common::for_each_row;
 use std::process::Command;
 
 /// A project containing a symlink whose real target sits *outside* the
@@ -60,14 +70,6 @@ impl EscapeProject {
 
 impl Drop for EscapeProject {
     fn drop(&mut self) {
-        // The refused `up` still records the sandbox (its `meta.json` is
-        // written before the policy compiles), so remove it through
-        // devcroft, which also takes its lock file; deleting only the
-        // project left one state dir per run.
-        let _ = Command::new(env!("CARGO_BIN_EXE_devcroft"))
-            .current_dir(&self.project_root)
-            .args(["rm", "--yes"])
-            .output();
         let _ = std::fs::remove_dir_all(&self.project_root);
         let _ = std::fs::remove_dir_all(&self.outside_target);
     }
@@ -100,37 +102,47 @@ fn up_refuses_a_manifest_whose_grant_symlinks_outside_the_project() {
         eprintln!("skipping: this host has no usable Landlock/Seatbelt support");
         return;
     }
-    let project = EscapeProject::new("up");
-    // `up` validates the compiled policy before doing anything provider-
-    // related fails first — needs a real flox environment to get past
-    // that layer and actually reach the policy-compile check this test
-    // is about.
-    let flox_ok = Command::new("flox")
-        .arg("init")
-        .current_dir(&project.project_root)
-        .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false);
-    // `flox init` is not the capability this needs: it writes a manifest
-    // without building anything, and succeeds on a host whose store is
-    // unreachable. `up` then fails at layer `provider` before it ever
-    // compiles the policy, and this test reports that as "the escape was
-    // not refused" — a false accusation against the code it covers.
-    if !flox_ok || !devcroft::provider::host_can_build_nix_closures() {
-        eprintln!("skipping: no usable flox here (not on PATH, or no reachable Nix store)");
-        return;
+    // SAFETY: this process runs a single test.
+    unsafe {
+        std::env::set_var("DEVCROFT_KEEPER_EXE", env!("CARGO_BIN_EXE_devcroft"));
     }
 
-    let out = Command::new(env!("CARGO_BIN_EXE_devcroft"))
-        .current_dir(&project.project_root)
-        .arg("up")
-        .output()
+    for_each_row("symlinkescape", |fx| {
+        let root = fx.project_root().to_path_buf();
+        let outside = root.with_extension("outside-secret");
+        let _ = std::fs::remove_dir_all(&outside);
+        std::fs::create_dir_all(&outside).unwrap();
+        std::fs::write(outside.join("secret.txt"), "do not grant").unwrap();
+        let link = root.join("escape-link");
+        let _ = std::fs::remove_file(&link);
+        std::os::unix::fs::symlink(&outside, &link).unwrap();
+        // Appended to the row's own manifest, so the row keeps whatever
+        // else it declares (its provider, its sandbox name).
+        let manifest = root.join("devcroft.toml");
+        let text = std::fs::read_to_string(&manifest).unwrap();
+        std::fs::write(
+            &manifest,
+            format!("{text}\n[filesystem]\nallow = [\".\", \"escape-link\"]\n"),
+        )
         .unwrap();
 
-    assert!(!out.status.success());
-    let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(
-        stderr.contains("escape-link") && stderr.contains("outside the project root"),
-        "stderr should name the entry and explain the escape, got: {stderr}"
-    );
+        let result = fx.bring_up(&devcroft::lifecycle::UpOptions::default());
+        // Refused, so normally there is nothing to take down; `rm` keeps a
+        // regression that started a sandbox from leaking one.
+        let _ = devcroft::lifecycle::rm(fx.sandbox_name());
+        let _ = std::fs::remove_dir_all(&outside);
+
+        let err = match result {
+            Ok(outcome) => panic!(
+                "row {}: up must refuse a grant that symlinks outside the project, got {outcome:?}",
+                fx.name()
+            ),
+            Err(e) => e.to_string(),
+        };
+        assert!(
+            err.contains("escape-link") && err.contains("outside the project root"),
+            "row {}: the error should name the entry and explain the escape, got: {err}",
+            fx.name()
+        );
+    });
 }

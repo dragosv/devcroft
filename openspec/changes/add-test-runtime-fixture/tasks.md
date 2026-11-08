@@ -234,6 +234,19 @@
       designed. So the remaining 17 files can migrate without turning a
       daemon-less host red, provided that host's job selects the row
       (group 6.1). Until each one moves, it still skips there.
+      **10 of 22 (2026-11-08):** `concurrent_up`, `egress_proxy_e2e` (the
+      recovery test; the `curl` test stays on flox because no row ships
+      `curl`), `proxy_up`, `ssh_up`, `symlink_escape_cli` (its `up` half;
+      `policy --render` needs no row). Green on nix, devbox and `test`
+      under `=all`, and on the default row. `proxy_up`'s auto-up test
+      skips the `test` row by `capabilities().cli_drivable`, since auto-up
+      is the CLI resolving a provider from `devcroft.toml`.
+      **Flox was not re-verified for this batch**, which breaks this task's
+      rule as written: the host had no FloxHub login, and the flox row
+      `flox install`s packages, which since flox 1.4 needs one. The old
+      hardcoded tests only ran `flox init`, which does not. Re-run
+      `DEVCROFT_TEST_PROVIDER=flox` on a logged-in host before calling
+      these five done on flox.
 - [ ] 4.3 Leave the 7 provider-contract files hardcoded and real:
       `flox_derived_env`, `flox_env_capture_is_deterministic`, `nix_provider_e2e`,
       `nix_env_capture_is_deterministic`, `devbox_provider_e2e`,

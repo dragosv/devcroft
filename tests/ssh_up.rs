@@ -1,16 +1,22 @@
 //! The embedded SSH server (ssh spec, task 6.1), end to end: a real `up`
-//! (real `nono`, real `flox`, real fd-passed sockets), a real SSH client
+//! (real `nono`, real fd-passed sockets), a real SSH client
 //! connecting over the sandbox's own unix socket and authenticating with
 //! the real generated client keypair. See `tests/lifecycle_up.rs` for why
 //! this needs `CARGO_BIN_EXE_devcroft` and why each such test lives in
 //! its own file/process.
+//!
+//! **Neutral surface** (`test-runtime-fixture`): socket modes, key
+//! authentication and the absence of a TCP listener are claims about the
+//! keeper, not a provider. It used to `flox init` an environment purely
+//! to get past `up`; it now runs on whichever row is selected.
 
-use devcroft::config::parse;
-use devcroft::lifecycle::{StatePaths, UpOptions, UpOutcome, client_key_paths, down, up};
+mod common;
+
+use common::for_each_row;
+use devcroft::lifecycle::{StatePaths, UpOptions, UpOutcome, client_key_paths, down};
 use russh::client;
 use russh::keys::key::PrivateKeyWithHashAlg;
 use russh::keys::{Algorithm, PrivateKey};
-use std::process::Command;
 use std::sync::Arc;
 
 struct AcceptAnyServerKey;
@@ -84,16 +90,10 @@ fn pid_owns_no_listening_tcp_socket(pid: libc::pid_t) -> bool {
     true
 }
 
-#[tokio::test]
-async fn ssh_server_authenticates_the_real_client_key_and_binds_no_tcp() {
+#[test]
+fn ssh_server_authenticates_the_real_client_key_and_binds_no_tcp() {
     if !devcroft::policy::backend_supported() {
         eprintln!("skipping: this host has no usable Landlock/Seatbelt support");
-        return;
-    }
-    if Command::new("flox").arg("--version").output().is_err()
-        || !devcroft::provider::host_can_build_nix_closures()
-    {
-        eprintln!("skipping: no usable flox here (not on PATH, or no reachable Nix store)");
         return;
     }
 
@@ -101,25 +101,15 @@ async fn ssh_server_authenticates_the_real_client_key_and_binds_no_tcp() {
         std::env::set_var("DEVCROFT_KEEPER_EXE", env!("CARGO_BIN_EXE_devcroft"));
     }
 
-    let project_root =
-        std::env::temp_dir().join(format!("devcroft-ssh-up-e2e-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&project_root);
-    std::fs::create_dir_all(&project_root).unwrap();
-    let init = Command::new("flox")
-        .arg("init")
-        .current_dir(&project_root)
-        .output()
-        .unwrap();
-    if !init.status.success() {
-        eprintln!(
-            "skipping: flox init failed: {}",
-            String::from_utf8_lossy(&init.stderr)
-        );
-        return;
-    }
+    for_each_row("ssh", |fx| {
+        tokio::runtime::Runtime::new()
+            .unwrap()
+            .block_on(check_one_row(fx));
+    });
+}
 
-    let sandbox_name = format!("e2essh{}", std::process::id());
-    let (manifest, _) = parse(&format!("[sandbox]\nname = {sandbox_name:?}\n")).unwrap();
+async fn check_one_row(fx: &mut dyn common::ProviderFixture) {
+    let sandbox_name = fx.sandbox_name().to_string();
     let paths = StatePaths::new(&sandbox_name).unwrap();
     let _ = std::fs::remove_dir_all(&paths.root);
     let _ = std::fs::remove_file(&paths.lifecycle_lock);
@@ -130,8 +120,11 @@ async fn ssh_server_authenticates_the_real_client_key_and_binds_no_tcp() {
     // the keeper's own startup, so by the time `up` returns it's ready
     // too — no separate polling needed here.
     assert_eq!(
-        up(&manifest, &project_root, &UpOptions::default()).unwrap(),
-        UpOutcome::Started
+        fx.bring_up(&UpOptions::default())
+            .unwrap_or_else(|e| panic!("row {}: up failed: {e}", fx.name())),
+        UpOutcome::Started,
+        "row {}",
+        fx.name()
     );
 
     let root_mode = std::fs::metadata(&paths.root).unwrap().permissions();
@@ -182,7 +175,4 @@ async fn ssh_server_authenticates_the_real_client_key_and_binds_no_tcp() {
     );
 
     down(&sandbox_name).unwrap();
-    let _ = std::fs::remove_dir_all(&paths.root);
-    let _ = std::fs::remove_file(&paths.lifecycle_lock);
-    let _ = std::fs::remove_dir_all(&project_root);
 }

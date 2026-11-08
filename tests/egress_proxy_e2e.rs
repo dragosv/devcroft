@@ -4,7 +4,15 @@
 //! session. See `tests/lifecycle_hooks.rs` for why this needs
 //! `CARGO_BIN_EXE_devcroft` and why each such test lives in its own
 //! file/process.
+//!
+//! The recovery test is on the **neutral surface** (`test-runtime-fixture`):
+//! stopping an orphaned proxy is lifecycle code, whatever the provider.
+//! The `curl` test stays on flox, because it needs `curl` in the closure
+//! and no row ships one.
 
+mod common;
+
+use common::for_each_row;
 use devcroft::config::parse;
 use devcroft::lifecycle::{StatePaths, UpOptions, UpOutcome, down, up};
 use std::io::{Read, Write};
@@ -189,89 +197,74 @@ fn recovering_a_dead_keeper_stops_the_orphaned_egress_proxy() {
         eprintln!("skipping: this host has no usable Landlock/Seatbelt support");
         return;
     }
-    if Command::new("flox").arg("--version").output().is_err()
-        || !devcroft::provider::host_can_build_nix_closures()
-    {
-        eprintln!("skipping: no usable flox here (not on PATH, or no reachable Nix store)");
-        return;
-    }
     unsafe {
         std::env::set_var("DEVCROFT_KEEPER_EXE", env!("CARGO_BIN_EXE_devcroft"));
     }
 
-    let project_root = std::env::temp_dir().join(format!(
-        "devcroft-egress-proxy-recovery-{}",
-        std::process::id()
-    ));
-    let _ = std::fs::remove_dir_all(&project_root);
-    std::fs::create_dir_all(&project_root).unwrap();
-    let project_root = project_root.canonicalize().unwrap();
-    let init = Command::new("flox")
-        .arg("init")
-        .current_dir(&project_root)
-        .output()
+    for_each_row("proxyrecover", |fx| {
+        // Appended to the row's own manifest, which declares no
+        // `[network]` of its own: an allowlist is what starts a proxy.
+        let manifest = fx.project_root().join("devcroft.toml");
+        let text = std::fs::read_to_string(&manifest).unwrap();
+        std::fs::write(
+            &manifest,
+            format!("{text}\n[network]\ndefault = \"deny\"\nallow = [\"example.com\"]\n"),
+        )
         .unwrap();
-    if !init.status.success() {
-        eprintln!("skipping: flox init failed");
-        return;
-    }
+        let name = fx.sandbox_name().to_string();
+        let paths = StatePaths::new(&name).unwrap();
+        let _ = std::fs::remove_dir_all(&paths.root);
+        let _ = std::fs::remove_file(&paths.lifecycle_lock);
+        // `rm`, not `down`, and on every exit including a failed assert: a
+        // `down` keeps the state dir, so each run used to leave one behind.
+        let _cleanup = Removed(&name);
 
-    let name = format!("e2eproxyrecover{}", std::process::id());
-    let (manifest, _) = parse(&format!(
-        "[sandbox]\nname = {name:?}\n[network]\ndefault = \"deny\"\nallow = [\"example.com\"]\n"
-    ))
-    .unwrap();
-    let paths = StatePaths::new(&name).unwrap();
-    let _ = std::fs::remove_dir_all(&paths.root);
-    let _ = std::fs::remove_file(&paths.lifecycle_lock);
-    // `rm`, not `down`, and on every exit including a failed assert: a
-    // `down` keeps the state dir, so each run used to leave one behind.
-    let _cleanup = Removed(&name);
+        assert_eq!(
+            fx.bring_up(&UpOptions::default())
+                .unwrap_or_else(|e| panic!("row {}: up failed: {e}", fx.name())),
+            UpOutcome::Started
+        );
+        let first_proxy =
+            read_pid(&paths.proxy_pidfile).expect("up with network.allow starts a proxy");
+        assert!(
+            pid_alive(first_proxy),
+            "the first proxy must be running after up"
+        );
 
-    assert_eq!(
-        up(&manifest, &project_root, &UpOptions::default()).unwrap(),
-        UpOutcome::Started
-    );
-    let first_proxy = read_pid(&paths.proxy_pidfile).expect("up with network.allow starts a proxy");
-    assert!(
-        pid_alive(first_proxy),
-        "the first proxy must be running after up"
-    );
+        // A crashed keeper, not a clean `down`: SIGKILL, then reap — `up`
+        // ran in-process, so this test is the keeper's parent (same
+        // reasoning as `tests/lifecycle_hooks.rs`'s recovery test).
+        let keeper = match devcroft::lifecycle::health(&paths).unwrap() {
+            devcroft::lifecycle::Health::Healthy(pid) => pid,
+            other => panic!("expected a healthy keeper, got {other:?}"),
+        };
+        unsafe {
+            assert_eq!(libc::kill(keeper, libc::SIGKILL), 0);
+            libc::waitpid(keeper, std::ptr::null_mut(), 0);
+        }
+        assert!(
+            pid_alive(first_proxy),
+            "the proxy is a separate process and must survive the keeper's death — \
+             otherwise this test measures nothing"
+        );
 
-    // A crashed keeper, not a clean `down`: SIGKILL, then reap — `up` ran
-    // in-process, so this test is the keeper's parent (same reasoning as
-    // `tests/lifecycle_hooks.rs`'s recovery test).
-    let keeper = match devcroft::lifecycle::health(&paths).unwrap() {
-        devcroft::lifecycle::Health::Healthy(pid) => pid,
-        other => panic!("expected a healthy keeper, got {other:?}"),
-    };
-    unsafe {
-        assert_eq!(libc::kill(keeper, libc::SIGKILL), 0);
-        libc::waitpid(keeper, std::ptr::null_mut(), 0);
-    }
-    assert!(
-        pid_alive(first_proxy),
-        "the proxy is a separate process and must survive the keeper's death — \
-         otherwise this test measures nothing"
-    );
+        assert_eq!(
+            fx.bring_up(&UpOptions::default()).unwrap(),
+            UpOutcome::Recovered
+        );
+        let second_proxy = read_pid(&paths.proxy_pidfile).expect("recovery starts a proxy");
+        assert_ne!(
+            second_proxy, first_proxy,
+            "recovery must start a fresh proxy"
+        );
+        assert!(
+            !pid_alive(first_proxy),
+            "the orphaned proxy (pid {first_proxy}) must be stopped by recovery, not left \
+             listening with the old allowlist and token"
+        );
 
-    assert_eq!(
-        up(&manifest, &project_root, &UpOptions::default()).unwrap(),
-        UpOutcome::Recovered
-    );
-    let second_proxy = read_pid(&paths.proxy_pidfile).expect("recovery starts a proxy");
-    assert_ne!(
-        second_proxy, first_proxy,
-        "recovery must start a fresh proxy"
-    );
-    assert!(
-        !pid_alive(first_proxy),
-        "the orphaned proxy (pid {first_proxy}) must be stopped by recovery, not left \
-         listening with the old allowlist and token"
-    );
-
-    down(&name).unwrap();
-    let _ = std::fs::remove_dir_all(&project_root);
+        down(&name).unwrap();
+    });
 }
 
 /// Removes a sandbox's state when dropped, so a test that panics part-way
