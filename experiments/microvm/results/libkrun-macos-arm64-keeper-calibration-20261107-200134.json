@@ -1,0 +1,118 @@
+{
+  "schema": 1,
+  "adapter": "libkrun",
+  "host": [
+    "Darwin",
+    "Dragoss-MacBook-Pro.local",
+    "24.6.0",
+    "Darwin Kernel Version 24.6.0: Mon Jan 19 22:01:58 PST 2026; root:xnu-11417.140.69.708.3~1/RELEASE_ARM64_T6041",
+    "arm64"
+  ],
+  "fixture": "stage-b-real-keeper",
+  "qualification": "diagnostic-only",
+  "instance_dir": "/private/tmp/dk-6_n__ufu",
+  "boots": [
+    {
+      "boot": 1,
+      "status": "failed",
+      "ready_seconds": 1.8867329580243677,
+      "greeting": "READY 1 state=1 ro=1 landlock=6 policy=1",
+      "landlock_abi": 6,
+      "guest_filesystem_policy": true,
+      "phase": "wait-for-exit",
+      "ping": true,
+      "readonly_backend": true,
+      "half_close": true,
+      "half_close_pending_bytes": 130816,
+      "oversized_frame_rejected": true,
+      "keeper": {
+        "status": "failed",
+        "implementation": "src/keeper",
+        "nono": "0.77.0",
+        "exec_stdout_stderr_exit": true,
+        "stdin_binary_eof_bytes": 131072,
+        "environment_filter_overlay_cwd": true,
+        "pty_resize": {
+          "initial": [
+            24,
+            80
+          ],
+          "resized": [
+            41,
+            132
+          ],
+          "exit_code": 13
+        },
+        "signals": {
+          "Int": 2,
+          "Term": 15,
+          "Hup": 1
+        },
+        "phase": "nono-filesystem",
+        "error": "AssertionError: (b'', b\"/bin/sh: can't create /bin/busybox: Text file busy\\n\", {'code': 1, 'signal': None})"
+      },
+      "clean_shutdown": true,
+      "exit_code": 0
+    },
+    {
+      "boot": 2,
+      "status": "failed",
+      "ready_seconds": 1.8694689590483904,
+      "greeting": "READY 1 state=2 ro=1 landlock=6 policy=1",
+      "landlock_abi": 6,
+      "guest_filesystem_policy": true,
+      "phase": "wait-for-exit",
+      "ping": true,
+      "readonly_backend": true,
+      "half_close": true,
+      "half_close_pending_bytes": 130816,
+      "oversized_frame_rejected": true,
+      "keeper": {
+        "status": "failed",
+        "implementation": "src/keeper",
+        "nono": "0.77.0",
+        "exec_stdout_stderr_exit": true,
+        "stdin_binary_eof_bytes": 131072,
+        "environment_filter_overlay_cwd": true,
+        "pty_resize": {
+          "initial": [
+            24,
+            80
+          ],
+          "resized": [
+            41,
+            132
+          ],
+          "exit_code": 13
+        },
+        "signals": {
+          "Int": 2,
+          "Term": 15,
+          "Hup": 1
+        },
+        "phase": "nono-filesystem",
+        "error": "AssertionError: (b'', b\"/bin/sh: can't create /bin/busybox: Text file busy\\n\", {'code': 1, 'signal': None})"
+      },
+      "clean_shutdown": true,
+      "exit_code": 0
+    }
+  ],
+  "helper_provenance": {
+    "patch_sha256": "7a25379a3e1291ecbace0cad78e804b70f3f4515cebbf8c35f0843d107d4c2cc",
+    "revision": "6151710f4ea627cf0e5dbce78e4192fb4d64c2e9"
+  },
+  "sandbox": {
+    "outside_denied": true,
+    "passed": true,
+    "readonly_input_works": true,
+    "runtime_write_denied": true,
+    "tcp_denied": true,
+    "thread_works": true,
+    "unix_works": true,
+    "writable_state_works": true
+  },
+  "runtime_unchanged": true,
+  "status": "failed",
+  "raw_results": "experiments/microvm/runs/20261107-200134",
+  "note": "Writing an executing BusyBox hits ETXTBSY independently of nono. Replaced with non-executable runtime data and pre-restriction positive controls."
+}

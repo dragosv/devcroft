@@ -1,0 +1,10 @@
+{
+  "schema": 1,
+  "repository": "nofireai/urunc-kernel",
+  "resolved_tag": "minimal",
+  "manifest_digest": "sha256:ea9bcbdb9b37c7d52a4a810d681d5e8255320751abcec93fcf91a84e45196670",
+  "kernel_digest": "sha256:d0b9acf74a05d21e9d30f567c3d475658d31c11aea61e2267c72262f4e7c62f2",
+  "config_digest": "sha256:93b8fef02034fa1c4805e90c3964d9cfdc41af1d74963a1f08a274fa6c9296e7",
+  "version_digest": "sha256:f5c524d4ae344fafdebbe4ef9c333d972210295bb01efa7c44df487e2fb42bea",
+  "qualification": "diagnostic-only; kernel configuration not qualified"
+}

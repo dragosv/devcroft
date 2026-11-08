@@ -1,0 +1,9 @@
+{
+  "schema": 1,
+  "package": "busybox-static-1.37.0-r30",
+  "architecture": "aarch64",
+  "url": "https://dl-cdn.alpinelinux.org/alpine/v3.23/main/aarch64/busybox-static-1.37.0-r30.apk",
+  "sha256": "44c9abdfb970f398fa72c8382fe2d8808eea16beaf82daf6ac708b92f1b8659e",
+  "member": "bin/busybox.static",
+  "purpose": "Real static shell and utilities for the keeper integration fixture; not a provider closure"
+}

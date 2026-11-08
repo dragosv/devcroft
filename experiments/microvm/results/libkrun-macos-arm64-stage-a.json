@@ -1,0 +1,75 @@
+{
+  "schema": 1,
+  "adapter": "libkrun",
+  "host": {
+    "os": "macOS 15.7.4",
+    "kernel": "24.6.0",
+    "architecture": "arm64",
+    "hypervisor": "HVF"
+  },
+  "fixture": "stage-a-raw-disks",
+  "qualification": "diagnostic-only",
+  "boots": [
+    {
+      "boot": 1,
+      "status": "failed",
+      "ready_seconds": 4.815987125009997,
+      "greeting": "READY 1 state=1 ro=1",
+      "phase": "wait-for-exit",
+      "ping": true,
+      "readonly_backend": true,
+      "half_close": false,
+      "half_close_error": "timed out",
+      "clean_shutdown": true,
+      "exit_code": 0
+    },
+    {
+      "boot": 2,
+      "status": "failed",
+      "ready_seconds": 4.750819125009002,
+      "greeting": "READY 1 state=2 ro=1",
+      "phase": "wait-for-exit",
+      "ping": true,
+      "readonly_backend": true,
+      "half_close": false,
+      "half_close_error": "timed out",
+      "clean_shutdown": true,
+      "exit_code": 0
+    }
+  ],
+  "sandbox": {
+    "outside_denied": true,
+    "passed": true,
+    "readonly_input_works": true,
+    "runtime_write_denied": true,
+    "tcp_denied": true,
+    "thread_works": true,
+    "unix_works": true,
+    "writable_state_works": true
+  },
+  "runtime_unchanged": true,
+  "status": "failed",
+  "observed_on": "2026-11-07",
+  "revision": "6151710f4ea627cf0e5dbce78e4192fb4d64c2e9",
+  "inputs": {
+    "kernel": "d0b9acf74a05d21e9d30f567c3d475658d31c11aea61e2267c72262f4e7c62f2",
+    "initramfs": "bcd65b39205c5116a23dc1007768d2fddc8f862cf4c0af89e13e97d0962c2380",
+    "runtime": "768f5b593e9f9f6888ea6930f6b6dc3adb65fd204b3c48361e0864dd6ae93f0c"
+  },
+  "guest_source_sha256": "3c7a3e8bf6cc5d41a069d563aa748339b3498fba7c86bbfde2691c9e31b16d6c",
+  "zig_version": "0.17.0",
+  "sandbox_source_sha256": "f69f8cd677949aa1339bb93a2304fb3f28d0d9ac9cd1392a4c1078519cc45df0",
+  "resources": {
+    "vcpus": 1,
+    "memory_mib": 256
+  },
+  "kernel_landlock": false,
+  "raw_evidence": "experiments/microvm/runs/20261107-131300",
+  "qualification_blockers": [
+    "Host-to-guest half-close timed out on both boots",
+    "Diagnostic kernel does not enable CONFIG_SECURITY_LANDLOCK",
+    "Complete keeper/closure/services/host resource controls not exercised"
+  ],
+  "interface_tests_passed": 8,
+  "benchmark": false
+}

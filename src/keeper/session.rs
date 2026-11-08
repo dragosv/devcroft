@@ -74,7 +74,7 @@ fn apply_activation_env(cmd: &mut Command) {
     // environment`'s rule is that what the sandbox sees is decided. By name,
     // not prefix: a project's own `DEVCROFT_*` variables are its own.
     for (name, _) in std::env::vars_os() {
-        if crate::lifecycle::is_keeper_internal(&name.to_string_lossy()) {
+        if super::environment::is_keeper_internal(&name.to_string_lossy()) {
             cmd.env_remove(name);
         }
     }

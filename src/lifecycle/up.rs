@@ -2014,42 +2014,7 @@ fn prepare_services(
     Ok(true)
 }
 
-/// devcroft's own variables in a keeper's environment, which sessions must
-/// not inherit (`keeper::session`): everything [`KeeperEnv::vars`] adds
-/// besides `SHELL` and `PATH`, which are for sessions, plus what the init
-/// helper and `spawn_keeper` add. Named one by one rather than by prefix,
-/// since a project may name its own variables `DEVCROFT_*` (this repository's
-/// tests do) and a fleet task's process is meant to see `DEVCROFT_TASK`.
-const KEEPER_INTERNAL: [&str; 20] = [
-    crate::runtime::redirect::KEEPER_LIB_VAR,
-    crate::runtime::redirect::KEEPER_EXEC_LOG_VAR,
-    crate::runtime::redirect::KEEPER_NS_VAR,
-    crate::runtime::redirect::KEEPER_TEMP_VAR,
-    crate::runtime::redirect::KEEPER_TEMP_GRANTS,
-    crate::runtime::redirect::KEEPER_USER_VAR,
-    "DEVCROFT_CAPABILITY_PLAN",
-    "DEVCROFT_SSH_HOST_KEY",
-    "DEVCROFT_SSH_AUTHORIZED_KEY",
-    "DEVCROFT_SHELL",
-    "DEVCROFT_START_SERVICES",
-    "DEVCROFT_SANDBOX_NAME",
-    "DEVCROFT_SERVICES_ROOT",
-    "DEVCROFT_SANDBOX_HOME",
-    "DEVCROFT_PROXY_RELAY_PORT",
-    "DEVCROFT_PROXY_SOCKET",
-    "DEVCROFT_PROXY_RELAY_FD",
-    "DEVCROFT_ACTIVATION_PROVISIONED",
-    ACTIVATION_FD_ENV,
-    ACTIVATION_OVERLAY_ENV,
-];
-
-/// The provisioning process's end of the pipe its activation script's
-/// exports come back on (`run_provisioning`).
-pub const ACTIVATION_FD_ENV: &str = "DEVCROFT_ACTIVATION_FD";
-
-/// What the activation script exported, as `up` read it, for the keeper to
-/// adopt (`spawn_keeper`).
-pub const ACTIVATION_OVERLAY_ENV: &str = "DEVCROFT_ACTIVATION_OVERLAY";
+pub use crate::keeper::environment::{ACTIVATION_FD_ENV, ACTIVATION_OVERLAY_ENV};
 
 /// A pipe, both ends close-on-exec: `(read, write)`.
 fn pipe() -> io::Result<(std::os::fd::OwnedFd, std::os::fd::OwnedFd)> {
@@ -2070,12 +2035,6 @@ fn pipe() -> io::Result<(std::os::fd::OwnedFd, std::os::fd::OwnedFd)> {
             std::os::fd::OwnedFd::from_raw_fd(fds[1]),
         )
     })
-}
-
-/// Whether `name` is one of devcroft's own keeper variables (see
-/// `KEEPER_INTERNAL`); the hooks are `DEVCROFT_HOOK_<NAME>`.
-pub(crate) fn is_keeper_internal(name: &str) -> bool {
-    KEEPER_INTERNAL.contains(&name) || name.starts_with("DEVCROFT_HOOK_")
 }
 
 /// The base-runtime provenance record for a sandbox (`crate::runtime`),
@@ -2104,7 +2063,6 @@ pub(crate) fn base_runtime_record(
         namespace,
     })
 }
-
 /// The environment's `PATH` with the resolved shell's directory appended,
 /// or `None` when it already holds it.
 fn path_ending_in_shell_dir(
@@ -3372,6 +3330,7 @@ pub(crate) fn pass_fds(cmd: &mut Command, fds: &[RawFd]) {
 
 #[cfg(test)]
 mod tests {
+    use crate::keeper::environment::is_keeper_internal;
     /// Only what the script added, and only what the policy refuses: a
     /// provider's `PATH` that already ends in the host's `/usr/bin` (flox's,
     /// nix's) is not the script's news, and the project is granted.
@@ -3435,6 +3394,22 @@ mod tests {
         }
         assert!(!is_keeper_internal("DEVCROFT_NIX_E2E"));
         assert!(!is_keeper_internal("DEVCROFT_TASK"));
+        // The list is literal, since the guest keeper compiles this module on
+        // its own; the redirect variables must still be in it.
+        use crate::runtime::redirect::{
+            KEEPER_EXEC_LOG_VAR, KEEPER_LIB_VAR, KEEPER_NS_VAR, KEEPER_TEMP_GRANTS,
+            KEEPER_TEMP_VAR, KEEPER_USER_VAR,
+        };
+        for var in [
+            KEEPER_LIB_VAR,
+            KEEPER_EXEC_LOG_VAR,
+            KEEPER_NS_VAR,
+            KEEPER_TEMP_VAR,
+            KEEPER_TEMP_GRANTS,
+            KEEPER_USER_VAR,
+        ] {
+            assert!(is_keeper_internal(var), "{var} reaches sessions");
+        }
     }
 
     /// The shell's directory ends `PATH`, once, and the environment's own
