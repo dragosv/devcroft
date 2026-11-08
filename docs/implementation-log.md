@@ -1399,3 +1399,21 @@ empty, so a `post_create` guarded by `[ -d "$PGDATA" ]` skips `initdb` on
 the first `up`. Fleet agents do not get the identity yet (their `View`
 passes `None`); that is an `add-linux-agent-fleet` task, because fleet's
 tests need sudo.
+
+**Every sandbox ever named left a lock file behind (2026-11-08).** One
+development machine's data dir held 1768 entries: 1646 `<name>.lock` files
+with no sandbox, and 60 state dirs from tests. `StatePaths::new` puts the
+lifecycle lock *beside* the sandbox's root on purpose, so an `up` that
+fails before creating the root leaves no directory, and `rm` deletes only
+the root. So nothing ever removed the lock. Unlinking a `flock`ed file is
+only safe if a waiter cannot end up holding a lock on the unlinked inode
+while a newcomer locks a fresh file, so `acquire_lifecycle_lock` now
+re-checks, after its `flock`, that the path still names the inode it
+locked, and retries if not. `rm`, and an `up` or `down` that ends with no
+root, then remove the lock while holding it. Both halves fail their test
+with the fix removed
+(`a_waiter_on_a_removed_lock_ends_up_holding_the_file_at_the_path`,
+`rm_removes_the_lock_that_lives_beside_the_root`). The two tests still
+leaking state dirs, the egress proxy's recovery test (`down` but never
+`rm`) and `symlink_escape_cli` (a refused `up` still writes `meta.json`),
+now remove their sandbox on every exit.

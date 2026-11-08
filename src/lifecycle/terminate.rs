@@ -112,20 +112,28 @@ fn down_at(paths: &StatePaths) -> Result<(), TerminateError> {
     // Same lock `up` holds for its own critical section — serializes
     // this against a concurrent `up` for the same sandbox, not only
     // `up` against itself. See `acquire_lifecycle_lock`'s doc.
-    let _lock = state::acquire_lifecycle_lock(&paths.lifecycle_lock)?;
+    let lock = state::acquire_lifecycle_lock(&paths.lifecycle_lock)?;
     stop_if_running(paths)?;
     state::clear_runtime_state(paths)?;
+    // `down` on a name with no state at all: nothing will use the lock.
+    if !paths.root.exists() {
+        lock.remove();
+    }
     Ok(())
 }
 
 fn rm_at(paths: &StatePaths) -> Result<(), TerminateError> {
-    let _lock = state::acquire_lifecycle_lock(&paths.lifecycle_lock)?;
+    let lock = state::acquire_lifecycle_lock(&paths.lifecycle_lock)?;
     stop_if_running(paths)?;
     match std::fs::remove_dir_all(&paths.root) {
-        Ok(()) => Ok(()),
-        Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(()),
-        Err(e) => Err(e.into()),
+        Ok(()) => {}
+        Err(e) if e.kind() == io::ErrorKind::NotFound => {}
+        Err(e) => return Err(e.into()),
     }
+    // Last, still held: the lock lives outside `root`, in the shared data
+    // dir, so removing `root` never touched it.
+    lock.remove();
+    Ok(())
 }
 
 fn stop_if_running(paths: &StatePaths) -> io::Result<()> {
@@ -181,6 +189,21 @@ mod tests {
         rm_at(&paths).unwrap();
 
         assert!(!paths.root.exists());
+    }
+
+    /// `rm` removes the sandbox's `<name>.lock`, which `StatePaths::new`
+    /// puts beside its root, not inside it, so deleting the root never
+    /// touched it: every removed sandbox used to leave one behind.
+    #[test]
+    fn rm_removes_the_lock_that_lives_beside_the_root() {
+        let mut paths = tempdir("rm-lock");
+        paths.lifecycle_lock = paths.root.with_extension("lock");
+        std::fs::write(&paths.profile, "{}").unwrap();
+
+        rm_at(&paths).unwrap();
+
+        assert!(!paths.root.exists());
+        assert!(!paths.lifecycle_lock.exists(), "rm left the lock file");
     }
 
     #[test]

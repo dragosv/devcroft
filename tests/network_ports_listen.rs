@@ -129,6 +129,7 @@ fn a_granted_port_binds_while_egress_stays_denied_and_other_ports_do_not() {
     .unwrap();
     let paths = StatePaths::new(&sandbox_name).unwrap();
     let _ = std::fs::remove_dir_all(&paths.root);
+    let _ = std::fs::remove_file(&paths.lifecycle_lock);
 
     assert_eq!(
         up(&manifest, &project_root, &UpOptions::default()).unwrap(),
@@ -200,5 +201,6 @@ fn a_granted_port_binds_while_egress_stays_denied_and_other_ports_do_not() {
 
     down(&sandbox_name).unwrap();
     let _ = std::fs::remove_dir_all(&paths.root);
+    let _ = std::fs::remove_file(&paths.lifecycle_lock);
     let _ = std::fs::remove_dir_all(&project_root);
 }

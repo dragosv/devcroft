@@ -111,6 +111,7 @@ fn the_hook_reaches_provisionings_hosts_and_sessions_reach_runtimes() {
     .unwrap();
     let paths = StatePaths::new(&name).unwrap();
     let _ = std::fs::remove_dir_all(&paths.root);
+    let _ = std::fs::remove_file(&paths.lifecycle_lock);
 
     let code = |url: String| {
         format!("/usr/bin/curl -s -o /dev/null --max-time 5 -w '%{{http_code}}' {url}")
@@ -145,6 +146,7 @@ fn the_hook_reaches_provisionings_hosts_and_sessions_reach_runtimes() {
     let (hook3, hook4) = (read("hook-reached-3"), read("hook-reached-4"));
     let _ = down(&name);
     let _ = std::fs::remove_dir_all(&paths.root);
+    let _ = std::fs::remove_file(&paths.lifecycle_lock);
     let _ = std::fs::remove_dir_all(&project);
 
     assert_eq!(
@@ -214,6 +216,7 @@ fn provisioning_gets_its_own_network_namespace_under_a_runtime_that_allows_all()
     .unwrap();
     let paths = StatePaths::new(&name).unwrap();
     let _ = std::fs::remove_dir_all(&paths.root);
+    let _ = std::fs::remove_file(&paths.lifecycle_lock);
     let row = Row {
         store,
         hook: format!(
@@ -227,6 +230,7 @@ fn provisioning_gets_its_own_network_namespace_under_a_runtime_that_allows_all()
     let reached = std::fs::read_to_string(project.join("hook-reached-3")).unwrap_or_default();
     let _ = down(&name);
     let _ = std::fs::remove_dir_all(&paths.root);
+    let _ = std::fs::remove_file(&paths.lifecycle_lock);
     let _ = std::fs::remove_dir_all(&project);
 
     assert!(outcome.is_ok(), "{outcome:?}");

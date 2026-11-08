@@ -121,6 +121,7 @@ fn network_allow_actually_filters_by_host_through_a_real_curl() {
     .unwrap();
     let paths = StatePaths::new(&sandbox_name).unwrap();
     let _ = std::fs::remove_dir_all(&paths.root);
+    let _ = std::fs::remove_file(&paths.lifecycle_lock);
 
     assert_eq!(
         up(&manifest, &project_root, &UpOptions::default()).unwrap(),
@@ -171,6 +172,7 @@ fn network_allow_actually_filters_by_host_through_a_real_curl() {
 
     let _ = down(&sandbox_name);
     let _ = std::fs::remove_dir_all(&paths.root);
+    let _ = std::fs::remove_file(&paths.lifecycle_lock);
     let _ = std::fs::remove_dir_all(&project_root);
 }
 
@@ -221,6 +223,10 @@ fn recovering_a_dead_keeper_stops_the_orphaned_egress_proxy() {
     .unwrap();
     let paths = StatePaths::new(&name).unwrap();
     let _ = std::fs::remove_dir_all(&paths.root);
+    let _ = std::fs::remove_file(&paths.lifecycle_lock);
+    // `rm`, not `down`, and on every exit including a failed assert: a
+    // `down` keeps the state dir, so each run used to leave one behind.
+    let _cleanup = Removed(&name);
 
     assert_eq!(
         up(&manifest, &project_root, &UpOptions::default()).unwrap(),
@@ -266,6 +272,16 @@ fn recovering_a_dead_keeper_stops_the_orphaned_egress_proxy() {
 
     down(&name).unwrap();
     let _ = std::fs::remove_dir_all(&project_root);
+}
+
+/// Removes a sandbox's state when dropped, so a test that panics part-way
+/// still leaves nothing in devcroft's data dir.
+struct Removed<'a>(&'a str);
+
+impl Drop for Removed<'_> {
+    fn drop(&mut self) {
+        let _ = devcroft::lifecycle::rm(self.0);
+    }
 }
 
 fn read_pid(pidfile: &std::path::Path) -> Option<libc::pid_t> {

@@ -182,6 +182,7 @@ fn an_isolated_sandboxs_granted_port_is_namespace_local_not_host_visible() {
     .unwrap();
     let paths = StatePaths::new(&sandbox_name).unwrap();
     let _ = std::fs::remove_dir_all(&paths.root);
+    let _ = std::fs::remove_file(&paths.lifecycle_lock);
 
     assert_eq!(
         up(&manifest, &project_root, &UpOptions::default()).unwrap(),
@@ -197,6 +198,7 @@ fn an_isolated_sandboxs_granted_port_is_namespace_local_not_host_visible() {
     }
     down(&sandbox_name).unwrap();
     let _ = std::fs::remove_dir_all(&paths.root);
+    let _ = std::fs::remove_file(&paths.lifecycle_lock);
     let _ = std::fs::remove_dir_all(&project_root);
 
     assert!(
@@ -254,6 +256,7 @@ fn a_non_isolated_sandboxs_granted_port_is_reachable_from_the_host() {
     .unwrap();
     let paths = StatePaths::new(&sandbox_name).unwrap();
     let _ = std::fs::remove_dir_all(&paths.root);
+    let _ = std::fs::remove_file(&paths.lifecycle_lock);
 
     assert_eq!(
         up(&manifest, &project_root, &UpOptions::default()).unwrap(),
@@ -269,6 +272,7 @@ fn a_non_isolated_sandboxs_granted_port_is_reachable_from_the_host() {
     }
     down(&sandbox_name).unwrap();
     let _ = std::fs::remove_dir_all(&paths.root);
+    let _ = std::fs::remove_file(&paths.lifecycle_lock);
     let _ = std::fs::remove_dir_all(&project_root);
 
     assert!(

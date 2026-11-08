@@ -35,6 +35,7 @@ fn down_terminates_a_live_session_process_not_just_the_keeper() {
         let project_root = fx.project_root().to_path_buf();
         let paths = StatePaths::new(&sandbox_name).unwrap();
         let _ = std::fs::remove_dir_all(&paths.root);
+        let _ = std::fs::remove_file(&paths.lifecycle_lock);
 
         assert_eq!(
             fx.bring_up(&UpOptions::default()).unwrap(),
@@ -109,6 +110,7 @@ fn down_terminates_a_live_session_process_not_just_the_keeper() {
         );
 
         let _ = std::fs::remove_dir_all(&paths.root);
+        let _ = std::fs::remove_file(&paths.lifecycle_lock);
         let _ = std::fs::remove_dir_all(&project_root);
     });
 }

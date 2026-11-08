@@ -128,7 +128,9 @@ impl StatePaths {
         // leaving behind — a per-sandbox directory that whole prior fix
         // exists to avoid. `ps`'s own directory scan already skips
         // non-directory entries, so a `<name>.lock` file here is inert to
-        // it regardless.
+        // it regardless. Being outside `root` also means deleting `root`
+        // never removes it: `rm`, and an `up` or `down` that ends with no
+        // `root`, remove it explicitly (`LifecycleLock::remove`).
         paths.lifecycle_lock = dir.join(format!("{sandbox_name}.lock"));
         Ok(paths)
     }
@@ -166,8 +168,32 @@ impl StatePaths {
 /// `acquire_lifecycle_lock`. Never read; its only job is to keep the
 /// fd open (and so the `flock` held) until this is dropped, at which
 /// point the kernel releases it as a side effect of the fd closing.
-#[allow(dead_code)]
-pub struct LifecycleLock(std::fs::File);
+pub struct LifecycleLock {
+    // Never read: held only so the fd, and with it the `flock`, lives
+    // until this is dropped.
+    _file: std::fs::File,
+    path: PathBuf,
+}
+
+impl LifecycleLock {
+    /// Unlink the lock file, then release it: for a sandbox that no longer
+    /// has any state (`rm`, or an `up` that failed before creating its
+    /// directory). Without this every sandbox ever named left a
+    /// `<name>.lock` in the shared data dir for good, since the file lives
+    /// outside the per-sandbox root that `rm` deletes (measured: 1646 of
+    /// them on one development machine).
+    ///
+    /// Safe against a process already blocked on the same file only
+    /// because [`acquire_lifecycle_lock`] re-checks, after its `flock`,
+    /// that the path still names the inode it locked: that waiter wakes
+    /// holding a lock on an unlinked inode, sees the mismatch, and retries
+    /// on whatever file now exists, so it never holds the lock alongside a
+    /// newcomer that created a fresh file.
+    pub fn remove(self) {
+        // Best-effort: a leftover lock file is litter, not a failure.
+        let _ = std::fs::remove_file(&self.path);
+    }
+}
 
 /// Serializes every lifecycle operation on one sandbox against every
 /// other. Before this existed, two concurrent `up` invocations for the
@@ -203,17 +229,35 @@ pub fn acquire_lifecycle_lock(path: &Path) -> io::Result<LifecycleLock> {
     // there is nothing to preserve, but nothing to gain by truncating
     // it either, and doing so is one more write to a file another
     // process might (harmlessly, but needlessly) be mid-`open` on.
-    let file = std::fs::OpenOptions::new()
-        .create(true)
-        .truncate(false)
-        .write(true)
-        .open(path)?;
-    // SAFETY: `file` owns a valid fd for the duration of this call, and
-    // `flock` neither reads nor writes through it.
-    if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX) } != 0 {
-        return Err(io::Error::last_os_error());
+    loop {
+        let file = std::fs::OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .write(true)
+            .open(path)?;
+        // SAFETY: `file` owns a valid fd for the duration of this call, and
+        // `flock` neither reads nor writes through it.
+        if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX) } != 0 {
+            return Err(io::Error::last_os_error());
+        }
+        // The holder we waited on may have removed the file
+        // (`LifecycleLock::remove`), in which case this lock is on an
+        // inode nobody else will ever open: retry on the path as it is
+        // now. A missing path is the same case.
+        use std::os::unix::fs::MetadataExt;
+        let locked = file.metadata()?;
+        match std::fs::metadata(path) {
+            Ok(now) if now.dev() == locked.dev() && now.ino() == locked.ino() => {
+                return Ok(LifecycleLock {
+                    _file: file,
+                    path: path.to_path_buf(),
+                });
+            }
+            Ok(_) => continue,
+            Err(e) if e.kind() == io::ErrorKind::NotFound => continue,
+            Err(e) => return Err(e),
+        }
     }
-    Ok(LifecycleLock(file))
 }
 
 /// Where the client ed25519 keypair lives (ssh spec's "Key management"
@@ -803,6 +847,55 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         StatePaths::in_dir(dir)
+    }
+
+    /// A process blocked on the lock while its holder removes the file must
+    /// not wake holding a lock on the unlinked inode: a newcomer would then
+    /// create a fresh file at the path and lock that, and the two would
+    /// hold "the" lock at once. The waiter instead re-checks the path after
+    /// its `flock` and retries, so whoever holds the lock holds it on the
+    /// file that is actually there, and a non-blocking attempt on that file
+    /// fails.
+    #[test]
+    fn a_waiter_on_a_removed_lock_ends_up_holding_the_file_at_the_path() {
+        let paths = tempdir("lock-remove-race");
+        let lock_path = paths.root.join("race.lock");
+        let first = acquire_lifecycle_lock(&lock_path).unwrap();
+
+        let (tx, rx) = std::sync::mpsc::channel();
+        let waiter_path = lock_path.clone();
+        let waiter = std::thread::spawn(move || {
+            let held = acquire_lifecycle_lock(&waiter_path).unwrap();
+            tx.send(()).unwrap();
+            // Keep holding until the main thread has probed.
+            std::thread::sleep(std::time::Duration::from_secs(2));
+            drop(held);
+        });
+        // Let the waiter open the file and block in `flock` on it.
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        first.remove();
+        rx.recv_timeout(std::time::Duration::from_secs(5))
+            .expect("the waiter never acquired the lock");
+
+        let probe = std::fs::OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .write(true)
+            .open(&lock_path)
+            .unwrap();
+        // SAFETY: a valid fd for the duration of the call.
+        let rc = unsafe {
+            libc::flock(
+                std::os::fd::AsRawFd::as_raw_fd(&probe),
+                libc::LOCK_EX | libc::LOCK_NB,
+            )
+        };
+        assert_eq!(
+            rc, -1,
+            "the file at the path was not locked: the waiter held a lock on the removed inode"
+        );
+        waiter.join().unwrap();
+        let _ = std::fs::remove_dir_all(&paths.root);
     }
 
     /// The traversal this check exists to close, confirmed live at the

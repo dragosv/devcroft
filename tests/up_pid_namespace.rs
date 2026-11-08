@@ -98,6 +98,7 @@ fn a_sandbox_sees_only_its_own_processes_and_down_ends_them() {
     .unwrap();
     let paths = StatePaths::new(&name).unwrap();
     let _ = std::fs::remove_dir_all(&paths.root);
+    let _ = std::fs::remove_file(&paths.lifecycle_lock);
 
     // A process outside the sandbox, by this test's own pid: it must not be
     // listed inside.
@@ -154,6 +155,7 @@ fn a_sandbox_sees_only_its_own_processes_and_down_ends_them() {
         unsafe { libc::kill(*pid as i32, libc::SIGKILL) };
     }
     let _ = std::fs::remove_dir_all(&paths.root);
+    let _ = std::fs::remove_file(&paths.lifecycle_lock);
     let _ = std::fs::remove_dir_all(&project);
 
     assert_eq!(
@@ -244,6 +246,7 @@ fn a_session_is_the_users_own_uid_not_root() {
     .unwrap();
     let paths = StatePaths::new(&name).unwrap();
     let _ = std::fs::remove_dir_all(&paths.root);
+    let _ = std::fs::remove_file(&paths.lifecycle_lock);
 
     let outcome = up_with_provider(&manifest, &project, &UpOptions::default(), &Row { store });
     let session = Command::new(exe)
@@ -262,6 +265,7 @@ fn a_session_is_the_users_own_uid_not_root() {
     let log = std::fs::read_to_string(&paths.log).unwrap_or_default();
     let downed = down(&name);
     let _ = std::fs::remove_dir_all(&paths.root);
+    let _ = std::fs::remove_file(&paths.lifecycle_lock);
     let _ = std::fs::remove_dir_all(&project);
 
     assert_eq!(
@@ -323,6 +327,7 @@ fn the_view_names_its_user_and_a_granted_path_stays_the_hosts() {
     .unwrap();
     let paths = StatePaths::new(&name).unwrap();
     let _ = std::fs::remove_dir_all(&paths.root);
+    let _ = std::fs::remove_file(&paths.lifecycle_lock);
 
     let outcome = up_with_provider(&manifest, &project, &UpOptions::default(), &Row { store });
     let session = Command::new(exe)
@@ -344,6 +349,7 @@ fn the_view_names_its_user_and_a_granted_path_stays_the_hosts() {
     let log = std::fs::read_to_string(&paths.log).unwrap_or_default();
     let downed = down(&name);
     let _ = std::fs::remove_dir_all(&paths.root);
+    let _ = std::fs::remove_file(&paths.lifecycle_lock);
     let _ = std::fs::remove_dir_all(&project);
 
     assert_eq!(

@@ -32,6 +32,7 @@ fn status_logs_and_ps_reflect_a_real_running_keeper() {
         let project_root = fx.project_root().to_path_buf();
         let paths = StatePaths::new(&sandbox_name).unwrap();
         let _ = std::fs::remove_dir_all(&paths.root);
+        let _ = std::fs::remove_file(&paths.lifecycle_lock);
 
         assert_eq!(
             fx.bring_up(&UpOptions::default()).unwrap(),
@@ -127,6 +128,7 @@ fn status_logs_and_ps_reflect_a_real_running_keeper() {
         assert_eq!(after.keeper, KeeperStatus::None);
 
         let _ = std::fs::remove_dir_all(&paths.root);
+        let _ = std::fs::remove_file(&paths.lifecycle_lock);
     });
 }
 

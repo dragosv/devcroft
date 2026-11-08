@@ -138,6 +138,7 @@ fn swift_resolves_as_artifact_tier_without_reading_the_package_graph() {
     let _ = Command::new(bin).arg("down").current_dir(&root).output();
     let paths = devcroft::lifecycle::StatePaths::new(&name).unwrap();
     let _ = std::fs::remove_dir_all(&paths.root);
+    let _ = std::fs::remove_file(&paths.lifecycle_lock);
     let _ = std::fs::remove_dir_all(&root);
 
     // The tier, at `up` and in `status`, naming its cost both times.
@@ -268,6 +269,7 @@ fn a_closure_provider_makes_no_such_disclosure() {
     let _ = Command::new(bin).arg("down").current_dir(&root).output();
     if let Ok(paths) = devcroft::lifecycle::StatePaths::new(&name) {
         let _ = std::fs::remove_dir_all(&paths.root);
+        let _ = std::fs::remove_file(&paths.lifecycle_lock);
     }
     let _ = std::fs::remove_dir_all(&root);
 
@@ -355,6 +357,7 @@ fn a_portable_swift_package_is_advised_by_default_and_refused_on_request() {
     let _ = Command::new(bin).arg("down").current_dir(&root).output();
     if let Ok(paths) = devcroft::lifecycle::StatePaths::new(&name) {
         let _ = std::fs::remove_dir_all(&paths.root);
+        let _ = std::fs::remove_file(&paths.lifecycle_lock);
     }
     let _ = std::fs::remove_dir_all(&root);
 
@@ -455,6 +458,7 @@ fn swift_build_and_run_succeed_through_the_shim_with_only_the_project_granted() 
     let _ = Command::new(bin).arg("down").current_dir(&root).output();
     if let Ok(paths) = devcroft::lifecycle::StatePaths::new(&name) {
         let _ = std::fs::remove_dir_all(&paths.root);
+        let _ = std::fs::remove_file(&paths.lifecycle_lock);
     }
 
     assert!(

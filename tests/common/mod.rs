@@ -881,6 +881,10 @@ pub fn for_each_row(tag: &str, body: impl Fn(&mut dyn ProviderFixture)) {
                 // never a skip -- it just fails legibly.
                 let outcome =
                     std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| body(fx.as_mut())));
+                // `rm` takes the state dir and its lock file together; a
+                // row whose body already removed the sandbox makes this a
+                // no-op.
+                let _ = devcroft::lifecycle::rm(fx.sandbox_name());
                 let _ = std::fs::remove_dir_all(fx.project_root());
                 match outcome {
                     Ok(()) => {

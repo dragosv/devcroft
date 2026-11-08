@@ -206,12 +206,28 @@ pub fn up_with_provider(
     provider: &dyn crate::provider::ProviderEntry,
 ) -> Result<UpOutcome, UpError> {
     let paths = StatePaths::new(&manifest.sandbox.name)?;
-    // Held for the rest of this function — see `acquire_lifecycle_lock`'s
-    // doc for the concurrent-`up` race this closes. Every `?` and early
-    // return below drops `_lock` (and so releases it) on the way out,
-    // same as any other RAII guard.
-    let _lock = state::acquire_lifecycle_lock(&paths.lifecycle_lock)?;
+    // Held for the whole of `up` — see `acquire_lifecycle_lock`'s doc for
+    // the concurrent-`up` race this closes.
+    let lock = state::acquire_lifecycle_lock(&paths.lifecycle_lock)?;
+    let outcome = up_locked(manifest, project_root, opts, provider, &paths);
+    // An `up` that failed before creating the sandbox's directory (a
+    // provider resolution failure leaves it uncreated on purpose) has no
+    // state for the lock to guard, and would otherwise leave
+    // `<name>.lock` behind in the shared data dir for good.
+    if !paths.root.exists() {
+        lock.remove();
+    }
+    outcome
+}
 
+/// `up_with_provider`'s body, run with the lifecycle lock held.
+fn up_locked(
+    manifest: &Manifest,
+    project_root: &Path,
+    opts: &UpOptions,
+    provider: &dyn crate::provider::ProviderEntry,
+    paths: &StatePaths,
+) -> Result<UpOutcome, UpError> {
     // **A state directory belongs to the project root it was created for.**
     //
     // `meta.json` has always recorded `project_root`; nothing ever compared
@@ -264,7 +280,7 @@ pub fn up_with_provider(
         // env, so reusing it here would silently ignore that change
         // until the next full `down`.
         state::terminate_and_wait(&paths.proxy_pidfile, TERMINATE_GRACE_PERIOD);
-        state::clear_runtime_state(&paths)?;
+        state::clear_runtime_state(paths)?;
         // A recreated sandbox does not start out needing attention
         // (`agent-attention`): what the last one's agent said was about
         // that sandbox. `down` keeps it, as it keeps everything else; `rm`
@@ -276,7 +292,7 @@ pub fn up_with_provider(
         .map_err(UpError::State)?;
         UpOutcome::Recreated
     } else {
-        match state::health(&paths)? {
+        match state::health(paths)? {
             Health::Healthy(_) => return Ok(UpOutcome::AlreadyUp),
             Health::Stale(_) => {
                 // The proxy outlives a crashed keeper — it is a separate
@@ -290,7 +306,7 @@ pub fn up_with_provider(
                 // `tests/egress_proxy_e2e.rs` now has the one that would
                 // have.
                 state::terminate_and_wait(&paths.proxy_pidfile, TERMINATE_GRACE_PERIOD);
-                state::clear_runtime_state(&paths)?;
+                state::clear_runtime_state(paths)?;
                 UpOutcome::Recovered
             }
             Health::None => UpOutcome::Started,
@@ -417,14 +433,14 @@ pub fn up_with_provider(
     // authentication entirely, so the pair is one `Option`, not two, all
     // the way to where each half is consumed.
     let proxy = if policy::compile(manifest).wants_egress_proxy() {
-        Some(ensure_egress_proxy(&paths, &manifest.network.allow)?)
+        Some(ensure_egress_proxy(paths, &manifest.network.allow)?)
     } else {
         // A manifest that no longer wants filtering (`network.allow` was
         // emptied, or `network.default` changed to `"allow"`) leaves a
         // proxy from a previous `up` running with nothing left to filter
         // for — same "no orphan" reasoning `clear_runtime_state` already
         // applies to the keeper's own pidfile.
-        stop_orphaned_egress_proxy(&paths)?;
+        stop_orphaned_egress_proxy(paths)?;
         None
     };
 
@@ -516,7 +532,7 @@ pub fn up_with_provider(
         provider,
         manifest,
         project_root,
-        &paths,
+        paths,
         opts,
         outcome,
         &resolution,

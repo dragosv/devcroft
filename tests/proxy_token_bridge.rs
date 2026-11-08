@@ -99,6 +99,7 @@ fn an_isolated_sandbox_needs_no_proxy_credential_and_the_host_listener_still_doe
     .unwrap();
     let paths = StatePaths::new(&name).unwrap();
     let _ = std::fs::remove_dir_all(&paths.root);
+    let _ = std::fs::remove_file(&paths.lifecycle_lock);
 
     let outcome = up_with_provider(&manifest, &project, &UpOptions::default(), &Row { store });
     // From inside: the proxy URL, then a credential-less CONNECT through it.
@@ -128,6 +129,7 @@ fn an_isolated_sandbox_needs_no_proxy_credential_and_the_host_listener_still_doe
     let log = std::fs::read_to_string(&paths.log).unwrap_or_default();
     let _ = down(&name);
     let _ = std::fs::remove_dir_all(&paths.root);
+    let _ = std::fs::remove_file(&paths.lifecycle_lock);
     let _ = std::fs::remove_dir_all(&project);
 
     assert_eq!(

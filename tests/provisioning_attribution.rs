@@ -80,6 +80,7 @@ fn failing_up(tag: &str, hook: String) -> Option<(String, String)> {
     .unwrap();
     let paths = StatePaths::new(&name).unwrap();
     let _ = std::fs::remove_dir_all(&paths.root);
+    let _ = std::fs::remove_file(&paths.lifecycle_lock);
 
     let outcome = up_with_provider(
         &manifest,
@@ -90,6 +91,7 @@ fn failing_up(tag: &str, hook: String) -> Option<(String, String)> {
     let log = std::fs::read_to_string(&paths.log).unwrap_or_default();
     let _ = down(&name);
     let _ = std::fs::remove_dir_all(&paths.root);
+    let _ = std::fs::remove_file(&paths.lifecycle_lock);
     let _ = std::fs::remove_dir_all(&project);
 
     match outcome {
@@ -207,6 +209,7 @@ fn a_grant_of_the_daemon_socket_is_refused_before_any_hook_runs() {
     let name = format!("e2eprovattrsock{pid}");
     let paths = StatePaths::new(&name).unwrap();
     let _ = std::fs::remove_dir_all(&paths.root);
+    let _ = std::fs::remove_file(&paths.lifecycle_lock);
 
     for grant in [
         "read = [\"/nix/var/nix/daemon-socket\"]",
@@ -241,6 +244,7 @@ fn a_grant_of_the_daemon_socket_is_refused_before_any_hook_runs() {
         assert!(!marker.exists(), "{grant}: the hook ran");
     }
     let _ = std::fs::remove_dir_all(&paths.root);
+    let _ = std::fs::remove_file(&paths.lifecycle_lock);
     let _ = std::fs::remove_dir_all(&project);
 }
 

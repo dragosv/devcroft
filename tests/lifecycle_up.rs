@@ -38,6 +38,7 @@ fn up_spawns_a_working_keeper_and_down_tears_it_back_down() {
         // for a healthy keeper.
         let paths = StatePaths::new(fx.sandbox_name()).unwrap();
         let _ = std::fs::remove_dir_all(&paths.root);
+        let _ = std::fs::remove_file(&paths.lifecycle_lock);
 
         let outcome = fx
             .bring_up(&UpOptions::default())
@@ -98,5 +99,6 @@ fn up_spawns_a_working_keeper_and_down_tears_it_back_down() {
         assert!(UnixStream::connect(&paths.socket).is_err());
 
         let _ = std::fs::remove_dir_all(&paths.root);
+        let _ = std::fs::remove_file(&paths.lifecycle_lock);
     });
 }

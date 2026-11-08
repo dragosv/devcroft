@@ -90,6 +90,7 @@ fn without_the_key_no_agent_socket_reaches_the_sandbox() {
     let _ = Command::new(bin).arg("down").current_dir(&root).output();
     let paths = devcroft::lifecycle::StatePaths::new(&name).unwrap();
     let _ = std::fs::remove_dir_all(&paths.root);
+    let _ = std::fs::remove_file(&paths.lifecycle_lock);
     let _ = std::fs::remove_dir_all(&root);
 
     assert!(
@@ -156,6 +157,7 @@ fn with_the_key_the_host_agent_is_reachable() {
     let _ = Command::new(bin).arg("down").current_dir(&root).output();
     let paths = devcroft::lifecycle::StatePaths::new(&name).unwrap();
     let _ = std::fs::remove_dir_all(&paths.root);
+    let _ = std::fs::remove_file(&paths.lifecycle_lock);
     let _ = std::fs::remove_dir_all(&root);
 
     // The same identities the host agent holds, which is what distinguishes

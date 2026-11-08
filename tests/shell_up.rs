@@ -73,6 +73,7 @@ fn shell_runs_commands_ends_with_its_input_and_falls_back_when_shell_is_missing(
     let (manifest, _) = parse(&format!("[sandbox]\nname = {sandbox_name:?}\n")).unwrap();
     let paths = StatePaths::new(&sandbox_name).unwrap();
     let _ = std::fs::remove_dir_all(&paths.root);
+    let _ = std::fs::remove_file(&paths.lifecycle_lock);
 
     assert_eq!(
         up(&manifest, &project_root, &UpOptions::default()).unwrap(),
@@ -243,5 +244,6 @@ fn shell_runs_commands_ends_with_its_input_and_falls_back_when_shell_is_missing(
 
     down(&sandbox_name).unwrap();
     let _ = std::fs::remove_dir_all(&paths.root);
+    let _ = std::fs::remove_file(&paths.lifecycle_lock);
     let _ = std::fs::remove_dir_all(&project_root);
 }

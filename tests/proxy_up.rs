@@ -104,6 +104,7 @@ async fn proxy_bridges_a_real_ssh_handshake_through_its_stdio() {
     let (manifest, _) = parse(&format!("[sandbox]\nname = {sandbox_name:?}\n")).unwrap();
     let paths = StatePaths::new(&sandbox_name).unwrap();
     let _ = std::fs::remove_dir_all(&paths.root);
+    let _ = std::fs::remove_file(&paths.lifecycle_lock);
 
     assert_eq!(
         up(&manifest, &project_root, &UpOptions::default()).unwrap(),
@@ -155,6 +156,7 @@ async fn proxy_bridges_a_real_ssh_handshake_through_its_stdio() {
 
     down(&sandbox_name).unwrap();
     let _ = std::fs::remove_dir_all(&paths.root);
+    let _ = std::fs::remove_file(&paths.lifecycle_lock);
     let _ = std::fs::remove_dir_all(&project_root);
 }
 
@@ -245,6 +247,7 @@ async fn proxy_brings_up_a_cold_sandbox_automatically() {
     .unwrap();
     let paths = StatePaths::new(&sandbox_name).unwrap();
     let _ = std::fs::remove_dir_all(&paths.root);
+    let _ = std::fs::remove_file(&paths.lifecycle_lock);
 
     // No `up` anywhere above: a cold sandbox, `proxy` targets it without
     // `--no-up`.
@@ -283,5 +286,6 @@ async fn proxy_brings_up_a_cold_sandbox_automatically() {
 
     down(&sandbox_name).unwrap();
     let _ = std::fs::remove_dir_all(&paths.root);
+    let _ = std::fs::remove_file(&paths.lifecycle_lock);
     let _ = std::fs::remove_dir_all(&project_root);
 }

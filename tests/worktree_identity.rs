@@ -86,6 +86,7 @@ fn two_worktrees_of_one_repo_do_not_silently_share_a_sandbox() {
 
         let paths = StatePaths::new(fx.sandbox_name()).unwrap();
         let _ = std::fs::remove_dir_all(&paths.root);
+        let _ = std::fs::remove_file(&paths.lifecycle_lock);
 
         // First worktree: ordinary `up`.
         assert_eq!(
@@ -123,6 +124,7 @@ fn two_worktrees_of_one_repo_do_not_silently_share_a_sandbox() {
             let _ = down(&alt);
             if let Ok(p) = StatePaths::new(&alt) {
                 let _ = std::fs::remove_dir_all(&p.root);
+                let _ = std::fs::remove_file(&p.lifecycle_lock);
             }
             out
         });
@@ -134,6 +136,7 @@ fn two_worktrees_of_one_repo_do_not_silently_share_a_sandbox() {
         };
         cleanup(fx.sandbox_name());
         let _ = std::fs::remove_dir_all(&paths.root);
+        let _ = std::fs::remove_file(&paths.lifecycle_lock);
         let _ = git(
             &["worktree", "remove", "--force", &second.to_string_lossy()],
             &root,
@@ -198,6 +201,7 @@ fn a_repeated_up_from_the_same_root_is_still_a_no_op() {
     for_each_row("samreroot", |fx| {
         let paths = StatePaths::new(fx.sandbox_name()).unwrap();
         let _ = std::fs::remove_dir_all(&paths.root);
+        let _ = std::fs::remove_file(&paths.lifecycle_lock);
 
         assert_eq!(
             fx.bring_up(&UpOptions::default()).unwrap(),
@@ -212,5 +216,6 @@ fn a_repeated_up_from_the_same_root_is_still_a_no_op() {
 
         down(fx.sandbox_name()).unwrap();
         let _ = std::fs::remove_dir_all(&paths.root);
+        let _ = std::fs::remove_file(&paths.lifecycle_lock);
     });
 }

@@ -47,6 +47,7 @@ fn exec_propagates_exit_code_maps_cwd_and_forwards_sigint() {
         std::fs::create_dir_all(&src_dir).unwrap();
         let paths = StatePaths::new(&sandbox_name).unwrap();
         let _ = std::fs::remove_dir_all(&paths.root);
+        let _ = std::fs::remove_file(&paths.lifecycle_lock);
 
         assert_eq!(
             fx.bring_up(&UpOptions::default()).unwrap(),
@@ -118,6 +119,7 @@ fn exec_propagates_exit_code_maps_cwd_and_forwards_sigint() {
 
         down(&sandbox_name).unwrap();
         let _ = std::fs::remove_dir_all(&paths.root);
+        let _ = std::fs::remove_file(&paths.lifecycle_lock);
         let _ = std::fs::remove_dir_all(&project_root);
     });
 }

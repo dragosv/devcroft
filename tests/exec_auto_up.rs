@@ -65,6 +65,7 @@ fn exec_brings_up_a_cold_sandbox_automatically() {
     .unwrap();
     let paths = StatePaths::new(&sandbox_name).unwrap();
     let _ = std::fs::remove_dir_all(&paths.root);
+    let _ = std::fs::remove_file(&paths.lifecycle_lock);
     assert!(
         matches!(health(&paths).unwrap(), Health::None),
         "sandbox must start cold for this test to mean anything"
@@ -98,6 +99,7 @@ fn exec_brings_up_a_cold_sandbox_automatically() {
 
     down(&sandbox_name).unwrap();
     let _ = std::fs::remove_dir_all(&paths.root);
+    let _ = std::fs::remove_file(&paths.lifecycle_lock);
 
     // `--no-up` (exec spec: "... unless --no-up is given") opts back out:
     // on a cold sandbox it must fail rather than silently starting one.

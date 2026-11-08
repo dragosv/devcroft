@@ -40,6 +40,7 @@ fn up_reports_healthy_and_down_stops_it_on_every_row() {
         let manifest = manifest_of(fx);
         let paths = StatePaths::new(fx.sandbox_name()).unwrap();
         let _ = std::fs::remove_dir_all(&paths.root);
+        let _ = std::fs::remove_file(&paths.lifecycle_lock);
 
         let outcome = fx.bring_up(&UpOptions::default());
         assert_eq!(
@@ -68,6 +69,7 @@ fn up_reports_healthy_and_down_stops_it_on_every_row() {
 
         down(fx.sandbox_name()).unwrap();
         let _ = std::fs::remove_dir_all(&paths.root);
+        let _ = std::fs::remove_file(&paths.lifecycle_lock);
     });
 }
 
@@ -104,6 +106,7 @@ fn a_drifted_environment_is_reported_stale_on_every_row() {
         }
         let paths = StatePaths::new(fx.sandbox_name()).unwrap();
         let _ = std::fs::remove_dir_all(&paths.root);
+        let _ = std::fs::remove_file(&paths.lifecycle_lock);
 
         assert_eq!(
             fx.bring_up(&UpOptions::default()).unwrap(),
@@ -133,6 +136,7 @@ fn a_drifted_environment_is_reported_stale_on_every_row() {
 
         down(fx.sandbox_name()).unwrap();
         let _ = std::fs::remove_dir_all(&paths.root);
+        let _ = std::fs::remove_file(&paths.lifecycle_lock);
     });
 }
 
@@ -161,6 +165,7 @@ fn every_row_resolves_its_shell_out_of_the_closure() {
     for_each_row("shell", |fx| {
         let paths = StatePaths::new(fx.sandbox_name()).unwrap();
         let _ = std::fs::remove_dir_all(&paths.root);
+        let _ = std::fs::remove_file(&paths.lifecycle_lock);
 
         assert_eq!(
             fx.bring_up(&UpOptions::default()).unwrap(),
@@ -200,6 +205,7 @@ fn every_row_resolves_its_shell_out_of_the_closure() {
 
         down(fx.sandbox_name()).unwrap();
         let _ = std::fs::remove_dir_all(&paths.root);
+        let _ = std::fs::remove_file(&paths.lifecycle_lock);
     });
 }
 

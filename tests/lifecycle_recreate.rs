@@ -31,6 +31,7 @@ fn recreate_replaces_a_running_keeper_with_a_fresh_one() {
     for_each_row("recreate", |fx| {
         let paths = StatePaths::new(fx.sandbox_name()).unwrap();
         let _ = std::fs::remove_dir_all(&paths.root);
+        let _ = std::fs::remove_file(&paths.lifecycle_lock);
 
         assert_eq!(
             fx.bring_up(&UpOptions::default()).unwrap(),
@@ -70,5 +71,6 @@ fn recreate_replaces_a_running_keeper_with_a_fresh_one() {
 
         devcroft::lifecycle::down(fx.sandbox_name()).unwrap();
         let _ = std::fs::remove_dir_all(&paths.root);
+        let _ = std::fs::remove_file(&paths.lifecycle_lock);
     });
 }

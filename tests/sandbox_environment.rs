@@ -181,6 +181,7 @@ fn the_invoking_shell_does_not_reach_the_sandbox() {
     let _ = Command::new(bin).arg("down").current_dir(&root).output();
     let paths = devcroft::lifecycle::StatePaths::new(&name).unwrap();
     let _ = std::fs::remove_dir_all(&paths.root);
+    let _ = std::fs::remove_file(&paths.lifecycle_lock);
     let _ = std::fs::remove_dir_all(&root);
 
     assert!(

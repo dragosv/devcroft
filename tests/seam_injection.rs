@@ -137,6 +137,7 @@ fn an_injected_row_drives_all_three_provider_entry_points() {
     .unwrap();
     let paths = StatePaths::new(&sandbox_name).unwrap();
     let _ = std::fs::remove_dir_all(&paths.root);
+    let _ = std::fs::remove_file(&paths.lifecycle_lock);
 
     let row = BorrowedStoreRow {
         store: store.clone(),
@@ -148,6 +149,7 @@ fn an_injected_row_drives_all_three_provider_entry_points() {
     let meta = devcroft::lifecycle::read_meta(&paths.meta);
     let _ = down(&sandbox_name);
     let _ = std::fs::remove_dir_all(&paths.root);
+    let _ = std::fs::remove_file(&paths.lifecycle_lock);
     let _ = std::fs::remove_dir_all(&project_root);
 
     assert_eq!(

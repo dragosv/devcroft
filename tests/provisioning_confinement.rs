@@ -99,6 +99,7 @@ fn a_hook_cannot_write_to_or_read_from_the_real_home() {
     .unwrap();
     let paths = StatePaths::new(&name).unwrap();
     let _ = std::fs::remove_dir_all(&paths.root);
+    let _ = std::fs::remove_file(&paths.lifecycle_lock);
 
     // Each attempt records its own result in the project, which is writable.
     let row = Row {
@@ -130,6 +131,7 @@ fn a_hook_cannot_write_to_or_read_from_the_real_home() {
     let _ = std::fs::remove_file(&credential);
     let _ = down(&name);
     let _ = std::fs::remove_dir_all(&paths.root);
+    let _ = std::fs::remove_file(&paths.lifecycle_lock);
     let _ = std::fs::remove_dir_all(&project);
 
     assert_eq!(

@@ -186,6 +186,7 @@ fn a_declared_service_runs_inside_the_sandbox_and_is_reaped_by_down() {
     .unwrap();
     let paths = StatePaths::new(&sandbox_name).unwrap();
     let _ = std::fs::remove_dir_all(&paths.root);
+    let _ = std::fs::remove_file(&paths.lifecycle_lock);
 
     assert_eq!(
         up(&dc_manifest, &project_root, &UpOptions::default()).unwrap(),
@@ -312,6 +313,7 @@ fn a_declared_service_runs_inside_the_sandbox_and_is_reaped_by_down() {
     );
 
     let _ = std::fs::remove_dir_all(&paths.root);
+    let _ = std::fs::remove_file(&paths.lifecycle_lock);
     let _ = std::fs::remove_dir_all(&project_root);
 }
 
@@ -348,6 +350,7 @@ fn services_without_process_compose_fail_at_the_provider_layer() {
     let (dc_manifest, _) = parse(&format!("[sandbox]\nname = {sandbox_name:?}\n")).unwrap();
     let paths = StatePaths::new(&sandbox_name).unwrap();
     let _ = std::fs::remove_dir_all(&paths.root);
+    let _ = std::fs::remove_file(&paths.lifecycle_lock);
 
     let err = up(&dc_manifest, &project_root, &UpOptions::default())
         .expect_err("declaring services without process-compose must fail `up`");
@@ -372,6 +375,7 @@ fn services_without_process_compose_fail_at_the_provider_layer() {
     );
 
     let _ = std::fs::remove_dir_all(&paths.root);
+    let _ = std::fs::remove_file(&paths.lifecycle_lock);
     let _ = std::fs::remove_dir_all(&project_root);
 }
 
@@ -470,6 +474,7 @@ fn services_declared_for_another_provider_fail_rather_than_being_ignored() {
     .unwrap();
     let paths = StatePaths::new(&sandbox_name).unwrap();
     let _ = std::fs::remove_dir_all(&paths.root);
+    let _ = std::fs::remove_file(&paths.lifecycle_lock);
 
     let err = up(&dc_manifest, &project_root, &UpOptions::default())
         .expect_err("services declared for a provider with none must fail `up`");
@@ -488,6 +493,7 @@ fn services_declared_for_another_provider_fail_rather_than_being_ignored() {
     );
 
     let _ = std::fs::remove_dir_all(&paths.root);
+    let _ = std::fs::remove_file(&paths.lifecycle_lock);
     let _ = std::fs::remove_dir_all(&project_root);
 }
 
@@ -530,6 +536,7 @@ fn skip_hooks_bypasses_the_wrong_provider_service_check() {
     let (dc_manifest, _) = parse(&format!("[sandbox]\nname = {sandbox_name:?}\n")).unwrap();
     let paths = StatePaths::new(&sandbox_name).unwrap();
     let _ = std::fs::remove_dir_all(&paths.root);
+    let _ = std::fs::remove_file(&paths.lifecycle_lock);
 
     let outcome = up(
         &dc_manifest,
@@ -546,6 +553,7 @@ fn skip_hooks_bypasses_the_wrong_provider_service_check() {
 
     let _ = down(&sandbox_name);
     let _ = std::fs::remove_dir_all(&paths.root);
+    let _ = std::fs::remove_file(&paths.lifecycle_lock);
     let _ = std::fs::remove_dir_all(&project_root);
 }
 
@@ -716,6 +724,7 @@ fn a_service_that_exits_non_zero_at_startup_is_reported_failed_and_the_sandbox_s
     let (dc_manifest, _) = parse(&format!("[sandbox]\nname = {sandbox_name:?}\n")).unwrap();
     let paths = StatePaths::new(&sandbox_name).unwrap();
     let _ = std::fs::remove_dir_all(&paths.root);
+    let _ = std::fs::remove_file(&paths.lifecycle_lock);
 
     // The `services` spec's "Services do not block sandbox availability":
     // `up` succeeds even though the service will not.
@@ -762,6 +771,7 @@ fn a_service_that_exits_non_zero_at_startup_is_reported_failed_and_the_sandbox_s
 
     let _ = down(&sandbox_name);
     let _ = std::fs::remove_dir_all(&paths.root);
+    let _ = std::fs::remove_file(&paths.lifecycle_lock);
     let _ = std::fs::remove_dir_all(&project_root);
 }
 
@@ -792,6 +802,7 @@ fn a_service_denied_its_port_fails_the_same_way_any_session_would() {
     .unwrap();
     let paths = StatePaths::new(&sandbox_name).unwrap();
     let _ = std::fs::remove_dir_all(&paths.root);
+    let _ = std::fs::remove_file(&paths.lifecycle_lock);
 
     assert_eq!(
         up(&dc_manifest, &project_root, &UpOptions::default()).unwrap(),
@@ -845,6 +856,7 @@ fn a_service_denied_its_port_fails_the_same_way_any_session_would() {
 
     let _ = down(&sandbox_name);
     let _ = std::fs::remove_dir_all(&paths.root);
+    let _ = std::fs::remove_file(&paths.lifecycle_lock);
     let _ = std::fs::remove_dir_all(&project_root);
 }
 
@@ -880,6 +892,7 @@ fn a_service_ignoring_sigterm_is_still_gone_after_teardown() {
     let (dc_manifest, _) = parse(&format!("[sandbox]\nname = {sandbox_name:?}\n")).unwrap();
     let paths = StatePaths::new(&sandbox_name).unwrap();
     let _ = std::fs::remove_dir_all(&paths.root);
+    let _ = std::fs::remove_file(&paths.lifecycle_lock);
 
     assert_eq!(
         up(&dc_manifest, &project_root, &UpOptions::default()).unwrap(),
@@ -918,5 +931,6 @@ fn a_service_ignoring_sigterm_is_still_gone_after_teardown() {
     );
 
     let _ = std::fs::remove_dir_all(&paths.root);
+    let _ = std::fs::remove_file(&paths.lifecycle_lock);
     let _ = std::fs::remove_dir_all(&project_root);
 }

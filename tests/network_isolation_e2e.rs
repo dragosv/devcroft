@@ -145,7 +145,9 @@ fn two_sandboxes_bind_the_same_declared_port_without_colliding() {
     let paths_a = StatePaths::new(&sandbox_a).unwrap();
     let paths_b = StatePaths::new(&sandbox_b).unwrap();
     let _ = std::fs::remove_dir_all(&paths_a.root);
+    let _ = std::fs::remove_file(&paths_a.lifecycle_lock);
     let _ = std::fs::remove_dir_all(&paths_b.root);
+    let _ = std::fs::remove_file(&paths_b.lifecycle_lock);
 
     assert_eq!(
         up(
@@ -207,7 +209,9 @@ fn two_sandboxes_bind_the_same_declared_port_without_colliding() {
     down(&sandbox_a).unwrap();
     down(&sandbox_b).unwrap();
     let _ = std::fs::remove_dir_all(&paths_a.root);
+    let _ = std::fs::remove_file(&paths_a.lifecycle_lock);
     let _ = std::fs::remove_dir_all(&paths_b.root);
+    let _ = std::fs::remove_file(&paths_b.lifecycle_lock);
     let _ = std::fs::remove_dir_all(&project_root);
 }
 

@@ -72,6 +72,7 @@ impl Sandbox {
         let name = format!("e2ehook{tag}{}", std::process::id());
         let paths = StatePaths::new(&name).unwrap();
         let _ = std::fs::remove_dir_all(&paths.root);
+        let _ = std::fs::remove_file(&paths.lifecycle_lock);
 
         std::fs::write(
             project_root.join("devcroft.toml"),

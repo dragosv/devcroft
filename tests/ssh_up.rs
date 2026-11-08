@@ -122,6 +122,7 @@ async fn ssh_server_authenticates_the_real_client_key_and_binds_no_tcp() {
     let (manifest, _) = parse(&format!("[sandbox]\nname = {sandbox_name:?}\n")).unwrap();
     let paths = StatePaths::new(&sandbox_name).unwrap();
     let _ = std::fs::remove_dir_all(&paths.root);
+    let _ = std::fs::remove_file(&paths.lifecycle_lock);
 
     // `up` itself blocks on the keeper's control socket becoming
     // responsive (lifecycle::up's `wait_until_responsive`); the ssh
@@ -182,5 +183,6 @@ async fn ssh_server_authenticates_the_real_client_key_and_binds_no_tcp() {
 
     down(&sandbox_name).unwrap();
     let _ = std::fs::remove_dir_all(&paths.root);
+    let _ = std::fs::remove_file(&paths.lifecycle_lock);
     let _ = std::fs::remove_dir_all(&project_root);
 }

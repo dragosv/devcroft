@@ -322,6 +322,7 @@ fn the_hook_runs_inside_the_sandbox_instead() {
     let (manifest, _) = parse(&format!("[sandbox]\nname = {sandbox_name:?}\n")).unwrap();
     let paths = StatePaths::new(&sandbox_name).unwrap();
     let _ = std::fs::remove_dir_all(&paths.root);
+    let _ = std::fs::remove_file(&paths.lifecycle_lock);
 
     let outcome = up(&manifest, &root, &UpOptions::default());
     match outcome {
@@ -348,5 +349,6 @@ fn the_hook_runs_inside_the_sandbox_instead() {
 
     let _ = down(&sandbox_name);
     let _ = std::fs::remove_dir_all(&paths.root);
+    let _ = std::fs::remove_file(&paths.lifecycle_lock);
     let _ = std::fs::remove_dir_all(&root);
 }

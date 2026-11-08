@@ -60,6 +60,14 @@ impl EscapeProject {
 
 impl Drop for EscapeProject {
     fn drop(&mut self) {
+        // The refused `up` still records the sandbox (its `meta.json` is
+        // written before the policy compiles), so remove it through
+        // devcroft, which also takes its lock file; deleting only the
+        // project left one state dir per run.
+        let _ = Command::new(env!("CARGO_BIN_EXE_devcroft"))
+            .current_dir(&self.project_root)
+            .args(["rm", "--yes"])
+            .output();
         let _ = std::fs::remove_dir_all(&self.project_root);
         let _ = std::fs::remove_dir_all(&self.outside_target);
     }

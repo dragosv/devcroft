@@ -108,6 +108,7 @@ impl Sandbox {
             parse(&format!("[sandbox]\nname = {name:?}\n{manifest_extra}")).unwrap();
         let paths = StatePaths::new(&name).unwrap();
         let _ = std::fs::remove_dir_all(&paths.root);
+        let _ = std::fs::remove_file(&paths.lifecycle_lock);
         assert_eq!(
             up(&manifest, &project_root, &UpOptions::default()).unwrap(),
             UpOutcome::Started

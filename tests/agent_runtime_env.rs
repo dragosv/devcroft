@@ -111,6 +111,7 @@ fn a_session_finds_sh_by_name_a_real_shell_and_the_ca_bundle() {
     .unwrap();
     let paths = StatePaths::new(&name).unwrap();
     let _ = std::fs::remove_dir_all(&paths.root);
+    let _ = std::fs::remove_file(&paths.lifecycle_lock);
 
     let outcome = up_with_provider(&manifest, &project, &UpOptions::default(), &Row { closure });
     let devcroft = |args: &[&str]| {
@@ -140,6 +141,7 @@ fn a_session_finds_sh_by_name_a_real_shell_and_the_ca_bundle() {
     let log = std::fs::read_to_string(&paths.log).unwrap_or_default();
     let _ = down(&name);
     let _ = std::fs::remove_dir_all(&paths.root);
+    let _ = std::fs::remove_file(&paths.lifecycle_lock);
     let _ = std::fs::remove_dir_all(&project);
 
     assert_eq!(

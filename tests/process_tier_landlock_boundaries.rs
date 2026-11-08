@@ -179,6 +179,7 @@ fn process_tier_blocks_cross_process_signals_and_proc_reads() {
     let (manifest, _) = parse(&format!("[sandbox]\nname = {sandbox_name:?}\n")).unwrap();
     let paths = StatePaths::new(&sandbox_name).unwrap();
     let _ = std::fs::remove_dir_all(&paths.root);
+    let _ = std::fs::remove_file(&paths.lifecycle_lock);
 
     assert_eq!(
         up(&manifest, &project_root, &UpOptions::default()).unwrap(),
@@ -264,6 +265,7 @@ fn process_tier_blocks_cross_process_signals_and_proc_reads() {
     let _ = victim.kill();
     let _ = victim.wait();
     let _ = std::fs::remove_dir_all(&paths.root);
+    let _ = std::fs::remove_file(&paths.lifecycle_lock);
     let _ = std::fs::remove_dir_all(&project_root);
 }
 
@@ -317,6 +319,7 @@ fn process_tier_blocks_raw_socket_bypass_of_deny_all_network() {
     let (manifest, _) = parse(&format!("[sandbox]\nname = {sandbox_name:?}\n")).unwrap();
     let paths = StatePaths::new(&sandbox_name).unwrap();
     let _ = std::fs::remove_dir_all(&paths.root);
+    let _ = std::fs::remove_file(&paths.lifecycle_lock);
 
     assert_eq!(
         up(&manifest, &project_root, &UpOptions::default()).unwrap(),
@@ -343,6 +346,7 @@ fn process_tier_blocks_raw_socket_bypass_of_deny_all_network() {
     let _ = std::net::TcpStream::connect(("127.0.0.1", port));
     let _ = listener_handle.join();
     let _ = std::fs::remove_dir_all(&paths.root);
+    let _ = std::fs::remove_file(&paths.lifecycle_lock);
     let _ = std::fs::remove_dir_all(&project_root);
 }
 
@@ -400,6 +404,7 @@ fn process_tier_blocks_raw_socket_bypass_of_a_domain_allowlist() {
     .unwrap();
     let paths = StatePaths::new(&sandbox_name).unwrap();
     let _ = std::fs::remove_dir_all(&paths.root);
+    let _ = std::fs::remove_file(&paths.lifecycle_lock);
 
     assert_eq!(
         up(&manifest, &project_root, &UpOptions::default()).unwrap(),
@@ -452,5 +457,6 @@ fn process_tier_blocks_raw_socket_bypass_of_a_domain_allowlist() {
     let _ = std::net::TcpStream::connect(("127.0.0.1", port));
     let _ = listener_handle.join();
     let _ = std::fs::remove_dir_all(&paths.root);
+    let _ = std::fs::remove_file(&paths.lifecycle_lock);
     let _ = std::fs::remove_dir_all(&project_root);
 }
