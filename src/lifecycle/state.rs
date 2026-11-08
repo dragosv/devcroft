@@ -603,12 +603,12 @@ fn process_start_time(_pid: libc::pid_t) -> io::Result<u64> {
 /// `down`/`rm`/`up --recreate` would otherwise `SIGTERM`/`SIGKILL`
 /// whatever unrelated process a dead keeper's or proxy's pid had since
 /// been reused for. `recorded_start_time == 0` (this platform has no
-/// `/proc`, see [`process_start_time`]) falls back to bare liveness,
+/// `/proc`, see [`process_start_time`]) falls back to liveness, less a zombie,
 /// preserving this project's existing (weaker, stated) macOS posture
 /// rather than claiming a guarantee this platform can't back.
 pub fn is_same_process(pid: libc::pid_t, recorded_start_time: u64) -> bool {
     if recorded_start_time == 0 {
-        return is_process_alive(pid);
+        return is_process_alive(pid) && !has_exited(pid);
     }
     process_start_time(pid)
         .map(|current| current == recorded_start_time)
@@ -636,7 +636,22 @@ fn has_exited(pid: libc::pid_t) -> bool {
         .is_some_and(|state| state == "Z" || state == "X")
 }
 
-#[cfg(not(target_os = "linux"))]
+/// macOS has the same zombie and no `/proc`, so bare liveness called it
+/// running and `down` waited its whole grace there too. The BSD process
+/// info reports `SZOMB`. A zombie has no task, so `proc_pidinfo` looks it
+/// up only when `arg` is 1.
+#[cfg(target_os = "macos")]
+fn has_exited(pid: libc::pid_t) -> bool {
+    // SAFETY: `proc_bsdinfo` is plain data, for which all-zero is valid.
+    let mut info: libc::proc_bsdinfo = unsafe { std::mem::zeroed() };
+    let size = std::mem::size_of::<libc::proc_bsdinfo>() as libc::c_int;
+    // SAFETY: the buffer is exactly `size` bytes and outlives the call.
+    let n =
+        unsafe { libc::proc_pidinfo(pid, libc::PROC_PIDTBSDINFO, 1, (&raw mut info).cast(), size) };
+    n == size && info.pbi_status == libc::SZOMB
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
 fn has_exited(_pid: libc::pid_t) -> bool {
     false
 }
@@ -750,8 +765,10 @@ fn terminate_and_wait_pid(pid: libc::pid_t, start_time: u64, grace: Duration) {
 #[cfg(test)]
 mod tests {
     /// A child that has exited but is not reaped keeps its pid and start
-    /// time; it is still not the running process its pidfile names.
-    #[cfg(target_os = "linux")]
+    /// time; it is still not the running process its pidfile names. On macOS
+    /// the start time is the `0` sentinel, so this covers the liveness
+    /// fallback there.
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     #[test]
     fn an_unreaped_child_is_not_the_same_process() {
         let child = std::process::Command::new("true").spawn().unwrap();

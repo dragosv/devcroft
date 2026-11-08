@@ -19,6 +19,15 @@ fn ns_of(pid: &str) -> Option<std::path::PathBuf> {
 /// pidfile is `pidfile`; `ns_pid` itself when the sandbox shares the host's.
 /// `None` when no such process exists.
 pub fn host_pid(pidfile: &Path, ns_pid: i32) -> Option<i32> {
+    // PID namespaces are Linux-only. Anywhere else a sandbox shares the
+    // host's and there is no `/proc` to ask, so the number is already the
+    // host's, as long as some process has it.
+    if !cfg!(target_os = "linux") {
+        // SAFETY: signal 0 only checks that the pid exists.
+        let exists = unsafe { libc::kill(ns_pid, 0) } == 0
+            || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM);
+        return exists.then_some(ns_pid);
+    }
     let keeper = std::fs::read_to_string(pidfile).ok()?;
     let keeper = keeper.split_whitespace().next()?;
     let sandbox_ns = ns_of(keeper)?;

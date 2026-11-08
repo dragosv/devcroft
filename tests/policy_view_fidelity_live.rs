@@ -50,6 +50,12 @@ fn why_inside_a_real_session_answers_as_the_host_does() {
     let project = std::env::temp_dir().join(&name);
     let _ = std::fs::remove_dir_all(&project);
     std::fs::create_dir_all(&project).unwrap();
+    // Canonicalized: on macOS `temp_dir()` is under `/var/folders/…`, `/var`
+    // is a symlink, and the session's `cd` below to the symlinked spelling
+    // is refused although the project root is granted (docs/known-gaps.md,
+    // "A grant does not cover the symlinked spelling of its own path on
+    // macOS"). Not the property this file tests.
+    let project = project.canonicalize().unwrap();
     for file in ["flake.nix", "flake.lock", "Cargo.toml", "Cargo.lock"] {
         std::fs::copy(sample.join(file), project.join(file)).unwrap();
     }

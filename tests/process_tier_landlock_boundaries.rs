@@ -193,6 +193,8 @@ fn process_tier_blocks_cross_process_signals_and_proc_reads() {
     // signal scoping and the default-deny `/proc` refuse it. Either way the
     // victim must survive.
     let own_namespace = host_pid::has_own_pid_namespace(&paths.pidfile);
+    // `read_refusal` serves Attack 2, which is Linux-only (see there).
+    #[cfg_attr(not(target_os = "linux"), allow(unused_variables))]
     let (signal_refusal, read_refusal) = if own_namespace {
         ("No such process", "No such file or directory")
     } else {

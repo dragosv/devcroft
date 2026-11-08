@@ -39,4 +39,8 @@ pub use up::{
 // `up`'s private submodule path reachable from outside `lifecycle` at
 // all — `up::clear_cloexec` being `pub(crate)` doesn't help by itself
 // when the `up` module segment itself is private.
-pub(crate) use up::{apply_manifest_env, keeper_answers, keeper_failure_reason, pass_fds};
+pub(crate) use up::pass_fds;
+// These three serve fleet's supervisor, commands and project, which are
+// Linux-only, so elsewhere the re-export is an unused import.
+#[cfg(target_os = "linux")]
+pub(crate) use up::{apply_manifest_env, keeper_answers, keeper_failure_reason};

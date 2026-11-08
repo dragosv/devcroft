@@ -22,6 +22,8 @@ use super::attribution;
 use super::hooks;
 use super::state::{self, Health, StatePaths};
 use super::terminate::GRACE_PERIOD as TERMINATE_GRACE_PERIOD;
+#[cfg(target_os = "linux")]
+use crate::fleet::init;
 
 const KEEPER_START_TIMEOUT: Duration = Duration::from_secs(10);
 
@@ -1854,7 +1856,7 @@ fn spawn_keeper(
     if own_procfs {
         // The two listeners move to the helper's inherited range, so the
         // keeper is told where they landed rather than where they were.
-        let first = crate::fleet::init::FIRST_INHERITED_FD;
+        let first = init::FIRST_INHERITED_FD;
         let agent = spawn_through_init(
             exe,
             &cmd,
@@ -2002,10 +2004,7 @@ fn run_provisioning(
     };
     let status = if own_procfs {
         // It lands first in the helper's inherited range.
-        cmd.env(
-            ACTIVATION_FD_ENV,
-            crate::fleet::init::FIRST_INHERITED_FD.to_string(),
-        );
+        cmd.env(ACTIVATION_FD_ENV, init::FIRST_INHERITED_FD.to_string());
         log_for(paths).and_then(|log| {
             spawn_through_init(
                 exe,
@@ -2017,7 +2016,7 @@ fn run_provisioning(
                 log,
                 vec![exports_w],
             )
-            .and_then(crate::fleet::init::Agent::wait)
+            .and_then(init::Agent::wait)
         })
     } else {
         cmd.env(ACTIVATION_FD_ENV, exports_w.as_raw_fd().to_string());
@@ -2091,6 +2090,7 @@ fn run_provisioning(
 /// applies `plan` to itself, and then starts the command. Design D1 has why
 /// the keeper cannot simply unshare the namespace itself; D2 why this is
 /// fleet's helper rather than a second one.
+#[cfg(target_os = "linux")]
 #[allow(clippy::too_many_arguments)]
 fn spawn_through_init(
     exe: &Path,
@@ -2143,6 +2143,51 @@ fn spawn_through_init(
     crate::fleet::init::spawn_in(exe, None, &spec, stdio)
 }
 
+/// `fleet::init` is Linux-only, and so is the PID namespace that leads to
+/// it: `own_procfs` is `cfg!(target_os = "linux") && …` (`up_process`).
+/// Elsewhere this stands in for what `spawn_keeper` and `run_provisioning`
+/// name, so their branches compile on every host. An `Agent` cannot exist
+/// here at all, which the compiler checks rather than a comment.
+#[cfg(not(target_os = "linux"))]
+mod init {
+    use std::io;
+    use std::os::fd::RawFd;
+    use std::process::ExitStatus;
+
+    /// The value Linux uses; never read, since no `Agent` is ever started.
+    pub const FIRST_INHERITED_FD: RawFd = 5;
+
+    pub enum Agent {}
+
+    impl Agent {
+        pub fn pid(&self) -> u32 {
+            match *self {}
+        }
+
+        pub fn wait(self) -> io::Result<ExitStatus> {
+            match self {}
+        }
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+#[allow(clippy::too_many_arguments)]
+fn spawn_through_init(
+    _: &Path,
+    _: &Command,
+    _: Vec<String>,
+    _: &policy::CapabilityPlan,
+    _: &Confinement,
+    _: Option<u16>,
+    _: std::fs::File,
+    _: Vec<std::os::fd::OwnedFd>,
+) -> io::Result<init::Agent> {
+    Err(io::Error::new(
+        io::ErrorKind::Unsupported,
+        "a PID namespace of its own is Linux-only",
+    ))
+}
+
 /// The log `up`'s sandboxed processes write to, appended.
 fn log_for(paths: &StatePaths) -> io::Result<std::fs::File> {
     std::fs::OpenOptions::new()
@@ -2157,6 +2202,7 @@ fn dup_fd(fd: RawFd) -> io::Result<std::os::fd::OwnedFd> {
 }
 
 /// This host's name, for a UTS namespace that should not look like one.
+#[cfg(target_os = "linux")]
 fn host_name() -> String {
     let mut buf = [0u8; 256];
     // SAFETY: a valid buffer and its length.
