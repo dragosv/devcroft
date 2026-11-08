@@ -1,0 +1,39 @@
+{
+  "schema": 1,
+  "adapter": "libkrun",
+  "host": [
+    "Darwin",
+    "Dragoss-MacBook-Pro.local",
+    "24.6.0",
+    "Darwin Kernel Version 24.6.0: Mon Jan 19 22:01:58 PST 2026; root:xnu-11417.140.69.708.3~1/RELEASE_ARM64_T6041",
+    "arm64"
+  ],
+  "fixture": "stage-b-real-keeper",
+  "qualification": "diagnostic-only",
+  "instance_dir": "/private/tmp/dk-q2ue7h6f",
+  "boots": [
+    {
+      "boot": 1,
+      "status": "failed",
+      "error": "helper exited before READY: 0"
+    }
+  ],
+  "helper_provenance": {
+    "patch_sha256": "7a25379a3e1291ecbace0cad78e804b70f3f4515cebbf8c35f0843d107d4c2cc",
+    "revision": "6151710f4ea627cf0e5dbce78e4192fb4d64c2e9"
+  },
+  "sandbox": {
+    "outside_denied": true,
+    "passed": true,
+    "readonly_input_works": true,
+    "runtime_write_denied": true,
+    "tcp_denied": true,
+    "thread_works": true,
+    "unix_works": true,
+    "writable_state_works": true
+  },
+  "runtime_unchanged": true,
+  "status": "failed",
+  "raw_results": "experiments/microvm/runs/20261107-200837",
+  "note": "Early diagnostic preflight failed before READY with missing guest console capture; switched TCP baseline to wildcard bind without requiring loopback configuration and repaired console capture."
+}

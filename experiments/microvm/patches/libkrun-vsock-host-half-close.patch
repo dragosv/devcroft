@@ -1,0 +1,126 @@
+diff --git a/src/devices/src/virtio/vsock/proxy.rs b/src/devices/src/virtio/vsock/proxy.rs
+index f535f39..13ba699 100644
+--- a/src/devices/src/virtio/vsock/proxy.rs
++++ b/src/devices/src/virtio/vsock/proxy.rs
+@@ -26,6 +26,7 @@ use utils::epoll::EventSet;
+ #[derive(Debug)]
+ pub enum RecvPkt {
+     Close,
++    Eof,
+     Error,
+     Read(usize),
+     WaitForCredit,
+diff --git a/src/devices/src/virtio/vsock/tsi_dgram/mod.rs b/src/devices/src/virtio/vsock/tsi_dgram/mod.rs
+index 60dc07c..4298389 100644
+--- a/src/devices/src/virtio/vsock/tsi_dgram/mod.rs
++++ b/src/devices/src/virtio/vsock/tsi_dgram/mod.rs
+@@ -78,7 +78,7 @@ impl TsiDgramProxy {
+                         pkt.set_len(cnt as u32);
+                         pkt.hdr().len() + cnt
+                     }
+-                    RecvPkt::Close => {
++                    RecvPkt::Close | RecvPkt::Eof => {
+                         self.status = ProxyStatus::Closed;
+                         0
+                     }
+diff --git a/src/devices/src/virtio/vsock/tsi_stream/mod.rs b/src/devices/src/virtio/vsock/tsi_stream/mod.rs
+index 88e5b55..d254a2b 100644
+--- a/src/devices/src/virtio/vsock/tsi_stream/mod.rs
++++ b/src/devices/src/virtio/vsock/tsi_stream/mod.rs
+@@ -174,7 +174,7 @@ impl TsiStreamProxy {
+                         pkt.set_len(cnt as u32);
+                         pkt.hdr().len() + cnt
+                     }
+-                    Ok(RecvPkt::Close) => {
++                    Ok(RecvPkt::Close | RecvPkt::Eof) => {
+                         self.host_read_closed = true;
+                         self.init_data_pkt(&mut pkt);
+                         pkt.set_op(uapi::VSOCK_OP_SHUTDOWN)
+diff --git a/src/devices/src/virtio/vsock/unix_proxy/mod.rs b/src/devices/src/virtio/vsock/unix_proxy/mod.rs
+index 15818d1..f441223 100644
+--- a/src/devices/src/virtio/vsock/unix_proxy/mod.rs
++++ b/src/devices/src/virtio/vsock/unix_proxy/mod.rs
+@@ -39,6 +39,7 @@ pub struct UnixProxy {
+     pub(crate) local_port: u32,
+     pub(crate) control_port: u32,
+     pub(crate) peer_shutdown: u32,
++    pub(crate) host_eof: bool,
+     pub(crate) peer_fwd_cnt: Wrapping<u32>,
+     pub(crate) peer_buf_alloc: u32,
+     pub(crate) tx_cnt: Wrapping<u32>,
+@@ -73,6 +74,7 @@ impl UnixProxy {
+             local_port,
+             control_port,
+             peer_shutdown: 0,
++            host_eof: false,
+             peer_fwd_cnt: Wrapping(0),
+             peer_buf_alloc: 0,
+             tx_cnt: Wrapping(0),
+@@ -101,6 +103,7 @@ impl UnixProxy {
+             peer_port,
+             control_port: 0,
+             peer_shutdown: 0,
++            host_eof: false,
+             fd,
+             status: ProxyStatus::ReverseInit,
+             mem,
+@@ -135,6 +138,9 @@ impl UnixProxy {
+     }
+ 
+     pub fn recv_pkt(&mut self) -> (bool, bool) {
++        if self.host_eof {
++            return (false, false);
++        }
+         let mut have_used = false;
+         let mut wait_credit = false;
+         let mut queue = self.queue.lock().unwrap();
+@@ -152,6 +158,14 @@ impl UnixProxy {
+                         pkt.set_len(cnt as u32);
+                         pkt.hdr().len() + cnt
+                     }
++                    RecvPkt::Eof => {
++                        self.host_eof = true;
++                        self.init_data_pkt(&mut pkt);
++                        pkt.set_op(uapi::VSOCK_OP_SHUTDOWN)
++                            .set_flags(uapi::VSOCK_FLAGS_SHUTDOWN_SEND)
++                            .set_len(0);
++                        pkt.hdr().len()
++                    }
+                     RecvPkt::Close => {
+                         self.status = ProxyStatus::Closed;
+                         0
+@@ -177,6 +191,9 @@ impl UnixProxy {
+                 if let Err(e) = queue.add_used(&self.mem, head.index, len as u32) {
+                     error!("failed to add used elements to the queue: {e:?}");
+                 }
++                if self.host_eof {
++                    break;
++                }
+             }
+         }
+ 
+diff --git a/src/devices/src/virtio/vsock/unix_proxy/unix.rs b/src/devices/src/virtio/vsock/unix_proxy/unix.rs
+index 00e62c8..7fa661a 100644
+--- a/src/devices/src/virtio/vsock/unix_proxy/unix.rs
++++ b/src/devices/src/virtio/vsock/unix_proxy/unix.rs
+@@ -118,7 +118,7 @@ pub(crate) fn recv_to_pkt(proxy: &super::UnixProxy, pkt: &mut VsockPacket) -> Re
+                     debug!("recv rx_cnt={}", proxy.rx_cnt);
+                     RecvPkt::Read(cnt)
+                 } else {
+-                    RecvPkt::Close
++                    RecvPkt::Eof
+                 }
+             }
+             Err(e) => {
+@@ -383,6 +383,11 @@ pub(crate) fn process_event(proxy: &mut super::UnixProxy, evset: EventSet) -> Pr
+             let (signal_queue, wait_credit) = proxy.recv_pkt();
+             update.signal_queue = signal_queue;
+ 
++            if proxy.host_eof {
++                update.polling = Some((proxy.id, proxy.fd.as_raw_fd(), EventSet::empty()));
++                return update;
++            }
++
+             if wait_credit && proxy.status != ProxyStatus::WaitingCreditUpdate {
+                 proxy.status = ProxyStatus::WaitingCreditUpdate;
+                 let rx = MuxerRx::CreditRequest {

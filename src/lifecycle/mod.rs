@@ -29,7 +29,6 @@ pub use state::{
 };
 pub use status::{KeeperStatus, SandboxStatus, SandboxSummary, StatusError, logs, ps, status};
 pub use terminate::{GRACE_PERIOD, TerminateError, down, rm};
-pub(crate) use up::is_keeper_internal;
 pub use up::{
     ACTIVATION_FD_ENV, ACTIVATION_OVERLAY_ENV, KeeperEnv, UpError, UpOptions, UpOutcome, up,
 };

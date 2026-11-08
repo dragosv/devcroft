@@ -11,6 +11,7 @@
 //! workspace to use one anyway.
 
 pub(crate) mod connection;
+pub(crate) mod environment;
 mod registry;
 
 /// Visible beyond `keeper` (task 6.3): the ssh server's channel handling

@@ -1,0 +1,6 @@
+/libkrun/target/
+/guest-keeper/target/
+/artifacts/
+/runs/
+__pycache__/
+/.zig-cache/

@@ -54,14 +54,27 @@ only as a labelled trusted-project row.
 ### Requirement: Qualification requires confinement before guest execution
 
 A qualifying run SHALL establish host confinement before first guest execution,
-inventory surviving descriptor authority, and enforce explicit host channels.
-Absence of a required control SHALL fail qualification rather than downgrade it.
+inventory surviving descriptor authority, and enforce explicit host channels. On
+a Linux host that confinement SHALL include a syscall allowlist covering every
+thread that runs VMM code. Absence of a required control SHALL fail qualification
+rather than downgrade it.
 
 #### Scenario: vCPUs start during builder construction
 
 - **WHEN** a VMM starts guest execution in its build operation
 - **THEN** confinement established only after build is rejected
 - **AND** the candidate needs an earlier restriction or demonstrated upstream seam
+
+#### Scenario: A Linux helper is confined by Landlock alone
+
+- **WHEN** no syscall filter is in force before first guest execution
+- **THEN** the run does not qualify, even if every filesystem and network probe passes
+
+#### Scenario: The helper makes a syscall outside its allowlist
+
+- **WHEN** a probe in the filtered helper issues a forbidden syscall after a boot
+- **THEN** the helper is terminated and the outcome is recorded
+- **AND** the successful boot serves as the positive control
 
 #### Scenario: Denial test has no functioning positive control
 

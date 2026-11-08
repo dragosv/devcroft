@@ -1,0 +1,57 @@
+{
+  "schema": 1,
+  "verified_on": "2026-11-07",
+  "libkrun": {
+    "repository": "https://github.com/containers/libkrun",
+    "revision": "6151710f4ea627cf0e5dbce78e4192fb4d64c2e9",
+    "crate": "libkrun",
+    "version": "2.0.0-dev",
+    "features": [
+      "blk"
+    ],
+    "default_features": false,
+    "patches": [
+      {
+        "path": "patches/libkrun-vsock-host-half-close.patch",
+        "sha256": "7a25379a3e1291ecbace0cad78e804b70f3f4515cebbf8c35f0843d107d4c2cc",
+        "status": "local experimental correction; not upstream merged"
+      }
+    ],
+    "verified_api": [
+      "Payload::load_external",
+      "VmmBuilder::build",
+      "MmioDeviceManager",
+      "BlockDevice::set_read_only",
+      "BlockDevice::set_sync_mode",
+      "VsockDevice::add_unix_port",
+      "TsiFlags::empty",
+      "BalloonDevice::set_free_page_reporting_mode",
+      "ConsoleBuilder::add_default_console (fixed-size hvc0 terminal, log output)"
+    ],
+    "macos_start_trace": [
+      "vmm/builder.rs: build_microvm calls start_vcpus",
+      "vmm/mod.rs: start_vcpus calls Vcpu::start_threaded",
+      "vmm/macos/vstate.rs: start_threaded spawns self.run",
+      "vmm/macos/vstate.rs: run calls run_emulation, entering HVF"
+    ],
+    "baseline_issues": [
+      "Host Unix socket SHUT_WR does not deliver expected EOF to guest at this pin; reproduced twice in the recorded two-boot run."
+    ],
+    "remaining_qualification": [
+      "Complete project policy, SSH/SFTP, services and editor integration; real keeper/nono fixture now passes on macOS ARM64",
+      "Linux host confinement and x86-64 row",
+      "Reverse-stream/loss probes and hvi comparison"
+    ]
+  },
+  "hvi": {
+    "repository": "https://github.com/brig-sh/hvi-vmm",
+    "revision": "351d1a15728e998486232e4815ba075a22e44f56",
+    "patches": [],
+    "verified_api": [
+      "boot(BootConfig) -> Result<Stop, BootError>",
+      "BootConfig::agent_sock",
+      "MAX_DISKS = 4"
+    ],
+    "execution": "not-run; no hvi adapter implemented"
+  }
+}

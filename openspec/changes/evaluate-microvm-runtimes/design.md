@@ -90,6 +90,23 @@ For hvi/macOS begin with its own confinement; do not stack a second Seatbelt
 initialization. Judge effective authority, including inherited descriptors,
 not use of the same library name on both adapters.
 
+On a Linux host, Landlock limits what the helper can open and connect to, not
+which kernel interfaces it can call: a compromised helper keeps the host's whole
+syscall surface and every KVM ioctl. The Linux gate therefore also requires a
+seccomp allowlist in force before the first guest instruction on every thread
+that runs VMM code, installed before those threads exist or synchronized across
+them, as the trace above confirms. The allowlist comes from the measured syscall
+inventory of the pinned helper's build and run paths. It filters arguments where
+the value decides the authority, such as ioctl request numbers and socket
+families, and kills the process on a miss. The logging mode used to collect the
+inventory is diagnostic. `docs/roadmap.md` leaves syscall-surface reduction to
+whoever argues against kernel exploits rather than misbehaving agents, and a
+hostile guest that has escaped the VMM is that argument. This is not the AF_UNIX
+gap, which seccomp cannot close because it cannot read a path argument. hvi on
+Linux is judged by its own filter if it ships one, as on macOS. macOS has no
+seccomp; record which kernel interfaces the Seatbelt profile leaves reachable
+rather than claiming parity.
+
 Test denial of original checkout, other instances, host credentials, arbitrary
 host networking and shared artifact writes. Add positive controls for the
 private disk and allowed egress. Also probe malformed/oversized host–guest
