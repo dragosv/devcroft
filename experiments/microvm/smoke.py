@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run two confined libkrun boots, with optional real keeper integration probes.
+"""Run two confined microVM boots, with optional real keeper integration probes.
 
 This is a functional diagnostic, not a density benchmark or backend qualification.
 Raw disks test the block device, not filesystem/application crash consistency.
@@ -27,6 +27,19 @@ def artifact(path):
     with path.open("rb") as f:
         digest = hashlib.file_digest(f, "sha256").hexdigest()
     return {"path": str(path), "sha256": digest}
+
+
+
+def helper_identity(binary):
+    """Attribute evidence to the actual pinned helper, rather than the default."""
+    provenance = json.loads(subprocess.check_output(
+        [str(binary.resolve()), "provenance"], env={"PATH": "/usr/bin:/bin"}, timeout=5))
+    pins = {"6151710f4ea627cf0e5dbce78e4192fb4d64c2e9": "libkrun",
+            "351d1a15728e998486232e4815ba075a22e44f56": "hvi"}
+    adapter = pins[provenance["revision"]]
+    if provenance.get("adapter", adapter) != adapter:
+        raise ValueError("helper provenance adapter disagrees with its revision")
+    return {"adapter": adapter, "helper_provenance": provenance}
 
 
 def line(sock):
@@ -198,11 +211,9 @@ def main():
     path = instance / "launch.json"
     path.write_text(json.dumps(launch, indent=2) + "\n")
     (args.out / "launch.json").write_text(path.read_text())
-    report = {"schema": 1, "adapter": "libkrun", "host": list(os.uname()),
+    report = {"schema": 1, **helper_identity(args.helper), "host": list(os.uname()),
               "fixture": guest["fixture"], "qualification": "diagnostic-only",
               "instance_dir": str(instance), "boots": []}
-    report["helper_provenance"] = json.loads(subprocess.check_output(
-        [str(args.helper.resolve()), "provenance"], env={"PATH": "/usr/bin:/bin"}, timeout=5))
     report["helper_artifact"] = artifact(args.helper)
     report["guest_build"] = guest
     original_runtime = launch["runtime"]["sha256"]

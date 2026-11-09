@@ -1,0 +1,729 @@
+{
+  "schema": 1,
+  "adapter": "hvi",
+  "helper_provenance": {
+    "adapter": "hvi",
+    "core_version": "0.1.0-rc.2+1.g351d1a1.dirty",
+    "patches": [
+      {
+        "file": "hvi-vsock-fixed-ports.patch",
+        "sha256": "4641b57e08f32f0c4814db39dbbd8280a4b974d3218618fe1a85e48df78ef14d"
+      }
+    ],
+    "revision": "351d1a15728e998486232e4815ba075a22e44f56"
+  },
+  "host": [
+    "Darwin",
+    "Dragoss-MacBook-Pro.local",
+    "24.6.0",
+    "Darwin Kernel Version 24.6.0: Mon Jan 19 22:01:58 PST 2026; root:xnu-11417.140.69.708.3~1/RELEASE_ARM64_T6041",
+    "arm64"
+  ],
+  "fixture": "Nix flake closure",
+  "qualification": "diagnostic-only",
+  "guest_build": {
+    "schema": 1,
+    "arch": "aarch64",
+    "fixture": "stage-b-nix-closure-ext4",
+    "zig_version": "0.17.0",
+    "source_sha256": "ada6355d1db490f6307a34c821c47bceb9ab6567fcc8863313de51748c4d1dac",
+    "nono": "0.77.0",
+    "keeper_sha256": "48e5a0dddd53a77a8332a581055de2f1f0a0f641200e778e77859ea894513da7",
+    "busybox_sha256": "198f6f675a49ac734082e054b823d3e2e947180ca2f632852ae1c09e950fd676",
+    "workload": true,
+    "nix": true,
+    "initramfs": {
+      "path": "/Users/dragos/Development/devcroft-codex/experiments/microvm/artifacts/stage-b-nix/initramfs.cpio",
+      "sha256": "35bbfb6ddc70dc96ee7ad0cc80a6b5a21a30a6d5e1644e9b69aeb810c08db292"
+    },
+    "runtime": {
+      "path": "/Users/dragos/Development/devcroft-codex/experiments/microvm/artifacts/stage-b-nix/runtime.img",
+      "sha256": "768f5b593e9f9f6888ea6930f6b6dc3adb65fd204b3c48361e0864dd6ae93f0c"
+    },
+    "sources": {
+      "src/keeper/connection.rs": "5ea9ab23a29a9eb73363759818af13d5619715e9bc3282409ebd0c4257363759",
+      "src/keeper/environment.rs": "dcf433c26bba99dbe3a28164e35cd38854c30a64521a21691dc92f15ddc29fc6",
+      "src/keeper/mod.rs": "2d93e061be8231d0e0f95b018405b7dac70973800f3a72eed951960d753573e9",
+      "src/keeper/protocol.rs": "a1fd3088992902e89022c229ed710d25487374bfeeeece8000dd2e5872572a2d",
+      "src/keeper/pty.rs": "be8ea1fda83d3932eebe6d54b509e2f96bae5df9aa313a00296e4fa41e580dca",
+      "src/keeper/registry.rs": "99d96e3c267247ecc2f2220f8c0667216998d2cdabd8aabf5284d21c38aa93ce",
+      "src/keeper/session.rs": "1d1a1fce6ff8daac07dc6a8cc95a5ef60362730ae7d22326658920d8a8cf195c",
+      "src/ssh/server.rs": "8c7ab0de47153e02c725684ef05fe1362f9d4af6204636304e4efc895552f986",
+      "src/ssh/sftp.rs": "805e6fc83c646b50df100010bb6bec3988733a8a79027ca1d6ce79ce745ae6ee",
+      "experiments/microvm/guest-keeper/src/bootstrap.rs": "9ad93deea140929f7b13c50411a8be1c46170ff3a118b75f9d32320a59b3e606",
+      "experiments/microvm/guest-keeper/src/linux.rs": "3cdaf225969c28c8f279067ff9aa60057b3bd83ce50ee52689c6afda42d72e72",
+      "experiments/microvm/guest-keeper/src/main.rs": "8195d8e46b245a42d9f20df636e9899c7a5bb9538968595850f8abfcb4fe7128",
+      "experiments/microvm/guest-keeper/Cargo.toml": "bf410f00c15228ec48cfda740c4a2c5a4f39e01e8f184edf4699ef3f96a2bb9f",
+      "experiments/microvm/guest-keeper/Cargo.lock": "c509b51fe02c1ae6842e01a302389076f615b27461f678b7b5af4e623b5e72b7",
+      "experiments/microvm/guest-keeper/zig-linker.sh": "28d89d7554ca99e4d1366d18d365253687076a7f9069d0488d9a011036626fd5",
+      "experiments/microvm/guest-keeper/zig-ar.sh": "8d9a92610ac547533bcce655621c435015305c043e273ea6a038ce999177935c",
+      "experiments/microvm/build_keeper_guest.py": "014709c331dfa3653bb2ae498803cabadd8f78d099460364fc1d2b44eb540b7d",
+      "experiments/microvm/build_guest.py": "b3e47c8936ed17862cb7c21475802520a596339a25f7fa1187bf2252a695b392",
+      "experiments/microvm/guest/init.c": "ada6355d1db490f6307a34c821c47bceb9ab6567fcc8863313de51748c4d1dac"
+    },
+    "busybox_package": {
+      "schema": 1,
+      "package": "busybox-static-1.37.0-r30",
+      "architecture": "aarch64",
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.23/main/aarch64/busybox-static-1.37.0-r30.apk",
+      "sha256": "44c9abdfb970f398fa72c8382fe2d8808eea16beaf82daf6ac708b92f1b8659e",
+      "member": "bin/busybox.static",
+      "purpose": "Real static shell and utilities for the keeper integration fixture; not a provider closure"
+    },
+    "rustc": "rustc 1.95.0 (59807616e 2026-04-14)"
+  },
+  "helper_artifact": {
+    "path": "/Users/dragos/Development/devcroft-codex/experiments/microvm/hvi/target/debug/devcroft-hvi-spike",
+    "sha256": "2b145d5304507649e3994a40e94b61f5d6a901eb3bb3fdaee2629370c01d4e62"
+  },
+  "client": {
+    "implementation": "system OpenSSH",
+    "known_hosts": "pinned from per-instance generated host keys",
+    "version": "OpenSSH_9.9p2, LibreSSL 3.3.6"
+  },
+  "status": "passed",
+  "instances": [
+    {
+      "label": "a",
+      "instance_dir": "/private/tmp/ds-2c6q6298",
+      "instance_id": "40746f7b53f036730605a6d539895851",
+      "boots": [
+        {
+          "boot": 1,
+          "greeting": "READY 1 state=1 ro=1 landlock=6 policy=1",
+          "ready_seconds": 17.54296400002204,
+          "probes": {
+            "instance_id": "40746f7b53f036730605a6d539895851",
+            "status": "passed",
+            "exec_stdout_stderr_exit": true,
+            "stdin_binary_eof_bytes": 131072,
+            "openssh_terminal_shell_pty": {
+              "initial": [
+                24,
+                80
+              ],
+              "resized": [
+                41,
+                132
+              ],
+              "ctrl_c_status": 130,
+              "shell_exit": 17
+            },
+            "sftp_put_rename_get_remove_bytes": 131072,
+            "sftp_nono_denials": true,
+            "private_bootstrap_disk_read_denied": true,
+            "wrong_client_key_rejected": true,
+            "guest_loopback_forward": {
+              "port": 8080,
+              "instance_id": "40746f7b53f036730605a6d539895851",
+              "live_port_8081_denied": true
+            },
+            "keeper": {
+              "status": "passed",
+              "implementation": "src/keeper",
+              "nono": "0.77.0",
+              "exec_stdout_stderr_exit": true,
+              "stdin_binary_eof_bytes": 131072,
+              "environment_filter_overlay_cwd": true,
+              "pty_resize": {
+                "initial": [
+                  24,
+                  80
+                ],
+                "resized": [
+                  41,
+                  132
+                ],
+                "exit_code": 13
+              },
+              "signals": {
+                "Int": 2,
+                "Term": 15,
+                "Hup": 1
+              },
+              "nono_inherited_policy": {
+                "workspace_rw": true,
+                "private_read_denied": true,
+                "runtime_data_write_denied": true,
+                "tool_and_runtime_data_read_allowed": true,
+                "tcp_bind_denied": true
+              },
+              "disconnect_reaps_session": true,
+              "unknown_oversized_frames_rejected": true
+            }
+          },
+          "exit_code": 0,
+          "forced_cleanup": false,
+          "log_overflow": false,
+          "ssh_console_captured": true,
+          "guest_console_stream": "stdout"
+        },
+        {
+          "boot": 2,
+          "greeting": "READY 1 state=2 ro=1 landlock=6 policy=1",
+          "ready_seconds": 7.851198541990016,
+          "probes": {
+            "instance_id": "40746f7b53f036730605a6d539895851",
+            "status": "passed",
+            "exec_stdout_stderr_exit": true,
+            "stdin_binary_eof_bytes": 131072,
+            "openssh_terminal_shell_pty": {
+              "initial": [
+                24,
+                80
+              ],
+              "resized": [
+                41,
+                132
+              ],
+              "ctrl_c_status": 130,
+              "shell_exit": 17
+            },
+            "sftp_put_rename_get_remove_bytes": 131072,
+            "sftp_nono_denials": true,
+            "private_bootstrap_disk_read_denied": true,
+            "wrong_client_key_rejected": true,
+            "guest_loopback_forward": {
+              "port": 8080,
+              "instance_id": "40746f7b53f036730605a6d539895851",
+              "live_port_8081_denied": true
+            },
+            "keeper": {
+              "status": "passed",
+              "implementation": "src/keeper",
+              "nono": "0.77.0",
+              "exec_stdout_stderr_exit": true,
+              "stdin_binary_eof_bytes": 131072,
+              "environment_filter_overlay_cwd": true,
+              "pty_resize": {
+                "initial": [
+                  24,
+                  80
+                ],
+                "resized": [
+                  41,
+                  132
+                ],
+                "exit_code": 13
+              },
+              "signals": {
+                "Int": 2,
+                "Term": 15,
+                "Hup": 1
+              },
+              "nono_inherited_policy": {
+                "workspace_rw": true,
+                "private_read_denied": true,
+                "runtime_data_write_denied": true,
+                "tool_and_runtime_data_read_allowed": true,
+                "tcp_bind_denied": true
+              },
+              "disconnect_reaps_session": true,
+              "unknown_oversized_frames_rejected": true
+            }
+          },
+          "exit_code": 0,
+          "forced_cleanup": false,
+          "log_overflow": false,
+          "ssh_console_captured": true,
+          "guest_console_stream": "stdout"
+        }
+      ],
+      "sandbox": {
+        "outside_denied": true,
+        "passed": true,
+        "positive_controls": "retained pre-opened descriptors; all path reopening remains denied",
+        "readonly_input_works": true,
+        "runtime_write_denied": true,
+        "tcp_denied": true,
+        "thread_works": true,
+        "unix_works": true,
+        "writable_state_works": true
+      }
+    },
+    {
+      "label": "b",
+      "instance_dir": "/private/tmp/ds-modot8r5",
+      "instance_id": "8464bc34b16a8bf7d879e9d00491d902",
+      "boots": [
+        {
+          "boot": 1,
+          "greeting": "READY 1 state=1 ro=1 landlock=6 policy=1",
+          "ready_seconds": 17.540831583028194,
+          "probes": {
+            "instance_id": "8464bc34b16a8bf7d879e9d00491d902",
+            "status": "passed",
+            "exec_stdout_stderr_exit": true,
+            "stdin_binary_eof_bytes": 131072,
+            "openssh_terminal_shell_pty": {
+              "initial": [
+                24,
+                80
+              ],
+              "resized": [
+                41,
+                132
+              ],
+              "ctrl_c_status": 130,
+              "shell_exit": 17
+            },
+            "sftp_put_rename_get_remove_bytes": 131072,
+            "sftp_nono_denials": true,
+            "private_bootstrap_disk_read_denied": true,
+            "wrong_client_key_rejected": true,
+            "guest_loopback_forward": {
+              "port": 8080,
+              "instance_id": "8464bc34b16a8bf7d879e9d00491d902",
+              "live_port_8081_denied": true
+            },
+            "keeper": {
+              "status": "passed",
+              "implementation": "src/keeper",
+              "nono": "0.77.0",
+              "exec_stdout_stderr_exit": true,
+              "stdin_binary_eof_bytes": 131072,
+              "environment_filter_overlay_cwd": true,
+              "pty_resize": {
+                "initial": [
+                  24,
+                  80
+                ],
+                "resized": [
+                  41,
+                  132
+                ],
+                "exit_code": 13
+              },
+              "signals": {
+                "Int": 2,
+                "Term": 15,
+                "Hup": 1
+              },
+              "nono_inherited_policy": {
+                "workspace_rw": true,
+                "private_read_denied": true,
+                "runtime_data_write_denied": true,
+                "tool_and_runtime_data_read_allowed": true,
+                "tcp_bind_denied": true
+              },
+              "disconnect_reaps_session": true,
+              "unknown_oversized_frames_rejected": true
+            }
+          },
+          "exit_code": 0,
+          "forced_cleanup": false,
+          "log_overflow": false,
+          "ssh_console_captured": true,
+          "guest_console_stream": "stdout"
+        }
+      ],
+      "sandbox": {
+        "outside_denied": true,
+        "passed": true,
+        "positive_controls": "retained pre-opened descriptors; all path reopening remains denied",
+        "readonly_input_works": true,
+        "runtime_write_denied": true,
+        "tcp_denied": true,
+        "thread_works": true,
+        "unix_works": true,
+        "writable_state_works": true
+      }
+    }
+  ],
+  "workload_artifact": {
+    "path": "/Users/dragos/Development/devcroft-codex/experiments/microvm/artifacts/nix/toolchain.img",
+    "sha256": "f7a03966978e4b46ea3ae56e7593a969735332594581c9e4e92ffcbae258324f"
+  },
+  "seed_artifact": {
+    "path": "/Users/dragos/Development/devcroft-codex/experiments/microvm/artifacts/nix/data.seed.img",
+    "sha256": "efdc0a7295c7c0b93b2a9e5c210565b85c03c15e80b20f70798d1a8e0bfc536f"
+  },
+  "resources_per_vm": {
+    "vcpus": 2,
+    "memory_mib": 512
+  },
+  "harness_sources": {
+    "ssh_smoke.py": "834dbad4f66c6604690498208e39b07c97989d7fe87de9764808fade7753b19f",
+    "smoke.py": "af93ea5cd5217231da0782b81032bd0dd0ec2913c2077e5658fd0a0b704d3a79",
+    "keeper_probe.py": "65932e55e49bb1cee55a38ad35ceb1d7b307b103d5aff373273afc72d83bca83",
+    "hvi/src/main.rs": "5569a64b8619bc3ec50d74b36d0052ecf3464dc2342c33fb04c54a4127daa0ab",
+    "hvi/Cargo.lock": "028412b3f8b1d94ec275b44e6afc57d09c3ddb18569e1f77627cc8aaf5e4c9e1",
+    "workload_smoke.py": "2616e24971efaf61ff86adc0519a11676a7b1242159774f7c7f89be8648c32cc"
+  },
+  "two_simultaneous_instances": true,
+  "sibling_client_key_rejected": true,
+  "sibling_endpoint_host_key_rejected": true,
+  "private_host_key_survives_cold_restart": true,
+  "sibling_survives_restart": true,
+  "runtime_unchanged": true,
+  "workload_unchanged": true,
+  "cleanup": {
+    "all_owned_helpers_reaped": true,
+    "endpoints_removed": true
+  },
+  "raw_evidence": "experiments/microvm/runs/20261109-hvi-reviewed-nix-ssh",
+  "host_boundary_events": [
+    {
+      "log": "runs/20261109-hvi-reviewed-nix-ssh/a/boot-1.stderr.log",
+      "descriptors": [
+        {
+          "access": 2,
+          "fd": 0,
+          "mode": 8192,
+          "path": "/dev/null"
+        },
+        {
+          "access": 1,
+          "fd": 1,
+          "mode": 4096,
+          "path": null
+        },
+        {
+          "access": 1,
+          "fd": 2,
+          "mode": 4096,
+          "path": null
+        },
+        {
+          "access": 2,
+          "fd": 3,
+          "mode": 0,
+          "path": null
+        },
+        {
+          "access": 0,
+          "fd": 4,
+          "mode": 32768,
+          "path": "/Users/dragos/Development/devcroft-codex/experiments/microvm/artifacts/stage-b-nix/runtime.img"
+        },
+        {
+          "access": 2,
+          "fd": 5,
+          "mode": 32768,
+          "path": "/private/tmp/ds-2c6q6298/state.img"
+        },
+        {
+          "access": 0,
+          "fd": 6,
+          "mode": 32768,
+          "path": "/Users/dragos/Development/devcroft-codex/experiments/microvm/artifacts/nix/toolchain.img"
+        },
+        {
+          "access": 2,
+          "fd": 7,
+          "mode": 32768,
+          "path": "/private/tmp/ds-2c6q6298/data.img"
+        },
+        {
+          "access": 2,
+          "fd": 8,
+          "mode": 49152,
+          "path": null
+        },
+        {
+          "access": 2,
+          "fd": 9,
+          "mode": 49152,
+          "path": null
+        },
+        {
+          "access": 2,
+          "fd": 10,
+          "mode": 49152,
+          "path": null
+        },
+        {
+          "access": 2,
+          "fd": 11,
+          "mode": 49152,
+          "path": null
+        },
+        {
+          "access": 2,
+          "fd": 12,
+          "mode": 49152,
+          "path": null
+        },
+        {
+          "access": 0,
+          "fd": 13,
+          "mode": 4096,
+          "path": null
+        },
+        {
+          "access": 1,
+          "fd": 14,
+          "mode": 4096,
+          "path": null
+        }
+      ],
+      "disks_access_checked": true,
+      "event": "hvi-descriptor-inventory",
+      "unexpected_regular_files": false
+    },
+    {
+      "log": "runs/20261109-hvi-reviewed-nix-ssh/a/boot-1.stderr.log",
+      "event": "hvi-before-confinement-positive-controls",
+      "passed": true
+    },
+    {
+      "log": "runs/20261109-hvi-reviewed-nix-ssh/a/boot-1.stderr.log",
+      "event": "hvi-before-first-guest-entry",
+      "outside_denied": true,
+      "passed": true,
+      "runtime_reopen_denied": true,
+      "state_reopen_denied": true,
+      "tcp_denied": true
+    },
+    {
+      "log": "runs/20261109-hvi-reviewed-nix-ssh/a/boot-2.stderr.log",
+      "descriptors": [
+        {
+          "access": 2,
+          "fd": 0,
+          "mode": 8192,
+          "path": "/dev/null"
+        },
+        {
+          "access": 1,
+          "fd": 1,
+          "mode": 4096,
+          "path": null
+        },
+        {
+          "access": 1,
+          "fd": 2,
+          "mode": 4096,
+          "path": null
+        },
+        {
+          "access": 2,
+          "fd": 3,
+          "mode": 0,
+          "path": null
+        },
+        {
+          "access": 0,
+          "fd": 4,
+          "mode": 32768,
+          "path": "/Users/dragos/Development/devcroft-codex/experiments/microvm/artifacts/stage-b-nix/runtime.img"
+        },
+        {
+          "access": 2,
+          "fd": 5,
+          "mode": 32768,
+          "path": "/private/tmp/ds-2c6q6298/state.img"
+        },
+        {
+          "access": 0,
+          "fd": 6,
+          "mode": 32768,
+          "path": "/Users/dragos/Development/devcroft-codex/experiments/microvm/artifacts/nix/toolchain.img"
+        },
+        {
+          "access": 2,
+          "fd": 7,
+          "mode": 32768,
+          "path": "/private/tmp/ds-2c6q6298/data.img"
+        },
+        {
+          "access": 2,
+          "fd": 8,
+          "mode": 49152,
+          "path": null
+        },
+        {
+          "access": 2,
+          "fd": 9,
+          "mode": 49152,
+          "path": null
+        },
+        {
+          "access": 2,
+          "fd": 10,
+          "mode": 49152,
+          "path": null
+        },
+        {
+          "access": 2,
+          "fd": 11,
+          "mode": 49152,
+          "path": null
+        },
+        {
+          "access": 2,
+          "fd": 12,
+          "mode": 49152,
+          "path": null
+        },
+        {
+          "access": 0,
+          "fd": 13,
+          "mode": 4096,
+          "path": null
+        },
+        {
+          "access": 1,
+          "fd": 14,
+          "mode": 4096,
+          "path": null
+        }
+      ],
+      "disks_access_checked": true,
+      "event": "hvi-descriptor-inventory",
+      "unexpected_regular_files": false
+    },
+    {
+      "log": "runs/20261109-hvi-reviewed-nix-ssh/a/boot-2.stderr.log",
+      "event": "hvi-before-confinement-positive-controls",
+      "passed": true
+    },
+    {
+      "log": "runs/20261109-hvi-reviewed-nix-ssh/a/boot-2.stderr.log",
+      "event": "hvi-before-first-guest-entry",
+      "outside_denied": true,
+      "passed": true,
+      "runtime_reopen_denied": true,
+      "state_reopen_denied": true,
+      "tcp_denied": true
+    },
+    {
+      "log": "runs/20261109-hvi-reviewed-nix-ssh/b/boot-1.stderr.log",
+      "descriptors": [
+        {
+          "access": 2,
+          "fd": 0,
+          "mode": 8192,
+          "path": "/dev/null"
+        },
+        {
+          "access": 1,
+          "fd": 1,
+          "mode": 4096,
+          "path": null
+        },
+        {
+          "access": 1,
+          "fd": 2,
+          "mode": 4096,
+          "path": null
+        },
+        {
+          "access": 2,
+          "fd": 3,
+          "mode": 0,
+          "path": null
+        },
+        {
+          "access": 0,
+          "fd": 4,
+          "mode": 32768,
+          "path": "/Users/dragos/Development/devcroft-codex/experiments/microvm/artifacts/stage-b-nix/runtime.img"
+        },
+        {
+          "access": 2,
+          "fd": 5,
+          "mode": 32768,
+          "path": "/private/tmp/ds-modot8r5/state.img"
+        },
+        {
+          "access": 0,
+          "fd": 6,
+          "mode": 32768,
+          "path": "/Users/dragos/Development/devcroft-codex/experiments/microvm/artifacts/nix/toolchain.img"
+        },
+        {
+          "access": 2,
+          "fd": 7,
+          "mode": 32768,
+          "path": "/private/tmp/ds-modot8r5/data.img"
+        },
+        {
+          "access": 2,
+          "fd": 8,
+          "mode": 49152,
+          "path": null
+        },
+        {
+          "access": 2,
+          "fd": 9,
+          "mode": 49152,
+          "path": null
+        },
+        {
+          "access": 2,
+          "fd": 10,
+          "mode": 49152,
+          "path": null
+        },
+        {
+          "access": 2,
+          "fd": 11,
+          "mode": 49152,
+          "path": null
+        },
+        {
+          "access": 2,
+          "fd": 12,
+          "mode": 49152,
+          "path": null
+        },
+        {
+          "access": 0,
+          "fd": 13,
+          "mode": 4096,
+          "path": null
+        },
+        {
+          "access": 1,
+          "fd": 14,
+          "mode": 4096,
+          "path": null
+        }
+      ],
+      "disks_access_checked": true,
+      "event": "hvi-descriptor-inventory",
+      "unexpected_regular_files": false
+    },
+    {
+      "log": "runs/20261109-hvi-reviewed-nix-ssh/b/boot-1.stderr.log",
+      "event": "hvi-before-confinement-positive-controls",
+      "passed": true
+    },
+    {
+      "log": "runs/20261109-hvi-reviewed-nix-ssh/b/boot-1.stderr.log",
+      "event": "hvi-before-first-guest-entry",
+      "outside_denied": true,
+      "passed": true,
+      "runtime_reopen_denied": true,
+      "state_reopen_denied": true,
+      "tcp_denied": true
+    }
+  ],
+  "host_confinement": {
+    "profile": "hvi native deny-default Seatbelt; no host path grants",
+    "order": "resources and on_attach positive controls, then process Seatbelt, then I/O/vCPU threads",
+    "probe_scope": "negative probes on first vcpu0 safepoint before its first entry; source ordering covers all vCPU threads",
+    "boots_with_probe": 3,
+    "disk_descriptor_access_checked": true
+  },
+  "density_collection": false,
+  "probe_sources": {
+    "smoke.py": "af93ea5cd5217231da0782b81032bd0dd0ec2913c2077e5658fd0a0b704d3a79",
+    "ssh_smoke.py": "834dbad4f66c6604690498208e39b07c97989d7fe87de9764808fade7753b19f",
+    "workload_smoke.py": "2616e24971efaf61ff86adc0519a11676a7b1242159774f7c7f89be8648c32cc",
+    "editor_smoke.py": "fc47c03ae32a5335b078bc3d9f708bbc2db05e3fd8f46061fe6eb7b59f8d2ec5",
+    "adaptable_smoke.py": "f934450922321f217a4b40ba869dbc4ac713cf49e71e2786cf6e9cded4b5e650",
+    "hvi/src/main.rs": "5569a64b8619bc3ec50d74b36d0052ecf3464dc2342c33fb04c54a4127daa0ab",
+    "hvi/build.rs": "e55179b0aca1f655566261c782de8b9213a37023713633a1cfd366bc5ed5e680",
+    "hvi/Cargo.lock": "028412b3f8b1d94ec275b44e6afc57d09c3ddb18569e1f77627cc8aaf5e4c9e1",
+    "build_hvi.py": "5c8cf821ed5b68f76507686dff5a32858c80b8ca56dcda49977fe708a2698c80",
+    "patches/hvi-vsock-fixed-ports.patch": "4641b57e08f32f0c4814db39dbbd8280a4b974d3218618fe1a85e48df78ef14d"
+  },
+  "remaining_limits": [
+    "macOS ARM64 functional diagnostic only; native Linux/x86-64 not qualified",
+    "No completed-agent, trusted Remote-SSH, density or host power-loss qualification",
+    "No hvi RNG/balloon device exposed by the pinned API; memory recovery remains unmeasured",
+    "Common artifacts reused; fixed-port hvi extension remains a local patch"
+  ]
+}

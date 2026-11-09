@@ -1,8 +1,53 @@
 # microVM experiments
 
 This is the experimental implementation of `evaluate-microvm-runtimes`.
-`libkrun/` has its own Cargo workspace and lockfile. The main devcroft build and
+`libkrun/` and `hvi/` have their own Cargo workspaces and lockfiles. The main devcroft build and
 published crate do not depend on it. No production VM dispatch exists yet.
+
+## hvi macOS ARM64 comparison
+
+The isolated `hvi/` workspace now passes eight functional rows with the same
+kernel, initramfs and disk images already used by libkrun: Stage A, keeper/SSH,
+Alpine build/Redis, private adaptable base, Alpine editor, and Nix SSH, workload
+and editor. The final reviewed patch run covers 25 clean/crash-recovery boots.
+See [hvi confinement and validation](fixtures/hvi-macos-confinement.json) and
+`results/hvi-macos-arm64-*.json` for actual events, hashes and raw log paths.
+
+`python3 experiments/microvm/build_hvi.py` prepares the fixed upstream revision,
+verifies the exact local patch/effective source diff, builds the separately
+locked helper and signs it on macOS. Run any common `*_smoke.py` harness with
+`--helper experiments/microvm/hvi/target/debug/devcroft-hvi-spike`. No production
+build depends on hvi. The helper uses hvi's native process-wide deny-default
+Seatbelt after resource acquisition and before I/O/vCPU threads, with no host
+filesystem shares or NIC. Actual retained disk descriptors are checked for
+RO/RW modes and unexpected regular files are rejected. Negative probes run on
+the first vcpu0 safepoint before its first guest entry; source ordering covers
+the other vCPU threads. Preopened descriptors remain usable after confinement.
+
+The pinned hvi API exposes only one fixed guest agent port. The recorded
+[local patch](patches/hvi-vsock-fixed-ports.patch) adds preopened Unix listeners
+for host-selected guest ports. This helper configures only control 1024,
+keeper 1025 and SSH 1026. Each connection validates the guest source port before
+handshake, credit, data or teardown, and all outgoing control/data packets retain
+the selected port. The extension changes no Seatbelt grants and uses no extra
+sidecar or guest multiplexer. Native vsock tests include cross-port injection.
+
+The earlier SSH calibration failed its console-capture gate because hvi writes
+guest console output to stdout while libkrun uses stderr. The common harness now
+checks both bounded streams, records the stream, and attributes the adapter from
+actual pinned helper provenance. The failure and passing reruns remain recorded.
+An initial double-lock integration failure was also retained in the raw runs;
+the wrapper now leaves disk locking to hvi's own shared-RO/exclusive-RW locks.
+
+hvi's `File::sync_data` flush uses `F_FULLFSYNC` in the recorded Rust 1.95 macOS
+implementation; this is source-level alignment, not a power-loss test or matched
+performance result. The pinned API exposes no RNG or balloon device, so memory
+recovery parity remains open. Native Linux/x86-64, trusted Remote-SSH, actual agent
+completion, fault coverage and density remain separate unqualified rows.
+
+[Brig reference](fixtures/brig-reference.json) records the owner-requested design
+comparison. Its 4 GiB agent allocations and 1.5x relative regression gate do not
+provide our absolute E5 limits. Density collection has not started.
 
 ## Current result
 

@@ -1,0 +1,63 @@
+{
+  "schema": 1,
+  "consulted_on": "2026-11-09",
+  "requested_by_owner": true,
+  "purpose": "External design reference for E5; distinguish resource configuration from measured no-go limits.",
+  "decisions": [
+    {
+      "subject": "resource allocations",
+      "source": "https://www.brig.sh/docs/built-in-profiles/",
+      "values": {
+        "agent_profile_memory_mib": 4096,
+        "agent_profile_vcpus": 4,
+        "ubuntu_memory_mib": 2048,
+        "ubuntu_vcpus": 2
+      },
+      "classification": "profile configuration, not measured post-build idle memory or fleet density"
+    },
+    {
+      "subject": "package installation storage",
+      "source": "https://www.brig.sh/docs/profiles/#rootfstype",
+      "decision": "Use block rootfs when installing packages; genericBoot can otherwise use an overlay root.",
+      "application": "Keep private block-backed adaptable fixture and explicit administrative setup phase."
+    },
+    {
+      "subject": "host boundary",
+      "source": "https://www.brig.sh/docs/architecture/",
+      "decision": "CLI, runtime and one VMM process per VM; confinement before guest entry.",
+      "application": "Use isolated hvi helper, private block disks, preopened fixed vsock listeners and native Seatbelt."
+    },
+    {
+      "subject": "regression gate",
+      "source": "https://github.com/brig-sh/hvi-vmm/blob/351d1a15728e998486232e4815ba075a22e44f56/docs/benchmarking.md",
+      "source_sha256": "ef4c1bdfbfd22aa5e0ff1ed249d8a4c4636aa608084ca70489ce35000e5c0666",
+      "values": {
+        "samples_per_side": 5,
+        "wall_time_ratio_limit": 1.5,
+        "host_operation_increase_allowed": 0
+      },
+      "classification": "relative same-host branch-versus-base fsbench regression, not absolute launch/preparation/storage limits",
+      "application": "Retain E4 matched workloads/durability and repetitions; do not substitute this relative gate for E5."
+    }
+  ],
+  "e5": {
+    "status": "not-established-by-consulted-sources",
+    "density_collection_started": false,
+    "numeric_no_go_thresholds": {
+      "post_build_idle_memory_mib": null,
+      "cold_preparation_seconds": null,
+      "agent_session_start_seconds": null,
+      "storage_per_environment_gib": null
+    },
+    "owner_direction": "Consult Brig decisions",
+    "remaining_decision": "No published absolute limits found in consulted profiles, architecture, homepage or pinned hvi performance gate; owner acceptance of explicit limits is still required before task 4.1.",
+    "proposal_pending_owner_response": {
+      "post_build_idle_memory_mib_all_processes": 4096,
+      "idle_observation_seconds": 60,
+      "cold_preparation_seconds_inputs_downloaded": 600,
+      "agent_session_start_seconds_vm_ready": 5,
+      "physical_storage_per_environment_gib": 8,
+      "source": "devcroft proposal informed by Brig allocation; not published Brig acceptance limits"
+    }
+  }
+}

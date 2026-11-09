@@ -15,7 +15,7 @@ import threading
 import time
 import urllib.request
 
-from smoke import ROOT, artifact, drain
+from smoke import helper_identity, ROOT, artifact, drain
 from ssh_smoke import ENV, SOCKETS, command, require
 from workload_smoke import WorkloadInstance
 
@@ -67,7 +67,7 @@ def main():
     args.out.mkdir(parents=True, exist_ok=False)
     guest = json.loads(args.guest.read_text())
     nix = guest.get('nix', False)
-    report = {'schema': 1, 'qualification': 'diagnostic-only', 'adapter': 'libkrun',
+    report = {'schema': 1, 'qualification': 'diagnostic-only', **helper_identity(args.helper),
         'host': list(os.uname()), 'editor_artifact': artifact(args.editor), 'helper_artifact': artifact(args.helper),
         'kernel_artifact': artifact(args.kernel), 'seed_artifact': artifact(args.seed),
         'editor_build': json.loads((args.editor.parent / 'build.json').read_text()),
