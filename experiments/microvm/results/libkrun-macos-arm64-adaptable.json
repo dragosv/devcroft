@@ -1,0 +1,999 @@
+{
+  "schema": 1,
+  "adapter": "libkrun",
+  "qualification": "diagnostic-only",
+  "status": "passed",
+  "host": [
+    "Darwin",
+    "Dragoss-MacBook-Pro.local",
+    "24.6.0",
+    "Darwin Kernel Version 24.6.0: Mon Jan 19 22:01:58 PST 2026; root:xnu-11417.140.69.708.3~1/RELEASE_ARM64_T6041",
+    "arm64"
+  ],
+  "kernel_artifact": {
+    "path": "/Users/dragos/Development/devcroft-codex/experiments/microvm/artifacts/kernel-landlock/Image",
+    "sha256": "2b8b6d4664f1521a0d9bcc22252c4cc2e0bc98a5bbcf2500cc1e45ef1e1275fb"
+  },
+  "helper_artifact": {
+    "path": "/Users/dragos/Development/devcroft-codex/experiments/microvm/libkrun/target/debug/devcroft-krun-spike",
+    "sha256": "ff28157bf6ed5e3522fce70eb14a18710c5e7e48a5412f1c5e653fa7cabc61cf"
+  },
+  "recipe": {
+    "architecture": "aarch64-linux",
+    "base_sha256": "9d3c6a36a43e238c2b88df3f0a9a418a1af1edbbba70bf16ba466e91814bc45b",
+    "manager_packages": [
+      {
+        "file": "alpine-keys-2.6-r0.apk",
+        "sha256": "a4b23531e2f48375d515ba77d983ac39a83aca4222744a40475c7bd2f50e6d66",
+        "url": "https://dl-cdn.alpinelinux.org/alpine/v3.23/main/aarch64/alpine-keys-2.6-r0.apk"
+      },
+      {
+        "file": "apk-tools-3.0.9-r0.apk",
+        "sha256": "52e05730d7256ca321e48d618ebcdda270cf6c2522f2a27ce15c00201bfb75fa",
+        "url": "https://dl-cdn.alpinelinux.org/alpine/v3.23/main/aarch64/apk-tools-3.0.9-r0.apk"
+      },
+      {
+        "file": "ca-certificates-bundle-20261020-r0.apk",
+        "sha256": "bdf6033710a251d8239f63236eacf40c84afdf8f7b25bb58d69a2c75202350e7",
+        "url": "https://dl-cdn.alpinelinux.org/alpine/v3.23/main/aarch64/ca-certificates-bundle-20261020-r0.apk"
+      },
+      {
+        "file": "libapk-3.0.9-r0.apk",
+        "sha256": "89fed5d57190643d3b146162773cca0efb8edc439f56b283fbfd4912a8f3a0da",
+        "url": "https://dl-cdn.alpinelinux.org/alpine/v3.23/main/aarch64/libapk-3.0.9-r0.apk"
+      },
+      {
+        "file": "libcrypto3-3.5.9-r0.apk",
+        "sha256": "3b0bd7aaac36d49216f47d025f303dafb6da8d05bd258f71900d3b6156d36012",
+        "url": "https://dl-cdn.alpinelinux.org/alpine/v3.23/main/aarch64/libcrypto3-3.5.9-r0.apk"
+      },
+      {
+        "file": "libssl3-3.5.9-r0.apk",
+        "sha256": "cdb3762116994f767cd1da423fa8004bd36b2e3802e3a1343786a40f00a5030e",
+        "url": "https://dl-cdn.alpinelinux.org/alpine/v3.23/main/aarch64/libssl3-3.5.9-r0.apk"
+      },
+      {
+        "file": "musl-1.2.5-r24.apk",
+        "sha256": "d7043c549029c98d438e9bc94213b006e5c88540eb58d1f5b0f0d1d56dbf9c98",
+        "url": "https://dl-cdn.alpinelinux.org/alpine/v3.23/main/aarch64/musl-1.2.5-r24.apk"
+      },
+      {
+        "file": "zlib-1.4-r0.apk",
+        "sha256": "c9bc3c75104ffba5785277b38eb83bf90ea83539e3bb26c617864fb78dcb4462",
+        "url": "https://dl-cdn.alpinelinux.org/alpine/v3.23/main/aarch64/zlib-1.4-r0.apk"
+      }
+    ],
+    "mechanism": "alpine-apk-offline",
+    "packages": [
+      {
+        "file": "musl-1.2.5-r24.apk",
+        "sha256": "d7043c549029c98d438e9bc94213b006e5c88540eb58d1f5b0f0d1d56dbf9c98",
+        "url": "https://dl-cdn.alpinelinux.org/alpine/v3.23/main/aarch64/musl-1.2.5-r24.apk"
+      },
+      {
+        "file": "pkgconf-2.5.1-r0.apk",
+        "sha256": "68a8cbd9901184caf0c4cf86c54ae199eae6110c313457ad34adb8ce1d929816",
+        "url": "https://dl-cdn.alpinelinux.org/alpine/v3.23/main/aarch64/pkgconf-2.5.1-r0.apk"
+      },
+      {
+        "file": "zlib-1.4-r0.apk",
+        "sha256": "c9bc3c75104ffba5785277b38eb83bf90ea83539e3bb26c617864fb78dcb4462",
+        "url": "https://dl-cdn.alpinelinux.org/alpine/v3.23/main/aarch64/zlib-1.4-r0.apk"
+      },
+      {
+        "file": "zlib-dev-1.4-r0.apk",
+        "sha256": "0a3a7a4f23f1bc853d8aad7ab892e73b9b81f103fa74b53d427966db729ff399",
+        "url": "https://dl-cdn.alpinelinux.org/alpine/v3.23/main/aarch64/zlib-dev-1.4-r0.apk"
+      }
+    ],
+    "schema": 1,
+    "source_sha256": "79cf823cf7b9c7baf7cff1b7737e4ff47cefa45afb94c174f1414c50aa9e90ea"
+  },
+  "recipe_sha256": "f247b7ee16ee3da6eb6a2d8f6da85916e2591abb3b075a30daf7207fbc0a7285",
+  "inputs": {
+    "path": "/Users/dragos/Development/devcroft-codex/experiments/microvm/artifacts/adaptable/toolchain.img",
+    "sha256": "14a476e2d39d3baf64cefdee4956a6fdde7aedab8244f84730d9e2eb69bb4d0f"
+  },
+  "seed": {
+    "path": "/Users/dragos/Development/devcroft-codex/experiments/microvm/artifacts/adaptable/data.seed.img",
+    "sha256": "6c1bf72dfb7382912e80ea2fbb437aa8bf2635f91c370418cbdf259db34ed454"
+  },
+  "guests": {
+    "runtime": {
+      "schema": 1,
+      "arch": "aarch64",
+      "fixture": "stage-c-private-adaptable-base",
+      "zig_version": "0.17.0",
+      "source_sha256": "9b15a6dac747eac795a8bd97c0f78582d606825fa3adab6e71c4d0a994386bcf",
+      "nono": "0.77.0",
+      "keeper_sha256": "5eace2a64b88fb23f772bc94b340bfb6a60452fd004095665ad8026c7c9ee83e",
+      "busybox_sha256": "198f6f675a49ac734082e054b823d3e2e947180ca2f632852ae1c09e950fd676",
+      "workload": true,
+      "adaptable": true,
+      "setup_window": false,
+      "setup_recipe_sha256": "f247b7ee16ee3da6eb6a2d8f6da85916e2591abb3b075a30daf7207fbc0a7285",
+      "initramfs": {
+        "path": "/Users/dragos/Development/devcroft-codex/experiments/microvm/artifacts/stage-c-runtime/initramfs.cpio",
+        "sha256": "2478b59c5fe10c193e76c4dfc70c286cf8910223bbef7856ffff75d2cdb32965"
+      },
+      "runtime": {
+        "path": "/Users/dragos/Development/devcroft-codex/experiments/microvm/artifacts/stage-c-runtime/runtime.img",
+        "sha256": "768f5b593e9f9f6888ea6930f6b6dc3adb65fd204b3c48361e0864dd6ae93f0c"
+      },
+      "sources": {
+        "src/keeper/connection.rs": "5ea9ab23a29a9eb73363759818af13d5619715e9bc3282409ebd0c4257363759",
+        "src/keeper/environment.rs": "dcf433c26bba99dbe3a28164e35cd38854c30a64521a21691dc92f15ddc29fc6",
+        "src/keeper/mod.rs": "2d93e061be8231d0e0f95b018405b7dac70973800f3a72eed951960d753573e9",
+        "src/keeper/protocol.rs": "a1fd3088992902e89022c229ed710d25487374bfeeeece8000dd2e5872572a2d",
+        "src/keeper/pty.rs": "be8ea1fda83d3932eebe6d54b509e2f96bae5df9aa313a00296e4fa41e580dca",
+        "src/keeper/registry.rs": "99d96e3c267247ecc2f2220f8c0667216998d2cdabd8aabf5284d21c38aa93ce",
+        "src/keeper/session.rs": "1d1a1fce6ff8daac07dc6a8cc95a5ef60362730ae7d22326658920d8a8cf195c",
+        "src/ssh/server.rs": "8c7ab0de47153e02c725684ef05fe1362f9d4af6204636304e4efc895552f986",
+        "src/ssh/sftp.rs": "805e6fc83c646b50df100010bb6bec3988733a8a79027ca1d6ce79ce745ae6ee",
+        "experiments/microvm/guest-keeper/src/bootstrap.rs": "9ad93deea140929f7b13c50411a8be1c46170ff3a118b75f9d32320a59b3e606",
+        "experiments/microvm/guest-keeper/src/linux.rs": "05227bc26ad0cc5f1903eed8c93fda8a18d474e04d2188c459acbf49eb505ac3",
+        "experiments/microvm/guest-keeper/src/main.rs": "8195d8e46b245a42d9f20df636e9899c7a5bb9538968595850f8abfcb4fe7128",
+        "experiments/microvm/guest-keeper/Cargo.toml": "bf410f00c15228ec48cfda740c4a2c5a4f39e01e8f184edf4699ef3f96a2bb9f",
+        "experiments/microvm/guest-keeper/Cargo.lock": "c509b51fe02c1ae6842e01a302389076f615b27461f678b7b5af4e623b5e72b7",
+        "experiments/microvm/guest-keeper/zig-linker.sh": "28d89d7554ca99e4d1366d18d365253687076a7f9069d0488d9a011036626fd5",
+        "experiments/microvm/guest-keeper/zig-ar.sh": "8d9a92610ac547533bcce655621c435015305c043e273ea6a038ce999177935c",
+        "experiments/microvm/build_keeper_guest.py": "3d27902d4a04988f1dc7faf4b9be927f8fc2e1ac3b8b230012904dcbb364af69",
+        "experiments/microvm/build_guest.py": "2a7ab92a57a27e19219e092eb7d85d4ae231333259264fd6a17eec1a78337c21",
+        "experiments/microvm/guest/init.c": "9b15a6dac747eac795a8bd97c0f78582d606825fa3adab6e71c4d0a994386bcf",
+        "experiments/microvm/fixtures/adaptable-recipe-aarch64.json": "f247b7ee16ee3da6eb6a2d8f6da85916e2591abb3b075a30daf7207fbc0a7285",
+        "experiments/microvm/adaptable/recipe.py": "0a00c9ba1b66c651b1b6ea164c64be8c7d5a15c5a78720e3abf18079ff040c50"
+      },
+      "busybox_package": {
+        "schema": 1,
+        "package": "busybox-static-1.37.0-r30",
+        "architecture": "aarch64",
+        "url": "https://dl-cdn.alpinelinux.org/alpine/v3.23/main/aarch64/busybox-static-1.37.0-r30.apk",
+        "sha256": "44c9abdfb970f398fa72c8382fe2d8808eea16beaf82daf6ac708b92f1b8659e",
+        "member": "bin/busybox.static",
+        "purpose": "Real static shell and utilities for the keeper integration fixture; not a provider closure"
+      },
+      "rustc": "rustc 1.95.0 (59807616e 2026-04-14)"
+    },
+    "setup": {
+      "schema": 1,
+      "arch": "aarch64",
+      "fixture": "stage-c-private-adaptable-base",
+      "zig_version": "0.17.0",
+      "source_sha256": "9b15a6dac747eac795a8bd97c0f78582d606825fa3adab6e71c4d0a994386bcf",
+      "nono": "0.77.0",
+      "keeper_sha256": "5eace2a64b88fb23f772bc94b340bfb6a60452fd004095665ad8026c7c9ee83e",
+      "busybox_sha256": "198f6f675a49ac734082e054b823d3e2e947180ca2f632852ae1c09e950fd676",
+      "workload": true,
+      "adaptable": true,
+      "setup_window": true,
+      "setup_recipe_sha256": "f247b7ee16ee3da6eb6a2d8f6da85916e2591abb3b075a30daf7207fbc0a7285",
+      "initramfs": {
+        "path": "/Users/dragos/Development/devcroft-codex/experiments/microvm/artifacts/stage-c-setup/initramfs.cpio",
+        "sha256": "7a6f5bff557cf79eaa83e42a19f505f8babd06fcc4a1513293c81fc4d85da3e8"
+      },
+      "runtime": {
+        "path": "/Users/dragos/Development/devcroft-codex/experiments/microvm/artifacts/stage-c-setup/runtime.img",
+        "sha256": "768f5b593e9f9f6888ea6930f6b6dc3adb65fd204b3c48361e0864dd6ae93f0c"
+      },
+      "sources": {
+        "src/keeper/connection.rs": "5ea9ab23a29a9eb73363759818af13d5619715e9bc3282409ebd0c4257363759",
+        "src/keeper/environment.rs": "dcf433c26bba99dbe3a28164e35cd38854c30a64521a21691dc92f15ddc29fc6",
+        "src/keeper/mod.rs": "2d93e061be8231d0e0f95b018405b7dac70973800f3a72eed951960d753573e9",
+        "src/keeper/protocol.rs": "a1fd3088992902e89022c229ed710d25487374bfeeeece8000dd2e5872572a2d",
+        "src/keeper/pty.rs": "be8ea1fda83d3932eebe6d54b509e2f96bae5df9aa313a00296e4fa41e580dca",
+        "src/keeper/registry.rs": "99d96e3c267247ecc2f2220f8c0667216998d2cdabd8aabf5284d21c38aa93ce",
+        "src/keeper/session.rs": "1d1a1fce6ff8daac07dc6a8cc95a5ef60362730ae7d22326658920d8a8cf195c",
+        "src/ssh/server.rs": "8c7ab0de47153e02c725684ef05fe1362f9d4af6204636304e4efc895552f986",
+        "src/ssh/sftp.rs": "805e6fc83c646b50df100010bb6bec3988733a8a79027ca1d6ce79ce745ae6ee",
+        "experiments/microvm/guest-keeper/src/bootstrap.rs": "9ad93deea140929f7b13c50411a8be1c46170ff3a118b75f9d32320a59b3e606",
+        "experiments/microvm/guest-keeper/src/linux.rs": "05227bc26ad0cc5f1903eed8c93fda8a18d474e04d2188c459acbf49eb505ac3",
+        "experiments/microvm/guest-keeper/src/main.rs": "8195d8e46b245a42d9f20df636e9899c7a5bb9538968595850f8abfcb4fe7128",
+        "experiments/microvm/guest-keeper/Cargo.toml": "bf410f00c15228ec48cfda740c4a2c5a4f39e01e8f184edf4699ef3f96a2bb9f",
+        "experiments/microvm/guest-keeper/Cargo.lock": "c509b51fe02c1ae6842e01a302389076f615b27461f678b7b5af4e623b5e72b7",
+        "experiments/microvm/guest-keeper/zig-linker.sh": "28d89d7554ca99e4d1366d18d365253687076a7f9069d0488d9a011036626fd5",
+        "experiments/microvm/guest-keeper/zig-ar.sh": "8d9a92610ac547533bcce655621c435015305c043e273ea6a038ce999177935c",
+        "experiments/microvm/build_keeper_guest.py": "3d27902d4a04988f1dc7faf4b9be927f8fc2e1ac3b8b230012904dcbb364af69",
+        "experiments/microvm/build_guest.py": "2a7ab92a57a27e19219e092eb7d85d4ae231333259264fd6a17eec1a78337c21",
+        "experiments/microvm/guest/init.c": "9b15a6dac747eac795a8bd97c0f78582d606825fa3adab6e71c4d0a994386bcf",
+        "experiments/microvm/fixtures/adaptable-recipe-aarch64.json": "f247b7ee16ee3da6eb6a2d8f6da85916e2591abb3b075a30daf7207fbc0a7285",
+        "experiments/microvm/adaptable/recipe.py": "0a00c9ba1b66c651b1b6ea164c64be8c7d5a15c5a78720e3abf18079ff040c50"
+      },
+      "busybox_package": {
+        "schema": 1,
+        "package": "busybox-static-1.37.0-r30",
+        "architecture": "aarch64",
+        "url": "https://dl-cdn.alpinelinux.org/alpine/v3.23/main/aarch64/busybox-static-1.37.0-r30.apk",
+        "sha256": "44c9abdfb970f398fa72c8382fe2d8808eea16beaf82daf6ac708b92f1b8659e",
+        "member": "bin/busybox.static",
+        "purpose": "Real static shell and utilities for the keeper integration fixture; not a provider closure"
+      },
+      "rustc": "rustc 1.95.0 (59807616e 2026-04-14)"
+    }
+  },
+  "resources_per_vm": {
+    "vcpus": 2,
+    "memory_mib": 512
+  },
+  "build": {
+    "schema": 1,
+    "recipe": {
+      "architecture": "aarch64-linux",
+      "base_sha256": "9d3c6a36a43e238c2b88df3f0a9a418a1af1edbbba70bf16ba466e91814bc45b",
+      "manager_packages": [
+        {
+          "file": "alpine-keys-2.6-r0.apk",
+          "sha256": "a4b23531e2f48375d515ba77d983ac39a83aca4222744a40475c7bd2f50e6d66",
+          "url": "https://dl-cdn.alpinelinux.org/alpine/v3.23/main/aarch64/alpine-keys-2.6-r0.apk"
+        },
+        {
+          "file": "apk-tools-3.0.9-r0.apk",
+          "sha256": "52e05730d7256ca321e48d618ebcdda270cf6c2522f2a27ce15c00201bfb75fa",
+          "url": "https://dl-cdn.alpinelinux.org/alpine/v3.23/main/aarch64/apk-tools-3.0.9-r0.apk"
+        },
+        {
+          "file": "ca-certificates-bundle-20261020-r0.apk",
+          "sha256": "bdf6033710a251d8239f63236eacf40c84afdf8f7b25bb58d69a2c75202350e7",
+          "url": "https://dl-cdn.alpinelinux.org/alpine/v3.23/main/aarch64/ca-certificates-bundle-20261020-r0.apk"
+        },
+        {
+          "file": "libapk-3.0.9-r0.apk",
+          "sha256": "89fed5d57190643d3b146162773cca0efb8edc439f56b283fbfd4912a8f3a0da",
+          "url": "https://dl-cdn.alpinelinux.org/alpine/v3.23/main/aarch64/libapk-3.0.9-r0.apk"
+        },
+        {
+          "file": "libcrypto3-3.5.9-r0.apk",
+          "sha256": "3b0bd7aaac36d49216f47d025f303dafb6da8d05bd258f71900d3b6156d36012",
+          "url": "https://dl-cdn.alpinelinux.org/alpine/v3.23/main/aarch64/libcrypto3-3.5.9-r0.apk"
+        },
+        {
+          "file": "libssl3-3.5.9-r0.apk",
+          "sha256": "cdb3762116994f767cd1da423fa8004bd36b2e3802e3a1343786a40f00a5030e",
+          "url": "https://dl-cdn.alpinelinux.org/alpine/v3.23/main/aarch64/libssl3-3.5.9-r0.apk"
+        },
+        {
+          "file": "musl-1.2.5-r24.apk",
+          "sha256": "d7043c549029c98d438e9bc94213b006e5c88540eb58d1f5b0f0d1d56dbf9c98",
+          "url": "https://dl-cdn.alpinelinux.org/alpine/v3.23/main/aarch64/musl-1.2.5-r24.apk"
+        },
+        {
+          "file": "zlib-1.4-r0.apk",
+          "sha256": "c9bc3c75104ffba5785277b38eb83bf90ea83539e3bb26c617864fb78dcb4462",
+          "url": "https://dl-cdn.alpinelinux.org/alpine/v3.23/main/aarch64/zlib-1.4-r0.apk"
+        }
+      ],
+      "mechanism": "alpine-apk-offline",
+      "packages": [
+        {
+          "file": "musl-1.2.5-r24.apk",
+          "sha256": "d7043c549029c98d438e9bc94213b006e5c88540eb58d1f5b0f0d1d56dbf9c98",
+          "url": "https://dl-cdn.alpinelinux.org/alpine/v3.23/main/aarch64/musl-1.2.5-r24.apk"
+        },
+        {
+          "file": "pkgconf-2.5.1-r0.apk",
+          "sha256": "68a8cbd9901184caf0c4cf86c54ae199eae6110c313457ad34adb8ce1d929816",
+          "url": "https://dl-cdn.alpinelinux.org/alpine/v3.23/main/aarch64/pkgconf-2.5.1-r0.apk"
+        },
+        {
+          "file": "zlib-1.4-r0.apk",
+          "sha256": "c9bc3c75104ffba5785277b38eb83bf90ea83539e3bb26c617864fb78dcb4462",
+          "url": "https://dl-cdn.alpinelinux.org/alpine/v3.23/main/aarch64/zlib-1.4-r0.apk"
+        },
+        {
+          "file": "zlib-dev-1.4-r0.apk",
+          "sha256": "0a3a7a4f23f1bc853d8aad7ab892e73b9b81f103fa74b53d427966db729ff399",
+          "url": "https://dl-cdn.alpinelinux.org/alpine/v3.23/main/aarch64/zlib-dev-1.4-r0.apk"
+        }
+      ],
+      "schema": 1,
+      "source_sha256": "79cf823cf7b9c7baf7cff1b7737e4ff47cefa45afb94c174f1414c50aa9e90ea"
+    },
+    "recipe_sha256": "f247b7ee16ee3da6eb6a2d8f6da85916e2591abb3b075a30daf7207fbc0a7285",
+    "build_script_sha256": "36ef444a440f561e325c55ec56e9d62524119fb4a786e6a30c05163ba09d156c",
+    "recipe_validator_sha256": "0a00c9ba1b66c651b1b6ea164c64be8c7d5a15c5a78720e3abf18079ff040c50",
+    "baseline_dependency_header_absent": true,
+    "filesystem": "vdc immutable baseline/offline inputs; vdd private rootfs and separate workspace subtree",
+    "builder_packages": [
+      "acl-libs-2.3.2-r1",
+      "ada-libs-3.3.0-r0",
+      "alpine-base-3.23.3-r0",
+      "alpine-baselayout-3.7.1-r8",
+      "alpine-baselayout-data-3.7.1-r8",
+      "alpine-conf-3.21.0-r0",
+      "alpine-keys-2.6-r0",
+      "alpine-release-3.23.3-r0",
+      "apk-tools-3.0.3-r1",
+      "bash-5.3.3-r1",
+      "bc-1.08.2-r0",
+      "binutils-2.45.1-r0",
+      "bison-3.8.2-r2",
+      "blkid-2.41.2-r0",
+      "bridge-1.5-r5",
+      "brotli-libs-1.2.0-r0",
+      "bsd-compat-headers-0.7.2-r6",
+      "build-base-0.5-r3",
+      "busybox-1.37.0-r30",
+      "busybox-binsh-1.37.0-r30",
+      "busybox-mdev-openrc-1.37.0-r30",
+      "busybox-openrc-1.37.0-r30",
+      "busybox-suid-1.37.0-r30",
+      "bzip2-dev-1.0.8-r6",
+      "c-ares-1.34.9-r0",
+      "ca-certificates-20261020-r0",
+      "ca-certificates-bundle-20251003-r0",
+      "chrony-4.8-r1",
+      "chrony-openrc-4.8-r1",
+      "cloud-init-25.3-r0",
+      "cloud-init-datasource-akamai-25.3-r0",
+      "cloud-init-datasource-akamai-pyc-25.3-r0",
+      "cloud-init-datasource-aliyun-25.3-r0",
+      "cloud-init-datasource-aliyun-pyc-25.3-r0",
+      "cloud-init-datasource-altcloud-25.3-r0",
+      "cloud-init-datasource-altcloud-pyc-25.3-r0",
+      "cloud-init-datasource-azure-25.3-r0",
+      "cloud-init-datasource-azure-pyc-25.3-r0",
+      "cloud-init-datasource-bigstep-25.3-r0",
+      "cloud-init-datasource-bigstep-pyc-25.3-r0",
+      "cloud-init-datasource-cloudcix-25.3-r0",
+      "cloud-init-datasource-cloudcix-pyc-25.3-r0",
+      "cloud-init-datasource-cloudsigma-25.3-r0",
+      "cloud-init-datasource-cloudsigma-pyc-25.3-r0",
+      "cloud-init-datasource-cloudstack-25.3-r0",
+      "cloud-init-datasource-cloudstack-pyc-25.3-r0",
+      "cloud-init-datasource-configdrive-25.3-r0",
+      "cloud-init-datasource-configdrive-pyc-25.3-r0",
+      "cloud-init-datasource-digitalocean-25.3-r0",
+      "cloud-init-datasource-digitalocean-pyc-25.3-r0",
+      "cloud-init-datasource-ec2-25.3-r0",
+      "cloud-init-datasource-ec2-pyc-25.3-r0",
+      "cloud-init-datasource-exoscale-25.3-r0",
+      "cloud-init-datasource-exoscale-pyc-25.3-r0",
+      "cloud-init-datasource-gce-25.3-r0",
+      "cloud-init-datasource-gce-pyc-25.3-r0",
+      "cloud-init-datasource-hetzner-25.3-r0",
+      "cloud-init-datasource-hetzner-pyc-25.3-r0",
+      "cloud-init-datasource-ibmcloud-25.3-r0",
+      "cloud-init-datasource-ibmcloud-pyc-25.3-r0",
+      "cloud-init-datasource-lxd-25.3-r0",
+      "cloud-init-datasource-lxd-pyc-25.3-r0",
+      "cloud-init-datasource-maas-25.3-r0",
+      "cloud-init-datasource-maas-pyc-25.3-r0",
+      "cloud-init-datasource-nocloud-25.3-r0",
+      "cloud-init-datasource-nocloud-pyc-25.3-r0",
+      "cloud-init-datasource-nwcs-25.3-r0",
+      "cloud-init-datasource-nwcs-pyc-25.3-r0",
+      "cloud-init-datasource-opennebula-25.3-r0",
+      "cloud-init-datasource-opennebula-pyc-25.3-r0",
+      "cloud-init-datasource-openstack-25.3-r0",
+      "cloud-init-datasource-openstack-pyc-25.3-r0",
+      "cloud-init-datasource-oracle-25.3-r0",
+      "cloud-init-datasource-oracle-pyc-25.3-r0",
+      "cloud-init-datasource-ovf-25.3-r0",
+      "cloud-init-datasource-ovf-pyc-25.3-r0",
+      "cloud-init-datasource-rbx-25.3-r0",
+      "cloud-init-datasource-rbx-pyc-25.3-r0",
+      "cloud-init-datasource-scaleway-25.3-r0",
+      "cloud-init-datasource-scaleway-pyc-25.3-r0",
+      "cloud-init-datasource-smartos-25.3-r0",
+      "cloud-init-datasource-smartos-pyc-25.3-r0",
+      "cloud-init-datasource-upcloud-25.3-r0",
+      "cloud-init-datasource-upcloud-pyc-25.3-r0",
+      "cloud-init-datasource-vmware-25.3-r0",
+      "cloud-init-datasource-vmware-pyc-25.3-r0",
+      "cloud-init-datasource-vultr-25.3-r0",
+      "cloud-init-datasource-vultr-pyc-25.3-r0",
+      "cloud-init-datasource-wsl-25.3-r0",
+      "cloud-init-datasource-wsl-pyc-25.3-r0",
+      "cloud-init-datasources-25.3-r0",
+      "cloud-init-openrc-25.3-r0",
+      "cloud-init-pyc-25.3-r0",
+      "cloud-utils-growpart-0.33-r1",
+      "coreutils-9.8-r1",
+      "coreutils-env-9.8-r1",
+      "coreutils-fmt-9.8-r1",
+      "coreutils-sha512sum-9.8-r1",
+      "cryptsetup-libs-2.8.1-r0",
+      "curl-8.23.0-r0",
+      "device-mapper-libs-2.03.35-r0",
+      "dhcpcd-10.3.0-r0",
+      "dhcpcd-openrc-10.3.0-r0",
+      "doas-6.8.2-r8",
+      "docbook-xml-4.5-r10",
+      "docbook-xsl-1.79.2-r13",
+      "docbook-xsl-nons-1.79.2-r13",
+      "docbook-xsl-ns-1.79.2-r13",
+      "dosfstools-4.2-r2",
+      "e2fsprogs-1.47.3-r0",
+      "e2fsprogs-dev-1.47.3-r0",
+      "e2fsprogs-extra-1.47.3-r0",
+      "e2fsprogs-libs-1.47.3-r0",
+      "file-5.46-r2",
+      "flex-2.6.4-r7",
+      "fortify-headers-1.1-r5",
+      "g++-15.2.0-r2",
+      "gawk-5.3.2-r2",
+      "gcc-15.2.0-r2",
+      "gdbm-1.26-r0",
+      "gettext-0.24.1-r1",
+      "gettext-asprintf-0.24.1-r1",
+      "gettext-dev-0.24.1-r1",
+      "gettext-envsubst-0.24.1-r1",
+      "gettext-libs-0.24.1-r1",
+      "glib-2.86.5-r0",
+      "glib-dev-2.86.5-r0",
+      "gmp-6.3.0-r4",
+      "gnutls-3.8.11-r0",
+      "grub-2.12-r8",
+      "grub-efi-2.12-r8",
+      "icu-data-en-76.1-r1",
+      "icu-libs-76.1-r1",
+      "ifupdown-ng-0.12.1-r7",
+      "ifupdown-ng-iproute2-0.12.1-r7",
+      "iproute2-minimal-6.17.0-r0",
+      "isl26-0.26-r1",
+      "jansson-2.14.1-r0",
+      "json-c-0.18-r1",
+      "keyutils-libs-1.6.3-r4",
+      "kmod-34.2-r1",
+      "kmod-libs-34.2-r1",
+      "krb5-conf-1.0-r2",
+      "krb5-dev-1.22.1-r0",
+      "krb5-libs-1.22.1-r0",
+      "krb5-server-ldap-1.22.1-r0",
+      "lddtree-1.27-r0",
+      "libapk-3.0.3-r1",
+      "libatomic-15.2.0-r2",
+      "libattr-2.5.2-r2",
+      "libblkid-2.41.6-r1",
+      "libbsd-0.12.2-r0",
+      "libbz2-1.0.8-r6",
+      "libcap2-2.77-r0",
+      "libcom_err-1.47.3-r0",
+      "libcrypto3-3.5.9-r0",
+      "libcurl-8.23.0-r0",
+      "libeconf-0.8.3-r0",
+      "libedit-20251016.3.1-r0",
+      "libedit-dev-20251016.3.1-r0",
+      "libelf-0.194-r0",
+      "libev-4.33-r1",
+      "libevent-2.1.13-r0",
+      "libexpat-2.7.3-r0",
+      "libfdisk-2.41.6-r1",
+      "libffi-3.5.2-r0",
+      "libffi-dev-3.5.2-r0",
+      "libformw-6.5_p20251123-r0",
+      "libgcc-15.2.0-r2",
+      "libgcrypt-1.11.2-r0",
+      "libgcrypt-dev-1.11.2-r0",
+      "libgomp-15.2.0-r2",
+      "libgpg-error-1.55-r0",
+      "libgpg-error-dev-1.55-r0",
+      "libidn2-2.3.8-r0",
+      "libintl-0.24.1-r1",
+      "liblastlog2-2.41.6-r1",
+      "libldap-2.6.13-r0",
+      "libmagic-5.46-r2",
+      "libmd-1.1.0-r0",
+      "libmenuw-6.5_p20251123-r0",
+      "libmnl-1.0.5-r2",
+      "libmount-2.41.6-r1",
+      "libncurses++-6.5_p20251123-r0",
+      "libncursesw-6.5_p20251123-r0",
+      "libnvme-1.16.1-r0",
+      "libnvmemi-1.16.1-r0",
+      "libpanelw-6.5_p20251123-r0",
+      "libpcre2-16-10.49-r0",
+      "libpcre2-32-10.49-r0",
+      "libpsl-0.21.5-r3",
+      "libsasl-2.1.28-r9",
+      "libseccomp-2.6.0-r1",
+      "libsecret-0.21.7-r0",
+      "libsecret-dev-0.21.7-r0",
+      "libsmartcols-2.41.6-r1",
+      "libssl3-3.5.9-r0",
+      "libstdc++-15.2.0-r2",
+      "libstdc++-dev-15.2.0-r2",
+      "libtasn1-4.21.0-r0",
+      "libunistring-1.4.1-r0",
+      "libuuid-2.41.6-r1",
+      "libverto-0.3.2-r2",
+      "libverto-dev-0.3.2-r2",
+      "libverto-glib-0.3.2-r2",
+      "libverto-libev-0.3.2-r2",
+      "libverto-libevent-0.3.2-r2",
+      "libx11-1.8.12-r1",
+      "libx11-dev-1.8.12-r1",
+      "libxau-1.0.12-r0",
+      "libxau-dev-1.0.12-r0",
+      "libxcb-1.17.0-r1",
+      "libxcb-dev-1.17.0-r1",
+      "libxdmcp-1.1.5-r1",
+      "libxdmcp-dev-1.1.5-r1",
+      "libxkbfile-1.1.3-r0",
+      "libxkbfile-dev-1.1.3-r0",
+      "libxml2-2.13.9-r1",
+      "libxml2-utils-2.13.9-r1",
+      "libxslt-1.1.43-r3",
+      "libxxhash-0.8.3-r0",
+      "linux-headers-6.16.12-r0",
+      "linux-pam-1.7.1-r2",
+      "linux-virt-6.18.7-r0",
+      "lz4-libs-1.10.0-r0",
+      "m4-1.4.20-r0",
+      "make-4.4.1-r3",
+      "mdev-conf-4.9-r0",
+      "mkinitfs-3.13.0-r0",
+      "mount-2.41.2-r0",
+      "mpc1-1.3.1-r1",
+      "mpdecimal-4.0.1-r0",
+      "mpfr4-4.2.2-r0",
+      "musl-1.2.5-r24",
+      "musl-dev-1.2.5-r24",
+      "musl-utils-1.2.5-r21",
+      "ncurses-dev-6.5_p20251123-r0",
+      "ncurses-terminfo-base-6.5_p20251123-r0",
+      "nettle-3.10.2-r0",
+      "nghttp2-libs-1.69.0-r0",
+      "nodejs-24.22.1-r1",
+      "nodejs-dev-24.22.1-r1",
+      "nodejs-libs-24.22.1-r1",
+      "npm-11.11.0-r0",
+      "nvme-cli-2.16-r1",
+      "openrc-0.63-r1",
+      "openrc-user-0.63-r1",
+      "openssh-10.2_p1-r0",
+      "openssh-client-common-10.2_p1-r0",
+      "openssh-client-default-10.2_p1-r0",
+      "openssh-keygen-10.2_p1-r0",
+      "openssh-server-10.2_p1-r0",
+      "openssh-server-common-10.2_p1-r0",
+      "openssh-server-common-openrc-10.2_p1-r0",
+      "openssh-server-pam-10.2_p1-r0",
+      "openssh-sftp-server-10.2_p1-r0",
+      "openssl-dev-3.5.9-r0",
+      "p11-kit-0.25.5-r2",
+      "partx-2.41.2-r0",
+      "patch-2.8-r0",
+      "pcre2-10.49-r0",
+      "pcre2-dev-10.49-r0",
+      "perl-5.42.2-r0",
+      "pkgconf-2.5.1-r0",
+      "popt-1.19-r4",
+      "py3-attrs-25.3.0-r0",
+      "py3-attrs-pyc-25.3.0-r0",
+      "py3-certifi-2025.11.12-r0",
+      "py3-certifi-pyc-2025.11.12-r0",
+      "py3-charset-normalizer-3.4.4-r0",
+      "py3-charset-normalizer-pyc-3.4.4-r0",
+      "py3-configobj-5.0.9-r1",
+      "py3-configobj-pyc-5.0.9-r1",
+      "py3-idna-3.11-r0",
+      "py3-idna-pyc-3.11-r0",
+      "py3-jinja2-3.1.6-r0",
+      "py3-jinja2-pyc-3.1.6-r0",
+      "py3-jsonpatch-1.33-r3",
+      "py3-jsonpatch-pyc-1.33-r3",
+      "py3-jsonpointer-3.0.0-r0",
+      "py3-jsonpointer-pyc-3.0.0-r0",
+      "py3-jsonschema-4.25.1-r0",
+      "py3-jsonschema-pyc-4.25.1-r0",
+      "py3-jsonschema-specifications-2025.9.1-r0",
+      "py3-jsonschema-specifications-pyc-2025.9.1-r0",
+      "py3-markupsafe-3.0.2-r0",
+      "py3-markupsafe-pyc-3.0.2-r0",
+      "py3-packaging-25.0-r0",
+      "py3-packaging-pyc-25.0-r0",
+      "py3-parsing-3.2.5-r0",
+      "py3-parsing-pyc-3.2.5-r0",
+      "py3-referencing-0.37.0-r0",
+      "py3-referencing-pyc-0.37.0-r0",
+      "py3-requests-2.32.5-r0",
+      "py3-requests-pyc-2.32.5-r0",
+      "py3-rpds-py-0.30.0-r0",
+      "py3-rpds-py-pyc-0.30.0-r0",
+      "py3-typing-extensions-4.15.0-r0",
+      "py3-typing-extensions-pyc-4.15.0-r0",
+      "py3-urllib3-2.6.3-r0",
+      "py3-urllib3-pyc-2.6.3-r0",
+      "py3-yaml-6.0.3-r0",
+      "py3-yaml-pyc-6.0.3-r0",
+      "pyc-3.12.12-r0",
+      "python3-3.12.12-r0",
+      "python3-pyc-3.12.12-r0",
+      "python3-pycache-pyc0-3.12.12-r0",
+      "readline-8.3.1-r0",
+      "rsync-3.5.2-r1",
+      "rsync-openrc-3.5.2-r1",
+      "scanelf-1.3.8-r2",
+      "sfdisk-2.41.2-r0",
+      "shadow-4.18.0-r0",
+      "simdjson-3.12.0-r0",
+      "simdutf-7.5.0-r1",
+      "skalibs-libs-2.14.4.0-r0",
+      "sqlite-3.53.4-r0",
+      "sqlite-dev-3.53.4-r0",
+      "sqlite-libs-3.53.4-r0",
+      "ssl_client-1.37.0-r30",
+      "sudo-1.9.17_p2-r0",
+      "tzdata-2025c-r0",
+      "util-linux-dev-2.41.6-r1",
+      "utmps-libs-0.1.3.1-r0",
+      "xcb-proto-1.17.0-r0",
+      "xcb-proto-pyc-1.17.0-r0",
+      "xorgproto-2024.1-r0",
+      "xtrans-1.6.0-r0",
+      "xz-5.8.4-r0",
+      "xz-libs-5.8.2-r0",
+      "yaml-0.2.5-r2",
+      "zlib-1.4-r0",
+      "zlib-dev-1.4-r0",
+      "zstd-libs-1.5.7-r2"
+    ],
+    "toolchain.img": {
+      "sha256": "14a476e2d39d3baf64cefdee4956a6fdde7aedab8244f84730d9e2eb69bb4d0f",
+      "bytes": 536870912
+    },
+    "data.seed.img": {
+      "sha256": "6c1bf72dfb7382912e80ea2fbb437aa8bf2635f91c370418cbdf259db34ed454",
+      "bytes": 805306368
+    },
+    "packages.tar": {
+      "sha256": "2a858e035717d70e95a17a66d4cf47b30a5ffc8a05d30822c6db830ef777bde0",
+      "bytes": 3563520
+    }
+  },
+  "instances": [
+    {
+      "label": "local",
+      "id": "48bfc5d4829aeab46e510c39d0101ab5",
+      "directory": "/private/tmp/ds-_2b755oi",
+      "boots": [
+        {
+          "boot": 1,
+          "greeting": "READY 1 state=1 ro=1 landlock=6 policy=1 setup=closed",
+          "initial_setup_phase": "closed",
+          "guest_initramfs": {
+            "path": "/Users/dragos/Development/devcroft-codex/experiments/microvm/artifacts/stage-c-runtime/initramfs.cpio",
+            "sha256": "2478b59c5fe10c193e76c4dfc70c286cf8910223bbef7856ffff75d2cdb32965"
+          },
+          "ready_seconds": 3.1317537499708124,
+          "dependency_absent_build_failure": {
+            "positive_compiler_control": true,
+            "missing_header": "zlib.h",
+            "output": "/workspace/probe.c:3:10: fatal error: zlib.h: No such file or directory\n    3 | #include <zlib.h>"
+          },
+          "exit_code": 0,
+          "forced_cleanup": false,
+          "log_overflow": false,
+          "ssh_console_captured": true
+        },
+        {
+          "boot": 2,
+          "greeting": "READY 1 state=2 ro=1 landlock=6 policy=1 setup=open",
+          "initial_setup_phase": "open",
+          "guest_initramfs": {
+            "path": "/Users/dragos/Development/devcroft-codex/experiments/microvm/artifacts/stage-c-setup/initramfs.cpio",
+            "sha256": "7a6f5bff557cf79eaa83e42a19f505f8babd06fcc4a1513293c81fc4d85da3e8"
+          },
+          "ready_seconds": 2.2648110410082154,
+          "setup": {
+            "recipe_sha256": "f247b7ee16ee3da6eb6a2d8f6da85916e2591abb3b075a30daf7207fbc0a7285",
+            "ssh_withheld_until_close": true,
+            "wrong_recipe_path_injection_and_oversize_refused": true,
+            "duplicate_apply_refused": true,
+            "closed_irreversibly_before_project_sessions": true
+          },
+          "native_dependency": {
+            "stdout": "zlib=1.4 roundtrip=ok bytes=49",
+            "sha256": {
+              "/usr/include/zlib.h": "2c404dcaa08709c2a129aea18f3dad4fb5acc5cb52ef12b6223bf8e78c195801",
+              "/usr/lib/libz.so.1": "5f05cb927503c68316a56a1588611cb72b7d05c160b780d92bfa6b8cfccda762",
+              "/workspace/probe.c": "79cf823cf7b9c7baf7cff1b7737e4ff47cefa45afb94c174f1414c50aa9e90ea",
+              "/workspace/app": "4bf43dc93b800e88339e4631c3450d52805ece9de5b6ab58ff1434368f4a2bb7"
+            },
+            "rebuilt": true,
+            "base_writes_and_package_removal_denied": true
+          },
+          "exit_code": 0,
+          "forced_cleanup": false,
+          "log_overflow": false,
+          "ssh_console_captured": true
+        },
+        {
+          "boot": 3,
+          "greeting": "READY 1 state=3 ro=1 landlock=6 policy=1 setup=closed",
+          "initial_setup_phase": "closed",
+          "guest_initramfs": {
+            "path": "/Users/dragos/Development/devcroft-codex/experiments/microvm/artifacts/stage-c-runtime/initramfs.cpio",
+            "sha256": "2478b59c5fe10c193e76c4dfc70c286cf8910223bbef7856ffff75d2cdb32965"
+          },
+          "ready_seconds": 2.4318014170276,
+          "native_dependency": {
+            "stdout": "zlib=1.4 roundtrip=ok bytes=49",
+            "sha256": {
+              "/usr/include/zlib.h": "2c404dcaa08709c2a129aea18f3dad4fb5acc5cb52ef12b6223bf8e78c195801",
+              "/usr/lib/libz.so.1": "5f05cb927503c68316a56a1588611cb72b7d05c160b780d92bfa6b8cfccda762",
+              "/workspace/probe.c": "79cf823cf7b9c7baf7cff1b7737e4ff47cefa45afb94c174f1414c50aa9e90ea",
+              "/workspace/app": "4bf43dc93b800e88339e4631c3450d52805ece9de5b6ab58ff1434368f4a2bb7"
+            },
+            "rebuilt": false,
+            "base_writes_and_package_removal_denied": true
+          },
+          "exit_code": 0,
+          "forced_cleanup": false,
+          "log_overflow": false,
+          "ssh_console_captured": true
+        }
+      ],
+      "sandbox": {
+        "outside_denied": true,
+        "passed": true,
+        "readonly_input_works": true,
+        "runtime_write_denied": true,
+        "tcp_denied": true,
+        "thread_works": true,
+        "unix_works": true,
+        "writable_state_works": true
+      }
+    },
+    {
+      "label": "reconstructed",
+      "id": "47a8915518b01aaa105d0cbf11778844",
+      "directory": "/private/tmp/ds-omoj6zp8",
+      "boots": [
+        {
+          "boot": 1,
+          "greeting": "READY 1 state=1 ro=1 landlock=6 policy=1 setup=open",
+          "initial_setup_phase": "open",
+          "guest_initramfs": {
+            "path": "/Users/dragos/Development/devcroft-codex/experiments/microvm/artifacts/stage-c-setup/initramfs.cpio",
+            "sha256": "7a6f5bff557cf79eaa83e42a19f505f8babd06fcc4a1513293c81fc4d85da3e8"
+          },
+          "ready_seconds": 2.6480097079765983,
+          "setup": {
+            "recipe_sha256": "f247b7ee16ee3da6eb6a2d8f6da85916e2591abb3b075a30daf7207fbc0a7285",
+            "ssh_withheld_until_close": true,
+            "wrong_recipe_path_injection_and_oversize_refused": true,
+            "duplicate_apply_refused": true,
+            "closed_irreversibly_before_project_sessions": true
+          },
+          "native_dependency": {
+            "stdout": "zlib=1.4 roundtrip=ok bytes=49",
+            "sha256": {
+              "/usr/include/zlib.h": "2c404dcaa08709c2a129aea18f3dad4fb5acc5cb52ef12b6223bf8e78c195801",
+              "/usr/lib/libz.so.1": "5f05cb927503c68316a56a1588611cb72b7d05c160b780d92bfa6b8cfccda762",
+              "/workspace/probe.c": "79cf823cf7b9c7baf7cff1b7737e4ff47cefa45afb94c174f1414c50aa9e90ea",
+              "/workspace/app": "4bf43dc93b800e88339e4631c3450d52805ece9de5b6ab58ff1434368f4a2bb7"
+            },
+            "rebuilt": true,
+            "base_writes_and_package_removal_denied": true
+          },
+          "exit_code": 0,
+          "forced_cleanup": false,
+          "log_overflow": false,
+          "ssh_console_captured": true
+        }
+      ],
+      "sandbox": {
+        "outside_denied": true,
+        "passed": true,
+        "readonly_input_works": true,
+        "runtime_write_denied": true,
+        "tcp_denied": true,
+        "thread_works": true,
+        "unix_works": true,
+        "writable_state_works": true
+      }
+    },
+    {
+      "label": "omitted-recipe",
+      "id": "6d94741f866444cd30963b73d29cb676",
+      "directory": "/private/tmp/ds-spzti7hq",
+      "boots": [
+        {
+          "boot": 1,
+          "greeting": "READY 1 state=1 ro=1 landlock=6 policy=1 setup=closed",
+          "initial_setup_phase": "closed",
+          "guest_initramfs": {
+            "path": "/Users/dragos/Development/devcroft-codex/experiments/microvm/artifacts/stage-c-runtime/initramfs.cpio",
+            "sha256": "2478b59c5fe10c193e76c4dfc70c286cf8910223bbef7856ffff75d2cdb32965"
+          },
+          "ready_seconds": 2.86057104205247,
+          "dependency_absent_build_failure": {
+            "positive_compiler_control": true,
+            "missing_header": "zlib.h",
+            "output": "/workspace/probe.c:3:10: fatal error: zlib.h: No such file or directory\n    3 | #include <zlib.h>"
+          },
+          "exit_code": 0,
+          "forced_cleanup": false,
+          "log_overflow": false,
+          "ssh_console_captured": true
+        }
+      ],
+      "sandbox": {
+        "outside_denied": true,
+        "passed": true,
+        "readonly_input_works": true,
+        "runtime_write_denied": true,
+        "tcp_denied": true,
+        "thread_works": true,
+        "unix_works": true,
+        "writable_state_works": true
+      }
+    }
+  ],
+  "local_adaptation_survives_restart": true,
+  "fresh_recipe_reconstruction_matches": true,
+  "reconstruction_copied_local_disk": false,
+  "omitted_recipe_reconstruction_rejected": true,
+  "immutable_inputs_unchanged": true,
+  "cleanup": {
+    "helpers_reaped": true,
+    "endpoints_removed": true
+  },
+  "raw_evidence": "experiments/microvm/runs/20261109-adaptable-final",
+  "probe_sources": [
+    {
+      "path": "experiments/microvm/adaptable/build.py",
+      "sha256": "36ef444a440f561e325c55ec56e9d62524119fb4a786e6a30c05163ba09d156c"
+    },
+    {
+      "path": "experiments/microvm/adaptable/recipe.py",
+      "sha256": "0a00c9ba1b66c651b1b6ea164c64be8c7d5a15c5a78720e3abf18079ff040c50"
+    },
+    {
+      "path": "experiments/microvm/adaptable/probe.c",
+      "sha256": "79cf823cf7b9c7baf7cff1b7737e4ff47cefa45afb94c174f1414c50aa9e90ea"
+    },
+    {
+      "path": "experiments/microvm/adaptable_smoke.py",
+      "sha256": "20e7b1d9b93d85dab89a5976bbc80ca7404ca1f4ec52a90b1852858b228d70eb"
+    },
+    {
+      "path": "experiments/microvm/build_adaptable.py",
+      "sha256": "9d65ae0ddb81e6d368dd6d9f58d7a9635a57be1b96eec35acf975f3fbc52f0d6"
+    },
+    {
+      "path": "experiments/microvm/build_guest.py",
+      "sha256": "2a7ab92a57a27e19219e092eb7d85d4ae231333259264fd6a17eec1a78337c21"
+    },
+    {
+      "path": "experiments/microvm/build_keeper_guest.py",
+      "sha256": "3d27902d4a04988f1dc7faf4b9be927f8fc2e1ac3b8b230012904dcbb364af69"
+    },
+    {
+      "path": "experiments/microvm/guest/init.c",
+      "sha256": "9b15a6dac747eac795a8bd97c0f78582d606825fa3adab6e71c4d0a994386bcf"
+    },
+    {
+      "path": "experiments/microvm/guest-keeper/src/linux.rs",
+      "sha256": "05227bc26ad0cc5f1903eed8c93fda8a18d474e04d2188c459acbf49eb505ac3"
+    },
+    {
+      "path": "experiments/microvm/smoke.py",
+      "sha256": "27f2830fece29433ab2e94451ab32058aed27df0ae237c7ed38fb393787e7c5e"
+    },
+    {
+      "path": "experiments/microvm/test_adaptable_recipe.py",
+      "sha256": "681381d6d9021ad344fc02a2f7462af1c18baa5f7367316e9f36cecb27c4e7fb"
+    },
+    {
+      "path": "experiments/microvm/fixtures/adaptable-recipe-aarch64.json",
+      "sha256": "f247b7ee16ee3da6eb6a2d8f6da85916e2591abb3b075a30daf7207fbc0a7285"
+    }
+  ],
+  "equal_native_artifact_hashes": {
+    "/usr/include/zlib.h": "2c404dcaa08709c2a129aea18f3dad4fb5acc5cb52ef12b6223bf8e78c195801",
+    "/usr/lib/libz.so.1": "5f05cb927503c68316a56a1588611cb72b7d05c160b780d92bfa6b8cfccda762",
+    "/workspace/probe.c": "79cf823cf7b9c7baf7cff1b7737e4ff47cefa45afb94c174f1414c50aa9e90ea",
+    "/workspace/app": "4bf43dc93b800e88339e4631c3450d52805ece9de5b6ab58ff1434368f4a2bb7"
+  },
+  "offline_stage": "All APKs fetched/hashed before boot; guest has no NIC/TSI; apk uses --no-network --no-scripts",
+  "disk_layout": {
+    "vda": "immutable runtime probe",
+    "vdb": "private bootstrap/counter",
+    "vdc": "immutable baseline and offline APK inputs",
+    "vdd": "private ext4 rootfs and separately bound workspace"
+  },
+  "setup_contract": "PID 1 fixed recipe apply/close commands only; project servers start after close; no reopen in that boot",
+  "preboot_negative_control": {
+    "raw": "experiments/microvm/runs/20261109-adaptable-seed-mismatch",
+    "result": "wrong seed rejected before instance/key/helper creation"
+  },
+  "omission_control_scope": "Fresh baseline without applying setup fails compilation for missing zlib.h; empty input recipes rejected by validator",
+  "remaining_limits": [
+    "libkrun/macOS ARM64 only; hvi and remaining platform rows not-run",
+    "Single compiled-in trusted fixture recipe, not a general production administrative API",
+    "Package scripts disabled; arbitrary package mechanisms and setup interruption/recovery not qualified",
+    "Full fleet/security/density qualification and production adoption remain open"
+  ],
+  "validation": {
+    "host_interface_and_recipe_tests": 22,
+    "keeper_ssh_bootstrap_tests": 28,
+    "guest_arm64_clippy": "passed with warnings denied",
+    "stage_a_two_boot_regression": "experiments/microvm/runs/20261109-adaptable-stage-a-regression"
+  },
+  "stage_a_regression": {
+    "schema": 1,
+    "adapter": "libkrun",
+    "host": [
+      "Darwin",
+      "Dragoss-MacBook-Pro.local",
+      "24.6.0",
+      "Darwin Kernel Version 24.6.0: Mon Jan 19 22:01:58 PST 2026; root:xnu-11417.140.69.708.3~1/RELEASE_ARM64_T6041",
+      "arm64"
+    ],
+    "fixture": "stage-a-raw-disks",
+    "qualification": "diagnostic-only",
+    "instance_dir": "/private/tmp/dk-2r7i5l_s",
+    "boots": [
+      {
+        "boot": 1,
+        "status": "passed",
+        "ready_seconds": 0.16551270900527015,
+        "greeting": "READY 1 state=1 ro=1 landlock=6 policy=1",
+        "landlock_abi": 6,
+        "guest_filesystem_policy": true,
+        "phase": "wait-for-exit",
+        "ping": true,
+        "readonly_backend": true,
+        "half_close": true,
+        "half_close_pending_bytes": 130816,
+        "oversized_frame_rejected": true,
+        "clean_shutdown": true,
+        "exit_code": 0
+      },
+      {
+        "boot": 2,
+        "status": "passed",
+        "ready_seconds": 0.16464979195734486,
+        "greeting": "READY 1 state=2 ro=1 landlock=6 policy=1",
+        "landlock_abi": 6,
+        "guest_filesystem_policy": true,
+        "phase": "wait-for-exit",
+        "ping": true,
+        "readonly_backend": true,
+        "half_close": true,
+        "half_close_pending_bytes": 130816,
+        "oversized_frame_rejected": true,
+        "clean_shutdown": true,
+        "exit_code": 0
+      }
+    ],
+    "helper_provenance": {
+      "patch_sha256": "7a25379a3e1291ecbace0cad78e804b70f3f4515cebbf8c35f0843d107d4c2cc",
+      "revision": "6151710f4ea627cf0e5dbce78e4192fb4d64c2e9"
+    },
+    "helper_artifact": {
+      "path": "/Users/dragos/Development/devcroft-codex/experiments/microvm/libkrun/target/debug/devcroft-krun-spike",
+      "sha256": "ff28157bf6ed5e3522fce70eb14a18710c5e7e48a5412f1c5e653fa7cabc61cf"
+    },
+    "guest_build": {
+      "schema": 1,
+      "arch": "aarch64",
+      "fixture": "stage-a-raw-disks",
+      "zig_version": "0.17.0",
+      "source_sha256": "9b15a6dac747eac795a8bd97c0f78582d606825fa3adab6e71c4d0a994386bcf",
+      "initramfs": {
+        "path": "/Users/dragos/Development/devcroft-codex/experiments/microvm/artifacts/stage-a-after-adaptable/initramfs.cpio",
+        "sha256": "f8ab6923185f2976a12284b59539efdfe2be4688903c33522e4e5c3210701b72"
+      },
+      "runtime": {
+        "path": "/Users/dragos/Development/devcroft-codex/experiments/microvm/artifacts/stage-a-after-adaptable/runtime.img",
+        "sha256": "768f5b593e9f9f6888ea6930f6b6dc3adb65fd204b3c48361e0864dd6ae93f0c"
+      }
+    },
+    "sandbox": {
+      "outside_denied": true,
+      "passed": true,
+      "readonly_input_works": true,
+      "runtime_write_denied": true,
+      "tcp_denied": true,
+      "thread_works": true,
+      "unix_works": true,
+      "writable_state_works": true
+    },
+    "runtime_unchanged": true,
+    "status": "passed"
+  },
+  "prior_successful_calibration": "experiments/microvm/runs/20261109-201427-adaptable; strengthened host bundle and fresh-workspace assertions before final run"
+}

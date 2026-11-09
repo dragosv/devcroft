@@ -60,7 +60,7 @@ def connect(path, process, deadline, overflow):
         try:
             sock.connect(str(path))
             greeting = line(sock)
-            if not re.fullmatch(rb"READY 1 state=[0-9]+ ro=1 landlock=[0-9]+ policy=[01]\n", greeting):
+            if not re.fullmatch(rb"READY 1 state=[0-9]+ ro=1 landlock=[0-9]+ policy=[01](?: setup=(?:open|closed))?\n", greeting):
                 raise ValueError(f"invalid READY: {greeting!r}")
             sock.settimeout(5)
             return sock, greeting

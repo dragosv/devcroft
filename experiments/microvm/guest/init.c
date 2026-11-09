@@ -53,6 +53,74 @@ static int send_all(int fd, const char *data) {
     return 0;
 }
 
+#ifdef ENABLE_ADAPTABLE
+/* Fixed argv only. Wire commands cannot choose paths, packages or a shell. */
+static int run_fixed(char *const argv[], unsigned int seconds) {
+    pid_t child = fork();
+    if (child < 0) fail("administrative fork");
+    if (!child) {
+        if (setsid() < 0) _exit(126);
+        execv(argv[0], argv);
+        _exit(127);
+    }
+    int status;
+    for (unsigned int i = 0; i < seconds * 100; ++i) {
+        pid_t done = waitpid(child, &status, WNOHANG);
+        if (done == child) return WIFEXITED(status) && WEXITSTATUS(status) == 0;
+        if (done < 0 && errno != EINTR) fail("administrative wait");
+        usleep(10000);
+    }
+    (void)kill(-child, SIGKILL);
+    while (waitpid(child, &status, 0) < 0 && errno == EINTR) {}
+    return 0;
+}
+
+static void write_marker(const char *path, const char *value) {
+    int fd = open(path, O_CREAT | O_EXCL | O_WRONLY | O_CLOEXEC, 0600);
+    size_t len = strlen(value);
+    if (fd < 0 || write(fd, value, len) != (ssize_t)len || fsync(fd)) fail("setup marker");
+    close(fd);
+}
+
+static void prepare_private_base(void) {
+    if (mkdir("/private-base/workspace", 0700) && errno != EEXIST) fail("private workspace");
+    if (access("/private-base/rootfs/.baseline-ready", F_OK)) {
+        if (mkdir("/private-base/rootfs.pending", 0700)) fail("pending base exists");
+        char *argv[] = {"/bin/busybox", "cp", "-a", "/toolchain/usr", "/toolchain/lib",
+            "/toolchain/etc", "/toolchain/bin", "/toolchain/sbin", "/toolchain/var",
+            "/private-base/rootfs.pending/", NULL};
+        if (!run_fixed(argv, 120)) fail("copy private baseline");
+        write_marker("/private-base/rootfs.pending/.baseline-ready", "baseline-v1\n");
+        if (rename("/private-base/rootfs.pending", "/private-base/rootfs")) fail("publish baseline");
+        sync();
+    }
+    if (mount("/private-base/workspace", "/workspace", NULL, MS_BIND, NULL)) fail("bind private workspace");
+}
+
+static int recipe_applied(void) {
+    char actual[65] = {0};
+    int fd = open("/private-base/rootfs/.recipe-applied", O_RDONLY | O_CLOEXEC);
+    if (fd < 0 && errno == ENOENT) return 0;
+    if (fd < 0 || read(fd, actual, sizeof(actual)) != 64) fail("read recipe marker");
+    close(fd);
+    if (strcmp(actual, SETUP_RECIPE_HASH)) fail("private base recipe mismatch");
+    return 1;
+}
+
+#ifdef ENABLE_SETUP_WINDOW
+static int install_recipe(void) {
+    char *check[] = {"/bin/busybox", "sha256sum", "-c", "/toolchain/adaptable/SHA256SUMS", NULL};
+    char *install[] = {"/private-base/rootfs/sbin/apk", "--root", "/private-base/rootfs",
+        "--no-network", "--no-scripts", "--force-non-repository", "--keys-dir",
+        "/toolchain/etc/apk/keys", "add", SETUP_PACKAGES, NULL};
+    if (!run_fixed(check, 30) || !run_fixed(install, 30)) return 0;
+    write_marker("/private-base/rootfs/.recipe-applied", SETUP_RECIPE_HASH);
+    sync();
+    return 1;
+}
+#endif
+#endif
+
 static int readonly_probe(void) {
     int fd = open("/dev/vda", O_RDWR | O_CLOEXEC);
     if (fd < 0) return -1; /* A missing/broken disk is not a denial pass. */
@@ -175,15 +243,31 @@ int main(void) {
 #ifdef ENABLE_WORKLOAD
     if (mount("/dev/vdc", "/toolchain", "ext4", MS_RDONLY | MS_NOSUID | MS_NODEV, NULL))
         fail("mount immutable toolchain");
+#ifdef ENABLE_ADAPTABLE
+    if (mount("/dev/vdd", "/private-base", "ext4", MS_NOSUID | MS_NODEV, NULL))
+        fail("mount private base");
+    prepare_private_base();
+#else
     if (mount("/dev/vdd", "/workspace", "ext4", MS_NOSUID | MS_NODEV, NULL))
         fail("mount private workspace");
 #endif
+#endif
     int landlock_abi = 0;
     int policy = landlock_probe(&landlock_abi);
-#ifdef ENABLE_KEEPER
+#ifdef ENABLE_ADAPTABLE
+    int applied = recipe_applied();
+#ifdef ENABLE_SETUP_WINDOW
+    int setup_open = 1;
+#else
+    int setup_open = 0;
+#endif
+#endif
+#if defined(ENABLE_KEEPER) && !defined(ENABLE_SETUP_WINDOW)
     start_keeper();
 #endif
+#ifndef ENABLE_SETUP_WINDOW
     signal(SIGCHLD, reap);
+#endif
     int ro = readonly_probe();
     if (ro != 1) fail("runtime backend did not enforce read-only");
     unsigned int state = update_state();
@@ -194,6 +278,9 @@ int main(void) {
     if (bind(server, (struct sockaddr *)&addr, sizeof(addr)) < 0 || listen(server, 8) < 0)
         fail("vsock listen");
     dprintf(1, "guest: ready state=%u ro=%d\n", state, ro);
+#ifdef ENABLE_SETUP_WINDOW
+    dprintf(1, "guest: setup open recipe=%s\n", SETUP_RECIPE_HASH);
+#endif
     for (;;) {
         int fd = accept4(server, NULL, NULL, SOCK_CLOEXEC);
         if (fd < 0) { if (errno == EINTR) continue; fail("accept"); }
@@ -201,8 +288,13 @@ int main(void) {
         setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
         setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout));
         char greeting[96];
+#ifdef ENABLE_ADAPTABLE
+        snprintf(greeting, sizeof(greeting), "READY 1 state=%u ro=%d landlock=%d policy=%d setup=%s\n",
+                 state, ro, landlock_abi, policy, setup_open ? "open" : "closed");
+#else
         snprintf(greeting, sizeof(greeting), "READY 1 state=%u ro=%d landlock=%d policy=%d\n",
                  state, ro, landlock_abi, policy);
+#endif
         if (send_all(fd, greeting) < 0) { close(fd); continue; }
         char line[1024];
         size_t used = 0;
@@ -220,6 +312,28 @@ int main(void) {
                 continue;
             }
             line[used] = 0;
+#ifdef ENABLE_ADAPTABLE
+            if (!strncmp(line, "SETUP ", 6)) {
+                if (!setup_open) { send_all(fd, "ERR setup closed\n"); }
+                else if (!strcmp(line, "SETUP CLOSE")) {
+                    if (!applied) { send_all(fd, "ERR setup unapplied\n"); }
+                    else {
+                        start_keeper();
+                        signal(SIGCHLD, reap);
+                        setup_open = 0;
+                        send_all(fd, "OK setup closed\n");
+                    }
+                } else if (!strcmp(line, "SETUP APPLY " SETUP_RECIPE_HASH)) {
+#ifdef ENABLE_SETUP_WINDOW
+                    if (applied) send_all(fd, "ERR setup applied\n");
+                    else if (!install_recipe()) send_all(fd, "ERR setup install\n");
+                    else { applied = 1; send_all(fd, "OK setup applied\n"); }
+#else
+                    send_all(fd, "ERR setup closed\n");
+#endif
+                } else { send_all(fd, "ERR setup recipe\n"); }
+            } else
+#endif
             if (!strncmp(line, "PING ", 5)) {
                 send_all(fd, "PONG "); send_all(fd, line + 5); send_all(fd, "\n");
             } else if (!strcmp(line, "SHUTDOWN")) {
