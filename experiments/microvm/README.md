@@ -31,17 +31,110 @@ working controls before restriction. `nono` applies before the first keeper/rela
 thread and is inherited by its sessions. The kernel now includes Unix98 PTYs.
 
 The fixed host channels are `control.sock` → vsock 1024 (PID 1 administration)
-and `keeper.sock` → vsock 1025 (keeper framing, relayed to its guest Unix socket).
-Both remain inside the private instance directory and exact Seatbelt socket
+and `keeper.sock` → vsock 1025 (keeper framing, relayed to its guest Unix socket),
+plus `ssh.sock` → vsock 1026 for SSH/SFTP. All remain inside the private instance directory and exact Seatbelt socket
 grants. The default console now creates a real hvc0 terminal; guest logs flow
 through the helper's bounded stderr capture. libkrun logs repeated ENOTCONN
 shutdown warnings at connection teardown; functional checks pass, but that noise
 remains recorded in the raw evidence.
 
-This does not qualify a complete backend. The keeper fixture has an in-memory
-workspace, synthetic private sentinel and restricted TCP; it is not the complete
-project policy or a Nix closure. SSH/SFTP, services, editor, credential delivery,
-crash recovery and density tests remain later stages. The ARM64
+The [SSH/SFTP run](results/libkrun-macos-arm64-ssh.json) reuses the actual
+`src/ssh/server.rs` and `src/ssh/sftp.rs`, with russh 0.62.5 and russh-sftp 2.4.0.
+Two VMs run simultaneously. Real system OpenSSH clients exercise exec, separated
+stdout/stderr, nonzero exit, 128 KiB binary stdin/EOF, an interactive shell, PTY
+resize via local SIGWINCH and Ctrl-C. SFTP uploads, renames, downloads and removes
+128 KiB, while nono rejects private-file reads and runtime-data writes. SSH
+commands also cannot read the private raw bootstrap disk. Both VMs forward their
+own HTTP identity fixture on `127.0.0.1:8080`; a live destination on 8081 is
+denied. Wrong and sibling client keys fail authentication, and pinned host keys
+refuse a sibling endpoint. One VM cold-restarts with its private host key while
+the sibling remains available. Owned helpers are reaped and their endpoints
+removed after the run. The shared runtime disk remains unchanged.
+
+Real clients exposed an existing SSH authentication bug: comparing `PublicKey`
+also compared the local file comment, which the wire identity omits. The server
+now compares cryptographic key data; a regression test covers commented keys
+without changing rejection of other keys.
+
+The [real workload run](results/libkrun-macos-arm64-workload.json) adds an
+immutable Alpine GCC/make/Redis filesystem and a separate private ext4 workspace.
+Both VMs compile upstream xxHash 0.8.3, run its `test_sanity`, verify 2,048 small
+files against SHA-256 inputs, hash those files with the compiled executable and
+export the ARM64 ELF. Both run real Redis 8.4.2 on guest port 6379, with AOF and
+`appendfsync always`, also exercised over SSH forwarding.
+
+One VM clean-restarts, then its helper receives SIGKILL during a progressing
+Redis SET workload. After both restarts, the previously built binaries and
+small-file checksums match without rebuilding; all 32 separately acknowledged
+durable keys match. The sibling Redis keeps its run ID and data. The crash boot
+logs ext4 journal recovery. The toolchain image remains byte-identical and owned
+helpers/endpoints are cleaned up. This tests helper termination while the host
+stays running, not host power loss or every storage fault.
+
+Redis exposed missing madvise syscalls and procfs page monitoring in the minimal
+kernel. It now enables `ADVISE_SYSCALLS` and `PROC_PAGE_MONITOR`; the workload
+policy grants read access to the VM's own procfs, never the host's. Redis's ARM64
+copy-on-write safety check explicitly passes without an `ignore-warnings`
+bypass. Other system checks retain a slow-clocksource warning/skips. Performance
+is not qualified.
+
+The [guest-served editor run](results/libkrun-macos-arm64-editor.json) passes with
+code-server 4.145.2 and real headless Chrome in a fresh profile, reached only
+through a pinned-key SSH tunnel over vsock. The browser logs in, opens `main.c`
+from Explorer, saves new C source, explicitly trusts this disposable fixture
+when the terminal requests it, then compiles and runs the program through the
+actual xterm UI. The probe uses an xterm paste event without the system clipboard.
+Independent SSH reads verify exact source, output and an exported AArch64 ELF.
+After a clean cold restart, those files match before reopening the browser;
+the second browser sees the persisted source and the binary hash is unchanged.
+Both boots pass bidirectional WebSocket activity, shutdown and endpoint cleanup;
+the read-only editor image hash is unchanged. Screenshots and raw logs are linked
+from the result. This is the Alpine/npm row with 2 vCPUs and 1 GiB, not the Nix
+closure or the separately labelled trusted Remote-SSH row.
+
+The browser retains duplicate TypeScript extension registration, missing-asset
+and blocked-gallery errors. Installing extensions or using an agent/API is not
+qualified. Calibration failures are retained, including an empty runtime APK
+closure caught by a real boot and a UI probe that initially selected Chat's
+Monaco instead of the file editor. The final probe checks the file editor and
+terminal focus, then gates success on independently verified guest files.
+
+The separately declared Nix closure now passes the same functional rows on
+libkrun/macOS ARM64. Its locked flake contains GCC 15.3.0, Redis 8.8.1 and
+code-server 4.115.0. All 146 NARs were verified and materialized in an empty
+store without network before exporting the read-only runtime filesystem:
+
+- [Nix workload/crash evidence](results/libkrun-macos-arm64-nix-workload.json):
+  two real guest builds, upstream sanity tests, 2,048 small files, two Redis
+  services on port 6379, clean restart and helper SIGKILL during 28,920 observed
+  SET calls. All 32 acknowledged keys and existing build outputs recover; the
+  sibling keeps its run ID/data. Exported AArch64 executables name the native
+  `/nix/store` glibc loader.
+- [Nix editor evidence](results/libkrun-macos-arm64-nix-editor.json): real Chrome
+  edit/save, compile/run through the integrated terminal, independently checked
+  source/output/Nix-linked ELF, and cold-restart persistence before reopening.
+  This uses the Nix-packaged editor, not the Alpine/npm image.
+- [Nix SSH/keeper evidence](results/libkrun-macos-arm64-nix-ssh.json): two VMs,
+  OpenSSH/SFTP/interactive PTY/resize/Ctrl-C, real keeper protocol/signal probes,
+  allowed/denied access, forwarding, cross-instance key refusal and restart.
+
+All three runs leave the immutable image unchanged, reap their owned helpers
+and remove endpoints. They retain application diagnostics, including missing
+assets, generic browser errors and inability to retrieve a MAC address from the
+NIC-less guest. The bootstrap's first attempt failed because BusyBox `cp` lacks
+the official installer's `--preserve` option; GNU coreutils was added to the
+builder only. Raw calibration and successful build logs remain under `runs/`.
+Versions and image sizes differ deliberately from the earlier Alpine fixtures;
+these are not matched performance comparisons. The Nix source pin reuses only
+xxHash and small-file inputs from `workload-source.json`; that file's service
+description applies to Alpine, while this row's Redis comes from the flake.
+
+This does not qualify a complete backend. The original keeper/SSH fixture has
+an in-memory workspace; the workload fixture uses ext4. Both are Alpine-based
+fixtures; the Nix closure is a separate image/guest row. Complete project policy,
+the separately labelled trusted Remote-SSH path,
+production credential delivery, remaining failure modes and density tests remain
+later stages. The ARM64
 kernel and configuration are now built and recorded; the x86-64 kernel row remains
 not-run. Linux host confinement is not implemented, so the helper refuses boot
 on Linux. The [original failed evidence](results/libkrun-macos-arm64-stage-a.json)
@@ -66,7 +159,118 @@ To include keeper/nono (requires Rust target `aarch64-unknown-linux-musl`):
 rtk proxy rustup target add aarch64-unknown-linux-musl
 rtk proxy python3 experiments/microvm/build_keeper_guest.py
 rtk proxy python3 experiments/microvm/smoke.py --guest experiments/microvm/artifacts/stage-b/guest.json --keeper
+rtk proxy python3 experiments/microvm/ssh_smoke.py
 ```
+
+The SSH harness generates fresh Ed25519 client and host keys for each instance,
+never using the operator's SSH agent or user config. It pins the known host key
+before connecting. The private state disk carries a bounded JSON bootstrap at
+offset 8192 (`DCSHKEY1`, big-endian u32 length, at most 16 KiB), separately from
+the raw-state counter at offset 4096. Keys are loaded and the disk fd closed
+before nono and before threads exist; key material is absent from the shared
+initramfs and session environment. These are disposable test identities in a
+mode-0700 instance directory, with mode-0600 private files; disks and test keys
+are retained for diagnosis. This is an experimental fixture, not the production
+credential provisioning/rotation design.
+
+Only guest loopback is enabled. There is still no NIC or TSI. The SSH fixture's
+nono policy permits TCP connect to 8080; a live 8081 listener supplies the denial
+control. The tiny HTTP identity server is a forwarding fixture, not evidence of
+the later Redis/Postgres, editor or application-build workloads.
+
+To reproduce the real build/persistence/crash demonstration after the kernel and
+helper builds above:
+
+```sh
+rtk proxy python3 experiments/microvm/build_workload.py
+rtk proxy python3 experiments/microvm/build_keeper_guest.py --workload
+rtk proxy python3 experiments/microvm/workload_smoke.py
+```
+
+`build_workload.py` uses the same mount-free Linux builder. Its APK closure is
+fixed by committed URLs and SHA-256 identities in
+`fixtures/workload-packages-aarch64.json`. Fetching precedes explicitly offline
+APK installation into the image. `--freeze-inputs` is an explicit repin, never
+the normal reproduction path. Input APKs are retained in `packages.tar`. The
+source archive is separately pinned in `fixtures/workload-source.json`.
+Application inputs and builder tools are recorded; bit-identical filesystem
+output is not claimed.
+
+The workload uses four raw disks: runtime probe, private bootstrap/counter,
+read-only toolchain and private ext4 data. Both writable disks have exclusive
+locks and full sync mode. Private data cannot alias bootstrap/immutable files
+or escape its instance directory. Each VM uses 2 vCPUs and 512 MiB. SHA-256 is
+optimized in the helper's dev profile so full verification of the 512 MiB image
+stays practical; VMM code retains its diagnostic dev profile. Validation and
+boot deadlines are bounded at 90 and 120 seconds. This is functional evidence,
+not a density or latency benchmark.
+
+To prepare the separate guest-served code-server fixture (after the workload
+build), with Node 20+ and Google Chrome installed on the host:
+
+```sh
+rtk proxy python3 experiments/microvm/build_editor.py
+rtk proxy env PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 npm ci --prefix experiments/microvm/editor-browser --ignore-scripts --no-audit --no-fund
+rtk proxy python3 experiments/microvm/editor_smoke.py
+```
+
+The editor builder starts from the hash-pinned workload image and adds a fixed
+Alpine runtime APK closure plus code-server 4.145.2 from its pinned npm archive.
+It records two local upstream corrections: nested installs use `npm ci`, and the
+published shrinkwrap's missing `tslib` peer is fixed to an explicit version and
+integrity. Native modules build with LTO disabled, retaining fortify. After
+fetching, the builder extracts the source again and reinstalls from the npm
+cache in a new network namespace with no network interfaces enabled. It checks
+the lockfile hashes and runs Node/code-server inside the exported filesystem
+with chroot. Runtime APKs, npm cache, source/patch identities and installed
+builder versions are retained; builder tools are not yet a fully hash-pinned
+closure, so this does not establish fleet eligibility or bit-identical images.
+`--freeze-inputs` explicitly repins runtime APKs.
+
+The editor harness uses 2 vCPUs and 1 GiB for one VM, a read-only editor image
+and a private ext4 workspace. Guest nono permits TCP bind/connect on 9090 only
+when that editor fixture exists; the host reaches it through SSH over vsock.
+The kernel includes inotify. The test-only Playwright dependency stays under
+`editor-browser/`; Chrome uses a fresh temporary profile and no operator login.
+The probe drives the actual workbench and terminal UI, captures WebSocket frame
+counts/screenshots, verifies written files independently through SSH, then
+checks persistence before reopening the editor after a cold restart.
+
+To materialize the separately declared Nix closure on Linux and package its
+guest (requires the pinned xxHash archive fetched by `build_workload.py`):
+
+```sh
+rtk proxy python3 experiments/microvm/build_nix.py
+rtk proxy python3 experiments/microvm/build_keeper_guest.py --nix
+rtk proxy python3 experiments/microvm/ssh_smoke.py --guest experiments/microvm/artifacts/stage-b-nix/guest.json --workload experiments/microvm/artifacts/nix/toolchain.img --seed experiments/microvm/artifacts/nix/data.seed.img
+rtk proxy python3 experiments/microvm/workload_smoke.py --guest experiments/microvm/artifacts/stage-b-nix/guest.json --workload experiments/microvm/artifacts/nix/toolchain.img --seed experiments/microvm/artifacts/nix/data.seed.img
+rtk proxy python3 experiments/microvm/editor_smoke.py --guest experiments/microvm/artifacts/stage-b-nix/guest.json --editor experiments/microvm/artifacts/nix/toolchain.img --seed experiments/microvm/artifacts/nix/data.seed.img
+```
+
+`nix/flake.nix` and `nix/flake.lock` declare the exact nixpkgs revision and NAR
+identity; every evaluation/build refuses lockfile updates. Nix 2.34.9's official
+ARM64 Linux bootstrap archive is separately SHA-256 pinned. The mount-free Lima
+builder installs it in its own Linux filesystem; macOS Nix is not used. The
+builder runs only this trusted fixture recipe, with Nix build sandboxing disabled
+inside the dedicated VM; project compilation runs later under guest nono.
+
+The builder verifies source-store content and trust, exports the runtime closure
+to a private NAR cache, then creates an empty destination store and imports it
+in a network namespace without connectivity. Destination content hashes must
+match every source NAR. Only that private import disables signature checks to
+accept the locally built, unsigned top-level environment; the receipt records
+this explicitly. It does not disable source trust verification or NAR content
+verification. `cache.tar` and `closure.json` are retained with the image and
+private ext4 seed. This verifies offline materialization from the captured
+closure cache, not rebuilding GCC or code-server from source.
+
+The Nix guest adds `/nix` → `/toolchain/nix`, preserving the binaries' native
+store references. `/usr` is a link to the declared environment; it does not
+import Alpine toolchain binaries. GCC, Redis and the Nix-packaged code-server
+therefore come from the flake. Runtime and editor probes record their actual
+versions and image hashes separately from the Alpine rows. Builder tools and
+filesystem metadata are recorded, not claimed bit-identical; complete fleet
+qualification and the x86-64/hvi rows remain separate work.
 
 The guest has a separate workspace and lockfile. The build uses installed Zig
 for both Rust linking and native dependencies, and disables Rust's duplicate
@@ -116,12 +320,14 @@ rtk proxy python3 -m unittest discover -s experiments/microvm -p test_stage_a.py
 rtk proxy cargo test --manifest-path experiments/microvm/guest-keeper/Cargo.toml --locked
 ```
 
-The ten interface tests exercise the compiled helper: patch provenance, input corruption, input
+The fifteen interface tests exercise the compiled helper: patch provenance, input corruption, input
 aliasing, writable-scope overlap, unknown network fields, private directory
 permissions, resource bounds, oversized records and distinction between input
-validation and runtime qualification, plus occupied endpoints/dangling symlinks.
+validation and runtime qualification, occupied endpoints/dangling symlinks,
+paired workload/data disks, private-data scope/aliasing, and exclusive locks.
 The interface tests require a built helper and do not silently skip. The guest
-workspace runs the existing 21 keeper tests on the host. Confinement probes run
+workspace runs 28 tests: the existing keeper/SSH tests, the authentication
+regression and bounded bootstrap/framing/truncation tests. Confinement probes run
 in separate processes inside `smoke.py`
 because Seatbelt entry is irreversible and process-wide.
 

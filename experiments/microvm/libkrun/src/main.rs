@@ -1,7 +1,7 @@
 mod config;
 mod sandbox;
 
-use config::{CONTROL_PORT, KEEPER_PORT, Launch, REVISION};
+use config::{CONTROL_PORT, KEEPER_PORT, Launch, REVISION, SSH_PORT};
 use krun::api::{
     BalloonDevice, BlockDevice, ConsoleDevice, DiskFormat, FreePageReportingMode, KernelFormat,
     MmioDeviceManager, Payload, RngDevice, SyncMode, TsiFlags, VmmBuilder, VsockDevice,
@@ -74,16 +74,20 @@ fn entry() -> Result<(), String> {
     if selftest {
         return sandbox::selftest(&cfg, Path::new(&args[3]));
     }
-    use std::os::unix::fs::OpenOptionsExt;
-    let state_lock = std::fs::OpenOptions::new()
-        .read(true)
-        .write(true)
-        .custom_flags(libc::O_NOFOLLOW)
-        .open(&cfg.state)
-        .map_err(|e| format!("backend: lock state: {e}"))?;
     use std::os::fd::AsRawFd;
-    if unsafe { libc::flock(state_lock.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } != 0 {
-        return Err("backend: state disk is already in use".into());
+    use std::os::unix::fs::OpenOptionsExt;
+    let mut disk_locks = Vec::new();
+    for path in std::iter::once(&cfg.state).chain(cfg.data.iter()) {
+        let lock = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .custom_flags(libc::O_NOFOLLOW)
+            .open(path)
+            .map_err(|e| format!("backend: lock state: {e}"))?;
+        if unsafe { libc::flock(lock.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } != 0 {
+            return Err("backend: private disk is already in use".into());
+        }
+        disk_locks.push(lock);
     }
     sandbox::apply(&cfg)?;
     eprintln!(
@@ -94,7 +98,7 @@ fn entry() -> Result<(), String> {
 
     // Hash again under restriction immediately before handing paths to libkrun.
     // These are experiment-owned immutable inputs, not attacker-writable paths.
-    for artifact in [&cfg.kernel, &cfg.initramfs, &cfg.runtime] {
+    for artifact in cfg.artifacts() {
         config::verify(artifact)?;
     }
     boot(&cfg)
@@ -116,7 +120,11 @@ fn boot(cfg: &Launch) -> Result<(), String> {
         text_path(&cfg.kernel.path)?,
         format,
         Some(text_path(&cfg.initramfs.path)?),
-        "console=hvc0 rdinit=/init panic=-1 reboot=k quiet",
+        if cfg.workload.is_some() {
+            "console=hvc0 rdinit=/init panic=-1 reboot=k"
+        } else {
+            "console=hvc0 rdinit=/init panic=-1 reboot=k quiet"
+        },
     )
     .map_err(map)?;
     let mut devices = MmioDeviceManager::new();
@@ -135,9 +143,21 @@ fn boot(cfg: &Launch) -> Result<(), String> {
         BlockDevice::new("state", text_path(&cfg.state)?, DiskFormat::Raw).map_err(map)?;
     state.set_sync_mode(SyncMode::Full);
     devices.add(state);
+    if let (Some(workload), Some(data)) = (&cfg.workload, &cfg.data) {
+        let mut tools = BlockDevice::new("toolchain", text_path(&workload.path)?, DiskFormat::Raw)
+            .map_err(map)?;
+        tools.set_read_only(true);
+        tools.set_sync_mode(SyncMode::Full);
+        devices.add(tools);
+        let mut private =
+            BlockDevice::new("workspace", text_path(data)?, DiskFormat::Raw).map_err(map)?;
+        private.set_sync_mode(SyncMode::Full);
+        devices.add(private);
+    }
     let mut vsock = VsockDevice::new(3, TsiFlags::empty()).map_err(map)?;
     vsock.add_unix_port(CONTROL_PORT, text_path(&cfg.control_socket())?, true);
     vsock.add_unix_port(KEEPER_PORT, text_path(&cfg.keeper_socket())?, true);
+    vsock.add_unix_port(SSH_PORT, text_path(&cfg.ssh_socket())?, true);
     devices.add(vsock);
     devices.add(RngDevice::new().map_err(map)?);
     let mut balloon = BalloonDevice::new().map_err(map)?;

@@ -1,0 +1,14 @@
+{
+  "schema": 1,
+  "kernel_version": "6.12.95",
+  "source_url": "https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-6.12.95.tar.xz",
+  "source_sha256": "a9e8c51fcb1e695d1d35dde5886cba579cb6f29c9646c5889f39d63841d4b9f6",
+  "source_checksum_reference": "https://cdn.kernel.org/pub/linux/kernel/v6.x/sha256sums.asc",
+  "architecture": "aarch64",
+  "builder": "kernel-build",
+  "builder_image": "alpine-3.23.3-aarch64-uefi-cloudinit-r0",
+  "reproducibility": "source/config/output identities recorded; installed toolchain recorded, not a bit-reproducibility claim",
+  "kernel_sha256": "094920a188cc190103b87341f05645bb3d5750db65c39422a95de5636a882b9d",
+  "config_sha256": "156aaef0b0557bdd6dfdbbdb4cf5aa8d16c6d119e16e102bdbfd0f4166d68578",
+  "config_fragment_sha256": "46902374fb2ca49e8317ceed2abf6b0209a8652beba53bdafcfb93b63167a006"
+}

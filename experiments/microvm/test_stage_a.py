@@ -1,5 +1,6 @@
 """Exercise the compiled helper's fail-closed launch interface, without a VM."""
 import copy
+import fcntl
 import hashlib
 import json
 from pathlib import Path
@@ -92,7 +93,7 @@ class LaunchValidation(unittest.TestCase):
         self.assertIn("exceeds 64 KiB", self.check(raw=b" " * 65537).stderr)
 
     def test_stale_endpoints_and_dangling_links_are_refused(self):
-        for name in ("control.sock", "keeper.sock"):
+        for name in ("control.sock", "keeper.sock", "ssh.sock"):
             with self.subTest(endpoint=name):
                 path = self.instance / name
                 path.symlink_to(self.instance / "missing-target")
@@ -100,6 +101,52 @@ class LaunchValidation(unittest.TestCase):
                     self.assertIn("socket is occupied", self.check().stderr)
                 finally:
                     path.unlink()
+
+    def workload_config(self):
+        cfg = copy.deepcopy(self.cfg)
+        image = self.root / "toolchain.img"
+        image.write_bytes(b"immutable-tools" + b"\0" * 8192)
+        cfg["workload"] = {"path": str(image), "sha256": hashlib.sha256(image.read_bytes()).hexdigest()}
+        cfg["data"] = str(self.instance / "data.img")
+        Path(cfg["data"]).write_bytes(b"\0" * 8192)
+        return cfg
+
+    def test_optional_disks_must_be_paired(self):
+        cfg = self.workload_config()
+        for missing in ("workload", "data"):
+            with self.subTest(missing=missing):
+                partial = copy.deepcopy(cfg)
+                del partial[missing]
+                self.assertIn("provided together", self.check(partial).stderr)
+
+    def test_toolchain_content_is_hash_checked(self):
+        cfg = self.workload_config()
+        self.assertEqual(self.check(cfg).returncode, 0)
+        Path(cfg["workload"]["path"]).write_bytes(b"changed")
+        self.assertIn("SHA-256 mismatch", self.check(cfg).stderr)
+
+    def test_data_cannot_alias_bootstrap_state(self):
+        cfg = self.workload_config()
+        cfg["data"] = cfg["state"]
+        self.assertIn("aliases state", self.check(cfg).stderr)
+
+    def test_data_cannot_escape_instance_directory(self):
+        cfg = self.workload_config()
+        disk = self.root / "outside-data.img"
+        disk.write_bytes(b"\0" * 8192)
+        cfg["data"] = str(disk)
+        self.assertIn("directly inside", self.check(cfg).stderr)
+
+    def test_data_already_in_use_is_refused_before_confinement_or_boot(self):
+        cfg = self.workload_config()
+        launch = self.root / "launch.json"
+        launch.write_text(json.dumps(cfg))
+        with Path(cfg["data"]).open("r+b") as disk:
+            fcntl.flock(disk, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            result = subprocess.run([str(HELPER), "run", str(launch)], capture_output=True,
+                                    text=True, env={"PATH": "/usr/bin:/bin"}, timeout=5)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("private disk is already in use", result.stderr)
 
 
 if __name__ == "__main__":

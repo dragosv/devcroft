@@ -1,0 +1,10 @@
+{
+  "schema": 1,
+  "project": "xxHash",
+  "version": "0.8.3",
+  "url": "https://github.com/Cyan4973/xxHash/archive/refs/tags/v0.8.3.tar.gz",
+  "sha256": "aae608dfe8213dfd05d909a57718ef82f30722c392344583d3f39050c7f29a80",
+  "build": "make -j2 xxhsum; make -C tests test_sanity",
+  "small_files": 2048,
+  "service": "Alpine Redis, exact APK closure recorded separately; appendonly yes, appendfsync always"
+}
