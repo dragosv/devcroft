@@ -1,7 +1,7 @@
 ## 1. Freeze the experiment
 
 - [x] 1.1 Verify both upstream commits/APIs, record full pins and patch inventory; keep dependencies outside the default production build. Evidence: `experiments/microvm/fixtures/upstream.json`, separate workspace and lockfile.
-- [ ] 1.2 Define the hardware matrix including a labelled nested row, fixture inputs, resource settings and raw result schema; mark unavailable rows not-run and name where each row's regressions will run.
+- [x] 1.2 Define the hardware matrix including a labelled nested row, fixture inputs, resource settings and raw result schema; mark unavailable rows not-run and name where each row's regressions will run. Records: `fixtures/hardware-matrix.json`, `fixtures/result.schema.json`, `fixtures/evaluation-protocol.json`. Native Linux/Intel runners are explicitly not provisioned; nested results do not qualify them.
 - [ ] 1.3 Build and hash a common kernel/initramfs per architecture with required storage, vsock, Landlock and page-reporting features.
   - [x] 1.3.1 Build and hash Linux 6.12.95 for ARM64 from fixed source/config, with Landlock, virtio block/vsock/console/balloon and page reporting; boot it with the common Stage-A initramfs under libkrun.
   - [ ] 1.3.2 Build and execute the x86-64 row and demonstrate artifact reuse by hvi.
@@ -21,6 +21,7 @@
   - [x] 2.2.1 Compile the pinned library helper in an independent workspace with external payload, read-only runtime disk, private locked state and plain vsock (no NIC/TSI).
   - [x] 2.2.2 Demonstrate macOS pre-build Seatbelt confinement with positive/negative checks and two real guest boots; record source trace and raw outcomes.
   - [ ] 2.2.3 Implement and demonstrate Linux pre-build confinement: Landlock plus a seccomp allowlist taken from the helper's measured syscall inventory, both in force on every VMM thread before the first vCPU, killing on a miss; prove it with forbidden-syscall probes and a working boot as the positive control.
+    - [x] 2.2.3.1 Implement Linux ARM64 Landlock (ABI >=6, explicit filesystem/device grants, TCP/IPC scopes) plus a rust-vmm seccompiler kill-process allowlist before payload/device/VMM construction. Derive 41 syscall names from post-filter inherited-thread traces; constrain socket/sendto/clone/prctl arguments. Prove seven forbidden calls terminate with SIGSYS, working filesystem/Unix/thread controls, and every host thread has Seccomp=2/NoNewPrivs=1 at READY. Stage A and Alpine/Nix workload/crash runs pass in the labelled VZ/KVM nested row. Native Linux and x86-64 qualification remain open. Evidence: `results/libkrun-linux-arm64-nested-*.json` and `fixtures/libkrun-linux-aarch64-syscalls.json`.
   - [ ] 2.2.4 Qualify the required guest policy through the keeper, not direct syscalls, on a kernel with Landlock enabled.
     - [x] 2.2.4.1 Apply nono 0.77.0 before all keeper/relay threads in the ARM64 guest; demonstrate filesystem and TCP denials through real sessions with functioning positive controls. Full project-policy qualification remains open.
 - [ ] 2.3 Verify transport framing, reverse streams, EOF/half-close, limits and loss behavior for both adapters, probing hvi's multiplexer as a host parser.
@@ -52,6 +53,7 @@ and loss cases (2.3), and the x86-64 row, hvi Linux confinement and matched dens
 - [ ] 3.1 Run real keeper exec, PTY, resize, signal and exit-status probes on both adapters.
   - [x] 3.1.1 Pass the real keeper probes on libkrun/macOS ARM64 across two cold boots: stdout/stderr, 128 KiB stdin + EOF, nonzero exit, environment/cwd, PTY resize, INT/TERM/HUP, query and disconnect cleanup. Evidence: `experiments/microvm/results/libkrun-macos-arm64-keeper.json`.
   - [ ] 3.1.2 Run the same probes through hvi and on the remaining host/architecture rows.
+    - [x] 3.1.2.2 Repeat the real keeper/PTY/resize/signal/stdin/EOF probes through libkrun in the final-filter Linux ARM64 nested row; verify every VMM thread has seccomp/NNP at READY and stop the builder. Evidence: `results/libkrun-linux-arm64-nested-keeper.json`. Native Linux remains unqualified.
     - [x] 3.1.2.1 Repeat the unchanged keeper probes on hvi/macOS ARM64, on both baseline and Nix guests, with simultaneous VMs and cold restart. Evidence: `results/hvi-macos-arm64-{ssh,nix-ssh}.json`.
   - [x] 3.1.3 Repeat the real keeper framing, stdin/EOF, exec, PTY/resize, signals and disconnect probes on the Nix closure under libkrun/macOS ARM64, across two VMs and a cold restart. Evidence: `experiments/microvm/results/libkrun-macos-arm64-nix-ssh.json`.
 - [ ] 3.2 Run SSH/SFTP and guest-local forwarding with two services on the same guest port; connect a terminal client, a guest-served editor and a separately labelled Remote-SSH trusted row.
@@ -80,6 +82,7 @@ and loss cases (2.3), and the x86-64 row, hvi Linux confinement and matched dens
   - [ ] 3.7.2 Exercise keeper/init death, other transport-loss/forced-stop points, host suspend/resume and remaining rows. Helper termination does not qualify host power-loss durability.
   - [x] 3.7.3 Repeat helper SIGKILL during observed Redis SET progress on the Nix closure; recover all 32 separately acknowledged keys and unchanged compiled/small-file outputs, keep the sibling Redis run ID/data, reap owned helpers and remove endpoints. Evidence: `experiments/microvm/results/libkrun-macos-arm64-nix-workload.json`.
 
+  - [x] 3.7.5 Repeat Alpine/Nix helper SIGKILL and acknowledged Redis recovery in the final-filter Linux ARM64 nested row, with sibling survival and owned cleanup; no native-Linux or host-power-loss claim.
   - [x] 3.7.4 Repeat helper SIGKILL during observed live Redis SET progress on hvi/macOS ARM64 for Alpine and Nix guests; recover acknowledged keys and existing build outputs while sibling service survives, then reap helpers/remove endpoints. Host power loss and other fault points remain open.
 
 ## 4. Measure and decide

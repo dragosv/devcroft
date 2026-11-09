@@ -72,7 +72,7 @@ class Instance:
         self.label, self.helper = label, helper.resolve()
         self.out = out / label
         self.out.mkdir()
-        self.path = Path(tempfile.mkdtemp(prefix="ds-", dir="/private/tmp"))
+        self.path = Path(tempfile.mkdtemp(prefix="ds-", dir="/private/tmp" if os.uname().sysname == "Darwin" else "/tmp"))
         self.id = secrets.token_hex(16)
         self.process = None
         self.boots = []

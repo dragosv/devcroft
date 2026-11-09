@@ -1,5 +1,9 @@
+#[cfg(not(target_os = "linux"))]
 use crate::config::Launch;
+#[cfg(target_os = "linux")]
+pub use crate::linux::{apply, selftest};
 
+#[cfg(not(target_os = "linux"))]
 pub fn selftest(cfg: &Launch, outside: &std::path::Path) -> Result<(), String> {
     use std::fs::{File, OpenOptions};
     use std::io::{ErrorKind, Write};
@@ -94,7 +98,7 @@ pub fn apply(cfg: &Launch) -> Result<(), String> {
     ))
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
 pub fn apply(_: &Launch) -> Result<(), String> {
     Err("backend: pre-vCPU host confinement is not implemented for this OS; refusing boot".into())
 }

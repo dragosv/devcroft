@@ -1,0 +1,49 @@
+{
+  "schema": 1,
+  "platform": "macos-arm64-native",
+  "thresholds": {
+    "path": "fixtures/no-go-thresholds.json",
+    "sha256": "5db6e27a67179c45403b159684b22db7789d2bc019552ae205d8a1ca2ba3768e"
+  },
+  "adapters": [
+    "libkrun",
+    "hvi"
+  ],
+  "fixtures": [
+    "alpine",
+    "nix"
+  ],
+  "instances": [
+    1,
+    4,
+    8
+  ],
+  "resources_per_instance": {
+    "vcpus": 2,
+    "memory_mib": 512
+  },
+  "launch_stop_cycles": 10,
+  "full_build_idle_repetitions": 5,
+  "idle_observation_seconds": 60,
+  "sample_interval_seconds": 0.25,
+  "adapter_order": "alternate per repetition within each fixture/instance-count pair",
+  "cache_condition": "verified immutable inputs already materialized; warm OS cache, no attempt to flush user machine caches; fresh private disks for each build repetition; repeated launch cycles reuse one private cohort",
+  "workload": "actual GCC xxHash build/upstream sanity, 2048 small files, Redis with appendfsync always, persisted-output verification",
+  "memory": "report task physical footprint and resident bytes separately; no PSS claim; include controller/observer and all recursively discovered runtime/client/proxy descendants; record sampled and VMM lifetime peaks",
+  "cpu": "calibrate libproc CPU units against POSIX process CPU time; record raw calibration and convert before computing one-core CPU percentages",
+  "recovery": "separate real-build recovery from a controlled in-guest allocate/touch/free phase; equal 60-second windows",
+  "session_start": "new pinned-key SSH command session in an already prepared VM, tiny guest readiness marker; record as substrate session, not full AI-agent completion",
+  "durability": "libkrun SyncMode::Full and hvi File::sync_data -> macOS Rust 1.95 F_FULLFSYNC; no host-power-loss claim",
+  "preconditions": [
+    "private Linux builder stopped",
+    "same common kernel and architecture-matched guest artifacts",
+    "host hardware/OS/power state recorded",
+    "no diagnostic unconfined or calibration row included in qualifying comparison"
+  ],
+  "failures": "retain every failure/exhaustion and requested instance count; an incomplete cohort never counts as successful density",
+  "storage": "count logical bytes and stat blocks*512; common verified inputs once per cohort, private disks per instance; retain standalone full-cost and amortized figures; preparation-output namespaces stay per-project",
+  "retention": "keep raw logs and exported verification artifacts; delete only owned successful private instance directories after storage accounting; retain failed instance disks for diagnosis",
+  "controlled_recovery_repetitions": 1,
+  "controlled_memory_mib": 256,
+  "controlled_hold_seconds": 2
+}

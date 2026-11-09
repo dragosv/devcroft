@@ -24,3 +24,6 @@ sha2 = "0.10"
 # Optimize only the SHA implementation; VMM code keeps its diagnostic dev build.
 [profile.dev.package.sha2]
 opt-level = 3
+
+[target.'cfg(target_os = "linux")'.dependencies]
+seccompiler = { version = "0.5", features = ["json"] }

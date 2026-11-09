@@ -42,16 +42,35 @@ def helper_identity(binary):
     return {"adapter": adapter, "helper_provenance": provenance}
 
 
-def line(sock):
+def line(sock, deadline=None):
+    """Read one bounded frame without consuming the next pipelined frame.
+
+    A slow peer cannot restart the deadline with every byte. Peek at chunks so
+    diagnostic syscall tracing does not turn 128 KiB into 128,000 host reads.
+    """
+    original_timeout = sock.gettimeout()
+    deadline = deadline if deadline is not None else time.monotonic() + (original_timeout or 5)
     result = bytearray()
-    while len(result) <= 1024:
-        data = sock.recv(1)
-        if not data:
-            raise ValueError("guest closed before completing a frame")
-        result += data
-        if data == b"\n":
-            return bytes(result)
-    raise ValueError("guest frame exceeds 1024 bytes")
+    try:
+        while len(result) < 1024:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError("guest frame deadline exceeded")
+            sock.settimeout(remaining)
+            data = sock.recv(1024 - len(result), socket.MSG_PEEK)
+            if not data:
+                raise ValueError("guest closed before completing a frame")
+            end = data.find(b"\n")
+            take = end + 1 if end >= 0 else len(data)
+            data = sock.recv(take)
+            if not data:
+                raise ValueError("guest closed before completing a frame")
+            result += data
+            if result.endswith(b"\n"):
+                return bytes(result)
+        raise ValueError("guest frame exceeds 1024 bytes")
+    finally:
+        sock.settimeout(original_timeout)
 
 
 def drain(stream, data, overflow):
@@ -100,6 +119,16 @@ def boot(binary, launch, instance, out, index, timeout, keeper=False):
         with sock:
             result["ready_seconds"] = time.monotonic() - start
             result["greeting"] = greeting.decode().strip()
+            if os.uname().sysname == "Linux":
+                statuses = []
+                for task in sorted(Path(f"/proc/{process.pid}/task").iterdir()):
+                    values = dict(row.split(":", 1) for row in (task / "status").read_text().splitlines() if ":" in row)
+                    statuses.append({"tid": int(task.name), "seccomp": int(values["Seccomp"]),
+                                     "no_new_privs": int(values["NoNewPrivs"])})
+                result["host_threads_at_ready"] = statuses
+                if not statuses or not all(t["seccomp"] == 2 and t["no_new_privs"] == 1 for t in statuses):
+                    raise AssertionError("a helper thread reached READY without seccomp/no_new_privs")
+
             expected = f"READY 1 state={index} ro=1 ".encode()
             if not greeting.startswith(expected):
                 raise AssertionError(f"persistence mismatch: {greeting!r}, expected prefix {expected!r}")
