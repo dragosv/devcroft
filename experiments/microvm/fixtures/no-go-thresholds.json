@@ -1,0 +1,23 @@
+{
+  "schema": 1,
+  "recorded_at": "2026-11-09T19:35:59.174660+00:00",
+  "owner_acceptance": "Accept pragurile propuse",
+  "source": "explicit owner reply to E5 proposal in this session",
+  "original_no_go_thresholds": {
+    "post_build_idle_memory_mib": 4096,
+    "cold_preparation_seconds": 600,
+    "agent_session_start_seconds": 5,
+    "physical_storage_per_environment_gib": 8
+  },
+  "conditions": {
+    "idle_window_seconds": 60,
+    "memory_scope": "all per-environment runtime processes; record totals, components and measurement-controller overhead explicitly",
+    "cold_preparation": "inputs already downloaded; materialization/preparation coldness and excluded downloads recorded separately",
+    "agent_session_start": "VM prepared; actual guest session start, separate from VM launch and READY",
+    "storage": "physical bytes; report shared/global storage and allocation rule explicitly, plus logical sizes"
+  },
+  "revisions": [],
+  "external_reference": "fixtures/brig-reference.json; values are accepted devcroft criteria, not published Brig limits",
+  "density_samples_existed_at_acceptance": false,
+  "comparison_rule": "A valid measured sample above its applicable maximum fails that row/criterion; retain failures and all raw samples. Missing qualification stays unqualified, not a pass."
+}

@@ -41,23 +41,15 @@
     }
   ],
   "e5": {
-    "status": "not-established-by-consulted-sources",
+    "status": "owner-accepted-devcroft-thresholds",
     "density_collection_started": false,
     "numeric_no_go_thresholds": {
-      "post_build_idle_memory_mib": null,
-      "cold_preparation_seconds": null,
-      "agent_session_start_seconds": null,
-      "storage_per_environment_gib": null
+      "post_build_idle_memory_mib": 4096,
+      "cold_preparation_seconds": 600,
+      "agent_session_start_seconds": 5,
+      "physical_storage_per_environment_gib": 8
     },
     "owner_direction": "Consult Brig decisions",
-    "remaining_decision": "No published absolute limits found in consulted profiles, architecture, homepage or pinned hvi performance gate; owner acceptance of explicit limits is still required before task 4.1.",
-    "proposal_pending_owner_response": {
-      "post_build_idle_memory_mib_all_processes": 4096,
-      "idle_observation_seconds": 60,
-      "cold_preparation_seconds_inputs_downloaded": 600,
-      "agent_session_start_seconds_vm_ready": 5,
-      "physical_storage_per_environment_gib": 8,
-      "source": "devcroft proposal informed by Brig allocation; not published Brig acceptance limits"
-    }
+    "acceptance_record": "fixtures/no-go-thresholds.json"
   }
 }
