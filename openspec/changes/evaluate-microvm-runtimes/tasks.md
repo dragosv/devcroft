@@ -10,7 +10,7 @@
   - [x] 1.4.1 Materialize the ARM64 Linux flake closure at locked nixpkgs revision/NAR hash using the SHA-256 pinned Nix 2.34.9 bootstrap inside the mount-free Linux builder. Verify source trust/content, reconstruct all 146 NARs in an empty store without network, compare hashes, and export the immutable ext4 image/private seed/cache with receipts. Recipe: `experiments/microvm/nix/`; evidence: `experiments/microvm/fixtures/nix-aarch64-build.json` and `nix-aarch64-closure.json`.
   - [ ] 1.4.2 Materialize and exercise the x86-64 closure row and reuse the architecture-matched artifacts through hvi. Full source rebuilding/fleet qualification remains separate from offline closure materialization.
   - [x] 1.4.3 Exercise the existing ARM64 Nix closure unchanged through hvi: real keeper/SSH/SFTP, upstream builds, Redis clean/crash persistence and guest-served editor with cold reopen. Evidence: `experiments/microvm/results/hvi-macos-arm64-nix-{ssh,workload,editor}.json`.
-- [ ] 1.5 Obtain the owner's numeric no-go thresholds and record them before task 4.1 starts.
+- [x] 1.5 Obtain the owner's numeric no-go thresholds and record them before task 4.1 starts. Explicit owner acceptance: 4096 MiB per environment after build/60 s idle, 600 s cold preparation with downloaded inputs, 5 s agent-session start in a prepared VM, 8 GiB physical storage per environment. Record: `experiments/microvm/fixtures/no-go-thresholds.json`; no density samples existed at acceptance.
 
 ## 2. Prove each adapter's substrate
 
@@ -90,4 +90,4 @@ and loss cases (2.3), and the x86-64 row, hvi Linux confinement and matched dens
 - [ ] 4.4 Publish raw results, failures/not-run rows, integration cost, each candidate against the five recorded backend criteria and a conditional recommendation including the no-go option.
 - [ ] 4.5 Obtain acceptance of the evidence, thresholds and release/platform criteria, and revisit the libkrun entry in `docs/decisions.md`, before unlocking production runtime adoption.
 
-Owner-directed Brig reference (2026-11-09): `experiments/microvm/fixtures/brig-reference.json` records profile resource allocations, block-root package-install guidance, process confinement and the pinned hvi relative performance gate. These are not the four absolute E5 no-go limits. A concrete threshold proposal is pending owner response; task 4.1 has not started.
+Owner-directed Brig reference (2026-11-09): `experiments/microvm/fixtures/brig-reference.json` records profile resource allocations, block-root package-install guidance, process confinement and the pinned hvi relative performance gate. These are not the four absolute E5 no-go limits. The owner accepted explicit devcroft thresholds, recorded in `fixtures/no-go-thresholds.json` before task 4.1; they are not presented as Brig limits.

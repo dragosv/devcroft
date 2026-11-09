@@ -47,7 +47,10 @@ completion, fault coverage and density remain separate unqualified rows.
 
 [Brig reference](fixtures/brig-reference.json) records the owner-requested design
 comparison. Its 4 GiB agent allocations and 1.5x relative regression gate do not
-provide our absolute E5 limits. Density collection has not started.
+provide our absolute E5 limits. The owner subsequently accepted the devcroft
+limits in [the frozen E5 record](fixtures/no-go-thresholds.json) before density
+collection: 4096 MiB after build/60 s idle, 600 s cold preparation with downloaded
+inputs, 5 s session start in a prepared VM, and 8 GiB physical storage per environment.
 
 ## Current result
 
