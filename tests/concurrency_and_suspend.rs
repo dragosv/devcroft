@@ -1,6 +1,6 @@
 //! Task 7.3: two-sandbox concurrency, and suspend/resume survival —
 //! lifecycle spec's "Concurrent sandboxes" and "Suspend/resume survival"
-//! requirements. Real `nono`/`flox`, real built binary, same pattern as
+//! requirements. Real `nono`, real built binary, same pattern as
 //! `tests/cli_lifecycle_and_policy.rs`.
 //!
 //! Host suspend/resume itself can't be triggered from inside a test (there
@@ -12,15 +12,22 @@
 //! tree (the freezer mechanism is signal-equivalent from the process's own
 //! point of view), so it's used here as the realistic proxy.
 
-use std::path::PathBuf;
+//!
+//! **Neutral surface** (`test-runtime-fixture`): neither property is about a
+//! provider. Both used to `flox init` + `flox install coreutils` purely to
+//! get past `up`; they now run on whichever row is selected. `up` goes
+//! through the row (`bring_up`), so a row the CLI cannot resolve still runs;
+//! everything after it is the real binary.
+
+mod common;
+
+use common::{ProviderFixture, another_of, for_each_row};
+use devcroft::lifecycle::{StatePaths, UpOptions, UpOutcome};
+use std::path::Path;
 use std::process::{Command, Stdio};
 
-fn devcroft_bin() -> &'static str {
-    env!("CARGO_BIN_EXE_devcroft")
-}
-
-fn run(cwd: &std::path::Path, args: &[&str]) -> std::process::Output {
-    Command::new(devcroft_bin())
+fn run(cwd: &Path, args: &[&str]) -> std::process::Output {
+    Command::new(env!("CARGO_BIN_EXE_devcroft"))
         .args(args)
         .current_dir(cwd)
         .stdin(Stdio::null())
@@ -28,178 +35,135 @@ fn run(cwd: &std::path::Path, args: &[&str]) -> std::process::Output {
         .unwrap()
 }
 
-struct Sandbox {
-    name: String,
-    project_root: PathBuf,
+fn supported() -> bool {
+    if !devcroft::policy::backend_supported() {
+        eprintln!("skipping: this host has no usable Landlock/Seatbelt support");
+        return false;
+    }
+    unsafe {
+        std::env::set_var("DEVCROFT_KEEPER_EXE", env!("CARGO_BIN_EXE_devcroft"));
+    }
+    true
 }
 
-impl Sandbox {
-    fn new(tag: &str, manifest_extra: &str) -> Option<Self> {
-        if !devcroft::policy::backend_supported() {
-            eprintln!("skipping: this host has no usable Landlock/Seatbelt support");
-            return None;
-        }
-        if Command::new("flox").arg("--version").output().is_err()
-            || !devcroft::provider::host_can_build_nix_closures()
-        {
-            eprintln!("skipping: no usable flox here (not on PATH, or no reachable Nix store)");
-            return None;
-        }
-        unsafe {
-            std::env::set_var("DEVCROFT_KEEPER_EXE", devcroft_bin());
-        }
-
-        let project_root = std::env::temp_dir().join(format!(
-            "devcroft-concurrency-suspend-{tag}-{}",
-            std::process::id()
-        ));
-        let _ = std::fs::remove_dir_all(&project_root);
-        std::fs::create_dir_all(&project_root).unwrap();
-        // Canonicalized so the `pwd` comparison below matches what the OS
-        // actually reports: on macOS `std::env::temp_dir()` returns a
-        // `/var/...` path, but `/var` is itself a symlink to
-        // `/private/var`, which `pwd` inside the spawned session resolves.
-        let project_root = project_root.canonicalize().unwrap();
-        let init = Command::new("flox")
-            .arg("init")
-            .current_dir(&project_root)
-            .output()
-            .unwrap();
-        if !init.status.success() {
-            eprintln!(
-                "skipping: flox init failed: {}",
-                String::from_utf8_lossy(&init.stderr)
-            );
-            return None;
-        }
-        // own-policy-baseline excludes host toolchain access, so a bare
-        // `flox init` leaves nothing for `exec -- pwd` etc. to run —
-        // installing coreutils gives the sandbox its own `pwd`/`echo`.
-        let install = Command::new("flox")
-            .args(["install", "coreutils"])
-            .current_dir(&project_root)
-            .output()
-            .unwrap();
-        if !install.status.success() {
-            eprintln!(
-                "skipping: flox install coreutils failed: {}",
-                String::from_utf8_lossy(&install.stderr)
-            );
-            return None;
-        }
-
-        let name = format!("e2ecs{tag}{}", std::process::id());
-        std::fs::write(
-            project_root.join("devcroft.toml"),
-            format!("[sandbox]\nname = {name:?}\n{manifest_extra}"),
-        )
-        .unwrap();
-
-        Some(Sandbox { name, project_root })
-    }
-
-    fn run(&self, args: &[&str]) -> std::process::Output {
-        run(&self.project_root, args)
-    }
-
-    fn state_root(&self) -> PathBuf {
-        devcroft::lifecycle::StatePaths::new(&self.name)
-            .unwrap()
-            .root
-    }
-
-    fn pid(&self) -> libc::pid_t {
-        let paths = devcroft::lifecycle::StatePaths::new(&self.name).unwrap();
-        match devcroft::lifecycle::health(&paths).unwrap() {
-            devcroft::lifecycle::Health::Healthy(pid) => pid,
-            other => panic!("expected a healthy keeper, got {other:?}"),
-        }
-    }
+/// Append to the row's own manifest, keeping its provider and name.
+fn append_manifest(fx: &dyn ProviderFixture, extra: &str) {
+    let path = fx.project_root().join("devcroft.toml");
+    let text = std::fs::read_to_string(&path).unwrap();
+    std::fs::write(&path, format!("{text}\n{extra}")).unwrap();
 }
 
-impl Drop for Sandbox {
-    fn drop(&mut self) {
-        let _ = self.run(&["rm", "--yes"]);
-        let _ = std::fs::remove_dir_all(self.state_root());
-        let _ = std::fs::remove_dir_all(&self.project_root);
-    }
+fn state_root(fx: &dyn ProviderFixture) -> std::path::PathBuf {
+    StatePaths::new(fx.sandbox_name()).unwrap().root
+}
+
+fn bring_up(fx: &dyn ProviderFixture) {
+    assert_eq!(
+        fx.bring_up(&UpOptions::default())
+            .unwrap_or_else(|e| panic!("row {}: up failed: {e}", fx.name())),
+        UpOutcome::Started
+    );
+}
+
+/// Canonicalized so the `pwd` comparison matches what the OS reports: on
+/// macOS `temp_dir()` is under `/var`, a symlink to `/private/var`, which
+/// `pwd` inside the session resolves.
+fn canonical_root(fx: &dyn ProviderFixture) -> String {
+    fx.project_root()
+        .canonicalize()
+        .unwrap()
+        .to_string_lossy()
+        .into_owned()
 }
 
 #[test]
 fn two_sandboxes_run_side_by_side_with_disjoint_state_and_policy() {
-    let Some(a) = Sandbox::new("a", "\n[network]\ndefault = \"allow\"\n") else {
+    if !supported() {
         return;
-    };
-    let Some(b) = Sandbox::new("b", "") else {
-        return; // default network.default = "deny"
-    };
+    }
+    for_each_row("csa", |a| {
+        let b = another_of(a, "csb");
+        // Removed on every exit, like the row `for_each_row` owns.
+        struct Gone<'a>(&'a dyn ProviderFixture);
+        impl Drop for Gone<'_> {
+            fn drop(&mut self) {
+                let _ = devcroft::lifecycle::rm(self.0.sandbox_name());
+                let _ = std::fs::remove_dir_all(self.0.project_root());
+            }
+        }
+        let _b_gone = Gone(b.as_ref());
 
-    assert!(a.run(&["up"]).status.success());
-    assert!(b.run(&["up"]).status.success());
+        append_manifest(a, "[network]\ndefault = \"allow\"\n");
+        // `b` keeps the default, network.default = "deny".
+        bring_up(a);
+        bring_up(b.as_ref());
 
-    // Disjoint state: distinct roots and sockets, both live at once.
-    assert_ne!(a.state_root(), b.state_root());
-    assert!(a.state_root().exists());
-    assert!(b.state_root().exists());
+        // Disjoint state: distinct roots and sockets, both live at once.
+        assert_ne!(state_root(a), state_root(b.as_ref()));
+        assert!(state_root(a).exists());
+        assert!(state_root(b.as_ref()).exists());
 
-    // Each `exec` reaches its own project root (own environment)...
-    let out_a = a.run(&["exec", "--", "pwd"]);
-    assert!(out_a.status.success(), "{out_a:?}");
-    assert_eq!(
-        String::from_utf8_lossy(&out_a.stdout).trim(),
-        a.project_root.to_str().unwrap()
-    );
+        // Each `exec` reaches its own project root (own environment)...
+        for fx in [&*a, b.as_ref()] {
+            let out = run(fx.project_root(), &["exec", "--", "pwd"]);
+            assert!(out.status.success(), "row {}: {out:?}", fx.name());
+            assert_eq!(
+                String::from_utf8_lossy(&out.stdout).trim(),
+                canonical_root(fx)
+            );
+        }
 
-    let out_b = b.run(&["exec", "--", "pwd"]);
-    assert!(out_b.status.success(), "{out_b:?}");
-    assert_eq!(
-        String::from_utf8_lossy(&out_b.stdout).trim(),
-        b.project_root.to_str().unwrap()
-    );
+        // ...and its own policy: `a` allows the network by default, `b`
+        // denies.
+        let why_a = run(a.project_root(), &["why", "--host", "example.com"]);
+        assert!(why_a.status.success(), "{why_a:?}");
+        assert!(String::from_utf8_lossy(&why_a.stdout).contains("ALLOWED"));
 
-    // ...and its own policy: `a` allows the network by default, `b` denies.
-    let why_a = a.run(&["why", "--host", "example.com"]);
-    assert!(why_a.status.success(), "{why_a:?}");
-    assert!(String::from_utf8_lossy(&why_a.stdout).contains("ALLOWED"));
+        let why_b = run(b.project_root(), &["why", "--host", "example.com"]);
+        assert!(why_b.status.success(), "{why_b:?}");
+        assert!(String::from_utf8_lossy(&why_b.stdout).contains("DENIED"));
 
-    let why_b = b.run(&["why", "--host", "example.com"]);
-    assert!(why_b.status.success(), "{why_b:?}");
-    assert!(String::from_utf8_lossy(&why_b.stdout).contains("DENIED"));
-
-    // `ps` lists both keepers with distinguishable names, independent of
-    // each other.
-    let ps = run(&a.project_root, &["ps"]);
-    assert!(ps.status.success(), "{ps:?}");
-    let stdout = String::from_utf8_lossy(&ps.stdout);
-    assert!(stdout.contains(&a.name));
-    assert!(stdout.contains(&b.name));
+        // `ps` lists both keepers with distinguishable names, independent of
+        // each other.
+        let ps = run(a.project_root(), &["ps"]);
+        assert!(ps.status.success(), "{ps:?}");
+        let stdout = String::from_utf8_lossy(&ps.stdout);
+        assert!(stdout.contains(a.sandbox_name()));
+        assert!(stdout.contains(b.sandbox_name()));
+    });
 }
 
 #[test]
 fn keeper_survives_a_freeze_and_the_next_command_verifies_health() {
-    let Some(sandbox) = Sandbox::new("freeze", "") else {
+    if !supported() {
         return;
-    };
-    assert!(sandbox.run(&["up"]).status.success());
-
-    let pid = sandbox.pid();
-    unsafe {
-        assert_eq!(libc::kill(pid, libc::SIGSTOP), 0, "failed to freeze keeper");
     }
-    std::thread::sleep(std::time::Duration::from_millis(300));
-    unsafe {
-        assert_eq!(libc::kill(pid, libc::SIGCONT), 0, "failed to resume keeper");
-    }
+    for_each_row("freeze", |fx| {
+        bring_up(fx);
 
-    // The first command after "resume" must transparently confirm health
-    // (via the control-socket probe in `lifecycle::state::health`, which
-    // every session-establishing command already goes through) rather than
-    // assume it, and behave with no user-visible difference.
-    let status = sandbox.run(&["status"]);
-    assert!(status.status.success(), "{status:?}");
-    assert!(String::from_utf8_lossy(&status.stdout).contains("keeper: healthy"));
+        let paths = StatePaths::new(fx.sandbox_name()).unwrap();
+        let pid = match devcroft::lifecycle::health(&paths).unwrap() {
+            devcroft::lifecycle::Health::Healthy(pid) => pid,
+            other => panic!("expected a healthy keeper, got {other:?}"),
+        };
+        unsafe {
+            assert_eq!(libc::kill(pid, libc::SIGSTOP), 0, "failed to freeze keeper");
+        }
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        unsafe {
+            assert_eq!(libc::kill(pid, libc::SIGCONT), 0, "failed to resume keeper");
+        }
 
-    let exec = sandbox.run(&["exec", "--", "echo", "still-alive"]);
-    assert!(exec.status.success(), "{exec:?}");
-    assert_eq!(String::from_utf8_lossy(&exec.stdout).trim(), "still-alive");
+        // The first command after "resume" must transparently confirm health
+        // (via the control-socket probe in `lifecycle::state::health`, which
+        // every session-establishing command already goes through) rather
+        // than assume it, and behave with no user-visible difference.
+        let status = run(fx.project_root(), &["status"]);
+        assert!(status.status.success(), "row {}: {status:?}", fx.name());
+        assert!(String::from_utf8_lossy(&status.stdout).contains("keeper: healthy"));
+
+        let exec = run(fx.project_root(), &["exec", "--", "echo", "still-alive"]);
+        assert!(exec.status.success(), "{exec:?}");
+        assert_eq!(String::from_utf8_lossy(&exec.stdout).trim(), "still-alive");
+    });
 }

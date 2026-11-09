@@ -9,7 +9,17 @@
 //!
 //! See `tests/lifecycle_up.rs` for why this needs `CARGO_BIN_EXE_devcroft`
 //! and why each such test lives in its own file/process.
+//!
+//! **Neutral surface** (`test-runtime-fixture`), except `rsync`: channels,
+//! sftp, the env allowlist and forwarding are the embedded server's, not a
+//! provider's. They used to `flox init` + `flox install bash coreutils`
+//! purely to get past `up`; they now run on whichever row is selected.
+//! The `rsync` test stays on flox, because rsync runs on both ends and no
+//! row ships one inside the sandbox.
 
+mod common;
+
+use common::for_each_row;
 use devcroft::config::parse;
 use devcroft::lifecycle::{StatePaths, UpOptions, UpOutcome, client_key_paths, down, up};
 use std::io::{Read, Write};
@@ -25,18 +35,9 @@ struct Sandbox {
 }
 
 impl Sandbox {
-    fn up(tag: &str) -> Option<Self> {
-        Self::up_with_manifest_extra(tag, "")
-    }
-
-    /// `manifest_extra` is appended verbatim to the `[sandbox]` block —
-    /// e.g. a `[network]` section for the direct-tcpip test, which
-    /// otherwise hits the manifest's own default of `network.default =
-    /// "deny"` (config::Network's `Default` impl): the sandbox's own
-    /// policy would correctly reject the forward, same as any other
-    /// disallowed target, which is exactly right in general but not what
-    /// that test is checking.
-    fn up_with_manifest_extra(tag: &str, manifest_extra: &str) -> Option<Self> {
+    /// A flox project with `rsync` in it, for the one test no row can run.
+    fn up_flox_with_rsync(tag: &str) -> Option<Self> {
+        let manifest_extra = "";
         if !devcroft::policy::backend_supported() {
             eprintln!("skipping: this host has no usable Landlock/Seatbelt support");
             return None;
@@ -86,10 +87,7 @@ impl Sandbox {
         // `rsync: command not found`, which reads as a transport failure
         // rather than a missing package. Scoped to the one tag so every
         // other sandbox here stays cheap to build.
-        let mut packages = vec!["install", "bash", "coreutils"];
-        if tag == "rsync" {
-            packages.push("rsync");
-        }
+        let packages = ["install", "bash", "coreutils", "rsync"];
         let install = Command::new("flox")
             .args(&packages)
             .current_dir(&project_root)
@@ -104,8 +102,10 @@ impl Sandbox {
         }
 
         let name = format!("e2ec{tag}{}", std::process::id());
-        let (manifest, _) =
-            parse(&format!("[sandbox]\nname = {name:?}\n{manifest_extra}")).unwrap();
+        let (manifest, _) = parse(&format!(
+            "[sandbox]\nname = {name:?}\n[env]\nprovider = \"flox\"\n{manifest_extra}"
+        ))
+        .unwrap();
         let paths = StatePaths::new(&name).unwrap();
         let _ = std::fs::remove_dir_all(&paths.root);
         let _ = std::fs::remove_file(&paths.lifecycle_lock);
@@ -119,6 +119,46 @@ impl Sandbox {
             project_root,
             paths,
         })
+    }
+
+    /// Run `body` once per selected row, with the row's sandbox up.
+    ///
+    /// `manifest_extra` is appended to the row's own manifest — e.g. a
+    /// `[network]` section for the direct-tcpip test, which otherwise hits
+    /// the manifest's own default of `network.default = "deny"`: the
+    /// sandbox's own policy would correctly reject the forward, same as any
+    /// other disallowed target, which is right in general but not what that
+    /// test is checking.
+    fn with_row(tag: &str, manifest_extra: &str, body: impl Fn(&Sandbox)) {
+        if !devcroft::policy::backend_supported() {
+            eprintln!("skipping: this host has no usable Landlock/Seatbelt support");
+            return;
+        }
+        unsafe {
+            std::env::set_var("DEVCROFT_KEEPER_EXE", env!("CARGO_BIN_EXE_devcroft"));
+        }
+        for_each_row(&format!("ch{tag}"), |fx| {
+            let manifest = fx.project_root().join("devcroft.toml");
+            let text = std::fs::read_to_string(&manifest).unwrap();
+            std::fs::write(&manifest, format!("{text}\n{manifest_extra}")).unwrap();
+            let name = fx.sandbox_name().to_string();
+            let paths = StatePaths::new(&name).unwrap();
+            let _ = std::fs::remove_dir_all(&paths.root);
+            let _ = std::fs::remove_file(&paths.lifecycle_lock);
+            assert_eq!(
+                fx.bring_up(&UpOptions::default())
+                    .unwrap_or_else(|e| panic!("row {}: up failed: {e}", fx.name())),
+                UpOutcome::Started
+            );
+            // Canonicalized for the macOS symlink reason in
+            // docs/known-gaps.md: scp/sftp write through the absolute path.
+            let project_root = fx.project_root().canonicalize().unwrap();
+            body(&Sandbox {
+                name,
+                project_root,
+                paths,
+            });
+        });
     }
 
     fn host(&self) -> String {
@@ -208,31 +248,30 @@ fn exec_channel_runs_commands_and_propagates_exit_code() {
     if skip_if_no_real_ssh_tools() {
         return;
     }
-    let Some(sandbox) = Sandbox::up("exec") else {
-        return;
-    };
-    let (identity, _) = client_key_paths().unwrap();
+    Sandbox::with_row("exec", "", |sandbox| {
+        let (identity, _) = client_key_paths().unwrap();
 
-    let out = Command::new("ssh")
-        .args(ssh_opts(&identity))
-        .arg(sandbox.host())
-        .arg("echo")
-        .arg("exec-channel-marker-hi")
-        .output()
-        .unwrap();
-    assert_eq!(
-        String::from_utf8_lossy(&out.stdout).trim(),
-        "exec-channel-marker-hi"
-    );
-    assert_eq!(out.status.code(), Some(0));
+        let out = Command::new("ssh")
+            .args(ssh_opts(&identity))
+            .arg(sandbox.host())
+            .arg("echo")
+            .arg("exec-channel-marker-hi")
+            .output()
+            .unwrap();
+        assert_eq!(
+            String::from_utf8_lossy(&out.stdout).trim(),
+            "exec-channel-marker-hi"
+        );
+        assert_eq!(out.status.code(), Some(0));
 
-    let out = Command::new("ssh")
-        .args(ssh_opts(&identity))
-        .arg(sandbox.host())
-        .arg("exit 42")
-        .output()
-        .unwrap();
-    assert_eq!(out.status.code(), Some(42));
+        let out = Command::new("ssh")
+            .args(ssh_opts(&identity))
+            .arg(sandbox.host())
+            .arg("exit 42")
+            .output()
+            .unwrap();
+        assert_eq!(out.status.code(), Some(42));
+    });
 }
 
 #[test]
@@ -243,35 +282,35 @@ fn shell_channel_allocates_a_pty_and_runs_commands() {
     // Runs on macOS too, since `policy::capability_set::grant_pty_slaves`
     // (docs/known-gaps.md, "Interactive pty sessions are refused on macOS
     // — fixed"). It used to be skipped there with `tests/shell_up.rs`.
-    let Some(sandbox) = Sandbox::up("shell") else {
-        return;
-    };
-    let (identity, _) = client_key_paths().unwrap();
+    Sandbox::with_row("shell", "", |sandbox| {
+        let (identity, _) = client_key_paths().unwrap();
 
-    let mut child = Command::new("ssh")
-        .args(ssh_opts(&identity))
-        .arg("-tt")
-        .arg(sandbox.host())
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .unwrap();
-    child
-        .stdin
-        .take()
-        .unwrap()
-        .write_all(b"echo shell-channel-marker-hi\nexit\n")
-        .unwrap();
-    let out = child.wait_with_output().unwrap();
-    assert!(
-        String::from_utf8_lossy(&out.stdout).contains("shell-channel-marker-hi"),
-        "expected pty output to contain the marker, got stdout={:?} stderr={:?}\n\
+        let mut child = Command::new("ssh")
+            .args(ssh_opts(&identity))
+            .arg("-tt")
+            .arg(sandbox.host())
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        child
+            .stdin
+            .take()
+            .unwrap()
+            .write_all(b"echo shell-channel-marker-hi\nexit\n")
+            .unwrap();
+        let out = child.wait_with_output().unwrap();
+        assert!(
+            String::from_utf8_lossy(&out.stdout).contains("shell-channel-marker-hi"),
+            "expected pty output to contain the marker, got stdout={:?} stderr={:?}\n\
          keeper log:\n{}",
-        String::from_utf8_lossy(&out.stdout),
-        String::from_utf8_lossy(&out.stderr),
-        std::fs::read_to_string(&StatePaths::new(&sandbox.name).unwrap().log).unwrap_or_default()
-    );
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr),
+            std::fs::read_to_string(&StatePaths::new(&sandbox.name).unwrap().log)
+                .unwrap_or_default()
+        );
+    });
 }
 
 #[test]
@@ -279,36 +318,36 @@ fn env_allowlist_passes_term_and_lang_but_not_arbitrary_vars() {
     if skip_if_no_real_ssh_tools() {
         return;
     }
-    let Some(sandbox) = Sandbox::up("env") else {
-        return;
-    };
-    let (identity, _) = client_key_paths().unwrap();
+    Sandbox::with_row("env", "", |sandbox| {
+        let (identity, _) = client_key_paths().unwrap();
 
-    let mut args = ssh_opts(&identity);
-    args.push("-o".to_string());
-    args.push(
-        "SetEnv=TERM=devcroft-test-term LANG=en_US.UTF-8 DEVCROFT_NOT_ALLOWED=leaked".to_string(),
-    );
+        let mut args = ssh_opts(&identity);
+        args.push("-o".to_string());
+        args.push(
+            "SetEnv=TERM=devcroft-test-term LANG=en_US.UTF-8 DEVCROFT_NOT_ALLOWED=leaked"
+                .to_string(),
+        );
 
-    let out = Command::new("ssh")
-        .args(args)
-        .arg(sandbox.host())
-        .arg("echo TERM=$TERM LANG=$LANG DEVCROFT_NOT_ALLOWED=${DEVCROFT_NOT_ALLOWED:-unset}")
-        .output()
-        .unwrap();
-    let stdout = String::from_utf8_lossy(&out.stdout);
-    assert!(
-        stdout.contains("TERM=devcroft-test-term"),
-        "TERM should pass the allowlist, got {stdout:?}"
-    );
-    assert!(
-        stdout.contains("LANG=en_US.UTF-8"),
-        "LANG should pass the allowlist, got {stdout:?}"
-    );
-    assert!(
-        stdout.contains("DEVCROFT_NOT_ALLOWED=unset"),
-        "an arbitrary var must not pass the allowlist, got {stdout:?}"
-    );
+        let out = Command::new("ssh")
+            .args(args)
+            .arg(sandbox.host())
+            .arg("echo TERM=$TERM LANG=$LANG DEVCROFT_NOT_ALLOWED=${DEVCROFT_NOT_ALLOWED:-unset}")
+            .output()
+            .unwrap();
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(
+            stdout.contains("TERM=devcroft-test-term"),
+            "TERM should pass the allowlist, got {stdout:?}"
+        );
+        assert!(
+            stdout.contains("LANG=en_US.UTF-8"),
+            "LANG should pass the allowlist, got {stdout:?}"
+        );
+        assert!(
+            stdout.contains("DEVCROFT_NOT_ALLOWED=unset"),
+            "an arbitrary var must not pass the allowlist, got {stdout:?}"
+        );
+    });
 }
 
 #[test]
@@ -316,58 +355,57 @@ fn sftp_round_trips_a_file_and_lists_a_directory() {
     if skip_if_no_real_ssh_tools() {
         return;
     }
-    let Some(sandbox) = Sandbox::up("sftp") else {
-        return;
-    };
-    let (identity, _) = client_key_paths().unwrap();
+    Sandbox::with_row("sftp", "", |sandbox| {
+        let (identity, _) = client_key_paths().unwrap();
 
-    let local_src = sandbox.project_root.join("local-src.txt");
-    std::fs::write(&local_src, b"devcroft sftp round-trip payload\n").unwrap();
-    let remote_path = sandbox.project_root.join("via-sftp.txt");
-    let local_dst = sandbox.project_root.join("local-dst.txt");
+        let local_src = sandbox.project_root.join("local-src.txt");
+        std::fs::write(&local_src, b"devcroft sftp round-trip payload\n").unwrap();
+        let remote_path = sandbox.project_root.join("via-sftp.txt");
+        let local_dst = sandbox.project_root.join("local-dst.txt");
 
-    // `put`/`get`/`ls` in one batch: open/write/close, open/read/close, and
-    // opendir/readdir all in a single real sftp session.
-    let batch = sandbox.project_root.join("sftp-batch.txt");
-    std::fs::write(
-        &batch,
-        format!(
-            "put {} {}\nget {} {}\nls {}\nbye\n",
-            local_src.to_string_lossy(),
-            remote_path.to_string_lossy(),
-            remote_path.to_string_lossy(),
-            local_dst.to_string_lossy(),
-            sandbox.project_root.to_string_lossy(),
-        ),
-    )
-    .unwrap();
-    let mut sftp_args = ssh_opts(&identity);
-    sftp_args.push("-b".to_string());
-    sftp_args.push(batch.to_string_lossy().into_owned());
-    sftp_args.push(sandbox.host());
-    let out = Command::new("sftp").args(&sftp_args).output().unwrap();
-    assert!(
-        out.status.success(),
-        "sftp batch session failed (status {:?}): stdout={} stderr={}",
-        out.status.code(),
-        String::from_utf8_lossy(&out.stdout),
-        String::from_utf8_lossy(&out.stderr)
-    );
-    assert_eq!(
-        std::fs::read(&remote_path).unwrap(),
-        std::fs::read(&local_src).unwrap(),
-        "the file written via sftp put must match the source"
-    );
-    assert_eq!(
-        std::fs::read(&local_dst).unwrap(),
-        b"devcroft sftp round-trip payload\n",
-        "the file fetched back via sftp get must match what was uploaded"
-    );
-    assert!(
-        String::from_utf8_lossy(&out.stdout).contains("via-sftp.txt"),
-        "sftp ls must list the file written earlier, got {:?}",
-        String::from_utf8_lossy(&out.stdout)
-    );
+        // `put`/`get`/`ls` in one batch: open/write/close, open/read/close, and
+        // opendir/readdir all in a single real sftp session.
+        let batch = sandbox.project_root.join("sftp-batch.txt");
+        std::fs::write(
+            &batch,
+            format!(
+                "put {} {}\nget {} {}\nls {}\nbye\n",
+                local_src.to_string_lossy(),
+                remote_path.to_string_lossy(),
+                remote_path.to_string_lossy(),
+                local_dst.to_string_lossy(),
+                sandbox.project_root.to_string_lossy(),
+            ),
+        )
+        .unwrap();
+        let mut sftp_args = ssh_opts(&identity);
+        sftp_args.push("-b".to_string());
+        sftp_args.push(batch.to_string_lossy().into_owned());
+        sftp_args.push(sandbox.host());
+        let out = Command::new("sftp").args(&sftp_args).output().unwrap();
+        assert!(
+            out.status.success(),
+            "sftp batch session failed (status {:?}): stdout={} stderr={}",
+            out.status.code(),
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert_eq!(
+            std::fs::read(&remote_path).unwrap(),
+            std::fs::read(&local_src).unwrap(),
+            "the file written via sftp put must match the source"
+        );
+        assert_eq!(
+            std::fs::read(&local_dst).unwrap(),
+            b"devcroft sftp round-trip payload\n",
+            "the file fetched back via sftp get must match what was uploaded"
+        );
+        assert!(
+            String::from_utf8_lossy(&out.stdout).contains("via-sftp.txt"),
+            "sftp ls must list the file written earlier, got {:?}",
+            String::from_utf8_lossy(&out.stdout)
+        );
+    });
 }
 
 /// Modern OpenSSH `scp` (9.0+) speaks SFTP under the hood by default —
@@ -394,55 +432,54 @@ fn scp_round_trips_correct_data_and_reports_success() {
     if skip_if_no_real_ssh_tools() {
         return;
     }
-    let Some(sandbox) = Sandbox::up("scp") else {
-        return;
-    };
-    let (identity, _) = client_key_paths().unwrap();
+    Sandbox::with_row("scp", "", |sandbox| {
+        let (identity, _) = client_key_paths().unwrap();
 
-    let local_src = sandbox.project_root.join("local-src.txt");
-    std::fs::write(&local_src, b"devcroft scp round-trip payload\n").unwrap();
-    let remote_path = sandbox.project_root.join("via-scp.txt");
+        let local_src = sandbox.project_root.join("local-src.txt");
+        std::fs::write(&local_src, b"devcroft scp round-trip payload\n").unwrap();
+        let remote_path = sandbox.project_root.join("via-scp.txt");
 
-    let mut scp_args = ssh_opts(&identity);
-    scp_args.push(local_src.to_string_lossy().into_owned());
-    scp_args.push(format!(
-        "{}:{}",
-        sandbox.host(),
-        remote_path.to_string_lossy()
-    ));
-    let up = Command::new("scp").args(&scp_args).output().unwrap();
-    assert!(
-        up.status.success(),
-        "scp upload must report success, got {:?}: {}",
-        up.status,
-        String::from_utf8_lossy(&up.stderr)
-    );
-    assert_eq!(
-        std::fs::read(&remote_path).unwrap(),
-        std::fs::read(&local_src).unwrap(),
-        "the file scp uploaded must match the source"
-    );
+        let mut scp_args = ssh_opts(&identity);
+        scp_args.push(local_src.to_string_lossy().into_owned());
+        scp_args.push(format!(
+            "{}:{}",
+            sandbox.host(),
+            remote_path.to_string_lossy()
+        ));
+        let up = Command::new("scp").args(&scp_args).output().unwrap();
+        assert!(
+            up.status.success(),
+            "scp upload must report success, got {:?}: {}",
+            up.status,
+            String::from_utf8_lossy(&up.stderr)
+        );
+        assert_eq!(
+            std::fs::read(&remote_path).unwrap(),
+            std::fs::read(&local_src).unwrap(),
+            "the file scp uploaded must match the source"
+        );
 
-    let local_dst = sandbox.project_root.join("local-dst.txt");
-    let mut scp_back_args = ssh_opts(&identity);
-    scp_back_args.push(format!(
-        "{}:{}",
-        sandbox.host(),
-        remote_path.to_string_lossy()
-    ));
-    scp_back_args.push(local_dst.to_string_lossy().into_owned());
-    let down = Command::new("scp").args(&scp_back_args).output().unwrap();
-    assert!(
-        down.status.success(),
-        "scp download must report success, got {:?}: {}",
-        down.status,
-        String::from_utf8_lossy(&down.stderr)
-    );
-    assert_eq!(
-        std::fs::read(&local_dst).unwrap(),
-        b"devcroft scp round-trip payload\n",
-        "the file scp downloaded must match what was uploaded"
-    );
+        let local_dst = sandbox.project_root.join("local-dst.txt");
+        let mut scp_back_args = ssh_opts(&identity);
+        scp_back_args.push(format!(
+            "{}:{}",
+            sandbox.host(),
+            remote_path.to_string_lossy()
+        ));
+        scp_back_args.push(local_dst.to_string_lossy().into_owned());
+        let down = Command::new("scp").args(&scp_back_args).output().unwrap();
+        assert!(
+            down.status.success(),
+            "scp download must report success, got {:?}: {}",
+            down.status,
+            String::from_utf8_lossy(&down.stderr)
+        );
+        assert_eq!(
+            std::fs::read(&local_dst).unwrap(),
+            b"devcroft scp round-trip payload\n",
+            "the file scp downloaded must match what was uploaded"
+        );
+    });
 }
 
 /// Task 6.5's rsync row (docs/ssh-validation.md): `rsync -e ssh` runs
@@ -460,7 +497,7 @@ fn rsync_transfers_a_file_through_devcroft_proxy_over_a_plain_exec_channel() {
     if skip_if_no_real_ssh_tools() || skip_if_no_real_rsync() {
         return;
     }
-    let Some(sandbox) = Sandbox::up("rsync") else {
+    let Some(sandbox) = Sandbox::up_flox_with_rsync("rsync") else {
         return;
     };
     let (identity, _) = client_key_paths().unwrap();
@@ -525,74 +562,72 @@ fn direct_tcpip_forwarding_relays_a_real_connection() {
     if skip_if_no_real_ssh_tools() {
         return;
     }
-    let Some(sandbox) = Sandbox::up_with_manifest_extra("fwd", "[network]\ndefault = \"allow\"\n")
-    else {
-        return;
-    };
-    let (identity, _) = client_key_paths().unwrap();
+    Sandbox::with_row("fwd", "[network]\ndefault = \"allow\"\n", |sandbox| {
+        let (identity, _) = client_key_paths().unwrap();
 
-    // A plain echo server standing in for "something reachable from
-    // inside the sandbox" — MVP has no network-namespace separation
-    // (design.md decision 5), so the keeper reaches the same host network
-    // this test process does.
-    let echo_listener = TcpListener::bind("127.0.0.1:0").unwrap();
-    let echo_port = echo_listener.local_addr().unwrap().port();
-    std::thread::spawn(move || {
-        for stream in echo_listener.incoming().flatten() {
-            std::thread::spawn(move || {
-                let mut stream = stream;
-                let mut buf = [0u8; 1024];
-                loop {
-                    match stream.read(&mut buf) {
-                        Ok(0) | Err(_) => break,
-                        Ok(n) => {
-                            if stream.write_all(&buf[..n]).is_err() {
-                                break;
+        // A plain echo server standing in for "something reachable from
+        // inside the sandbox" — MVP has no network-namespace separation
+        // (design.md decision 5), so the keeper reaches the same host network
+        // this test process does.
+        let echo_listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let echo_port = echo_listener.local_addr().unwrap().port();
+        std::thread::spawn(move || {
+            for stream in echo_listener.incoming().flatten() {
+                std::thread::spawn(move || {
+                    let mut stream = stream;
+                    let mut buf = [0u8; 1024];
+                    loop {
+                        match stream.read(&mut buf) {
+                            Ok(0) | Err(_) => break,
+                            Ok(n) => {
+                                if stream.write_all(&buf[..n]).is_err() {
+                                    break;
+                                }
                             }
                         }
                     }
-                }
-            });
+                });
+            }
+        });
+
+        let local_port = {
+            let l = TcpListener::bind("127.0.0.1:0").unwrap();
+            l.local_addr().unwrap().port()
+        };
+
+        let mut args = ssh_opts(&identity);
+        args.push("-N".to_string());
+        args.push("-o".to_string());
+        args.push("ExitOnForwardFailure=yes".to_string());
+        args.push("-L".to_string());
+        args.push(format!("{local_port}:127.0.0.1:{echo_port}"));
+        args.push(sandbox.host());
+        let mut tunnel = Command::new("ssh")
+            .args(args)
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let mut connected = None;
+        while Instant::now() < deadline {
+            if let Ok(stream) = std::net::TcpStream::connect(("127.0.0.1", local_port)) {
+                connected = Some(stream);
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(100));
         }
+        let mut stream = connected.expect("local end of the -L tunnel never became connectable");
+
+        stream.write_all(b"through-the-tunnel").unwrap();
+        stream.shutdown(std::net::Shutdown::Write).unwrap();
+        let mut received = Vec::new();
+        stream.read_to_end(&mut received).unwrap();
+        assert_eq!(received, b"through-the-tunnel");
+
+        let _ = tunnel.kill();
+        let _ = tunnel.wait();
     });
-
-    let local_port = {
-        let l = TcpListener::bind("127.0.0.1:0").unwrap();
-        l.local_addr().unwrap().port()
-    };
-
-    let mut args = ssh_opts(&identity);
-    args.push("-N".to_string());
-    args.push("-o".to_string());
-    args.push("ExitOnForwardFailure=yes".to_string());
-    args.push("-L".to_string());
-    args.push(format!("{local_port}:127.0.0.1:{echo_port}"));
-    args.push(sandbox.host());
-    let mut tunnel = Command::new("ssh")
-        .args(args)
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .unwrap();
-
-    let deadline = Instant::now() + Duration::from_secs(10);
-    let mut connected = None;
-    while Instant::now() < deadline {
-        if let Ok(stream) = std::net::TcpStream::connect(("127.0.0.1", local_port)) {
-            connected = Some(stream);
-            break;
-        }
-        std::thread::sleep(Duration::from_millis(100));
-    }
-    let mut stream = connected.expect("local end of the -L tunnel never became connectable");
-
-    stream.write_all(b"through-the-tunnel").unwrap();
-    stream.shutdown(std::net::Shutdown::Write).unwrap();
-    let mut received = Vec::new();
-    stream.read_to_end(&mut received).unwrap();
-    assert_eq!(received, b"through-the-tunnel");
-
-    let _ = tunnel.kill();
-    let _ = tunnel.wait();
 }

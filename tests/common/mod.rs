@@ -968,6 +968,24 @@ pub fn for_each_row(tag: &str, body: impl Fn(&mut dyn ProviderFixture)) {
     );
 }
 
+/// A second, independent project on the same row as `fx`, for a test that
+/// needs two sandboxes at once (`tests/concurrency_and_suspend.rs`).
+///
+/// Looks the row up by name, which is not the branching the name rule
+/// forbids: nothing here behaves differently per row, it only asks the same
+/// row for another instance. The row was set up once already, so failing
+/// to set it up again is a failure, not a skip.
+pub fn another_of(fx: &dyn ProviderFixture, tag: &str) -> Box<dyn ProviderFixture> {
+    let (_, setup) = ROWS
+        .iter()
+        .find(|(n, _)| *n == fx.name())
+        .expect("a row that is running is in ROWS");
+    match setup(tag) {
+        Ok(other) => other,
+        Err(Unavailable(reason)) => panic!("row {} set up once but not twice: {reason}", fx.name()),
+    }
+}
+
 /// Single-row convenience for tests that cannot be written as a closure.
 ///
 /// Same selection and same no-fallback rule as [`for_each_row`], but it
