@@ -23,7 +23,7 @@ import threading
 import time
 
 import keeper_probe
-from smoke import LOG_LIMIT, ROOT, artifact, connect, drain, line
+from smoke import helper_identity, LOG_LIMIT, ROOT, artifact, connect, drain, line
 
 ENV = {"PATH": "/usr/bin:/bin", "LC_ALL": "C"}
 SOCKETS = ("control.sock", "keeper.sock", "ssh.sock")
@@ -161,7 +161,8 @@ class Instance:
         if self.boots:
             self.boots[-1].update(exit_code=self.process.returncode, forced_cleanup=forced,
                 log_overflow=self.overflow.is_set(),
-                ssh_console_captured=b"guest SSH: nono applied; serving port 1026" in self.stderr)
+                ssh_console_captured=b"guest SSH: nono applied; serving port 1026" in self.stderr + self.stdout,
+                guest_console_stream="stdout" if b"guest SSH: nono applied; serving port 1026" in self.stdout else "stderr")
         self.process = None
         for name in SOCKETS:
             (self.path / name).unlink(missing_ok=True)
@@ -309,7 +310,7 @@ def main():
     guest = json.loads(args.guest.read_text())
     if guest.get('workload') and args.workload is None:
         p.error('this guest requires --workload and --seed')
-    report = {"schema": 1, "adapter": "libkrun", "host": list(os.uname()),
+    report = {"schema": 1, **helper_identity(args.helper), "host": list(os.uname()),
         "fixture": "real keeper/SSH/SFTP + private raw bootstrap + guest HTTP identity fixture",
         "qualification": "diagnostic-only", "guest_build": guest, "helper_artifact": artifact(args.helper),
         "client": {"implementation": "system OpenSSH", "known_hosts": "pinned from per-instance generated host keys"},
@@ -319,7 +320,7 @@ def main():
             workload_artifact=artifact(args.workload), seed_artifact=artifact(args.seed),
             resources_per_vm={'vcpus': 2, 'memory_mib': 512})
     sources = [Path(__file__), ROOT / "smoke.py", ROOT / "keeper_probe.py",
-               *sorted((ROOT / "libkrun/src").glob("*.rs")), ROOT / "libkrun/Cargo.lock"]
+               *sorted((ROOT / report["adapter"] / "src").glob("*.rs")), ROOT / report["adapter"] / "Cargo.lock"]
     if args.workload:
         sources.append(ROOT / 'workload_smoke.py')
     report["harness_sources"] = {str(f.relative_to(ROOT)): hashlib.sha256(f.read_bytes()).hexdigest() for f in sources}

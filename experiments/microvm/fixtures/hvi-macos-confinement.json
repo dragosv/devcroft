@@ -1,0 +1,74 @@
+{
+  "schema": 1,
+  "revision": "351d1a15728e998486232e4815ba075a22e44f56",
+  "patch_sha256": "4641b57e08f32f0c4814db39dbbd8280a4b974d3218618fe1a85e48df78ef14d",
+  "source_trace": {
+    "src/arch/aarch64/hvf.rs": [
+      "open_disks and every VsockBridge::bind before process Seatbelt",
+      "guest.attach invokes plugin on_attach and descriptor inventory",
+      "seatbelt::enter_with_shares; no fs shares configured",
+      "IoThreads::start after Seatbelt",
+      "vCPUs spawn after Seatbelt",
+      "vcpu0 pass_safepoint invokes negative probe before vcpu.run"
+    ]
+  },
+  "descriptors": "inherited >2 closed first; actual retained file access modes verified RO/RW against every configured disk; unexpected regular files rejected",
+  "profile": "native hvi deny default; no path or NIC shares, preopened listeners retained",
+  "disk_flush": {
+    "hvi": "VIRTIO_BLK_T_FLUSH -> File::sync_data",
+    "rustc": "1.95.0",
+    "macos_std": "datasync -> fcntl(F_FULLFSYNC)",
+    "source": "https://github.com/rust-lang/rust/blob/1.95.0/library/std/src/sys/fs/unix.rs#L1306",
+    "scope": "source-level flush alignment; no physical power-loss or matched performance claim"
+  },
+  "functional_rows": [
+    {
+      "row": "stage-a",
+      "status": "passed",
+      "boots": 2
+    },
+    {
+      "row": "ssh",
+      "status": "passed",
+      "boots": 3
+    },
+    {
+      "row": "workload",
+      "status": "passed",
+      "boots": 4
+    },
+    {
+      "row": "adaptable",
+      "status": "passed",
+      "boots": 5
+    },
+    {
+      "row": "editor",
+      "status": "passed",
+      "boots": 2
+    },
+    {
+      "row": "nix-ssh",
+      "status": "passed",
+      "boots": 3
+    },
+    {
+      "row": "nix-workload",
+      "status": "passed",
+      "boots": 4
+    },
+    {
+      "row": "nix-editor",
+      "status": "passed",
+      "boots": 2
+    }
+  ],
+  "validation": {
+    "vsock_tests_passed": 53,
+    "library_tests_passed": 562,
+    "library_tests_ignored": 6,
+    "ignored_scope": "five opt-in filesystem benchmarks and one timing-dependent queue ordering stress test",
+    "clippy": "wrapper and patched hvi all-targets, warnings denied"
+  },
+  "linux_execution": "not-qualified"
+}

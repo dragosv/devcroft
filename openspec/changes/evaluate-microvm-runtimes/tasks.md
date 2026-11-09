@@ -5,14 +5,18 @@
 - [ ] 1.3 Build and hash a common kernel/initramfs per architecture with required storage, vsock, Landlock and page-reporting features.
   - [x] 1.3.1 Build and hash Linux 6.12.95 for ARM64 from fixed source/config, with Landlock, virtio block/vsock/console/balloon and page reporting; boot it with the common Stage-A initramfs under libkrun.
   - [ ] 1.3.2 Build and execute the x86-64 row and demonstrate artifact reuse by hvi.
+  - [x] 1.3.3 Demonstrate hvi/macOS ARM64 reuse of the exact common kernel and architecture-matched Stage-A, keeper, workload, Nix and adaptable initramfs artifacts; eight functional rows/25 boots pass. Evidence: `experiments/microvm/results/hvi-macos-arm64-*.json`. This does not qualify x86-64.
 - [ ] 1.4 Build the pinned Nix closure fixture and private raw disk seed; document Linux materialization without host project tools.
   - [x] 1.4.1 Materialize the ARM64 Linux flake closure at locked nixpkgs revision/NAR hash using the SHA-256 pinned Nix 2.34.9 bootstrap inside the mount-free Linux builder. Verify source trust/content, reconstruct all 146 NARs in an empty store without network, compare hashes, and export the immutable ext4 image/private seed/cache with receipts. Recipe: `experiments/microvm/nix/`; evidence: `experiments/microvm/fixtures/nix-aarch64-build.json` and `nix-aarch64-closure.json`.
   - [ ] 1.4.2 Materialize and exercise the x86-64 closure row and reuse the architecture-matched artifacts through hvi. Full source rebuilding/fleet qualification remains separate from offline closure materialization.
+  - [x] 1.4.3 Exercise the existing ARM64 Nix closure unchanged through hvi: real keeper/SSH/SFTP, upstream builds, Redis clean/crash persistence and guest-served editor with cold reopen. Evidence: `experiments/microvm/results/hvi-macos-arm64-nix-{ssh,workload,editor}.json`.
 - [ ] 1.5 Obtain the owner's numeric no-go thresholds and record them before task 4.1 starts.
 
 ## 2. Prove each adapter's substrate
 
 - [ ] 2.1 Implement the isolated hvi helper with READY/stop and explicit devices; prove confinement ordering, including on Linux the syscall filter (E3).
+  - [x] 2.1.1 Implement the pinned isolated hvi helper on macOS ARM64; verify actual disk descriptor access modes and native deny-default Seatbelt before I/O/vCPU creation, plus first-vcpu0-entry negative controls and two READY/stop boots. Record local fixed-port bridge patch and 562 passing/6 ignored upstream library tests. Evidence: `experiments/microvm/fixtures/hvi-macos-confinement.json` and `results/hvi-macos-arm64-stage-a.json`.
+  - [ ] 2.1.2 Qualify the Linux host syscall/filesystem boundary and remaining architectures; nested execution remains a separate diagnostic row.
 - [ ] 2.2 Implement the isolated libkrun 2.0 helper; prove restriction before first vCPU including the build path.
   - [x] 2.2.1 Compile the pinned library helper in an independent workspace with external payload, read-only runtime disk, private locked state and plain vsock (no NIC/TSI).
   - [x] 2.2.2 Demonstrate macOS pre-build Seatbelt confinement with positive/negative checks and two real guest boots; record source trace and raw outcomes.
@@ -21,7 +25,10 @@
     - [x] 2.2.4.1 Apply nono 0.77.0 before all keeper/relay threads in the ARM64 guest; demonstrate filesystem and TCP denials through real sessions with functioning positive controls. Full project-policy qualification remains open.
 - [ ] 2.3 Verify transport framing, reverse streams, EOF/half-close, limits and loss behavior for both adapters, probing hvi's multiplexer as a host parser.
   - [x] 2.3.1 Record and reproducibly apply the libkrun host-EOF correction; pass macOS EOF/half-close with pending data, reconnect and oversized-frame rejection.
+  - [x] 2.3.2 Pass hvi/macOS ARM64 half-close with 130,816 pending bytes, reconnect and oversize refusal on the common Stage-A guest; pass 53 native vsock tests including cross-port acceptance/credit/data/reset refusal in the fixed-port extension.
 - [ ] 2.4 Verify read-only enforcement, persistence after cold restart, timeout cleanup and descriptor inventories.
+
+  - [x] 2.4.1 On hvi/macOS ARM64, verify actual RO/RW descriptors before confinement, immutable runtime/toolchain hashes, private state after cold restart and clean helper/endpoint cleanup across all eight functional rows. Timeout/death/suspend coverage and other platforms remain open.
 
 Stage-A libkrun evidence (2026-11-07, macOS ARM64, both runs diagnostic-only):
 
@@ -38,13 +45,14 @@ Stage-A libkrun evidence (2026-11-07, macOS ARM64, both runs diagnostic-only):
 
 Still open: the guest policy through nono/keeper rather than direct syscalls
 (2.2.4), Linux host confinement with its syscall filter (2.2.3), reverse-stream
-and loss cases (2.3), and the x86-64 row and hvi comparison (1.3.2, 2.1).
+and loss cases (2.3), and the x86-64 row, hvi Linux confinement and matched density comparison (1.3.2, 2.1, 4.1).
 
 ## 3. Exercise useful workloads and hostile inputs
 
 - [ ] 3.1 Run real keeper exec, PTY, resize, signal and exit-status probes on both adapters.
   - [x] 3.1.1 Pass the real keeper probes on libkrun/macOS ARM64 across two cold boots: stdout/stderr, 128 KiB stdin + EOF, nonzero exit, environment/cwd, PTY resize, INT/TERM/HUP, query and disconnect cleanup. Evidence: `experiments/microvm/results/libkrun-macos-arm64-keeper.json`.
   - [ ] 3.1.2 Run the same probes through hvi and on the remaining host/architecture rows.
+    - [x] 3.1.2.1 Repeat the unchanged keeper probes on hvi/macOS ARM64, on both baseline and Nix guests, with simultaneous VMs and cold restart. Evidence: `results/hvi-macos-arm64-{ssh,nix-ssh}.json`.
   - [x] 3.1.3 Repeat the real keeper framing, stdin/EOF, exec, PTY/resize, signals and disconnect probes on the Nix closure under libkrun/macOS ARM64, across two VMs and a cold restart. Evidence: `experiments/microvm/results/libkrun-macos-arm64-nix-ssh.json`.
 - [ ] 3.2 Run SSH/SFTP and guest-local forwarding with two services on the same guest port; connect a terminal client, a guest-served editor and a separately labelled Remote-SSH trusted row.
   - [x] 3.2.1 Demonstrate real SSH/SFTP on libkrun/macOS ARM64 with per-instance test keys, pinned host identity, OpenSSH exec/stdin/interactive PTY/resize/Ctrl-C, SFTP positive/negative controls, two simultaneous HTTP identity fixtures on guest port 8080, a denied live 8081 destination, and cold restart without disrupting the sibling. Evidence: `experiments/microvm/results/libkrun-macos-arm64-ssh.json`.
@@ -52,21 +60,27 @@ and loss cases (2.3), and the x86-64 row and hvi comparison (1.3.2, 2.1).
     - [x] 3.2.2.1 Demonstrate the Alpine/npm guest-served editor on libkrun/macOS ARM64: code-server through SSH/vsock, real isolated Chrome workbench, exact file save, in-editor terminal compile/run, AArch64 ELF export and persistence checked before reopening after cold restart. Explicit workspace trust applies only to the disposable fixture; it does not qualify Remote-SSH. Evidence: `experiments/microvm/results/libkrun-macos-arm64-editor.json`.
     - [ ] 3.2.2.2 Qualify the separately labelled trusted Remote-SSH row, hvi and remaining host/architecture rows. Hash-pin the complete editor builder closure before any fleet-eligibility claim.
     - [x] 3.2.2.3 Repeat the real Chrome workbench/terminal edit, compile/run, exported Nix-linked AArch64 ELF and cold-restart persistence checks with flake-packaged code-server 4.115.0. Native store references are preserved without Alpine toolchain substitution. Evidence: `experiments/microvm/results/libkrun-macos-arm64-nix-editor.json`.
+    - [x] 3.2.2.4 Repeat both Alpine/npm and Nix guest-served editor rows on hvi/macOS ARM64: real Chrome file save, integrated-terminal compile/run, independent ELF/hash checks, cold reopen and cleanup. Evidence: `results/hvi-macos-arm64-{editor,nix-editor}.json`.
   - [x] 3.2.3 Repeat OpenSSH exec/binary stdin/EOF/interactive PTY/resize/Ctrl-C, SFTP positive/negative controls, pinned/wrong/sibling-key cases and same-port forwarding on two Nix closure guests. Cold restart preserves private host identity while the sibling survives. Evidence: `experiments/microvm/results/libkrun-macos-arm64-nix-ssh.json`.
+  - [x] 3.2.4 Repeat real OpenSSH/SFTP/PTY/resize/Ctrl-C, same-port forwarding and denied destination, wrong/sibling keys and pinned-host refusal on hvi/macOS ARM64 for baseline and Nix guests. Preserve the console-stream calibration failure, corrected harness and passing reruns.
 - [ ] 3.3 Run real build/small-file workloads and service readiness/persistence; label dummy-key and completed-agent checks separately.
   - [x] 3.3.1 On libkrun/macOS ARM64, compile upstream xxHash 0.8.3 with in-guest GCC, run upstream sanity tests, verify/process 2,048 small files, and run two real Redis services on guest port 6379 with AOF/appendfsync always. Persist binaries/files/32 acknowledged keys across clean restart. Evidence: `experiments/microvm/results/libkrun-macos-arm64-workload.json`.
   - [ ] 3.3.2 Repeat with the declared Nix closure and other adapters/platform rows; dummy-key/API transport and completed-agent checks remain not-run. The Alpine workload does not qualify those rows.
     - [x] 3.3.2.1 Compile/test upstream xxHash with Nix GCC 15.3.0, verify/process 2,048 small files and run two Nix Redis 8.8.1 services with AOF/appendfsync always. Verify the executable's native /nix/store interpreter and clean/crash persistence. Evidence: `experiments/microvm/results/libkrun-macos-arm64-nix-workload.json`.
     - [ ] 3.3.2.2 Repeat on hvi and remaining host/architecture rows; perform separately labelled dummy-key/API and completed-agent checks.
+    - [x] 3.3.2.2.1 Repeat real xxHash builds/sanity tests, 2,048 small files, two Redis services and clean/crash recovery on hvi/macOS ARM64, for both Alpine and Nix artifacts. Evidence: `results/hvi-macos-arm64-{workload,nix-workload}.json`.
 - [ ] 3.4 Add the adaptable-base fixture, private administrative install through a setup window, restart and clean recipe reconstruction with hash-pinned inputs and an offline build stage.
   - [x] 3.4.1 On libkrun/macOS ARM64, copy a fixed Alpine baseline into a private rootfs, apply SHA-256 pinned zlib development APKs through a bounded PID 1 setup window, then start keeper/SSH with read-only base and read-write workspace grants. Verify native build/test, persistence without rebuilding, exact header/library/source/executable hashes in a fresh reconstruction, refusal of an omitted setup and empty/floating recipe inputs, and cleanup. Five clean boots across three fresh instances; evidence: `experiments/microvm/results/libkrun-macos-arm64-adaptable.json`.
   - [ ] 3.4.2 Repeat on hvi and remaining platform rows; qualify interrupted setup/recovery and broader recipe/package mechanisms separately before production/fleet claims.
+    - [x] 3.4.2.1 Repeat the existing five-boot/three-instance private setup and fresh recipe reconstruction on hvi/macOS ARM64; unchanged guest/images, identical reconstructed artifact hashes, omitted recipe failure, immutable base and endpoint cleanup. Evidence: `results/hvi-macos-arm64-adaptable.json`. Interruption/recovery remains open.
 - [ ] 3.5 Test checkout/sibling/credential denial and allowed access controls with confinement active.
 - [ ] 3.6 Test forbidden egress, malformed frames, forged instance requests and shared-cache write attempts.
 - [ ] 3.7 Exercise keeper/init/helper death, transport loss, forced shutdown and suspend/resume; inspect orphan resources.
   - [x] 3.7.1 Kill the libkrun helper with SIGKILL while Redis SET progress is observed and the writer remains live; recover ext4, existing build outputs and all 32 separately acknowledged keys. Confirm the sibling Redis keeps its run ID/data and reap owned helpers/remove endpoints.
   - [ ] 3.7.2 Exercise keeper/init death, other transport-loss/forced-stop points, host suspend/resume and remaining rows. Helper termination does not qualify host power-loss durability.
   - [x] 3.7.3 Repeat helper SIGKILL during observed Redis SET progress on the Nix closure; recover all 32 separately acknowledged keys and unchanged compiled/small-file outputs, keep the sibling Redis run ID/data, reap owned helpers and remove endpoints. Evidence: `experiments/microvm/results/libkrun-macos-arm64-nix-workload.json`.
+
+  - [x] 3.7.4 Repeat helper SIGKILL during observed live Redis SET progress on hvi/macOS ARM64 for Alpine and Nix guests; recover acknowledged keys and existing build outputs while sibling service survives, then reap helpers/remove endpoints. Host power loss and other fault points remain open.
 
 ## 4. Measure and decide
 
@@ -75,3 +89,5 @@ and loss cases (2.3), and the x86-64 row and hvi comparison (1.3.2, 2.1).
 - [ ] 4.3 Measure logical/physical storage for identical and overlapping environments, per-project cache namespaces and cleanup retention.
 - [ ] 4.4 Publish raw results, failures/not-run rows, integration cost, each candidate against the five recorded backend criteria and a conditional recommendation including the no-go option.
 - [ ] 4.5 Obtain acceptance of the evidence, thresholds and release/platform criteria, and revisit the libkrun entry in `docs/decisions.md`, before unlocking production runtime adoption.
+
+Owner-directed Brig reference (2026-11-09): `experiments/microvm/fixtures/brig-reference.json` records profile resource allocations, block-root package-install guidance, process confinement and the pinned hvi relative performance gate. These are not the four absolute E5 no-go limits. A concrete threshold proposal is pending owner response; task 4.1 has not started.

@@ -12,7 +12,7 @@ import subprocess
 import threading
 import time
 
-from smoke import ROOT, artifact, drain
+from smoke import helper_identity, ROOT, artifact, drain
 from ssh_smoke import ENV, SOCKETS, Instance, command, require
 
 
@@ -220,7 +220,7 @@ def main():
     os.umask(0o077)
     args.out.mkdir(parents=True, exist_ok=False)
     guest = json.loads(args.guest.read_text())
-    report = {"schema": 1, "adapter": "libkrun", "qualification": "diagnostic-only",
+    report = {"schema": 1, **helper_identity(args.helper), "qualification": "diagnostic-only",
         "fixture": "Nix flake closure" if guest.get('nix') else "Alpine APK closure",
         "host": list(os.uname()), "guest_build": guest, "helper_artifact": artifact(args.helper),
         "workload_artifact": artifact(args.workload), "seed_artifact": artifact(args.seed),

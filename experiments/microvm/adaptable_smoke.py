@@ -9,7 +9,7 @@ import shlex
 import time
 
 from adaptable.recipe import encoded, load
-from smoke import ROOT, artifact, connect, line
+from smoke import helper_identity, ROOT, artifact, connect, line
 from ssh_smoke import command, require, SOCKETS
 from workload_smoke import WorkloadInstance
 
@@ -124,7 +124,7 @@ def main():
     runtime = json.loads((ROOT / 'artifacts/stage-c-runtime/guest.json').read_text())
     setup = json.loads((ROOT / 'artifacts/stage-c-setup/guest.json').read_text())
     require(runtime['setup_recipe_sha256'] == setup['setup_recipe_sha256'] == recipe_id, 'guest/recipe mismatch')
-    report = {'schema': 1, 'adapter': 'libkrun', 'qualification': 'diagnostic-only', 'status': 'failed',
+    report = {'schema': 1, **helper_identity(args.helper), 'qualification': 'diagnostic-only', 'status': 'failed',
         'host': list(os.uname()), 'kernel_artifact': artifact(args.kernel), 'helper_artifact': artifact(args.helper),
         'recipe': recipe, 'recipe_sha256': recipe_id, 'inputs': artifact(args.inputs), 'seed': artifact(args.seed),
         'guests': {'runtime': runtime, 'setup': setup}, 'resources_per_vm': {'vcpus': 2, 'memory_mib': 512},

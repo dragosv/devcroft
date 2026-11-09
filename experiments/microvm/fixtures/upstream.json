@@ -46,12 +46,27 @@
   "hvi": {
     "repository": "https://github.com/brig-sh/hvi-vmm",
     "revision": "351d1a15728e998486232e4815ba075a22e44f56",
-    "patches": [],
+    "patches": [
+      {
+        "path": "patches/hvi-vsock-fixed-ports.patch",
+        "sha256": "4641b57e08f32f0c4814db39dbbd8280a4b974d3218618fe1a85e48df78ef14d",
+        "status": "local experimental fixed-port bridge extension; not upstream merged"
+      }
+    ],
     "verified_api": [
       "boot(BootConfig) -> Result<Stop, BootError>",
       "BootConfig::agent_sock",
-      "MAX_DISKS = 4"
+      "MAX_DISKS = 4",
+      "BootConfig::sandbox = true",
+      "Plugin::on_attach before native confinement",
+      "Plugin::on_safepoint before vcpu0 guest entry",
+      "local BootConfig::agent_ports: fixed preopened listeners with per-connection source-port validation"
     ],
-    "execution": "not-run; no hvi adapter implemented"
+    "execution": "macOS ARM64 native functional rows implemented; Linux and x86-64 execution not yet qualified",
+    "limitations": [
+      "No RNG or balloon device in this pinned API; no page-reclaim parity claim.",
+      "Fixed local port-map extension required for the unchanged common keeper/SSH guest.",
+      "No native Linux/x86-64 qualification or density results."
+    ]
   }
 }

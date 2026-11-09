@@ -1,0 +1,320 @@
+{
+  "schema": 1,
+  "adapter": "hvi",
+  "helper_provenance": {
+    "adapter": "hvi",
+    "core_version": "0.1.0-rc.2+1.g351d1a1.dirty",
+    "patches": [
+      {
+        "file": "hvi-vsock-fixed-ports.patch",
+        "sha256": "4641b57e08f32f0c4814db39dbbd8280a4b974d3218618fe1a85e48df78ef14d"
+      }
+    ],
+    "revision": "351d1a15728e998486232e4815ba075a22e44f56"
+  },
+  "host": [
+    "Darwin",
+    "Dragoss-MacBook-Pro.local",
+    "24.6.0",
+    "Darwin Kernel Version 24.6.0: Mon Jan 19 22:01:58 PST 2026; root:xnu-11417.140.69.708.3~1/RELEASE_ARM64_T6041",
+    "arm64"
+  ],
+  "fixture": "stage-a-raw-disks",
+  "qualification": "diagnostic-only",
+  "instance_dir": "/private/tmp/dk-whqnzag2",
+  "boots": [
+    {
+      "boot": 1,
+      "status": "passed",
+      "ready_seconds": 0.338848874962423,
+      "greeting": "READY 1 state=1 ro=1 landlock=6 policy=1",
+      "landlock_abi": 6,
+      "guest_filesystem_policy": true,
+      "phase": "wait-for-exit",
+      "ping": true,
+      "readonly_backend": true,
+      "half_close": true,
+      "half_close_pending_bytes": 130816,
+      "oversized_frame_rejected": true,
+      "clean_shutdown": true,
+      "exit_code": 0
+    },
+    {
+      "boot": 2,
+      "status": "passed",
+      "ready_seconds": 0.5149011249886826,
+      "greeting": "READY 1 state=2 ro=1 landlock=6 policy=1",
+      "landlock_abi": 6,
+      "guest_filesystem_policy": true,
+      "phase": "wait-for-exit",
+      "ping": true,
+      "readonly_backend": true,
+      "half_close": true,
+      "half_close_pending_bytes": 130816,
+      "oversized_frame_rejected": true,
+      "clean_shutdown": true,
+      "exit_code": 0
+    }
+  ],
+  "helper_artifact": {
+    "path": "/Users/dragos/Development/devcroft-codex/experiments/microvm/hvi/target/debug/devcroft-hvi-spike",
+    "sha256": "2b145d5304507649e3994a40e94b61f5d6a901eb3bb3fdaee2629370c01d4e62"
+  },
+  "guest_build": {
+    "schema": 1,
+    "arch": "aarch64",
+    "fixture": "stage-a-raw-disks",
+    "zig_version": "0.17.0",
+    "source_sha256": "9b15a6dac747eac795a8bd97c0f78582d606825fa3adab6e71c4d0a994386bcf",
+    "initramfs": {
+      "path": "/Users/dragos/Development/devcroft-codex/experiments/microvm/artifacts/stage-a-after-adaptable/initramfs.cpio",
+      "sha256": "f8ab6923185f2976a12284b59539efdfe2be4688903c33522e4e5c3210701b72"
+    },
+    "runtime": {
+      "path": "/Users/dragos/Development/devcroft-codex/experiments/microvm/artifacts/stage-a-after-adaptable/runtime.img",
+      "sha256": "768f5b593e9f9f6888ea6930f6b6dc3adb65fd204b3c48361e0864dd6ae93f0c"
+    }
+  },
+  "sandbox": {
+    "outside_denied": true,
+    "passed": true,
+    "positive_controls": "retained pre-opened descriptors; all path reopening remains denied",
+    "readonly_input_works": true,
+    "runtime_write_denied": true,
+    "tcp_denied": true,
+    "thread_works": true,
+    "unix_works": true,
+    "writable_state_works": true
+  },
+  "runtime_unchanged": true,
+  "status": "passed",
+  "raw_evidence": "experiments/microvm/runs/20261109-hvi-reviewed-stage-a",
+  "host_boundary_events": [
+    {
+      "log": "runs/20261109-hvi-reviewed-stage-a/boot-1.stderr.log",
+      "descriptors": [
+        {
+          "access": 2,
+          "fd": 0,
+          "mode": 8192,
+          "path": "/dev/null"
+        },
+        {
+          "access": 1,
+          "fd": 1,
+          "mode": 4096,
+          "path": null
+        },
+        {
+          "access": 1,
+          "fd": 2,
+          "mode": 4096,
+          "path": null
+        },
+        {
+          "access": 2,
+          "fd": 3,
+          "mode": 0,
+          "path": null
+        },
+        {
+          "access": 0,
+          "fd": 4,
+          "mode": 32768,
+          "path": "/Users/dragos/Development/devcroft-codex/experiments/microvm/artifacts/stage-a-after-adaptable/runtime.img"
+        },
+        {
+          "access": 2,
+          "fd": 5,
+          "mode": 32768,
+          "path": "/private/tmp/dk-whqnzag2/state.img"
+        },
+        {
+          "access": 2,
+          "fd": 6,
+          "mode": 49152,
+          "path": null
+        },
+        {
+          "access": 2,
+          "fd": 7,
+          "mode": 49152,
+          "path": null
+        },
+        {
+          "access": 2,
+          "fd": 8,
+          "mode": 49152,
+          "path": null
+        },
+        {
+          "access": 2,
+          "fd": 9,
+          "mode": 49152,
+          "path": null
+        },
+        {
+          "access": 2,
+          "fd": 10,
+          "mode": 49152,
+          "path": null
+        },
+        {
+          "access": 0,
+          "fd": 11,
+          "mode": 4096,
+          "path": null
+        },
+        {
+          "access": 1,
+          "fd": 12,
+          "mode": 4096,
+          "path": null
+        }
+      ],
+      "disks_access_checked": true,
+      "event": "hvi-descriptor-inventory",
+      "unexpected_regular_files": false
+    },
+    {
+      "log": "runs/20261109-hvi-reviewed-stage-a/boot-1.stderr.log",
+      "event": "hvi-before-confinement-positive-controls",
+      "passed": true
+    },
+    {
+      "log": "runs/20261109-hvi-reviewed-stage-a/boot-1.stderr.log",
+      "event": "hvi-before-first-guest-entry",
+      "outside_denied": true,
+      "passed": true,
+      "runtime_reopen_denied": true,
+      "state_reopen_denied": true,
+      "tcp_denied": true
+    },
+    {
+      "log": "runs/20261109-hvi-reviewed-stage-a/boot-2.stderr.log",
+      "descriptors": [
+        {
+          "access": 2,
+          "fd": 0,
+          "mode": 8192,
+          "path": "/dev/null"
+        },
+        {
+          "access": 1,
+          "fd": 1,
+          "mode": 4096,
+          "path": null
+        },
+        {
+          "access": 1,
+          "fd": 2,
+          "mode": 4096,
+          "path": null
+        },
+        {
+          "access": 2,
+          "fd": 3,
+          "mode": 0,
+          "path": null
+        },
+        {
+          "access": 0,
+          "fd": 4,
+          "mode": 32768,
+          "path": "/Users/dragos/Development/devcroft-codex/experiments/microvm/artifacts/stage-a-after-adaptable/runtime.img"
+        },
+        {
+          "access": 2,
+          "fd": 5,
+          "mode": 32768,
+          "path": "/private/tmp/dk-whqnzag2/state.img"
+        },
+        {
+          "access": 2,
+          "fd": 6,
+          "mode": 49152,
+          "path": null
+        },
+        {
+          "access": 2,
+          "fd": 7,
+          "mode": 49152,
+          "path": null
+        },
+        {
+          "access": 2,
+          "fd": 8,
+          "mode": 49152,
+          "path": null
+        },
+        {
+          "access": 2,
+          "fd": 9,
+          "mode": 49152,
+          "path": null
+        },
+        {
+          "access": 2,
+          "fd": 10,
+          "mode": 49152,
+          "path": null
+        },
+        {
+          "access": 0,
+          "fd": 11,
+          "mode": 4096,
+          "path": null
+        },
+        {
+          "access": 1,
+          "fd": 12,
+          "mode": 4096,
+          "path": null
+        }
+      ],
+      "disks_access_checked": true,
+      "event": "hvi-descriptor-inventory",
+      "unexpected_regular_files": false
+    },
+    {
+      "log": "runs/20261109-hvi-reviewed-stage-a/boot-2.stderr.log",
+      "event": "hvi-before-confinement-positive-controls",
+      "passed": true
+    },
+    {
+      "log": "runs/20261109-hvi-reviewed-stage-a/boot-2.stderr.log",
+      "event": "hvi-before-first-guest-entry",
+      "outside_denied": true,
+      "passed": true,
+      "runtime_reopen_denied": true,
+      "state_reopen_denied": true,
+      "tcp_denied": true
+    }
+  ],
+  "host_confinement": {
+    "profile": "hvi native deny-default Seatbelt; no host path grants",
+    "order": "resources and on_attach positive controls, then process Seatbelt, then I/O/vCPU threads",
+    "probe_scope": "negative probes on first vcpu0 safepoint before its first entry; source ordering covers all vCPU threads",
+    "boots_with_probe": 2,
+    "disk_descriptor_access_checked": true
+  },
+  "density_collection": false,
+  "probe_sources": {
+    "smoke.py": "af93ea5cd5217231da0782b81032bd0dd0ec2913c2077e5658fd0a0b704d3a79",
+    "ssh_smoke.py": "834dbad4f66c6604690498208e39b07c97989d7fe87de9764808fade7753b19f",
+    "workload_smoke.py": "2616e24971efaf61ff86adc0519a11676a7b1242159774f7c7f89be8648c32cc",
+    "editor_smoke.py": "fc47c03ae32a5335b078bc3d9f708bbc2db05e3fd8f46061fe6eb7b59f8d2ec5",
+    "adaptable_smoke.py": "f934450922321f217a4b40ba869dbc4ac713cf49e71e2786cf6e9cded4b5e650",
+    "hvi/src/main.rs": "5569a64b8619bc3ec50d74b36d0052ecf3464dc2342c33fb04c54a4127daa0ab",
+    "hvi/build.rs": "e55179b0aca1f655566261c782de8b9213a37023713633a1cfd366bc5ed5e680",
+    "hvi/Cargo.lock": "028412b3f8b1d94ec275b44e6afc57d09c3ddb18569e1f77627cc8aaf5e4c9e1",
+    "build_hvi.py": "5c8cf821ed5b68f76507686dff5a32858c80b8ca56dcda49977fe708a2698c80",
+    "patches/hvi-vsock-fixed-ports.patch": "4641b57e08f32f0c4814db39dbbd8280a4b974d3218618fe1a85e48df78ef14d"
+  },
+  "remaining_limits": [
+    "macOS ARM64 functional diagnostic only; native Linux/x86-64 not qualified",
+    "No completed-agent, trusted Remote-SSH, density or host power-loss qualification",
+    "No hvi RNG/balloon device exposed by the pinned API; memory recovery remains unmeasured",
+    "Common artifacts reused; fixed-port hvi extension remains a local patch"
+  ]
+}

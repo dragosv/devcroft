@@ -1,0 +1,1199 @@
+{
+  "schema": 1,
+  "adapter": "hvi",
+  "helper_provenance": {
+    "adapter": "hvi",
+    "core_version": "0.1.0-rc.2+1.g351d1a1.dirty",
+    "patches": [
+      {
+        "file": "hvi-vsock-fixed-ports.patch",
+        "sha256": "4641b57e08f32f0c4814db39dbbd8280a4b974d3218618fe1a85e48df78ef14d"
+      }
+    ],
+    "revision": "351d1a15728e998486232e4815ba075a22e44f56"
+  },
+  "qualification": "diagnostic-only",
+  "fixture": "Alpine APK closure",
+  "host": [
+    "Darwin",
+    "Dragoss-MacBook-Pro.local",
+    "24.6.0",
+    "Darwin Kernel Version 24.6.0: Mon Jan 19 22:01:58 PST 2026; root:xnu-11417.140.69.708.3~1/RELEASE_ARM64_T6041",
+    "arm64"
+  ],
+  "guest_build": {
+    "schema": 1,
+    "arch": "aarch64",
+    "fixture": "stage-b-xxhash-redis-ext4",
+    "zig_version": "0.17.0",
+    "source_sha256": "ada6355d1db490f6307a34c821c47bceb9ab6567fcc8863313de51748c4d1dac",
+    "nono": "0.77.0",
+    "keeper_sha256": "6a0fc5c9886b18367ecda47e597b454ef9e761c50a7c025babd8747be9fdcbc0",
+    "busybox_sha256": "198f6f675a49ac734082e054b823d3e2e947180ca2f632852ae1c09e950fd676",
+    "workload": true,
+    "initramfs": {
+      "path": "/Users/dragos/Development/devcroft-codex/experiments/microvm/artifacts/stage-b-workload/initramfs.cpio",
+      "sha256": "2aef7f283f69d3ccc773dc9665bdc95211005ac74339a283531951e1bba4220b"
+    },
+    "runtime": {
+      "path": "/Users/dragos/Development/devcroft-codex/experiments/microvm/artifacts/stage-b-workload/runtime.img",
+      "sha256": "768f5b593e9f9f6888ea6930f6b6dc3adb65fd204b3c48361e0864dd6ae93f0c"
+    },
+    "sources": {
+      "src/keeper/connection.rs": "5ea9ab23a29a9eb73363759818af13d5619715e9bc3282409ebd0c4257363759",
+      "src/keeper/environment.rs": "dcf433c26bba99dbe3a28164e35cd38854c30a64521a21691dc92f15ddc29fc6",
+      "src/keeper/mod.rs": "2d93e061be8231d0e0f95b018405b7dac70973800f3a72eed951960d753573e9",
+      "src/keeper/protocol.rs": "a1fd3088992902e89022c229ed710d25487374bfeeeece8000dd2e5872572a2d",
+      "src/keeper/pty.rs": "be8ea1fda83d3932eebe6d54b509e2f96bae5df9aa313a00296e4fa41e580dca",
+      "src/keeper/registry.rs": "99d96e3c267247ecc2f2220f8c0667216998d2cdabd8aabf5284d21c38aa93ce",
+      "src/keeper/session.rs": "1d1a1fce6ff8daac07dc6a8cc95a5ef60362730ae7d22326658920d8a8cf195c",
+      "src/ssh/server.rs": "8c7ab0de47153e02c725684ef05fe1362f9d4af6204636304e4efc895552f986",
+      "src/ssh/sftp.rs": "805e6fc83c646b50df100010bb6bec3988733a8a79027ca1d6ce79ce745ae6ee",
+      "experiments/microvm/guest-keeper/src/bootstrap.rs": "9ad93deea140929f7b13c50411a8be1c46170ff3a118b75f9d32320a59b3e606",
+      "experiments/microvm/guest-keeper/src/linux.rs": "4056b5644573168c55af48acd5c00837a89e976e51dfc138c5ade238eaf7d319",
+      "experiments/microvm/guest-keeper/src/main.rs": "8195d8e46b245a42d9f20df636e9899c7a5bb9538968595850f8abfcb4fe7128",
+      "experiments/microvm/guest-keeper/Cargo.toml": "bf410f00c15228ec48cfda740c4a2c5a4f39e01e8f184edf4699ef3f96a2bb9f",
+      "experiments/microvm/guest-keeper/Cargo.lock": "c509b51fe02c1ae6842e01a302389076f615b27461f678b7b5af4e623b5e72b7",
+      "experiments/microvm/guest-keeper/zig-linker.sh": "28d89d7554ca99e4d1366d18d365253687076a7f9069d0488d9a011036626fd5",
+      "experiments/microvm/guest-keeper/zig-ar.sh": "8d9a92610ac547533bcce655621c435015305c043e273ea6a038ce999177935c",
+      "experiments/microvm/build_keeper_guest.py": "7d2e2ed0d53b813822c15b1e9e907d47ba7048a18146f0d131d0f043ed9cfb2c",
+      "experiments/microvm/build_guest.py": "55e34a70b59a632ae0bedb1173acc13c9ef2bab3f04f97346ab0dfe70193a547",
+      "experiments/microvm/guest/init.c": "ada6355d1db490f6307a34c821c47bceb9ab6567fcc8863313de51748c4d1dac"
+    },
+    "busybox_package": {
+      "schema": 1,
+      "package": "busybox-static-1.37.0-r30",
+      "architecture": "aarch64",
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.23/main/aarch64/busybox-static-1.37.0-r30.apk",
+      "sha256": "44c9abdfb970f398fa72c8382fe2d8808eea16beaf82daf6ac708b92f1b8659e",
+      "member": "bin/busybox.static",
+      "purpose": "Real static shell and utilities for the keeper integration fixture; not a provider closure"
+    },
+    "rustc": "rustc 1.95.0 (59807616e 2026-04-14)"
+  },
+  "helper_artifact": {
+    "path": "/Users/dragos/Development/devcroft-codex/experiments/microvm/hvi/target/debug/devcroft-hvi-spike",
+    "sha256": "2b145d5304507649e3994a40e94b61f5d6a901eb3bb3fdaee2629370c01d4e62"
+  },
+  "workload_artifact": {
+    "path": "/Users/dragos/Development/devcroft-codex/experiments/microvm/artifacts/workload/toolchain.img",
+    "sha256": "9d3c6a36a43e238c2b88df3f0a9a418a1af1edbbba70bf16ba466e91814bc45b"
+  },
+  "seed_artifact": {
+    "path": "/Users/dragos/Development/devcroft-codex/experiments/microvm/artifacts/workload/data.seed.img",
+    "sha256": "7ca2c31408d6e6c4f434d7d42d3719d7c42838e4dd1a340064d59addf2728a46"
+  },
+  "workload_build": {
+    "schema": 1,
+    "architecture": "aarch64",
+    "source": {
+      "schema": 1,
+      "project": "xxHash",
+      "version": "0.8.3",
+      "url": "https://github.com/Cyan4973/xxHash/archive/refs/tags/v0.8.3.tar.gz",
+      "sha256": "aae608dfe8213dfd05d909a57718ef82f30722c392344583d3f39050c7f29a80",
+      "build": "make -j2 xxhsum; make -C tests test_sanity",
+      "small_files": 2048,
+      "service": "Alpine Redis, exact APK closure recorded separately; appendonly yes, appendfsync always"
+    },
+    "packages": {
+      "schema": 1,
+      "architecture": "aarch64",
+      "packages": [
+        {
+          "url": "https://dl-cdn.alpinelinux.org/alpine/v3.23/community/aarch64/redis-8.4.2-r0.apk",
+          "file": "redis-8.4.2-r0.apk",
+          "sha256": "b05481e59402e685df3b97f02fd172c07c2fec8b4b7cb1ab993a06856ad458bd",
+          "bytes": 1770236
+        },
+        {
+          "url": "https://dl-cdn.alpinelinux.org/alpine/v3.23/main/aarch64/alpine-baselayout-3.7.2-r0.apk",
+          "file": "alpine-baselayout-3.7.2-r0.apk",
+          "sha256": "11c8dfc7c0f3c7eb3599b9faf2888bc012dc34118fc1f6e1c5740d77d82e26d3",
+          "bytes": 8268
+        },
+        {
+          "url": "https://dl-cdn.alpinelinux.org/alpine/v3.23/main/aarch64/alpine-baselayout-data-3.7.2-r0.apk",
+          "file": "alpine-baselayout-data-3.7.2-r0.apk",
+          "sha256": "7206c404fec5ccaae7f34604e8660ba1c6d5f93675ee0b83ef9843bfab730ac9",
+          "bytes": 10779
+        },
+        {
+          "url": "https://dl-cdn.alpinelinux.org/alpine/v3.23/main/aarch64/binutils-2.45.1-r0.apk",
+          "file": "binutils-2.45.1-r0.apk",
+          "sha256": "8fe163aa9736136f9d78de191cb336e20bed741871511c5e83da1429d6a7e53a",
+          "bytes": 3321755
+        },
+        {
+          "url": "https://dl-cdn.alpinelinux.org/alpine/v3.23/main/aarch64/busybox-1.37.0-r30.apk",
+          "file": "busybox-1.37.0-r30.apk",
+          "sha256": "d3c919f1f142e41ba83c7dbcc392388f23f840dda6867719e660ebb9cc681254",
+          "bytes": 521860
+        },
+        {
+          "url": "https://dl-cdn.alpinelinux.org/alpine/v3.23/main/aarch64/busybox-binsh-1.37.0-r30.apk",
+          "file": "busybox-binsh-1.37.0-r30.apk",
+          "sha256": "311c832f7b05a545b8d18dbddff23b1d6d0c6085970735398064f91ed55cd575",
+          "bytes": 1540
+        },
+        {
+          "url": "https://dl-cdn.alpinelinux.org/alpine/v3.23/main/aarch64/gcc-15.2.0-r2.apk",
+          "file": "gcc-15.2.0-r2.apk",
+          "sha256": "a06f4242b1e12a2449c1525a0e750c1503774de9e79db34f554b31241783ce48",
+          "bytes": 54697112
+        },
+        {
+          "url": "https://dl-cdn.alpinelinux.org/alpine/v3.23/main/aarch64/gmp-6.3.0-r4.apk",
+          "file": "gmp-6.3.0-r4.apk",
+          "sha256": "dc1b69ae15ad58a9f933b750fd4463defc32f7467f1ce9b57d80f893a6635377",
+          "bytes": 221013
+        },
+        {
+          "url": "https://dl-cdn.alpinelinux.org/alpine/v3.23/main/aarch64/isl26-0.26-r1.apk",
+          "file": "isl26-0.26-r1.apk",
+          "sha256": "bc3cb35a9d09ebb6401163ff605a9159679a64d91128f3ab96392e73b27af919",
+          "bytes": 870481
+        },
+        {
+          "url": "https://dl-cdn.alpinelinux.org/alpine/v3.23/main/aarch64/jansson-2.14.1-r0.apk",
+          "file": "jansson-2.14.1-r0.apk",
+          "sha256": "3f2782a46b59b8ecfb8a15750026be0097b414c9e788074020a6c698e3b74b90",
+          "bytes": 49695
+        },
+        {
+          "url": "https://dl-cdn.alpinelinux.org/alpine/v3.23/main/aarch64/libatomic-15.2.0-r2.apk",
+          "file": "libatomic-15.2.0-r2.apk",
+          "sha256": "1a44d408b77d92f1b3f002e1045399fad81c1d58409b895eeaba0bb5c3fe4402",
+          "bytes": 10366
+        },
+        {
+          "url": "https://dl-cdn.alpinelinux.org/alpine/v3.23/main/aarch64/libcrypto3-3.5.9-r0.apk",
+          "file": "libcrypto3-3.5.9-r0.apk",
+          "sha256": "3b0bd7aaac36d49216f47d025f303dafb6da8d05bd258f71900d3b6156d36012",
+          "bytes": 2286808
+        },
+        {
+          "url": "https://dl-cdn.alpinelinux.org/alpine/v3.23/main/aarch64/libgcc-15.2.0-r2.apk",
+          "file": "libgcc-15.2.0-r2.apk",
+          "sha256": "eaaafda78fde1c904e1741680ddea91649f051e29a343152c8a4327605704b0f",
+          "bytes": 66324
+        },
+        {
+          "url": "https://dl-cdn.alpinelinux.org/alpine/v3.23/main/aarch64/libgomp-15.2.0-r2.apk",
+          "file": "libgomp-15.2.0-r2.apk",
+          "sha256": "d2989f9476a67085442d916c1e55ebe213e269f3221225b3285585f3e47a33af",
+          "bytes": 146525
+        },
+        {
+          "url": "https://dl-cdn.alpinelinux.org/alpine/v3.23/main/aarch64/libssl3-3.5.9-r0.apk",
+          "file": "libssl3-3.5.9-r0.apk",
+          "sha256": "cdb3762116994f767cd1da423fa8004bd36b2e3802e3a1343786a40f00a5030e",
+          "bytes": 373026
+        },
+        {
+          "url": "https://dl-cdn.alpinelinux.org/alpine/v3.23/main/aarch64/libstdc++-15.2.0-r2.apk",
+          "file": "libstdc++-15.2.0-r2.apk",
+          "sha256": "10d72e25f6fcc0f3d9fdd801c9bdaed81d6e836aa2b65b63f25d2d97f860a7d1",
+          "bytes": 908978
+        },
+        {
+          "url": "https://dl-cdn.alpinelinux.org/alpine/v3.23/main/aarch64/make-4.4.1-r3.apk",
+          "file": "make-4.4.1-r3.apk",
+          "sha256": "e15217cadc367b7fc52871e3cc82fe7193bc82f75087db0598aa2e5e941f734c",
+          "bytes": 117570
+        },
+        {
+          "url": "https://dl-cdn.alpinelinux.org/alpine/v3.23/main/aarch64/mpc1-1.3.1-r1.apk",
+          "file": "mpc1-1.3.1-r1.apk",
+          "sha256": "753858c93308a54fd2c578e67ce5f3947e4b7946052b1e66a892cd5ee7efd4a4",
+          "bytes": 53693
+        },
+        {
+          "url": "https://dl-cdn.alpinelinux.org/alpine/v3.23/main/aarch64/mpfr4-4.2.2-r0.apk",
+          "file": "mpfr4-4.2.2-r0.apk",
+          "sha256": "da8b196bad532b4a82ea62f0b1609fc4bbdadb8ac9fed7c7792a84be8084a04f",
+          "bytes": 294779
+        },
+        {
+          "url": "https://dl-cdn.alpinelinux.org/alpine/v3.23/main/aarch64/musl-1.2.5-r24.apk",
+          "file": "musl-1.2.5-r24.apk",
+          "sha256": "d7043c549029c98d438e9bc94213b006e5c88540eb58d1f5b0f0d1d56dbf9c98",
+          "bytes": 416083
+        },
+        {
+          "url": "https://dl-cdn.alpinelinux.org/alpine/v3.23/main/aarch64/musl-dev-1.2.5-r24.apk",
+          "file": "musl-dev-1.2.5-r24.apk",
+          "sha256": "8e3a2e5b78069ebd1307cb092972de2f95deb0b21b866a788d1ac7d6972db43e",
+          "bytes": 2529387
+        },
+        {
+          "url": "https://dl-cdn.alpinelinux.org/alpine/v3.23/main/aarch64/ssl_client-1.37.0-r30.apk",
+          "file": "ssl_client-1.37.0-r30.apk",
+          "sha256": "990d82a6c4e3af70be12cc0ee09aa9ddfd30ac0ec71edad04b3fa158fd9ebe46",
+          "bytes": 5074
+        },
+        {
+          "url": "https://dl-cdn.alpinelinux.org/alpine/v3.23/main/aarch64/zlib-1.4-r0.apk",
+          "file": "zlib-1.4-r0.apk",
+          "sha256": "c9bc3c75104ffba5785277b38eb83bf90ea83539e3bb26c617864fb78dcb4462",
+          "bytes": 55052
+        },
+        {
+          "url": "https://dl-cdn.alpinelinux.org/alpine/v3.23/main/aarch64/zstd-libs-1.5.7-r2.apk",
+          "file": "zstd-libs-1.5.7-r2.apk",
+          "sha256": "50a998e56e4bf31504996e49c1b4a23eed5e0cd4e24b8a1356a54daf1a6eabbe",
+          "bytes": 363448
+        }
+      ]
+    },
+    "build_network": "apk install uses --no-network after complete hash verification",
+    "filesystem": "ext4; immutable toolchain plus per-instance writable workspace",
+    "reproducibility": "reconstruction recipe and exact source/APK inputs; not a bit-reproducible filesystem claim",
+    "toolchain.img": {
+      "sha256": "9d3c6a36a43e238c2b88df3f0a9a418a1af1edbbba70bf16ba466e91814bc45b",
+      "bytes": 536870912
+    },
+    "data.seed.img": {
+      "sha256": "7ca2c31408d6e6c4f434d7d42d3719d7c42838e4dd1a340064d59addf2728a46",
+      "bytes": 134217728
+    },
+    "packages.tar": {
+      "sha256": "d9e8dff30c7de638f896d26311e2e2b4f20b803364551a7f0f059b2520a69ef6",
+      "bytes": 69150720
+    },
+    "builder_packages": [
+      "acl-libs-2.3.2-r1",
+      "alpine-base-3.23.3-r0",
+      "alpine-baselayout-3.7.1-r8",
+      "alpine-baselayout-data-3.7.1-r8",
+      "alpine-conf-3.21.0-r0",
+      "alpine-keys-2.6-r0",
+      "alpine-release-3.23.3-r0",
+      "apk-tools-3.0.3-r1",
+      "bc-1.08.2-r0",
+      "binutils-2.45.1-r0",
+      "bison-3.8.2-r2",
+      "blkid-2.41.2-r0",
+      "bridge-1.5-r5",
+      "brotli-libs-1.2.0-r0",
+      "build-base-0.5-r3",
+      "busybox-1.37.0-r30",
+      "busybox-binsh-1.37.0-r30",
+      "busybox-mdev-openrc-1.37.0-r30",
+      "busybox-openrc-1.37.0-r30",
+      "busybox-suid-1.37.0-r30",
+      "c-ares-1.34.9-r0",
+      "ca-certificates-bundle-20251003-r0",
+      "chrony-4.8-r1",
+      "chrony-openrc-4.8-r1",
+      "cloud-init-25.3-r0",
+      "cloud-init-datasource-akamai-25.3-r0",
+      "cloud-init-datasource-akamai-pyc-25.3-r0",
+      "cloud-init-datasource-aliyun-25.3-r0",
+      "cloud-init-datasource-aliyun-pyc-25.3-r0",
+      "cloud-init-datasource-altcloud-25.3-r0",
+      "cloud-init-datasource-altcloud-pyc-25.3-r0",
+      "cloud-init-datasource-azure-25.3-r0",
+      "cloud-init-datasource-azure-pyc-25.3-r0",
+      "cloud-init-datasource-bigstep-25.3-r0",
+      "cloud-init-datasource-bigstep-pyc-25.3-r0",
+      "cloud-init-datasource-cloudcix-25.3-r0",
+      "cloud-init-datasource-cloudcix-pyc-25.3-r0",
+      "cloud-init-datasource-cloudsigma-25.3-r0",
+      "cloud-init-datasource-cloudsigma-pyc-25.3-r0",
+      "cloud-init-datasource-cloudstack-25.3-r0",
+      "cloud-init-datasource-cloudstack-pyc-25.3-r0",
+      "cloud-init-datasource-configdrive-25.3-r0",
+      "cloud-init-datasource-configdrive-pyc-25.3-r0",
+      "cloud-init-datasource-digitalocean-25.3-r0",
+      "cloud-init-datasource-digitalocean-pyc-25.3-r0",
+      "cloud-init-datasource-ec2-25.3-r0",
+      "cloud-init-datasource-ec2-pyc-25.3-r0",
+      "cloud-init-datasource-exoscale-25.3-r0",
+      "cloud-init-datasource-exoscale-pyc-25.3-r0",
+      "cloud-init-datasource-gce-25.3-r0",
+      "cloud-init-datasource-gce-pyc-25.3-r0",
+      "cloud-init-datasource-hetzner-25.3-r0",
+      "cloud-init-datasource-hetzner-pyc-25.3-r0",
+      "cloud-init-datasource-ibmcloud-25.3-r0",
+      "cloud-init-datasource-ibmcloud-pyc-25.3-r0",
+      "cloud-init-datasource-lxd-25.3-r0",
+      "cloud-init-datasource-lxd-pyc-25.3-r0",
+      "cloud-init-datasource-maas-25.3-r0",
+      "cloud-init-datasource-maas-pyc-25.3-r0",
+      "cloud-init-datasource-nocloud-25.3-r0",
+      "cloud-init-datasource-nocloud-pyc-25.3-r0",
+      "cloud-init-datasource-nwcs-25.3-r0",
+      "cloud-init-datasource-nwcs-pyc-25.3-r0",
+      "cloud-init-datasource-opennebula-25.3-r0",
+      "cloud-init-datasource-opennebula-pyc-25.3-r0",
+      "cloud-init-datasource-openstack-25.3-r0",
+      "cloud-init-datasource-openstack-pyc-25.3-r0",
+      "cloud-init-datasource-oracle-25.3-r0",
+      "cloud-init-datasource-oracle-pyc-25.3-r0",
+      "cloud-init-datasource-ovf-25.3-r0",
+      "cloud-init-datasource-ovf-pyc-25.3-r0",
+      "cloud-init-datasource-rbx-25.3-r0",
+      "cloud-init-datasource-rbx-pyc-25.3-r0",
+      "cloud-init-datasource-scaleway-25.3-r0",
+      "cloud-init-datasource-scaleway-pyc-25.3-r0",
+      "cloud-init-datasource-smartos-25.3-r0",
+      "cloud-init-datasource-smartos-pyc-25.3-r0",
+      "cloud-init-datasource-upcloud-25.3-r0",
+      "cloud-init-datasource-upcloud-pyc-25.3-r0",
+      "cloud-init-datasource-vmware-25.3-r0",
+      "cloud-init-datasource-vmware-pyc-25.3-r0",
+      "cloud-init-datasource-vultr-25.3-r0",
+      "cloud-init-datasource-vultr-pyc-25.3-r0",
+      "cloud-init-datasource-wsl-25.3-r0",
+      "cloud-init-datasource-wsl-pyc-25.3-r0",
+      "cloud-init-datasources-25.3-r0",
+      "cloud-init-openrc-25.3-r0",
+      "cloud-init-pyc-25.3-r0",
+      "cloud-utils-growpart-0.33-r1",
+      "cryptsetup-libs-2.8.1-r0",
+      "curl-8.23.0-r0",
+      "device-mapper-libs-2.03.35-r0",
+      "dhcpcd-10.3.0-r0",
+      "dhcpcd-openrc-10.3.0-r0",
+      "doas-6.8.2-r8",
+      "dosfstools-4.2-r2",
+      "e2fsprogs-1.47.3-r0",
+      "e2fsprogs-extra-1.47.3-r0",
+      "e2fsprogs-libs-1.47.3-r0",
+      "file-5.46-r2",
+      "flex-2.6.4-r7",
+      "fortify-headers-1.1-r5",
+      "g++-15.2.0-r2",
+      "gcc-15.2.0-r2",
+      "gdbm-1.26-r0",
+      "gmp-6.3.0-r4",
+      "gnutls-3.8.11-r0",
+      "grub-2.12-r8",
+      "grub-efi-2.12-r8",
+      "ifupdown-ng-0.12.1-r7",
+      "ifupdown-ng-iproute2-0.12.1-r7",
+      "iproute2-minimal-6.17.0-r0",
+      "isl26-0.26-r1",
+      "jansson-2.14.1-r0",
+      "json-c-0.18-r1",
+      "kmod-34.2-r1",
+      "kmod-libs-34.2-r1",
+      "lddtree-1.27-r0",
+      "libapk-3.0.3-r1",
+      "libatomic-15.2.0-r2",
+      "libblkid-2.41.2-r0",
+      "libbsd-0.12.2-r0",
+      "libbz2-1.0.8-r6",
+      "libcap2-2.77-r0",
+      "libcom_err-1.47.3-r0",
+      "libcrypto3-3.5.5-r0",
+      "libcurl-8.23.0-r0",
+      "libeconf-0.8.3-r0",
+      "libedit-20251016.3.1-r0",
+      "libelf-0.194-r0",
+      "libexpat-2.7.3-r0",
+      "libfdisk-2.41.2-r0",
+      "libffi-3.5.2-r0",
+      "libgcc-15.2.0-r2",
+      "libgomp-15.2.0-r2",
+      "libidn2-2.3.8-r0",
+      "libmagic-5.46-r2",
+      "libmd-1.1.0-r0",
+      "libmnl-1.0.5-r2",
+      "libmount-2.41.2-r0",
+      "libncursesw-6.5_p20251123-r0",
+      "libnvme-1.16.1-r0",
+      "libnvmemi-1.16.1-r0",
+      "libpanelw-6.5_p20251123-r0",
+      "libpsl-0.21.5-r3",
+      "libseccomp-2.6.0-r1",
+      "libsmartcols-2.41.2-r0",
+      "libssl3-3.5.5-r0",
+      "libstdc++-15.2.0-r2",
+      "libstdc++-dev-15.2.0-r2",
+      "libtasn1-4.21.0-r0",
+      "libunistring-1.4.1-r0",
+      "libuuid-2.41.2-r0",
+      "libxxhash-0.8.3-r0",
+      "linux-headers-6.16.12-r0",
+      "linux-pam-1.7.1-r2",
+      "linux-virt-6.18.7-r0",
+      "lz4-libs-1.10.0-r0",
+      "m4-1.4.20-r0",
+      "make-4.4.1-r3",
+      "mdev-conf-4.9-r0",
+      "mkinitfs-3.13.0-r0",
+      "mount-2.41.2-r0",
+      "mpc1-1.3.1-r1",
+      "mpdecimal-4.0.1-r0",
+      "mpfr4-4.2.2-r0",
+      "musl-1.2.5-r24",
+      "musl-dev-1.2.5-r24",
+      "musl-utils-1.2.5-r21",
+      "ncurses-terminfo-base-6.5_p20251123-r0",
+      "nettle-3.10.2-r0",
+      "nghttp2-libs-1.69.0-r0",
+      "nvme-cli-2.16-r1",
+      "openrc-0.63-r1",
+      "openrc-user-0.63-r1",
+      "openssh-10.2_p1-r0",
+      "openssh-client-common-10.2_p1-r0",
+      "openssh-client-default-10.2_p1-r0",
+      "openssh-keygen-10.2_p1-r0",
+      "openssh-server-10.2_p1-r0",
+      "openssh-server-common-10.2_p1-r0",
+      "openssh-server-common-openrc-10.2_p1-r0",
+      "openssh-server-pam-10.2_p1-r0",
+      "openssh-sftp-server-10.2_p1-r0",
+      "p11-kit-0.25.5-r2",
+      "partx-2.41.2-r0",
+      "patch-2.8-r0",
+      "perl-5.42.2-r0",
+      "popt-1.19-r4",
+      "py3-attrs-25.3.0-r0",
+      "py3-attrs-pyc-25.3.0-r0",
+      "py3-certifi-2025.11.12-r0",
+      "py3-certifi-pyc-2025.11.12-r0",
+      "py3-charset-normalizer-3.4.4-r0",
+      "py3-charset-normalizer-pyc-3.4.4-r0",
+      "py3-configobj-5.0.9-r1",
+      "py3-configobj-pyc-5.0.9-r1",
+      "py3-idna-3.11-r0",
+      "py3-idna-pyc-3.11-r0",
+      "py3-jinja2-3.1.6-r0",
+      "py3-jinja2-pyc-3.1.6-r0",
+      "py3-jsonpatch-1.33-r3",
+      "py3-jsonpatch-pyc-1.33-r3",
+      "py3-jsonpointer-3.0.0-r0",
+      "py3-jsonpointer-pyc-3.0.0-r0",
+      "py3-jsonschema-4.25.1-r0",
+      "py3-jsonschema-pyc-4.25.1-r0",
+      "py3-jsonschema-specifications-2025.9.1-r0",
+      "py3-jsonschema-specifications-pyc-2025.9.1-r0",
+      "py3-markupsafe-3.0.2-r0",
+      "py3-markupsafe-pyc-3.0.2-r0",
+      "py3-referencing-0.37.0-r0",
+      "py3-referencing-pyc-0.37.0-r0",
+      "py3-requests-2.32.5-r0",
+      "py3-requests-pyc-2.32.5-r0",
+      "py3-rpds-py-0.30.0-r0",
+      "py3-rpds-py-pyc-0.30.0-r0",
+      "py3-typing-extensions-4.15.0-r0",
+      "py3-typing-extensions-pyc-4.15.0-r0",
+      "py3-urllib3-2.6.3-r0",
+      "py3-urllib3-pyc-2.6.3-r0",
+      "py3-yaml-6.0.3-r0",
+      "py3-yaml-pyc-6.0.3-r0",
+      "pyc-3.12.12-r0",
+      "python3-3.12.12-r0",
+      "python3-pyc-3.12.12-r0",
+      "python3-pycache-pyc0-3.12.12-r0",
+      "readline-8.3.1-r0",
+      "rsync-3.5.2-r1",
+      "rsync-openrc-3.5.2-r1",
+      "scanelf-1.3.8-r2",
+      "sfdisk-2.41.2-r0",
+      "shadow-4.18.0-r0",
+      "skalibs-libs-2.14.4.0-r0",
+      "sqlite-libs-3.51.2-r0",
+      "ssl_client-1.37.0-r30",
+      "sudo-1.9.17_p2-r0",
+      "tzdata-2025c-r0",
+      "utmps-libs-0.1.3.1-r0",
+      "xz-5.8.4-r0",
+      "xz-libs-5.8.2-r0",
+      "yaml-0.2.5-r2",
+      "zlib-1.3.1-r2",
+      "zstd-libs-1.5.7-r2"
+    ]
+  },
+  "resources_per_vm": {
+    "vcpus": 2,
+    "memory_mib": 512
+  },
+  "instances": [
+    {
+      "label": "a",
+      "instance_id": "d7df166accad3db27076bdf2d6182f47",
+      "instance_dir": "/private/tmp/ds-t1rp0kku",
+      "boots": [
+        {
+          "boot": 1,
+          "greeting": "READY 1 state=1 ro=1 landlock=6 policy=1",
+          "ready_seconds": 2.4292210830026306,
+          "build": {
+            "project": "xxHash 0.8.3",
+            "compiler_runs_in_guest": true,
+            "network": "no NIC/TSI; fixed source and toolchain pre-materialized",
+            "upstream_test_sanity": "passed",
+            "small_files_verified_and_hashed": 2048,
+            "sha256": {
+              "/workspace/project/xxhsum": "3330ce93433c5ef97fd7ce1ff697401f61ef0fef9e0c236123101bd499424e12",
+              "/workspace/project/tests/sanity_test": "a87786e8381c531260d5435bf6a83720c209b8094240fe47abab99628608a7af",
+              "/workspace/hashes.txt": "26c69ceea3b93f9eae742e6bcdcd946e379b0e9551ab55f20b0f33aebd1e6c34",
+              "/workspace/small/SHA256SUMS": "508278cbaea6f4ef5127f559bb3f52d86250010ba625ccd60d031c67eda21755"
+            }
+          },
+          "redis": {
+            "ready": true,
+            "run_id": "169b552f7cba02b9fc0d50ddf8142b027a4bbf73",
+            "appendonly": true,
+            "appendfsync": "always",
+            "arm64_madvise_free_fork_check": "OK",
+            "ignored_warnings": [],
+            "system_check_exit_code": 1,
+            "clocksource_warning": true,
+            "other_system_checks_qualified": false
+          },
+          "acknowledged_keys_written": 32,
+          "acknowledged_redis_keys_verified": {
+            "count": 32,
+            "sha256": "9f706716000c9158f2d0cf83a296c388edbbf3536bee9de6fc8f362c55f519ea"
+          },
+          "exit_code": 0,
+          "forced_cleanup": false,
+          "log_overflow": false,
+          "ssh_console_captured": true,
+          "guest_console_stream": "stdout"
+        },
+        {
+          "boot": 2,
+          "greeting": "READY 1 state=2 ro=1 landlock=6 policy=1",
+          "ready_seconds": 3.0893042919924483,
+          "persisted_build_verified": {
+            "sha256": {
+              "/workspace/project/xxhsum": "3330ce93433c5ef97fd7ce1ff697401f61ef0fef9e0c236123101bd499424e12",
+              "/workspace/project/tests/sanity_test": "a87786e8381c531260d5435bf6a83720c209b8094240fe47abab99628608a7af",
+              "/workspace/hashes.txt": "26c69ceea3b93f9eae742e6bcdcd946e379b0e9551ab55f20b0f33aebd1e6c34",
+              "/workspace/small/SHA256SUMS": "508278cbaea6f4ef5127f559bb3f52d86250010ba625ccd60d031c67eda21755"
+            },
+            "small_files": 2048,
+            "existing_binary_test_sanity": "passed",
+            "rebuilt_before_check": false
+          },
+          "redis": {
+            "ready": true,
+            "run_id": "768d82be1c5729bf61d43a86f9f3f7ebcc30e6d5",
+            "appendonly": true,
+            "appendfsync": "always",
+            "arm64_madvise_free_fork_check": "OK",
+            "ignored_warnings": [],
+            "system_check_exit_code": 1,
+            "clocksource_warning": true,
+            "other_system_checks_qualified": false
+          },
+          "acknowledged_redis_keys_verified": {
+            "count": 32,
+            "sha256": "9f706716000c9158f2d0cf83a296c388edbbf3536bee9de6fc8f362c55f519ea"
+          },
+          "forced_stop": {
+            "expected": true,
+            "signal": "SIGKILL",
+            "redis_set_calls_before": 0,
+            "redis_set_calls_at_stop": 29360,
+            "writer_still_running": true,
+            "writer_exit_code": 255
+          },
+          "exit_code": -9,
+          "forced_cleanup": true,
+          "log_overflow": false,
+          "ssh_console_captured": true,
+          "guest_console_stream": "stdout"
+        },
+        {
+          "boot": 3,
+          "greeting": "READY 1 state=3 ro=1 landlock=6 policy=1",
+          "ready_seconds": 2.6289592499961145,
+          "persisted_build_verified": {
+            "sha256": {
+              "/workspace/project/xxhsum": "3330ce93433c5ef97fd7ce1ff697401f61ef0fef9e0c236123101bd499424e12",
+              "/workspace/project/tests/sanity_test": "a87786e8381c531260d5435bf6a83720c209b8094240fe47abab99628608a7af",
+              "/workspace/hashes.txt": "26c69ceea3b93f9eae742e6bcdcd946e379b0e9551ab55f20b0f33aebd1e6c34",
+              "/workspace/small/SHA256SUMS": "508278cbaea6f4ef5127f559bb3f52d86250010ba625ccd60d031c67eda21755"
+            },
+            "small_files": 2048,
+            "existing_binary_test_sanity": "passed",
+            "rebuilt_before_check": false
+          },
+          "redis": {
+            "ready": true,
+            "run_id": "ee841d1892031f91df4e0c5ed1d7f244db691120",
+            "appendonly": true,
+            "appendfsync": "always",
+            "arm64_madvise_free_fork_check": "OK",
+            "ignored_warnings": [],
+            "system_check_exit_code": 1,
+            "clocksource_warning": true,
+            "other_system_checks_qualified": false
+          },
+          "acknowledged_redis_keys_verified": {
+            "count": 32,
+            "sha256": "9f706716000c9158f2d0cf83a296c388edbbf3536bee9de6fc8f362c55f519ea"
+          },
+          "exit_code": 0,
+          "forced_cleanup": false,
+          "log_overflow": false,
+          "ssh_console_captured": true,
+          "guest_console_stream": "stdout"
+        }
+      ],
+      "sandbox": {
+        "outside_denied": true,
+        "passed": true,
+        "positive_controls": "retained pre-opened descriptors; all path reopening remains denied",
+        "readonly_input_works": true,
+        "runtime_write_denied": true,
+        "tcp_denied": true,
+        "thread_works": true,
+        "unix_works": true,
+        "writable_state_works": true
+      }
+    },
+    {
+      "label": "b",
+      "instance_id": "faf505e9b5ea66f46299bfb107b51dfe",
+      "instance_dir": "/private/tmp/ds-fnfzd2y0",
+      "boots": [
+        {
+          "boot": 1,
+          "greeting": "READY 1 state=1 ro=1 landlock=6 policy=1",
+          "ready_seconds": 2.42725495796185,
+          "build": {
+            "project": "xxHash 0.8.3",
+            "compiler_runs_in_guest": true,
+            "network": "no NIC/TSI; fixed source and toolchain pre-materialized",
+            "upstream_test_sanity": "passed",
+            "small_files_verified_and_hashed": 2048,
+            "sha256": {
+              "/workspace/project/xxhsum": "3330ce93433c5ef97fd7ce1ff697401f61ef0fef9e0c236123101bd499424e12",
+              "/workspace/project/tests/sanity_test": "a87786e8381c531260d5435bf6a83720c209b8094240fe47abab99628608a7af",
+              "/workspace/hashes.txt": "26c69ceea3b93f9eae742e6bcdcd946e379b0e9551ab55f20b0f33aebd1e6c34",
+              "/workspace/small/SHA256SUMS": "508278cbaea6f4ef5127f559bb3f52d86250010ba625ccd60d031c67eda21755"
+            }
+          },
+          "redis": {
+            "ready": true,
+            "run_id": "4e75b14f8ea23ed871f738d6efecc0dd7c1e9e31",
+            "appendonly": true,
+            "appendfsync": "always",
+            "arm64_madvise_free_fork_check": "OK",
+            "ignored_warnings": [],
+            "system_check_exit_code": 1,
+            "clocksource_warning": true,
+            "other_system_checks_qualified": false
+          },
+          "acknowledged_keys_written": 32,
+          "acknowledged_redis_keys_verified": {
+            "count": 32,
+            "sha256": "ce8fdf5d1914559e47dc732f81867d9a5773bdd0141f315f6ce0395228605eac"
+          },
+          "exit_code": 0,
+          "forced_cleanup": false,
+          "log_overflow": false,
+          "ssh_console_captured": true,
+          "guest_console_stream": "stdout"
+        }
+      ],
+      "sandbox": {
+        "outside_denied": true,
+        "passed": true,
+        "positive_controls": "retained pre-opened descriptors; all path reopening remains denied",
+        "readonly_input_works": true,
+        "runtime_write_denied": true,
+        "tcp_denied": true,
+        "thread_works": true,
+        "unix_works": true,
+        "writable_state_works": true
+      }
+    }
+  ],
+  "status": "passed",
+  "two_real_redis_services_same_guest_port": 6379,
+  "clean_restart_persistence": true,
+  "sibling_service_survives_crash": true,
+  "active_write_crash_recovery": true,
+  "acknowledged_keys_recovered": 32,
+  "immutable_toolchain_unchanged": true,
+  "cleanup": {
+    "all_owned_helpers_reaped": true,
+    "endpoints_removed": true
+  },
+  "raw_evidence": "experiments/microvm/runs/20261109-hvi-reviewed-workload",
+  "host_boundary_events": [
+    {
+      "log": "runs/20261109-hvi-reviewed-workload/a/boot-1.stderr.log",
+      "descriptors": [
+        {
+          "access": 2,
+          "fd": 0,
+          "mode": 8192,
+          "path": "/dev/null"
+        },
+        {
+          "access": 1,
+          "fd": 1,
+          "mode": 4096,
+          "path": null
+        },
+        {
+          "access": 1,
+          "fd": 2,
+          "mode": 4096,
+          "path": null
+        },
+        {
+          "access": 2,
+          "fd": 3,
+          "mode": 0,
+          "path": null
+        },
+        {
+          "access": 0,
+          "fd": 4,
+          "mode": 32768,
+          "path": "/Users/dragos/Development/devcroft-codex/experiments/microvm/artifacts/stage-b-workload/runtime.img"
+        },
+        {
+          "access": 2,
+          "fd": 5,
+          "mode": 32768,
+          "path": "/private/tmp/ds-t1rp0kku/state.img"
+        },
+        {
+          "access": 0,
+          "fd": 6,
+          "mode": 32768,
+          "path": "/Users/dragos/Development/devcroft-codex/experiments/microvm/artifacts/workload/toolchain.img"
+        },
+        {
+          "access": 2,
+          "fd": 7,
+          "mode": 32768,
+          "path": "/private/tmp/ds-t1rp0kku/data.img"
+        },
+        {
+          "access": 2,
+          "fd": 8,
+          "mode": 49152,
+          "path": null
+        },
+        {
+          "access": 2,
+          "fd": 9,
+          "mode": 49152,
+          "path": null
+        },
+        {
+          "access": 2,
+          "fd": 10,
+          "mode": 49152,
+          "path": null
+        },
+        {
+          "access": 2,
+          "fd": 11,
+          "mode": 49152,
+          "path": null
+        },
+        {
+          "access": 2,
+          "fd": 12,
+          "mode": 49152,
+          "path": null
+        },
+        {
+          "access": 0,
+          "fd": 13,
+          "mode": 4096,
+          "path": null
+        },
+        {
+          "access": 1,
+          "fd": 14,
+          "mode": 4096,
+          "path": null
+        }
+      ],
+      "disks_access_checked": true,
+      "event": "hvi-descriptor-inventory",
+      "unexpected_regular_files": false
+    },
+    {
+      "log": "runs/20261109-hvi-reviewed-workload/a/boot-1.stderr.log",
+      "event": "hvi-before-confinement-positive-controls",
+      "passed": true
+    },
+    {
+      "log": "runs/20261109-hvi-reviewed-workload/a/boot-1.stderr.log",
+      "event": "hvi-before-first-guest-entry",
+      "outside_denied": true,
+      "passed": true,
+      "runtime_reopen_denied": true,
+      "state_reopen_denied": true,
+      "tcp_denied": true
+    },
+    {
+      "log": "runs/20261109-hvi-reviewed-workload/a/boot-2.stderr.log",
+      "descriptors": [
+        {
+          "access": 2,
+          "fd": 0,
+          "mode": 8192,
+          "path": "/dev/null"
+        },
+        {
+          "access": 1,
+          "fd": 1,
+          "mode": 4096,
+          "path": null
+        },
+        {
+          "access": 1,
+          "fd": 2,
+          "mode": 4096,
+          "path": null
+        },
+        {
+          "access": 2,
+          "fd": 3,
+          "mode": 0,
+          "path": null
+        },
+        {
+          "access": 0,
+          "fd": 4,
+          "mode": 32768,
+          "path": "/Users/dragos/Development/devcroft-codex/experiments/microvm/artifacts/stage-b-workload/runtime.img"
+        },
+        {
+          "access": 2,
+          "fd": 5,
+          "mode": 32768,
+          "path": "/private/tmp/ds-t1rp0kku/state.img"
+        },
+        {
+          "access": 0,
+          "fd": 6,
+          "mode": 32768,
+          "path": "/Users/dragos/Development/devcroft-codex/experiments/microvm/artifacts/workload/toolchain.img"
+        },
+        {
+          "access": 2,
+          "fd": 7,
+          "mode": 32768,
+          "path": "/private/tmp/ds-t1rp0kku/data.img"
+        },
+        {
+          "access": 2,
+          "fd": 8,
+          "mode": 49152,
+          "path": null
+        },
+        {
+          "access": 2,
+          "fd": 9,
+          "mode": 49152,
+          "path": null
+        },
+        {
+          "access": 2,
+          "fd": 10,
+          "mode": 49152,
+          "path": null
+        },
+        {
+          "access": 2,
+          "fd": 11,
+          "mode": 49152,
+          "path": null
+        },
+        {
+          "access": 2,
+          "fd": 12,
+          "mode": 49152,
+          "path": null
+        },
+        {
+          "access": 0,
+          "fd": 13,
+          "mode": 4096,
+          "path": null
+        },
+        {
+          "access": 1,
+          "fd": 14,
+          "mode": 4096,
+          "path": null
+        }
+      ],
+      "disks_access_checked": true,
+      "event": "hvi-descriptor-inventory",
+      "unexpected_regular_files": false
+    },
+    {
+      "log": "runs/20261109-hvi-reviewed-workload/a/boot-2.stderr.log",
+      "event": "hvi-before-confinement-positive-controls",
+      "passed": true
+    },
+    {
+      "log": "runs/20261109-hvi-reviewed-workload/a/boot-2.stderr.log",
+      "event": "hvi-before-first-guest-entry",
+      "outside_denied": true,
+      "passed": true,
+      "runtime_reopen_denied": true,
+      "state_reopen_denied": true,
+      "tcp_denied": true
+    },
+    {
+      "log": "runs/20261109-hvi-reviewed-workload/a/boot-3.stderr.log",
+      "descriptors": [
+        {
+          "access": 2,
+          "fd": 0,
+          "mode": 8192,
+          "path": "/dev/null"
+        },
+        {
+          "access": 1,
+          "fd": 1,
+          "mode": 4096,
+          "path": null
+        },
+        {
+          "access": 1,
+          "fd": 2,
+          "mode": 4096,
+          "path": null
+        },
+        {
+          "access": 2,
+          "fd": 3,
+          "mode": 0,
+          "path": null
+        },
+        {
+          "access": 0,
+          "fd": 4,
+          "mode": 32768,
+          "path": "/Users/dragos/Development/devcroft-codex/experiments/microvm/artifacts/stage-b-workload/runtime.img"
+        },
+        {
+          "access": 2,
+          "fd": 5,
+          "mode": 32768,
+          "path": "/private/tmp/ds-t1rp0kku/state.img"
+        },
+        {
+          "access": 0,
+          "fd": 6,
+          "mode": 32768,
+          "path": "/Users/dragos/Development/devcroft-codex/experiments/microvm/artifacts/workload/toolchain.img"
+        },
+        {
+          "access": 2,
+          "fd": 7,
+          "mode": 32768,
+          "path": "/private/tmp/ds-t1rp0kku/data.img"
+        },
+        {
+          "access": 2,
+          "fd": 8,
+          "mode": 49152,
+          "path": null
+        },
+        {
+          "access": 2,
+          "fd": 9,
+          "mode": 49152,
+          "path": null
+        },
+        {
+          "access": 2,
+          "fd": 10,
+          "mode": 49152,
+          "path": null
+        },
+        {
+          "access": 2,
+          "fd": 11,
+          "mode": 49152,
+          "path": null
+        },
+        {
+          "access": 2,
+          "fd": 12,
+          "mode": 49152,
+          "path": null
+        },
+        {
+          "access": 0,
+          "fd": 13,
+          "mode": 4096,
+          "path": null
+        },
+        {
+          "access": 1,
+          "fd": 14,
+          "mode": 4096,
+          "path": null
+        }
+      ],
+      "disks_access_checked": true,
+      "event": "hvi-descriptor-inventory",
+      "unexpected_regular_files": false
+    },
+    {
+      "log": "runs/20261109-hvi-reviewed-workload/a/boot-3.stderr.log",
+      "event": "hvi-before-confinement-positive-controls",
+      "passed": true
+    },
+    {
+      "log": "runs/20261109-hvi-reviewed-workload/a/boot-3.stderr.log",
+      "event": "hvi-before-first-guest-entry",
+      "outside_denied": true,
+      "passed": true,
+      "runtime_reopen_denied": true,
+      "state_reopen_denied": true,
+      "tcp_denied": true
+    },
+    {
+      "log": "runs/20261109-hvi-reviewed-workload/b/boot-1.stderr.log",
+      "descriptors": [
+        {
+          "access": 2,
+          "fd": 0,
+          "mode": 8192,
+          "path": "/dev/null"
+        },
+        {
+          "access": 1,
+          "fd": 1,
+          "mode": 4096,
+          "path": null
+        },
+        {
+          "access": 1,
+          "fd": 2,
+          "mode": 4096,
+          "path": null
+        },
+        {
+          "access": 2,
+          "fd": 3,
+          "mode": 0,
+          "path": null
+        },
+        {
+          "access": 0,
+          "fd": 4,
+          "mode": 32768,
+          "path": "/Users/dragos/Development/devcroft-codex/experiments/microvm/artifacts/stage-b-workload/runtime.img"
+        },
+        {
+          "access": 2,
+          "fd": 5,
+          "mode": 32768,
+          "path": "/private/tmp/ds-fnfzd2y0/state.img"
+        },
+        {
+          "access": 0,
+          "fd": 6,
+          "mode": 32768,
+          "path": "/Users/dragos/Development/devcroft-codex/experiments/microvm/artifacts/workload/toolchain.img"
+        },
+        {
+          "access": 2,
+          "fd": 7,
+          "mode": 32768,
+          "path": "/private/tmp/ds-fnfzd2y0/data.img"
+        },
+        {
+          "access": 2,
+          "fd": 8,
+          "mode": 49152,
+          "path": null
+        },
+        {
+          "access": 2,
+          "fd": 9,
+          "mode": 49152,
+          "path": null
+        },
+        {
+          "access": 2,
+          "fd": 10,
+          "mode": 49152,
+          "path": null
+        },
+        {
+          "access": 2,
+          "fd": 11,
+          "mode": 49152,
+          "path": null
+        },
+        {
+          "access": 2,
+          "fd": 12,
+          "mode": 49152,
+          "path": null
+        },
+        {
+          "access": 0,
+          "fd": 13,
+          "mode": 4096,
+          "path": null
+        },
+        {
+          "access": 1,
+          "fd": 14,
+          "mode": 4096,
+          "path": null
+        }
+      ],
+      "disks_access_checked": true,
+      "event": "hvi-descriptor-inventory",
+      "unexpected_regular_files": false
+    },
+    {
+      "log": "runs/20261109-hvi-reviewed-workload/b/boot-1.stderr.log",
+      "event": "hvi-before-confinement-positive-controls",
+      "passed": true
+    },
+    {
+      "log": "runs/20261109-hvi-reviewed-workload/b/boot-1.stderr.log",
+      "event": "hvi-before-first-guest-entry",
+      "outside_denied": true,
+      "passed": true,
+      "runtime_reopen_denied": true,
+      "state_reopen_denied": true,
+      "tcp_denied": true
+    }
+  ],
+  "host_confinement": {
+    "profile": "hvi native deny-default Seatbelt; no host path grants",
+    "order": "resources and on_attach positive controls, then process Seatbelt, then I/O/vCPU threads",
+    "probe_scope": "negative probes on first vcpu0 safepoint before its first entry; source ordering covers all vCPU threads",
+    "boots_with_probe": 4,
+    "disk_descriptor_access_checked": true
+  },
+  "density_collection": false,
+  "probe_sources": {
+    "smoke.py": "af93ea5cd5217231da0782b81032bd0dd0ec2913c2077e5658fd0a0b704d3a79",
+    "ssh_smoke.py": "834dbad4f66c6604690498208e39b07c97989d7fe87de9764808fade7753b19f",
+    "workload_smoke.py": "2616e24971efaf61ff86adc0519a11676a7b1242159774f7c7f89be8648c32cc",
+    "editor_smoke.py": "fc47c03ae32a5335b078bc3d9f708bbc2db05e3fd8f46061fe6eb7b59f8d2ec5",
+    "adaptable_smoke.py": "f934450922321f217a4b40ba869dbc4ac713cf49e71e2786cf6e9cded4b5e650",
+    "hvi/src/main.rs": "5569a64b8619bc3ec50d74b36d0052ecf3464dc2342c33fb04c54a4127daa0ab",
+    "hvi/build.rs": "e55179b0aca1f655566261c782de8b9213a37023713633a1cfd366bc5ed5e680",
+    "hvi/Cargo.lock": "028412b3f8b1d94ec275b44e6afc57d09c3ddb18569e1f77627cc8aaf5e4c9e1",
+    "build_hvi.py": "5c8cf821ed5b68f76507686dff5a32858c80b8ca56dcda49977fe708a2698c80",
+    "patches/hvi-vsock-fixed-ports.patch": "4641b57e08f32f0c4814db39dbbd8280a4b974d3218618fe1a85e48df78ef14d"
+  },
+  "remaining_limits": [
+    "macOS ARM64 functional diagnostic only; native Linux/x86-64 not qualified",
+    "No completed-agent, trusted Remote-SSH, density or host power-loss qualification",
+    "No hvi RNG/balloon device exposed by the pinned API; memory recovery remains unmeasured",
+    "Common artifacts reused; fixed-port hvi extension remains a local patch"
+  ]
+}

@@ -1,0 +1,531 @@
+diff --git a/examples/watch_guest.rs b/examples/watch_guest.rs
+index 675f4be..7bc5b1e 100644
+--- a/examples/watch_guest.rs
++++ b/examples/watch_guest.rs
+@@ -209,6 +209,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
+         sandbox_id: String::from("watch-guest"),
+         vcpus: 1,
+         agent_sock: None,
++        agent_ports: Vec::new(),
+         plugin: Some(Arc::new(WatchGuest::new())),
+         sandbox: true,
+         stop: None,
+diff --git a/src/arch/aarch64/hvf.rs b/src/arch/aarch64/hvf.rs
+index 01b1d81..95aca6b 100644
+--- a/src/arch/aarch64/hvf.rs
++++ b/src/arch/aarch64/hvf.rs
+@@ -515,18 +515,29 @@ pub(crate) fn boot(mut cfg: BootConfig) -> Result<Stop, Box<dyn std::error::Erro
+ 
+     let net = net::share(net_dev, cfg.net_mac);
+ 
+-    let vsock = cfg.agent_sock.as_ref().map(|sock| {
+-        eprintln!("{LOG_PREFIX} virtio-vsock: agent bridge on {sock} (guest cid 3, port 1024)");
+-        Arc::new(Mutex::new(VirtioVsock::new()))
+-    });
+-    // Bind before Seatbelt is installed. Accepting on this already-open
+-    // listener remains allowed afterwards; acquiring a new socket does not.
+-    let bridge = match (&cfg.agent_sock, &vsock) {
+-        (Some(path), Some(dev)) => {
+-            Some(VsockBridge::bind(path, Arc::clone(dev), Arc::clone(&ram))?)
++    let endpoints: Vec<_> = cfg
++        .agent_sock
++        .iter()
++        .map(|path| (path.as_str(), 1024))
++        .chain(
++            cfg.agent_ports
++                .iter()
++                .map(|(path, port)| (path.as_str(), *port)),
++        )
++        .collect();
++    let vsock = (!endpoints.is_empty()).then(|| Arc::new(Mutex::new(VirtioVsock::new())));
++    // Acquire every listener before Seatbelt; no later path grants are needed.
++    let mut bridge = Vec::new();
++    if let Some(dev) = &vsock {
++        for (path, port) in endpoints {
++            bridge.push(VsockBridge::bind(
++                path,
++                port,
++                Arc::clone(dev),
++                Arc::clone(&ram),
++            )?);
+         }
+-        _ => None,
+-    };
++    }
+     // The stop source's socket pair is created before Seatbelt for the same
+     // reason.
+     let stop_source = StopSource::new()?;
+diff --git a/src/arch/aarch64/kvm.rs b/src/arch/aarch64/kvm.rs
+index b37b2f8..a1de132 100644
+--- a/src/arch/aarch64/kvm.rs
++++ b/src/arch/aarch64/kvm.rs
+@@ -258,10 +258,8 @@ pub(crate) fn boot(mut cfg: BootConfig) -> Result<Stop, Box<dyn std::error::Erro
+ 
+     let net = net::share(net_dev, cfg.net_mac);
+ 
+-    let vsock = cfg
+-        .agent_sock
+-        .as_ref()
+-        .map(|_| Arc::new(Mutex::new(VirtioVsock::new())));
++    let vsock = (cfg.agent_sock.is_some() || !cfg.agent_ports.is_empty())
++        .then(|| Arc::new(Mutex::new(VirtioVsock::new())));
+     // virtio-fs: one transport per export, each served by the caller's daemon.
+     let fs = vhost_user::attach(&cfg.fs, shared_ram.as_raw_fd(), |index| {
+         place_virtio_fs(index, &gic, Some(GIC_NUM_IRQS)).map_err(std::io::Error::other)
+diff --git a/src/arch/x86_64/kvm.rs b/src/arch/x86_64/kvm.rs
+index d583235..297b575 100644
+--- a/src/arch/x86_64/kvm.rs
++++ b/src/arch/x86_64/kvm.rs
+@@ -325,10 +325,8 @@ pub(crate) fn boot(mut cfg: BootConfig) -> Result<Stop, Box<dyn std::error::Erro
+ 
+     let net = net::share(net_dev, cfg.net_mac);
+ 
+-    let vsock = cfg
+-        .agent_sock
+-        .as_ref()
+-        .map(|_| Arc::new(Mutex::new(VirtioVsock::new())));
++    let vsock = (cfg.agent_sock.is_some() || !cfg.agent_ports.is_empty())
++        .then(|| Arc::new(Mutex::new(VirtioVsock::new())));
+     // virtio-fs: one transport per export, each served by the caller's daemon.
+     let fs = vhost_user::attach(&cfg.fs, shared_ram.as_raw_fd(), |index| {
+         match (virtio_fs_base(index), virtio_fs_gsi(index)) {
+@@ -939,6 +937,7 @@ mod vcpu_cap_tests {
+             sandbox_id: "cap-test".to_string(),
+             vcpus: 255,
+             agent_sock: None,
++            agent_ports: Vec::new(),
+             plugin: None,
+             sandbox: false,
+             stop: None,
+diff --git a/src/config.rs b/src/config.rs
+index 178ef6b..d5510e6 100644
+--- a/src/config.rs
++++ b/src/config.rs
+@@ -619,6 +619,9 @@ pub struct BootConfig {
+     pub vcpus: u32,
+     /// Host Unix-socket path bridged to the guest agent's vsock port (exec).
+     pub agent_sock: Option<String>,
++    /// Additional fixed host Unix listeners and their guest vsock ports.
++    /// Listeners are acquired before confinement, just like `agent_sock`.
++    pub agent_ports: Vec<(String, u32)>,
+     /// A plugin attached to this guest, or `None` to run it with none.
+     ///
+     /// This is the whole of the VMM's observation surface: see
+diff --git a/src/devices/virtio/vsock.rs b/src/devices/virtio/vsock.rs
+index eaf8775..44e0388 100644
+--- a/src/devices/virtio/vsock.rs
++++ b/src/devices/virtio/vsock.rs
+@@ -294,6 +294,8 @@ impl Drop for WriterGates {
+ 
+ /// One exec session: a host Unix stream mapped to a guest vsock stream.
+ struct Conn {
++    /// The guest endpoint this host connection was explicitly opened to.
++    guest_port: u32,
+     /// The host stream, written with guest bytes.
+     ///
+     /// A clone of it is read elsewhere, so `Drop` shuts the stream down. A
+@@ -501,12 +503,18 @@ impl VirtioVsock {
+     /// Errors if the stream refuses non-blocking mode. The connection is not
+     /// registered then.
+     pub fn add_conn(&mut self, stream: UnixStream) -> std::io::Result<u32> {
++        self.add_conn_to(stream, AGENT_PORT)
++    }
++
++    /// Registers a connection to a fixed guest endpoint chosen by the host.
++    pub fn add_conn_to(&mut self, stream: UnixStream, guest_port: u32) -> std::io::Result<u32> {
+         stream.set_nonblocking(true)?;
+         let port = self.next_port;
+         self.next_port += 1;
+         self.conns.insert(
+             port,
+             Conn {
++                guest_port,
+                 stream,
+                 state: ConnState::New,
+                 rx_cnt: 0,
+@@ -541,15 +549,18 @@ impl VirtioVsock {
+ 
+     /// Queues a connection REQUEST to the guest agent and delivers it.
+     pub fn connect(&mut self, mem: &GuestRam, host_port: u32) {
+-        match self.conns.get_mut(&host_port) {
+-            Some(conn) => conn.state = ConnState::Offered,
++        let guest_port = match self.conns.get_mut(&host_port) {
++            Some(conn) => {
++                conn.state = ConnState::Offered;
++                conn.guest_port
++            }
+             None => return, // nothing to offer
+-        }
++        };
+         let hdr = Hdr {
+             src_cid: HOST_CID,
+             dst_cid: GUEST_CID,
+             src_port: host_port,
+-            dst_port: AGENT_PORT,
++            dst_port: guest_port,
+             typ: TYPE_STREAM,
+             op: OP_REQUEST,
+             buf_alloc: OUR_BUF_ALLOC,
+@@ -674,7 +685,7 @@ impl VirtioVsock {
+         if guest_open && conn.host_eof && conn.backlog.is_empty() && conn.told != SHUTDOWN_BOTH {
+             if conn.host_gone {
+                 conn.reset_sent = true;
+-                let pkt = Self::control_pkt(host_port, OP_RST, 0, conn.rx_cnt);
++                let pkt = Self::control_pkt(host_port, conn.guest_port, OP_RST, 0, conn.rx_cnt);
+                 self.pending.push_back(pkt);
+             } else {
+                 // The host may have closed while the guest read the backlog. A
+@@ -696,7 +707,13 @@ impl VirtioVsock {
+                 }
+                 if flags & !conn.told != 0 {
+                     conn.told |= flags;
+-                    let pkt = Self::control_pkt(host_port, OP_SHUTDOWN, conn.told, conn.rx_cnt);
++                    let pkt = Self::control_pkt(
++                        host_port,
++                        conn.guest_port,
++                        OP_SHUTDOWN,
++                        conn.told,
++                        conn.rx_cnt,
++                    );
+                     self.pending.push_back(pkt);
+                 }
+             }
+@@ -704,10 +721,17 @@ impl VirtioVsock {
+         if conn.to_guest_done() && conn.to_host_done() {
+             if !conn.guest_reset && !conn.reset_sent {
+                 let pkt = if conn.guest_full_close() {
+-                    Some(Self::control_pkt(host_port, OP_RST, 0, conn.rx_cnt))
++                    Some(Self::control_pkt(
++                        host_port,
++                        conn.guest_port,
++                        OP_RST,
++                        0,
++                        conn.rx_cnt,
++                    ))
+                 } else if conn.told != SHUTDOWN_BOTH {
+                     Some(Self::control_pkt(
+                         host_port,
++                        conn.guest_port,
+                         OP_SHUTDOWN,
+                         SHUTDOWN_BOTH,
+                         conn.rx_cnt,
+@@ -750,7 +774,13 @@ impl VirtioVsock {
+         let guest_sends = !conn.guest_send_shut && !conn.reset_sent;
+         if guest_sends && conn.told & SHUTDOWN_RCV == 0 && !reset_due {
+             conn.told |= SHUTDOWN_RCV;
+-            let pkt = Self::control_pkt(host_port, OP_SHUTDOWN, SHUTDOWN_RCV, conn.rx_cnt);
++            let pkt = Self::control_pkt(
++                host_port,
++                conn.guest_port,
++                OP_SHUTDOWN,
++                SHUTDOWN_RCV,
++                conn.rx_cnt,
++            );
+             self.pending.push_back(pkt);
+         }
+         self.settle(host_port);
+@@ -762,12 +792,12 @@ impl VirtioVsock {
+     ///
+     /// A Linux guest takes the credit of every header it receives. A stale
+     /// `fwd_cnt` on a connection the guest still writes to stops its writes.
+-    fn control_pkt(host_port: u32, op: u16, flags: u32, fwd_cnt: u32) -> Vec<u8> {
++    fn control_pkt(host_port: u32, guest_port: u32, op: u16, flags: u32, fwd_cnt: u32) -> Vec<u8> {
+         let hdr = Hdr {
+             src_cid: HOST_CID,
+             dst_cid: GUEST_CID,
+             src_port: host_port,
+-            dst_port: AGENT_PORT,
++            dst_port: guest_port,
+             typ: TYPE_STREAM,
+             op,
+             flags,
+@@ -865,7 +895,7 @@ impl VirtioVsock {
+             src_cid: HOST_CID,
+             dst_cid: GUEST_CID,
+             src_port: port,
+-            dst_port: AGENT_PORT,
++            dst_port: conn.guest_port,
+             len: n as u32,
+             typ: TYPE_STREAM,
+             op: OP_RW,
+@@ -1025,10 +1055,15 @@ impl VirtioVsock {
+             return;
+         }
+         // Everything below addresses an existing session, and the guest half of
+-        // one is always the agent: a packet claiming another source port is not
+-        // part of a session we opened.
++        // one must match the fixed endpoint the host selected: another source
++        // port cannot update credit, accept, write or reset this session.
+         let port = h.dst_port; // our (host) local port
+-        if h.op != OP_REQUEST && h.src_port != AGENT_PORT {
++        if h.op != OP_REQUEST
++            && self
++                .conns
++                .get(&port)
++                .is_none_or(|c| h.src_port != c.guest_port)
++        {
+             return;
+         }
+         // Every header the guest sends carries its credit, as in Linux's
+@@ -1088,7 +1123,7 @@ impl VirtioVsock {
+                     Relay::Drop(rx) => self.enqueue_credit(port, rx),
+                     Relay::Overrun => {
+                         let rx = self.conns.remove(&port).map_or(0, |c| c.rx_cnt);
+-                        let rst = Self::control_pkt(port, OP_RST, 0, rx);
++                        let rst = Self::control_pkt(port, h.src_port, OP_RST, 0, rx);
+                         self.pending.push_back(rst);
+                     }
+                 }
+@@ -1170,7 +1205,10 @@ impl VirtioVsock {
+ 
+     /// Queues an `OP_CREDIT_UPDATE` for `host_port` that advertises `fwd_cnt`.
+     fn enqueue_credit(&mut self, host_port: u32, fwd_cnt: u32) {
+-        let pkt = Self::control_pkt(host_port, OP_CREDIT_UPDATE, 0, fwd_cnt);
++        let Some(conn) = self.conns.get(&host_port) else {
++            return;
++        };
++        let pkt = Self::control_pkt(host_port, conn.guest_port, OP_CREDIT_UPDATE, 0, fwd_cnt);
+         self.pending.push_back(pkt);
+     }
+ 
+@@ -1325,6 +1363,8 @@ impl Default for VirtioVsock {
+ /// connection hands the host's bytes to the device, and a writer thread sends
+ /// the guest's bytes the vCPU could not.
+ pub(crate) struct VsockBridge {
++    /// Host-selected guest endpoint, never read from the Unix stream.
++    guest_port: u32,
+     /// The agent socket, non-blocking.
+     listener: UnixListener,
+     /// The device the connections are relayed to.
+@@ -1352,6 +1392,7 @@ impl VsockBridge {
+     #[allow(clippy::disallowed_methods)]
+     pub(crate) fn bind(
+         path: &str,
++        guest_port: u32,
+         dev: Arc<Mutex<VirtioVsock>>,
+         mem: Arc<GuestRam>,
+     ) -> std::io::Result<Self> {
+@@ -1360,7 +1401,12 @@ impl VsockBridge {
+             std::io::Error::new(e.kind(), format!("cannot bind Unix socket {path}: {e}"))
+         })?;
+         listener.set_nonblocking(true)?;
+-        Ok(Self { listener, dev, mem })
++        Ok(Self {
++            listener,
++            guest_port,
++            dev,
++            mem,
++        })
+     }
+ 
+     /// Accepts and relays agent connections until `stop` is requested.
+@@ -1369,7 +1415,12 @@ impl VsockBridge {
+     /// the ones still running before it returns. On Linux they inherit the
+     /// seccomp filter of the thread that runs this.
+     pub(crate) fn run(self, stop: &StopToken) {
+-        let Self { listener, dev, mem } = self;
++        let Self {
++            listener,
++            guest_port,
++            dev,
++            mem,
++        } = self;
+         let mut relays: Vec<JoinHandle<()>> = Vec::new();
+         let mut gates = WriterGates(Vec::new());
+         loop {
+@@ -1393,7 +1444,7 @@ impl VsockBridge {
+             // Register the connection and send the guest agent a REQUEST.
+             let (port, writer_gate) = {
+                 let mut d = dev.lock().unwrap();
+-                let Ok(port) = d.add_conn(stream) else {
++                let Ok(port) = d.add_conn_to(stream, guest_port) else {
+                     continue;
+                 };
+                 d.connect(&mem, port);
+@@ -1821,6 +1872,69 @@ mod session_tests {
+         assert_eq!(dev.read_tx(&mem, 8), None, "an out-of-ring head");
+     }
+ 
++    #[test]
++    fn fixed_endpoints_reject_cross_port_accept_credit_data_and_reset() {
++        let mem = mem_of(0x1000);
++        let mut dev = VirtioVsock::new();
++        let (a_dev, _a_peer) = UnixStream::pair().unwrap();
++        let (b_dev, mut b_peer) = UnixStream::pair().unwrap();
++        let a = dev.add_conn_to(a_dev, 1025).unwrap();
++        let b = dev.add_conn_to(b_dev, 1026).unwrap();
++        dev.connect(&mem, a);
++        dev.connect(&mem, b);
++        let requests: Vec<_> = dev
++            .pending
++            .drain(..)
++            .map(|p| Hdr::parse(&p).unwrap())
++            .collect();
++        assert_eq!(
++            requests.iter().map(|h| h.dst_port).collect::<Vec<_>>(),
++            [1025, 1026]
++        );
++        let from = |source, op, port, body: &[u8]| {
++            let mut h = Hdr::parse(&pkt(op, port, body)).unwrap();
++            h.src_port = source;
++            let mut p = h.to_bytes().to_vec();
++            p.extend_from_slice(body);
++            p
++        };
++        dev.handle_pkt(&mem, &from(1025, OP_RESPONSE, b, &[]));
++        assert_eq!(dev.conns[&b].state, ConnState::Offered);
++        assert_eq!(dev.conns[&b].peer_buf_alloc, 0);
++        dev.handle_pkt(&mem, &from(1026, OP_RESPONSE, b, &[]));
++        assert_eq!(dev.conns[&b].state, ConnState::Connected);
++        for op in [OP_CREDIT_UPDATE, OP_RW, OP_RST, OP_SHUTDOWN] {
++            let mut forged = Hdr::parse(&from(1025, op, b, b"forged")).unwrap();
++            forged.buf_alloc = 7;
++            let mut p = forged.to_bytes().to_vec();
++            p.extend_from_slice(b"forged");
++            dev.handle_pkt(&mem, &p);
++            assert_eq!(dev.conns[&b].state, ConnState::Connected);
++            assert_eq!(dev.conns[&b].peer_buf_alloc, GUEST_BUF_ALLOC);
++            assert!(!dev.conns[&b].guest_reset);
++            assert!(dev.conns[&b].to_host.is_empty());
++        }
++        dev.handle_pkt(&mem, &from(1026, OP_RW, b, b"correct"));
++        assert_eq!(recv(&mut b_peer, 7), Some(b"correct".to_vec()));
++        assert!(dev
++            .pending
++            .iter()
++            .all(|p| Hdr::parse(p).unwrap().dst_port == 1026));
++        dev.pending.clear();
++        dev.conns.get_mut(&b).unwrap().backlog.extend(b"reply");
++        assert!(dev.frame_backlog());
++        assert_eq!(
++            Hdr::parse(dev.pending.back().unwrap()).unwrap().dst_port,
++            1026
++        );
++        dev.pending.clear();
++        dev.host_gone(&mem, b);
++        assert!(dev
++            .pending
++            .iter()
++            .all(|p| Hdr::parse(p).unwrap().dst_port == 1026));
++    }
++
+     /// Regression for the cross-session injection: session B is registered and
+     /// offered, but the guest never accepted it, so its bytes must not flow.
+     #[test]
+diff --git a/src/hypervisor/kvm.rs b/src/hypervisor/kvm.rs
+index de31660..357c163 100644
+--- a/src/hypervisor/kvm.rs
++++ b/src/hypervisor/kvm.rs
+@@ -241,14 +241,26 @@ pub(crate) fn start_io_threads(
+     // first stop signal stops the run rather than ending the process with the
+     // terminal raw.
+     crate::signal::start_stop_signal_thread()?;
+-    let bridge = match (&cfg.agent_sock, &guest.vsock) {
+-        (Some(path), Some(dev)) => Some(VsockBridge::bind(
+-            path,
+-            Arc::clone(dev),
+-            Arc::clone(&guest.ram),
+-        )?),
+-        _ => None,
+-    };
++    let mut bridge = Vec::new();
++    if let Some(dev) = &guest.vsock {
++        for (path, port) in cfg
++            .agent_sock
++            .iter()
++            .map(|path| (path.as_str(), 1024))
++            .chain(
++                cfg.agent_ports
++                    .iter()
++                    .map(|(path, port)| (path.as_str(), *port)),
++            )
++        {
++            bridge.push(VsockBridge::bind(
++                path,
++                port,
++                Arc::clone(dev),
++                Arc::clone(&guest.ram),
++            )?);
++        }
++    }
+     let source = StopSource::new()?;
+     let io_threads = IoThreads::start(
+         source,
+@@ -561,6 +573,7 @@ mod stop_tests {
+             sandbox_id: "stop-test".to_string(),
+             vcpus: 2,
+             agent_sock: None,
++            agent_ports: Vec::new(),
+             plugin,
+             sandbox: !cfg!(debug_assertions),
+             stop: None,
+diff --git a/src/io_threads.rs b/src/io_threads.rs
+index f9b792f..096fc30 100644
+--- a/src/io_threads.rs
++++ b/src/io_threads.rs
+@@ -127,7 +127,7 @@ impl<K: Kick> IoThreads<K> {
+         guest: &Arc<Guest<K>>,
+         plugin: Option<Arc<dyn Plugin>>,
+         deliver: impl FnMut(u8) + Send + 'static,
+-        bridge: Option<VsockBridge>,
++        bridge: Vec<VsockBridge>,
+         net: Option<NetSource>,
+         plugin_threads: Vec<PluginThread>,
+     ) -> Self
+@@ -155,7 +155,7 @@ impl<K: Kick> IoThreads<K> {
+             threads: Vec::new(),
+             finish_count,
+         };
+-        if let Some(bridge) = bridge {
++        for bridge in bridge {
+             io_threads.spawn("agent bridge", move |stop| bridge.run(&stop));
+         }
+         if let (Some(net), Some(dev)) = (net, &guest.net) {
+diff --git a/src/main.rs b/src/main.rs
+index ee54d1c..d305a7b 100644
+--- a/src/main.rs
++++ b/src/main.rs
+@@ -465,6 +465,7 @@ fn boot_guest(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
+         sandbox_id,
+         vcpus,
+         agent_sock,
++        agent_ports: Vec::new(),
+         sandbox,
+         // `None` rather than an empty chain, so without tools the hooks stay a
+         // null check.
+diff --git a/src/run/spawn.rs b/src/run/spawn.rs
+index ab112a5..b3c9d26 100644
+--- a/src/run/spawn.rs
++++ b/src/run/spawn.rs
+@@ -137,6 +137,7 @@ mod tests {
+             sandbox_id: "spawn-test".to_string(),
+             vcpus: 1,
+             agent_sock: None,
++            agent_ports: Vec::new(),
+             plugin: None,
+             sandbox: false,
+             stop: Some(registration),
+diff --git a/tests/sandbox_stays_on.rs b/tests/sandbox_stays_on.rs
+index 9ec03aa..5906b03 100644
+--- a/tests/sandbox_stays_on.rs
++++ b/tests/sandbox_stays_on.rs
+@@ -36,6 +36,7 @@ fn config(sandbox: bool) -> BootConfig {
+         sandbox_id: "sandbox-test".to_string(),
+         vcpus: 1,
+         agent_sock: None,
++        agent_ports: Vec::new(),
+         plugin: None,
+         sandbox,
+         stop: None,
+diff --git a/tests/sandbox_stays_on_in_log_mode.rs b/tests/sandbox_stays_on_in_log_mode.rs
+index 27b2d12..fcf1c92 100644
+--- a/tests/sandbox_stays_on_in_log_mode.rs
++++ b/tests/sandbox_stays_on_in_log_mode.rs
+@@ -37,6 +37,7 @@ fn config() -> BootConfig {
+         sandbox_id: "sandbox-log-test".to_string(),
+         vcpus: 1,
+         agent_sock: None,
++        agent_ports: Vec::new(),
+         plugin: None,
+         sandbox: true,
+         stop: None,
