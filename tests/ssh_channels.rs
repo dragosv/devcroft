@@ -89,7 +89,7 @@ impl Sandbox {
         // other sandbox here stays cheap to build.
         let packages = ["install", "bash", "coreutils", "rsync"];
         let install = Command::new("flox")
-            .args(&packages)
+            .args(packages)
             .current_dir(&project_root)
             .output()
             .unwrap();

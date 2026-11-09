@@ -582,6 +582,15 @@ pub struct NixFreeRow {
     dir: PathBuf,
 }
 
+/// The row owns its environment directory; `for_each_row` only knows
+/// about the project root.
+#[cfg(feature = "test-support")]
+impl Drop for NixFreeRow {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.dir);
+    }
+}
+
 #[cfg(feature = "test-support")]
 impl ProviderFixture for NixFreeRow {
     fn name(&self) -> &'static str {
@@ -786,10 +795,28 @@ fn setup_test_row(tag: &str) -> Result<Box<dyn ProviderFixture>, Unavailable> {
         )));
     }
 
-    let dir = fixture_root("testrow-env", tag);
+    // Under cargo's per-target scratch dir, **not** `/tmp`: the baseline
+    // grants `/tmp` read-write, so a row environment there was reachable
+    // whether or not `up` folded the row's grant into the policy -- the row
+    // could not have caught that grant going missing, and `why` credited
+    // the baseline for it. `/nix/store` has no such cover, so neither should
+    // this. The path-length and macOS-symlink reasons `fixture_root` uses
+    // `/tmp` for are about the *project* root (the supervisor socket lives
+    // there), which stays where it was.
+    let dir = PathBuf::from(env!("CARGO_TARGET_TMPDIR"))
+        .join(format!("dcfx-testrow-env-{tag}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let dir = dir.canonicalize().unwrap();
     let bin = dir.join("bin");
     std::fs::create_dir_all(&bin).unwrap();
-    std::fs::copy(&shell, bin.join("sh"))
+    // A hard link where possible: the shell is ~146 MB unoptimized, and a
+    // copy per row per test filled 9.9 GB of `/tmp` before this row had a
+    // `Drop` (measured, 2026-11-09). A link is still a file inside the row's
+    // own grant, which is what the shell guard checks; a symlink would not
+    // be, since it resolves to `target/debug/examples`.
+    std::fs::hard_link(&shell, bin.join("sh"))
+        .or_else(|_| std::fs::copy(&shell, bin.join("sh")).map(|_| ()))
         .map_err(|e| Unavailable(format!("could not place the row's shell: {e}")))?;
     #[cfg(unix)]
     {

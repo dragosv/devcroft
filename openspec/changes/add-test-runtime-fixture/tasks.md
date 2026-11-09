@@ -259,6 +259,35 @@
       Also: the row now refuses a `test-row-sh` older than its source, after
       `cargo test --test <file>` (which does not rebuild examples) ran a
       stale one without complaint. Flox again unverified, same reason.
+      **15 of 22 (2026-11-09):** `concurrency_and_suspend` (two sandboxes on
+      one row, via `common::another_of`), `lifecycle_hooks`, `ssh_channels`
+      (all but `rsync`, which needs rsync inside the sandbox) and
+      `cli_lifecycle_and_policy` (the three tests whose subject is
+      `devcroft up` gate on `cli_drivable`; its provider-grants test now
+      reads the grant from `Meta` rather than expecting `/nix/store` and
+      `provider:flox`). Three things the batch found:
+      - **A product bug.** `up` cleared `FD_CLOEXEC` on the keeper's
+        listeners in the caller and leaked them, so parallel in-process
+        `up`s handed every sandbox's listeners to every subprocess, and
+        `ps` hung on a removed sandbox's still-accepting socket. Fixed in
+        `src/lifecycle/up.rs`, asserted by `tests/up_closes_its_listeners.rs`.
+      - **The Nix-free row's grant was hidden by the baseline.** Its
+        environment lived under `/tmp`, which the baseline grants, so the
+        row could not have caught its own grant going missing. It now lives
+        under `CARGO_TARGET_TMPDIR`, outside every baseline grant, as
+        `/nix/store` is.
+      - **The row leaked its environment dir** (no `Drop`; a ~146 MB shell
+        copy each): 72 directories, 9.9 GB in `/tmp`. It now has a `Drop`
+        and hard-links the shell.
+      **Probe-bound, not migrated (5 files + 2 tests):**
+      `network_isolation_e2e`, `isolated_egress_e2e`,
+      `host_port_reachability`, `network_ports_listen`, `udp_egress_denied`,
+      plus `egress_proxy_e2e`'s curl test and `ssh_channels`' rsync test.
+      Their claims are neutral but each needs `python3`, `curl` or `rsync`
+      inside the sandbox, which no row ships; rewriting the probes in shell
+      would weaken them (the UDP test needs a reply, not just a send).
+      Whether to give rows a probe runtime is open.
+      **Not yet looked at:** `mount_view_e2e`, `process_tier_landlock_boundaries`.
 - [ ] 4.3 Leave the 7 provider-contract files hardcoded and real:
       `flox_derived_env`, `flox_env_capture_is_deterministic`, `nix_provider_e2e`,
       `nix_env_capture_is_deterministic`, `devbox_provider_e2e`,
