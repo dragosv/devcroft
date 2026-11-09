@@ -33,10 +33,9 @@ pub(crate) use up::is_keeper_internal;
 pub use up::{
     ACTIVATION_FD_ENV, ACTIVATION_OVERLAY_ENV, KeeperEnv, UpError, UpOptions, UpOutcome, up,
 };
-// `pub(crate)`, not part of the public surface: `crate::proxy::spawn`
-// needs the identical fd-inheritance dance `up_process` already does for
-// the control/SSH sockets, and re-exporting through here is what makes
-// `up`'s private submodule path reachable from outside `lifecycle` at
-// all — `up::clear_cloexec` being `pub(crate)` doesn't help by itself
-// when the `up` module segment itself is private.
+// `pub(crate)`, not part of the public surface: `crate::proxy::spawn` and
+// the fleet need the same fd inheritance `spawn_keeper` uses for the
+// control/SSH sockets (`pass_fds`), and re-exporting through here is what
+// makes `up`'s private submodule path reachable from outside `lifecycle`
+// at all, since the `up` module segment itself is private.
 pub(crate) use up::{apply_manifest_env, keeper_answers, keeper_failure_reason, pass_fds};

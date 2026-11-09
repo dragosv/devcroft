@@ -1028,7 +1028,14 @@ fn up_process(
     // sensitive of the two sockets, not the less. Found by adversarial
     // review; no spec required it, which was itself the gap.
     std::fs::set_permissions(&paths.socket, std::fs::Permissions::from_mode(0o600))?;
-    clear_cloexec(listener.as_raw_fd())?;
+    // `FD_CLOEXEC` stays set here: `spawn_keeper` clears it in the forked
+    // child only (`pass_fds`). Clearing it in this process -- as this did
+    // until 2026-11-09 -- let any child another thread spawned inherit the
+    // listener for good, and an in-process caller running several `up`s
+    // at once (the test suite) leaked every sandbox's listeners into every
+    // subprocess. A leaked listener keeps a removed sandbox's socket
+    // accepting connections nobody will ever answer: `ps`, querying a
+    // keeper that had just gone, blocked forever on one (measured).
 
     // The ssh server's socket (ssh spec, task 6.1): same listener-before-
     // restriction reasoning as the control socket above, plus its own
@@ -1037,7 +1044,6 @@ fn up_process(
     let _ = std::fs::remove_file(&paths.ssh_socket);
     let ssh_listener = UnixListener::bind(&paths.ssh_socket)?;
     std::fs::set_permissions(&paths.ssh_socket, std::fs::Permissions::from_mode(0o600))?;
-    clear_cloexec(ssh_listener.as_raw_fd())?;
 
     // Both key materials are generated/resolved host-side because the
     // keeper cannot read either back off disk itself once sandboxed —
@@ -1316,10 +1322,14 @@ fn up_process(
         identity.as_ref(),
     )
     .map_err(|e| UpError::Keeper(e.to_string()))?;
-    // Both fds must outlive this function for the child to inherit them
-    // across exec; ownership passes to the keeper process from here.
-    std::mem::forget(listener);
-    std::mem::forget(ssh_listener);
+    // The keeper holds its own copies now (inherited across exec, or
+    // handed to the namespace helper as dups), so this process's are
+    // closed rather than leaked. They used to be `mem::forget`-ed, which
+    // for a one-shot `devcroft up` changed nothing, and for any in-process
+    // caller kept every listener it ever created open until it exited --
+    // including a removed sandbox's, whose socket then went on accepting.
+    drop(listener);
+    drop(ssh_listener);
 
     state::write_pidfile(&paths.pidfile, keeper_pid)?;
 
@@ -1934,6 +1944,10 @@ fn spawn_keeper(
         // the keeper; its exit ends everything in the namespace.
         return Ok(agent.pid() as libc::pid_t);
     }
+    // Inherited by the keeper alone: the flag is cleared in the forked
+    // child, never in this process (see the comment at the listeners'
+    // creation in `up_process`).
+    pass_fds(&mut cmd, &[listener.as_raw_fd(), ssh.listener.as_raw_fd()]);
     confine_on_exec(&mut cmd, confinement);
 
     let child = cmd.spawn()?;
@@ -2628,21 +2642,6 @@ pub(crate) fn keeper_failure_reason(log: &Path) -> Option<String> {
         .map(str::to_string)
 }
 
-/// `pub(crate)`: `crate::proxy::spawn` needs the identical clear (its
-/// listener crosses the same exec boundary the control/SSH sockets do
-/// here, just into a different child), and duplicating a five-line
-/// `fcntl` dance is worse than one more crate-visible function.
-pub(crate) fn clear_cloexec(fd: RawFd) -> io::Result<()> {
-    let flags = unsafe { libc::fcntl(fd, libc::F_GETFD) };
-    if flags < 0 {
-        return Err(io::Error::last_os_error());
-    }
-    if unsafe { libc::fcntl(fd, libc::F_SETFD, flags & !libc::FD_CLOEXEC) } < 0 {
-        return Err(io::Error::last_os_error());
-    }
-    Ok(())
-}
-
 /// What the manifest adds to the provider's environment, in `up`'s order:
 /// `[env.vars]`, then `[env] forward`. Shared with fleet, which applies it
 /// to each agent; before that, an agent started from the same manifest as a
@@ -2693,7 +2692,7 @@ pub(crate) fn apply_manifest_env(
 /// Let the child `cmd` starts inherit `fds`, at the numbers they have here,
 /// without ever clearing `FD_CLOEXEC` in this process.
 ///
-/// **Why not [`clear_cloexec`] then spawn.** In a process with other
+/// **Why not clear `FD_CLOEXEC` here, then spawn.** In a process with other
 /// threads, clearing it opens a window in which any child another thread
 /// forks and execs inherits the fd *for good*, since nothing closes it at
 /// exec any more. Measured in the fleet supervisor: a stopped agent's host
