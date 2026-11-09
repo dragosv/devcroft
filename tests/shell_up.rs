@@ -7,22 +7,25 @@
 //! waiting on a session ignoring a forwarded SIGTERM. See `tests/lifecycle_up.rs` for why this needs
 //! `CARGO_BIN_EXE_devcroft` and why each such test lives in its own
 //! file/process.
+//!
+//! **Neutral surface** (`test-runtime-fixture`): the session protocol, pty
+//! choice and signal forwarding belong to the keeper and the client, not a
+//! provider. It used to `flox init` + `flox install bash` purely to get past
+//! `up`; it now runs on whichever row is selected. Every session goes
+//! through `$SHELL` set to the shell `up` resolved out of the row's closure,
+//! so the row decides what that is.
 
-use devcroft::config::parse;
-use devcroft::lifecycle::{StatePaths, UpOptions, UpOutcome, down, up};
+mod common;
+
+use common::for_each_row;
+use devcroft::lifecycle::{StatePaths, UpOptions, UpOutcome, down};
 use std::io::Write;
 use std::process::{Command, Stdio};
 
-fn skip_if_tooling_missing() -> bool {
-    !devcroft::policy::backend_supported()
-        || (Command::new("flox").arg("--version").output().is_err()
-            || !devcroft::provider::host_can_build_nix_closures())
-}
-
 #[test]
 fn shell_runs_commands_ends_with_its_input_and_falls_back_when_shell_is_missing() {
-    if skip_if_tooling_missing() {
-        eprintln!("skipping: no usable flox here (not on PATH, or no reachable Nix store)");
+    if !devcroft::policy::backend_supported() {
+        eprintln!("skipping: this host has no usable Landlock/Seatbelt support");
         return;
     }
 
@@ -30,55 +33,40 @@ fn shell_runs_commands_ends_with_its_input_and_falls_back_when_shell_is_missing(
     unsafe {
         std::env::set_var("DEVCROFT_KEEPER_EXE", env!("CARGO_BIN_EXE_devcroft"));
     }
+
+    for_each_row("shell", |fx| {
+        let sandbox_name = fx.sandbox_name().to_string();
+        let paths = StatePaths::new(&sandbox_name).unwrap();
+        let _ = std::fs::remove_dir_all(&paths.root);
+        let _ = std::fs::remove_file(&paths.lifecycle_lock);
+        assert_eq!(
+            fx.bring_up(&UpOptions::default())
+                .unwrap_or_else(|e| panic!("row {}: up failed: {e}", fx.name())),
+            UpOutcome::Started
+        );
+        // Canonicalized for the macOS symlink reason in docs/known-gaps.md:
+        // `temp_dir()` sits under the `/var` symlink there, and the
+        // un-canonicalized spelling of a granted path is refused — the pty
+        // session below gets this as its working directory.
+        let project_root = fx.project_root().canonicalize().unwrap();
+        sessions(
+            &sandbox_name,
+            &project_root,
+            &paths,
+            fx.capabilities().signal_traps,
+        );
+        down(&sandbox_name).unwrap();
+    });
+}
+
+/// Every session this test drives, against a sandbox that is already up.
+fn sessions(
+    sandbox_name: &str,
+    project_root: &std::path::Path,
+    paths: &StatePaths,
+    signal_traps: bool,
+) {
     let devcroft_bin = env!("CARGO_BIN_EXE_devcroft");
-
-    let project_root =
-        std::env::temp_dir().join(format!("devcroft-shell-up-e2e-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&project_root);
-    std::fs::create_dir_all(&project_root).unwrap();
-    // Canonicalized (after creation) for the macOS symlink reason in
-    // docs/known-gaps.md: `temp_dir()` sits under the `/var` symlink there,
-    // and the un-canonicalized spelling of a granted path is refused — the
-    // pty session below gets this as its working directory.
-    let project_root = project_root.canonicalize().unwrap();
-    let init = Command::new("flox")
-        .arg("init")
-        .current_dir(&project_root)
-        .output()
-        .unwrap();
-    if !init.status.success() {
-        eprintln!(
-            "skipping: flox init failed: {}",
-            String::from_utf8_lossy(&init.stderr)
-        );
-        return;
-    }
-    // own-policy-baseline excludes host toolchain access, so a bare
-    // `flox init` leaves nothing for `SHELL=sh` (or its `/bin/sh`-turned-
-    // bare-`sh` fallback below) to resolve to.
-    let install = Command::new("flox")
-        .args(["install", "bash"])
-        .current_dir(&project_root)
-        .output()
-        .unwrap();
-    if !install.status.success() {
-        eprintln!(
-            "skipping: flox install bash failed: {}",
-            String::from_utf8_lossy(&install.stderr)
-        );
-        return;
-    }
-
-    let sandbox_name = format!("e2eshell{}", std::process::id());
-    let (manifest, _) = parse(&format!("[sandbox]\nname = {sandbox_name:?}\n")).unwrap();
-    let paths = StatePaths::new(&sandbox_name).unwrap();
-    let _ = std::fs::remove_dir_all(&paths.root);
-    let _ = std::fs::remove_file(&paths.lifecycle_lock);
-
-    assert_eq!(
-        up(&manifest, &project_root, &UpOptions::default()).unwrap(),
-        UpOutcome::Started
-    );
 
     // Requested shell exists (exec spec's "Interactive shell" requirement):
     // commands run and their output streams back. Piped input, so a piped
@@ -98,9 +86,9 @@ fn shell_runs_commands_ends_with_its_input_and_falls_back_when_shell_is_missing(
         .expect("up records the shell it resolved from the closure");
     let mut child = Command::new(devcroft_bin)
         .arg("shell")
-        .arg(&sandbox_name)
+        .arg(sandbox_name)
         .env("SHELL", &requested)
-        .current_dir(&project_root)
+        .current_dir(project_root)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -131,9 +119,9 @@ fn shell_runs_commands_ends_with_its_input_and_falls_back_when_shell_is_missing(
     // `shell()` retries with `/bin/sh` transparently rather than erroring.
     let mut child = Command::new(devcroft_bin)
         .arg("shell")
-        .arg(&sandbox_name)
+        .arg(sandbox_name)
         .env("SHELL", "/no/such/shell-binary")
-        .current_dir(&project_root)
+        .current_dir(project_root)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -161,9 +149,9 @@ fn shell_runs_commands_ends_with_its_input_and_falls_back_when_shell_is_missing(
     let bounded = |stdin: Stdio, input: &[u8]| {
         let mut child = Command::new("timeout")
             .args(["-k", "2", "20", devcroft_bin, "shell"])
-            .arg(&sandbox_name)
+            .arg(sandbox_name)
             .env("SHELL", &requested)
-            .current_dir(&project_root)
+            .current_dir(project_root)
             .stdin(stdin)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -188,7 +176,7 @@ fn shell_runs_commands_ends_with_its_input_and_falls_back_when_shell_is_missing(
             .arg(format!("{devcroft_bin} shell {sandbox_name}"))
             .arg("/dev/null")
             .env("SHELL", &requested)
-            .current_dir(&project_root)
+            .current_dir(project_root)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .spawn()
@@ -214,18 +202,28 @@ fn shell_runs_commands_ends_with_its_input_and_falls_back_when_shell_is_missing(
     // A forwarded SIGTERM the session ignores no longer leaves the client
     // waiting forever: it gives up after the grace period, exits 143, and
     // the keeper reaps the session it abandoned.
+    //
+    // Needs a session that really ignores TERM, which only a shell honouring
+    // `trap ''` can build out of builtins.
+    if !signal_traps {
+        eprintln!(
+            "skipping the ignored-SIGTERM case: this row's shell cannot ignore a signal \
+             (signal_traps)"
+        );
+        return;
+    }
     let mut ignoring = Command::new(devcroft_bin)
         // Builtins only (no `sleep` in this environment): a coprocess that
         // never writes gives `read` something to wait sixty seconds on.
         .args([
             "exec",
-            &sandbox_name,
+            sandbox_name,
             "--",
             &requested,
             "-c",
             "trap '' TERM; coproc { read; }; read -t 60 -u \"${COPROC[0]}\"",
         ])
-        .current_dir(&project_root)
+        .current_dir(project_root)
         .stdin(Stdio::null())
         .spawn()
         .unwrap();
@@ -241,9 +239,4 @@ fn shell_runs_commands_ends_with_its_input_and_falls_back_when_shell_is_missing(
             && took < devcroft::lifecycle::GRACE_PERIOD + std::time::Duration::from_secs(5),
         "gave up after {took:?}"
     );
-
-    down(&sandbox_name).unwrap();
-    let _ = std::fs::remove_dir_all(&paths.root);
-    let _ = std::fs::remove_file(&paths.lifecycle_lock);
-    let _ = std::fs::remove_dir_all(&project_root);
 }

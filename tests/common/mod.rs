@@ -78,6 +78,15 @@ pub struct ProviderCapabilities {
     /// a future row that cannot fingerprint its own environment is exactly
     /// the case this describes, and the gate costs nothing.
     pub staleness: bool,
+    /// The row's shell turns `trap '' SIG` into a real ignored disposition,
+    /// so a session can be made to ignore a signal.
+    ///
+    /// False for the Nix-free row, measured: brush 0.4.0 records the trap
+    /// (`trap -p` prints it) but never installs `SIG_IGN`, so the process
+    /// still dies from the signal. Only a test that needs a session which
+    /// *survives* a signal consults this; signal forwarding itself is not
+    /// affected.
+    pub signal_traps: bool,
 }
 
 /// One row of the matrix: a project of a given provider's shape, set up on
@@ -196,6 +205,7 @@ impl ProviderFixture for NixRow {
             external_utils: true,
             cli_drivable: true,
             staleness: true,
+            signal_traps: true,
         }
     }
     fn project_root(&self) -> &Path {
@@ -231,6 +241,7 @@ impl ProviderFixture for FloxRow {
             external_utils: true,
             cli_drivable: true,
             staleness: true,
+            signal_traps: true,
         }
     }
     fn project_root(&self) -> &Path {
@@ -263,6 +274,7 @@ impl ProviderFixture for DevboxRow {
             external_utils: true,
             cli_drivable: true,
             staleness: true,
+            signal_traps: true,
         }
     }
     fn project_root(&self) -> &Path {
@@ -303,6 +315,7 @@ impl ProviderFixture for SwiftRow {
             cli_drivable: true,
             // `Package.swift` is in the fingerprint.
             staleness: true,
+            signal_traps: true,
         }
     }
     fn project_root(&self) -> &Path {
@@ -591,6 +604,7 @@ impl ProviderFixture for NixFreeRow {
             // True since `status_with_provider` landed: the row's own
             // fingerprint is now what `status` compares against.
             staleness: true,
+            signal_traps: false,
         }
     }
     fn project_root(&self) -> &Path {
@@ -729,7 +743,25 @@ fn setup_test_row(tag: &str) -> Result<Box<dyn ProviderFixture>, Unavailable> {
     let shell = match std::env::var(ROW_SHELL_ENV) {
         Ok(p) => PathBuf::from(p),
         Err(_) => match bundled_row_shell() {
-            Some(p) => p,
+            Some(p) => {
+                // Older than its source means the row would run a shell
+                // that is not the one in the tree. `cargo test --test <file>`
+                // does not rebuild examples, so this happens silently -- a
+                // fix to the shim then appears not to work (it did, on
+                // 2026-11-09, for a whole debugging round).
+                let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("examples/test-row-sh.rs");
+                let mtime = |p: &Path| std::fs::metadata(p).and_then(|m| m.modified()).ok();
+                if let (Some(bin), Some(src)) = (mtime(&p), mtime(&src))
+                    && bin < src
+                {
+                    return Err(Unavailable(
+                        "the row's shell is older than examples/test-row-sh.rs; run \
+                         `cargo build --example test-row-sh --features test-support`"
+                            .to_string(),
+                    ));
+                }
+                p
+            }
             None => {
                 return Err(Unavailable(
                     "the row's shell is not built; run `cargo build --example \

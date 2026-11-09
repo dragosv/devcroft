@@ -247,6 +247,18 @@
       hardcoded tests only ran `flox init`, which does not. Re-run
       `DEVCROFT_TEST_PROVIDER=flox` on a logged-in host before calling
       these five done on flox.
+      **12 of 22 (2026-11-09):** `exec_auto_up` (auto-up half gated on
+      `cli_drivable`; the `--no-up` half refuses before any provider and runs
+      on every row) and `shell_up`. `shell_up` found two gaps in the
+      Nix-free row's shell, both in brush rather than devcroft:
+      its `reedline` editor queries the cursor position on a pty and aborts
+      when nothing answers (fixed in the row: `examples/test-row-sh` re-execs
+      with `--input-backend=basic` on a terminal), and `trap '' TERM` is
+      recorded but never installed, so no session can ignore a signal
+      (declared as `capabilities().signal_traps`, false for that row only).
+      Also: the row now refuses a `test-row-sh` older than its source, after
+      `cargo test --test <file>` (which does not rebuild examples) ran a
+      stale one without complaint. Flox again unverified, same reason.
 - [ ] 4.3 Leave the 7 provider-contract files hardcoded and real:
       `flox_derived_env`, `flox_env_capture_is_deterministic`, `nix_provider_e2e`,
       `nix_env_capture_is_deterministic`, `devbox_provider_e2e`,

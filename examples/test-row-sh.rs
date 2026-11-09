@@ -43,7 +43,47 @@ fn main() {
         "sleep" => uu_sleep::uumain(std::env::args_os()),
         "echo" => uu_echo::uumain(std::env::args_os()),
         // Anything else — `sh` included — is the shell.
-        _ => return brush_shell::entry::run(),
+        _ => {
+            with_plain_line_input();
+            return brush_shell::entry::run();
+        }
     };
     std::process::exit(code);
+}
+
+/// On a terminal, re-exec with `--input-backend=basic` unless a backend was
+/// already chosen.
+///
+/// brush's default on a terminal is `reedline`, which asks the terminal for
+/// the cursor position (`ESC[6n`) at its first prompt and aborts when no
+/// reply comes. A pty with no emulator behind it — `script` in
+/// `tests/shell_up.rs`, an editor's remote terminal before it draws — never
+/// replies, so the session died with "the cursor position could not be
+/// read". bash's readline asks nothing, so a real provider's shell never
+/// hit this; the line editor is this row's choice, not devcroft's behaviour,
+/// and the session is still a pty either way.
+///
+/// A re-exec rather than an argument because `brush_shell::entry::run`
+/// reads `std::env::args()` itself and takes none.
+fn with_plain_line_input() {
+    use std::io::IsTerminal;
+    use std::os::unix::process::CommandExt;
+
+    let args: Vec<_> = std::env::args_os().collect();
+    let chosen = args
+        .iter()
+        .any(|a| a.to_string_lossy().starts_with("--input-backend"));
+    if chosen || !std::io::stdin().is_terminal() {
+        return;
+    }
+    let Ok(exe) = std::env::current_exe() else {
+        return;
+    };
+    let mut cmd = std::process::Command::new(exe);
+    // `argv[0]` kept, so a login shell (`-sh`) stays one.
+    cmd.arg0(&args[0])
+        .arg("--input-backend=basic")
+        .args(&args[1..]);
+    // Only returns on failure; the shell then runs with its default.
+    let _ = cmd.exec();
 }
