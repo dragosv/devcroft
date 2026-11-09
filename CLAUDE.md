@@ -188,6 +188,11 @@ a manifest that has no lock yet requires a FloxHub login, while `search`,
 `show`, `init` and activating an already-locked environment all work
 without one. `tests/flox_derived_env.rs` writes fresh manifests, so it
 probes by resolving one (`flox list`), not by `flox auth status`.
+The flox *row* (`tests/common/mod.rs`) therefore never resolves: it
+copies the pre-locked `tests/fixtures/flox-row`, re-locked only by
+`scripts/lock-flox-test-row.sh`. `tests/flox_fresh_resolution.rs` keeps
+first-lock resolution covered and, once flox is selected, fails without
+a login instead of skipping.
 
 **After any `Cargo.lock` change**, regenerate the dependency attribution:
 

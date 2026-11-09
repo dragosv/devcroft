@@ -1,0 +1,18 @@
+# The flox test row's environment (tests/common/mod.rs, `setup_flox`).
+#
+# Locked and checked in so the row runs without a FloxHub login: since
+# flox 1.4, *resolving* a manifest needs one, while activating an
+# already-locked environment does not. Edit this file only together with
+# its lock -- run scripts/lock-flox-test-row.sh (needs `flox auth login`).
+#
+# bash and coreutils for the same reason the nix row's flake names them:
+# `own-policy-baseline` removed host toolchain access, so an empty
+# environment leaves nothing devcroft is allowed to run.
+version = 1
+
+[install]
+bash.pkg-path = "bash"
+coreutils.pkg-path = "coreutils"
+
+[options]
+systems = ["aarch64-darwin", "aarch64-linux", "x86_64-darwin", "x86_64-linux"]

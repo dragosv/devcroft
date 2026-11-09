@@ -358,6 +358,36 @@ fn write_manifest(root: &Path, sandbox: &str, provider: &str) {
     .unwrap();
 }
 
+/// What differs between the flox fixture's manifest and the manifest its
+/// lock was made from, or `None` if the lock still matches. Compares the
+/// parts this fixture sets -- packages and systems -- since flox fills the
+/// locked copy with defaults the hand-written file leaves out.
+fn flox_fixture_drift(fixture: &Path) -> Option<String> {
+    let manifest: toml::Table =
+        toml::from_str(&std::fs::read_to_string(fixture.join("env/manifest.toml")).unwrap())
+            .unwrap();
+    let manifest = serde_json::to_value(manifest).unwrap();
+    let lock: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(fixture.join("env/manifest.lock")).unwrap())
+            .unwrap();
+    ["install", "options"].into_iter().find_map(|key| {
+        (manifest.get(key) != lock["manifest"].get(key)).then(|| format!("`{key}` differs"))
+    })
+}
+
+/// Copy a small directory tree (a fixture), files and directories only.
+fn copy_tree(from: &Path, to: &Path) {
+    std::fs::create_dir_all(to).unwrap();
+    for entry in std::fs::read_dir(from).unwrap().flatten() {
+        let (src, dst) = (entry.path(), to.join(entry.file_name()));
+        if entry.file_type().unwrap().is_dir() {
+            copy_tree(&src, &dst);
+        } else {
+            std::fs::copy(&src, &dst).unwrap();
+        }
+    }
+}
+
 /// Why a row could not be set up. Carried rather than discarded so the
 /// matrix can name the reason instead of printing a bare "skip".
 pub struct Unavailable(pub String);
@@ -403,32 +433,32 @@ fn setup_flox(tag: &str) -> Result<Box<dyn ProviderFixture>, Unavailable> {
             "flox is not on PATH, or this host has no reachable nix store".into(),
         ));
     }
+    // A checked-in, already-locked environment, copied -- never `flox
+    // install`. Since flox 1.4 resolving a manifest needs a FloxHub login,
+    // so a row that resolved at setup skipped on every host without one,
+    // and on the host this row was migrated on it had never run at all. Activating a locked environment needs no login (measured,
+    // flox 1.14). Fresh resolution keeps its own test,
+    // `tests/flox_fresh_resolution.rs`, which fails rather than skips.
+    let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/flox-row/.flox");
+    if !fixture.join("env/manifest.lock").is_file() {
+        return Err(Unavailable(format!(
+            "{} has no manifest.lock; run scripts/lock-flox-test-row.sh \
+             (needs `flox auth login`) and commit the lock",
+            fixture.display()
+        )));
+    }
+    // A lock that no longer matches its manifest is not locked: flox would
+    // re-resolve on first use, needing the very login this fixture exists
+    // to avoid -- and, on a host that has one, silently, so the stale lock
+    // would go unnoticed until it reached one that does not.
+    if let Some(drift) = flox_fixture_drift(&fixture) {
+        return Err(Unavailable(format!(
+            "the flox row's lock is stale ({drift}); run \
+             scripts/lock-flox-test-row.sh (needs `flox auth login`) and commit the lock"
+        )));
+    }
     let root = fixture_root("flox", tag);
-    if !Command::new("flox")
-        .arg("init")
-        .current_dir(&root)
-        .output()
-        .is_ok_and(|o| o.status.success())
-    {
-        return Err(Unavailable("flox init failed".into()));
-    }
-    // Same reason the nix row's flake names them: `own-policy-baseline`
-    // removed host toolchain access, so a bare `flox init` leaves nothing
-    // devcroft is allowed to run.
-    let install = Command::new("flox")
-        .args(["install", "bash", "coreutils"])
-        .current_dir(&root)
-        .output();
-    match install {
-        Ok(o) if o.status.success() => {}
-        Ok(o) => {
-            return Err(Unavailable(format!(
-                "flox install bash coreutils failed: {}",
-                String::from_utf8_lossy(&o.stderr).trim()
-            )));
-        }
-        Err(e) => return Err(Unavailable(format!("flox install could not run: {e}"))),
-    }
+    copy_tree(&fixture, &root.join(".flox"));
     let sandbox = format!("fxflox{tag}{}", std::process::id());
     write_manifest(&root, &sandbox, "flox");
     Ok(Box::new(FloxRow { root, sandbox }))
