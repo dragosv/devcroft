@@ -52,6 +52,50 @@ limits in [the frozen E5 record](fixtures/no-go-thresholds.json) before density
 collection: 4096 MiB after build/60 s idle, 600 s cold preparation with downloaded
 inputs, 5 s session start in a prepared VM, and 8 GiB physical storage per environment.
 
+## Linux ARM64 nested diagnostics
+
+`libkrun/src/linux.rs` installs a fail-closed host boundary while `/proc/self/task`
+contains exactly one thread, before payload/device constructors and `build()`.
+It requires Landlock ABI 6 or newer, grants immutable inputs read-only and only
+the owned instance/device paths needed for boot, and handles TCP/IPC scopes.
+The compiled rust-vmm `seccompiler` policy has 41 syscall names selected from
+post-filter traces of successful Stage A, keeper and real workload runs. Every
+miss kills the process. Socket family, destination-less sends, thread-only clone
+flags and the thread-name `prctl` are constrained. Host `connect`, addressed sends,
+exec, fork-like clone, ptrace and io_uring are unavailable. There is no log/bypass
+mode. The helper refuses unsupported architectures rather than inventing a list.
+
+Seven separate fixed probes die with SIGSYS; filesystem read/write denials and
+working input/private-file/Unix/thread controls pass. The probes fork only in the
+single-threaded **selftest before restriction**, reuse already-hashed inputs,
+close ambient descriptors and apply the real policy in each child. VMM runs never
+fork after restriction. Stage A additionally reads every helper thread's status
+from the controller at READY and requires seccomp mode 2 plus `NoNewPrivs=1`.
+
+[Measured inventory](fixtures/libkrun-linux-aarch64-syscalls.json) includes archive
+hashes, filtered roots/threads and the final-policy reruns. The labelled
+`results/libkrun-linux-arm64-nested-*.json` records common-artifact Stage A,
+Alpine and Nix builds/Redis/restart/SIGKILL. The outer machine is this M4 Mac,
+Lima/VZ 4 vCPUs/4 GiB, with nested KVM API 12 and Linux Landlock ABI 7. This does
+**not** qualify a native Linux host or x86-64, and traced timings are not used for
+the native comparison. The [matrix](fixtures/hardware-matrix.json) names missing
+hardware rows explicitly.
+
+Build with `python3 experiments/microvm/build_linux_helper.py`; the static Linux
+ARM64 target uses the recorded Zig linker and its own lockfile. The dedicated
+mount-free Lima instance uses [nested-builder.yaml](kernel/nested-builder.yaml).
+`nested_probe.py <row> --out <path> --trace` copies inputs and keeps full raw logs;
+it stops the builder in `finally` unless `--keep-running` is explicitly selected.
+An exclusive controller lock prevents concurrent uploads from truncating shared
+inputs. Tests retain calibration failures: missing Linux `/private/tmp`, BusyBox
+netcat without Unix `-U`, and redundant large-image hashing under strace. The
+final runner uses `/tmp`, OpenBSD netcat and prevalidated single-threaded probe children.
+
+The common control-frame reader now bounds the whole frame deadline, preserves
+pipelined frames and peeks chunks rather than issuing one syscall per byte.
+Four framing tests, the 26-test host suite and two-boot native macOS regressions
+for both adapters pass. Guest policy, kernel and runtime images remain unchanged.
+
 ## Current result
 
 The pinned libkrun **2.0**, plus the recorded local half-close patch, boots a

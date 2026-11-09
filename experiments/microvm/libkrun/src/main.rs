@@ -1,4 +1,6 @@
 mod config;
+#[cfg(target_os = "linux")]
+mod linux;
 mod sandbox;
 
 use config::{CONTROL_PORT, KEEPER_PORT, Launch, REVISION, SSH_PORT};
@@ -43,12 +45,24 @@ fn entry() -> Result<(), String> {
         return Ok(());
     }
     if args.len() == 2 && args[1] == "provenance" {
-        println!(
-            "{}",
-            serde_json::json!({"revision":REVISION,
-            "patch_sha256":env!("DEVCROFT_KRUN_PATCH_SHA256")})
-        );
+        let provenance = serde_json::json!({"revision":REVISION,
+            "patch_sha256":env!("DEVCROFT_KRUN_PATCH_SHA256")});
+        #[cfg(target_os = "linux")]
+        let provenance = {
+            let mut p = provenance;
+            p["linux_seccomp_sha256"] = env!("DEVCROFT_KRUN_LINUX_FILTER_SHA256").into();
+            p["linux_host_boundary"] =
+                "Landlock ABI >=6 + inherited kill-process seccomp before VMM construction".into();
+            p
+        };
+        println!("{provenance}");
         return Ok(());
+    }
+    #[cfg(target_os = "linux")]
+    if args.len() == 4 && args[1] == "syscall-probe" {
+        let cfg = Launch::read(Path::new(&args[2]))?;
+        sandbox::close_inherited_fds()?;
+        return linux::probe(&cfg, args[3].to_str().ok_or("non-UTF-8 probe")?);
     }
     let selftest = args.len() == 4 && args[1] == "sandbox-test";
     if !selftest && (args.len() != 3 || (args[1] != "run" && args[1] != "check")) {

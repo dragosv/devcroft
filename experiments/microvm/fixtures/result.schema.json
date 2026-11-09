@@ -1,0 +1,129 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "devcroft:microvm:raw-result-v1",
+  "title": "microVM experiment raw result envelope",
+  "type": "object",
+  "required": [
+    "schema",
+    "status",
+    "qualification"
+  ],
+  "properties": {
+    "schema": {
+      "const": 1
+    },
+    "status": {
+      "enum": [
+        "passed",
+        "failed",
+        "not-run",
+        "running"
+      ]
+    },
+    "qualification": {
+      "type": "string",
+      "minLength": 1
+    },
+    "adapter": {
+      "enum": [
+        "libkrun",
+        "hvi"
+      ]
+    },
+    "platform": {
+      "type": "string"
+    },
+    "host": {
+      "oneOf": [
+        {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "os",
+            "architecture"
+          ]
+        }
+      ],
+      "description": "uname vector in current raw harness; original Stage-A wrappers retain named os/architecture metadata."
+    },
+    "raw_evidence": {
+      "type": "string"
+    },
+    "samples": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "adapter",
+          "fixture",
+          "instances_requested",
+          "kind",
+          "repetition",
+          "status",
+          "raw"
+        ],
+        "properties": {
+          "adapter": {
+            "enum": [
+              "libkrun",
+              "hvi"
+            ]
+          },
+          "fixture": {
+            "type": "string"
+          },
+          "instances_requested": {
+            "enum": [
+              1,
+              4,
+              8
+            ]
+          },
+          "kind": {
+            "enum": [
+              "launch",
+              "build-idle"
+            ]
+          },
+          "repetition": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "status": {
+            "enum": [
+              "passed",
+              "failed"
+            ]
+          },
+          "raw": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "required": [
+          "samples"
+        ]
+      },
+      "then": {
+        "required": [
+          "platform",
+          "host",
+          "protocol",
+          "thresholds"
+        ]
+      }
+    }
+  ],
+  "additionalProperties": true,
+  "description": "Raw envelope retained across fixture stages; per-boot protocol/control/storage and per-sample memory/CPU fields remain in the record. Qualification labels are mandatory and never inferred from a pass."
+}

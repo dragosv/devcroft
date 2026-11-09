@@ -1,0 +1,21 @@
+# Diagnostic Linux-on-macOS row only; does not qualify native Linux.
+vmType: vz
+arch: aarch64
+cpus: 4
+memory: 4GiB
+disk: 20GiB
+images:
+  - location: https://dl-cdn.alpinelinux.org/alpine/v3.23/releases/cloud/nocloud_alpine-3.23.3-aarch64-uefi-cloudinit-r0.qcow2
+    arch: aarch64
+    digest: sha512:7a3cdfaefb0cbf3bb6824cd6ae80d6a3e0b0e367609e5fc50c5f714374d31e8d70dd607094a4e9cfe2e6ead7537781782469fe93bcea79611fbce4ddeacc92e1
+mounts: []
+containerd:
+  system: false
+  user: false
+propagateProxyEnv: false
+ssh:
+  loadDotSSHPubKeys: false
+portForwards:
+  - guestPortRange: [1, 65535]
+    ignore: true
+nestedVirtualization: true

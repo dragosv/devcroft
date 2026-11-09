@@ -1,0 +1,220 @@
+{
+  "helper": {
+    "default_action": "kill_process",
+    "filter_action": "allow",
+    "filter": [
+      {
+        "syscall": "read",
+        "comment": "Measured post-filter across Stage A, keeper and real Alpine build/Redis/crash: 303589 calls; see fixtures/libkrun-linux-aarch64-syscalls.json."
+      },
+      {
+        "syscall": "write",
+        "comment": "Measured post-filter across Stage A, keeper and real Alpine build/Redis/crash: 16616 calls; see fixtures/libkrun-linux-aarch64-syscalls.json."
+      },
+      {
+        "syscall": "close",
+        "comment": "Measured post-filter across Stage A, keeper and real Alpine build/Redis/crash: 125 calls; see fixtures/libkrun-linux-aarch64-syscalls.json."
+      },
+      {
+        "syscall": "fstat",
+        "comment": "Measured post-filter across Stage A, keeper and real Alpine build/Redis/crash: 40 calls; see fixtures/libkrun-linux-aarch64-syscalls.json."
+      },
+      {
+        "syscall": "newfstatat",
+        "comment": "Measured post-filter across Stage A, keeper and real Alpine build/Redis/crash: 8 calls; see fixtures/libkrun-linux-aarch64-syscalls.json."
+      },
+      {
+        "syscall": "openat",
+        "comment": "Measured post-filter across Stage A, keeper and real Alpine build/Redis/crash: 100 calls; see fixtures/libkrun-linux-aarch64-syscalls.json."
+      },
+      {
+        "syscall": "fcntl",
+        "comment": "Measured post-filter across Stage A, keeper and real Alpine build/Redis/crash: 485 calls; see fixtures/libkrun-linux-aarch64-syscalls.json."
+      },
+      {
+        "syscall": "ioctl",
+        "comment": "Measured post-filter across Stage A, keeper and real Alpine build/Redis/crash: 33120 calls; see fixtures/libkrun-linux-aarch64-syscalls.json."
+      },
+      {
+        "syscall": "mmap",
+        "comment": "Measured post-filter across Stage A, keeper and real Alpine build/Redis/crash: 196 calls; see fixtures/libkrun-linux-aarch64-syscalls.json."
+      },
+      {
+        "syscall": "mprotect",
+        "comment": "Measured post-filter across Stage A, keeper and real Alpine build/Redis/crash: 120 calls; see fixtures/libkrun-linux-aarch64-syscalls.json."
+      },
+      {
+        "syscall": "munmap",
+        "comment": "Measured post-filter across Stage A, keeper and real Alpine build/Redis/crash: 66 calls; see fixtures/libkrun-linux-aarch64-syscalls.json."
+      },
+      {
+        "syscall": "madvise",
+        "comment": "Measured post-filter across Stage A, keeper and real Alpine build/Redis/crash: 19 calls; see fixtures/libkrun-linux-aarch64-syscalls.json."
+      },
+      {
+        "syscall": "getrandom",
+        "comment": "Measured post-filter across Stage A, keeper and real Alpine build/Redis/crash: 73 calls; see fixtures/libkrun-linux-aarch64-syscalls.json."
+      },
+      {
+        "syscall": "gettid",
+        "comment": "Measured post-filter across Stage A, keeper and real Alpine build/Redis/crash: 60 calls; see fixtures/libkrun-linux-aarch64-syscalls.json."
+      },
+      {
+        "syscall": "futex",
+        "comment": "Measured post-filter across Stage A, keeper and real Alpine build/Redis/crash: 3733 calls; see fixtures/libkrun-linux-aarch64-syscalls.json."
+      },
+      {
+        "syscall": "sigaltstack",
+        "comment": "Measured post-filter across Stage A, keeper and real Alpine build/Redis/crash: 127 calls; see fixtures/libkrun-linux-aarch64-syscalls.json."
+      },
+      {
+        "syscall": "rt_sigaction",
+        "comment": "Measured post-filter across Stage A, keeper and real Alpine build/Redis/crash: 16 calls; see fixtures/libkrun-linux-aarch64-syscalls.json."
+      },
+      {
+        "syscall": "rt_sigprocmask",
+        "comment": "Measured post-filter across Stage A, keeper and real Alpine build/Redis/crash: 235 calls; see fixtures/libkrun-linux-aarch64-syscalls.json."
+      },
+      {
+        "syscall": "rt_sigreturn",
+        "comment": "Measured post-filter across Stage A, keeper and real Alpine build/Redis/crash: 12 calls; see fixtures/libkrun-linux-aarch64-syscalls.json."
+      },
+      {
+        "syscall": "eventfd2",
+        "comment": "Measured post-filter across Stage A, keeper and real Alpine build/Redis/crash: 280 calls; see fixtures/libkrun-linux-aarch64-syscalls.json."
+      },
+      {
+        "syscall": "epoll_create1",
+        "comment": "Measured post-filter across Stage A, keeper and real Alpine build/Redis/crash: 40 calls; see fixtures/libkrun-linux-aarch64-syscalls.json."
+      },
+      {
+        "syscall": "epoll_ctl",
+        "comment": "Measured post-filter across Stage A, keeper and real Alpine build/Redis/crash: 652 calls; see fixtures/libkrun-linux-aarch64-syscalls.json."
+      },
+      {
+        "syscall": "epoll_pwait",
+        "comment": "Measured post-filter across Stage A, keeper and real Alpine build/Redis/crash: 14389 calls; see fixtures/libkrun-linux-aarch64-syscalls.json."
+      },
+      {
+        "syscall": "clock_gettime",
+        "comment": "Measured post-filter across Stage A, keeper and real Alpine build/Redis/crash: 903 calls; see fixtures/libkrun-linux-aarch64-syscalls.json."
+      },
+      {
+        "syscall": "sched_yield",
+        "comment": "Measured post-filter across Stage A, keeper and real Alpine build/Redis/crash: 681 calls; see fixtures/libkrun-linux-aarch64-syscalls.json."
+      },
+      {
+        "syscall": "exit",
+        "comment": "Measured post-filter across Stage A, keeper and real Alpine build/Redis/crash: 7 calls; see fixtures/libkrun-linux-aarch64-syscalls.json."
+      },
+      {
+        "syscall": "exit_group",
+        "comment": "Measured post-filter across Stage A, keeper and real Alpine build/Redis/crash: 7 calls; see fixtures/libkrun-linux-aarch64-syscalls.json."
+      },
+      {
+        "syscall": "bind",
+        "comment": "Measured post-filter across Stage A, keeper and real Alpine build/Redis/crash: 24 calls; see fixtures/libkrun-linux-aarch64-syscalls.json."
+      },
+      {
+        "syscall": "listen",
+        "comment": "Measured post-filter across Stage A, keeper and real Alpine build/Redis/crash: 24 calls; see fixtures/libkrun-linux-aarch64-syscalls.json."
+      },
+      {
+        "syscall": "shutdown",
+        "comment": "Measured post-filter across Stage A, keeper and real Alpine build/Redis/crash: 163 calls; see fixtures/libkrun-linux-aarch64-syscalls.json."
+      },
+      {
+        "syscall": "recvfrom",
+        "comment": "Measured post-filter across Stage A, keeper and real Alpine build/Redis/crash: 1210 calls; see fixtures/libkrun-linux-aarch64-syscalls.json."
+      },
+      {
+        "syscall": "fsync",
+        "comment": "Measured post-filter across Stage A, keeper and real Alpine build/Redis/crash: 608 calls; see fixtures/libkrun-linux-aarch64-syscalls.json."
+      },
+      {
+        "syscall": "tkill",
+        "comment": "Measured post-filter across Stage A, keeper and real Alpine build/Redis/crash: 12 calls; see fixtures/libkrun-linux-aarch64-syscalls.json."
+      },
+      {
+        "syscall": "socket",
+        "args": [
+          {
+            "index": 0,
+            "type": "dword",
+            "op": "eq",
+            "val": 1
+          }
+        ],
+        "comment": "Measured post-filter across Stage A, keeper and real Alpine build/Redis/crash: 24 calls; see fixtures/libkrun-linux-aarch64-syscalls.json. Arguments constrained to Unix family."
+      },
+      {
+        "syscall": "sendto",
+        "args": [
+          {
+            "index": 4,
+            "type": "qword",
+            "op": "eq",
+            "val": 0
+          },
+          {
+            "index": 5,
+            "type": "dword",
+            "op": "eq",
+            "val": 0
+          }
+        ],
+        "comment": "Measured post-filter across Stage A, keeper and real Alpine build/Redis/crash: 3821 calls; see fixtures/libkrun-linux-aarch64-syscalls.json. No destination sockaddr."
+      },
+      {
+        "syscall": "clone",
+        "args": [
+          {
+            "index": 0,
+            "type": "qword",
+            "op": {
+              "masked_eq": 65536
+            },
+            "val": 65536
+          },
+          {
+            "index": 0,
+            "type": "qword",
+            "op": {
+              "masked_eq": 18446744073684578559
+            },
+            "val": 0
+          }
+        ],
+        "comment": "Measured post-filter across Stage A, keeper and real Alpine build/Redis/crash: 60 calls; see fixtures/libkrun-linux-aarch64-syscalls.json. Require only explicit thread-sharing/TLS/tid clone flags."
+      },
+      {
+        "syscall": "prctl",
+        "args": [
+          {
+            "index": 0,
+            "type": "dword",
+            "op": "eq",
+            "val": 15
+          }
+        ],
+        "comment": "Measured post-filter across Stage A, keeper and real Alpine build/Redis/crash: 52 calls; see fixtures/libkrun-linux-aarch64-syscalls.json. Thread name only."
+      },
+      {
+        "syscall": "fstatfs",
+        "comment": "Measured post-filter across Stage A, keeper and real Alpine build/Redis/crash: 12 calls; see fixtures/libkrun-linux-aarch64-syscalls.json."
+      },
+      {
+        "syscall": "preadv",
+        "comment": "Measured post-filter across Stage A, keeper and real Alpine build/Redis/crash: 12224 calls; see fixtures/libkrun-linux-aarch64-syscalls.json."
+      },
+      {
+        "syscall": "pwritev",
+        "comment": "Measured post-filter across Stage A, keeper and real Alpine build/Redis/crash: 1286 calls; see fixtures/libkrun-linux-aarch64-syscalls.json."
+      },
+      {
+        "syscall": "accept",
+        "comment": "Measured post-filter across Stage A, keeper and real Alpine build/Redis/crash: 113 calls; see fixtures/libkrun-linux-aarch64-syscalls.json."
+      }
+    ]
+  }
+}

@@ -29,6 +29,10 @@ fn main() {
         "prepare libkrun with build_helper.py: {}",
         String::from_utf8_lossy(&verification.stderr)
     );
+    let linux_filter = root.join("libkrun/resources/seccomp-aarch64.json");
+    println!("cargo:rerun-if-changed={}", linux_filter.display());
+    let filter_hash = format!("{:x}", Sha256::digest(fs::read(linux_filter).unwrap()));
+    println!("cargo:rustc-env=DEVCROFT_KRUN_LINUX_FILTER_SHA256={filter_hash}");
     let hash = format!("{:x}", Sha256::digest(fs::read(patch).unwrap()));
     println!("cargo:rustc-env=DEVCROFT_KRUN_PATCH_SHA256={hash}");
 }

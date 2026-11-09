@@ -1,0 +1,80 @@
+{
+  "schema": 1,
+  "recorded_on": "2026-11-09",
+  "rows": [
+    {
+      "id": "macos-arm64-native",
+      "status": "available",
+      "hardware": {
+        "cpu": "Apple M4 Pro",
+        "physical_cores": 12,
+        "logical_cpus": 12,
+        "memory_bytes": 25769803776
+      },
+      "os": "macOS 15.7.4 / Darwin 24.6.0",
+      "adapters": [
+        "libkrun",
+        "hvi"
+      ],
+      "regression_location": "this local native host; smoke.py, ssh_smoke.py, workload_smoke.py, editor_smoke.py, adaptable_smoke.py; density.py without strace"
+    },
+    {
+      "id": "linux-arm64-nested-on-macos-vz",
+      "status": "functional-diagnostic",
+      "outer": "macos-arm64-native",
+      "outer_vm": {
+        "driver": "Lima 2.1.0 VZ nestedVirtualization=true",
+        "vcpus": 4,
+        "memory_mib": 4096,
+        "disk_gib": 20,
+        "host_mounts": []
+      },
+      "linux_kernel": "6.18.7-0-virt Alpine ARM64",
+      "kvm_api": 12,
+      "landlock_abi": 7,
+      "adapters": {
+        "libkrun": "Final-filter Stage A, keeper/PTY/signals and Alpine/Nix workload/crash passed; builder stopped afterward",
+        "hvi": "not-run"
+      },
+      "regression_location": "nested_probe.py with kernel/nested-builder.yaml; diagnostic only, not a native performance comparison"
+    },
+    {
+      "id": "linux-arm64-native",
+      "status": "not-run",
+      "reason": "no native Linux ARM64 host provisioned in this workspace",
+      "regression_location": "required dedicated native Linux ARM64 runner; Landlock ABI >=6 and KVM required; not yet provisioned"
+    },
+    {
+      "id": "linux-x86_64-native",
+      "status": "not-run",
+      "reason": "no native Linux x86-64 host provisioned; architecture-matched kernel/closure and measured syscall filter pending",
+      "regression_location": "required dedicated native Linux x86-64 runner; not yet provisioned"
+    },
+    {
+      "id": "macos-x86_64-native",
+      "status": "not-run",
+      "reason": "no native Intel Mac available; pinned hvi macOS backend supports ARM64 only",
+      "regression_location": "Intel Mac required to determine libkrun support; hvi unsupported at pin"
+    }
+  ],
+  "fixtures": {
+    "alpine": {
+      "guest": "artifacts/stage-b-workload/guest.json",
+      "image": "artifacts/workload/toolchain.img",
+      "seed": "artifacts/workload/data.seed.img"
+    },
+    "nix": {
+      "guest": "artifacts/stage-b-nix/guest.json",
+      "image": "artifacts/nix/toolchain.img",
+      "seed": "artifacts/nix/data.seed.img"
+    },
+    "adaptable": {
+      "runtime": "artifacts/stage-c-runtime/guest.json",
+      "setup": "artifacts/stage-c-setup/guest.json",
+      "recipe": "fixtures/adaptable-recipe-aarch64.json"
+    }
+  },
+  "density_protocol": "fixtures/evaluation-protocol.json",
+  "raw_results": "runs/<run>/report.json or nested.json + raw/report.json; per-boot logs and per-sample memory-cpu.jsonl retained",
+  "qualification_rule": "No row inherits another platform/architecture result. Nested and calibration data are excluded from the native comparison."
+}
