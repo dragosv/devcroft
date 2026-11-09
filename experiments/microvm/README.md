@@ -129,6 +129,42 @@ these are not matched performance comparisons. The Nix source pin reuses only
 xxHash and small-file inputs from `workload-source.json`; that file's service
 description applies to Alpine, while this row's Redis comes from the flake.
 
+The [adaptable-base run](results/libkrun-macos-arm64-adaptable.json) adds a private
+writable rootfs and a bounded administrative setup phase. Five clean boots across
+three instances demonstrate the actual transition: GCC works on the baseline,
+the zlib program fails for missing `zlib.h`, fixed offline APKs install through
+PID 1, then the real keeper compiles and runs a zlib compression round trip.
+After cold restart the existing executable runs without rebuilding. A new
+instance starts from the empty seed and reconstructs the same header, library,
+source and executable SHA-256 hashes from the recipe, without copying the first
+instance's modified disk. A third fresh baseline fails the missing-dependency
+build when setup is omitted. Empty install inputs, missing hashes, foreign URLs,
+path escapes, corrupt APKs and symlink inputs fail host recipe validation.
+
+This still uses four disks. The private ext4 disk contains disjoint `rootfs`
+and `workspace` subtrees; only the latter is bind-mounted at `/workspace` and
+granted read-write access. Guest nono grants read-only access to the rootfs.
+Normal sessions cannot append to the installed header or remove the package,
+although the filesystem itself remains writable for administrative setup.
+The immutable input image remains unchanged. All owned helpers and endpoints
+are cleaned up. A mismatched seed is rejected before instance/key/helper creation.
+
+The setup guest withholds keeper/SSH until `SETUP CLOSE`. Its control parser on
+the existing private `control.sock` accepts only the compiled-in recipe hash
+and fixed apply/close operations; no paths, packages or shell strings come from
+the wire. APK input hashes/signatures are checked, install uses `--no-network`
+and `--no-scripts`, and there is no guest NIC/TSI. Wrong hashes, path injection,
+oversized frames, duplicate application and reopening after close are refused.
+The window cannot reopen within that boot. Administrative child processes and
+baseline copying have deadlines; control descriptors have close-on-exec.
+The exact recipe and separate runtime/setup initramfs identities are retained.
+
+This is one trusted fixture recipe using Alpine APK, not the production package
+mechanism or a general privileged shell/API. Setup interruption/recovery, other
+adapters/platforms and full fleet/security qualification remain open. Omitting
+the whole setup is the runtime negative control; empty/floating recipe inputs
+are separately rejected before guest creation.
+
 This does not qualify a complete backend. The original keeper/SSH fixture has
 an in-memory workspace; the workload fixture uses ext4. Both are Alpine-based
 fixtures; the Nix closure is a separate image/guest row. Complete project policy,
@@ -272,6 +308,25 @@ versions and image hashes separately from the Alpine rows. Builder tools and
 filesystem metadata are recorded, not claimed bit-identical; complete fleet
 qualification and the x86-64/hvi rows remain separate work.
 
+To reproduce the adaptable-base row after building the immutable workload input:
+
+```sh
+rtk proxy python3 experiments/microvm/build_adaptable.py
+rtk proxy python3 experiments/microvm/build_keeper_guest.py --adaptable
+rtk proxy python3 experiments/microvm/build_keeper_guest.py --adaptable --setup-window
+rtk proxy python3 experiments/microvm/adaptable_smoke.py
+```
+
+`fixtures/adaptable-recipe-aarch64.json` fixes the baseline image identity,
+native source and all package-manager/dependency APK URLs and SHA-256 hashes.
+`--freeze-inputs` explicitly resolves new pins; normal reproduction never
+repins them. `packages.tar` retains the archives. The Linux builder adds only
+the package manager to the immutable baseline; the native development package
+remains uninstalled until guest setup. The seed is an empty 768 MiB ext4 disk;
+instances use 2 vCPUs and 512 MiB. The host checks recipe/image/seed consistency
+before starting any guest. The setup protocol is an experimental PID 1 contract,
+not a change to the keeper or the public devcroft CLI.
+
 The guest has a separate workspace and lockfile. The build uses installed Zig
 for both Rust linking and native dependencies, and disables Rust's duplicate
 self-contained CRT. The guest receipt records all reused keeper source hashes,
@@ -317,6 +372,7 @@ hashes identify bytes and are not authorization for arbitrary untrusted kernels.
 rtk proxy cargo fmt --manifest-path experiments/microvm/libkrun/Cargo.toml --check
 rtk proxy cargo clippy --manifest-path experiments/microvm/libkrun/Cargo.toml --locked --offline -- -D warnings
 rtk proxy python3 -m unittest discover -s experiments/microvm -p test_stage_a.py -v
+rtk proxy python3 -m unittest discover -s experiments/microvm -p test_adaptable_recipe.py -v
 rtk proxy cargo test --manifest-path experiments/microvm/guest-keeper/Cargo.toml --locked
 ```
 

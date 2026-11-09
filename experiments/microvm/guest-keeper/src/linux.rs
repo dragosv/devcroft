@@ -152,6 +152,10 @@ pub(super) fn run() -> Result<(), Box<dyn std::error::Error>> {
         .allow_file("/dev/null", AccessMode::ReadWrite)?
         .set_signal_mode(SignalMode::AllowSameSandbox)
         .block_network();
+    if std::path::Path::new("/private-base/rootfs/.baseline-ready").is_file() {
+        // The base and bound workspace must be disjoint Landlock subtrees.
+        caps = caps.allow_path("/private-base/rootfs", AccessMode::Read)?;
+    }
     if std::path::Path::new("/toolchain/usr/bin/gcc").is_file() {
         caps = caps
             .allow_path("/toolchain", AccessMode::Read)?

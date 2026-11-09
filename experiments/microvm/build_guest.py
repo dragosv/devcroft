@@ -26,7 +26,7 @@ def entry(out, name, data=b"", mode=stat.S_IFDIR | 0o755, ino=1, major=0, minor=
     out.write(b"\0" * (-out.tell() % 4))
 
 
-def build(out_dir, arch, zig, keeper=None, busybox=None, workload=False, nix=False):
+def build(out_dir, arch, zig, keeper=None, busybox=None, workload=False, nix=False, adaptable=False, setup=False):
     if nix and not workload:
         raise ValueError('Nix fixture requires the workload block devices')
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -38,6 +38,21 @@ def build(out_dir, arch, zig, keeper=None, busybox=None, workload=False, nix=Fal
         command.append("-DENABLE_KEEPER=1")
     if workload:
         command.append("-DENABLE_WORKLOAD=1")
+    recipe_hash = None
+    if adaptable:
+        if not workload or not keeper or nix:
+            raise ValueError('adaptable fixture requires its own keeper/workload guest')
+        from adaptable.recipe import encoded, load
+        recipe = load(ROOT / 'fixtures/adaptable-recipe-aarch64.json')
+        recipe_hash = hashlib.sha256(encoded(recipe)).hexdigest()
+        header = out_dir / 'setup_recipe.h'
+        packages = ', '.join(json.dumps('/toolchain/adaptable/apks/' + item['file']) for item in recipe['packages'])
+        header.write_text('#define SETUP_RECIPE_HASH ' + json.dumps(recipe_hash) + '\n#define SETUP_PACKAGES ' + packages + '\n')
+        command.extend(['-DENABLE_ADAPTABLE=1', '-include', str(header)])
+        if setup:
+            command.append('-DENABLE_SETUP_WINDOW=1')
+    elif setup:
+        raise ValueError('setup window requires the adaptable fixture')
     subprocess.run(command, check=True, env=env)
     archive = io.BytesIO()
     for ino, name in enumerate(["dev", "proc", "sys", "run", "tmp"], 1):
@@ -56,7 +71,10 @@ def build(out_dir, arch, zig, keeper=None, busybox=None, workload=False, nix=Fal
         if workload:
             entry(archive, "toolchain", ino=100)
             for ino, name in enumerate(["usr", "lib", "etc"], 101):
-                entry(archive, name, f"toolchain/{name}".encode(), stat.S_IFLNK | 0o777, ino=ino)
+                target = f'private-base/rootfs/{name}' if adaptable else f'toolchain/{name}'
+                entry(archive, name, target.encode(), stat.S_IFLNK | 0o777, ino=ino)
+            if adaptable:
+                entry(archive, 'private-base', ino=108)
             if nix:
                 entry(archive, "nix", b"toolchain/nix", stat.S_IFLNK | 0o777, ino=105)
     entry(archive, "TRAILER!!!", mode=0, ino=31)
@@ -77,6 +95,9 @@ def build(out_dir, arch, zig, keeper=None, busybox=None, workload=False, nix=Fal
         result.update(fixture="stage-b-xxhash-redis-ext4", workload=True)
     if nix:
         result.update(fixture="stage-b-nix-closure-ext4", nix=True)
+    if adaptable:
+        result.update(fixture='stage-c-private-adaptable-base', adaptable=True,
+                      setup_window=setup, setup_recipe_sha256=recipe_hash)
     for key, file in [("initramfs", path), ("runtime", runtime)]:
         result[key] = {"path": str(file.resolve()), "sha256": hashlib.sha256(file.read_bytes()).hexdigest()}
     (out_dir / "guest.json").write_text(json.dumps(result, indent=2) + "\n")
