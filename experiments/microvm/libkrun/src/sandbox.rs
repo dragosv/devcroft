@@ -18,7 +18,8 @@ pub fn selftest(cfg: &Launch, outside: &std::path::Path) -> Result<(), String> {
         .and_then(|mut f| f.write_all(b"positive-control"))
         .is_ok();
     let unix_works = std::os::unix::net::UnixListener::bind(cfg.control_socket()).is_ok()
-        && std::os::unix::net::UnixListener::bind(cfg.keeper_socket()).is_ok();
+        && std::os::unix::net::UnixListener::bind(cfg.keeper_socket()).is_ok()
+        && std::os::unix::net::UnixListener::bind(cfg.ssh_socket()).is_ok();
     let thread_works = std::thread::spawn(|| 7).join().ok() == Some(7);
     let passed = outside_denied
         && runtime_write_denied
@@ -116,7 +117,7 @@ fn profile(cfg: &Launch) -> Result<String, String> {
     // acquire its boot resources. There are no host filesystem shares, TCP/UDP
     // grants, process-exec/fork grants, or access to the operator's home.
     let mut p = String::from("(version 1)\n(deny default)\n(allow sysctl-read)\n");
-    for a in [&cfg.kernel, &cfg.initramfs, &cfg.runtime] {
+    for a in cfg.artifacts() {
         p.push_str(&format!(
             "(allow file-read* (literal {}))\n",
             quoted(&a.path)?
@@ -127,7 +128,7 @@ fn profile(cfg: &Launch) -> Result<String, String> {
         quoted(&cfg.instance_dir)?
     ));
     // Socket creation/bind is constrained to the per-instance Unix pathname.
-    for socket in [cfg.control_socket(), cfg.keeper_socket()] {
+    for socket in [cfg.control_socket(), cfg.keeper_socket(), cfg.ssh_socket()] {
         p.push_str(&format!(
             "(allow network-bind network-inbound network-outbound (local unix-socket (path {})))\n",
             quoted(&socket)?

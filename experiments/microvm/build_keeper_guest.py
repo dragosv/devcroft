@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Cross-compile the real keeper + nono and package a pinned static-shell fixture."""
 import gzip
+import argparse
 import hashlib
 import io
 import json
@@ -15,6 +16,12 @@ from build_guest import ROOT, build
 
 
 def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--workload", action="store_true")
+    parser.add_argument("--nix", action="store_true", help="package the declared Nix workload fixture")
+    args = parser.parse_args()
+    if args.nix:
+        args.workload = True
     zig = shutil.which("zig")
     if not zig:
         raise RuntimeError("an installed Zig and the aarch64-unknown-linux-musl Rust target are required")
@@ -26,7 +33,7 @@ def main():
                CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_RUSTFLAGS="-C link-self-contained=no")
     subprocess.run(["cargo", "build", "--manifest-path", str(crate / "Cargo.toml"), "--locked",
                     "--target", "aarch64-unknown-linux-musl", "--release"], check=True, env=env, timeout=900)
-    out = ROOT / "artifacts/stage-b"
+    out = ROOT / ("artifacts/stage-b-nix" if args.nix else "artifacts/stage-b-workload" if args.workload else "artifacts/stage-b")
     out.mkdir(parents=True, exist_ok=True)
     pin = json.loads((ROOT / "fixtures/busybox-aarch64.json").read_text())
     package = out / "busybox.apk"
@@ -48,9 +55,10 @@ def main():
         busybox = out / "busybox"
         busybox.write_bytes(archive.extractfile(members[0]).read())
     keeper = crate / "target/aarch64-unknown-linux-musl/release/devcroft-guest-keeper"
-    build(out, "aarch64", zig, keeper=keeper, busybox=busybox)
+    build(out, "aarch64", zig, keeper=keeper, busybox=busybox, workload=args.workload, nix=args.nix)
     receipt = json.loads((out / "guest.json").read_text())
     sources = [*sorted((ROOT.parent.parent / "src/keeper").glob("*.rs")),
+               ROOT.parent.parent / "src/ssh/server.rs", ROOT.parent.parent / "src/ssh/sftp.rs",
                *sorted((crate / "src").glob("*.rs")), crate / "Cargo.toml", crate / "Cargo.lock",
                crate / "zig-linker.sh", crate / "zig-ar.sh", ROOT / "build_keeper_guest.py",
                ROOT / "build_guest.py", ROOT / "guest/init.c"]

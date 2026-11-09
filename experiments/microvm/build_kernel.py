@@ -11,6 +11,7 @@ import os
 from pathlib import Path
 import platform
 import subprocess
+import tempfile
 
 ROOT = Path(__file__).resolve().parent
 SOURCE_SHA = "a9e8c51fcb1e695d1d35dde5886cba579cb6f29c9646c5889f39d63841d4b9f6"
@@ -27,6 +28,11 @@ def main():
     if platform.system() != "Darwin" or platform.machine() != "arm64":
         parser.error("this builder profile requires macOS ARM64; no emulation fallback")
     env = dict(os.environ, LIMA_HOME=str(args.lima_home.resolve()))
+    frozen = tempfile.TemporaryDirectory(prefix="devcroft-kernel-inputs-")
+    fragment = Path(frozen.name) / "aarch64.config"
+    recipe = Path(frozen.name) / "build.sh"
+    fragment.write_bytes((ROOT / "kernel/aarch64.config").read_bytes())
+    recipe.write_bytes((ROOT / "kernel/build.sh").read_bytes())
 
     def lima(*cmd, capture=False):
         call = ["limactl", *cmd]
@@ -42,13 +48,17 @@ def main():
             lima("shell", args.name, "sudo", "apk", "add", "--no-cache", *PACKAGES)
             if lima("shell", args.name, "stat", "-f", "-c", "%T", "/tmp", capture=True) != "tmpfs":
                 lima("shell", args.name, "sudo", "mount", "-t", "tmpfs", "-o", "size=3G", "tmpfs", "/tmp")
-            lima("copy", str(ROOT / "kernel/aarch64.config"), str(ROOT / "kernel/build.sh"), f"{args.name}:/tmp/")
+            lima("copy", str(fragment), str(recipe), f"{args.name}:/tmp/")
             lima("shell", args.name, "sh", "/tmp/build.sh", "/tmp/aarch64.config")
         args.out.mkdir(parents=True, exist_ok=True)
         for file in ["Image", "config", "KVER", "SHA256SUMS", "toolchain.txt"]:
             lima("copy", f"{args.name}:/tmp/devcroft-kernel/output/{file}", str(args.out / file))
         packages = lima("shell", args.name, "apk", "info", "-v", capture=True)
         (args.out / "packages.txt").write_text(packages + "\n")
+        built_config = (args.out / "config").read_text().splitlines()
+        for required in ("CONFIG_SECURITY_LANDLOCK=y", "CONFIG_PROC_PAGE_MONITOR=y", "CONFIG_ADVISE_SYSCALLS=y", "CONFIG_INOTIFY_USER=y"):
+            if required not in built_config:
+                raise RuntimeError(f"output kernel lacks required capability: {required}")
         receipt = {"schema": 1, "kernel_version": (args.out / "KVER").read_text().strip(),
                    "source_url": "https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-6.12.95.tar.xz",
                    "source_sha256": SOURCE_SHA,
@@ -57,13 +67,14 @@ def main():
                    "builder_image": "alpine-3.23.3-aarch64-uefi-cloudinit-r0",
                    "reproducibility": "source/config/output identities recorded; installed toolchain recorded, not a bit-reproducibility claim"}
         for key, file in [("kernel", args.out / "Image"), ("config", args.out / "config"),
-                          ("config_fragment", ROOT / "kernel/aarch64.config")]:
+                          ("config_fragment", fragment)]:
             receipt[f"{key}_sha256"] = hashlib.sha256(file.read_bytes()).hexdigest()
         (args.out / "build.json").write_text(json.dumps(receipt, indent=2) + "\n")
         print(json.dumps(receipt, indent=2))
     finally:
         if (args.lima_home / args.name / "ha.pid").exists():
             lima("stop", args.name)
+        frozen.cleanup()
 
 
 if __name__ == "__main__":

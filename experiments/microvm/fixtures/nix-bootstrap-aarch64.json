@@ -1,0 +1,9 @@
+{
+  "schema": 1,
+  "version": "2.34.9",
+  "system": "aarch64-linux",
+  "url": "https://releases.nixos.org/nix/nix-2.34.9/nix-2.34.9-aarch64-linux.tar.xz",
+  "sha256": "f0bb2518db6c9db3f925be3edb76f6e0da17cb72fba329493f510ca08e5111a7",
+  "checksum_reference": "https://releases.nixos.org/nix/nix-2.34.9/nix-2.34.9-aarch64-linux.tar.xz.sha256",
+  "scope": "single-user bootstrap inside the dedicated Linux builder only"
+}

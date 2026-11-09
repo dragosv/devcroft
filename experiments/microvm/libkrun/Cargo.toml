@@ -19,3 +19,8 @@ sha2 = "0.10"
 
 [build-dependencies]
 sha2 = "0.10"
+
+# Large immutable images are always fully verified, including debug smoke runs.
+# Optimize only the SHA implementation; VMM code keeps its diagnostic dev build.
+[profile.dev.package.sha2]
+opt-level = 3

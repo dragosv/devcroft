@@ -8,6 +8,7 @@ use std::path::{Path, PathBuf};
 pub const REVISION: &str = "6151710f4ea627cf0e5dbce78e4192fb4d64c2e9";
 pub const CONTROL_PORT: u32 = 1024;
 pub const KEEPER_PORT: u32 = 1025;
+pub const SSH_PORT: u32 = 1026;
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -23,6 +24,8 @@ pub struct Launch {
     pub kernel: Artifact,
     pub initramfs: Artifact,
     pub runtime: Artifact,
+    pub workload: Option<Artifact>,
+    pub data: Option<PathBuf>,
     pub state: PathBuf,
     pub instance_dir: PathBuf,
     pub vcpus: u8,
@@ -52,17 +55,34 @@ impl Launch {
             artifact.path = regular_file(&artifact.path)?;
             verify(artifact)?;
         }
-        cfg.state = regular_file(&cfg.state)?;
-        let state_meta = fs::metadata(&cfg.state).map_err(|e| e.to_string())?;
-        if state_meta.len() < 8192 || state_meta.nlink() != 1 {
+        if cfg.workload.is_some() != cfg.data.is_some() {
             return Err(
-                "config: state must be a private regular disk of at least 8192 bytes".into(),
+                "config: workload image and private data disk must be provided together".into(),
             );
         }
-        for artifact in [&cfg.kernel, &cfg.initramfs, &cfg.runtime] {
-            let meta = fs::metadata(&artifact.path).map_err(|e| e.to_string())?;
-            if (meta.dev(), meta.ino()) == (state_meta.dev(), state_meta.ino()) {
-                return Err("config: state aliases an immutable input".into());
+        if let Some(artifact) = &mut cfg.workload {
+            artifact.path = regular_file(&artifact.path)?;
+            verify(artifact)?;
+        }
+        cfg.state = regular_file(&cfg.state)?;
+        if let Some(data) = &mut cfg.data {
+            *data = regular_file(data)?;
+            if *data == cfg.state {
+                return Err("config: private data disk aliases state".into());
+            }
+        }
+        for private in std::iter::once(&cfg.state).chain(cfg.data.iter()) {
+            let state_meta = fs::metadata(private).map_err(|e| e.to_string())?;
+            if state_meta.len() < 8192 || state_meta.nlink() != 1 {
+                return Err(
+                    "config: private disk must have one link and at least 8192 bytes".into(),
+                );
+            }
+            for artifact in cfg.artifacts() {
+                let meta = fs::metadata(&artifact.path).map_err(|e| e.to_string())?;
+                if (meta.dev(), meta.ino()) == (state_meta.dev(), state_meta.ino()) {
+                    return Err("config: private disk aliases an immutable input".into());
+                }
             }
         }
         cfg.instance_dir = fs::canonicalize(&cfg.instance_dir)
@@ -73,10 +93,14 @@ impl Launch {
                 "config: instance directory must be owned by this user with mode 0700".into(),
             );
         }
-        if cfg.state.parent() != Some(cfg.instance_dir.as_path()) {
-            return Err("config: state must be directly inside its instance directory".into());
+        for disk in std::iter::once(&cfg.state).chain(cfg.data.iter()) {
+            if disk.parent() != Some(cfg.instance_dir.as_path()) {
+                return Err(
+                    "config: private disks must be directly inside their instance directory".into(),
+                );
+            }
         }
-        for artifact in [&cfg.kernel, &cfg.initramfs, &cfg.runtime] {
+        for artifact in cfg.artifacts() {
             if artifact.path.starts_with(&cfg.instance_dir) {
                 return Err(
                     "config: immutable input must be outside the writable instance directory"
@@ -84,7 +108,7 @@ impl Launch {
                 );
             }
         }
-        for socket in [cfg.control_socket(), cfg.keeper_socket()] {
+        for socket in [cfg.control_socket(), cfg.keeper_socket(), cfg.ssh_socket()] {
             let occupied = match socket.symlink_metadata() {
                 Ok(_) => true,
                 Err(e) if e.kind() == io::ErrorKind::NotFound => false,
@@ -101,8 +125,18 @@ impl Launch {
         self.instance_dir.join("control.sock")
     }
 
+    pub fn artifacts(&self) -> impl Iterator<Item = &Artifact> {
+        [&self.kernel, &self.initramfs, &self.runtime]
+            .into_iter()
+            .chain(self.workload.iter())
+    }
+
     pub fn keeper_socket(&self) -> PathBuf {
         self.instance_dir.join("keeper.sock")
+    }
+
+    pub fn ssh_socket(&self) -> PathBuf {
+        self.instance_dir.join("ssh.sock")
     }
 }
 

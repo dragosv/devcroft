@@ -1,0 +1,396 @@
+{
+  "schema": 1,
+  "adapter": "libkrun",
+  "host": [
+    "Darwin",
+    "Dragoss-MacBook-Pro.local",
+    "24.6.0",
+    "Darwin Kernel Version 24.6.0: Mon Jan 19 22:01:58 PST 2026; root:xnu-11417.140.69.708.3~1/RELEASE_ARM64_T6041",
+    "arm64"
+  ],
+  "fixture": "real keeper/SSH/SFTP + private raw bootstrap + guest HTTP identity fixture",
+  "qualification": "diagnostic-only",
+  "guest_build": {
+    "schema": 1,
+    "arch": "aarch64",
+    "fixture": "stage-b-real-keeper",
+    "zig_version": "0.17.0",
+    "source_sha256": "bdef4d683177192063cc5ec46028f26e668cf14fa0c6af843de9db9efdf73019",
+    "nono": "0.77.0",
+    "keeper_sha256": "927d7f4a5ec0f7225ee518b7af0eaa1e8f183aad1eec77671fb435f1f580763e",
+    "busybox_sha256": "198f6f675a49ac734082e054b823d3e2e947180ca2f632852ae1c09e950fd676",
+    "initramfs": {
+      "path": "/Users/dragos/Development/devcroft-codex/experiments/microvm/artifacts/stage-b/initramfs.cpio",
+      "sha256": "5b39d498f3aa140553f2d9ec1a79fe012868009b48e6789bc840d4049bacaeab"
+    },
+    "runtime": {
+      "path": "/Users/dragos/Development/devcroft-codex/experiments/microvm/artifacts/stage-b/runtime.img",
+      "sha256": "768f5b593e9f9f6888ea6930f6b6dc3adb65fd204b3c48361e0864dd6ae93f0c"
+    },
+    "sources": {
+      "src/keeper/connection.rs": "5ea9ab23a29a9eb73363759818af13d5619715e9bc3282409ebd0c4257363759",
+      "src/keeper/environment.rs": "dcf433c26bba99dbe3a28164e35cd38854c30a64521a21691dc92f15ddc29fc6",
+      "src/keeper/mod.rs": "2d93e061be8231d0e0f95b018405b7dac70973800f3a72eed951960d753573e9",
+      "src/keeper/protocol.rs": "a1fd3088992902e89022c229ed710d25487374bfeeeece8000dd2e5872572a2d",
+      "src/keeper/pty.rs": "be8ea1fda83d3932eebe6d54b509e2f96bae5df9aa313a00296e4fa41e580dca",
+      "src/keeper/registry.rs": "99d96e3c267247ecc2f2220f8c0667216998d2cdabd8aabf5284d21c38aa93ce",
+      "src/keeper/session.rs": "1d1a1fce6ff8daac07dc6a8cc95a5ef60362730ae7d22326658920d8a8cf195c",
+      "src/ssh/server.rs": "8c7ab0de47153e02c725684ef05fe1362f9d4af6204636304e4efc895552f986",
+      "src/ssh/sftp.rs": "805e6fc83c646b50df100010bb6bec3988733a8a79027ca1d6ce79ce745ae6ee",
+      "experiments/microvm/guest-keeper/src/bootstrap.rs": "9ad93deea140929f7b13c50411a8be1c46170ff3a118b75f9d32320a59b3e606",
+      "experiments/microvm/guest-keeper/src/linux.rs": "0173d3ac8397cb9e5bc8f74f4d73466abcc2f81b3732e992a26034c38d1dd1f9",
+      "experiments/microvm/guest-keeper/src/main.rs": "8195d8e46b245a42d9f20df636e9899c7a5bb9538968595850f8abfcb4fe7128",
+      "experiments/microvm/guest-keeper/Cargo.toml": "bf410f00c15228ec48cfda740c4a2c5a4f39e01e8f184edf4699ef3f96a2bb9f",
+      "experiments/microvm/guest-keeper/Cargo.lock": "c509b51fe02c1ae6842e01a302389076f615b27461f678b7b5af4e623b5e72b7",
+      "experiments/microvm/guest-keeper/zig-linker.sh": "28d89d7554ca99e4d1366d18d365253687076a7f9069d0488d9a011036626fd5",
+      "experiments/microvm/guest-keeper/zig-ar.sh": "8d9a92610ac547533bcce655621c435015305c043e273ea6a038ce999177935c",
+      "experiments/microvm/build_keeper_guest.py": "9cff5a0ee251c012d8e6600f1497aa63b31063263c1e6222a4b0881f5752efd9",
+      "experiments/microvm/build_guest.py": "cfcef7b1fb6f3cace94cb6fe7533b778a6bcba3a808d374696fbea6b52e2194c",
+      "experiments/microvm/guest/init.c": "bdef4d683177192063cc5ec46028f26e668cf14fa0c6af843de9db9efdf73019"
+    },
+    "busybox_package": {
+      "schema": 1,
+      "package": "busybox-static-1.37.0-r30",
+      "architecture": "aarch64",
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.23/main/aarch64/busybox-static-1.37.0-r30.apk",
+      "sha256": "44c9abdfb970f398fa72c8382fe2d8808eea16beaf82daf6ac708b92f1b8659e",
+      "member": "bin/busybox.static",
+      "purpose": "Real static shell and utilities for the keeper integration fixture; not a provider closure"
+    },
+    "rustc": "rustc 1.95.0 (59807616e 2026-04-14)"
+  },
+  "helper_artifact": {
+    "path": "/Users/dragos/Development/devcroft-codex/experiments/microvm/libkrun/target/debug/devcroft-krun-spike",
+    "sha256": "f20883daa99427fd1223caca465e1fa3db656663a4f6083bcd501c1c9156d65c"
+  },
+  "client": {
+    "implementation": "system OpenSSH",
+    "known_hosts": "pinned from per-instance generated host keys",
+    "version": "OpenSSH_9.9p2, LibreSSL 3.3.6"
+  },
+  "status": "passed",
+  "instances": [
+    {
+      "label": "a",
+      "instance_dir": "/private/tmp/ds-_crbbprl",
+      "instance_id": "692692c71b90578471975b62e7414ea3",
+      "boots": [
+        {
+          "boot": 1,
+          "greeting": "READY 1 state=1 ro=1 landlock=6 policy=1",
+          "ready_seconds": 2.5037445000489242,
+          "probes": {
+            "instance_id": "692692c71b90578471975b62e7414ea3",
+            "status": "passed",
+            "exec_stdout_stderr_exit": true,
+            "stdin_binary_eof_bytes": 131072,
+            "openssh_terminal_shell_pty": {
+              "initial": [
+                24,
+                80
+              ],
+              "resized": [
+                41,
+                132
+              ],
+              "ctrl_c_status": 130,
+              "shell_exit": 17
+            },
+            "sftp_put_rename_get_remove_bytes": 131072,
+            "sftp_nono_denials": true,
+            "private_bootstrap_disk_read_denied": true,
+            "wrong_client_key_rejected": true,
+            "guest_loopback_forward": {
+              "port": 8080,
+              "instance_id": "692692c71b90578471975b62e7414ea3",
+              "live_port_8081_denied": true
+            },
+            "keeper": {
+              "status": "passed",
+              "implementation": "src/keeper",
+              "nono": "0.77.0",
+              "exec_stdout_stderr_exit": true,
+              "stdin_binary_eof_bytes": 131072,
+              "environment_filter_overlay_cwd": true,
+              "pty_resize": {
+                "initial": [
+                  24,
+                  80
+                ],
+                "resized": [
+                  41,
+                  132
+                ],
+                "exit_code": 13
+              },
+              "signals": {
+                "Int": 2,
+                "Term": 15,
+                "Hup": 1
+              },
+              "nono_inherited_policy": {
+                "workspace_rw": true,
+                "private_read_denied": true,
+                "runtime_data_write_denied": true,
+                "tool_and_runtime_data_read_allowed": true,
+                "tcp_bind_denied": true
+              },
+              "disconnect_reaps_session": true,
+              "unknown_oversized_frames_rejected": true
+            }
+          },
+          "exit_code": 0,
+          "forced_cleanup": false,
+          "log_overflow": false,
+          "ssh_console_captured": true
+        },
+        {
+          "boot": 2,
+          "greeting": "READY 1 state=2 ro=1 landlock=6 policy=1",
+          "ready_seconds": 2.4318681249860674,
+          "probes": {
+            "instance_id": "692692c71b90578471975b62e7414ea3",
+            "status": "passed",
+            "exec_stdout_stderr_exit": true,
+            "stdin_binary_eof_bytes": 131072,
+            "openssh_terminal_shell_pty": {
+              "initial": [
+                24,
+                80
+              ],
+              "resized": [
+                41,
+                132
+              ],
+              "ctrl_c_status": 130,
+              "shell_exit": 17
+            },
+            "sftp_put_rename_get_remove_bytes": 131072,
+            "sftp_nono_denials": true,
+            "private_bootstrap_disk_read_denied": true,
+            "wrong_client_key_rejected": true,
+            "guest_loopback_forward": {
+              "port": 8080,
+              "instance_id": "692692c71b90578471975b62e7414ea3",
+              "live_port_8081_denied": true
+            },
+            "keeper": {
+              "status": "passed",
+              "implementation": "src/keeper",
+              "nono": "0.77.0",
+              "exec_stdout_stderr_exit": true,
+              "stdin_binary_eof_bytes": 131072,
+              "environment_filter_overlay_cwd": true,
+              "pty_resize": {
+                "initial": [
+                  24,
+                  80
+                ],
+                "resized": [
+                  41,
+                  132
+                ],
+                "exit_code": 13
+              },
+              "signals": {
+                "Int": 2,
+                "Term": 15,
+                "Hup": 1
+              },
+              "nono_inherited_policy": {
+                "workspace_rw": true,
+                "private_read_denied": true,
+                "runtime_data_write_denied": true,
+                "tool_and_runtime_data_read_allowed": true,
+                "tcp_bind_denied": true
+              },
+              "disconnect_reaps_session": true,
+              "unknown_oversized_frames_rejected": true
+            }
+          },
+          "exit_code": 0,
+          "forced_cleanup": false,
+          "log_overflow": false,
+          "ssh_console_captured": true
+        }
+      ],
+      "sandbox": {
+        "outside_denied": true,
+        "passed": true,
+        "readonly_input_works": true,
+        "runtime_write_denied": true,
+        "tcp_denied": true,
+        "thread_works": true,
+        "unix_works": true,
+        "writable_state_works": true
+      }
+    },
+    {
+      "label": "b",
+      "instance_dir": "/private/tmp/ds-ow14f58h",
+      "instance_id": "10a1578f127b831cd49165e69c14cd49",
+      "boots": [
+        {
+          "boot": 1,
+          "greeting": "READY 1 state=1 ro=1 landlock=6 policy=1",
+          "ready_seconds": 2.5024818340316415,
+          "probes": {
+            "instance_id": "10a1578f127b831cd49165e69c14cd49",
+            "status": "passed",
+            "exec_stdout_stderr_exit": true,
+            "stdin_binary_eof_bytes": 131072,
+            "openssh_terminal_shell_pty": {
+              "initial": [
+                24,
+                80
+              ],
+              "resized": [
+                41,
+                132
+              ],
+              "ctrl_c_status": 130,
+              "shell_exit": 17
+            },
+            "sftp_put_rename_get_remove_bytes": 131072,
+            "sftp_nono_denials": true,
+            "private_bootstrap_disk_read_denied": true,
+            "wrong_client_key_rejected": true,
+            "guest_loopback_forward": {
+              "port": 8080,
+              "instance_id": "10a1578f127b831cd49165e69c14cd49",
+              "live_port_8081_denied": true
+            },
+            "keeper": {
+              "status": "passed",
+              "implementation": "src/keeper",
+              "nono": "0.77.0",
+              "exec_stdout_stderr_exit": true,
+              "stdin_binary_eof_bytes": 131072,
+              "environment_filter_overlay_cwd": true,
+              "pty_resize": {
+                "initial": [
+                  24,
+                  80
+                ],
+                "resized": [
+                  41,
+                  132
+                ],
+                "exit_code": 13
+              },
+              "signals": {
+                "Int": 2,
+                "Term": 15,
+                "Hup": 1
+              },
+              "nono_inherited_policy": {
+                "workspace_rw": true,
+                "private_read_denied": true,
+                "runtime_data_write_denied": true,
+                "tool_and_runtime_data_read_allowed": true,
+                "tcp_bind_denied": true
+              },
+              "disconnect_reaps_session": true,
+              "unknown_oversized_frames_rejected": true
+            }
+          },
+          "exit_code": 0,
+          "forced_cleanup": false,
+          "log_overflow": false,
+          "ssh_console_captured": true
+        }
+      ],
+      "sandbox": {
+        "outside_denied": true,
+        "passed": true,
+        "readonly_input_works": true,
+        "runtime_write_denied": true,
+        "tcp_denied": true,
+        "thread_works": true,
+        "unix_works": true,
+        "writable_state_works": true
+      }
+    }
+  ],
+  "harness_sources": {
+    "ssh_smoke.py": "7475c927c4bb357d495380ae0f55869b6f824ea69df7d403f19e82f0b898146d",
+    "smoke.py": "1b1d81afe831e1af68015ffc3cf1ae288908fd54d4bd378047dce2836214f313",
+    "keeper_probe.py": "65932e55e49bb1cee55a38ad35ceb1d7b307b103d5aff373273afc72d83bca83",
+    "libkrun/src/config.rs": "24aee909273c1a86a9661cb696495c6cc11f1485df2a3f925d242b2e07454d16",
+    "libkrun/src/main.rs": "718f49c959b994c86e08aaadd3bcee236a559ca24910eaa135234dbd497f61f6",
+    "libkrun/src/sandbox.rs": "87041e0863cb8a4975f4e8ce8ab28fe3949df6e7f5fae78f5ed42ec1d811b181",
+    "libkrun/Cargo.lock": "04f7e2df8f1ea8490280a4fda5c542cb24338b118693b719c4ae16789c3d2e38"
+  },
+  "helper_provenance": {
+    "patch_sha256": "7a25379a3e1291ecbace0cad78e804b70f3f4515cebbf8c35f0843d107d4c2cc",
+    "revision": "6151710f4ea627cf0e5dbce78e4192fb4d64c2e9"
+  },
+  "two_simultaneous_instances": true,
+  "sibling_client_key_rejected": true,
+  "sibling_endpoint_host_key_rejected": true,
+  "private_host_key_survives_cold_restart": true,
+  "sibling_survives_restart": true,
+  "runtime_unchanged": true,
+  "cleanup": {
+    "all_owned_helpers_reaped": true,
+    "endpoints_removed": true
+  },
+  "raw_results": "experiments/microvm/runs/20261108-175419-ssh",
+  "kernel_build": {
+    "schema": 1,
+    "kernel_version": "6.12.95",
+    "source_url": "https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-6.12.95.tar.xz",
+    "source_sha256": "a9e8c51fcb1e695d1d35dde5886cba579cb6f29c9646c5889f39d63841d4b9f6",
+    "source_checksum_reference": "https://cdn.kernel.org/pub/linux/kernel/v6.x/sha256sums.asc",
+    "architecture": "aarch64",
+    "builder": "kernel-build",
+    "builder_image": "alpine-3.23.3-aarch64-uefi-cloudinit-r0",
+    "reproducibility": "source/config/output identities recorded; installed toolchain recorded, not a bit-reproducibility claim",
+    "kernel_sha256": "4a8ce1332cf14b2e2bd4cae12befc6be8875cab812a61e4f478710d11a169ae6",
+    "config_sha256": "2f4848e751aa6e3f0da7d9d0b3b595121602caf18f3bc3c0d05883badf2e8809",
+    "config_fragment_sha256": "f8a30880fae5997636bfe38341bd15e3fc8b732849a8f643f635d8c4219f6313"
+  },
+  "validation": {
+    "guest_keeper_ssh_bootstrap_tests": 28,
+    "helper_interface_tests": 10,
+    "native_ssh_authentication_tests": 3,
+    "clippy": [
+      "main-native-all-targets",
+      "libkrun-helper",
+      "guest-aarch64-musl",
+      "guest-native-all-targets"
+    ],
+    "openspec": "evaluate-microvm-runtimes strict validation passed"
+  },
+  "scope": {
+    "production_backend": false,
+    "production_credential_delivery": "not-implemented",
+    "application_build_or_database_service": "not-run",
+    "guest_editor": "not-run",
+    "trusted_remote_ssh_editor": "not-run",
+    "nix_closure": "not-run",
+    "hvi": "not-run",
+    "linux_host": "not-run",
+    "density_measurement": "not-run",
+    "workspace": "initramfs/in-memory; this run does not qualify workspace filesystem persistence"
+  },
+  "credentials": {
+    "scope": "Fresh disposable test identities per instance; none from user SSH configuration/agent",
+    "delivery": "Private raw state record, read and closed before nono/threads",
+    "known_hosts": "Pinned from generated per-instance public host key before first connect",
+    "retention": "Test keys and raw disks remain only in the private mode-0700 temporary instance directories",
+    "included_in_shared_initramfs": false
+  },
+  "calibration_runs": [
+    {
+      "path": "experiments/microvm/runs/20261108-174228-ssh",
+      "status": "failed-client-setup",
+      "reason": "ProxyCommand duplicated the exec that OpenSSH already supplies; no SSH authentication exercised."
+    },
+    {
+      "path": "experiments/microvm/runs/20261108-174255-ssh",
+      "status": "failed-authentication",
+      "reason": "Existing PublicKey equality included the authorized-file comment omitted on the wire. Cryptographic key-data comparison and regression test fixed the bug."
+    }
+  ]
+}

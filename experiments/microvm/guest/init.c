@@ -9,6 +9,7 @@
 #include <linux/fs.h>
 #include <linux/landlock.h>
 #include <linux/vm_sockets.h>
+#include <net/if.h>
 #include <signal.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -132,6 +133,14 @@ static int landlock_probe(int *abi) {
 
 #ifdef ENABLE_KEEPER
 static void start_keeper(void) {
+    /* Only loopback exists: enabling it adds no guest/host NIC or egress path. */
+    int net = socket(AF_INET, SOCK_DGRAM | SOCK_CLOEXEC, 0);
+    struct ifreq loopback = {0};
+    strcpy(loopback.ifr_name, "lo");
+    if (net < 0 || ioctl(net, SIOCGIFFLAGS, &loopback)) fail("loopback flags");
+    loopback.ifr_flags |= IFF_UP;
+    if (ioctl(net, SIOCSIFFLAGS, &loopback)) fail("enable loopback");
+    close(net);
     if (mkdir("/dev/pts", 0755) && errno != EEXIST) fail("mkdir devpts");
     if (mount("devpts", "/dev/pts", "devpts", MS_NOSUID | MS_NOEXEC,
               "mode=0620,ptmxmode=0666") < 0) fail("mount devpts");
@@ -140,7 +149,7 @@ static void start_keeper(void) {
     if (child < 0) fail("fork keeper");
     if (!child) {
         char *argv[] = {"/guest-keeper", NULL};
-        char *env[] = {"PATH=/bin", "HOME=/home/devcroft", "SHELL=/bin/sh",
+        char *env[] = {"PATH=/usr/bin:/bin", "HOME=/home/devcroft", "SHELL=/bin/sh",
                       "DEVCROFT_TASK=fixture-task", "DEVCROFT_SHELL=/bin/sh",
                       "DEVCROFT_SSH_HOST_KEY=fixture-not-a-key", NULL};
         execve(argv[0], argv, env);
@@ -163,6 +172,12 @@ int main(void) {
     if (mount("devtmpfs", "/dev", "devtmpfs", MS_NOSUID, NULL) < 0) fail("devtmpfs");
     mount_required("tmpfs", "/run");
     mount_required("tmpfs", "/tmp");
+#ifdef ENABLE_WORKLOAD
+    if (mount("/dev/vdc", "/toolchain", "ext4", MS_RDONLY | MS_NOSUID | MS_NODEV, NULL))
+        fail("mount immutable toolchain");
+    if (mount("/dev/vdd", "/workspace", "ext4", MS_NOSUID | MS_NODEV, NULL))
+        fail("mount private workspace");
+#endif
     int landlock_abi = 0;
     int policy = landlock_probe(&landlock_abi);
 #ifdef ENABLE_KEEPER

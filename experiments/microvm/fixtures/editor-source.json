@@ -1,0 +1,22 @@
+{
+  "schema": 1,
+  "editor": "code-server",
+  "version": "4.145.2",
+  "url": "https://registry.npmjs.org/code-server/-/code-server-4.145.2.tgz",
+  "sha256": "655a9e6f72f2318e5bfc3ce6612e017991799b255456ddd43b10949ea78059de",
+  "integrity": "sha512-4eQi9fVJnspJ5sS+ahSvSqana6odQZwLOapL839ZaBbjjpNN3diS1Ugzu0sjUMTh+OK2mZdhrGF5ieOY9dgFXw==",
+  "node_major": 24,
+  "base_toolchain_sha256": "9d3c6a36a43e238c2b88df3f0a9a418a1af1edbbba70bf16ba466e91814bc45b",
+  "install_reference": "https://coder.com/docs/code-server/npm",
+  "shrinkwrap_additions": {
+    "lib/vscode/npm-shrinkwrap.json": {
+      "node_modules/tslib": {
+        "version": "2.9.1",
+        "resolved": "https://registry.npmjs.org/tslib/-/tslib-2.9.1.tgz",
+        "integrity": "sha512-a4Ux9VKuIMHsOS7ENbEq6hK2ZGYIT27Rtl0E4eD9KqwxhKiQeMZE/9xb3IdYwWaSOyIBQLExhQgXDTYoiCxnWA==",
+        "license": "0BSD",
+        "peer": true
+      }
+    }
+  }
+}

@@ -165,6 +165,7 @@ def boot(binary, launch, instance, out, index, timeout, keeper=False):
         # Only after our owned process has exited. Never unlink a live listener.
         (instance / "control.sock").unlink(missing_ok=True)
         (instance / "keeper.sock").unlink(missing_ok=True)
+        (instance / "ssh.sock").unlink(missing_ok=True)
     if result["status"] != "passed":
         print(stderr.decode(errors="replace")[-8000:])
         print(stdout.decode(errors="replace")[-8000:])
@@ -219,6 +220,7 @@ def main():
         report["sandbox"] = json.loads(check.stdout)
         (instance / "control.sock").unlink(missing_ok=True)
         (instance / "keeper.sock").unlink(missing_ok=True)
+        (instance / "ssh.sock").unlink(missing_ok=True)
         for index in (1, 2):
             result = boot(args.helper.resolve(), path, instance, args.out, index, args.timeout, keeper=args.keeper)
             report["boots"].append(result)

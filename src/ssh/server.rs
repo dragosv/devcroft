@@ -383,7 +383,10 @@ impl Handler for SshServer {
         _user: &str,
         public_key: &PublicKey,
     ) -> Result<Auth, Self::Error> {
-        if public_key == self.authorized_key.as_ref() {
+        // OpenSSH file comments are labels, absent from the wire key blob.
+        // Comparing the whole struct rejects a correctly signed identity when
+        // its authorized .pub file has a comment (ssh-keygen's usual output).
+        if public_key.key_data() == self.authorized_key.key_data() {
             Ok(Auth::Accept)
         } else {
             Ok(Auth::reject())
@@ -755,6 +758,14 @@ mod tests {
     async fn the_authorized_key_is_accepted() {
         let key = PrivateKey::random(&mut rand::rng(), Algorithm::Ed25519).unwrap();
         assert!(authenticate(key.clone(), key.public_key().clone()).await);
+    }
+
+    #[tokio::test]
+    async fn an_authorized_key_file_comment_is_not_part_of_the_wire_identity() {
+        let key = PrivateKey::random(&mut rand::rng(), Algorithm::Ed25519).unwrap();
+        let mut authorized = key.public_key().clone();
+        authorized.set_comment("ssh-keygen-label-not-sent-over-the-wire");
+        assert!(authenticate(key, authorized).await);
     }
 
     #[tokio::test]
