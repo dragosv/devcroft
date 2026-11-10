@@ -589,3 +589,15 @@ inputs in a fresh, network-isolated builder namespace and verifies it in a real
 guest. It refuses to run during density collection or calibration. Its frozen
 scope is `fixtures/cold-preparation-protocol.json`; cold preparation has not
 passed until its timed clean verification result exists.
+
+`finish_native.py --density-run runs/<collector> --out runs/<continuation>`
+waits for that collector's final report and exclusive lease release, then
+publishes the density summary, runs clean preparation, and exercises SSH-client
+loss, helper pause/resume, keeper death and helper termination for each adapter.
+The fault probes retain a live sibling and verify existing builds/acknowledged
+Redis keys after recovery. Session cleanup checks the guest PID's start time;
+a failed SSH connection is never counted as a reaped process. Physical host
+suspend and PID 1 death stay explicitly not-run. Independent phase failures
+remain visible and do not prevent collecting the other adapter's evidence.
+The continuation's `report.json` identifies its current phase; a waiting/running
+controller is not a completed evaluation or production approval.
