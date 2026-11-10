@@ -1,0 +1,202 @@
+{
+  "schema": 1,
+  "status": "passed",
+  "qualification": "closure overlap and actual retained image/archive allocation; no APFS shared-extent attribution",
+  "platform": "macos-arm64-native",
+  "environments": {
+    "nix-baseline": {
+      "closure_paths": 146,
+      "nar_bytes": 1449212808,
+      "profile": "/nix/store/lfxxg63kp9xamvca3sd7bfk1hv4cikls-devcroft-microvm-closure",
+      "versions": {
+        "codeServer": "4.115.0",
+        "gcc": "15.3.0",
+        "redis": "8.8.1"
+      },
+      "deployed_image_and_seed": [
+        {
+          "path": "/Users/dragos/Development/devcroft-codex/experiments/microvm/artifacts/nix/toolchain.img",
+          "logical_bytes": 1946157056,
+          "allocated_bytes": 1946157056
+        },
+        {
+          "path": "/Users/dragos/Development/devcroft-codex/experiments/microvm/artifacts/nix/data.seed.img",
+          "logical_bytes": 134217728,
+          "allocated_bytes": 134217728
+        }
+      ],
+      "retained_download_archive": [
+        {
+          "path": "/Users/dragos/Development/devcroft-codex/experiments/microvm/artifacts/nix/cache.tar",
+          "logical_bytes": 283002880,
+          "allocated_bytes": 283004928
+        }
+      ],
+      "deployed_allocated_bytes": 2080374784,
+      "retained_archive_allocated_bytes": 283004928,
+      "builder_output_namespace": "/home/dragos.guest/devcroft-nix",
+      "definition_receipt_sha256": "e99027f989d9284d8a6debb0f04bd4714572f3a7709146717c34e5771a41188c"
+    },
+    "agents": {
+      "closure_paths": 129,
+      "nar_bytes": 1644897192,
+      "profile": "/nix/store/5qsk5hs1caxv2mrglbbd8102n45yns8x-devcroft-microvm-agents",
+      "versions": {
+        "claudeCode": "2.1.228",
+        "codex": "0.147.0",
+        "gcc": "15.3.0",
+        "redis": "8.8.1"
+      },
+      "deployed_image_and_seed": [
+        {
+          "path": "/Users/dragos/Development/devcroft-codex/experiments/microvm/artifacts/agents/toolchain.img",
+          "logical_bytes": 2214592512,
+          "allocated_bytes": 2214592512
+        },
+        {
+          "path": "/Users/dragos/Development/devcroft-codex/experiments/microvm/artifacts/agents/data.seed.img",
+          "logical_bytes": 134217728,
+          "allocated_bytes": 134217728
+        }
+      ],
+      "retained_download_archive": [
+        {
+          "path": "/Users/dragos/Development/devcroft-codex/experiments/microvm/artifacts/agents/cache.tar",
+          "logical_bytes": 333168640,
+          "allocated_bytes": 333168640
+        }
+      ],
+      "deployed_allocated_bytes": 2348810240,
+      "retained_archive_allocated_bytes": 333168640,
+      "builder_output_namespace": "/home/dragos.guest/devcroft-agents",
+      "definition_receipt_sha256": "3457a8e9b463cb1d2d5f31f7529dc31e2af330344185df5ff230789c5fb62608"
+    }
+  },
+  "overlap": {
+    "same_store_paths": 111,
+    "common_nar_bytes": 745576624,
+    "union_store_paths": 164,
+    "union_nar_bytes": 2348533376,
+    "shared_paths": [
+      "/nix/store/00qad9xxxv7ca23hx2i09snra8w37yjg-libmpc-1.4.1",
+      "/nix/store/07gribxm3sky3lw2g64n59l974q7q1bf-gnugrep-3.12",
+      "/nix/store/0gm46ay1b1c2ic40xi6fg2r9gfwcxnnz-gnutls-3.8.13",
+      "/nix/store/1bczr25ry5vg2wr27jc7kc61f8c2yn2v-util-linux-minimal-2.42.2-swap",
+      "/nix/store/1dzsx5xcm25931cbdzs8cbjlzpc85mbp-gnumake-4.4.1",
+      "/nix/store/1gqjlc6ysvvla1j34bjc3fd89lyjs7h6-mpfr-4.2.2",
+      "/nix/store/1hyypxhm1rnbqr4y6h466kxdgv8zc62i-lvm2-2.03.41-lib",
+      "/nix/store/1mp52pnrdyqrj5sfkl1fgnhphhcmcwy7-lz4-1.10.0-lib",
+      "/nix/store/28x5qj84g0ybg3hq21shg7grc51c1a7b-gnumake-4.4.1-man",
+      "/nix/store/2i1hgmh5kaa976iqdrgwcclv0mz8jgrf-attr-2.6.0",
+      "/nix/store/2qs1kwbf15jckq2ink80py6pyk4h4wgx-libgpg-error-1.61",
+      "/nix/store/2r04afmsjkpkp482q1xvkdg8d2mj04i9-gzip-1.14",
+      "/nix/store/355vzap72n1fyisr54f2ps7acl4r9b7r-qrencode-4.1.1",
+      "/nix/store/36z368yjqm57gcidfn38c61k6rk0wfp9-util-linux-minimal-2.42.2-login",
+      "/nix/store/3bhqb8cnndkch493f6f06pgdff7igi0f-db-4.8.30",
+      "/nix/store/3inr3nxzqarhb9rh1z7s2s20j8c0395h-python3-3.14.7",
+      "/nix/store/3kaakrwd1jia637aa3cpj3lkgfxwg3k3-bash-5.3p15",
+      "/nix/store/3lzrddk8kbyxsmj7f2xqky82n28cxk6b-expand-response-params",
+      "/nix/store/3v2w5hdrpzwx3w8svda35lyrq9jwqbc8-zlib-1.3.2",
+      "/nix/store/43kh06xv15bv3z58qz8h0iswfwbpfmbc-publicsuffix-list-0-unstable-2026-07-25",
+      "/nix/store/4b7nzym3c7c2f7w6ngj1b7d04pg3q9f4-tpm2-tss-4.2.0",
+      "/nix/store/4fj1rs40wx8r4pbbzrjzmzxv4dg4aia5-findutils-4.11.0",
+      "/nix/store/4nw5wlqzxg7hyrwkif8rhir6406sx1ad-krb5-1.22.2-lib",
+      "/nix/store/5fmknmxx5s78zbbai817zghzmc5l7d3z-xgcc-15.3.0-libgcc",
+      "/nix/store/6alwmb2pqwzkvfrhanphmab7487p0qbi-readline-8.3p3",
+      "/nix/store/6b8dlmv0a6vxcix2hv9iavhrmcp5jx9w-kbd-2.9.0",
+      "/nix/store/6bgs2brhrhvhv9k103q3b3qqsic54n2c-kexec-tools-2.0.32",
+      "/nix/store/7vsyq49lwwzd2pc5kkgbyawrv9nnqqgi-cryptsetup-2.8.6",
+      "/nix/store/7w6a03silnkhm5x4bdsjd5cnri73pyid-kmod-31-lib",
+      "/nix/store/7zy98i52jaifcpgj3ymw6vdx754m0pnn-nghttp2-1.69.0-lib",
+      "/nix/store/8i9qa86chssc6fc51hwysvgdzh1a63r9-libpwquality-1.4.5-lib",
+      "/nix/store/8xjsfv19z90diipv5ylqbbs5cgqda880-nettle-3.10.2",
+      "/nix/store/8xr3jrl58cav2gchddq9n83vvb25ybpv-libmicrohttpd-1.0.6",
+      "/nix/store/929svfrm3z9facma5l7y3pkym56b8gni-libidn2-2.3.8",
+      "/nix/store/9k3l8v5p5zh9ai9hjjm45izbkhvlwfdd-glibc-2.42-67-bin",
+      "/nix/store/9kr1hvqny4gz0a614yyjvvavii4j8k39-diffutils-3.12",
+      "/nix/store/9xv39s6xlidk22n8m7r5yzynsd60xvz9-keyutils-1.6.3-lib",
+      "/nix/store/a9kda025a17126f14c01xpwscmjqddwb-bash-interactive-5.3p15",
+      "/nix/store/ah5m9c4ffy0m45h68ls77xr6m4c6rmg9-ncurses-6.6",
+      "/nix/store/aykdq7abk7gvr9smfzzwj5r50rg9q892-unbound-1.25.2-lib",
+      "/nix/store/b57ihysnpkp69hsbbw1gr1yjac6xagkf-libunistring-1.4.2",
+      "/nix/store/b9lnrrbgb4yh20iqy9dpikhs5in7ri3r-linux-headers-7.1",
+      "/nix/store/baiqbh22367k40973a7rx2lj2mp7skmp-elfutils-0.195",
+      "/nix/store/bc9zgcv6xxpcj366wrrn10mxrpax2cg0-gdbm-1.26-lib",
+      "/nix/store/brn37ijdrwnll5wrc0avzhjhqgiyipx6-dns-root-data-2025-04-14",
+      "/nix/store/bvjp82swwzljhjfsnv7jdvr7xyxb0dbc-nghttp3-1.16.0",
+      "/nix/store/c5vd5ipiid78ldydx7ky39z9mgm6d7mk-libcbor-0.14.0",
+      "/nix/store/cpwqjn64gzylzqnr2lj7wgdd9fvf29df-ngtcp2-1.23.0",
+      "/nix/store/cwn32dkv1iffrhh6sw1gk09nxb10dv17-glibc-2.42-67-dev",
+      "/nix/store/d9by4vhj0ss1g374jzy6683sgrl35l30-libcap-ng-0.9.3",
+      "/nix/store/dg7mp8yr4arbb6khlmjj3rzxdz6k1l5q-gzip-1.14-man",
+      "/nix/store/dgzd0xg1qmk6z4bdaipzlb4fivfh0b78-gmp-with-cxx-6.3.0",
+      "/nix/store/dnvwhqgbyg8vhxmkjdfxfjlf77lq13pn-gmp-with-cxx-6.3.0",
+      "/nix/store/dqxknsb71lsgzfzcdmn6x7fzssqbdyyx-coreutils-9.11",
+      "/nix/store/dzkmgqdx7wfd98z4xjmyfm2cj732b0hd-cracklib-2.10.3",
+      "/nix/store/f8q4w2hbjvwy7qqwpnvbf5f4qwyww6cp-glibc-2.42-67",
+      "/nix/store/flpfpb9gn5jk3zjdvpgzmy2b14ksjdmn-libarchive-3.8.8-lib",
+      "/nix/store/gc4gq3xjlhvfmyf599n6l7jvc7z41yyg-libxml2-2.15.3",
+      "/nix/store/gdbq6857ydnda2zi8fhdmzpbjh9d946l-bash-interactive-5.3p15-man",
+      "/nix/store/gspr8h35wp1lp1zyri0mbhlrd711ivm1-jemalloc-5.3.1",
+      "/nix/store/gw0vcpg33m9cqd6rscyqvds45apfrxfy-gcc-wrapper-15.3.0",
+      "/nix/store/hz51xhnpl8d51hh6kkhqhnwm52v9ks4i-gmp-6.3.0",
+      "/nix/store/hzjkim59mc4wbgvrpfv54fblx3lxziis-pcsclite-2.4.1-lib",
+      "/nix/store/i4kp6hsdfr7k6189r4pf7gx17ggn6cjz-libseccomp-2.6.1-lib",
+      "/nix/store/if0jy4wir03z31y1kqhfc3mgvz5ih71v-linux-pam-1.7.2",
+      "/nix/store/irwai5r7dcn836p9zri9bzcawc7d91s2-libtasn1-4.21.0",
+      "/nix/store/jkry4b00dmfsfx5r8m2n11r7fchz6aj8-gcc-15.3.0-libgcc",
+      "/nix/store/k2fr8pihnym47m71fij3ns184vbx4v79-zstd-1.5.7",
+      "/nix/store/kf94rdy65hbqjrvw07b3w3gigiv4q3ax-expat-2.8.2",
+      "/nix/store/khblf98c721xyd5j9hphmii437bh2qdy-gcc-15.3.0-man",
+      "/nix/store/l06hkrvzgb0iw5pbz6j5xzhkqs2bns6p-tzdata-2026c",
+      "/nix/store/l5jj35jgikj1y7m23r5d57xkdlr7w3l7-util-linux-minimal-2.42.2-mount",
+      "/nix/store/l5zqppiy8dazh9z96lfj2z7swzx9dsf7-acl-2.4.0",
+      "/nix/store/l73b40s107mbz59w42s1j7dpfj56xfrk-isl-0.20",
+      "/nix/store/ly5swsxfy36yqnx2amyzx3pd06rkd87n-libapparmor-5.0.2",
+      "/nix/store/m9n6gv7j96sxbb0lzkgz40a02yb20hah-binutils-wrapper-2.46",
+      "/nix/store/mg2881q8a5ask9isvhvrbxkyddqh8q2w-libfido2-1.17.0",
+      "/nix/store/mhpnggd19hisq1zsjzhb7pch08f7bix6-libffi-3.7.1",
+      "/nix/store/mlqqpn1h34rwg4ix8sn84lafb4jzw2sb-libxcrypt-4.5.2",
+      "/nix/store/mm80mz52armp3bqw4h16ic6y36dpyhqs-binutils-2.46",
+      "/nix/store/n7v4fk0yzfl45w4maza94539w5pa2dmz-gcc-wrapper-15.3.0-man",
+      "/nix/store/nji88iy6f1s0m15pwfz0qbwlzd58wj9b-libbpf-1.7.0",
+      "/nix/store/p1zamvivw0l5zf4crr82v6f6rpg014fm-sqlite-3.53.3",
+      "/nix/store/p4xn44pyfhfrbwyx9di5dzwfyayx9d16-systemd-minimal-libs-261.1",
+      "/nix/store/p504yd5gipcqczgdi3kygzykmfgdai71-p11-kit-0.26.2",
+      "/nix/store/p6k41cfwvr8plgvcnnlb55wb0cy49qyx-gnused-4.10",
+      "/nix/store/phs39dhh68pj4jg19qivz8v9b68c5sbd-audit-4.2.1-lib",
+      "/nix/store/pkjkl2glnx7g3v3s2rlhxmipvfqbrsjl-mpdecimal-4.0.1",
+      "/nix/store/pyrvwmigi6qdpz9lbbslj5771pfl7r69-systemd-261.1",
+      "/nix/store/qz6qz18kddi2y25gk9h8ffg37lk8vwcf-gawk-5.4.1",
+      "/nix/store/rrc4m369h000c5ajmskwb3ksafsz824z-kmod-31",
+      "/nix/store/s8bv602bckzpwgjijx3lfjb1yv2v5nhc-gnutar-1.35",
+      "/nix/store/smlvbkblfh3gnx23yrrxampz2a24bfy9-libpsl-0.21.5",
+      "/nix/store/vnazsj33pbi2nklj0g9w8xs6h9wmgb8k-openssl-3.6.3",
+      "/nix/store/w0szn2ip93x22mzmlxxgncrcj9qnm4wc-curl-8.21.0",
+      "/nix/store/w590vx55f4fy0g0gvhj2k4w15acavqd3-xz-5.8.3",
+      "/nix/store/wi3n92k0x9zdgbmzkvbm51rlfmm5722j-json-c-0.18",
+      "/nix/store/wqqb6mbnrnm380adc0ry5hdm449xix4f-gcc-15.3.0",
+      "/nix/store/x01rpzv7bbqi9sic78zjnqyi7jvby1cb-libevent-2.1.13",
+      "/nix/store/x1zf7hg1r7zpwcgvvl13fy3611lm3bd9-libssh2-1.11.1",
+      "/nix/store/xa1brw3bh0lrw4f5d1g74gmm2jv4d39v-pcre2-10.47",
+      "/nix/store/xdf3jqbcg7v1ykma34b8v950mmq95zg1-binutils-2.46-lib",
+      "/nix/store/xq2d27sf13d5zg6fhndphxqr7f1mggy7-mailcap-2.1.54",
+      "/nix/store/y0l5kchfn3qcbj44kf09200mjgi14k35-gawk-5.4.1-man",
+      "/nix/store/y4kivjss3mg1kxy6p8483s9mi4hf4qmy-brotli-1.2.0-lib",
+      "/nix/store/yhl6wwjg5clqvaz5j6gcbxzv6zkxd057-libtpms-0.10.2-unstable-2026-05-06",
+      "/nix/store/ylzalvsf8nxhidm1p72k6ckxckpj1wd3-gcc-15.3.0-lib",
+      "/nix/store/yx4sm7i1s32bp906qm1csvlcqz3xpg40-util-linux-minimal-2.42.2-lib",
+      "/nix/store/z558fjbsk7pmcimy3090ii7gcqas8brg-redis-8.8.1",
+      "/nix/store/z9487m413049a5sq8xprw85hfvkkz8b8-libgcrypt-1.12.2-lib",
+      "/nix/store/zmhsvn0jkdm2hqixsrxf5jnyy4smm5in-bzip2-1.0.8"
+    ]
+  },
+  "allocation_rule": "Raw images are separate immutable files; charge actual stat blocks to each image. NAR identity overlap does not prove cross-image filesystem extent deduplication. Private disks are measured per VM in density evidence.",
+  "cache_rule": "Each declared fixture has its own captured immutable NAR archive and builder output namespace. Linux Nix store sharing is immutable; runtime writable source/build/service state stays on each private ext4 disk.",
+  "excluded_from_this_subtotal": [
+    "native helpers/common kernel/initramfs/runtime disks (counted in density deployed inputs)",
+    "retained raw diagnostic logs and failed disks",
+    "dedicated stopped builder root disk, source/Cargo/compiler caches; report separately as host preparation infrastructure"
+  ],
+  "remaining_qualification": "These subtotals do not independently satisfy the full per-environment E5 storage gate; combine with runtime/private and global preparation infrastructure measurements."
+}
