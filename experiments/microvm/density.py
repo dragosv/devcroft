@@ -185,8 +185,9 @@ def sample(cohort, out, kind, repetition, idle, controlled):
         observer.phase = 'shutdown'
         cohort.shutdown()
         result['status'] = 'passed'
-    except Exception as error:
+    except BaseException as error:
         result['error'] = f'{type(error).__name__}: {error}'
+        result['interrupted'] = isinstance(error, KeyboardInterrupt)
         cohort.stop()
     finally:
         try:
@@ -197,6 +198,8 @@ def sample(cohort, out, kind, repetition, idle, controlled):
         if observer.samples:
             result['sampled_peak_total_footprint_bytes'] = max(s['total_physical_footprint_bytes'] for s in observer.samples)
         write(out / 'sample.json', result)
+    if result.get('interrupted'):
+        raise KeyboardInterrupt(result['error'])
     print(json.dumps({k: result[k] for k in ('adapter', 'fixture', 'instances_requested', 'kind', 'repetition', 'status')}), flush=True)
     return result
 
@@ -204,7 +207,7 @@ def sample(cohort, out, kind, repetition, idle, controlled):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--out', type=Path, required=True)
-    parser.add_argument('--calibration', action='store_true', help='one instance/repetition and short idle; excluded from comparison')
+    parser.add_argument('--calibration', action='store_true', help='one instance/repetition with full idle windows; excluded from comparison')
     parser.add_argument('--fixture', choices=['alpine', 'nix', 'both'], default='both')
     args = parser.parse_args()
     def interrupt(_signal, _frame):
@@ -237,7 +240,7 @@ def main():
               'observer_artifact': artifact(ROOT / 'artifacts/measure-macos'),
               'samples': [], 'status': 'running'}
     write(args.out / 'report.json', report)
-    counts, launches, builds, idle = ([1], 1, 1, 2) if args.calibration else (protocol['instances'], 10, 5, 60)
+    counts, launches, builds, idle = ([1], 1, 1, 60) if args.calibration else (protocol['instances'], 10, 5, 60)
     fixtures = ['alpine', 'nix'] if args.fixture == 'both' else [args.fixture]
     report['planned_samples'] = [dict(fixture=f, adapter=a, instances_requested=n, kind=k, repetition=r)
                                 for f in fixtures for n in counts for a in protocol['adapters']
@@ -281,6 +284,11 @@ def main():
     finally:
         awake.terminate()
         awake.wait(timeout=3)
+        recorded = {s['raw'] for s in report['samples']}
+        for path in sorted(args.out.glob('*/sample.json')):
+            saved = json.loads(path.read_text())
+            if saved['raw'] not in recorded:
+                report['samples'].append(saved)
         done = {(s['fixture'], s['adapter'], s['instances_requested'], s['kind'], s['repetition']) for s in report['samples']}
         report['not_run_samples'] = [s for s in report['planned_samples'] if
                                     (s['fixture'], s['adapter'], s['instances_requested'], s['kind'], s['repetition']) not in done]
