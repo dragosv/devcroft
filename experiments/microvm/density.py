@@ -60,6 +60,7 @@ class Cohort:
         self.kernel = ROOT / 'artifacts/kernel-landlock/Image'
         self.guest = json.loads((ROOT / 'artifacts' / guest_dir / 'guest.json').read_text())
         self.vms = []
+        self.latest_sample_complete = False
         self.setup_samples = []
         started = time.monotonic()
         try:
@@ -163,6 +164,9 @@ class Cohort:
 
 def sample(cohort, out, kind, repetition, idle, controlled):
     out.mkdir(parents=True, exist_ok=False)
+    # A constructor/interrupt failure before sample() returns must never make
+    # the launch-cohort cleanup treat unrecorded work as successful.
+    cohort.latest_sample_complete = False
     result = {'adapter': cohort.adapter, 'fixture': cohort.fixture, 'instances_requested': cohort.count,
               'kind': kind, 'repetition': repetition, 'status': 'failed', 'raw': str(out)}
     observer = Observer(out, cohort.vms)
@@ -198,6 +202,7 @@ def sample(cohort, out, kind, repetition, idle, controlled):
         if observer.samples:
             result['sampled_peak_total_footprint_bytes'] = max(s['total_physical_footprint_bytes'] for s in observer.samples)
         write(out / 'sample.json', result)
+    cohort.latest_sample_complete = result['status'] == 'passed'
     if result.get('interrupted'):
         raise KeyboardInterrupt(result['error'])
     print(json.dumps({k: result[k] for k in ('adapter', 'fixture', 'instances_requested', 'kind', 'repetition', 'status')}), flush=True)
@@ -263,7 +268,7 @@ def main():
                             write(args.out / 'report.json', report)
                 finally:
                     for cohort in cohorts.values():
-                        write(cohort.out / 'storage-cleanup.json', cohort.cleanup(successful=all(
+                        write(cohort.out / 'storage-cleanup.json', cohort.cleanup(successful=cohort.latest_sample_complete and all(
                             s['status'] == 'passed' for s in report['samples'] if s['adapter'] == cohort.adapter and s['fixture'] == fixture and s['instances_requested'] == count)))
                 for repetition in range(builds):
                     order = protocol['adapters'] if repetition % 2 == 0 else list(reversed(protocol['adapters']))
