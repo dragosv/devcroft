@@ -1,0 +1,56 @@
+{
+  "schema": 1,
+  "recorded_at": "2026-11-10T06:57:58.446244+00:00",
+  "owner_selection": "Ambele: Codex and Claude Code",
+  "platform": "macos-arm64-native",
+  "adapters": [
+    "libkrun",
+    "hvi"
+  ],
+  "instances": 1,
+  "vcpus": 2,
+  "memory_mib": 1024,
+  "repetitions_per_cli": 5,
+  "cli_versions": {
+    "codex": "0.147.0",
+    "claudeCode": "2.1.228"
+  },
+  "thresholds": {
+    "path": "fixtures/no-go-thresholds.json",
+    "sha256": "5db6e27a67179c45403b159684b22db7789d2bc019552ae205d8a1ca2ba3768e"
+  },
+  "measurement": "host monotonic clock immediately before a new pinned-key SSH exec until the actual CLI turn.started (Codex) or system/init (Claude) event is read; includes SSH overhead; VM and fixed reverse forward already prepared",
+  "cache_condition": "fresh private VM per adapter; immutable pinned agent closure; five new CLI/SSH sessions reuse that VM and its private home; OS caches not flushed",
+  "transport": "no NIC/TSI; existing fixed vsock SSH port; guest-only loopback 443 is forwarded by trusted OpenSSH client to exactly one vendor:443; immutable hosts aliases preserve real server name; TLS validation runs inside guest",
+  "credentials": "only deliberately invalid test keys; no real login/host credential import",
+  "positive_controls": [
+    "both real pinned CLI versions/help",
+    "verified HTTPS from guest to actual vendor returning 401",
+    "actual CLI initialization event plus vendor 401 for every repetition"
+  ],
+  "negative_controls": [
+    "wildcard, wrong and dynamic reverse ports refused",
+    "OpenSSH cancel removes guest listener",
+    "normal production keeper refuses all reverse forwarding by default",
+    "Each actual CLI reaches a live TLS endpoint with correct vendor SNI and a self-signed certificate. Codex sends an unknown-CA alert. Claude sends no application bytes with default trust and does send application bytes to the exact same endpoint when its public test CA is explicitly added in that child process; its retry loop is stopped under five-second supervision."
+  ],
+  "interpretation": "startup and dummy-key transport only; not a completed authenticated agent task; no concurrent-agent-density or production credential-channel qualification",
+  "comparison_rule": "any valid initialization sample above accepted five-second limit fails the startup row; failures and incomplete rows retained",
+  "revisions": [
+    {
+      "previous_sha256": "6090afa5d8219745cd165069bfb958dc360a132c93c099851623047a8c4db2cd",
+      "at": "2026-11-10T07:00:46.124766+00:00",
+      "reason": "Pilot showed the upstream rejects absent SNI before sending a certificate. Use an unrelated valid trust root with the correct SNI to test the client validator directly. Virtual HTTPS port is standard 443, preserving HTTP authority; nonstandard authority also timed out in the direct host control. No accepted E5 threshold changed."
+    },
+    {
+      "previous_sha256": "feb6e7b4f89850ac41f4b17cd54c9741fb065ffcc15f6b4a371937840009faad",
+      "at": "2026-11-10T07:04:13.955492+00:00",
+      "reason": "Codex uses bundled roots and did not honor replacing SSL_CERT_FILE; this is not a TLS validation failure. Replace the ineffective environment override with an actual self-signed server at the correct hostname. Startup thresholds unchanged."
+    },
+    {
+      "previous_sha256": "64248492ce649b73c17e2c2337d58f71faaada8d177ea303e3a2196b4f978b1c",
+      "at": "2026-11-10T07:14:52.285160+00:00",
+      "reason": "Pilot established that Bun completes the cryptographic handshake before dropping the connection without application data and reconnects without a final error. Verify default-trust versus explicit-test-CA behavior on the same endpoint; record SNI, byte counts and supervised stop. No TLS bypass observed. Startup threshold unchanged."
+    }
+  ]
+}

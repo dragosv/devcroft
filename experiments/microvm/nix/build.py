@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Materialize a locked Linux Nix closure in the mount-free experiment builder."""
+import argparse
 import hashlib
 import json
 import os
@@ -23,6 +24,17 @@ def run(*argv, env=None, capture=False, timeout=1800, cwd=None):
 
 
 def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--work-dir', type=Path, default=WORK)
+    parser.add_argument('--required-binary', action='append')
+    args = parser.parse_args()
+    work = args.work_dir
+    if not work.is_absolute() or work.is_symlink():
+        raise RuntimeError('builder work directory must be an absolute non-symlink path')
+    materialize(work, args.required_binary or ('gcc', 'make', 'redis-server', 'code-server'))
+
+
+def materialize(WORK, required_binaries):
     os.chdir(WORK)
     pin = json.loads((WORK / 'bootstrap.json').read_text())
     archive = WORK / 'nix-bootstrap.tar.xz'
@@ -113,7 +125,7 @@ def main():
         checksums.append(f'{digest(file)}  {name}\n')
     (small / 'SHA256SUMS').write_text(''.join(checksums))
     # Required binaries are closure links, never copied from Alpine's /usr.
-    for binary in ('gcc', 'make', 'redis-server', 'code-server'):
+    for binary in required_binaries:
         resolved = os.path.realpath(root / 'usr/bin' / binary)
         if not resolved.startswith('/nix/store/'):
             raise RuntimeError(f'{binary} is not a Nix closure executable')
