@@ -135,6 +135,25 @@ the maintainer has direct access to a Mac, just not through this
 devcontainer — so what is missing is the run itself, not access to run
 it. Nothing downstream of task group 0 starts until it reports back.
 
+**`add-test-runtime-fixture`** sits between `add-mount-isolation` and
+0.3. It is test infrastructure, and **not a gate on cutting `0.1.0`**: it
+changes what the suite exercises, not what devcroft claims. Scoped as
+built:
+
+- The default developer suite runs against a real Nix environment (the
+  nix row: a real closure, a shell resolved out of it, a real loader).
+  It does not quietly fall back to something cheaper: an unavailable
+  default row fails the run, with the remedy.
+- One neutral test runs against any row: nix, flox, devbox, swift, or the
+  Nix-free `test` row. Each row states what it can exercise as
+  capabilities. A test skips a row by capability, never by its name.
+- CI has independent provider-contract jobs (flox, nix and devbox
+  blocking) and a provider-free leg on the Nix-free row.
+
+What it is not: evidence that a closure's toolchain runs anywhere the
+Nix-free row is green. That row's shell loads the host's libc
+(`NixFreeRow`'s own doc comment says why).
+
 ## 0.3 — one agent, end to end
 
 **`add-agent-workload`** (0/38) and the attention half of

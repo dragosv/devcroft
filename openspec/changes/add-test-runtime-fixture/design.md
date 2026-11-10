@@ -240,10 +240,23 @@ is a regression in coverage wearing the shape of a migration.
    `process-compose` does not. Decided: generalize the guard from "under
    `/nix/store`" to "inside a path the provider declared", landing in group 5
    with the row, gated on task 0.4 showing a host shell is still refused.
-2. **Does `=all` earn its cost?** Needs the measured delta — wall-time for
-   four rows against one, and how many currently-skipped tests become
-   runnable — before it goes anywhere near a required job.
+2. **~~Does `=all` earn its cost?~~ ANSWERED — not on Linux CI.** Measured
+   (tasks.md 6.3, 2026-11-10): 85s for the default row, 252s for `=all`,
+   and 52 row executions become 208. But no skipped test becomes
+   runnable (99 skips become 103), because none of the skips is
+   row-shaped: they need cgroup delegation, devenv, swift or a
+   closure-building host. The per-provider legs already buy the same
+   coverage in parallel, so `=all` is a local convenience and the macOS
+   leg's way of running two rows on one runner, not a required Linux job.
+   The fixture itself did earn its cost, by a different measure: migrating
+   onto it found a product bug (`up` leaking the keeper's listeners into
+   its caller), a flox row that had never run without a login, and three
+   tests whose controls their own comments described but never asserted.
 3. **Do `fingerprint` and `static_name` belong on the `Provider` trait?**
    Free functions today. Moving them removes the dispatch duplication D1's
    table describes, but widens a product trait for a test-driven reason.
    Decidable once the seam exists, not before.
+   *Still open (2026-11-10).* The seam exists, and nothing in groups 1-7
+   needed the move, so there is no test-driven reason left to widen the
+   trait. That argues for leaving them free functions, but it is a product
+   decision, not this change's.

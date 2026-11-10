@@ -93,7 +93,7 @@
       `test`, `fixture` and `testprov`. The pre-existing `host` (out of scope)
       and `mise` (not yet supported) tests already cover the distinction and
       are untouched.
-- [~] 1.5 Add `up_with_resolution(...)` for the narrower band that never needs `up`
+- [x] 1.5 Add `up_with_resolution(...)` for the narrower band that never needs `up`
       (hooks, `services::render_config`, keeper-direct, `spawn_keeper`). This is the
       cheap half of design.md D1 and needs none of the above — land it first if the
       seam work stalls.
@@ -408,10 +408,21 @@
       secrets, for `tests/flox_fresh_resolution.rs`, which fails without a
       login by design. **The secret has to be created by the owner**; until
       then, and on fork PRs, that leg is red.
-- [ ] 6.3 Measure `=all` before putting it on any critical path (design.md Open
+- [x] 6.3 Measure `=all` before putting it on any critical path (design.md Open
       Question 2): wall-time against the current 159s single-row baseline, and how
       many of the ~80 currently-skipped tests become runnable. If the answer is only
       "cleaner", it does not ship.
+      → Measured 2026-11-10 on this devcontainer (aarch64, warm store):
+      default row 85s, 749 passed; `=all` 252s, 762 passed. `=all` turns
+      52 row executions into 208 (nix, flox, devbox, test). It makes **no**
+      skipped test runnable: 99 skip lines become 103, and none of the 99
+      is row-shaped. They need cgroup delegation (~49), devenv (~37), swift
+      or a closure-building host. So on Linux `=all` is "cleaner" in the
+      task's sense: the per-provider CI legs already buy its coverage in
+      parallel. **It stays off the Linux critical path.** It keeps its one
+      CI use, the macOS leg, where it is how the swift and `test` rows run
+      side by side on one runner. The 159s baseline was a different suite
+      on a different day, so the two times are not comparable.
 - [x] 6.4 Keep at least the Nix row in pre-merge CI. A mount-view regression that the
       synthetic row cannot see is precisely what `add-mount-isolation`'s branch hit —
       new mount tests green, an existing devbox test regressed.
@@ -419,13 +430,17 @@
 
 ## 7. Record what the change actually did
 
-- [ ] 7.1 Update `docs/roadmap.md` with the milestone as scoped: default developer
+- [x] 7.1 Update `docs/roadmap.md` with the milestone as scoped: default developer
       suite exercises a real Nix environment; CI has independent provider-contract
       jobs. Place it after `add-mount-isolation`, before 0.3, and state that it is
       **not** a gate on cutting 0.1.0.
+      → Done: a paragraph between 0.2 and 0.3, stating it is not a gate on
+      0.1.0 and what the Nix-free row is not evidence for.
 - [x] 7.2 If task 0 changed `shell::resolve`'s guard, update `CLAUDE.md`'s shell
       invariant to describe what the guard now is. That paragraph is currently the
       authority on it, and a stale invariant is worse than an unwritten one.
-- [ ] 7.3 Record the outcome in design.md's Open Questions — including, if it turns
+- [x] 7.3 Record the outcome in design.md's Open Questions — including, if it turns
       out that way, "the synthetic row is not worth its cost". A change that measures
       its own premise and finds it wanting has succeeded, not failed.
+      → Done: Open Questions 2 answered with 6.3's numbers. 3 stays open,
+      deliberately.
