@@ -38,12 +38,12 @@ class Observer:
 
     def run(self):
         try:
+            next_sample = time.monotonic()
             while not self.done.is_set():
-                started = time.monotonic()
                 self.process.stdin.write(f'tree {os.getpid()}\n')
                 self.process.stdin.flush()
                 data = self.read()
-                data.update(at=time.monotonic(), phase=self.phase)
+                data.update(at=time.monotonic(), wall_at=time.time(), phase=self.phase)
                 data['helper_pids'] = [vm.process.pid for vm in self.instances if vm.process is not None]
                 records = [*data['processes'], data['observer']]
                 data['total_physical_footprint_bytes'] = sum(p.get('physical_footprint_bytes', 0) for p in records)
@@ -51,7 +51,14 @@ class Observer:
                 self.file.write(json.dumps(data, separators=(',', ':')) + '\n')
                 self.file.flush()
                 self.samples.append(data)
-                self.done.wait(max(0, self.interval - (time.monotonic() - started)))
+                # Relative waits accumulate macOS timer coalescing (about 8 ms
+                # per wake in the first full run). Schedule against an absolute
+                # cadence instead, while retaining genuine missed slots.
+                next_sample += self.interval
+                now = time.monotonic()
+                if now - next_sample > self.interval:
+                    next_sample = now + self.interval
+                self.done.wait(max(0, next_sample - now))
         except Exception as error:
             self.error = f'{type(error).__name__}: {error}'
 

@@ -508,3 +508,10 @@ The experimental code is Apache-2.0. libkrun and hvi are separate Apache-2.0
 upstreams. The downloaded Linux kernel has its own GPL obligations and provenance;
 this directory does not distribute it. The experiment's additional dependencies
 are recorded in its own lockfile and are not part of devcroft's release graph.
+
+The first full density attempt (`runs/20261110-native-density-v1`) is excluded
+from comparison: relative observer waits accumulated macOS timer coalescing,
+leaving 233–234 samples per 60-second idle window. Thresholds are unchanged.
+Absolute monotonic deadlines passed four complete 60-second windows on both
+adapters with 240 samples each. Raw clocks and interrupted samples are retained;
+see `results/macos-arm64-density-cadence-calibration.json`.

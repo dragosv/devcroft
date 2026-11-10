@@ -1,0 +1,72 @@
+{
+  "schema": 1,
+  "qualification": "calibration-only; excluded from qualifying density comparison",
+  "platform": "macos-arm64-native",
+  "status": "passed",
+  "raw_evidence": "experiments/microvm/runs/20261110-density-cadence-calibration",
+  "raw_report_sha256": "edb1582a790ce20e04a093f0539bf79382ef11d85a5e14cfd75cf3fc9be93109",
+  "harness_sources": {
+    "density.py": "5345a290e39a88260f4912c1a1e394654e71b15f326f97e96057d7422b63d313",
+    "observe_macos.py": "26002eea484b9b5aec1218da16618bc4244912d1c89cbbbcce9ffd11d2437056",
+    "measure_macos.c": "27204057076aa4edcebd0264e150901cf84b81642d7d9e7135fd3c2d2a2bf234",
+    "memory_stress.c": "ad09728aea479805d1cf57446a9ed71cafa04ff00cef7896b98ae282c0ee3bce",
+    "smoke.py": "11b0c8e4f9b38ad86de1da496297dc7248502c3e6d4c4ce0e9a64c39ab05bf05",
+    "ssh_smoke.py": "cfddc0a941dab7ac5633d0c83e9649898e2622237d138e1084b9de94434e1a7e",
+    "workload_smoke.py": "9051808535ccbcf757b45f4b5afce31e030107d9c890a3ef29dae988b5fb15ff",
+    "keeper_probe.py": "65932e55e49bb1cee55a38ad35ceb1d7b307b103d5aff373273afc72d83bca83"
+  },
+  "thresholds": {
+    "path": "/Users/dragos/Development/devcroft-codex/experiments/microvm/fixtures/no-go-thresholds.json",
+    "sha256": "5db6e27a67179c45403b159684b22db7789d2bc019552ae205d8a1ca2ba3768e"
+  },
+  "windows": [
+    {
+      "adapter": "libkrun",
+      "phase": "post-build-idle",
+      "window_seconds": 60,
+      "accepted_samples": 240,
+      "raw_samples": 240,
+      "maximum_gap_seconds": 0.25855425000190735,
+      "median_gap_seconds": 0.2498941250378266,
+      "sample_span_seconds": 59.7478610840044
+    },
+    {
+      "adapter": "libkrun",
+      "phase": "controlled-idle",
+      "window_seconds": 60,
+      "accepted_samples": 240,
+      "raw_samples": 240,
+      "maximum_gap_seconds": 0.2581567080342211,
+      "median_gap_seconds": 0.24994958302704617,
+      "sample_span_seconds": 59.74533925001742
+    },
+    {
+      "adapter": "hvi",
+      "phase": "post-build-idle",
+      "window_seconds": 60,
+      "accepted_samples": 240,
+      "raw_samples": 240,
+      "maximum_gap_seconds": 0.2587819169857539,
+      "median_gap_seconds": 0.2500026670168154,
+      "sample_span_seconds": 59.74471058300696
+    },
+    {
+      "adapter": "hvi",
+      "phase": "controlled-idle",
+      "window_seconds": 60,
+      "accepted_samples": 240,
+      "raw_samples": 240,
+      "maximum_gap_seconds": 0.2549084580386989,
+      "median_gap_seconds": 0.2500093749840744,
+      "sample_span_seconds": 59.749263582983986
+    }
+  ],
+  "prior_attempt": {
+    "raw": "experiments/microvm/runs/20261110-native-density-v1",
+    "qualification": "invalid measurement cadence; excluded from comparison",
+    "status": "failed",
+    "reason": "Relative waits accumulated macOS wake/coalescing delay: 233-234 rather than at least 237 samples per 60 seconds. Successful launch rows and failed idle rows remain retained. Operator interrupted after diagnosis.",
+    "thresholds_changed": false
+  },
+  "fix": "absolute monotonic sampling deadlines; preserve missed slots, record monotonic and wall clocks; full 60-second calibration for both adapters; retain interrupted raw sample in summary"
+}
