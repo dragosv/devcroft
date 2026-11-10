@@ -247,7 +247,7 @@ openspec status --change <change> --json       # artifact state, paths, what's n
 openspec instructions <artifact> --change <c> --json   # how to write an artifact
 ```
 
-`openspec validate --all` currently reports **19 passed, 0 failed**.
+`openspec validate --all` currently reports **18 passed, 0 failed**.
 `add-nix-provider` (nix flakes as a second closure-tier environment
 provider, alongside flox), `add-hardened-tier` (whose tier dispatch
 `remove-gvisor-backend` deleted; its backend-generic `SessionBackend`
@@ -268,7 +268,9 @@ is archived (2026-11-08, along with `add-devbox-services` and the other
 completed ones), like `sandbox-provisioning` without syncing its specs,
 for the same reason: the base capability specs still live in
 unarchived `add-mvp-core`. `add-hardened-tier` stays active on purpose
-(its proposal says why). Those plus `add-mvp-core` are the
+(its proposal says why). `add-test-runtime-fixture` (the provider-row
+test fixture, `tests/common/mod.rs`) is archived too (2026-11-10), its
+specs likewise unsynced. Those plus `add-mvp-core` are the
 changes actually implemented; run `openspec list` for the rest, which are
 in flight or not started.
 
