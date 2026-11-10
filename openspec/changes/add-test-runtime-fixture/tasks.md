@@ -164,8 +164,14 @@
       (`every_row_resolves_its_shell_out_of_the_closure`), so it holds for
       rows added later too — including the synthetic one, which is exactly
       the row most tempted to reach for `/bin/sh`.
-- [ ] 3.3 Verify the row is skippable-but-loud: on a host with no usable Nix store,
+- [x] 3.3 Verify the row is skippable-but-loud: on a host with no usable Nix store,
       the default run fails with the remedy rather than skipping silently.
+      → Verified 2026-11-10 by shadowing `nix` with one that fails: the
+      default run panics naming the row and the reason ("a flakes-enabled
+      nix is not on PATH") and the remedy (`DEVCROFT_TEST_PROVIDER=test`, or
+      another row). Not simulated: a present `nix` with the daemon down,
+      which would mean stopping this host's daemon. That branch goes through
+      the same `Unavailable` and the same panic.
 
 ## 4. Migrate the neutral surface
 
@@ -351,18 +357,35 @@
 
 ## 5. The synthetic row — only if task 0 said it can exist
 
-- [ ] 5.1 Build the row per 0.3's decision. If it stays below `up`, say so in its own
+- [x] 5.1 Build the row per 0.3's decision. If it stays below `up`, say so in its own
       doc comment and keep it out of the lifecycle band entirely.
-- [ ] 5.2 If it runs `up`: ship a real `process-compose`, pinned by hash per platform
+      → Done in `add-nix-free-test-row` (archived 2026-11-08): the row runs
+      `up` through the seam, under the guard 0.3 generalized.
+- [x] 5.2 If it runs `up`: ship a real `process-compose`, pinned by hash per platform
       and architecture, and record the licence/attribution obligations that come with
       vendoring or fetching a prebuilt binary.
-- [ ] 5.3 State the row's limits where they are visible: it has no dynamic loader, so
+      → Decided against in `add-nix-free-test-row` 4.1: no process-compose
+      (no Rust reimplementation to vendor the cheap way), so no pinned
+      binary and no licence obligation. `capabilities().services` is false
+      for the row and services tests skip it by capability.
+- [x] 5.3 State the row's limits where they are visible: it has no dynamic loader, so
       it never exercises the `/lib` → `ld-linux` → merged-`/usr` path
       `fleet::mount::setup_merged_usr_compat` exists for. It is not evidence that a
       real toolchain runs inside the mount view.
-- [ ] 5.4 macOS: a static-ELF row does not exist there. Either give the row a
+      → Done 2026-11-10, on `NixFreeRow` itself. The archived change
+      recorded this as done in the row's comments, but no such comment
+      exists, and the statement had been written for the planned static
+      BusyBox, which N6 replaced with `brush` — so it was also false: the row's shell is now *host*-linked (host
+      `ld-linux` + glibc, readable through the keeper's baseline
+      `KEEPER_SYSTEM_READ` grant), not loader-free. The limit is the same,
+      by the opposite mechanism, and the doc says so.
+- [x] 5.4 macOS: a static-ELF row does not exist there. Either give the row a
       per-platform implementation or scope it to Linux and say so — one row with two
       materially different runtimes must not be described as one row.
+      → Superseded premise: the row is no longer a static ELF. It is one
+      Rust source compiled natively per platform, so one row, not two
+      runtimes under one name. Its macOS run since the move to `brush` is
+      not recorded; noted on `NixFreeRow`.
 
 ## 6. CI, and the measurement that decides `=all`
 

@@ -647,6 +647,31 @@ fn bundled_row_shell() -> Option<PathBuf> {
     candidate.is_file().then_some(candidate)
 }
 
+/// The Nix-free row: a shell devcroft builds itself (`examples/test-row-sh`,
+/// the `brush` crate plus three uutils), in a directory the row declares as
+/// its provider grant.
+///
+/// **What a green board from this row is not evidence for.** Its shell is an
+/// ordinary host-linked binary: on Linux it loads the *host's*
+/// `/lib/ld-linux-*.so` and glibc, which the sandbox can read only because
+/// the baseline grants them to the host-linked keeper
+/// (`policy::KEEPER_SYSTEM_READ`) and sessions inherit that. So this row
+/// never exercises a closure's own loader (`/nix/store/…/ld-linux`), the
+/// `/lib` -> merged-`/usr` path `fleet::mount::setup_merged_usr_compat`
+/// exists for, or any library resolution a real toolchain does. It is not
+/// evidence that a toolchain runs inside the sandbox or its mount view.
+/// `every_row_resolves_its_shell_out_of_the_closure` passes for it because
+/// it checks where the shell *is*, not what the shell loads.
+///
+/// The row was planned as a static BusyBox (`add-nix-free-test-row` group
+/// 3), and this limit was written as "no dynamic loader". That change's
+/// design.md N6 replaced the plan with `brush`, which is dynamically linked
+/// (measured with `ldd`, 2026-11-10): the limit is the same, the mechanism
+/// is the opposite.
+///
+/// On macOS the same source compiles natively and links the host's
+/// `libSystem`, the only option there. No run on macOS since the move to
+/// `brush` is recorded.
 #[cfg(feature = "test-support")]
 pub struct NixFreeRow {
     root: PathBuf,
