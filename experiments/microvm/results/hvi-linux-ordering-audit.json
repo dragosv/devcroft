@@ -1,0 +1,23 @@
+{
+  "schema": 1,
+  "status": "failed",
+  "qualification": "pinned-source ordering audit only; Linux execution not-run",
+  "adapter": "hvi",
+  "platform": "linux-source-audit",
+  "revision": "351d1a15728e998486232e4815ba075a22e44f56",
+  "source": {
+    "path": "src/hypervisor/kvm.rs",
+    "effective_sha256": "745b2c65c0331e4e7abea90fa1d93694459455b8bf2abca15f1ed5aac7f19a10",
+    "upstream_url": "https://github.com/brig-sh/hvi-vmm/blob/351d1a15728e998486232e4815ba075a22e44f56/src/hypervisor/kvm.rs"
+  },
+  "gate": "OpenSpec E3: syscall allowlist covers every VMM thread before first guest instruction",
+  "observed_call_order": [
+    "run_guest calls guest.vcpus.spawn at lines 304-311",
+    "only after spawning does the calling thread install filters at lines 315-321",
+    "the pinned source explicitly identifies the guest as already running at this point"
+  ],
+  "conclusion": "The native Linux library call order does not establish the experiment-wide pre-first-vCPU filtering guarantee. A synchronization seam or earlier caller restriction is required before Linux qualification. This source observation is not an exploit demonstration.",
+  "runtime_probe_status": "not-run; experimental wrapper still uses macOS F_GETPATH and Seatbelt APIs, and no native Linux runner is provisioned",
+  "macos_effect": "none: the tested macOS path enters process-wide Seatbelt before I/O/vCPU threads; Mac evidence stays separately qualified",
+  "thresholds_changed": false
+}
