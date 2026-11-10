@@ -5,6 +5,8 @@
 #include <libproc.h>
 #include <limits.h>
 #include <mach/mach_time.h>
+#include <pthread/qos.h>
+#include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -13,6 +15,20 @@
 #include <unistd.h>
 
 static uint32_t scale_num = 1, scale_den = 1;
+static volatile sig_atomic_t stopped;
+static int autonomous;
+static uint64_t previous_output_duration;
+
+static void stop(int signal_number) {
+    (void)signal_number;
+    stopped = 1;
+}
+
+static uint64_t monotonic_ns(void) {
+    mach_timebase_info_data_t timebase;
+    if (mach_timebase_info(&timebase) != KERN_SUCCESS) exit(2);
+    return (uint64_t)(((__uint128_t)mach_absolute_time() * timebase.numer) / timebase.denom);
+}
 
 static uint64_t process_cpu_ns(void) {
     struct timespec t;
@@ -56,13 +72,16 @@ static void calibrate(void) {
         exit(2);
     }
     printf("{\"event\":\"calibration\",\"observer_pid\":%d,\"raw_cpu_delta\":%" PRIu64
-           ",\"posix_cpu_delta_ns\":%" PRIu64 ",\"raw_unit\":\"%s\",\"scale_num\":%u,\"scale_den\":%u}\n",
-           getpid(), raw, end - start, unit, scale_num, scale_den);
-    fflush(stdout);
+           ",\"posix_cpu_delta_ns\":%" PRIu64 ",\"raw_unit\":\"%s\",\"scale_num\":%u,\"scale_den\":%u"
+           ",\"monotonic_ns\":%" PRIu64 ",\"autonomous\":%s,\"qos_class\":%u}\n",
+           getpid(), raw, end - start, unit, scale_num, scale_den, monotonic_ns(),
+           autonomous ? "true" : "false", qos_class_self());
+    if (fflush(stdout)) exit(2);
 }
 
 static int record(pid_t pid) {
     struct rusage_info_v4 info;
+    uint64_t started = monotonic_ns();
     if (usage(pid, &info)) {
         printf("{\"pid\":%d,\"error\":%d}", pid, errno);
         return 1;
@@ -70,10 +89,11 @@ static int record(pid_t pid) {
     printf("{\"pid\":%d,\"start_abstime\":%" PRIu64 ",\"physical_footprint_bytes\":%" PRIu64
            ",\"resident_bytes\":%" PRIu64 ",\"wired_bytes\":%" PRIu64
            ",\"lifetime_peak_footprint_bytes\":%" PRIu64 ",\"user_cpu_ns\":%" PRIu64
-           ",\"system_cpu_ns\":%" PRIu64 ",\"disk_read_bytes\":%" PRIu64 ",\"disk_write_bytes\":%" PRIu64 "}",
+           ",\"system_cpu_ns\":%" PRIu64 ",\"disk_read_bytes\":%" PRIu64 ",\"disk_write_bytes\":%" PRIu64 ",\"query_ns\":%" PRIu64 "}",
            pid, info.ri_proc_start_abstime, info.ri_phys_footprint, info.ri_resident_size,
            info.ri_wired_size, info.ri_lifetime_max_phys_footprint, nanos(info.ri_user_time),
-           nanos(info.ri_system_time), info.ri_diskio_bytesread, info.ri_diskio_byteswritten);
+           nanos(info.ri_system_time), info.ri_diskio_bytesread, info.ri_diskio_byteswritten,
+           monotonic_ns() - started);
     return 0;
 }
 
@@ -98,10 +118,70 @@ static size_t descendants(pid_t root, pid_t *pids, size_t capacity) {
     return count;
 }
 
-int main(void) {
+static void emit(pid_t *pids, size_t count, uint64_t collection_started, uint64_t descendants_duration) {
+    struct timespec wall;
+    if (clock_gettime(CLOCK_REALTIME, &wall)) exit(2);
+    printf("{\"native_monotonic_ns\":%" PRIu64 ",\"wall_time_ns\":%" PRIu64 ",\"processes\":[",
+           collection_started, (uint64_t)wall.tv_sec * 1000000000 + (uint64_t)wall.tv_nsec);
+    for (size_t i = 0; i < count; ++i) {
+        if (i) putchar(',');
+        record(pids[i]);
+    }
+    printf("],\"observer\":");
+    record(getpid());
+    printf(",\"collection_duration_ns\":%" PRIu64 ",\"descendants_duration_ns\":%" PRIu64
+           ",\"previous_output_duration_ns\":%" PRIu64 "}\n",
+           monotonic_ns() - collection_started, descendants_duration, previous_output_duration);
+    uint64_t output_started = monotonic_ns();
+    if (fflush(stdout)) exit(2);
+    previous_output_duration = monotonic_ns() - output_started;
+}
+
+int main(int argc, char **argv) {
+    // A complete bounded snapshot fits in memory before the explicit flush,
+    // separating kernel enumeration cost from filesystem writeback latency.
+    if (setvbuf(stdout, NULL, _IOFBF, 131072)) return 2;
+    pid_t root = 0;
+    if (argc == 3 && !strcmp(argv[1], "watch")) {
+        char *end;
+        errno = 0;
+        long pid = strtol(argv[2], &end, 10);
+        if (errno || *end || pid < 1 || pid > INT_MAX) return 2;
+        root = (pid_t)pid;
+        autonomous = 1;
+        // Only the tiny observer gets the QoS for a user-requested measurement;
+        // VMMs retain their original priorities. No realtime policy is used.
+        if (pthread_set_qos_class_self_np(QOS_CLASS_USER_INITIATED, 0)) return 2;
+        signal(SIGTERM, stop);
+        signal(SIGINT, stop);
+    } else if (argc != 1) {
+        return 2;
+    }
     calibrate();
+    if (autonomous) {
+        mach_timebase_info_data_t timebase;
+        if (mach_timebase_info(&timebase) != KERN_SUCCESS) return 2;
+        const uint64_t interval = 250000000;
+        uint64_t next = monotonic_ns();
+        while (!stopped && getppid() == root) {
+            uint64_t began = monotonic_ns();
+            pid_t pids[256];
+            size_t count = descendants(root, pids, 256);
+            uint64_t descendants_duration = monotonic_ns() - began;
+            emit(pids, count, began, descendants_duration);
+            next += interval;
+            uint64_t now = monotonic_ns();
+            if (now > next + interval) next = now + interval;
+            if (next > now) {
+                uint64_t ticks = (uint64_t)(((__uint128_t)next * timebase.denom) / timebase.numer);
+                mach_wait_until(ticks);
+            }
+        }
+        return 0;
+    }
     char line[4096];
     while (fgets(line, sizeof(line), stdin)) {
+        uint64_t collection_started = monotonic_ns();
         if (!strchr(line, '\n')) return 2;
         pid_t pids[256];
         size_t count = 0;
@@ -120,15 +200,7 @@ int main(void) {
             if (count != 1) return 2;
             count = descendants(pids[0], pids, 256);
         }
-        printf("{\"processes\":[");
-        for (size_t i = 0; i < count; ++i) {
-            if (i) putchar(',');
-            record(pids[i]);
-        }
-        printf("],\"observer\":");
-        record(getpid());
-        printf("}\n");
-        fflush(stdout);
+        emit(pids, count, collection_started, monotonic_ns() - collection_started);
     }
     return ferror(stdin) ? 2 : 0;
 }

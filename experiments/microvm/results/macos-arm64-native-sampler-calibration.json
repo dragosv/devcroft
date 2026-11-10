@@ -1,0 +1,64 @@
+{
+  "schema": 1,
+  "status": "passed",
+  "qualification": "native sampler calibration only; excluded from full density comparison",
+  "platform": "macos-arm64-native",
+  "raw_evidence": "experiments/microvm/runs/20261110-density-native-headroom-8",
+  "source_report_sha256": "94e8a19df4871016847af7558fb638edb26b28197dd48430c16513965090f430",
+  "harness_sources": {
+    "density.py": "c7e29af1c995c9a4ac9d306022e2c73230c54dd162f8e7c3af3ab61c29e8b40a",
+    "observe_macos.py": "0b36898aff230d1a1774455ecc7f20826b856b0726edb3fa7c8e87dd86d4fce7",
+    "measure_macos.c": "f7bb764dbd8b8bb3f8c4f9ddf19c5f5b0bf3e805f59382b35a086386d2c9af8e",
+    "memory_stress.c": "ad09728aea479805d1cf57446a9ed71cafa04ff00cef7896b98ae282c0ee3bce",
+    "smoke.py": "11b0c8e4f9b38ad86de1da496297dc7248502c3e6d4c4ce0e9a64c39ab05bf05",
+    "ssh_smoke.py": "cfddc0a941dab7ac5633d0c83e9649898e2622237d138e1084b9de94434e1a7e",
+    "workload_smoke.py": "9051808535ccbcf757b45f4b5afce31e030107d9c890a3ef29dae988b5fb15ff",
+    "keeper_probe.py": "65932e55e49bb1cee55a38ad35ceb1d7b307b103d5aff373273afc72d83bca83"
+  },
+  "observer_artifact": {
+    "path": "/Users/dragos/Development/devcroft-codex/experiments/microvm/artifacts/measure-macos",
+    "sha256": "ca39e8c77beb6234ae28e729ad16ecba399f7c6138688631368d92090740a6be"
+  },
+  "windows": [
+    {
+      "adapter": "libkrun",
+      "kind": "post_build_idle",
+      "samples": 240,
+      "seconds": 60
+    },
+    {
+      "adapter": "libkrun",
+      "kind": "controlled_idle",
+      "samples": 240,
+      "seconds": 60
+    },
+    {
+      "adapter": "hvi",
+      "kind": "post_build_idle",
+      "samples": 240,
+      "seconds": 60
+    },
+    {
+      "adapter": "hvi",
+      "kind": "controlled_idle",
+      "samples": 240,
+      "seconds": 60
+    }
+  ],
+  "controller_pause_controls": [
+    "runs/20261110-native-observer-pause/report.json",
+    "runs/20261110-native-observer-pause-group/report.json"
+  ],
+  "retained_failures": [
+    {
+      "raw": "runs/20261110-native-density-v2",
+      "result": "54 cases recorded; two 4-VM cadence failures and one interrupted case, remainder not-run; complete 1-VM rows retained but excluded from the fresh v3 comparison"
+    },
+    {
+      "raw": "runs/20261110-density-native-calibration-8",
+      "result": "8-VM launch controls passed; native idle window had 175 samples and next cohort hit host storage reserve; failed disks retained"
+    }
+  ],
+  "resource_repair": "results/macos-arm64-compilation-cache-cleanup.json; approximately 6 GiB of only regenerable experiment Cargo cache released, four executable hashes unchanged",
+  "frozen_e5_thresholds_changed": false
+}

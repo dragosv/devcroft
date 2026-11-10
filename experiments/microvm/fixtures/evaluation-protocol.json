@@ -39,7 +39,8 @@
     "same common kernel and architecture-matched guest artifacts",
     "host hardware/OS/power state recorded",
     "no diagnostic unconfined or calibration row included in qualifying comparison",
-    "at least 2 GiB free host storage before each cohort; exhaustion is retained and remaining samples become not-run"
+    "at least 2 GiB free host storage before each cohort; exhaustion is retained and remaining samples become not-run",
+    "exclusive dedicated-builder lease for the entire density series; no concurrent materialization or nested runner"
   ],
   "failures": "retain every failure/exhaustion and requested instance count; an incomplete cohort never counts as successful density",
   "storage": "count logical bytes and stat blocks*512; common verified inputs once per cohort, private disks per instance; retain standalone full-cost and amortized figures; preparation-output namespaces stay per-project",
@@ -47,5 +48,19 @@
   "controlled_recovery_repetitions": 1,
   "controlled_memory_mib": 256,
   "controlled_hold_seconds": 2,
-  "minimum_host_free_storage_bytes": 2147483648
+  "minimum_host_free_storage_bytes": 2147483648,
+  "collector": {
+    "method": "native autonomous 250-ms Mach absolute deadlines, independent session, direct bounded-buffer JSONL output; phase markers written separately by Python",
+    "qos": "only observer requests QOS_CLASS_USER_INITIATED (25); VMM priorities unchanged; no realtime scheduling",
+    "latency_evidence": "per-pid libproc time, process-tree enumeration time and previous output-flush time recorded",
+    "controller_independence": "seven native snapshots persisted while the owned Python controller process group was SIGSTOPped for two seconds; not a host/VM suspend qualification"
+  },
+  "cohort_headroom_rule": "at least 2 GiB reserve plus requested instances * (512 MiB configured guest RAM + private seed capacity + 16 MiB bootstrap state); fail before preparation if unavailable",
+  "method_revisions": [
+    {
+      "previous_protocol_sha256": "1b5a2defb82d28462de2b37bfff89e49a074d09ad3ea90e9b07f493fa2cd22d2",
+      "recorded_at": "2026-11-10T18:12:12.446021+00:00",
+      "reason": "v1 relative waits accumulated coalescing; v2 synchronous polling had isolated multi-second gaps and the first native 8-VM calibration exhausted host storage. Retain all attempts. Use autonomous native timing, separate collection/output timings, reclaim only regenerable experiment compiler caches, and reserve potential guest RAM/private disk capacity before a cohort. Original 4096 MiB/600 s/5 s/8 GiB E5 limits and 60-second/250-ms sampling requirements are unchanged."
+    }
+  ]
 }

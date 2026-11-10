@@ -551,3 +551,41 @@ providing the positive control. No real credentials are used. Wrong/dynamic/
 wildcard reverse ports are refused and OpenSSH cancellation removes the guest
 listener. Earlier failed/ineffective calibrations remain labelled in
 `results/macos-arm64-agent-calibrations.json`.
+
+### Native observer reliability and capacity controls
+
+`measure_macos.c watch <controller-pid>` now owns its 250-ms absolute Mach
+deadlines, runs in an independent session and writes complete native snapshots.
+Only the small observer requests user-initiated QoS; VMM priorities are unchanged.
+Python records independent phase markers and supervises instance liveness. Raw
+monotonic/wall clocks, per-PID usage-call time, descendant-enumeration time and
+output-flush time remain available. Seven snapshots persisted while the owned
+controller process group was stopped for two seconds; this is not a host-suspend
+qualification. `native_observer_probe.py` reproduces that control.
+
+The v2 collection is retained with 54 recorded cases, including cadence failures
+at four VMs. The first native eight-VM calibration also hit the host storage
+reserve. Only regenerable Cargo caches inside experiment targets were removed;
+four native/guest executable hashes were unchanged. After recovering about
+6 GiB, both eight-VM fixtures passed their build and two complete idle windows
+with 240 samples each. Evidence: `results/macos-arm64-native-sampler-calibration.json`
+and `macos-arm64-compilation-cache-cleanup.json`. A fresh comparison uses the
+revised collector on all configurations; earlier attempts stay excluded.
+
+Before each cohort, headroom now covers the original 2-GiB host reserve plus
+configured guest RAM and the private disks' logical capacities. Density and
+materialization runners share an exclusive builder lease. This changes the
+measurement safeguards, not the owner's 4096-MiB/600-s/5-s/8-GiB limits.
+
+`summarize_density.py` preserves missing and failed rows, reports cohort
+minimum/median/maximum, and never treats the SSH marker as actual agent startup.
+`storage_overlap.py` separately accounts for 111 common NAR paths in the baseline
+and agent closures without assuming APFS deduplication between raw images. The
+Linux hvi ordering audit remains a source finding, not a runtime exploit claim:
+`results/hvi-linux-ordering-audit.json`.
+
+`cold_prepare.py` prepares a separate agent image from downloaded immutable
+inputs in a fresh, network-isolated builder namespace and verifies it in a real
+guest. It refuses to run during density collection or calibration. Its frozen
+scope is `fixtures/cold-preparation-protocol.json`; cold preparation has not
+passed until its timed clean verification result exists.

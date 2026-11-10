@@ -2,7 +2,7 @@
   "schema": 1,
   "platform": "macos-arm64-native",
   "observer_source": "measure_macos.c",
-  "source_sha256": "27204057076aa4edcebd0264e150901cf84b81642d7d9e7135fd3c2d2a2bf234",
+  "source_sha256": "88dbe980ac1b1bf904019e027da48ef400ae11af9735190e96871a3860ccfd2d",
   "api": "proc_pid_rusage RUSAGE_INFO_V4; proc_listchildpids recursively includes owned runtime/client/proxy descendants",
   "memory_counters": [
     "ri_phys_footprint",
@@ -17,5 +17,11 @@
   "peak_limit": "sampled aggregate peaks; per-live-process lifetime peak also retained; very short-lived clients may fall between samples",
   "calibration_validation": "CPU scale and recursive child discovery checked with own processes; complete one-VM build/service/allocate-touch-free flow passed on both adapters",
   "source_reference": "https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/osfmk/kern/bsd_kern.c#L1182",
-  "cadence_validation": "Four complete 60-second windows (post-build and controlled recovery, both adapters), 240 samples each; absolute monotonic deadlines avoid accumulated wake coalescing. Failed prior attempt retained separately."
+  "cadence_validation": "Four complete 60-second native windows at 8 VMs, 240 samples per window, following cache cleanup; owned controller/process-group pause controls retained separately.",
+  "sampling_control": {
+    "method": "native autonomous 250-ms Mach absolute deadlines, independent session, direct bounded-buffer JSONL output; phase markers written separately by Python",
+    "qos": "only observer requests QOS_CLASS_USER_INITIATED (25); VMM priorities unchanged; no realtime scheduling",
+    "latency_evidence": "per-pid libproc time, process-tree enumeration time and previous output-flush time recorded",
+    "controller_independence": "seven native snapshots persisted while the owned Python controller process group was SIGSTOPped for two seconds; not a host/VM suspend qualification"
+  }
 }
