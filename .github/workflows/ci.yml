@@ -329,10 +329,18 @@ jobs:
       # failing test *binary*, so a leg reports one failure where it has
       # several — the first dispatched run showed exactly one binary per
       # leg, all with the same cause, and would have hidden a second.
+      # flox: the row runs from a checked-in lock and needs no login, but
+      # `tests/flox_fresh_resolution.rs` resolves a fresh manifest, which
+      # since flox 1.4 needs FloxHub auth, and fails rather than skips
+      # without it. The token is how CI has that (https://go.flox.dev/auth).
+      # Unset (a fork's PR, or before the secret exists) that one test
+      # fails, and the leg with it: on purpose, so a project's first lock
+      # is never quietly untested.
       - name: cargo test
         timeout-minutes: 40
         env:
           DEVCROFT_TEST_PROVIDER: ${{ matrix.provider == 'devenv' && 'nix' || matrix.provider }}
+          FLOX_FLOXHUB_TOKEN: ${{ matrix.provider == 'flox' && secrets.FLOX_FLOXHUB_TOKEN || '' }}
         run: |
           set -o pipefail
           cargo test --no-fail-fast -- --nocapture 2>&1 | tee /tmp/test-output.txt

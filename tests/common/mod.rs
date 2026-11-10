@@ -96,8 +96,10 @@ pub struct ProviderCapabilities {
     /// that failed for any other reason, and a bare non-zero exit cannot.
     /// False for the Nix-free row, measured: it ships no `bash` or `cat`, and
     /// brush 0.4.0's `kill` reports only "failed to send signal to process".
-    /// True for every real row, each of which installs bash and coreutils
-    /// (swift: the host's `/bin` and `/usr/bin` are provider grants).
+    /// True for nix, flox and devbox, each of which installs bash and
+    /// coreutils. False for swift until measured: the host's `/bin` and
+    /// `/usr/bin` are its provider grants, but no boundary test has run on
+    /// it, and Seatbelt's refusals need not read the way these tests expect.
     pub boundary_probes: bool,
     /// The row has `python3` and `curl` inside the sandbox: the clients and
     /// servers the network tests probe with (a UDP round trip, an HTTP
@@ -355,7 +357,9 @@ impl ProviderFixture for SwiftRow {
             // `Package.swift` is in the fingerprint.
             staleness: true,
             signal_traps: true,
-            boundary_probes: true,
+            // Unmeasured: the host's `/bin/bash` and `/bin/cat` are inside the
+            // provider's grants, but no boundary test has run on this row.
+            boundary_probes: false,
             network_probes: false,
         }
     }

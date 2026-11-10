@@ -389,9 +389,11 @@
 
 ## 6. CI, and the measurement that decides `=all`
 
-- [ ] 6.1 Add the fast job: `DEVCROFT_TEST_PROVIDER=test cargo test --features
+- [x] 6.1 Add the fast job: `DEVCROFT_TEST_PROVIDER=test cargo test --features
       test-support`, no Nix daemon. Only if group 5 produced a row.
-- [ ] 6.2 Add the per-provider jobs (nix, flox, devbox) as parallel required jobs, in
+      → Already in `.github/workflows/ci.yml` (`test` job, ubuntu leg:
+      `DEVCROFT_TEST_PROVIDER=test cargo test --features test-support`).
+- [x] 6.2 Add the per-provider jobs (nix, flox, devbox) as parallel required jobs, in
       which an available-but-failing row fails the build.
       → **Corrected while implementing group 2**: this originally read "and only
       an unavailable one skips", i.e. a job selecting one row and finding it
@@ -400,13 +402,20 @@
       tested nothing and says otherwise. A single explicitly-selected row that
       is unavailable now **fails**; only under `=all` do individual rows skip,
       and even there a run where every row skipped fails.
+      → Already in ci.yml (`e2e` matrix; flox, nix and devbox blocking,
+      devenv continue-on-error for its recorded nix-evaluator failure).
+      2026-11-10: the flox leg now passes `FLOX_FLOXHUB_TOKEN` from
+      secrets, for `tests/flox_fresh_resolution.rs`, which fails without a
+      login by design. **The secret has to be created by the owner**; until
+      then, and on fork PRs, that leg is red.
 - [ ] 6.3 Measure `=all` before putting it on any critical path (design.md Open
       Question 2): wall-time against the current 159s single-row baseline, and how
       many of the ~80 currently-skipped tests become runnable. If the answer is only
       "cleaner", it does not ship.
-- [ ] 6.4 Keep at least the Nix row in pre-merge CI. A mount-view regression that the
+- [x] 6.4 Keep at least the Nix row in pre-merge CI. A mount-view regression that the
       synthetic row cannot see is precisely what `add-mount-isolation`'s branch hit —
       new mount tests green, an existing devbox test regressed.
+      → Already: the `e2e (nix)` leg runs on `pull_request` and is blocking.
 
 ## 7. Record what the change actually did
 
