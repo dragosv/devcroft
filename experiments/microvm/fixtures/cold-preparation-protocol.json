@@ -1,0 +1,26 @@
+{
+  "schema": 1,
+  "recorded_at": "2026-11-10T17:13:16.365821+00:00",
+  "thresholds_sha256": "5db6e27a67179c45403b159684b22db7789d2bc019552ae205d8a1ca2ba3768e",
+  "fixture": "pinned Codex 0.147.0 and Claude Code 2.1.228 Nix closure",
+  "scope": "inputs already downloaded; fresh builder output namespace and empty destination Nix store, reconstruction in a network namespace with no external interfaces; not a full source compilation or cold OS page cache",
+  "includes": [
+    "start the dedicated stopped Linux materializer VM",
+    "transfer verified downloaded NAR archive and fixed definition/source inputs",
+    "re-evaluate locked definition against already downloaded immutable inputs",
+    "materialize/verify all NAR contents into an empty destination store without network",
+    "assemble immutable image/private seed and verify exported hashes",
+    "stop materializer before native guest verification",
+    "boot the clean image, apply nono/host confinement and verify both real CLI startup/HTTPS/TLS with dummy credentials",
+    "clean up owned VM/helpers/endpoints"
+  ],
+  "timing": "report offline preparation separately; compare the conservative complete end-to-end time including guest verification to accepted 600-second limit",
+  "preconditions": [
+    "no active native density collection",
+    "dedicated builder initially stopped; exclusive nested-runner lock",
+    "no host mounts or host credential import"
+  ],
+  "cache_conditions": "captured immutable NAR archive and Nix bootstrap already downloaded; builder Nix executable and immutable store inputs may already exist; destination store/workspace is new; host and guest page caches not flushed",
+  "output_policy": "separate clean verification image/receipt; baseline density images never overwritten; remove only verified reconstructible builder intermediates before export",
+  "qualification": "a passing reconstructed runtime verifies declared closure content, not fleet eligibility, source-level bit reproducibility, or completed authenticated agent tasks"
+}

@@ -271,6 +271,9 @@ def main():
     parser.add_argument('--inspect', action='store_true', help='versions/help only, not agent readiness')
     parser.add_argument('--trace-claude', action='store_true', help='diagnose pinned CLI under the unchanged guest policy')
     parser.add_argument('--repetitions', type=int, default=5)
+    parser.add_argument('--image', type=Path, default=ROOT / 'artifacts/agents/toolchain.img')
+    parser.add_argument('--seed', type=Path, default=ROOT / 'artifacts/agents/data.seed.img')
+    parser.add_argument('--guest', type=Path, default=ROOT / 'artifacts/stage-b-agents/guest.json')
     args = parser.parse_args()
     require(1 <= args.repetitions <= 10, 'agent repetitions must be between one and ten')
     os.umask(0o077)
@@ -283,8 +286,9 @@ def main():
         (sources / name).write_bytes(content)
         source_hashes[name] = hashlib.sha256(content).hexdigest()
     helper = ROOT / ('hvi/target/debug/devcroft-hvi-spike' if args.adapter == 'hvi' else 'libkrun/target/debug/devcroft-krun-spike')
-    guest = json.loads((ROOT / 'artifacts/stage-b-agents/guest.json').read_text())
-    receipt = json.loads((ROOT / 'artifacts/agents/build.json').read_text())
+    guest = json.loads(args.guest.read_text())
+    receipt = json.loads((args.image.parent / 'build.json').read_text())
+    require(guest.get('agents') and guest.get('nix'), 'agent probe requires its declared guest fixture')
     report = {'schema': 1, 'status': 'failed', 'qualification': 'real CLI initialization and dummy-key transport; not completed agent task',
               'host': list(os.uname()), **helper_identity(helper), 'helper': artifact(helper),
               'guest': guest, 'closure_build': receipt, 'agent_selection': ['codex', 'claude'],
@@ -301,10 +305,13 @@ def main():
     require(receipt['versions'] == {'claudeCode': '2.1.228', 'codex': '0.147.0', 'gcc': '15.3.0', 'redis': '8.8.1'},
             'agent closure versions differ from frozen fixture')
     report['kernel'] = artifact(ROOT / 'artifacts/kernel-landlock/Image')
-    report['agent_image'] = artifact(ROOT / 'artifacts/agents/toolchain.img')
-    report['seed'] = artifact(ROOT / 'artifacts/agents/data.seed.img')
+    report['agent_image'] = artifact(args.image)
+    report['seed'] = artifact(args.seed)
+    require(report['agent_image']['sha256'] == receipt['toolchain.img']['sha256']
+            and report['seed']['sha256'] == receipt['data.seed.img']['sha256'],
+            'agent image/seed differs from its materialization receipt')
     vm = WorkloadInstance('agent-vm', args.out, helper, ROOT / 'artifacts/kernel-landlock/Image', guest,
-                          ROOT / 'artifacts/agents/toolchain.img', ROOT / 'artifacts/agents/data.seed.img')
+                          args.image, args.seed)
     vm.launch['memory_mib'] = 1024
     vm.launch_path.write_text(json.dumps(vm.launch, indent=2) + '\n')
     (vm.out / 'launch.json').write_text(vm.launch_path.read_text())

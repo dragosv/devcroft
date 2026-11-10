@@ -2,6 +2,7 @@
 """Matched native macOS ARM64 launch/build/idle measurements with full raw costs."""
 import argparse
 import base64
+import fcntl
 from concurrent.futures import ThreadPoolExecutor
 import hashlib
 import json
@@ -57,6 +58,10 @@ class Cohort:
         guest_dir = 'stage-b-nix' if fixture == 'nix' else 'stage-b-workload'
         self.image = ROOT / 'artifacts' / directory / 'toolchain.img'
         self.seed = ROOT / 'artifacts' / directory / 'data.seed.img'
+        self.required_host_headroom_bytes = 2 * 1024**3 + count * (512 * 1024**2 + self.seed.stat().st_size + 16 * 1024**2)
+        self.host_free_bytes_before = shutil.disk_usage('/private/tmp').free
+        require(self.host_free_bytes_before >= self.required_host_headroom_bytes,
+                f'host headroom exhausted: free={self.host_free_bytes_before} required={self.required_host_headroom_bytes} instances={count}; reserve plus configured guest RAM and private disk capacity')
         self.kernel = ROOT / 'artifacts/kernel-landlock/Image'
         self.guest = json.loads((ROOT / 'artifacts' / guest_dir / 'guest.json').read_text())
         self.vms = []
@@ -77,6 +82,8 @@ class Cohort:
         self.preflight_seconds = time.monotonic() - started
         self.inputs = {'kernel': artifact(self.kernel), 'guest': self.guest, 'image': artifact(self.image),
                        'seed': artifact(self.seed), 'helper': artifact(self.helper), **helper_identity(self.helper),
+                       'host_free_bytes_before': self.host_free_bytes_before,
+                       'required_host_headroom_bytes': self.required_host_headroom_bytes,
                        'private_setup': self.setup_samples, 'total_preflight_seconds': self.preflight_seconds}
         write(out / 'inputs.json', self.inputs)
 
@@ -214,7 +221,10 @@ def main():
     parser.add_argument('--out', type=Path, required=True)
     parser.add_argument('--calibration', action='store_true', help='one instance/repetition with full idle windows; excluded from comparison')
     parser.add_argument('--fixture', choices=['alpine', 'nix', 'both'], default='both')
+    parser.add_argument('--calibration-instances', type=int, choices=[1, 4, 8], default=1)
     args = parser.parse_args()
+    builder_lease = (ROOT / 'artifacts/nested-runner.lock').open('a')
+    fcntl.flock(builder_lease, fcntl.LOCK_EX | fcntl.LOCK_NB)
     def interrupt(_signal, _frame):
         raise KeyboardInterrupt('evaluation interrupted')
     signal.signal(signal.SIGTERM, interrupt)
@@ -245,7 +255,8 @@ def main():
               'observer_artifact': artifact(ROOT / 'artifacts/measure-macos'),
               'samples': [], 'status': 'running'}
     write(args.out / 'report.json', report)
-    counts, launches, builds, idle = ([1], 1, 1, 60) if args.calibration else (protocol['instances'], 10, 5, 60)
+    require(args.calibration or args.calibration_instances == 1, 'instance override is calibration-only')
+    counts, launches, builds, idle = ([args.calibration_instances], 1, 1, 60) if args.calibration else (protocol['instances'], 10, 5, 60)
     fixtures = ['alpine', 'nix'] if args.fixture == 'both' else [args.fixture]
     report['planned_samples'] = [dict(fixture=f, adapter=a, instances_requested=n, kind=k, repetition=r)
                                 for f in fixtures for n in counts for a in protocol['adapters']

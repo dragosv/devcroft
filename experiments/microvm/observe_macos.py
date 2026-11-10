@@ -2,9 +2,7 @@
 import json
 import os
 from pathlib import Path
-import selectors
 import subprocess
-import threading
 import time
 
 ROOT = Path(__file__).resolve().parent
@@ -12,55 +10,71 @@ ROOT = Path(__file__).resolve().parent
 
 class Observer:
     def __init__(self, out, instances, interval=0.25):
+        if interval != 0.25:
+            raise ValueError('native observer implements the frozen 250-ms cadence')
         self.out, self.instances, self.interval = out, instances, interval
-        self.phase = 'prepare'
-        self.samples = []
         self.error = None
-        self.done = threading.Event()
-        self.process = subprocess.Popen([str(ROOT / 'artifacts/measure-macos')], stdin=subprocess.PIPE,
-                                        stdout=subprocess.PIPE, stderr=(out / 'observer.stderr').open('wb'), text=True)
-        self.selector = selectors.DefaultSelector()
-        self.selector.register(self.process.stdout, selectors.EVENT_READ)
-        self.calibration = self.read()
-        if self.calibration.get('event') != 'calibration':
-            raise ValueError('observer CPU calibration missing')
-        self.file = (out / 'memory-cpu.jsonl').open('w')
-        self.thread = threading.Thread(target=self.run, daemon=True)
-        self.thread.start()
+        self.phases = []
+        self._phase = 'prepare'
+        self.phase = 'prepare'
+        self.raw = out / 'memory-cpu.native.jsonl'
+        self.output = self.raw.open('wb')
+        self.stderr = (out / 'observer.stderr').open('wb')
+        self.process = subprocess.Popen([str(ROOT / 'artifacts/measure-macos'), 'watch', str(os.getpid())],
+                                        stdin=subprocess.DEVNULL, stdout=self.output, stderr=self.stderr,
+                                        start_new_session=True)
+        deadline = time.monotonic() + 5
+        while True:
+            with self.raw.open() as stream:
+                line = stream.readline()
+            if line.endswith('\n'):
+                self.calibration = json.loads(line)
+                break
+            if self.process.poll() is not None or time.monotonic() >= deadline:
+                self.stop()
+                raise RuntimeError('native observer did not calibrate')
+            time.sleep(0.005)
+        if (self.calibration.get('event') != 'calibration' or not self.calibration.get('autonomous')
+                or abs(self.calibration['monotonic_ns'] / 1e9 - time.monotonic()) > 1):
+            self.stop()
+            raise ValueError('native observer clock/calibration mismatch')
 
-    def read(self):
-        if not self.selector.select(timeout=5):
-            raise TimeoutError('observer did not answer within five seconds')
-        line = self.process.stdout.readline()
-        if not line:
-            raise RuntimeError(f'observer exited: {self.process.poll()}')
-        return json.loads(line)
+    @property
+    def phase(self):
+        return self._phase
 
-    def run(self):
-        try:
-            next_sample = time.monotonic()
-            while not self.done.is_set():
-                self.process.stdin.write(f'tree {os.getpid()}\n')
-                self.process.stdin.flush()
-                data = self.read()
-                data.update(at=time.monotonic(), wall_at=time.time(), phase=self.phase)
-                data['helper_pids'] = [vm.process.pid for vm in self.instances if vm.process is not None]
+    @phase.setter
+    def phase(self, value):
+        self._phase = value
+        self.phases.append({'at': time.monotonic(), 'phase': value,
+                            'helper_pids': [vm.process.pid for vm in self.instances if vm.process is not None]})
+        (self.out / 'observer-phases.json').write_text(json.dumps(self.phases, indent=2) + '\n')
+
+    @property
+    def samples(self):
+        samples = []
+        with self.raw.open() as stream:
+            for line in stream:
+                # An in-flight final line is retried on the next read. The
+                # native writer flushes each complete snapshot independently.
+                if not line.endswith('\n'):
+                    break
+                data = json.loads(line)
+                if data.get('event') == 'calibration':
+                    continue
+                data['at'] = data['native_monotonic_ns'] / 1e9
+                data['wall_at'] = data['wall_time_ns'] / 1e9
+                phase = self.phases[0]
+                for marker in self.phases:
+                    if marker['at'] > data['at']:
+                        break
+                    phase = marker
+                data.update(phase=phase['phase'], helper_pids=phase['helper_pids'])
                 records = [*data['processes'], data['observer']]
                 data['total_physical_footprint_bytes'] = sum(p.get('physical_footprint_bytes', 0) for p in records)
                 data['total_resident_bytes'] = sum(p.get('resident_bytes', 0) for p in records)
-                self.file.write(json.dumps(data, separators=(',', ':')) + '\n')
-                self.file.flush()
-                self.samples.append(data)
-                # Relative waits accumulate macOS timer coalescing (about 8 ms
-                # per wake in the first full run). Schedule against an absolute
-                # cadence instead, while retaining genuine missed slots.
-                next_sample += self.interval
-                now = time.monotonic()
-                if now - next_sample > self.interval:
-                    next_sample = now + self.interval
-                self.done.wait(max(0, next_sample - now))
-        except Exception as error:
-            self.error = f'{type(error).__name__}: {error}'
+                samples.append(data)
+        return samples
 
     def observe_idle(self, label, seconds):
         self.phase = label
@@ -76,7 +90,7 @@ class Observer:
             time.sleep(min(0.25, max(0, deadline - time.monotonic())))
         samples = [sample for sample in self.samples if sample['phase'] == label and started <= sample['at'] <= deadline]
         if len(samples) < max(1, int(seconds / self.interval) - 3):
-            raise RuntimeError('idle observation has missing samples')
+            raise RuntimeError(f'idle observation has missing samples: {len(samples)} in {seconds} seconds')
         expected = {vm.process.pid for vm in self.instances}
         for sample in samples:
             present = {p['pid'] for p in sample['processes'] if 'error' not in p}
@@ -116,11 +130,15 @@ class Observer:
                 'cpu_process_set_stable': set(first_all) == set(last_all)}
 
     def stop(self):
-        self.done.set()
-        self.thread.join(timeout=6)
-        self.process.stdin.close()
+        if self.process.poll() is None:
+            self.process.terminate()
         self.process.wait(timeout=3)
-        self.selector.close()
-        self.file.close()
-        if self.thread.is_alive() or self.error or self.process.returncode:
-            raise RuntimeError(self.error or 'observer did not stop cleanly')
+        self.output.close()
+        self.stderr.close()
+        if self.process.returncode:
+            raise RuntimeError('native observer did not stop cleanly')
+        # Preserve the familiar enriched JSONL in addition to native snapshots
+        # and the independent phase markers, so every timestamp can be audited.
+        with (self.out / 'memory-cpu.jsonl').open('w') as stream:
+            for sample in self.samples:
+                stream.write(json.dumps(sample, separators=(',', ':')) + '\n')
