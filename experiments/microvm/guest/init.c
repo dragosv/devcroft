@@ -201,6 +201,14 @@ static int landlock_probe(int *abi) {
 
 #ifdef ENABLE_KEEPER
 static void start_keeper(void) {
+#ifdef ENABLE_AGENT_PROBE
+    /* Fixture-only DNS aliases preserve the real TLS server name while the
+     * trusted SSH client forwards this single loopback port to vendor:443.
+     * No NIC, resolver, filesystem share or general proxy is introduced. */
+    if (mount("/agent-api-hosts", "/etc/hosts", NULL, MS_BIND, NULL) ||
+        mount(NULL, "/etc/hosts", NULL, MS_BIND | MS_REMOUNT | MS_RDONLY |
+              MS_NOSUID | MS_NODEV | MS_NOEXEC, NULL)) fail("agent hosts bind");
+#endif
     /* Only loopback exists: enabling it adds no guest/host NIC or egress path. */
     int net = socket(AF_INET, SOCK_DGRAM | SOCK_CLOEXEC, 0);
     struct ifreq loopback = {0};

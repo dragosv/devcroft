@@ -26,7 +26,7 @@ def entry(out, name, data=b"", mode=stat.S_IFDIR | 0o755, ino=1, major=0, minor=
     out.write(b"\0" * (-out.tell() % 4))
 
 
-def build(out_dir, arch, zig, keeper=None, busybox=None, workload=False, nix=False, adaptable=False, setup=False):
+def build(out_dir, arch, zig, keeper=None, busybox=None, workload=False, nix=False, adaptable=False, setup=False, agents=False):
     if nix and not workload:
         raise ValueError('Nix fixture requires the workload block devices')
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -38,6 +38,10 @@ def build(out_dir, arch, zig, keeper=None, busybox=None, workload=False, nix=Fal
         command.append("-DENABLE_KEEPER=1")
     if workload:
         command.append("-DENABLE_WORKLOAD=1")
+    if agents:
+        if not nix or not keeper:
+            raise ValueError('agent probe requires the isolated Nix keeper fixture')
+        command.append('-DENABLE_AGENT_PROBE=1')
     recipe_hash = None
     if adaptable:
         if not workload or not keeper or nix:
@@ -77,6 +81,9 @@ def build(out_dir, arch, zig, keeper=None, busybox=None, workload=False, nix=Fal
                 entry(archive, 'private-base', ino=108)
             if nix:
                 entry(archive, "nix", b"toolchain/nix", stat.S_IFLNK | 0o777, ino=105)
+            if agents:
+                entry(archive, 'agent-api-hosts', b'127.0.0.1 localhost api.openai.com api.anthropic.com\n::1 localhost\n',
+                      stat.S_IFREG | 0o444, ino=109)
     entry(archive, "TRAILER!!!", mode=0, ino=31)
     path = out_dir / "initramfs.cpio"
     path.write_bytes(archive.getvalue())
@@ -95,6 +102,8 @@ def build(out_dir, arch, zig, keeper=None, busybox=None, workload=False, nix=Fal
         result.update(fixture="stage-b-xxhash-redis-ext4", workload=True)
     if nix:
         result.update(fixture="stage-b-nix-closure-ext4", nix=True)
+    if agents:
+        result.update(fixture='stage-b-real-agent-tls-probe', agents=True)
     if adaptable:
         result.update(fixture='stage-c-private-adaptable-base', adaptable=True,
                       setup_window=setup, setup_recipe_sha256=recipe_hash)

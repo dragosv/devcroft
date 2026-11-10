@@ -169,6 +169,16 @@ pub(super) fn run() -> Result<(), Box<dyn std::error::Error>> {
     if ssh.is_some() {
         caps = caps.allow_tcp_connect(8080);
     }
+    let agent_probe = std::path::Path::new("/toolchain/usr/bin/codex").is_file()
+        && std::path::Path::new("/toolchain/usr/bin/claude").is_file();
+    if agent_probe {
+        // Bun opens the guest entropy device directly (rather than only using
+        // getrandom). Give this exact read-only device, never all of /dev.
+        caps = caps
+            .allow_file("/dev/urandom", AccessMode::Read)?
+            .allow_tcp_connect(443)
+            .allow_tcp_bind(443);
+    }
     if std::path::Path::new("/toolchain/editor/node_modules/code-server/out/node/entry.js")
         .is_file()
         || std::path::Path::new("/toolchain/usr/bin/code-server").is_file()
@@ -213,6 +223,7 @@ pub(super) fn run() -> Result<(), Box<dyn std::error::Error>> {
             key,
             authorized,
             Arc::new(keeper::LocalSessionBackend),
+            agent_probe.then_some(443),
         );
         std::thread::spawn(move || http_fixture(http, id));
         std::thread::spawn(move || {

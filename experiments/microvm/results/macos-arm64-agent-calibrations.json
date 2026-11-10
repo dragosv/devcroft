@@ -1,0 +1,38 @@
+{
+  "schema": 1,
+  "qualification": "calibration history; excluded from final startup comparison",
+  "status": "failed",
+  "platform": "macos-arm64-native",
+  "cases": [
+    {
+      "raw": "runs/20261110-agents-cli-inspection",
+      "failure": "Claude SIGABRT; strace in runs/20261110-agents-claude-trace-2 proved guest /dev/urandom read denied; fixed exact read-only grant for agent fixture"
+    },
+    {
+      "raw": "runs/20261110-libkrun-agents-transport-1",
+      "failure": "Claude default SDK retry loop exceeded controller deadline; explicit CLI retry setting added"
+    },
+    {
+      "raw": "runs/20261110-libkrun-agents-reviewed",
+      "scope": "Early host HTTPS broker calibration; replaced in final fixture by end-to-end TLS inside guest through fixed OpenSSH mapping"
+    },
+    {
+      "raw": "runs/20261110-libkrun-agents-tls-diagnostic",
+      "failure": "Nonstandard HTTP authority :8082 timed out after successful TLS; reproduced directly on host; standard loopback HTTPS port preserves vendor authority"
+    },
+    {
+      "raw": "runs/20261110-libkrun-agents-guest-tls",
+      "failure": "Wrong-name control triggered upstream SNI refusal; did not qualify client certificate verification"
+    },
+    {
+      "raw": "runs/20261110-libkrun-agents-tls-ca",
+      "failure": "Replacing SSL_CERT_FILE did not replace Codex bundled roots; did not qualify a negative trust control"
+    },
+    {
+      "raw": "runs/20261110-libkrun-agents-tls-application-probe",
+      "finding": "Bun completes handshake then closes without application bytes under default trust and reconnects; final fixture differentiates cryptographic handshake from app traffic and proves exact same endpoint with explicit test CA"
+    }
+  ],
+  "thresholds_changed": false,
+  "retention": "all calibration evidence retained"
+}

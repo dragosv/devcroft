@@ -62,5 +62,5 @@ pub fn start(
             return;
         }
     };
-    server::spawn(listener, host_key, authorized_key, backend);
+    server::spawn(listener, host_key, authorized_key, backend, None);
 }

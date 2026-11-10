@@ -515,3 +515,39 @@ leaving 233–234 samples per 60-second idle window. Thresholds are unchanged.
 Absolute monotonic deadlines passed four complete 60-second windows on both
 adapters with 240 samples each. Raw clocks and interrupted samples are retained;
 see `results/macos-arm64-density-cadence-calibration.json`.
+
+### Real agent startup and guest TLS
+
+The owner selected both Codex and Claude Code. `agents/flake.nix` and its lock
+reuse the fixed nixpkgs revision in a separate closure: Codex 0.147.0 and Claude
+Code 2.1.228, 129 NAR paths, verified and reconstructed in an empty offline
+store. `build_agents.py` leaves the baseline Nix image unchanged and removes only
+verified reconstruction intermediates from the dedicated builder. Build/closure
+receipts are in `fixtures/agents-aarch64-{build,closure}.json`.
+
+`build_keeper_guest.py --agents` packages a separate guest. It gives Bun read-only
+access to the exact guest `/dev/urandom` device, enables only loopback TCP 443,
+and mounts immutable hosts aliases for the two API names before the keeper
+applies nono. An explicitly opted-in SSH reverse listener maps this port to one
+fixed vendor:443 through the trusted OpenSSH controller. The three VMM vsock
+ports, no-NIC configuration and host Seatbelt boundary are unchanged. Ordinary
+keepers pass `None` and refuse reverse forwarding, covered by a protocol test.
+
+`agent_probe.py` measures five fresh SSH/CLI sessions in one prepared 2-vCPU,
+1024-MiB VM per adapter. Codex `turn.started` and Claude `system/init` events are
+timestamped before the host reads the actual vendor's dummy-key 401. All twenty
+startup samples passed the original five-second limit. These are initialization
+and transport checks, not completed authenticated agent tasks or concurrent
+agent-density measurements. Evidence: `results/{libkrun,hvi}-macos-arm64-agent-start.json`;
+the frozen method is `fixtures/agent-start-protocol.json`.
+
+TLS is verified inside the guest against the Nix CA bundle. Both real CLIs also
+reach a live local endpoint using the correct vendor SNI and a self-signed
+certificate. Codex sends an unknown-CA alert. Claude finishes the cryptographic
+handshake but closes without application bytes and reconnects; the controller
+stops this negative probe after five seconds. Adding only the public test CA to
+that child process makes the exact same endpoint receive application bytes,
+providing the positive control. No real credentials are used. Wrong/dynamic/
+wildcard reverse ports are refused and OpenSSH cancellation removes the guest
+listener. Earlier failed/ineffective calibrations remain labelled in
+`results/macos-arm64-agent-calibrations.json`.

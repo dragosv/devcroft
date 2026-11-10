@@ -112,6 +112,19 @@ struct SshServer {
     channels: HashMap<ChannelId, Channel<Msg>>,
     pending: HashMap<ChannelId, PendingChannel>,
     active: HashMap<ChannelId, ActiveSession>,
+    /// Explicit opt-in for the isolated microVM API probe. Normal keepers
+    /// pass None. Only this exact guest-loopback listener may be requested;
+    /// the trusted SSH client chooses its fixed host-side destination.
+    remote_forward_port: Option<u16>,
+    remote_forward: Option<RemoteForwardTask>,
+}
+
+struct RemoteForwardTask(tokio::task::JoinHandle<()>);
+
+impl Drop for RemoteForwardTask {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
 }
 
 impl SshServer {
@@ -122,6 +135,8 @@ impl SshServer {
             channels: HashMap::new(),
             pending: HashMap::new(),
             active: HashMap::new(),
+            remote_forward_port: None,
+            remote_forward: None,
         }
     }
 
@@ -365,12 +380,69 @@ impl server::Server for SshServer {
             channels: HashMap::new(),
             pending: HashMap::new(),
             active: HashMap::new(),
+            remote_forward_port: self.remote_forward_port,
+            remote_forward: None,
         }
     }
 }
 
 impl Handler for SshServer {
     type Error = russh::Error;
+
+    async fn tcpip_forward(
+        &mut self,
+        address: &str,
+        port: &mut u32,
+        session: &mut Session,
+    ) -> Result<bool, Self::Error> {
+        if address != "127.0.0.1"
+            || self.remote_forward_port.map(u32::from) != Some(*port)
+            || self.remote_forward.is_some()
+        {
+            return Ok(false);
+        }
+        let Ok(listener) = tokio::net::TcpListener::bind(("127.0.0.1", *port as u16)).await else {
+            return Ok(false);
+        };
+        let port = *port;
+        let handle = session.handle();
+        self.remote_forward = Some(RemoteForwardTask(tokio::spawn(async move {
+            // The JoinSet drops/aborts every relay when this listener is
+            // cancelled or its authenticated SSH connection disappears.
+            let mut relays = tokio::task::JoinSet::new();
+            loop {
+                tokio::select! {
+                    _ = relays.join_next(), if !relays.is_empty() => {},
+                    accepted = listener.accept(), if relays.len() < 16 => {
+                        let Ok((mut stream, peer)) = accepted else { break };
+                        let handle = handle.clone();
+                        relays.spawn(async move {
+                            let open = handle.channel_open_forwarded_tcpip(
+                                "127.0.0.1", port, peer.ip().to_string(), u32::from(peer.port()));
+                            if let Ok(Ok(channel)) = tokio::time::timeout(std::time::Duration::from_secs(10), open).await {
+                                let mut channel = channel.into_stream();
+                                let _ = tokio::time::timeout(std::time::Duration::from_secs(120),
+                                    tokio::io::copy_bidirectional(&mut stream, &mut channel)).await;
+                            }
+                        });
+                    }
+                }
+            }
+        })));
+        Ok(true)
+    }
+
+    async fn cancel_tcpip_forward(
+        &mut self,
+        address: &str,
+        port: u32,
+        _session: &mut Session,
+    ) -> Result<bool, Self::Error> {
+        if address == "127.0.0.1" && self.remote_forward_port.map(u32::from) == Some(port) {
+            return Ok(self.remote_forward.take().is_some());
+        }
+        Ok(false)
+    }
 
     /// The ssh spec's whole authentication model: one recognized
     /// identity (the devcroft client keypair, `ssh::ensure_client_keypair`),
@@ -619,12 +691,14 @@ async fn serve(
     host_key: PrivateKey,
     authorized_key: PublicKey,
     backend: Arc<dyn SessionBackend>,
+    remote_forward_port: Option<u16>,
 ) -> io::Result<()> {
     let config = Arc::new(Config {
         keys: vec![host_key],
         ..Default::default()
     });
     let mut server = SshServer::new(authorized_key, backend);
+    server.remote_forward_port = remote_forward_port;
 
     loop {
         let (stream, _addr) = listener.accept().await?;
@@ -657,6 +731,7 @@ pub fn spawn(
     host_key: PrivateKey,
     authorized_key: PublicKey,
     backend: Arc<dyn SessionBackend>,
+    remote_forward_port: Option<u16>,
 ) {
     if let Err(e) = std_listener.set_nonblocking(true) {
         eprintln!("devcroft: ssh: set_nonblocking on the ssh socket: {e}");
@@ -689,7 +764,15 @@ pub fn spawn(
                     return;
                 }
             };
-            if let Err(e) = serve(listener, host_key, authorized_key, backend).await {
+            if let Err(e) = serve(
+                listener,
+                host_key,
+                authorized_key,
+                backend,
+                remote_forward_port,
+            )
+            .await
+            {
                 eprintln!("devcroft: ssh: server exited: {e}");
             }
         });
@@ -723,7 +806,10 @@ mod tests {
     /// which is exactly the trade `tests/exec.rs`'s `Keeper` tests make
     /// too (protocol-level coverage without a real process boundary; a
     /// real `up`-driven connection is `tests/ssh_up.rs`).
-    async fn authenticate(client_key: PrivateKey, authorized_key: PublicKey) -> bool {
+    async fn authenticated_connection(
+        client_key: PrivateKey,
+        authorized_key: PublicKey,
+    ) -> (client::Handle<AcceptAnyServerKey>, bool) {
         let (client_stream, server_stream) = tokio::net::UnixStream::pair().unwrap();
 
         let host_key = PrivateKey::random(&mut rand::rng(), Algorithm::Ed25519).unwrap();
@@ -751,7 +837,20 @@ mod tests {
             )
             .await
             .unwrap();
-        result.success()
+        (handle, result.success())
+    }
+
+    async fn authenticate(client_key: PrivateKey, authorized_key: PublicKey) -> bool {
+        authenticated_connection(client_key, authorized_key).await.1
+    }
+
+    #[tokio::test]
+    async fn normal_keeper_rejects_remote_forwarding() {
+        let key = PrivateKey::random(&mut rand::rng(), Algorithm::Ed25519).unwrap();
+        let (mut client, authorized) =
+            authenticated_connection(key.clone(), key.public_key().clone()).await;
+        assert!(authorized);
+        assert!(client.tcpip_forward("127.0.0.1", 8082).await.is_err());
     }
 
     #[tokio::test]
