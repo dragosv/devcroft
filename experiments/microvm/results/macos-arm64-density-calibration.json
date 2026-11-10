@@ -1,0 +1,727 @@
+{
+  "schema": 1,
+  "qualification": "calibration-only; excluded from full comparison",
+  "platform": "macos-arm64-native",
+  "host": [
+    "Darwin",
+    "Dragoss-MacBook-Pro.local",
+    "24.6.0",
+    "Darwin Kernel Version 24.6.0: Mon Jan 19 22:01:58 PST 2026; root:xnu-11417.140.69.708.3~1/RELEASE_ARM64_T6041",
+    "arm64"
+  ],
+  "protocol": {
+    "schema": 1,
+    "platform": "macos-arm64-native",
+    "thresholds": {
+      "path": "fixtures/no-go-thresholds.json",
+      "sha256": "5db6e27a67179c45403b159684b22db7789d2bc019552ae205d8a1ca2ba3768e"
+    },
+    "adapters": [
+      "libkrun",
+      "hvi"
+    ],
+    "fixtures": [
+      "alpine",
+      "nix"
+    ],
+    "instances": [
+      1,
+      4,
+      8
+    ],
+    "resources_per_instance": {
+      "vcpus": 2,
+      "memory_mib": 512
+    },
+    "launch_stop_cycles": 10,
+    "full_build_idle_repetitions": 5,
+    "idle_observation_seconds": 60,
+    "sample_interval_seconds": 0.25,
+    "adapter_order": "alternate per repetition within each fixture/instance-count pair",
+    "cache_condition": "verified immutable inputs already materialized; warm OS cache, no attempt to flush user machine caches; fresh private disks for each build repetition; repeated launch cycles reuse one private cohort",
+    "workload": "actual GCC xxHash build/upstream sanity, 2048 small files, Redis with appendfsync always, persisted-output verification",
+    "memory": "report task physical footprint and resident bytes separately; no PSS claim; include controller/observer and all recursively discovered runtime/client/proxy descendants; record sampled and VMM lifetime peaks",
+    "cpu": "calibrate libproc CPU units against POSIX process CPU time; record raw calibration and convert before computing one-core CPU percentages",
+    "recovery": "separate real-build recovery from a controlled in-guest allocate/touch/free phase; equal 60-second windows",
+    "session_start": "new pinned-key SSH command session in an already prepared VM, tiny guest readiness marker; record as substrate session, not full AI-agent completion",
+    "durability": "libkrun SyncMode::Full and hvi File::sync_data -> macOS Rust 1.95 F_FULLFSYNC; no host-power-loss claim",
+    "preconditions": [
+      "private Linux builder stopped",
+      "same common kernel and architecture-matched guest artifacts",
+      "host hardware/OS/power state recorded",
+      "no diagnostic unconfined or calibration row included in qualifying comparison"
+    ],
+    "failures": "retain every failure/exhaustion and requested instance count; an incomplete cohort never counts as successful density",
+    "storage": "count logical bytes and stat blocks*512; common verified inputs once per cohort, private disks per instance; retain standalone full-cost and amortized figures; preparation-output namespaces stay per-project",
+    "retention": "keep raw logs and exported verification artifacts; delete only owned successful private instance directories after storage accounting; retain failed instance disks for diagnosis",
+    "controlled_recovery_repetitions": 1,
+    "controlled_memory_mib": 256,
+    "controlled_hold_seconds": 2
+  },
+  "thresholds": {
+    "path": "/Users/dragos/Development/devcroft-codex/experiments/microvm/fixtures/no-go-thresholds.json",
+    "sha256": "5db6e27a67179c45403b159684b22db7789d2bc019552ae205d8a1ca2ba3768e"
+  },
+  "power": "Now drawing from 'AC Power'\n -InternalBattery-0 (id=22347875)\t100%; charged; 0:00 remaining present: true\n",
+  "hardware": "hw.memsize: 25769803776\nhw.physicalcpu: 12\nhw.logicalcpu: 12\nmachdep.cpu.brand_string: Apple M4 Pro\n",
+  "samples": [
+    {
+      "adapter": "libkrun",
+      "fixture": "alpine",
+      "instances_requested": 1,
+      "kind": "launch",
+      "repetition": 0,
+      "status": "passed",
+      "raw": "experiments/microvm/runs/20261109-density-calibration-2/alpine-1-libkrun-launch-0",
+      "launch": {
+        "cohort_to_ready_seconds": 2.324441291973926,
+        "project_ready_seconds": 3.3628817920107394,
+        "instances": [
+          {
+            "instance": "vm-0",
+            "ready_seconds": 2.3243304169736803
+          }
+        ],
+        "sessions": [
+          {
+            "instance": "vm-0",
+            "upper_bound_seconds": 1.0381560839596204,
+            "kind": "new pinned-key SSH guest command session; not AI-agent completion"
+          }
+        ]
+      },
+      "observer_calibration": {
+        "event": "calibration",
+        "observer_pid": 37177,
+        "raw_cpu_delta": 3604322,
+        "posix_cpu_delta_ns": 150177000,
+        "raw_unit": "mach_absolute_ticks",
+        "scale_num": 125,
+        "scale_den": 3
+      },
+      "sampled_peak_total_footprint_bytes": 85985776
+    },
+    {
+      "adapter": "hvi",
+      "fixture": "alpine",
+      "instances_requested": 1,
+      "kind": "launch",
+      "repetition": 0,
+      "status": "passed",
+      "raw": "experiments/microvm/runs/20261109-density-calibration-2/alpine-1-hvi-launch-0",
+      "launch": {
+        "cohort_to_ready_seconds": 2.3009869169909507,
+        "project_ready_seconds": 3.364078124985099,
+        "instances": [
+          {
+            "instance": "vm-0",
+            "ready_seconds": 2.3008814160129987
+          }
+        ],
+        "sessions": [
+          {
+            "instance": "vm-0",
+            "upper_bound_seconds": 1.0628455000114627,
+            "kind": "new pinned-key SSH guest command session; not AI-agent completion"
+          }
+        ]
+      },
+      "observer_calibration": {
+        "event": "calibration",
+        "observer_pid": 37271,
+        "raw_cpu_delta": 3604805,
+        "posix_cpu_delta_ns": 150195000,
+        "raw_unit": "mach_absolute_ticks",
+        "scale_num": 125,
+        "scale_den": 3
+      },
+      "sampled_peak_total_footprint_bytes": 95439320
+    },
+    {
+      "adapter": "libkrun",
+      "fixture": "alpine",
+      "instances_requested": 1,
+      "kind": "build-idle",
+      "repetition": 0,
+      "status": "passed",
+      "raw": "experiments/microvm/runs/20261109-density-calibration-2/alpine-1-libkrun-build-0",
+      "launch": {
+        "cohort_to_ready_seconds": 2.3135324589675292,
+        "project_ready_seconds": 3.3613865000079386,
+        "instances": [
+          {
+            "instance": "vm-0",
+            "ready_seconds": 2.3134354999638163
+          }
+        ],
+        "sessions": [
+          {
+            "instance": "vm-0",
+            "upper_bound_seconds": 1.0475868749781512,
+            "kind": "new pinned-key SSH guest command session; not AI-agent completion"
+          }
+        ]
+      },
+      "workload": [
+        {
+          "instance": "vm-0",
+          "source_import_seconds": 1.1519013330107555,
+          "build_and_verification_seconds": 4.913499916961882,
+          "service_and_durable_check_seconds": 4.611142040987033,
+          "hashes": {
+            "/workspace/project/xxhsum": "3330ce93433c5ef97fd7ce1ff697401f61ef0fef9e0c236123101bd499424e12",
+            "/workspace/project/tests/sanity_test": "a87786e8381c531260d5435bf6a83720c209b8094240fe47abab99628608a7af",
+            "/workspace/hashes.txt": "26c69ceea3b93f9eae742e6bcdcd946e379b0e9551ab55f20b0f33aebd1e6c34",
+            "/workspace/small/SHA256SUMS": "508278cbaea6f4ef5127f559bb3f52d86250010ba625ccd60d031c67eda21755"
+          },
+          "acknowledged_keys": 32
+        }
+      ],
+      "post_build_idle": {
+        "window_seconds": 2,
+        "sample_span_seconds": 1.8037110830191523,
+        "samples": 8,
+        "maximum_total_footprint_bytes": 353421496,
+        "end_total_footprint_bytes": 353421496,
+        "end_total_resident_bytes": 376012800,
+        "end_processes": [
+          {
+            "pid": 37023,
+            "start_abstime": 9705261298759,
+            "physical_footprint_bytes": 21152440,
+            "resident_bytes": 24920064,
+            "wired_bytes": 0,
+            "lifetime_peak_footprint_bytes": 31900176,
+            "user_cpu_ns": 1414739583,
+            "system_cpu_ns": 392611291,
+            "disk_read_bytes": 693714944,
+            "disk_write_bytes": 25767936
+          },
+          {
+            "pid": 37419,
+            "start_abstime": 9705649849698,
+            "physical_footprint_bytes": 329647160,
+            "resident_bytes": 348045312,
+            "wired_bytes": 0,
+            "lifetime_peak_footprint_bytes": 329647160,
+            "user_cpu_ns": 5620288500,
+            "system_cpu_ns": 264325041,
+            "disk_read_bytes": 1249280,
+            "disk_write_bytes": 11337728
+          },
+          {
+            "pid": 37028,
+            "start_abstime": 9705266788273,
+            "physical_footprint_bytes": 1769736,
+            "resident_bytes": 1933312,
+            "wired_bytes": 0,
+            "lifetime_peak_footprint_bytes": 1802504,
+            "user_cpu_ns": 1349666,
+            "system_cpu_ns": 1666541,
+            "disk_read_bytes": 86016,
+            "disk_write_bytes": 0
+          }
+        ],
+        "observer_overhead": {
+          "pid": 37418,
+          "start_abstime": 9705646154689,
+          "physical_footprint_bytes": 852160,
+          "resident_bytes": 1114112,
+          "wired_bytes": 0,
+          "lifetime_peak_footprint_bytes": 852160,
+          "user_cpu_ns": 151281833,
+          "system_cpu_ns": 13318208,
+          "disk_read_bytes": 32768,
+          "disk_write_bytes": 0
+        },
+        "helper_cpu": [
+          {
+            "pid": 37419,
+            "cpu_seconds": 0.012324125
+          }
+        ],
+        "helper_cpu_percent_one_core": 0.6832649150977766
+      },
+      "controlled_source_sha256": "ad09728aea479805d1cf57446a9ed71cafa04ff00cef7896b98ae282c0ee3bce",
+      "controlled_idle": {
+        "window_seconds": 2,
+        "sample_span_seconds": 1.7964741670293733,
+        "samples": 8,
+        "maximum_total_footprint_bytes": 538904880,
+        "end_total_footprint_bytes": 538904880,
+        "end_total_resident_bytes": 563331072,
+        "end_processes": [
+          {
+            "pid": 37023,
+            "start_abstime": 9705261298759,
+            "physical_footprint_bytes": 19464888,
+            "resident_bytes": 25149440,
+            "wired_bytes": 0,
+            "lifetime_peak_footprint_bytes": 31900176,
+            "user_cpu_ns": 1422394208,
+            "system_cpu_ns": 399806875,
+            "disk_read_bytes": 693735424,
+            "disk_write_bytes": 25772032
+          },
+          {
+            "pid": 37419,
+            "start_abstime": 9705649849698,
+            "physical_footprint_bytes": 516818096,
+            "resident_bytes": 535134208,
+            "wired_bytes": 0,
+            "lifetime_peak_footprint_bytes": 516818096,
+            "user_cpu_ns": 5768703458,
+            "system_cpu_ns": 289123666,
+            "disk_read_bytes": 1249280,
+            "disk_write_bytes": 11337728
+          },
+          {
+            "pid": 37028,
+            "start_abstime": 9705266788273,
+            "physical_footprint_bytes": 1769736,
+            "resident_bytes": 1933312,
+            "wired_bytes": 0,
+            "lifetime_peak_footprint_bytes": 1802504,
+            "user_cpu_ns": 1349666,
+            "system_cpu_ns": 1666541,
+            "disk_read_bytes": 86016,
+            "disk_write_bytes": 0
+          }
+        ],
+        "observer_overhead": {
+          "pid": 37418,
+          "start_abstime": 9705646154689,
+          "physical_footprint_bytes": 852160,
+          "resident_bytes": 1114112,
+          "wired_bytes": 0,
+          "lifetime_peak_footprint_bytes": 852160,
+          "user_cpu_ns": 151684041,
+          "system_cpu_ns": 18487333,
+          "disk_read_bytes": 32768,
+          "disk_write_bytes": 0
+        },
+        "helper_cpu": [
+          {
+            "pid": 37419,
+            "cpu_seconds": 0.013632499
+          }
+        ],
+        "helper_cpu_percent_one_core": 0.7588474830418812
+      },
+      "observer_calibration": {
+        "event": "calibration",
+        "observer_pid": 37418,
+        "raw_cpu_delta": 3601670,
+        "posix_cpu_delta_ns": 150065000,
+        "raw_unit": "mach_absolute_ticks",
+        "scale_num": 125,
+        "scale_den": 3
+      },
+      "sampled_peak_total_footprint_bytes": 544541816,
+      "storage_cleanup": {
+        "private_before_cleanup": {
+          "logical_bytes": 150997695,
+          "allocated_bytes": 18157568,
+          "files": [
+            {
+              "path": "/private/tmp/ds-mj3tigig/client",
+              "logical_bytes": 411,
+              "allocated_bytes": 4096
+            },
+            {
+              "path": "/private/tmp/ds-mj3tigig/client.pub",
+              "logical_bytes": 103,
+              "allocated_bytes": 4096
+            },
+            {
+              "path": "/private/tmp/ds-mj3tigig/data.img",
+              "logical_bytes": 134217728,
+              "allocated_bytes": 18104320
+            },
+            {
+              "path": "/private/tmp/ds-mj3tigig/host",
+              "logical_bytes": 411,
+              "allocated_bytes": 4096
+            },
+            {
+              "path": "/private/tmp/ds-mj3tigig/host.pub",
+              "logical_bytes": 103,
+              "allocated_bytes": 4096
+            },
+            {
+              "path": "/private/tmp/ds-mj3tigig/known_hosts",
+              "logical_bytes": 142,
+              "allocated_bytes": 4096
+            },
+            {
+              "path": "/private/tmp/ds-mj3tigig/launch.json",
+              "logical_bytes": 1051,
+              "allocated_bytes": 4096
+            },
+            {
+              "path": "/private/tmp/ds-mj3tigig/sandbox-positive",
+              "logical_bytes": 16,
+              "allocated_bytes": 4096
+            },
+            {
+              "path": "/private/tmp/ds-mj3tigig/state.img",
+              "logical_bytes": 16777216,
+              "allocated_bytes": 16384
+            },
+            {
+              "path": "/private/tmp/ds-mj3tigig/wrong-client",
+              "logical_bytes": 411,
+              "allocated_bytes": 4096
+            },
+            {
+              "path": "/private/tmp/ds-mj3tigig/wrong-client.pub",
+              "logical_bytes": 103,
+              "allocated_bytes": 4096
+            }
+          ],
+          "method": "stat size and blocks*512; unique inodes only; no claim of APFS shared-extent deduplication"
+        },
+        "common_deployed_inputs": {
+          "logical_bytes": 710477880,
+          "allocated_bytes": 710483968,
+          "files": [
+            {
+              "path": "/Users/dragos/Development/devcroft-codex/experiments/microvm/libkrun/target/debug/devcroft-krun-spike",
+              "logical_bytes": 9730784,
+              "allocated_bytes": 9732096
+            },
+            {
+              "path": "/Users/dragos/Development/devcroft-codex/experiments/microvm/artifacts/kernel-landlock/Image",
+              "logical_bytes": 5758984,
+              "allocated_bytes": 5763072
+            },
+            {
+              "path": "/Users/dragos/Development/devcroft-codex/experiments/microvm/artifacts/stage-b-workload/initramfs.cpio",
+              "logical_bytes": 7122256,
+              "allocated_bytes": 7122944
+            },
+            {
+              "path": "/Users/dragos/Development/devcroft-codex/experiments/microvm/artifacts/stage-b-workload/runtime.img",
+              "logical_bytes": 16777216,
+              "allocated_bytes": 16777216
+            },
+            {
+              "path": "/Users/dragos/Development/devcroft-codex/experiments/microvm/artifacts/workload/toolchain.img",
+              "logical_bytes": 536870912,
+              "allocated_bytes": 536870912
+            },
+            {
+              "path": "/Users/dragos/Development/devcroft-codex/experiments/microvm/artifacts/workload/data.seed.img",
+              "logical_bytes": 134217728,
+              "allocated_bytes": 134217728
+            }
+          ],
+          "method": "stat size and blocks*512; unique inodes only; no claim of APFS shared-extent deduplication"
+        },
+        "cohort_total_allocated_bytes": 728641536,
+        "per_environment_amortized_allocated_bytes": 728641536.0,
+        "standalone_per_environment_upper_bound_allocated_bytes": 728641536,
+        "successful_private_directories_removed": true,
+        "failed_private_disks_retained": false,
+        "all_helpers_reaped": true,
+        "endpoints_removed": true
+      }
+    },
+    {
+      "adapter": "hvi",
+      "fixture": "alpine",
+      "instances_requested": 1,
+      "kind": "build-idle",
+      "repetition": 0,
+      "status": "passed",
+      "raw": "experiments/microvm/runs/20261109-density-calibration-2/alpine-1-hvi-build-0",
+      "launch": {
+        "cohort_to_ready_seconds": 2.2998844160465524,
+        "project_ready_seconds": 3.3529641660279594,
+        "instances": [
+          {
+            "instance": "vm-0",
+            "ready_seconds": 2.2997814579866827
+          }
+        ],
+        "sessions": [
+          {
+            "instance": "vm-0",
+            "upper_bound_seconds": 1.0528177079977468,
+            "kind": "new pinned-key SSH guest command session; not AI-agent completion"
+          }
+        ]
+      },
+      "workload": [
+        {
+          "instance": "vm-0",
+          "source_import_seconds": 1.172700207971502,
+          "build_and_verification_seconds": 4.861142458976246,
+          "service_and_durable_check_seconds": 4.64761800004635,
+          "hashes": {
+            "/workspace/project/xxhsum": "3330ce93433c5ef97fd7ce1ff697401f61ef0fef9e0c236123101bd499424e12",
+            "/workspace/project/tests/sanity_test": "a87786e8381c531260d5435bf6a83720c209b8094240fe47abab99628608a7af",
+            "/workspace/hashes.txt": "26c69ceea3b93f9eae742e6bcdcd946e379b0e9551ab55f20b0f33aebd1e6c34",
+            "/workspace/small/SHA256SUMS": "508278cbaea6f4ef5127f559bb3f52d86250010ba625ccd60d031c67eda21755"
+          },
+          "acknowledged_keys": 32
+        }
+      ],
+      "post_build_idle": {
+        "window_seconds": 2,
+        "sample_span_seconds": 1.8025842909701169,
+        "samples": 8,
+        "maximum_total_footprint_bytes": 369264848,
+        "end_total_footprint_bytes": 369264848,
+        "end_total_resident_bytes": 383991808,
+        "end_processes": [
+          {
+            "pid": 37023,
+            "start_abstime": 9705261298759,
+            "physical_footprint_bytes": 21856952,
+            "resident_bytes": 31440896,
+            "wired_bytes": 0,
+            "lifetime_peak_footprint_bytes": 31900176,
+            "user_cpu_ns": 1895405458,
+            "system_cpu_ns": 535481708,
+            "disk_read_bytes": 836194304,
+            "disk_write_bytes": 34619392
+          },
+          {
+            "pid": 38005,
+            "start_abstime": 9706282897733,
+            "physical_footprint_bytes": 344786000,
+            "resident_bytes": 349503488,
+            "wired_bytes": 0,
+            "lifetime_peak_footprint_bytes": 344818768,
+            "user_cpu_ns": 5631749750,
+            "system_cpu_ns": 262542916,
+            "disk_read_bytes": 2224128,
+            "disk_write_bytes": 11325440
+          },
+          {
+            "pid": 37028,
+            "start_abstime": 9705266788273,
+            "physical_footprint_bytes": 1769736,
+            "resident_bytes": 1933312,
+            "wired_bytes": 0,
+            "lifetime_peak_footprint_bytes": 1802504,
+            "user_cpu_ns": 1349666,
+            "system_cpu_ns": 1666541,
+            "disk_read_bytes": 86016,
+            "disk_write_bytes": 0
+          }
+        ],
+        "observer_overhead": {
+          "pid": 38004,
+          "start_abstime": 9706279215447,
+          "physical_footprint_bytes": 852160,
+          "resident_bytes": 1114112,
+          "wired_bytes": 0,
+          "lifetime_peak_footprint_bytes": 852160,
+          "user_cpu_ns": 151272791,
+          "system_cpu_ns": 12783875,
+          "disk_read_bytes": 32768,
+          "disk_write_bytes": 0
+        },
+        "helper_cpu": [
+          {
+            "pid": 38005,
+            "cpu_seconds": 0.012252334
+          }
+        ],
+        "helper_cpu_percent_one_core": 0.679709351811006
+      },
+      "controlled_source_sha256": "ad09728aea479805d1cf57446a9ed71cafa04ff00cef7896b98ae282c0ee3bce",
+      "controlled_idle": {
+        "window_seconds": 2,
+        "sample_span_seconds": 1.7935750409960747,
+        "samples": 8,
+        "maximum_total_footprint_bytes": 557500744,
+        "end_total_footprint_bytes": 557484360,
+        "end_total_resident_bytes": 572096512,
+        "end_processes": [
+          {
+            "pid": 37023,
+            "start_abstime": 9705261298759,
+            "physical_footprint_bytes": 21906104,
+            "resident_bytes": 31457280,
+            "wired_bytes": 0,
+            "lifetime_peak_footprint_bytes": 31900176,
+            "user_cpu_ns": 1903005666,
+            "system_cpu_ns": 542768500,
+            "disk_read_bytes": 836214784,
+            "disk_write_bytes": 34623488
+          },
+          {
+            "pid": 38005,
+            "start_abstime": 9706282897733,
+            "physical_footprint_bytes": 532956360,
+            "resident_bytes": 537591808,
+            "wired_bytes": 0,
+            "lifetime_peak_footprint_bytes": 532989128,
+            "user_cpu_ns": 5780143541,
+            "system_cpu_ns": 287101291,
+            "disk_read_bytes": 2224128,
+            "disk_write_bytes": 11325440
+          },
+          {
+            "pid": 37028,
+            "start_abstime": 9705266788273,
+            "physical_footprint_bytes": 1769736,
+            "resident_bytes": 1933312,
+            "wired_bytes": 0,
+            "lifetime_peak_footprint_bytes": 1802504,
+            "user_cpu_ns": 1349666,
+            "system_cpu_ns": 1666541,
+            "disk_read_bytes": 86016,
+            "disk_write_bytes": 0
+          }
+        ],
+        "observer_overhead": {
+          "pid": 38004,
+          "start_abstime": 9706279215447,
+          "physical_footprint_bytes": 852160,
+          "resident_bytes": 1114112,
+          "wired_bytes": 0,
+          "lifetime_peak_footprint_bytes": 852160,
+          "user_cpu_ns": 151666083,
+          "system_cpu_ns": 17541250,
+          "disk_read_bytes": 32768,
+          "disk_write_bytes": 0
+        },
+        "helper_cpu": [
+          {
+            "pid": 38005,
+            "cpu_seconds": 0.012450874
+          }
+        ],
+        "helper_cpu_percent_one_core": 0.694193090080319
+      },
+      "observer_calibration": {
+        "event": "calibration",
+        "observer_pid": 38004,
+        "raw_cpu_delta": 3603355,
+        "posix_cpu_delta_ns": 150136000,
+        "raw_unit": "mach_absolute_ticks",
+        "scale_num": 125,
+        "scale_den": 3
+      },
+      "sampled_peak_total_footprint_bytes": 563088480,
+      "storage_cleanup": {
+        "private_before_cleanup": {
+          "logical_bytes": 150997692,
+          "allocated_bytes": 18173952,
+          "files": [
+            {
+              "path": "/private/tmp/ds-_nzn9_o7/before-confinement-sentinel",
+              "logical_bytes": 13,
+              "allocated_bytes": 4096
+            },
+            {
+              "path": "/private/tmp/ds-_nzn9_o7/client",
+              "logical_bytes": 411,
+              "allocated_bytes": 4096
+            },
+            {
+              "path": "/private/tmp/ds-_nzn9_o7/client.pub",
+              "logical_bytes": 103,
+              "allocated_bytes": 4096
+            },
+            {
+              "path": "/private/tmp/ds-_nzn9_o7/data.img",
+              "logical_bytes": 134217728,
+              "allocated_bytes": 18104320
+            },
+            {
+              "path": "/private/tmp/ds-_nzn9_o7/host",
+              "logical_bytes": 411,
+              "allocated_bytes": 4096
+            },
+            {
+              "path": "/private/tmp/ds-_nzn9_o7/host.pub",
+              "logical_bytes": 103,
+              "allocated_bytes": 4096
+            },
+            {
+              "path": "/private/tmp/ds-_nzn9_o7/known_hosts",
+              "logical_bytes": 142,
+              "allocated_bytes": 4096
+            },
+            {
+              "path": "/private/tmp/ds-_nzn9_o7/launch.json",
+              "logical_bytes": 1051,
+              "allocated_bytes": 4096
+            },
+            {
+              "path": "/private/tmp/ds-_nzn9_o7/state.img",
+              "logical_bytes": 16777216,
+              "allocated_bytes": 32768
+            },
+            {
+              "path": "/private/tmp/ds-_nzn9_o7/wrong-client",
+              "logical_bytes": 411,
+              "allocated_bytes": 4096
+            },
+            {
+              "path": "/private/tmp/ds-_nzn9_o7/wrong-client.pub",
+              "logical_bytes": 103,
+              "allocated_bytes": 4096
+            }
+          ],
+          "method": "stat size and blocks*512; unique inodes only; no claim of APFS shared-extent deduplication"
+        },
+        "common_deployed_inputs": {
+          "logical_bytes": 705225752,
+          "allocated_bytes": 705232896,
+          "files": [
+            {
+              "path": "/Users/dragos/Development/devcroft-codex/experiments/microvm/hvi/target/debug/devcroft-hvi-spike",
+              "logical_bytes": 4478656,
+              "allocated_bytes": 4481024
+            },
+            {
+              "path": "/Users/dragos/Development/devcroft-codex/experiments/microvm/artifacts/kernel-landlock/Image",
+              "logical_bytes": 5758984,
+              "allocated_bytes": 5763072
+            },
+            {
+              "path": "/Users/dragos/Development/devcroft-codex/experiments/microvm/artifacts/stage-b-workload/initramfs.cpio",
+              "logical_bytes": 7122256,
+              "allocated_bytes": 7122944
+            },
+            {
+              "path": "/Users/dragos/Development/devcroft-codex/experiments/microvm/artifacts/stage-b-workload/runtime.img",
+              "logical_bytes": 16777216,
+              "allocated_bytes": 16777216
+            },
+            {
+              "path": "/Users/dragos/Development/devcroft-codex/experiments/microvm/artifacts/workload/toolchain.img",
+              "logical_bytes": 536870912,
+              "allocated_bytes": 536870912
+            },
+            {
+              "path": "/Users/dragos/Development/devcroft-codex/experiments/microvm/artifacts/workload/data.seed.img",
+              "logical_bytes": 134217728,
+              "allocated_bytes": 134217728
+            }
+          ],
+          "method": "stat size and blocks*512; unique inodes only; no claim of APFS shared-extent deduplication"
+        },
+        "cohort_total_allocated_bytes": 723406848,
+        "per_environment_amortized_allocated_bytes": 723406848.0,
+        "standalone_per_environment_upper_bound_allocated_bytes": 723406848,
+        "successful_private_directories_removed": true,
+        "failed_private_disks_retained": false,
+        "all_helpers_reaped": true,
+        "endpoints_removed": true
+      }
+    }
+  ],
+  "status": "passed",
+  "raw_evidence": "experiments/microvm/runs/20261109-density-calibration-2",
+  "remaining_limits": [
+    "one instance, one launch/build repetition, two-second idle windows",
+    "SSH marker is a guest command session; real Codex/Claude Code agent startup remains separate"
+  ]
+}

@@ -78,7 +78,10 @@ redis-cli --raw INFO server | grep '^run_id:'
             "other_system_checks_qualified": False}
         return run_id
 
-    def build(self):
+    def import_sources(self):
+        self.execute("source-import", "set -eu; test ! -e /workspace/project; cp -R /toolchain/fixture/xxHash /workspace/project; cp -R /toolchain/fixture/small /workspace/small")
+
+    def build(self, import_sources=True):
         if self.nix:
             layout = self.execute('nix-closure-layout', '''set -eu
 test "$(/bin/busybox readlink /nix)" = toolchain/nix
@@ -88,10 +91,11 @@ for name in gcc make redis-server code-server; do
 done
 ''')
             self.boots[-1]['nix_executables'] = layout.stdout.decode().splitlines()
+        if import_sources:
+            self.import_sources()
         result = self.execute("build", """set -eu
-test ! -e /workspace/project
-cp -R /toolchain/fixture/xxHash /workspace/project
-cp -R /toolchain/fixture/small /workspace/small
+test -d /workspace/project
+test -d /workspace/small
 uname -sm
 gcc --version
 make --version
