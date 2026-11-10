@@ -50,19 +50,54 @@
 //!
 //! See `tests/lifecycle_up.rs` for why this needs `CARGO_BIN_EXE_devcroft`
 //! and why each such test lives in its own file/process.
+//!
+//! **Neutral surface** (`test-runtime-fixture`): all four are claims about
+//! the backend, whatever the provider. They used to `flox init` + `flox
+//! install bash coreutils` purely to have a `bash` and a `cat`; they now
+//! run on whichever row is selected that has the probes they need
+//! (`capabilities().boundary_probes`: bash, `cat`, and a `kill` that names
+//! the errno). The Nix-free row has none of the three, and on it the attacks
+//! fail without a reason, which is no evidence of a refusal.
 
 #[path = "common/host_pid.rs"]
 mod host_pid;
 
-use devcroft::config::parse;
-use devcroft::lifecycle::{StatePaths, UpOptions, UpOutcome, down, up};
+mod common;
+
+use common::{ProviderFixture, for_each_row};
+use devcroft::lifecycle::{StatePaths, UpOptions, UpOutcome, down};
 use std::net::TcpListener;
 use std::process::{Command, Stdio};
 
-fn tooling_missing() -> bool {
-    !devcroft::policy::backend_supported()
-        || (Command::new("flox").arg("--version").output().is_err()
-            || !devcroft::provider::host_can_build_nix_closures())
+fn supported() -> bool {
+    if !devcroft::policy::backend_supported() {
+        eprintln!("skipping: this host has no usable Landlock/Seatbelt support");
+        return false;
+    }
+    // SAFETY: each test here sets the same value before any thread reads it.
+    unsafe {
+        std::env::set_var("DEVCROFT_KEEPER_EXE", env!("CARGO_BIN_EXE_devcroft"));
+    }
+    true
+}
+
+/// Append to the row's own manifest, keeping its provider and name.
+fn append_manifest(fx: &dyn ProviderFixture, extra: &str) {
+    let path = fx.project_root().join("devcroft.toml");
+    let text = std::fs::read_to_string(&path).unwrap();
+    std::fs::write(&path, format!("{text}\n{extra}")).unwrap();
+}
+
+fn bring_up(fx: &dyn ProviderFixture) -> StatePaths {
+    let paths = StatePaths::new(fx.sandbox_name()).unwrap();
+    let _ = std::fs::remove_dir_all(&paths.root);
+    let _ = std::fs::remove_file(&paths.lifecycle_lock);
+    assert_eq!(
+        fx.bring_up(&UpOptions::default())
+            .unwrap_or_else(|e| panic!("row {}: up failed: {e}", fx.name())),
+        UpOutcome::Started
+    );
+    paths
 }
 
 /// A loopback listener the sandbox has no legitimate reason to reach —
@@ -81,16 +116,15 @@ fn spawn_forbidden_listener() -> (u16, std::thread::JoinHandle<()>) {
 }
 
 /// `bash`'s own `/dev/tcp` (not `sh`'s — dash has no such feature) as the
-/// raw-socket client — installed into each fixture's flox environment
-/// (own-policy-baseline excludes host toolchain access, so this is no
-/// longer "already on the sandbox's inherited system `PATH`", the false
-/// assumption this comment used to make). Its stderr on failure names the
-/// real reason (`Permission denied` for a kernel-level Landlock deny vs
+/// raw-socket client, from the row's own environment: own-policy-baseline
+/// excludes host toolchain access, and every row with `boundary_probes`
+/// installs bash. Its stderr on failure names the real reason (`Permission denied` for a kernel-level Landlock deny vs
 /// `Connection refused` for "nobody was listening"), which is exactly the
 /// distinction these tests need to be meaningful — and exactly why a
 /// missing `bash` would be a silent false pass: `devcroft exec`'s own
 /// "keeper refused to spawn: Permission denied" also contains the
-/// substring these tests check for.
+/// substring these tests check for, hence `assert_bash_runs`.
+///
 /// A raw-socket `/dev/tcp` connect blocked at the kernel level, regardless
 /// of which errno the running nono/kernel combination surfaces it as.
 /// Verified live against both nono 0.71.0 (`Permission denied`, EACCES)
@@ -117,346 +151,247 @@ fn attempt_raw_connect(devcroft_bin: &str, sandbox_name: &str, port: u16) -> std
         .unwrap()
 }
 
+/// The control the old comment above warned was missing: `bash` runs in
+/// this sandbox. Without it, a missing `bash` makes `exec` fail with
+/// "keeper refused to spawn: Permission denied", which the denial check
+/// would accept as the boundary working.
+fn assert_bash_runs(devcroft_bin: &str, fx: &dyn ProviderFixture) {
+    let out = Command::new(devcroft_bin)
+        .args([
+            "exec",
+            fx.sandbox_name(),
+            "--",
+            "bash",
+            "-c",
+            "echo bash-ready",
+        ])
+        .output()
+        .unwrap();
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout).trim(),
+        "bash-ready",
+        "row {}: bash must run in the sandbox before its /dev/tcp is evidence of anything: {out:?}",
+        fx.name()
+    );
+}
+
 #[test]
 fn process_tier_blocks_cross_process_signals_and_proc_reads() {
-    if tooling_missing() {
-        eprintln!("skipping: no usable flox here (not on PATH, or no reachable Nix store)");
+    if !supported() {
         return;
-    }
-
-    // SAFETY: this process runs a single test.
-    unsafe {
-        std::env::set_var("DEVCROFT_KEEPER_EXE", env!("CARGO_BIN_EXE_devcroft"));
     }
     let devcroft_bin = env!("CARGO_BIN_EXE_devcroft");
 
-    // The victim: an ordinary host process with no relationship to the
-    // sandbox that's about to attack it — not its parent, not its child,
-    // not aware it exists, started before the sandbox even comes up.
-    let mut victim = Command::new("sleep")
-        .arg("300")
-        .stdout(Stdio::null())
-        .spawn()
-        .expect("spawn victim process");
-    let victim_pid = victim.id();
-
-    let project_root = std::env::temp_dir().join(format!(
-        "devcroft-landlock-boundaries-signal-{}",
-        std::process::id()
-    ));
-    let _ = std::fs::remove_dir_all(&project_root);
-    std::fs::create_dir_all(&project_root).unwrap();
-    let init = Command::new("flox")
-        .arg("init")
-        .current_dir(&project_root)
-        .output()
-        .unwrap();
-    if !init.status.success() {
-        eprintln!(
-            "skipping: flox init failed: {}",
-            String::from_utf8_lossy(&init.stderr)
+    for_each_row("landlocksig", |fx| {
+        if !fx.capabilities().boundary_probes {
+            eprintln!(
+                "row {}: skipped (no `kill` that names the errno, no `cat`)",
+                fx.name()
+            );
+            return;
+        }
+        // The victim: an ordinary host process with no relationship to the
+        // sandbox that's about to attack it — not its parent, not its
+        // child, not aware it exists, started before the sandbox comes up.
+        // Reaped on every exit, a failed assertion included.
+        struct Reap(std::process::Child);
+        impl Drop for Reap {
+            fn drop(&mut self) {
+                let _ = self.0.kill();
+                let _ = self.0.wait();
+            }
+        }
+        let mut victim = Reap(
+            Command::new("sleep")
+                .arg("300")
+                .stdout(Stdio::null())
+                .spawn()
+                .expect("spawn victim process"),
         );
-        let _ = victim.kill();
-        let _ = victim.wait();
-        return;
-    }
-    let install = Command::new("flox")
-        .args(["install", "bash", "coreutils"])
-        .current_dir(&project_root)
-        .output()
-        .unwrap();
-    if !install.status.success() {
-        eprintln!(
-            "skipping: flox install bash coreutils failed: {}",
-            String::from_utf8_lossy(&install.stderr)
-        );
-        let _ = victim.kill();
-        let _ = victim.wait();
-        return;
-    }
+        let victim_pid = victim.0.id();
 
-    let sandbox_name = format!("e2elandlock1{}", std::process::id());
-    let (manifest, _) = parse(&format!("[sandbox]\nname = {sandbox_name:?}\n")).unwrap();
-    let paths = StatePaths::new(&sandbox_name).unwrap();
-    let _ = std::fs::remove_dir_all(&paths.root);
-    let _ = std::fs::remove_file(&paths.lifecycle_lock);
+        let paths = bring_up(fx);
 
-    assert_eq!(
-        up(&manifest, &project_root, &UpOptions::default()).unwrap(),
-        UpOutcome::Started
-    );
+        // Two regimes, and each has its own correct answer. With a PID
+        // namespace of its own (`add-up-pid-namespace`), the victim has no
+        // number inside the sandbox at all: `kill` finds no such process
+        // and `/proc` has no entry, which is the stronger property. Sharing
+        // the host's (a host that masks `/proc`, or macOS), the victim is
+        // addressable and Landlock V6's signal scoping and the default-deny
+        // `/proc` refuse it. Either way the victim must survive.
+        let own_namespace = host_pid::has_own_pid_namespace(&paths.pidfile);
+        let (signal_refusal, read_refusal) = if own_namespace {
+            ("No such process", "No such file or directory")
+        } else {
+            ("Operation not permitted", "Permission denied")
+        };
 
-    // Two regimes, and each has its own correct answer. With a PID namespace
-    // of its own (`add-up-pid-namespace`), the victim has no number inside
-    // the sandbox at all: `kill` finds no such process and `/proc` has no
-    // entry, which is the stronger property. Sharing the host's (a host that
-    // masks `/proc`, or macOS), the victim is addressable and Landlock V6's
-    // signal scoping and the default-deny `/proc` refuse it. Either way the
-    // victim must survive.
-    let own_namespace = host_pid::has_own_pid_namespace(&paths.pidfile);
-    let (signal_refusal, read_refusal) = if own_namespace {
-        ("No such process", "No such file or directory")
-    } else {
-        ("Operation not permitted", "Permission denied")
-    };
-
-    // Attack 1: kill() across the PID space.
-    let out = Command::new(devcroft_bin)
-        .arg("exec")
-        .arg(&sandbox_name)
-        .arg("--")
-        .arg("sh")
-        .arg("-c")
-        .arg(format!("kill -TERM {victim_pid}"))
-        .output()
-        .unwrap();
-    assert!(
-        !out.status.success(),
-        "expected Landlock V6 signal-scoping to block a sandboxed `kill` against a process \
-         outside the sandbox; stdout={} stderr={}",
-        String::from_utf8_lossy(&out.stdout),
-        String::from_utf8_lossy(&out.stderr)
-    );
-    assert!(
-        String::from_utf8_lossy(&out.stderr).contains(signal_refusal),
-        "expected {signal_refusal:?} (own PID namespace: {own_namespace}), got stderr={}",
-        String::from_utf8_lossy(&out.stderr)
-    );
-    assert!(
-        victim.try_wait().unwrap().is_none(),
-        "victim must still be alive — the sandboxed kill must not have reached it"
-    );
-
-    // Attack 2: read the same victim's /proc entry directly (no
-    // directory listing involved — Landlock mediates the path itself).
-    //
-    // Linux-only, because the *attack* is: there is no `/proc` on macOS
-    // for a sandbox to read, so the read fails `ENOENT` rather than being
-    // refused, and asserting a denial there would be asserting the
-    // absence of a filesystem rather than the presence of a boundary.
-    // Attack 1 above (cross-process signals) is not gated and does hold on
-    // both — Seatbelt's `(allow signal (target same-sandbox))` is the
-    // macOS counterpart to Landlock V6 signal scoping.
-    #[cfg(target_os = "linux")]
-    {
+        // Attack 1: kill() across the PID space.
         let out = Command::new(devcroft_bin)
-            .arg("exec")
-            .arg(&sandbox_name)
-            .arg("--")
-            .arg("sh")
-            .arg("-c")
-            .arg(format!("cat /proc/{victim_pid}/cmdline"))
+            .args(["exec", fx.sandbox_name(), "--", "sh", "-c"])
+            .arg(format!("kill -TERM {victim_pid}"))
             .output()
             .unwrap();
         assert!(
             !out.status.success(),
-            "expected /proc/<pid>/cmdline for a process outside the sandbox to be denied by \
-             the default-deny filesystem policy; stdout={}",
-            String::from_utf8_lossy(&out.stdout)
-        );
-        assert!(
-            String::from_utf8_lossy(&out.stderr).contains(read_refusal),
-            "expected {read_refusal:?} (own PID namespace: {own_namespace}), got stderr={}",
+            "row {}: expected a sandboxed `kill` against a process outside the sandbox to \
+             fail; stdout={} stderr={}",
+            fx.name(),
+            String::from_utf8_lossy(&out.stdout),
             String::from_utf8_lossy(&out.stderr)
         );
-    }
+        assert!(
+            String::from_utf8_lossy(&out.stderr).contains(signal_refusal),
+            "row {}: expected {signal_refusal:?} (own PID namespace: {own_namespace}), got \
+             stderr={}",
+            fx.name(),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert!(
+            victim.0.try_wait().unwrap().is_none(),
+            "victim must still be alive — the sandboxed kill must not have reached it"
+        );
 
-    down(&sandbox_name).unwrap();
-    let _ = victim.kill();
-    let _ = victim.wait();
-    let _ = std::fs::remove_dir_all(&paths.root);
-    let _ = std::fs::remove_file(&paths.lifecycle_lock);
-    let _ = std::fs::remove_dir_all(&project_root);
+        // Attack 2: read the same victim's /proc entry directly (no
+        // directory listing involved — Landlock mediates the path itself).
+        //
+        // Linux-only, because the *attack* is: there is no `/proc` on
+        // macOS for a sandbox to read, so the read fails `ENOENT` rather
+        // than being refused, and asserting a denial there would be
+        // asserting the absence of a filesystem rather than the presence
+        // of a boundary. Attack 1 above holds on both — Seatbelt's
+        // `(allow signal (target same-sandbox))` is the macOS counterpart
+        // to Landlock V6 signal scoping.
+        #[cfg(target_os = "linux")]
+        {
+            let out = Command::new(devcroft_bin)
+                .args(["exec", fx.sandbox_name(), "--", "sh", "-c"])
+                .arg(format!("cat /proc/{victim_pid}/cmdline"))
+                .output()
+                .unwrap();
+            assert!(
+                !out.status.success(),
+                "row {}: expected /proc/<pid>/cmdline for a process outside the sandbox to \
+                 be refused; stdout={}",
+                fx.name(),
+                String::from_utf8_lossy(&out.stdout)
+            );
+            assert!(
+                String::from_utf8_lossy(&out.stderr).contains(read_refusal),
+                "row {}: expected {read_refusal:?} (own PID namespace: {own_namespace}), got \
+                 stderr={}",
+                fx.name(),
+                String::from_utf8_lossy(&out.stderr)
+            );
+        }
+
+        down(fx.sandbox_name()).unwrap();
+    });
 }
 
 #[test]
 fn process_tier_blocks_raw_socket_bypass_of_deny_all_network() {
-    if tooling_missing() {
-        eprintln!("skipping: no usable flox here (not on PATH, or no reachable Nix store)");
+    if !supported() {
         return;
-    }
-
-    unsafe {
-        std::env::set_var("DEVCROFT_KEEPER_EXE", env!("CARGO_BIN_EXE_devcroft"));
     }
     let devcroft_bin = env!("CARGO_BIN_EXE_devcroft");
 
-    let project_root = std::env::temp_dir().join(format!(
-        "devcroft-landlock-boundaries-netdeny-{}",
-        std::process::id()
-    ));
-    let _ = std::fs::remove_dir_all(&project_root);
-    std::fs::create_dir_all(&project_root).unwrap();
-    let init = Command::new("flox")
-        .arg("init")
-        .current_dir(&project_root)
-        .output()
-        .unwrap();
-    if !init.status.success() {
-        eprintln!(
-            "skipping: flox init failed: {}",
-            String::from_utf8_lossy(&init.stderr)
+    for_each_row("landlocknetdeny", |fx| {
+        if !fx.capabilities().boundary_probes {
+            eprintln!("row {}: skipped (no bash for /dev/tcp)", fx.name());
+            return;
+        }
+        // `network.default` defaults to `deny` with an empty allowlist
+        // (config::Network's Default impl), which is what every row writes.
+        bring_up(fx);
+        assert_bash_runs(devcroft_bin, fx);
+
+        let (port, listener_handle) = spawn_forbidden_listener();
+        let out = attempt_raw_connect(devcroft_bin, fx.sandbox_name(), port);
+        assert!(
+            !out.status.success(),
+            "row {}: expected a raw socket to be denied under network.default = deny; \
+             stdout={}",
+            fx.name(),
+            String::from_utf8_lossy(&out.stdout)
         );
-        return;
-    }
-
-    let install = Command::new("flox")
-        .args(["install", "bash"])
-        .current_dir(&project_root)
-        .output()
-        .unwrap();
-    if !install.status.success() {
-        eprintln!(
-            "skipping: flox install bash failed: {}",
-            String::from_utf8_lossy(&install.stderr)
+        assert!(
+            stderr_is_a_kernel_level_denial(&String::from_utf8_lossy(&out.stderr)),
+            "row {}: expected a kernel-level (Landlock network-scope) denial, not merely an \
+             unreached proxy, got stderr={}",
+            fx.name(),
+            String::from_utf8_lossy(&out.stderr)
         );
-        return;
-    }
 
-    // `network.default` defaults to `deny` with an empty allowlist
-    // (config::Network's Default impl) — no `[network]` section needed.
-    let sandbox_name = format!("e2elandlock2{}", std::process::id());
-    let (manifest, _) = parse(&format!("[sandbox]\nname = {sandbox_name:?}\n")).unwrap();
-    let paths = StatePaths::new(&sandbox_name).unwrap();
-    let _ = std::fs::remove_dir_all(&paths.root);
-    let _ = std::fs::remove_file(&paths.lifecycle_lock);
-
-    assert_eq!(
-        up(&manifest, &project_root, &UpOptions::default()).unwrap(),
-        UpOutcome::Started
-    );
-
-    let (port, listener_handle) = spawn_forbidden_listener();
-    let out = attempt_raw_connect(devcroft_bin, &sandbox_name, port);
-    assert!(
-        !out.status.success(),
-        "expected a raw socket to be denied under network.default = deny; stdout={}",
-        String::from_utf8_lossy(&out.stdout)
-    );
-    assert!(
-        stderr_is_a_kernel_level_denial(&String::from_utf8_lossy(&out.stderr)),
-        "expected a kernel-level (Landlock network-scope) denial, not merely an unreached \
-         proxy, got stderr={}",
-        String::from_utf8_lossy(&out.stderr)
-    );
-
-    down(&sandbox_name).unwrap();
-    // Unblocks the listener thread so it doesn't outlive the test: connect
-    // once from here, outside the sandbox, so `accept()` returns.
-    let _ = std::net::TcpStream::connect(("127.0.0.1", port));
-    let _ = listener_handle.join();
-    let _ = std::fs::remove_dir_all(&paths.root);
-    let _ = std::fs::remove_file(&paths.lifecycle_lock);
-    let _ = std::fs::remove_dir_all(&project_root);
+        down(fx.sandbox_name()).unwrap();
+        // Unblocks the listener thread so it doesn't outlive the test:
+        // connect once from here, outside the sandbox, so `accept()`
+        // returns.
+        let _ = std::net::TcpStream::connect(("127.0.0.1", port));
+        let _ = listener_handle.join();
+    });
 }
 
 #[test]
 fn process_tier_blocks_raw_socket_bypass_of_a_domain_allowlist() {
-    if tooling_missing() {
-        eprintln!("skipping: no usable flox here (not on PATH, or no reachable Nix store)");
+    if !supported() {
         return;
-    }
-
-    unsafe {
-        std::env::set_var("DEVCROFT_KEEPER_EXE", env!("CARGO_BIN_EXE_devcroft"));
     }
     let devcroft_bin = env!("CARGO_BIN_EXE_devcroft");
 
-    let project_root = std::env::temp_dir().join(format!(
-        "devcroft-landlock-boundaries-netallow-{}",
-        std::process::id()
-    ));
-    let _ = std::fs::remove_dir_all(&project_root);
-    std::fs::create_dir_all(&project_root).unwrap();
-    let init = Command::new("flox")
-        .arg("init")
-        .current_dir(&project_root)
-        .output()
-        .unwrap();
-    if !init.status.success() {
-        eprintln!(
-            "skipping: flox init failed: {}",
-            String::from_utf8_lossy(&init.stderr)
+    for_each_row("landlocknetallow", |fx| {
+        // `policy --render` below is the CLI resolving the row's provider.
+        if !(fx.capabilities().boundary_probes && fx.capabilities().cli_drivable) {
+            eprintln!(
+                "row {}: skipped (needs bash for /dev/tcp and a CLI-drivable row)",
+                fx.name()
+            );
+            return;
+        }
+        // A domain that has nothing to do with the forbidden listener
+        // below — the exact shape docs/decisions.md's original "Cooperative
+        // network filtering" entry described as unstopped.
+        append_manifest(
+            fx,
+            "[network]\ndefault = \"deny\"\nallow = [\"example.com\"]\n",
         );
-        return;
-    }
+        bring_up(fx);
+        assert_bash_runs(devcroft_bin, fx);
 
-    let install = Command::new("flox")
-        .args(["install", "bash"])
-        .current_dir(&project_root)
-        .output()
-        .unwrap();
-    if !install.status.success() {
-        eprintln!(
-            "skipping: flox install bash failed: {}",
-            String::from_utf8_lossy(&install.stderr)
+        // Confirm the allowlist actually took effect before attacking it —
+        // otherwise a passing test here would prove nothing.
+        let render = Command::new(devcroft_bin)
+            .args(["policy", "--render"])
+            .current_dir(fx.project_root())
+            .output()
+            .unwrap();
+        let render_stdout = String::from_utf8_lossy(&render.stdout);
+        assert!(
+            render_stdout.contains("example.com"),
+            "row {}: expected the manifest's network allowlist in the compiled policy, got \
+             {render_stdout}",
+            fx.name()
         );
-        return;
-    }
 
-    // A domain that has nothing to do with the forbidden listener below —
-    // this is the exact shape docs/decisions.md's original "Cooperative
-    // network filtering" entry described as unstopped.
-    let sandbox_name = format!("e2elandlock3{}", std::process::id());
-    let (manifest, _) = parse(&format!(
-        "[sandbox]\nname = {sandbox_name:?}\n[network]\ndefault = \"deny\"\nallow = [\"example.com\"]\n"
-    ))
-    .unwrap();
-    let paths = StatePaths::new(&sandbox_name).unwrap();
-    let _ = std::fs::remove_dir_all(&paths.root);
-    let _ = std::fs::remove_file(&paths.lifecycle_lock);
+        let (port, listener_handle) = spawn_forbidden_listener();
+        let out = attempt_raw_connect(devcroft_bin, fx.sandbox_name(), port);
+        assert!(
+            !out.status.success(),
+            "row {}: expected a raw socket to an IP unrelated to the allowlisted domain to be \
+             denied even with network.allow set; stdout={}",
+            fx.name(),
+            String::from_utf8_lossy(&out.stdout)
+        );
+        assert!(
+            stderr_is_a_kernel_level_denial(&String::from_utf8_lossy(&out.stderr)),
+            "row {}: expected a kernel-level denial, not a proxy the raw socket simply \
+             bypassed, got stderr={}",
+            fx.name(),
+            String::from_utf8_lossy(&out.stderr)
+        );
 
-    assert_eq!(
-        up(&manifest, &project_root, &UpOptions::default()).unwrap(),
-        UpOutcome::Started
-    );
-
-    // Confirm the allowlist actually took effect before attacking it —
-    // otherwise a passing test here would prove nothing. `policy
-    // --render` re-parses the manifest from disk (it's not sandbox
-    // runtime state), so it needs both a devcroft.toml on disk and to
-    // run from within the project directory — `up` above only took a
-    // parsed `Manifest` in memory, same as every other test in this
-    // suite, so the file needs writing here specifically for this check.
-    std::fs::write(
-        project_root.join("devcroft.toml"),
-        format!(
-            "[sandbox]\nname = {sandbox_name:?}\n[network]\ndefault = \"deny\"\nallow = [\"example.com\"]\n"
-        ),
-    )
-    .unwrap();
-    let render = Command::new(devcroft_bin)
-        .arg("policy")
-        .arg("--render")
-        .current_dir(&project_root)
-        .output()
-        .unwrap();
-    let render_stdout = String::from_utf8_lossy(&render.stdout);
-    assert!(
-        render_stdout.contains("example.com"),
-        "expected the manifest's network allowlist to be reflected in the compiled policy, \
-         got {render_stdout}"
-    );
-
-    let (port, listener_handle) = spawn_forbidden_listener();
-    let out = attempt_raw_connect(devcroft_bin, &sandbox_name, port);
-    assert!(
-        !out.status.success(),
-        "expected a raw socket to an IP unrelated to the allowlisted domain to be denied \
-         even with network.allow set; stdout={}",
-        String::from_utf8_lossy(&out.stdout)
-    );
-    assert!(
-        stderr_is_a_kernel_level_denial(&String::from_utf8_lossy(&out.stderr)),
-        "expected a kernel-level denial, not a proxy the raw socket simply bypassed, \
-         got stderr={}",
-        String::from_utf8_lossy(&out.stderr)
-    );
-
-    down(&sandbox_name).unwrap();
-    let _ = std::net::TcpStream::connect(("127.0.0.1", port));
-    let _ = listener_handle.join();
-    let _ = std::fs::remove_dir_all(&paths.root);
-    let _ = std::fs::remove_file(&paths.lifecycle_lock);
-    let _ = std::fs::remove_dir_all(&project_root);
+        down(fx.sandbox_name()).unwrap();
+        let _ = std::net::TcpStream::connect(("127.0.0.1", port));
+        let _ = listener_handle.join();
+    });
 }

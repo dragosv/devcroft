@@ -87,6 +87,18 @@ pub struct ProviderCapabilities {
     /// *survives* a signal consults this; signal forwarding itself is not
     /// affected.
     pub signal_traps: bool,
+    /// The row has what the boundary tests probe with: `bash` (for its
+    /// `/dev/tcp`), a `cat` binary, and a shell whose failed `kill` names
+    /// the errno.
+    ///
+    /// The errno is the point, not the tools. A boundary test has to tell a
+    /// refusal by the backend (`EPERM`, `ESRCH`, `EACCES`) from a command
+    /// that failed for any other reason, and a bare non-zero exit cannot.
+    /// False for the Nix-free row, measured: it ships no `bash` or `cat`, and
+    /// brush 0.4.0's `kill` reports only "failed to send signal to process".
+    /// True for every real row, each of which installs bash and coreutils
+    /// (swift: the host's `/bin` and `/usr/bin` are provider grants).
+    pub boundary_probes: bool,
 }
 
 /// One row of the matrix: a project of a given provider's shape, set up on
@@ -206,6 +218,7 @@ impl ProviderFixture for NixRow {
             cli_drivable: true,
             staleness: true,
             signal_traps: true,
+            boundary_probes: true,
         }
     }
     fn project_root(&self) -> &Path {
@@ -242,6 +255,7 @@ impl ProviderFixture for FloxRow {
             cli_drivable: true,
             staleness: true,
             signal_traps: true,
+            boundary_probes: true,
         }
     }
     fn project_root(&self) -> &Path {
@@ -275,6 +289,7 @@ impl ProviderFixture for DevboxRow {
             cli_drivable: true,
             staleness: true,
             signal_traps: true,
+            boundary_probes: true,
         }
     }
     fn project_root(&self) -> &Path {
@@ -316,6 +331,7 @@ impl ProviderFixture for SwiftRow {
             // `Package.swift` is in the fingerprint.
             staleness: true,
             signal_traps: true,
+            boundary_probes: true,
         }
     }
     fn project_root(&self) -> &Path {
@@ -644,6 +660,7 @@ impl ProviderFixture for NixFreeRow {
             // fingerprint is now what `status` compares against.
             staleness: true,
             signal_traps: false,
+            boundary_probes: false,
         }
     }
     fn project_root(&self) -> &Path {

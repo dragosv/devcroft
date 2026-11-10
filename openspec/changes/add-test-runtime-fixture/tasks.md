@@ -287,7 +287,18 @@
       inside the sandbox, which no row ships; rewriting the probes in shell
       would weaken them (the UDP test needs a reply, not just a send).
       Whether to give rows a probe runtime is open.
-      **Not yet looked at:** `mount_view_e2e`, `process_tier_landlock_boundaries`.
+      **17 of 22 (2026-11-10):** `process_tier_landlock_boundaries` (all
+      three tests, green on nix, flox, devbox; the Nix-free row skips by a
+      new capability, `boundary_probes`: it has no bash or `cat`, and
+      brush's `kill` fails without naming the errno, so a failure there is
+      no evidence of a refusal). Each `/dev/tcp` test now first asserts
+      bash runs in the sandbox — the false pass its own comment warned
+      about, unguarded until now; on the Nix-free row the guard fired
+      before the capability existed. `mount_view_e2e` is **not a
+      migration**: neither test goes through `up`, one is a real `cargo
+      build` from devbox's closure (provider content no row ships), the
+      other uses the host's `rustc` and no provider at all. Counted as
+      settled, left as is.
       **The flox row no longer resolves (2026-11-09).** It copies a
       checked-in, already-locked environment (`tests/fixtures/flox-row`,
       bash + coreutils, all four systems) instead of `flox install`ing:
