@@ -38,12 +38,14 @@
     "private Linux builder stopped",
     "same common kernel and architecture-matched guest artifacts",
     "host hardware/OS/power state recorded",
-    "no diagnostic unconfined or calibration row included in qualifying comparison"
+    "no diagnostic unconfined or calibration row included in qualifying comparison",
+    "at least 2 GiB free host storage before each cohort; exhaustion is retained and remaining samples become not-run"
   ],
   "failures": "retain every failure/exhaustion and requested instance count; an incomplete cohort never counts as successful density",
   "storage": "count logical bytes and stat blocks*512; common verified inputs once per cohort, private disks per instance; retain standalone full-cost and amortized figures; preparation-output namespaces stay per-project",
   "retention": "keep raw logs and exported verification artifacts; delete only owned successful private instance directories after storage accounting; retain failed instance disks for diagnosis",
   "controlled_recovery_repetitions": 1,
   "controlled_memory_mib": 256,
-  "controlled_hold_seconds": 2
+  "controlled_hold_seconds": 2,
+  "minimum_host_free_storage_bytes": 2147483648
 }

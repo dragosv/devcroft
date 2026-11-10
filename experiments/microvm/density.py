@@ -49,6 +49,7 @@ def usage(paths):
 
 class Cohort:
     def __init__(self, adapter, fixture, count, out):
+        require(shutil.disk_usage('/private/tmp').free >= 2 * 1024**3, 'host storage reserve exhausted before cohort preparation')
         self.adapter, self.fixture, self.count, self.out = adapter, fixture, count, out
         out.mkdir(parents=True, exist_ok=False)
         self.helper = ROOT / ('hvi/target/debug/devcroft-hvi-spike' if adapter == 'hvi' else 'libkrun/target/debug/devcroft-krun-spike')
