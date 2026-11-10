@@ -8,11 +8,13 @@
 # bash and coreutils for the same reason the nix row's flake names them:
 # `own-policy-baseline` removed host toolchain access, so an empty
 # environment leaves nothing devcroft is allowed to run.
-version = 1
+schema-version = "1.14.0"
 
 [install]
 bash.pkg-path = "bash"
+bash.outputs = "all"
 coreutils.pkg-path = "coreutils"
+coreutils.outputs = "all"
 
 [options]
 systems = ["aarch64-darwin", "aarch64-linux", "x86_64-darwin", "x86_64-linux"]
