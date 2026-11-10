@@ -7,7 +7,8 @@
 #
 # bash and coreutils for the same reason the nix row's flake names them:
 # `own-policy-baseline` removed host toolchain access, so an empty
-# environment leaves nothing devcroft is allowed to run.
+# environment leaves nothing devcroft is allowed to run. python3 and curl
+# are the network tests' probes (`network_probes` in tests/common/mod.rs).
 schema-version = "1.14.0"
 
 [install]
@@ -15,6 +16,8 @@ bash.pkg-path = "bash"
 bash.outputs = "all"
 coreutils.pkg-path = "coreutils"
 coreutils.outputs = "all"
+python3.pkg-path = "python3"
+curl.pkg-path = "curl"
 
 [options]
 systems = ["aarch64-darwin", "aarch64-linux", "x86_64-darwin", "x86_64-linux"]

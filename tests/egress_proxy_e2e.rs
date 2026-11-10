@@ -5,16 +5,15 @@
 //! `CARGO_BIN_EXE_devcroft` and why each such test lives in its own
 //! file/process.
 //!
-//! The recovery test is on the **neutral surface** (`test-runtime-fixture`):
-//! stopping an orphaned proxy is lifecycle code, whatever the provider.
-//! The `curl` test stays on flox, because it needs `curl` in the closure
-//! and no row ships one.
+//! Both tests are on the **neutral surface** (`test-runtime-fixture`): the
+//! proxy's host decision and stopping an orphaned proxy are devcroft's,
+//! whatever the provider. The `curl` test runs on any row with
+//! `network_probes`.
 
 mod common;
 
 use common::for_each_row;
-use devcroft::config::parse;
-use devcroft::lifecycle::{StatePaths, UpOptions, UpOutcome, down, up};
+use devcroft::lifecycle::{StatePaths, UpOptions, UpOutcome, down};
 use std::io::{Read, Write};
 use std::net::TcpListener;
 use std::process::Command;
@@ -40,148 +39,117 @@ fn network_allow_actually_filters_by_host_through_a_real_curl() {
         eprintln!("skipping: this host has no usable Landlock/Seatbelt support");
         return;
     }
-    if Command::new("flox").arg("--version").output().is_err()
-        || !devcroft::provider::host_can_build_nix_closures()
-    {
-        eprintln!("skipping: no usable flox here (not on PATH, or no reachable Nix store)");
-        return;
-    }
-
     // SAFETY: this process runs a single test.
     unsafe {
         std::env::set_var("DEVCROFT_KEEPER_EXE", env!("CARGO_BIN_EXE_devcroft"));
     }
     let devcroft_bin = env!("CARGO_BIN_EXE_devcroft");
 
-    let project_root =
-        std::env::temp_dir().join(format!("devcroft-egress-proxy-e2e-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&project_root);
-    std::fs::create_dir_all(&project_root).unwrap();
-    let init = Command::new("flox")
-        .arg("init")
-        .current_dir(&project_root)
-        .output()
-        .unwrap();
-    if !init.status.success() {
-        eprintln!(
-            "skipping: flox init failed: {}",
-            String::from_utf8_lossy(&init.stderr)
-        );
-        return;
-    }
-    // own-policy-baseline excludes host toolchain access — `curl` has to
-    // come from the resolved environment, same reasoning
-    // `tests/exec_up.rs` already documents for `bash`/`coreutils`.
-    let install = Command::new("flox")
-        .args(["install", "curl"])
-        .current_dir(&project_root)
-        .output()
-        .unwrap();
-    if !install.status.success() {
-        eprintln!(
-            "skipping: flox install curl failed: {}",
-            String::from_utf8_lossy(&install.stderr)
-        );
-        return;
-    }
-
-    // Two mock upstreams on two different loopback-family addresses: the
-    // manifest allows exactly one by name, so a name-based (not merely
-    // reachability-based) decision is what's actually under test.
-    //
-    // Linux gives the whole `127.0.0.0/8` block to `lo` automatically;
-    // macOS configures only `127.0.0.1` on `lo0`, so these binds fail
-    // there with `EADDRNOTAVAIL` until the aliases are added by hand.
-    // Skipped with the remedy rather than silently reshaped to use one
-    // address and two ports: `up` sets `NO_PROXY` to exempt `127.0.0.1`
-    // (see the comment below), so a single-address variant would bypass
-    // the proxy entirely and assert nothing about its host decision —
-    // the exact "passes for the wrong reason" failure this suite keeps
-    // running into.
-    let Ok(allowed_listener) = TcpListener::bind("127.0.0.3:0") else {
-        eprintln!(
-            "skipping: this host has no 127.0.0.3 loopback alias (Linux assigns all of \
+    for_each_row("egresscurl", |fx| {
+        if !fx.capabilities().network_probes {
+            eprintln!("row {}: skipped (no curl in the sandbox)", fx.name());
+            return;
+        }
+        // Per row: each upstream answers one request.
+        // Two mock upstreams on two different loopback-family addresses: the
+        // manifest allows exactly one by name, so a name-based (not merely
+        // reachability-based) decision is what's actually under test.
+        //
+        // Linux gives the whole `127.0.0.0/8` block to `lo` automatically;
+        // macOS configures only `127.0.0.1` on `lo0`, so these binds fail
+        // there with `EADDRNOTAVAIL` until the aliases are added by hand.
+        // Skipped with the remedy rather than silently reshaped to use one
+        // address and two ports: `up` sets `NO_PROXY` to exempt `127.0.0.1`
+        // (see the comment below), so a single-address variant would bypass
+        // the proxy entirely and assert nothing about its host decision —
+        // the exact "passes for the wrong reason" failure this suite keeps
+        // running into.
+        let Ok(allowed_listener) = TcpListener::bind("127.0.0.3:0") else {
+            eprintln!(
+                "skipping: this host has no 127.0.0.3 loopback alias (Linux assigns all of \
              127.0.0.0/8; macOS assigns only 127.0.0.1). Add them with \
              `sudo ifconfig lo0 alias 127.0.0.3` and `... 127.0.0.4` to run this test."
+            );
+            return;
+        };
+        let allowed_port = allowed_listener.local_addr().unwrap().port();
+        serve_one_ok_response(allowed_listener);
+
+        let Ok(denied_listener) = TcpListener::bind("127.0.0.4:0") else {
+            eprintln!("skipping: this host has no 127.0.0.4 loopback alias (see above)");
+            return;
+        };
+        let denied_port = denied_listener.local_addr().unwrap().port();
+        serve_one_ok_response(denied_listener);
+
+        let sandbox_name = fx.sandbox_name();
+        // `127.0.0.3`, not `127.0.0.1`: `up_process` sets `NO_PROXY` to
+        // exempt `localhost`/`127.0.0.1`/`::1` from proxying at all (so an
+        // ordinary `network.ports`-granted dev server stays reachable
+        // without an allowlist entry) — using `.1` here would make curl skip
+        // the proxy entirely and hit Landlock's direct-connect denial
+        // instead of the proxy's own host decision, testing the wrong thing.
+        let path = fx.project_root().join("devcroft.toml");
+        let text = std::fs::read_to_string(&path).unwrap();
+        std::fs::write(
+            &path,
+            format!("{text}\n[network]\ndefault = \"deny\"\nallow = [\"127.0.0.3\"]\n"),
+        )
+        .unwrap();
+        let paths = StatePaths::new(sandbox_name).unwrap();
+        let _ = std::fs::remove_dir_all(&paths.root);
+        let _ = std::fs::remove_file(&paths.lifecycle_lock);
+
+        assert_eq!(
+            fx.bring_up(&UpOptions::default())
+                .unwrap_or_else(|e| panic!("row {}: up failed: {e}", fx.name())),
+            UpOutcome::Started
         );
-        return;
-    };
-    let allowed_port = allowed_listener.local_addr().unwrap().port();
-    serve_one_ok_response(allowed_listener);
 
-    let Ok(denied_listener) = TcpListener::bind("127.0.0.4:0") else {
-        eprintln!("skipping: this host has no 127.0.0.4 loopback alias (see above)");
-        return;
-    };
-    let denied_port = denied_listener.local_addr().unwrap().port();
-    serve_one_ok_response(denied_listener);
+        let curl_status = |port: u16, host: &str| -> String {
+            let out = Command::new(devcroft_bin)
+                .arg("exec")
+                .arg(sandbox_name)
+                .arg("--")
+                .arg("curl")
+                .arg("-s")
+                .arg("--max-time")
+                .arg("5")
+                .arg("-o")
+                .arg("/dev/null")
+                .arg("-w")
+                .arg("%{http_code}")
+                .arg(format!("http://{host}:{port}/"))
+                .output()
+                .unwrap();
+            String::from_utf8_lossy(&out.stdout).into_owned()
+        };
 
-    let sandbox_name = format!("e2eegress{}", std::process::id());
-    // `127.0.0.3`, not `127.0.0.1`: `up_process` sets `NO_PROXY` to
-    // exempt `localhost`/`127.0.0.1`/`::1` from proxying at all (so an
-    // ordinary `network.ports`-granted dev server stays reachable
-    // without an allowlist entry) — using `.1` here would make curl skip
-    // the proxy entirely and hit Landlock's direct-connect denial
-    // instead of the proxy's own host decision, testing the wrong thing.
-    let (manifest, _) = parse(&format!(
-        "[sandbox]\nname = {sandbox_name:?}\n\n[network]\ndefault = \"deny\"\nallow = [\"127.0.0.3\"]\n"
-    ))
-    .unwrap();
-    let paths = StatePaths::new(&sandbox_name).unwrap();
-    let _ = std::fs::remove_dir_all(&paths.root);
-    let _ = std::fs::remove_file(&paths.lifecycle_lock);
+        let allowed_status = curl_status(allowed_port, "127.0.0.3");
+        assert_eq!(
+            allowed_status, "200",
+            "network.allow = [\"127.0.0.3\"] must let a request to 127.0.0.3 through the proxy"
+        );
 
-    assert_eq!(
-        up(&manifest, &project_root, &UpOptions::default()).unwrap(),
-        UpOutcome::Started
-    );
-
-    let curl_status = |port: u16, host: &str| -> String {
-        let out = Command::new(devcroft_bin)
-            .arg("exec")
-            .arg(&sandbox_name)
-            .arg("--")
-            .arg("curl")
-            .arg("-s")
-            .arg("--max-time")
-            .arg("5")
-            .arg("-o")
-            .arg("/dev/null")
-            .arg("-w")
-            .arg("%{http_code}")
-            .arg(format!("http://{host}:{port}/"))
-            .output()
-            .unwrap();
-        String::from_utf8_lossy(&out.stdout).into_owned()
-    };
-
-    let allowed_status = curl_status(allowed_port, "127.0.0.3");
-    assert_eq!(
-        allowed_status, "200",
-        "network.allow = [\"127.0.0.3\"] must let a request to 127.0.0.3 through the proxy"
-    );
-
-    let denied_status = curl_status(denied_port, "127.0.0.4");
-    assert_eq!(
-        denied_status, "502",
-        "127.0.0.4 is not on network.allow and must be refused by the proxy, not merely \
+        let denied_status = curl_status(denied_port, "127.0.0.4");
+        assert_eq!(
+            denied_status, "502",
+            "127.0.0.4 is not on network.allow and must be refused by the proxy, not merely \
          unreachable — a 502 (not a connection error/timeout) proves the proxy itself decided"
-    );
+        );
 
-    let log = std::fs::read_to_string(&paths.proxy_log).unwrap_or_default();
-    assert!(
-        log.contains("allow") && log.contains(&allowed_port.to_string()),
-        "proxy log must record the allow decision, log was: {log}"
-    );
-    assert!(
-        log.contains("refuse") && log.contains("127.0.0.4"),
-        "proxy log must record the refusal naming the denied host, log was: {log}"
-    );
+        let log = std::fs::read_to_string(&paths.proxy_log).unwrap_or_default();
+        assert!(
+            log.contains("allow") && log.contains(&allowed_port.to_string()),
+            "proxy log must record the allow decision, log was: {log}"
+        );
+        assert!(
+            log.contains("refuse") && log.contains("127.0.0.4"),
+            "proxy log must record the refusal naming the denied host, log was: {log}"
+        );
 
-    let _ = down(&sandbox_name);
-    let _ = std::fs::remove_dir_all(&paths.root);
-    let _ = std::fs::remove_file(&paths.lifecycle_lock);
-    let _ = std::fs::remove_dir_all(&project_root);
+        let _ = down(sandbox_name);
+    });
 }
 
 /// A keeper that dies leaves its egress proxy running — it is a separate

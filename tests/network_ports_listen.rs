@@ -23,18 +23,24 @@
 //!
 //! See `tests/lifecycle_up.rs` for why this needs `CARGO_BIN_EXE_devcroft`
 //! and why each such test lives in its own file/process.
+//!
+//! **Neutral surface** (`test-runtime-fixture`): `network.ports` is policy,
+//! whatever the provider. It used to `flox init` + `flox install python3`;
+//! it now runs on any row with `network_probes`.
 
-use devcroft::config::parse;
-use devcroft::lifecycle::{StatePaths, UpOptions, UpOutcome, down, up};
+mod common;
+
+use common::for_each_row;
+use devcroft::lifecycle::{StatePaths, UpOptions, UpOutcome, down};
 use std::process::Command;
 
 /// A python one-liner reporting whether binding `port` on loopback
-/// succeeds. `python3` must be installed into the sandbox's flox
-/// environment (`Sandbox::new`'s `flox install python3`) — before own-
-/// policy-baseline this comment claimed it "comes from the flox-
-/// provisioned environment" while actually resolving through the host's
-/// `/usr/bin` via the now-excluded `system_read_linux_core` group, which
-/// is exactly the smuggled host passthrough that change targets.
+/// succeeds. `python3` comes from the row's environment
+/// (`network_probes`) — before own-policy-baseline this comment claimed it
+/// "comes from the flox-provisioned environment" while actually resolving
+/// through the host's `/usr/bin` via the now-excluded
+/// `system_read_linux_core` group, which is exactly the smuggled host
+/// passthrough that change targets.
 fn bind_probe(devcroft_bin: &str, sandbox: &str, port: u16) -> String {
     let out = Command::new(devcroft_bin)
         .arg("exec")
@@ -68,139 +74,101 @@ fn a_granted_port_binds_while_egress_stays_denied_and_other_ports_do_not() {
         eprintln!("skipping: this host has no usable Landlock/Seatbelt support");
         return;
     }
-    if Command::new("flox").arg("--version").output().is_err()
-        || !devcroft::provider::host_can_build_nix_closures()
-    {
-        eprintln!("skipping: no usable flox here (not on PATH, or no reachable Nix store)");
-        return;
-    }
-
     // SAFETY: this process runs a single test.
     unsafe {
         std::env::set_var("DEVCROFT_KEEPER_EXE", env!("CARGO_BIN_EXE_devcroft"));
     }
     let devcroft_bin = env!("CARGO_BIN_EXE_devcroft");
 
-    let project_root =
-        std::env::temp_dir().join(format!("devcroft-network-ports-e2e-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&project_root);
-    std::fs::create_dir_all(&project_root).unwrap();
-    let init = Command::new("flox")
-        .arg("init")
-        .current_dir(&project_root)
-        .output()
+    for_each_row("netports", |fx| {
+        // `policy --render` below is the CLI resolving the row's provider.
+        if !(fx.capabilities().network_probes && fx.capabilities().cli_drivable) {
+            eprintln!(
+                "row {}: skipped (needs python3 and a CLI-drivable row)",
+                fx.name()
+            );
+            return;
+        }
+        // Deliberately high and unusual, so a stray host listener is not
+        // mistaken for the sandbox successfully binding.
+        const GRANTED: u16 = 18123;
+        // Only the Linux branch below consumes this — macOS cannot scope
+        // listening per port at all (see that branch's comment).
+        #[cfg(target_os = "linux")]
+        const UNGRANTED: u16 = 18124;
+
+        let sandbox_name = fx.sandbox_name();
+        let manifest = fx.project_root().join("devcroft.toml");
+        let text = std::fs::read_to_string(&manifest).unwrap();
+        // On disk rather than only in memory: `policy --render` below re-parses
+        // the manifest from the project, as the CLI does.
+        std::fs::write(
+            &manifest,
+            format!("{text}\n[network]\ndefault = \"deny\"\nports = [{GRANTED}]\n"),
+        )
         .unwrap();
-    if !init.status.success() {
-        eprintln!(
-            "skipping: flox init failed: {}",
-            String::from_utf8_lossy(&init.stderr)
+        let paths = StatePaths::new(sandbox_name).unwrap();
+        let _ = std::fs::remove_dir_all(&paths.root);
+        let _ = std::fs::remove_file(&paths.lifecycle_lock);
+
+        assert_eq!(
+            fx.bring_up(&UpOptions::default())
+                .unwrap_or_else(|e| panic!("row {}: up failed: {e}", fx.name())),
+            UpOutcome::Started
         );
-        return;
-    }
-    // own-policy-baseline excludes host toolchain access, so `python3`
-    // must come from the flox closure, not (as the comment on
-    // `bind_probe` already assumed) the host.
-    let install = Command::new("flox")
-        .args(["install", "python3"])
-        .current_dir(&project_root)
-        .output()
-        .unwrap();
-    if !install.status.success() {
-        eprintln!(
-            "skipping: flox install python3 failed: {}",
-            String::from_utf8_lossy(&install.stderr)
-        );
-        return;
-    }
 
-    // Deliberately high and unusual, so a stray host listener is not
-    // mistaken for the sandbox successfully binding.
-    const GRANTED: u16 = 18123;
-    // Only the Linux branch below consumes this — macOS cannot scope
-    // listening per port at all (see that branch's comment).
-    #[cfg(target_os = "linux")]
-    const UNGRANTED: u16 = 18124;
-
-    let sandbox_name = format!("e2eports{}", std::process::id());
-    let (manifest, _) = parse(&format!(
-        "[sandbox]\nname = {sandbox_name:?}\n\
-         [network]\ndefault = \"deny\"\nports = [{GRANTED}]\n"
-    ))
-    .unwrap();
-    let paths = StatePaths::new(&sandbox_name).unwrap();
-    let _ = std::fs::remove_dir_all(&paths.root);
-    let _ = std::fs::remove_file(&paths.lifecycle_lock);
-
-    assert_eq!(
-        up(&manifest, &project_root, &UpOptions::default()).unwrap(),
-        UpOutcome::Started
-    );
-
-    // The grant works under a deny-all egress policy — the combination
-    // that was previously impossible to express.
-    let granted = bind_probe(devcroft_bin, &sandbox_name, GRANTED);
-    assert!(
-        granted.contains("BOUND"),
-        "a granted port must bind under network.default = deny, got: {granted}"
-    );
-
-    // ...and it is an allowlist, not a blanket unlock. Without this the
-    // test would still pass if `ports` accidentally disabled port
-    // mediation altogether.
-    //
-    // **Linux-only, because macOS genuinely cannot do this** — a measured
-    // platform limit that is now declared rather than assumed away.
-    // Seatbelt has no per-port form of `network-bind`, so granting any
-    // port emits a blanket `(allow network-bind)` and every other port
-    // becomes bindable; `policy::degraded` warns about exactly this at
-    // `up` ("network.ports (per-port listen scoping)"), and the
-    // `network-block-and-ports` capability records it as an
-    // enforced-with-named-degradation rather than plain enforced, which is
-    // what it incorrectly claimed while nobody had measured it. The
-    // *outbound* half below is not gated and does hold on both.
-    #[cfg(target_os = "linux")]
-    {
-        let ungranted = bind_probe(devcroft_bin, &sandbox_name, UNGRANTED);
+        // The grant works under a deny-all egress policy — the combination
+        // that was previously impossible to express.
+        let granted = bind_probe(devcroft_bin, sandbox_name, GRANTED);
         assert!(
-            ungranted.contains("DENIED"),
-            "an ungranted port must still be denied, got: {ungranted}"
+            granted.contains("BOUND"),
+            "a granted port must bind under network.default = deny, got: {granted}"
         );
-    }
 
-    // Egress remains filtered: granting a local port must not have
-    // widened outbound access, which is the entire reason this key
-    // exists rather than telling users to set `default = "allow"`.
-    // `policy --render` re-parses the manifest from disk and must run
-    // from within the project, so the file has to exist here: `up` above
-    // took an already-parsed `Manifest`, as every test in this suite does.
-    std::fs::write(
-        project_root.join("devcroft.toml"),
-        format!(
-            "[sandbox]\nname = {sandbox_name:?}\n\
-             [network]\ndefault = \"deny\"\nports = [{GRANTED}]\n"
-        ),
-    )
-    .unwrap();
-    let render = Command::new(devcroft_bin)
-        .arg("policy")
-        .arg("--render")
-        .current_dir(&project_root)
-        .output()
-        .unwrap();
-    let render = String::from_utf8_lossy(&render.stdout);
-    assert!(
-        render.contains("network.block: true"),
-        "egress must stay blocked, got: {render}"
-    );
-    // The "nothing reaches the backend that --render cannot show"
-    // invariant: the port is in profile.json, so it must be here too.
-    assert!(
-        render.contains(&GRANTED.to_string()) && render.contains("manifest:network.ports"),
-        "the granted port must be visible with its origin, got: {render}"
-    );
+        // ...and it is an allowlist, not a blanket unlock. Without this the
+        // test would still pass if `ports` accidentally disabled port
+        // mediation altogether.
+        //
+        // **Linux-only, because macOS genuinely cannot do this** — a measured
+        // platform limit that is now declared rather than assumed away.
+        // Seatbelt has no per-port form of `network-bind`, so granting any
+        // port emits a blanket `(allow network-bind)` and every other port
+        // becomes bindable; `policy::degraded` warns about exactly this at
+        // `up` ("network.ports (per-port listen scoping)"), and the
+        // `network-block-and-ports` capability records it as an
+        // enforced-with-named-degradation rather than plain enforced, which is
+        // what it incorrectly claimed while nobody had measured it. The
+        // *outbound* half below is not gated and does hold on both.
+        #[cfg(target_os = "linux")]
+        {
+            let ungranted = bind_probe(devcroft_bin, sandbox_name, UNGRANTED);
+            assert!(
+                ungranted.contains("DENIED"),
+                "an ungranted port must still be denied, got: {ungranted}"
+            );
+        }
 
-    down(&sandbox_name).unwrap();
-    let _ = std::fs::remove_dir_all(&paths.root);
-    let _ = std::fs::remove_file(&paths.lifecycle_lock);
-    let _ = std::fs::remove_dir_all(&project_root);
+        // Egress remains filtered: granting a local port must not have
+        // widened outbound access, which is the entire reason this key
+        // exists rather than telling users to set `default = "allow"`.
+        let render = Command::new(devcroft_bin)
+            .arg("policy")
+            .arg("--render")
+            .current_dir(fx.project_root())
+            .output()
+            .unwrap();
+        let render = String::from_utf8_lossy(&render.stdout);
+        assert!(
+            render.contains("network.block: true"),
+            "egress must stay blocked, got: {render}"
+        );
+        // The "nothing reaches the backend that --render cannot show"
+        // invariant: the port is in profile.json, so it must be here too.
+        assert!(
+            render.contains(&GRANTED.to_string()) && render.contains("manifest:network.ports"),
+            "the granted port must be visible with its origin, got: {render}"
+        );
+
+        down(sandbox_name).unwrap();
+    });
 }

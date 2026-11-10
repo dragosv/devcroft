@@ -209,7 +209,7 @@
         belong to the *platform* axis, which design.md D5 keeps separate — they
         migrate, but their skips stay `cfg`-based and must not become row
         capabilities.
-- [~] 4.2 Migrate them to `fixture_for()`, one file at a time, each still green on its
+- [x] 4.2 Migrate them to `fixture_for()`, one file at a time, each still green on its
       original provider first.
       → **5 of 22 done**, each following the rule: verified green on the flox
       it used to hardcode *before* being allowed onto another row.
@@ -279,14 +279,30 @@
       - **The row leaked its environment dir** (no `Drop`; a ~146 MB shell
         copy each): 72 directories, 9.9 GB in `/tmp`. It now has a `Drop`
         and hard-links the shell.
-      **Probe-bound, not migrated (5 files + 2 tests):**
+      **22 of 22 (2026-11-10).** The probe-bound files below were migrated
+      by giving rows the probes rather than rewriting them: nix, flox and
+      devbox now ship `python3` and `curl` (`capabilities().network_probes`;
+      false for the Nix-free row, and for swift until measured there), and
+      the flox lock was regenerated. `network_isolation_e2e`'s two sandboxes
+      of one project needed `ProviderFixture::bring_up_with(&Manifest)`.
+      Two of the five gained the control their own comments described:
+      `host_port_reachability` now asserts the server answered inside before
+      reading "unreachable from the host" as isolation, and
+      `udp_egress_denied` skips unless the host itself gets a DNS reply,
+      so an offline runner no longer passes it. Teeth-checked: with
+      `default = "allow"` the UDP test fails on `LEAK 61`. Only
+      `ssh_channels`' rsync test stays on flox, since it needs rsync on the
+      host as well. Verified: default row 749 passed, `=all` over the 26
+      row-fixture files 58 passed, every matrix line `nix ok, flox ok,
+      devbox ok`.
+      **Probe-bound at 17 of 22, since migrated (5 files + 2 tests):**
       `network_isolation_e2e`, `isolated_egress_e2e`,
       `host_port_reachability`, `network_ports_listen`, `udp_egress_denied`,
       plus `egress_proxy_e2e`'s curl test and `ssh_channels`' rsync test.
       Their claims are neutral but each needs `python3`, `curl` or `rsync`
       inside the sandbox, which no row ships; rewriting the probes in shell
       would weaken them (the UDP test needs a reply, not just a send).
-      Whether to give rows a probe runtime is open.
+      Decided: rows ship the probes (see 22 of 22 above).
       **17 of 22 (2026-11-10):** `process_tier_landlock_boundaries` (all
       three tests, green on nix, flox, devbox; the Nix-free row skips by a
       new capability, `boundary_probes`: it has no bash or `cat`, and
@@ -316,14 +332,22 @@
       row fixture green under `=flox` (no flox skip), and
       `flox_fresh_resolution` green with a login. This closes the
       "flox unverified" caveat on every batch above.
-- [ ] 4.3 Leave the 7 provider-contract files hardcoded and real:
+- [x] 4.3 Leave the 7 provider-contract files hardcoded and real:
       `flox_derived_env`, `flox_env_capture_is_deterministic`, `nix_provider_e2e`,
       `nix_env_capture_is_deterministic`, `devbox_provider_e2e`,
       `devbox_env_capture_is_deterministic`, `provisioning_runs_no_project_code`.
-- [ ] 4.4 Keep the platform axis separate from the provider axis (design.md D5): the
+      → Done: all seven still build their own provider projects, and none
+      uses `common` (checked 2026-11-10).
+- [x] 4.4 Keep the platform axis separate from the provider axis (design.md D5): the
       macOS gaps stay `cfg`-gated with their `docs/known-gaps.md` pointers and do not
       become `ProviderCapabilities` entries. Verify no macOS gap gets absorbed into a
       row capability, which would hide a published product limitation.
+      → Done (2026-11-10): the eight capabilities (`services`,
+      `activation_hook`, `external_utils`, `cli_drivable`, `staleness`,
+      `signal_traps`, `boundary_probes`, `network_probes`) each describe a
+      row's tooling or its provider, none a platform. The macOS gaps the
+      migration touched stayed `cfg`-gated: `network_ports_listen`'s per-port
+      listen scoping and `process_tier_landlock_boundaries`' `/proc` read.
 
 ## 5. The synthetic row — only if task 0 said it can exist
 

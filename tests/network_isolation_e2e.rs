@@ -12,9 +12,15 @@
 //!
 //! See `tests/lifecycle_up.rs` for why this needs `CARGO_BIN_EXE_devcroft`
 //! and why each such test lives in its own file/process.
+//!
+//! **Neutral surface** (`test-runtime-fixture`): the namespace is the
+//! backend's, whatever the provider. It used to `flox init` + `flox install
+//! python3`; it now runs on any row with `network_probes`.
 
-use devcroft::config::parse;
-use devcroft::lifecycle::{StatePaths, UpOptions, UpOutcome, down, up};
+mod common;
+
+use common::for_each_row;
+use devcroft::lifecycle::{StatePaths, UpOptions, UpOutcome, down};
 use std::io::{BufRead, BufReader};
 use std::process::{Command, Stdio};
 
@@ -80,139 +86,103 @@ fn two_sandboxes_bind_the_same_declared_port_without_colliding() {
         eprintln!("skipping: this host cannot create unprivileged network namespaces");
         return;
     }
-    if Command::new("flox").arg("--version").output().is_err()
-        || !devcroft::provider::host_can_build_nix_closures()
-    {
-        eprintln!("skipping: no usable flox here (not on PATH, or no reachable Nix store)");
-        return;
-    }
-
     // SAFETY: this process runs a single test.
     unsafe {
         std::env::set_var("DEVCROFT_KEEPER_EXE", env!("CARGO_BIN_EXE_devcroft"));
     }
     let devcroft_bin = env!("CARGO_BIN_EXE_devcroft");
 
-    // One shared project root, flox environment installed once — two
-    // sandboxes of the *same* project, exactly the git-worktree shape
-    // the collision is about. `StatePaths` are keyed on sandbox name, not
-    // project root, so this needs no directory duplication.
-    let project_root = std::env::temp_dir().join(format!(
-        "devcroft-network-isolation-e2e-{}",
-        std::process::id()
-    ));
-    let _ = std::fs::remove_dir_all(&project_root);
-    std::fs::create_dir_all(&project_root).unwrap();
-    let init = Command::new("flox")
-        .arg("init")
-        .current_dir(&project_root)
-        .output()
-        .unwrap();
-    if !init.status.success() {
-        eprintln!(
-            "skipping: flox init failed: {}",
-            String::from_utf8_lossy(&init.stderr)
+    for_each_row("netiso", |fx| {
+        if !fx.capabilities().network_probes {
+            eprintln!("row {}: skipped (no python3 in the sandbox)", fx.name());
+            return;
+        }
+        // Two sandboxes of the *same* project -- the row's -- exactly the
+        // git-worktree shape the collision is about. `StatePaths` are keyed on
+        // sandbox name, not project root, so this needs no directory
+        // duplication.
+        // Deliberately high and unusual, so a stray host listener is not
+        // mistaken for either sandbox successfully binding.
+        const SHARED_PORT: u16 = 18225;
+
+        let sandbox_a = format!("{}a", fx.sandbox_name());
+        let sandbox_b = format!("{}b", fx.sandbox_name());
+        let manifest_for = |name: &str| {
+            let mut manifest = fx.manifest();
+            manifest.sandbox.name = name.to_string();
+            manifest.network.ports = vec![SHARED_PORT];
+            manifest
+        };
+        // `for_each_row` removes the row's own sandbox; these two are the
+        // test's, so removed here on every exit.
+        struct Gone<'a>(&'a str, &'a str);
+        impl Drop for Gone<'_> {
+            fn drop(&mut self) {
+                let _ = devcroft::lifecycle::rm(self.0);
+                let _ = devcroft::lifecycle::rm(self.1);
+            }
+        }
+        let _gone = Gone(&sandbox_a, &sandbox_b);
+        let paths_a = StatePaths::new(&sandbox_a).unwrap();
+        let paths_b = StatePaths::new(&sandbox_b).unwrap();
+        let _ = std::fs::remove_dir_all(&paths_a.root);
+        let _ = std::fs::remove_file(&paths_a.lifecycle_lock);
+        let _ = std::fs::remove_dir_all(&paths_b.root);
+        let _ = std::fs::remove_file(&paths_b.lifecycle_lock);
+
+        for name in [&sandbox_a, &sandbox_b] {
+            assert_eq!(
+                fx.bring_up_with(&manifest_for(name), &UpOptions::default())
+                    .unwrap_or_else(|e| panic!("row {}: up {name} failed: {e}", fx.name())),
+                UpOutcome::Started
+            );
+        }
+
+        // Sandbox A holds the port open for the duration of the test — this
+        // is the collision opportunity. Without a private network namespace
+        // per sandbox, B's own bind on the identical number would get
+        // `EADDRINUSE` from the kernel, since both would share one port
+        // table.
+        let mut holder = Command::new(devcroft_bin)
+            .arg("exec")
+            .arg(&sandbox_a)
+            .arg("--")
+            .arg("python3")
+            .arg("-c")
+            .arg(hold_probe_script(SHARED_PORT))
+            .stdout(Stdio::piped())
+            .spawn()
+            .unwrap();
+        let mut a_ready_line = String::new();
+        BufReader::new(holder.stdout.take().unwrap())
+            .read_line(&mut a_ready_line)
+            .unwrap();
+        assert!(
+            a_ready_line.contains("BOUND"),
+            "sandbox A must bind {SHARED_PORT} first, got: {a_ready_line}"
         );
-        return;
-    }
-    let install = Command::new("flox")
-        .args(["install", "python3"])
-        .current_dir(&project_root)
-        .output()
-        .unwrap();
-    if !install.status.success() {
-        eprintln!(
-            "skipping: flox install python3 failed: {}",
-            String::from_utf8_lossy(&install.stderr)
-        );
-        return;
-    }
 
-    // Deliberately high and unusual, so a stray host listener is not
-    // mistaken for either sandbox successfully binding.
-    const SHARED_PORT: u16 = 18225;
+        // Sandbox B binds the *same* number while A still holds it.
+        let b_result = probe_once(devcroft_bin, &sandbox_b, SHARED_PORT);
 
-    let sandbox_a = format!("e2eisoa{}", std::process::id());
-    let sandbox_b = format!("e2eisob{}", std::process::id());
-    let manifest_for = |name: &str| {
-        parse(&format!(
-            "[sandbox]\nname = {name:?}\n\
-             [network]\ndefault = \"deny\"\nports = [{SHARED_PORT}]\n"
-        ))
-        .unwrap()
-        .0
-    };
-    let paths_a = StatePaths::new(&sandbox_a).unwrap();
-    let paths_b = StatePaths::new(&sandbox_b).unwrap();
-    let _ = std::fs::remove_dir_all(&paths_a.root);
-    let _ = std::fs::remove_file(&paths_a.lifecycle_lock);
-    let _ = std::fs::remove_dir_all(&paths_b.root);
-    let _ = std::fs::remove_file(&paths_b.lifecycle_lock);
+        let _ = holder.kill();
+        let _ = holder.wait();
 
-    assert_eq!(
-        up(
-            &manifest_for(&sandbox_a),
-            &project_root,
-            &UpOptions::default()
-        )
-        .unwrap(),
-        UpOutcome::Started
-    );
-    assert_eq!(
-        up(
-            &manifest_for(&sandbox_b),
-            &project_root,
-            &UpOptions::default()
-        )
-        .unwrap(),
-        UpOutcome::Started
-    );
-
-    // Sandbox A holds the port open for the duration of the test — this
-    // is the collision opportunity. Without a private network namespace
-    // per sandbox, B's own bind on the identical number would get
-    // `EADDRINUSE` from the kernel, since both would share one port
-    // table.
-    let mut holder = Command::new(devcroft_bin)
-        .arg("exec")
-        .arg(&sandbox_a)
-        .arg("--")
-        .arg("python3")
-        .arg("-c")
-        .arg(hold_probe_script(SHARED_PORT))
-        .stdout(Stdio::piped())
-        .spawn()
-        .unwrap();
-    let mut a_ready_line = String::new();
-    BufReader::new(holder.stdout.take().unwrap())
-        .read_line(&mut a_ready_line)
-        .unwrap();
-    assert!(
-        a_ready_line.contains("BOUND"),
-        "sandbox A must bind {SHARED_PORT} first, got: {a_ready_line}"
-    );
-
-    // Sandbox B binds the *same* number while A still holds it.
-    let b_result = probe_once(devcroft_bin, &sandbox_b, SHARED_PORT);
-
-    let _ = holder.kill();
-    let _ = holder.wait();
-
-    assert!(
-        b_result.contains("BOUND"),
-        "sandbox B must bind {SHARED_PORT} even while sandbox A holds the identical \
+        assert!(
+            b_result.contains("BOUND"),
+            "sandbox B must bind {SHARED_PORT} even while sandbox A holds the identical \
          number open — a shared port table would deny this with EADDRINUSE, which is \
          exactly the collision devcroft's per-sandbox network namespace exists to \
          prevent. Got: {b_result}"
-    );
+        );
 
-    down(&sandbox_a).unwrap();
-    down(&sandbox_b).unwrap();
-    let _ = std::fs::remove_dir_all(&paths_a.root);
-    let _ = std::fs::remove_file(&paths_a.lifecycle_lock);
-    let _ = std::fs::remove_dir_all(&paths_b.root);
-    let _ = std::fs::remove_file(&paths_b.lifecycle_lock);
-    let _ = std::fs::remove_dir_all(&project_root);
+        down(&sandbox_a).unwrap();
+        down(&sandbox_b).unwrap();
+        let _ = std::fs::remove_dir_all(&paths_a.root);
+        let _ = std::fs::remove_file(&paths_a.lifecycle_lock);
+        let _ = std::fs::remove_dir_all(&paths_b.root);
+        let _ = std::fs::remove_file(&paths_b.lifecycle_lock);
+    });
 }
 
 /// The other half of `wants_network_isolation`'s contract: a sandbox that

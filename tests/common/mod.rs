@@ -99,6 +99,17 @@ pub struct ProviderCapabilities {
     /// True for every real row, each of which installs bash and coreutils
     /// (swift: the host's `/bin` and `/usr/bin` are provider grants).
     pub boundary_probes: bool,
+    /// The row has `python3` and `curl` inside the sandbox: the clients and
+    /// servers the network tests probe with (a UDP round trip, an HTTP
+    /// request through the egress proxy, a listener on a declared port).
+    ///
+    /// Shipped by the rows rather than rewritten in shell, because a shell
+    /// probe is weaker: the UDP test needs to see a *reply*, and bash's
+    /// `/dev/udp` can only send. True for nix, flox and devbox, which install
+    /// both. False for the Nix-free row, which has neither, and for swift,
+    /// whose host `/usr/bin/python3` and `curl` are unmeasured inside its
+    /// sandbox -- set it once someone has run the network tests there.
+    pub network_probes: bool,
 }
 
 /// One row of the matrix: a project of a given provider's shape, set up on
@@ -137,8 +148,18 @@ pub trait ProviderFixture: Sync {
     /// through the injection seam. Which of those a row is stays the row's
     /// business, exactly like `setup` and `mutate_to_drift`.
     fn bring_up(&self, opts: &devcroft::lifecycle::UpOptions) -> UpResult {
-        let manifest = self.manifest();
-        devcroft::lifecycle::up(&manifest, self.project_root(), opts)
+        self.bring_up_with(&self.manifest(), opts)
+    }
+
+    /// `up` this row's project under a manifest the test built, not the
+    /// one on disk -- for a second sandbox of the same project (a git
+    /// worktree's shape), which differs only in its name.
+    fn bring_up_with(
+        &self,
+        manifest: &devcroft::config::Manifest,
+        opts: &devcroft::lifecycle::UpOptions,
+    ) -> UpResult {
+        devcroft::lifecycle::up(manifest, self.project_root(), opts)
     }
 
     /// This row's sandbox status.
@@ -189,7 +210,7 @@ const NIX_FLAKE: &str = r#"
       shellFor = system:
         let pkgs = import nixpkgs { inherit system; };
         in pkgs.mkShell {
-          packages = [ pkgs.bash pkgs.coreutils ];
+          packages = [ pkgs.bash pkgs.coreutils pkgs.python3 pkgs.curl ];
           DEVCROFT_FIXTURE_ROW = "nix";
         };
     in {
@@ -219,6 +240,7 @@ impl ProviderFixture for NixRow {
             staleness: true,
             signal_traps: true,
             boundary_probes: true,
+            network_probes: true,
         }
     }
     fn project_root(&self) -> &Path {
@@ -256,6 +278,7 @@ impl ProviderFixture for FloxRow {
             staleness: true,
             signal_traps: true,
             boundary_probes: true,
+            network_probes: true,
         }
     }
     fn project_root(&self) -> &Path {
@@ -290,6 +313,7 @@ impl ProviderFixture for DevboxRow {
             staleness: true,
             signal_traps: true,
             boundary_probes: true,
+            network_probes: true,
         }
     }
     fn project_root(&self) -> &Path {
@@ -332,6 +356,7 @@ impl ProviderFixture for SwiftRow {
             staleness: true,
             signal_traps: true,
             boundary_probes: true,
+            network_probes: false,
         }
     }
     fn project_root(&self) -> &Path {
@@ -504,7 +529,8 @@ fn setup_devbox(tag: &str) -> Result<Box<dyn ProviderFixture>, Unavailable> {
     // provision if resolving would rewrite the lockfile, so a row that
     // handed `up` an unresolved project would fail at layer `provider` for
     // a reason that has nothing to do with the test.
-    for pkg in ["bash", "coreutils"] {
+    // python3 and curl are the network tests' probes (`network_probes`).
+    for pkg in ["bash", "coreutils", "python3", "curl"] {
         let out = Command::new("devbox")
             .args(["add", pkg])
             .current_dir(&root)
@@ -661,6 +687,7 @@ impl ProviderFixture for NixFreeRow {
             staleness: true,
             signal_traps: false,
             boundary_probes: false,
+            network_probes: false,
         }
     }
     fn project_root(&self) -> &Path {
@@ -680,9 +707,13 @@ impl ProviderFixture for NixFreeRow {
     }
 
     /// Through the seam, because this row has no provider to name.
-    fn bring_up(&self, opts: &devcroft::lifecycle::UpOptions) -> UpResult {
-        let manifest = self.manifest();
-        devcroft::test_support::up_with_provider(&manifest, &self.root, opts, self)
+    /// `bring_up` reaches it through the trait's default.
+    fn bring_up_with(
+        &self,
+        manifest: &devcroft::config::Manifest,
+        opts: &devcroft::lifecycle::UpOptions,
+    ) -> UpResult {
+        devcroft::test_support::up_with_provider(manifest, &self.root, opts, self)
     }
 
     /// Also through the seam: without it, `status` would re-derive a

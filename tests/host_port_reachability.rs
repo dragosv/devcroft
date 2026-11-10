@@ -21,9 +21,15 @@
 //! through `ssh -L`. If a future change adds host-side port mapping
 //! (`add-linux-agent-fleet` D8), the first assertion below flips and this
 //! comment is the record of why it read the other way.
+//!
+//! **Neutral surface** (`test-runtime-fixture`): where a port lives is the
+//! backend's business, whatever the provider. Both tests used to `flox init`
+//! + `flox install python3`; they now run on any row with `network_probes`.
 
-use devcroft::config::parse;
-use devcroft::lifecycle::{StatePaths, UpOptions, UpOutcome, down, up};
+mod common;
+
+use common::{ProviderFixture, for_each_row};
+use devcroft::lifecycle::{StatePaths, UpOptions, UpOutcome, down};
 use std::net::TcpStream;
 use std::process::{Child, Command};
 use std::time::Duration;
@@ -42,13 +48,16 @@ fn host_can_reach(port: u16) -> bool {
 
 /// Starts a listener *inside* the sandbox and waits for it to be
 /// reachable from inside, so the test never races the server's startup.
-/// Returns the still-running child; the caller kills it.
+/// Returns the still-running child, which the caller kills, and whether the
+/// server answered inside. The caller asserts the second: the isolated test
+/// asserts *un*reachability from the host, which a server that never
+/// started satisfies just as well.
 fn serve_inside(
     devcroft_bin: &str,
     sandbox: &str,
     project_root: &std::path::Path,
     port: u16,
-) -> Option<Child> {
+) -> (Child, bool) {
     let child = Command::new(devcroft_bin)
         .arg("exec")
         .arg(sandbox)
@@ -72,7 +81,7 @@ fn serve_inside(
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .spawn()
-        .ok()?;
+        .unwrap();
 
     // Readiness is checked from inside, since from the host is exactly
     // what is under test and would beg the question.
@@ -91,60 +100,61 @@ fn serve_inside(
             ))
             .current_dir(project_root)
             .output()
-            .ok()?;
+            .unwrap();
         if probe.status.success() {
-            return Some(child);
+            return (child, true);
         }
         std::thread::sleep(Duration::from_millis(250));
     }
-    Some(child)
+    (child, false)
 }
 
-fn flox_project_with_python(tag: &str) -> Option<std::path::PathBuf> {
-    if Command::new("flox").arg("--version").output().is_err()
-        || !devcroft::provider::host_can_build_nix_closures()
-    {
-        return None;
+fn supported() -> bool {
+    if !devcroft::policy::backend_supported() {
+        eprintln!("skipping: this host has no usable Landlock/Seatbelt support");
+        return false;
     }
-    let root =
-        std::env::temp_dir().join(format!("devcroft-hostreach-{tag}-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&root);
-    std::fs::create_dir_all(&root).ok()?;
-    // Canonicalized for the macOS symlink reason documented in
-    // docs/known-gaps.md ("A grant does not cover the symlinked spelling of
-    // its own path on macOS"): `temp_dir()` is under `/var/folders/…` there
-    // and `/var` is a symlink, so a sandbox given the un-canonicalized form
-    // cannot even set it as a session's working directory — the server
-    // below never starts. That failure is *silent* in the isolated test,
-    // which asserts unreachability and would pass for the wrong reason.
-    let root = root.canonicalize().ok()?;
-    if !Command::new("flox")
-        .arg("init")
-        .current_dir(&root)
-        .output()
-        .ok()?
-        .status
-        .success()
-    {
-        return None;
+    // SAFETY: both tests set the same value before any thread reads it.
+    unsafe {
+        std::env::set_var("DEVCROFT_KEEPER_EXE", env!("CARGO_BIN_EXE_devcroft"));
     }
-    if !Command::new("flox")
-        .args(["install", "python3"])
-        .current_dir(&root)
-        .output()
-        .ok()?
-        .status
-        .success()
-    {
-        return None;
-    }
-    Some(root)
+    true
+}
+
+/// Up the row's sandbox with `network` as its `[network]` table, serve
+/// `port` inside it, and report whether the host's own loopback reaches it.
+fn reachable_from_host(fx: &dyn ProviderFixture, network: &str, port: u16) -> bool {
+    let devcroft_bin = env!("CARGO_BIN_EXE_devcroft");
+    let path = fx.project_root().join("devcroft.toml");
+    let text = std::fs::read_to_string(&path).unwrap();
+    std::fs::write(&path, format!("{text}\n[network]\n{network}")).unwrap();
+    let paths = StatePaths::new(fx.sandbox_name()).unwrap();
+    let _ = std::fs::remove_dir_all(&paths.root);
+    let _ = std::fs::remove_file(&paths.lifecycle_lock);
+    assert_eq!(
+        fx.bring_up(&UpOptions::default())
+            .unwrap_or_else(|e| panic!("row {}: up failed: {e}", fx.name())),
+        UpOutcome::Started
+    );
+
+    let (mut server, ready) =
+        serve_inside(devcroft_bin, fx.sandbox_name(), fx.project_root(), port);
+    let reachable = ready && host_can_reach(port);
+    let _ = server.kill();
+    let _ = server.wait();
+    down(fx.sandbox_name()).unwrap();
+    assert!(
+        ready,
+        "row {}: the server never answered on {port} inside the sandbox, so where its \
+         port lives was not tested",
+        fx.name()
+    );
+    reachable
 }
 
 #[test]
 fn an_isolated_sandboxs_granted_port_is_namespace_local_not_host_visible() {
-    if !devcroft::policy::backend_supported() {
-        eprintln!("skipping: this host has no usable Landlock/Seatbelt support");
+    if !supported() {
         return;
     }
     if !devcroft::fleet::netns::probe(std::path::Path::new(env!("CARGO_BIN_EXE_devcroft")))
@@ -153,63 +163,32 @@ fn an_isolated_sandboxs_granted_port_is_namespace_local_not_host_visible() {
         eprintln!("skipping: this host cannot create unprivileged network namespaces");
         return;
     }
-    let Some(project_root) = flox_project_with_python("iso") else {
-        eprintln!("skipping: flox unavailable or environment setup failed");
-        return;
-    };
-
-    // SAFETY: this process runs a single test.
-    unsafe {
-        std::env::set_var("DEVCROFT_KEEPER_EXE", env!("CARGO_BIN_EXE_devcroft"));
-    }
-    let devcroft_bin = env!("CARGO_BIN_EXE_devcroft");
-
     // Nothing may already hold the port, or the assertion below cannot
     // distinguish "the sandbox is isolated" from "something else answered".
     if host_can_reach(PORT) {
         eprintln!("skipping: something on this host already holds {PORT}");
-        let _ = std::fs::remove_dir_all(&project_root);
         return;
     }
 
-    // `default = "deny"` + a declared port: the shape that triggers
-    // isolation, and the shape devcroft's own docs recommend.
-    let sandbox_name = format!("e2ehriso{}", std::process::id());
-    let (manifest, _) = parse(&format!(
-        "[sandbox]\nname = {sandbox_name:?}\n\
-         [network]\ndefault = \"deny\"\nports = [{PORT}]\n"
-    ))
-    .unwrap();
-    let paths = StatePaths::new(&sandbox_name).unwrap();
-    let _ = std::fs::remove_dir_all(&paths.root);
-    let _ = std::fs::remove_file(&paths.lifecycle_lock);
-
-    assert_eq!(
-        up(&manifest, &project_root, &UpOptions::default()).unwrap(),
-        UpOutcome::Started
-    );
-
-    let server = serve_inside(devcroft_bin, &sandbox_name, &project_root, PORT);
-    let reachable_from_host = host_can_reach(PORT);
-
-    if let Some(mut c) = server {
-        let _ = c.kill();
-        let _ = c.wait();
-    }
-    down(&sandbox_name).unwrap();
-    let _ = std::fs::remove_dir_all(&paths.root);
-    let _ = std::fs::remove_file(&paths.lifecycle_lock);
-    let _ = std::fs::remove_dir_all(&project_root);
-
-    assert!(
-        !reachable_from_host,
-        "an isolated sandbox's port answered on the host's own loopback. That is not \
+    for_each_row("hostreachiso", |fx| {
+        if !fx.capabilities().network_probes {
+            eprintln!("row {}: skipped (no python3 in the sandbox)", fx.name());
+            return;
+        }
+        // `default = "deny"` + a declared port: the shape that triggers
+        // isolation, and the shape devcroft's own docs recommend.
+        let reachable_from_host =
+            reachable_from_host(fx, &format!("default = \"deny\"\nports = [{PORT}]\n"), PORT);
+        assert!(
+            !reachable_from_host,
+            "an isolated sandbox's port answered on the host's own loopback. That is not \
          a failure of isolation being *wanted* — it means the sandbox did not get its \
          own namespace, so two sandboxes of one project would collide on this port \
          again. If host-side port mapping was deliberately added (fleet D8), this \
          assertion is the thing to update, together with `up`'s note and \
          `policy --render`'s `network.namespace` line."
-    );
+        );
+    });
 }
 
 /// The other half, and the reason the first assertion is not simply
@@ -219,28 +198,15 @@ fn an_isolated_sandboxs_granted_port_is_namespace_local_not_host_visible() {
 /// server never started.
 #[test]
 fn a_non_isolated_sandboxs_granted_port_is_reachable_from_the_host() {
-    if !devcroft::policy::backend_supported() {
-        eprintln!("skipping: this host has no usable Landlock/Seatbelt support");
+    if !supported() {
         return;
     }
-    let Some(project_root) = flox_project_with_python("plain") else {
-        eprintln!("skipping: flox unavailable or environment setup failed");
-        return;
-    };
-
-    // SAFETY: this process runs a single test.
-    unsafe {
-        std::env::set_var("DEVCROFT_KEEPER_EXE", env!("CARGO_BIN_EXE_devcroft"));
-    }
-    let devcroft_bin = env!("CARGO_BIN_EXE_devcroft");
-
     // A distinct port from the isolated test: cargo runs test binaries
     // concurrently, and both of these care about the *host's* namespace,
     // where sharing a number is interference rather than a subject.
     const PLAIN_PORT: u16 = 18448;
     if host_can_reach(PLAIN_PORT) {
         eprintln!("skipping: something on this host already holds {PLAIN_PORT}");
-        let _ = std::fs::remove_dir_all(&project_root);
         return;
     }
 
@@ -248,37 +214,21 @@ fn a_non_isolated_sandboxs_granted_port_is_reachable_from_the_host() {
     // `wants_network_isolation` is false and the sandbox shares the
     // host's port table — the pre-isolation behaviour, still current for
     // this manifest shape.
-    let sandbox_name = format!("e2ehrplain{}", std::process::id());
-    let (manifest, _) = parse(&format!(
-        "[sandbox]\nname = {sandbox_name:?}\n\
-         [network]\ndefault = \"allow\"\nports = [{PLAIN_PORT}]\n"
-    ))
-    .unwrap();
-    let paths = StatePaths::new(&sandbox_name).unwrap();
-    let _ = std::fs::remove_dir_all(&paths.root);
-    let _ = std::fs::remove_file(&paths.lifecycle_lock);
-
-    assert_eq!(
-        up(&manifest, &project_root, &UpOptions::default()).unwrap(),
-        UpOutcome::Started
-    );
-
-    let server = serve_inside(devcroft_bin, &sandbox_name, &project_root, PLAIN_PORT);
-    let reachable_from_host = host_can_reach(PLAIN_PORT);
-
-    if let Some(mut c) = server {
-        let _ = c.kill();
-        let _ = c.wait();
-    }
-    down(&sandbox_name).unwrap();
-    let _ = std::fs::remove_dir_all(&paths.root);
-    let _ = std::fs::remove_file(&paths.lifecycle_lock);
-    let _ = std::fs::remove_dir_all(&project_root);
-
-    assert!(
-        reachable_from_host,
-        "a sandbox sharing the host's port table must be reachable on it — this is \
+    for_each_row("hostreachplain", |fx| {
+        if !fx.capabilities().network_probes {
+            eprintln!("row {}: skipped (no python3 in the sandbox)", fx.name());
+            return;
+        }
+        let reachable_from_host = reachable_from_host(
+            fx,
+            &format!("default = \"allow\"\nports = [{PLAIN_PORT}]\n"),
+            PLAIN_PORT,
+        );
+        assert!(
+            reachable_from_host,
+            "a sandbox sharing the host's port table must be reachable on it — this is \
          what makes the isolated case's unreachability a property of the namespace \
          rather than of the test never starting a server"
-    );
+        );
+    });
 }

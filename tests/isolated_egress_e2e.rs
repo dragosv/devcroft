@@ -21,9 +21,15 @@
 //! `tests/network_isolation_e2e.rs` proves isolation with *no* egress;
 //! `tests/egress_proxy_e2e.rs` proves egress with *no* isolation. Neither
 //! would notice the combination regressing.
+//!
+//! **Neutral surface** (`test-runtime-fixture`): the namespace and the relay
+//! are the backend's, whatever the provider. It used to `flox init` + `flox
+//! install curl python3`; it now runs on any row with `network_probes`.
 
-use devcroft::config::parse;
-use devcroft::lifecycle::{StatePaths, UpOptions, UpOutcome, down, up};
+mod common;
+
+use common::for_each_row;
+use devcroft::lifecycle::{StatePaths, UpOptions, UpOutcome, down};
 use std::io::{Read, Write};
 use std::net::TcpListener;
 use std::process::Command;
@@ -76,47 +82,11 @@ fn an_isolated_sandbox_still_reaches_its_allowlisted_hosts() {
         eprintln!("skipping: this host cannot create unprivileged network namespaces");
         return;
     }
-    if Command::new("flox").arg("--version").output().is_err()
-        || !devcroft::provider::host_can_build_nix_closures()
-    {
-        eprintln!("skipping: no usable flox here (not on PATH, or no reachable Nix store)");
-        return;
-    }
-
     // SAFETY: this process runs a single test.
     unsafe {
         std::env::set_var("DEVCROFT_KEEPER_EXE", env!("CARGO_BIN_EXE_devcroft"));
     }
     let devcroft_bin = env!("CARGO_BIN_EXE_devcroft");
-
-    let project_root =
-        std::env::temp_dir().join(format!("devcroft-iso-egress-e2e-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&project_root);
-    std::fs::create_dir_all(&project_root).unwrap();
-    let init = Command::new("flox")
-        .arg("init")
-        .current_dir(&project_root)
-        .output()
-        .unwrap();
-    if !init.status.success() {
-        eprintln!(
-            "skipping: flox init failed: {}",
-            String::from_utf8_lossy(&init.stderr)
-        );
-        return;
-    }
-    let install = Command::new("flox")
-        .args(["install", "curl", "python3"])
-        .current_dir(&project_root)
-        .output()
-        .unwrap();
-    if !install.status.success() {
-        eprintln!(
-            "skipping: flox install failed: {}",
-            String::from_utf8_lossy(&install.stderr)
-        );
-        return;
-    }
 
     // The upstreams live on the *host*. An isolated sandbox has no route
     // to them at all except through the proxy, which is exactly the
@@ -137,33 +107,46 @@ fn an_isolated_sandbox_still_reaches_its_allowlisted_hosts() {
     // A service port *and* an allowlist: this manifest is what makes the
     // sandbox qualify for isolation while still wanting egress.
     const SERVICE_PORT: u16 = 18330;
-    let sandbox_name = format!("e2eisoeg{}", std::process::id());
-    let manifest_text = format!(
-        "[sandbox]\nname = {sandbox_name:?}\n\n\
-         [network]\ndefault = \"deny\"\nallow = [\"127.0.0.3\"]\nports = [{SERVICE_PORT}]\n"
-    );
-    let (manifest, _) = parse(&manifest_text).unwrap();
-    let paths = StatePaths::new(&sandbox_name).unwrap();
-    let _ = std::fs::remove_dir_all(&paths.root);
-    let _ = std::fs::remove_file(&paths.lifecycle_lock);
+    for_each_row("isoegress", |fx| {
+        if !fx.capabilities().network_probes {
+            eprintln!(
+                "row {}: skipped (no python3 or curl in the sandbox)",
+                fx.name()
+            );
+            return;
+        }
+        let path = fx.project_root().join("devcroft.toml");
+        let text = std::fs::read_to_string(&path).unwrap();
+        std::fs::write(
+        &path,
+        format!(
+            "{text}\n[network]\ndefault = \"deny\"\nallow = [\"127.0.0.3\"]\nports = [{SERVICE_PORT}]\n"
+        ),
+    )
+    .unwrap();
+        let sandbox_name = fx.sandbox_name();
+        let paths = StatePaths::new(sandbox_name).unwrap();
+        let _ = std::fs::remove_dir_all(&paths.root);
+        let _ = std::fs::remove_file(&paths.lifecycle_lock);
 
-    assert_eq!(
-        up(&manifest, &project_root, &UpOptions::default()).unwrap(),
-        UpOutcome::Started
-    );
+        assert_eq!(
+            fx.bring_up(&UpOptions::default())
+                .unwrap_or_else(|e| panic!("row {}: up failed: {e}", fx.name())),
+            UpOutcome::Started
+        );
 
-    // 1. The sandbox really is isolated: it binds its declared port even
-    //    while the *host* holds the same number, which a shared port
-    //    table would refuse with EADDRINUSE.
-    let host_holder = TcpListener::bind(("127.0.0.1", SERVICE_PORT));
-    let bind_probe = Command::new(devcroft_bin)
-        .arg("exec")
-        .arg(&sandbox_name)
-        .arg("--")
-        .arg("python3")
-        .arg("-c")
-        .arg(format!(
-            "import socket\n\
+        // 1. The sandbox really is isolated: it binds its declared port even
+        //    while the *host* holds the same number, which a shared port
+        //    table would refuse with EADDRINUSE.
+        let host_holder = TcpListener::bind(("127.0.0.1", SERVICE_PORT));
+        let bind_probe = Command::new(devcroft_bin)
+            .arg("exec")
+            .arg(sandbox_name)
+            .arg("--")
+            .arg("python3")
+            .arg("-c")
+            .arg(format!(
+                "import socket\n\
              s = socket.socket()\n\
              try:\n\
              \x20   s.bind(('127.0.0.1', {SERVICE_PORT}))\n\
@@ -171,58 +154,56 @@ fn an_isolated_sandbox_still_reaches_its_allowlisted_hosts() {
              \x20   print('BOUND')\n\
              except Exception as e:\n\
              \x20   print('DENIED', e)\n"
-        ))
-        .output()
-        .unwrap();
-    let bind_out = String::from_utf8_lossy(&bind_probe.stdout).to_string();
-
-    // 2. Egress still works through the proxy, decided by hostname.
-    let curl_status = |port: u16, host: &str| -> String {
-        let out = Command::new(devcroft_bin)
-            .arg("exec")
-            .arg(&sandbox_name)
-            .arg("--")
-            .arg("curl")
-            .arg("-s")
-            .arg("--max-time")
-            .arg("10")
-            .arg("-o")
-            .arg("/dev/null")
-            .arg("-w")
-            .arg("%{http_code}")
-            .arg(format!("http://{host}:{port}/"))
+            ))
             .output()
             .unwrap();
-        format!(
-            "{}{}",
-            String::from_utf8_lossy(&out.stdout),
-            String::from_utf8_lossy(&out.stderr)
-        )
-    };
-    let allowed = curl_status(allowed_port, "127.0.0.3");
-    let denied = curl_status(denied_port, "127.0.0.4");
+        let bind_out = String::from_utf8_lossy(&bind_probe.stdout).to_string();
 
-    drop(host_holder);
-    down(&sandbox_name).unwrap();
-    let _ = std::fs::remove_dir_all(&paths.root);
-    let _ = std::fs::remove_file(&paths.lifecycle_lock);
-    let _ = std::fs::remove_dir_all(&project_root);
+        // 2. Egress still works through the proxy, decided by hostname.
+        let curl_status = |port: u16, host: &str| -> String {
+            let out = Command::new(devcroft_bin)
+                .arg("exec")
+                .arg(sandbox_name)
+                .arg("--")
+                .arg("curl")
+                .arg("-s")
+                .arg("--max-time")
+                .arg("10")
+                .arg("-o")
+                .arg("/dev/null")
+                .arg("-w")
+                .arg("%{http_code}")
+                .arg(format!("http://{host}:{port}/"))
+                .output()
+                .unwrap();
+            format!(
+                "{}{}",
+                String::from_utf8_lossy(&out.stdout),
+                String::from_utf8_lossy(&out.stderr)
+            )
+        };
+        let allowed = curl_status(allowed_port, "127.0.0.3");
+        let denied = curl_status(denied_port, "127.0.0.4");
 
-    assert!(
-        bind_out.contains("BOUND"),
-        "the sandbox must bind its declared port in its own namespace even while the \
+        drop(host_holder);
+        down(sandbox_name).unwrap();
+
+        assert!(
+            bind_out.contains("BOUND"),
+            "the sandbox must bind its declared port in its own namespace even while the \
          host holds the same number — without isolation this is EADDRINUSE. Got: {bind_out}"
-    );
-    assert!(
-        allowed.contains("200"),
-        "an isolated sandbox must still reach an allowlisted host through the proxy. \
+        );
+        assert!(
+            allowed.contains("200"),
+            "an isolated sandbox must still reach an allowlisted host through the proxy. \
          This is the whole point: the namespace has no route to the host, so this \
          traffic went keeper relay -> unix socket -> host proxy -> upstream. A failure \
          here means that path is broken, not that the allowlist is wrong. Got: {allowed}"
-    );
-    assert!(
-        !denied.contains("200"),
-        "a host outside `network.allow` must still be refused — isolation must not \
+        );
+        assert!(
+            !denied.contains("200"),
+            "a host outside `network.allow` must still be refused — isolation must not \
          have turned the proxy into an open relay. Got: {denied}"
-    );
+        );
+    });
 }
