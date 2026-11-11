@@ -1,0 +1,1117 @@
+{
+  "schema": 1,
+  "status": "passed",
+  "qualification": "real CLI initialization and dummy-key transport; not completed agent task",
+  "host": [
+    "Darwin",
+    "Dragoss-MacBook-Pro.local",
+    "24.6.0",
+    "Darwin Kernel Version 24.6.0: Mon Jan 19 22:01:58 PST 2026; root:xnu-11417.140.69.708.3~1/RELEASE_ARM64_T6041",
+    "arm64"
+  ],
+  "adapter": "hvi",
+  "helper_provenance": {
+    "adapter": "hvi",
+    "core_version": "0.1.0-rc.2+1.g351d1a1.dirty",
+    "patches": [
+      {
+        "file": "hvi-vsock-fixed-ports.patch",
+        "sha256": "4641b57e08f32f0c4814db39dbbd8280a4b974d3218618fe1a85e48df78ef14d"
+      }
+    ],
+    "revision": "351d1a15728e998486232e4815ba075a22e44f56"
+  },
+  "helper": {
+    "path": "/Users/dragos/Development/devcroft-codex/experiments/microvm/hvi/target/debug/devcroft-hvi-spike",
+    "sha256": "2b145d5304507649e3994a40e94b61f5d6a901eb3bb3fdaee2629370c01d4e62"
+  },
+  "guest": {
+    "schema": 1,
+    "arch": "aarch64",
+    "fixture": "stage-b-real-agent-tls-probe",
+    "zig_version": "0.17.0",
+    "source_sha256": "18a7223ffac37edc5471af2627b7f1ee352d39b91681ce823f342310f31a57af",
+    "nono": "0.77.0",
+    "keeper_sha256": "2e96bf0de960443b322df11b4d0e410fff4a861de7aeb55dd4bd2404919314a0",
+    "busybox_sha256": "198f6f675a49ac734082e054b823d3e2e947180ca2f632852ae1c09e950fd676",
+    "workload": true,
+    "nix": true,
+    "agents": true,
+    "initramfs": {
+      "path": "/Users/dragos/Development/devcroft-codex/experiments/microvm/artifacts/stage-b-agents-ssh-loss-fix-final/initramfs.cpio",
+      "sha256": "7e2cf00ae8e935fa173530b9b99ea5fa891dedbc1863a7bffdd33599fd341186"
+    },
+    "runtime": {
+      "path": "/Users/dragos/Development/devcroft-codex/experiments/microvm/artifacts/stage-b-agents-ssh-loss-fix-final/runtime.img",
+      "sha256": "768f5b593e9f9f6888ea6930f6b6dc3adb65fd204b3c48361e0864dd6ae93f0c"
+    },
+    "sources": {
+      "src/keeper/connection.rs": "5ea9ab23a29a9eb73363759818af13d5619715e9bc3282409ebd0c4257363759",
+      "src/keeper/environment.rs": "dcf433c26bba99dbe3a28164e35cd38854c30a64521a21691dc92f15ddc29fc6",
+      "src/keeper/mod.rs": "2d93e061be8231d0e0f95b018405b7dac70973800f3a72eed951960d753573e9",
+      "src/keeper/protocol.rs": "a1fd3088992902e89022c229ed710d25487374bfeeeece8000dd2e5872572a2d",
+      "src/keeper/pty.rs": "be8ea1fda83d3932eebe6d54b509e2f96bae5df9aa313a00296e4fa41e580dca",
+      "src/keeper/registry.rs": "99d96e3c267247ecc2f2220f8c0667216998d2cdabd8aabf5284d21c38aa93ce",
+      "src/keeper/session.rs": "1d1a1fce6ff8daac07dc6a8cc95a5ef60362730ae7d22326658920d8a8cf195c",
+      "src/ssh/server.rs": "6db352d3a4150d2e89963787dc63c5e5d70eea1167a5f6c84bba8c1fdfede900",
+      "src/ssh/sftp.rs": "805e6fc83c646b50df100010bb6bec3988733a8a79027ca1d6ce79ce745ae6ee",
+      "experiments/microvm/guest-keeper/src/bootstrap.rs": "9ad93deea140929f7b13c50411a8be1c46170ff3a118b75f9d32320a59b3e606",
+      "experiments/microvm/guest-keeper/src/linux.rs": "63d0d745b0f4fb4f6f9df105e651dd954f854dc84a4650c90c60d799118c76d3",
+      "experiments/microvm/guest-keeper/src/main.rs": "8195d8e46b245a42d9f20df636e9899c7a5bb9538968595850f8abfcb4fe7128",
+      "experiments/microvm/guest-keeper/Cargo.toml": "bf410f00c15228ec48cfda740c4a2c5a4f39e01e8f184edf4699ef3f96a2bb9f",
+      "experiments/microvm/guest-keeper/Cargo.lock": "c509b51fe02c1ae6842e01a302389076f615b27461f678b7b5af4e623b5e72b7",
+      "experiments/microvm/guest-keeper/zig-linker.sh": "28d89d7554ca99e4d1366d18d365253687076a7f9069d0488d9a011036626fd5",
+      "experiments/microvm/guest-keeper/zig-ar.sh": "8d9a92610ac547533bcce655621c435015305c043e273ea6a038ce999177935c",
+      "experiments/microvm/build_keeper_guest.py": "f5d9c2ed82f9c97c0abf742dedb1394ee47a4d9075654615a1de003501f8e8d0",
+      "experiments/microvm/build_guest.py": "cdf605d85ff6252380321c84bea0f4b7f35c218339d555c0f5d83f8e6089b710",
+      "experiments/microvm/guest/init.c": "18a7223ffac37edc5471af2627b7f1ee352d39b91681ce823f342310f31a57af"
+    },
+    "busybox_package": {
+      "schema": 1,
+      "package": "busybox-static-1.37.0-r30",
+      "architecture": "aarch64",
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.23/main/aarch64/busybox-static-1.37.0-r30.apk",
+      "sha256": "44c9abdfb970f398fa72c8382fe2d8808eea16beaf82daf6ac708b92f1b8659e",
+      "member": "bin/busybox.static",
+      "purpose": "Real static shell and utilities for the keeper integration fixture; not a provider closure"
+    },
+    "rustc": "rustc 1.95.0 (59807616e 2026-04-14)"
+  },
+  "closure_build": {
+    "schema": 1,
+    "architecture": "aarch64-linux",
+    "bootstrap": {
+      "schema": 1,
+      "version": "2.34.9",
+      "system": "aarch64-linux",
+      "url": "https://releases.nixos.org/nix/nix-2.34.9/nix-2.34.9-aarch64-linux.tar.xz",
+      "sha256": "f0bb2518db6c9db3f925be3edb76f6e0da17cb72fba329493f510ca08e5111a7",
+      "checksum_reference": "https://releases.nixos.org/nix/nix-2.34.9/nix-2.34.9-aarch64-linux.tar.xz.sha256",
+      "scope": "single-user bootstrap inside the dedicated Linux builder only"
+    },
+    "nix_version": "nix (Nix) 2.34.9",
+    "flake_sha256": {
+      "flake.nix": "0fe6a619611ca37923232d5b0bd5808250402c45f3afe856dc134397c6e0ebd9",
+      "flake.lock": "fae29563701304a37fbc90b3fa11ec813616feebbe1bcba5e7bfca5df8e2364d"
+    },
+    "flake_metadata": {
+      "description": "Isolated, pinned Codex and Claude Code microVM probe",
+      "fingerprint": "d233f99d5847b8dc3e3551bcc515eda1d54563efc1a32d1d402709866b71f17b",
+      "lastModified": 1794292088,
+      "locked": {
+        "__final": true,
+        "lastModified": 1794292088,
+        "narHash": "sha256-9+Cxbuc/VSYloFCUZDfGebBZsoTm1ySa9EL67RAOtb0=",
+        "path": "/home/dragos.guest/devcroft-agents/definition",
+        "type": "path"
+      },
+      "locks": {
+        "nodes": {
+          "nixpkgs": {
+            "locked": {
+              "lastModified": 1786599213,
+              "narHash": "sha256-yNJd40f11EzXBjSByCB7IPpeFFAdeoSKKM67dGkfFoU=",
+              "owner": "NixOS",
+              "repo": "nixpkgs",
+              "rev": "0e251e24a4f24e036a084b6b4b2d2491af4167f4",
+              "type": "github"
+            },
+            "original": {
+              "owner": "NixOS",
+              "repo": "nixpkgs",
+              "rev": "0e251e24a4f24e036a084b6b4b2d2491af4167f4",
+              "type": "github"
+            }
+          },
+          "root": {
+            "inputs": {
+              "nixpkgs": "nixpkgs"
+            }
+          }
+        },
+        "root": "root",
+        "version": 7
+      },
+      "original": {
+        "path": "/home/dragos.guest/devcroft-agents/definition",
+        "type": "path"
+      },
+      "originalUrl": "path:/home/dragos.guest/devcroft-agents/definition",
+      "path": "/nix/store/2acmgxhfslg08bb3pnh22pc5i1x2kwxz-source",
+      "resolved": {
+        "path": "/home/dragos.guest/devcroft-agents/definition",
+        "type": "path"
+      },
+      "resolvedUrl": "path:/home/dragos.guest/devcroft-agents/definition",
+      "url": "path:/home/dragos.guest/devcroft-agents/definition?lastModified=1794292088&narHash=sha256-9%2BCxbuc/VSYloFCUZDfGebBZsoTm1ySa9EL67RAOtb0%3D"
+    },
+    "profile": "/nix/store/5qsk5hs1caxv2mrglbbd8102n45yns8x-devcroft-microvm-agents",
+    "versions": {
+      "claudeCode": "2.1.228",
+      "codex": "0.147.0",
+      "gcc": "15.3.0",
+      "redis": "8.8.1"
+    },
+    "closure_paths": 129,
+    "nar_bytes": 1644897192,
+    "closure_nar_hashes": {
+      "/nix/store/00qad9xxxv7ca23hx2i09snra8w37yjg-libmpc-1.4.1": "sha256-qPwTzn3NQ2ee8mM4hBWZGSAW4KC9W0TJulKsmsI8KWQ=",
+      "/nix/store/07gribxm3sky3lw2g64n59l974q7q1bf-gnugrep-3.12": "sha256-pz8kv4+lErrZ+/Z+lJ/PBc2lKgN8v7qRxIfS0FzMTBs=",
+      "/nix/store/08wsdrsj3hfkapgz9iybjxg0y12aqnzh-bubblewrap-0.11.2": "sha256-qUsgeEBUj3qfJfk/B0h2qGKVJlMS20ZxvnNTVkjW/XU=",
+      "/nix/store/0gm46ay1b1c2ic40xi6fg2r9gfwcxnnz-gnutls-3.8.13": "sha256-+QyQPeqNeBmxVWhHAojFO1EnTDUvsXE9p0MpaAhYncA=",
+      "/nix/store/0vs7b4cjq3sg9267h7vbyjf1kxnd3qws-alsa-topology-conf-1.2.5.1": "sha256-Pm9kI2/IV/+jMdf1acsOIPgSDXSIzWPio4gVFh+nVl4=",
+      "/nix/store/1bczr25ry5vg2wr27jc7kc61f8c2yn2v-util-linux-minimal-2.42.2-swap": "sha256-nB31k8uK1sWVsHuEO7m5gwjucCZCaHraAFXJvtDAmV8=",
+      "/nix/store/1dzsx5xcm25931cbdzs8cbjlzpc85mbp-gnumake-4.4.1": "sha256-xusq59dvjTtookEZSLuJMV2JhrKwTI0SjvgaV22L4ec=",
+      "/nix/store/1gqjlc6ysvvla1j34bjc3fd89lyjs7h6-mpfr-4.2.2": "sha256-q2Uqe6ltPdCtwi+pwXKI7PmZPIrzh/DGAdB5kjWr23M=",
+      "/nix/store/1hyypxhm1rnbqr4y6h466kxdgv8zc62i-lvm2-2.03.41-lib": "sha256-c9R7uEUmaY6XWpx7h4vLSx5gdipQmfyLF7cApmELemw=",
+      "/nix/store/1mp52pnrdyqrj5sfkl1fgnhphhcmcwy7-lz4-1.10.0-lib": "sha256-XP4UZtf1M68+7VjY659PnS0HlZjMYNOWWM/ix9zFb4k=",
+      "/nix/store/28x5qj84g0ybg3hq21shg7grc51c1a7b-gnumake-4.4.1-man": "sha256-yjun050DAGGJgHXLaoFYm+nGYmxumGaVELxFsYlOSp8=",
+      "/nix/store/2i1hgmh5kaa976iqdrgwcclv0mz8jgrf-attr-2.6.0": "sha256-bxCukeOeN6IYXQNfXdNY7qf5KvMKEgGjKrhR87ztCFE=",
+      "/nix/store/2qs1kwbf15jckq2ink80py6pyk4h4wgx-libgpg-error-1.61": "sha256-BomVv0pVAMgcW3Cgh4fmVBfs6ucuRnSEHJo+K8OMuRc=",
+      "/nix/store/2r04afmsjkpkp482q1xvkdg8d2mj04i9-gzip-1.14": "sha256-QVzuLf4EpgsUk3Sf3kNXJN9I8LNn+YmBDDIXI7XPc1c=",
+      "/nix/store/355vzap72n1fyisr54f2ps7acl4r9b7r-qrencode-4.1.1": "sha256-Eqvax2EsxI7tc7+8Vmrj2xyEjob8h8P55AzHjLHzoVQ=",
+      "/nix/store/36z368yjqm57gcidfn38c61k6rk0wfp9-util-linux-minimal-2.42.2-login": "sha256-yhp8yidfN/UCM73S0Eg+dt8k1zW93YzKefcr82zFBpY=",
+      "/nix/store/3bhqb8cnndkch493f6f06pgdff7igi0f-db-4.8.30": "sha256-ktoBAshfX2oREo3hILLmpfldtVi7rSseTMHovid2264=",
+      "/nix/store/3inr3nxzqarhb9rh1z7s2s20j8c0395h-python3-3.14.7": "sha256-smYWSUbEmEEnzSQ0GwpXVC2xFnwjHw9W7ZN2NmV4BC4=",
+      "/nix/store/3kaakrwd1jia637aa3cpj3lkgfxwg3k3-bash-5.3p15": "sha256-sDTqnybTzV4WZfGeDO54zKUXsSqd5LJVW/Mlc57z5Mw=",
+      "/nix/store/3lzrddk8kbyxsmj7f2xqky82n28cxk6b-expand-response-params": "sha256-FsXjeCpG8u+xMbOahiiIPjVFjFRePZMyFg8C1lvSK6E=",
+      "/nix/store/3v2w5hdrpzwx3w8svda35lyrq9jwqbc8-zlib-1.3.2": "sha256-w6HgEfIATU5WMoWQbQqJNnuIlfmwRgpsR2vpucNCddI=",
+      "/nix/store/43kh06xv15bv3z58qz8h0iswfwbpfmbc-publicsuffix-list-0-unstable-2026-07-25": "sha256-SCG6bOJDqD9uGl44MtOVlw8/u8WoDNxtZBs6/PYG+d8=",
+      "/nix/store/4b7nzym3c7c2f7w6ngj1b7d04pg3q9f4-tpm2-tss-4.2.0": "sha256-szFD6FWZbltdia81YCyeblMiDYcxY8gSzmpSPrjsGzU=",
+      "/nix/store/4fj1rs40wx8r4pbbzrjzmzxv4dg4aia5-findutils-4.11.0": "sha256-vvFAyHToVh2hGxln1howoaoAt0kXpPaaThKfzNHS3cI=",
+      "/nix/store/4nw5wlqzxg7hyrwkif8rhir6406sx1ad-krb5-1.22.2-lib": "sha256-PBgcAbmrGKBFirDp+pZtErcKR80p4qPBixe3iiui4lU=",
+      "/nix/store/58c49kcaw81zcks38jyq5fg7nssnvw3m-libcap-2.78-lib": "sha256-qPcnLNPsrfTq1w7xvirLxClVyFYA1m/6G/szlZQu9IE=",
+      "/nix/store/5fmknmxx5s78zbbai817zghzmc5l7d3z-xgcc-15.3.0-libgcc": "sha256-gU+R7O0Nt685kMk1rmRLddufPlyV7x694ibxzMiOiHQ=",
+      "/nix/store/5qsk5hs1caxv2mrglbbd8102n45yns8x-devcroft-microvm-agents": "sha256-BV26YKm29nVG0sfAOqvkFuZTbR6V56Wiqb1sS976dpA=",
+      "/nix/store/60ql1db9jl171j18jndv45lqdjlgzw0k-codex-0.147.0": "sha256-zpJKh4xXgz2Dgwqrby+mkCCxbCrpaJSUah8ItNrvW0I=",
+      "/nix/store/6alwmb2pqwzkvfrhanphmab7487p0qbi-readline-8.3p3": "sha256-Sm7In60x356VfTJvE10RH0FO+DGRc19628uVg68GKZs=",
+      "/nix/store/6b8dlmv0a6vxcix2hv9iavhrmcp5jx9w-kbd-2.9.0": "sha256-y8XdyqttyHp67z2TsLG7L0k6JqUpfCpX7GMWH8Xdy7w=",
+      "/nix/store/6bgs2brhrhvhv9k103q3b3qqsic54n2c-kexec-tools-2.0.32": "sha256-o5CTzPO82Whq21VxIcoMFU+AeuhaDIaWrst2mvLoaRg=",
+      "/nix/store/7vsyq49lwwzd2pc5kkgbyawrv9nnqqgi-cryptsetup-2.8.6": "sha256-cOBdRsTK9etN0GcPZxjvn8H3E1SpOgmBRp6WEGSrAp0=",
+      "/nix/store/7w6a03silnkhm5x4bdsjd5cnri73pyid-kmod-31-lib": "sha256-LHLAH6A17XXmpe/AB/X8DA5xyGcIU6vWyflygl4QoZ4=",
+      "/nix/store/7zy98i52jaifcpgj3ymw6vdx754m0pnn-nghttp2-1.69.0-lib": "sha256-9IohuN5oX5Oie1SjUsGghKnK2zTuD7nXvBfrPzfc2zI=",
+      "/nix/store/8c75db480f4ld8jvwajzdp6rqlx3zlfz-procps-4.0.6": "sha256-xBHcqWjd5Lm5gxojykqpFbWYFHFK24TLJNsq/KEhspk=",
+      "/nix/store/8i9qa86chssc6fc51hwysvgdzh1a63r9-libpwquality-1.4.5-lib": "sha256-smK9VVnC7w680BDj+wW1H941QJK1OY6DzMcsQvDzWNs=",
+      "/nix/store/8maz5b22n7dpdk32ngiwxd79zaczb9si-git-minimal-2.55.0": "sha256-HsIYjwDoDurNt7Wm4AQID33E812Y3PC7UGZhvh+QnC8=",
+      "/nix/store/8xjsfv19z90diipv5ylqbbs5cgqda880-nettle-3.10.2": "sha256-Ub2QTlchFktovZIJVzO3m9EueN6A8nVRdJkuixAdQUQ=",
+      "/nix/store/8xr3jrl58cav2gchddq9n83vvb25ybpv-libmicrohttpd-1.0.6": "sha256-1x3MbXpZcOIAQuVdyfWGy0YICj3hNonCeWBcVpVg89o=",
+      "/nix/store/929svfrm3z9facma5l7y3pkym56b8gni-libidn2-2.3.8": "sha256-xC9mZiHEYf3cieYwLx4+9+9kiqhytr6wCwsF0NxJBZA=",
+      "/nix/store/9k3l8v5p5zh9ai9hjjm45izbkhvlwfdd-glibc-2.42-67-bin": "sha256-hZtlWD6T+CgAmMdPlLoiZfzrE/mcRiu0TBlVfhNi7M8=",
+      "/nix/store/9kr1hvqny4gz0a614yyjvvavii4j8k39-diffutils-3.12": "sha256-2rOVkr5U7zFWihyJxh7SFEAsI/qopO6fayAs3uy6N0M=",
+      "/nix/store/9xv39s6xlidk22n8m7r5yzynsd60xvz9-keyutils-1.6.3-lib": "sha256-a5ntxru7HhbqdRF6f0osAJecYDpeDWaFMXEViPIJ2U8=",
+      "/nix/store/a9kda025a17126f14c01xpwscmjqddwb-bash-interactive-5.3p15": "sha256-/cdvpo+FV7PcX1NP5F6LANX8I2+CvJKN1u4ZbGEhu3w=",
+      "/nix/store/ah5m9c4ffy0m45h68ls77xr6m4c6rmg9-ncurses-6.6": "sha256-7LiGtLjm1n7HY623hgcjFM7K7p/YEuvEv+bUtgCAYSw=",
+      "/nix/store/ai0yaxin94p1ya5d49nw0bbbqx17jzdr-curl-8.21.0-bin": "sha256-HPfJd0rZzDBzOC2tTtRjqMhBG8VpLp4sRl2s7lU+2cI=",
+      "/nix/store/aykdq7abk7gvr9smfzzwj5r50rg9q892-unbound-1.25.2-lib": "sha256-ohiykpBtrndN2XfzlOfSbNhl8qnSFFezjpwSow7UqcI=",
+      "/nix/store/b57ihysnpkp69hsbbw1gr1yjac6xagkf-libunistring-1.4.2": "sha256-wSSwO8HePwHrG5OCW5e+VqkXzvZME7FvqnHM/pHRMO0=",
+      "/nix/store/b9lnrrbgb4yh20iqy9dpikhs5in7ri3r-linux-headers-7.1": "sha256-GIQK/xqLZllgev8qAjn/pguTNy5uDxc1+6k1tJowE/4=",
+      "/nix/store/baiqbh22367k40973a7rx2lj2mp7skmp-elfutils-0.195": "sha256-gO5FwRU5tV7jPIOfyvf+/wK9rJUpax1P5TCAZrgv+O4=",
+      "/nix/store/bc9zgcv6xxpcj366wrrn10mxrpax2cg0-gdbm-1.26-lib": "sha256-aBij7cjMbR05v3aq6ek9n2Amm/lwv82X6E/Acec4Z8M=",
+      "/nix/store/brn37ijdrwnll5wrc0avzhjhqgiyipx6-dns-root-data-2025-04-14": "sha256-wTGKs4KYV6CF1WaemAhtRzyeXshcuO/kyPpQiDdHb+s=",
+      "/nix/store/bvjp82swwzljhjfsnv7jdvr7xyxb0dbc-nghttp3-1.16.0": "sha256-OZzMHjjEAC7vJpfABSRXxdzGXGy5Pq7S9mPDiI/x6MQ=",
+      "/nix/store/c5vd5ipiid78ldydx7ky39z9mgm6d7mk-libcbor-0.14.0": "sha256-xZxNSsUNxBGqAmR8I8G9e/ZfNfCB1Kqqk+qS0UXt044=",
+      "/nix/store/cpwqjn64gzylzqnr2lj7wgdd9fvf29df-ngtcp2-1.23.0": "sha256-g79bYr1un4knptXPcQNueVPegKLzfUfKerl+vbIQa/k=",
+      "/nix/store/cwn32dkv1iffrhh6sw1gk09nxb10dv17-glibc-2.42-67-dev": "sha256-Jf7afvNaQ8H5+DVru+EwmKdxz5ZOUbfmY2jyr70tqgU=",
+      "/nix/store/d0yjv7jazwrvb8p1abqh6n3csqa21sp4-alsa-lib-1.2.16.1": "sha256-OhhqM4mY87Yqbeg50MYdQyBWlUr1Cc9fv/zEUkyIk1U=",
+      "/nix/store/d9by4vhj0ss1g374jzy6683sgrl35l30-libcap-ng-0.9.3": "sha256-71zcbSygkgCRzduMItlvc8urFpIgkUUIcbCz1SSZFWE=",
+      "/nix/store/dg7mp8yr4arbb6khlmjj3rzxdz6k1l5q-gzip-1.14-man": "sha256-XlXreTcG/fQuyMnFBl/C8GD/Llkyq+XXsS87J9Qy1q0=",
+      "/nix/store/dgzd0xg1qmk6z4bdaipzlb4fivfh0b78-gmp-with-cxx-6.3.0": "sha256-VaNH9HUEJ1H5CevlNx1h+Lgy2cqnc/IW28nxOxei1/M=",
+      "/nix/store/dnvwhqgbyg8vhxmkjdfxfjlf77lq13pn-gmp-with-cxx-6.3.0": "sha256-YeLEdn5Q7Wcs3fqQoJ+zj39HeTgl2yos8PmuE78UVA4=",
+      "/nix/store/dp77w3j5l0pkb1b0s6ag75xz8agqlih8-ripgrep-15.2.0": "sha256-nDBAGtHlv2IAMVVfZJ08zY5MWY+Qz01ZY7ZZc7yRnUo=",
+      "/nix/store/dqxknsb71lsgzfzcdmn6x7fzssqbdyyx-coreutils-9.11": "sha256-LHaQ0r2FyepZdsP2wsYnigYLnGVpzqGhEOXopCK4+iI=",
+      "/nix/store/dzkmgqdx7wfd98z4xjmyfm2cj732b0hd-cracklib-2.10.3": "sha256-7OqvIph0xZ0Ju96WnvkYGv+ZbbkzwdUV9VCBSMNKz7w=",
+      "/nix/store/f8q4w2hbjvwy7qqwpnvbf5f4qwyww6cp-glibc-2.42-67": "sha256-QIL0sJCaS7bhMVZQT+aefC+8gFP8A8q/tvu0yYwrp6g=",
+      "/nix/store/fdn90f4m92qk40q8vq8ijpq1yvbd0pci-curl-8.21.0-man": "sha256-ezpXOnKUWTpo1RUww4ZzVdx3ZuITPxMyxvwvENfw8ws=",
+      "/nix/store/flpfpb9gn5jk3zjdvpgzmy2b14ksjdmn-libarchive-3.8.8-lib": "sha256-d+pHe/GYUonAwb0C0V4TEqWDVqLl3bS2IdAbFBBGQCA=",
+      "/nix/store/gc4gq3xjlhvfmyf599n6l7jvc7z41yyg-libxml2-2.15.3": "sha256-z1OMv5y4BBhFHyIDUOZFHIkHmtM0VJfiltpbkqkT1JI=",
+      "/nix/store/gdbq6857ydnda2zi8fhdmzpbjh9d946l-bash-interactive-5.3p15-man": "sha256-PMT39dfJSouhOe22vI5y9grFe1pOCF+7Q5kj3qHiZoo=",
+      "/nix/store/gspr8h35wp1lp1zyri0mbhlrd711ivm1-jemalloc-5.3.1": "sha256-TmSGnfSVZACzCrp16XqS/ekW6PFwepMeOu3qgGcezxA=",
+      "/nix/store/gw0vcpg33m9cqd6rscyqvds45apfrxfy-gcc-wrapper-15.3.0": "sha256-pE4SBFMC5+f2ppnVk6sSwKdG6E2nKP/7kmrZ2eGVAxw=",
+      "/nix/store/hz51xhnpl8d51hh6kkhqhnwm52v9ks4i-gmp-6.3.0": "sha256-iXJvmgy7Dptr/fFaE/9KKwIaSRrfFeb3LMFmsPIWlZs=",
+      "/nix/store/hzjkim59mc4wbgvrpfv54fblx3lxziis-pcsclite-2.4.1-lib": "sha256-6UFgJAjm/G0QzOnJpruw1okD0C7rkjpwLLF8WFIHVBA=",
+      "/nix/store/i4kp6hsdfr7k6189r4pf7gx17ggn6cjz-libseccomp-2.6.1-lib": "sha256-KSxkX5yPmESEBx66wq6GdKeZpqum5O9DPRZfzrPb8iY=",
+      "/nix/store/if0jy4wir03z31y1kqhfc3mgvz5ih71v-linux-pam-1.7.2": "sha256-4SAxRWEhhsLc32KDY2AAJ939ZtDeAP+Cj1NVAyjYcb0=",
+      "/nix/store/irwai5r7dcn836p9zri9bzcawc7d91s2-libtasn1-4.21.0": "sha256-EMtF0TsMUrlchRobW5F+9cCCU4U+2cGOjsI344Z6rN0=",
+      "/nix/store/jkry4b00dmfsfx5r8m2n11r7fchz6aj8-gcc-15.3.0-libgcc": "sha256-+KR7FBXJK+JmhbRqRIwqYgiS6K/wGTM2XQkAM2/1zHE=",
+      "/nix/store/k2fr8pihnym47m71fij3ns184vbx4v79-zstd-1.5.7": "sha256-R+qzKT/BoXRCQM9v7vmqT1+v19moqf5cVol5Y1dF44A=",
+      "/nix/store/kf94rdy65hbqjrvw07b3w3gigiv4q3ax-expat-2.8.2": "sha256-OiRhHkV6e82K2jnA4gX3s9W0v7oC/vh9ezL9CXr7BjA=",
+      "/nix/store/khblf98c721xyd5j9hphmii437bh2qdy-gcc-15.3.0-man": "sha256-Ni/JS2KUT6APmOXVMb1q3EYBYHPIVavIPaLV+BnaZcI=",
+      "/nix/store/l06hkrvzgb0iw5pbz6j5xzhkqs2bns6p-tzdata-2026c": "sha256-9RNssc1MdqwuuxmVP0DyUxn6Xl1vnlEu6BaF7SMk35s=",
+      "/nix/store/l5jj35jgikj1y7m23r5d57xkdlr7w3l7-util-linux-minimal-2.42.2-mount": "sha256-Nkk4vqF9RMT2lWbE4GUoBDSibo8HgVpMH1WRIC4cdFU=",
+      "/nix/store/l5zqppiy8dazh9z96lfj2z7swzx9dsf7-acl-2.4.0": "sha256-CE0ECniwve5nCuc0Cz+CfGIlFnpHLsf2a3DHvoYg99E=",
+      "/nix/store/l73b40s107mbz59w42s1j7dpfj56xfrk-isl-0.20": "sha256-OMf26zr0AZLmiKSEn0eGExpVcEMMH/GTW1qzaJrywyw=",
+      "/nix/store/ly5swsxfy36yqnx2amyzx3pd06rkd87n-libapparmor-5.0.2": "sha256-Fz7VFAJ7jGmz4ijFED0FFtxB1EihoT/k8Dowhfbct60=",
+      "/nix/store/m9n6gv7j96sxbb0lzkgz40a02yb20hah-binutils-wrapper-2.46": "sha256-Hv5q/3EdZcqwztCfFinCUSfD6jOCne5OcZbAAK5ApIQ=",
+      "/nix/store/mg2881q8a5ask9isvhvrbxkyddqh8q2w-libfido2-1.17.0": "sha256-wCsDDqOFPvi/MSoh8jDBxWmwLN1H7d7UTdTUUCxu2jg=",
+      "/nix/store/mhpnggd19hisq1zsjzhb7pch08f7bix6-libffi-3.7.1": "sha256-7wXps2TSmgqQY4Roy33+yBB1TEt/uevcWMDYuakZfn8=",
+      "/nix/store/mlqqpn1h34rwg4ix8sn84lafb4jzw2sb-libxcrypt-4.5.2": "sha256-pLyWKYKv4SAusF/Dcm0AU9p7lmhnwDp3QLCH3RBTJJc=",
+      "/nix/store/mm80mz52armp3bqw4h16ic6y36dpyhqs-binutils-2.46": "sha256-mrsVKhTfusr0Dpwidq6nTj0Kif/rGnAhalJ5yJolORM=",
+      "/nix/store/mzcp5ig4d5mr3fxnbbg4lly0gh83vb0p-nss-cacert-3.126": "sha256-BZF791OyoLAt1B4Y0Vu789O0CJyxdMrHPj+nfnCr+34=",
+      "/nix/store/n7v4fk0yzfl45w4maza94539w5pa2dmz-gcc-wrapper-15.3.0-man": "sha256-LdiRvCvr6PajYUj2RipsbgZ1Bp9IX/U1msLSooc0nBI=",
+      "/nix/store/nji88iy6f1s0m15pwfz0qbwlzd58wj9b-libbpf-1.7.0": "sha256-FcGl+Y0yQzN8mkUdnLgay2sAOzv3AuTmFQMRa1VkP+g=",
+      "/nix/store/njkg10wv2l1wzlmrbnkxjqn7rfj0wk88-alsa-ucm-conf-1.2.16.1": "sha256-uAos9ALIWVQz16CsxYvEOWIKvGKcGpfkypQ6dfC6d9Q=",
+      "/nix/store/p1zamvivw0l5zf4crr82v6f6rpg014fm-sqlite-3.53.3": "sha256-gBE4aLbOGPCS2W4M95NsdFqvD1fvqNre7YeVX0bMaLc=",
+      "/nix/store/p4xn44pyfhfrbwyx9di5dzwfyayx9d16-systemd-minimal-libs-261.1": "sha256-4EU1361x5t+5dln86tkphyYo/h1Dl5LICzzuwJfOY4U=",
+      "/nix/store/p504yd5gipcqczgdi3kygzykmfgdai71-p11-kit-0.26.2": "sha256-2vMv1BPSFTs5jhbsoJc+6d8YjgZ1mx+FQfVbf7XiW8k=",
+      "/nix/store/p6k41cfwvr8plgvcnnlb55wb0cy49qyx-gnused-4.10": "sha256-h0K+OuDGJGAUPRI9F+L4SkB1ywRl790C68baP7dU1CE=",
+      "/nix/store/phs39dhh68pj4jg19qivz8v9b68c5sbd-audit-4.2.1-lib": "sha256-q222lVFwfKycbkn3z1yrVvw0HkPaCQfJqy25PLI6FuE=",
+      "/nix/store/pkjkl2glnx7g3v3s2rlhxmipvfqbrsjl-mpdecimal-4.0.1": "sha256-viA+Rac8Xmr0+SCYbn8n5nPMGgNBkEKaT0hKHjdCWS4=",
+      "/nix/store/pyrvwmigi6qdpz9lbbslj5771pfl7r69-systemd-261.1": "sha256-9/+rJG0Ekh4Rgt8uKqXHI+8w7CBq4c48vNkrTGLB1o8=",
+      "/nix/store/qz6qz18kddi2y25gk9h8ffg37lk8vwcf-gawk-5.4.1": "sha256-SnRhXFyd8+iW0f7yMFxFf1XRK+6KZqLyyMqBXn69MxI=",
+      "/nix/store/r5k6jvbgqbmav38w3n0yadcia99ks5l4-zlib-ng-2.3.3": "sha256-pq5edqB+W1SDAnX7EXIsAmVVn4xOHTLkrACnlSe5Jyk=",
+      "/nix/store/r8lxndj3syf32h2mcp6gnr52vir3qibn-libselinux-3.10": "sha256-KXrmWt5xIKjUpjnffQr7bSD55tddM7+7anEtuDWgZBI=",
+      "/nix/store/rrc4m369h000c5ajmskwb3ksafsz824z-kmod-31": "sha256-dg8RiueXWBR7ts/po+Dv0QaHQEreVU+yMsQOMEzJZJ4=",
+      "/nix/store/s8bv602bckzpwgjijx3lfjb1yv2v5nhc-gnutar-1.35": "sha256-M1TzzYGA75xot60BKgNcCAGGbun7fgKsT4OwbQ4bX9k=",
+      "/nix/store/smlvbkblfh3gnx23yrrxampz2a24bfy9-libpsl-0.21.5": "sha256-XmkxbaG+3ZuSnO3iWaOd8kR35H1PI9M3E4mI9PKgZ6Y=",
+      "/nix/store/sq7c80pva0lk51gn7fbgycr0gaw001pn-gettext-1.0": "sha256-SwxX4LUqaFMYt+PwSDY4ly1BtsZkKTgWodJES7APW/w=",
+      "/nix/store/vnazsj33pbi2nklj0g9w8xs6h9wmgb8k-openssl-3.6.3": "sha256-W3/inydpKPhMQOygNSu1DyZuOiJV4aRcy6FVneW17ok=",
+      "/nix/store/w0szn2ip93x22mzmlxxgncrcj9qnm4wc-curl-8.21.0": "sha256-U0IbK71bGuMtDsTB26YU6sBy3Yq3/L0YVAM4tKzxDZI=",
+      "/nix/store/w590vx55f4fy0g0gvhj2k4w15acavqd3-xz-5.8.3": "sha256-YV77oSk/QzkI0H05NbV82KIx+ktov95Tg5Wa7mpZYtM=",
+      "/nix/store/wi3n92k0x9zdgbmzkvbm51rlfmm5722j-json-c-0.18": "sha256-PnsoTwl4QMUr52aJSjjSuQ41CLPvvuCDKE5ZUkL2sqs=",
+      "/nix/store/wqqb6mbnrnm380adc0ry5hdm449xix4f-gcc-15.3.0": "sha256-22aEFH/TjsXO7mrJSNeZvE+01b4QKEZhpVXJg1VwDPw=",
+      "/nix/store/x01rpzv7bbqi9sic78zjnqyi7jvby1cb-libevent-2.1.13": "sha256-NhtA5OsQ+2KsHhfj6aHCwF+tSa90hP9FBDLMztKqNRE=",
+      "/nix/store/x1gjwa0ywc65sda1nnr1165vx9kngq0w-claude-code-2.1.228": "sha256-uPfuB4CCs6jfn5G/Gj/l2+PT6pMmGXmmQigBqF0ud3I=",
+      "/nix/store/x1zf7hg1r7zpwcgvvl13fy3611lm3bd9-libssh2-1.11.1": "sha256-xHvjpTpypBMQOqiRAkyxA/oyjHJuU3iLEHTze3bQFeM=",
+      "/nix/store/xa1brw3bh0lrw4f5d1g74gmm2jv4d39v-pcre2-10.47": "sha256-cJC0zqlot8G7W31fq+/X7RqQVxVPkI0kTQA1AsAuw3w=",
+      "/nix/store/xdf3jqbcg7v1ykma34b8v950mmq95zg1-binutils-2.46-lib": "sha256-t6qU689Vb46arpuhxf+PHlhF9oxVSjbr8B43BxVuzco=",
+      "/nix/store/xq2d27sf13d5zg6fhndphxqr7f1mggy7-mailcap-2.1.54": "sha256-/2pkdgHKodEDLknYROnuSN0F17m+BZ4AymO51vBpcvU=",
+      "/nix/store/xx42cl6as3w5mjya8cznpp1g9z1vrasw-socat-1.8.1.3": "sha256-eghUIXPWzL4g8r815j6LWwL6oEDVNRQblmwf92sMfxo=",
+      "/nix/store/y0l5kchfn3qcbj44kf09200mjgi14k35-gawk-5.4.1-man": "sha256-BOhag+utsHIs3/PqbRfCRiEd+s319/Fbaj3wdMuGFpc=",
+      "/nix/store/y4kivjss3mg1kxy6p8483s9mi4hf4qmy-brotli-1.2.0-lib": "sha256-lbnkR5q4fS2FL3L0OMS8Juw/79B8f5f8SEbdk0s61hw=",
+      "/nix/store/yhl6wwjg5clqvaz5j6gcbxzv6zkxd057-libtpms-0.10.2-unstable-2026-05-06": "sha256-PH+DVY1WmQpfXU560YwbdA/SutUCZXM14eHlIck4258=",
+      "/nix/store/ylzalvsf8nxhidm1p72k6ckxckpj1wd3-gcc-15.3.0-lib": "sha256-k7+Gj45ldy8ArHNkln5Tcvwa7bnOb18xY33AeAhQTk0=",
+      "/nix/store/yx4sm7i1s32bp906qm1csvlcqz3xpg40-util-linux-minimal-2.42.2-lib": "sha256-P5Ls+9mfsx3m7JpEBDFo+PC497Yg/k3yXdKLG6cESXs=",
+      "/nix/store/z558fjbsk7pmcimy3090ii7gcqas8brg-redis-8.8.1": "sha256-MNb7ZpAnAZ4oVQvqhFpLUcpERxkEwsHRnHEU9NuLv8s=",
+      "/nix/store/z9487m413049a5sq8xprw85hfvkkz8b8-libgcrypt-1.12.2-lib": "sha256-Ymzp45GM1J2vHbL5R8nhjqqNSoYsjqvb1QYZorVBI0I=",
+      "/nix/store/zmhsvn0jkdm2hqixsrxf5jnyy4smm5in-bzip2-1.0.8": "sha256-OXI+wIEq04NK+h6hdCvqjiqJ2Hc4kbgVkXaYvD/UXkw="
+    },
+    "offline_materialization": {
+      "fresh_store": true,
+      "network_namespace": "unshare --net",
+      "nar_contents_verified": true,
+      "source_closure_trust_verified": true,
+      "destination_signature_check": "disabled only for private locally produced cache; NAR hashes independently verified"
+    },
+    "builder": {
+      "host_mounts": [],
+      "nix_build_sandbox": false,
+      "isolation": "dedicated Lima Linux VM; trusted experiment recipe",
+      "packages": [
+        "acl-libs-2.3.2-r1",
+        "ada-libs-3.3.0-r0",
+        "alpine-base-3.23.3-r0",
+        "alpine-baselayout-3.7.1-r8",
+        "alpine-baselayout-data-3.7.1-r8",
+        "alpine-conf-3.21.0-r0",
+        "alpine-keys-2.6-r0",
+        "alpine-release-3.23.3-r0",
+        "apk-tools-3.0.3-r1",
+        "bash-5.3.3-r1",
+        "bc-1.08.2-r0",
+        "binutils-2.45.1-r0",
+        "bison-3.8.2-r2",
+        "blkid-2.41.2-r0",
+        "bridge-1.5-r5",
+        "brotli-libs-1.2.0-r0",
+        "bsd-compat-headers-0.7.2-r6",
+        "build-base-0.5-r3",
+        "busybox-1.37.0-r30",
+        "busybox-binsh-1.37.0-r30",
+        "busybox-mdev-openrc-1.37.0-r30",
+        "busybox-openrc-1.37.0-r30",
+        "busybox-suid-1.37.0-r30",
+        "bzip2-dev-1.0.8-r6",
+        "c-ares-1.34.9-r0",
+        "ca-certificates-20261020-r0",
+        "ca-certificates-bundle-20251003-r0",
+        "chrony-4.8-r1",
+        "chrony-openrc-4.8-r1",
+        "cloud-init-25.3-r0",
+        "cloud-init-datasource-akamai-25.3-r0",
+        "cloud-init-datasource-akamai-pyc-25.3-r0",
+        "cloud-init-datasource-aliyun-25.3-r0",
+        "cloud-init-datasource-aliyun-pyc-25.3-r0",
+        "cloud-init-datasource-altcloud-25.3-r0",
+        "cloud-init-datasource-altcloud-pyc-25.3-r0",
+        "cloud-init-datasource-azure-25.3-r0",
+        "cloud-init-datasource-azure-pyc-25.3-r0",
+        "cloud-init-datasource-bigstep-25.3-r0",
+        "cloud-init-datasource-bigstep-pyc-25.3-r0",
+        "cloud-init-datasource-cloudcix-25.3-r0",
+        "cloud-init-datasource-cloudcix-pyc-25.3-r0",
+        "cloud-init-datasource-cloudsigma-25.3-r0",
+        "cloud-init-datasource-cloudsigma-pyc-25.3-r0",
+        "cloud-init-datasource-cloudstack-25.3-r0",
+        "cloud-init-datasource-cloudstack-pyc-25.3-r0",
+        "cloud-init-datasource-configdrive-25.3-r0",
+        "cloud-init-datasource-configdrive-pyc-25.3-r0",
+        "cloud-init-datasource-digitalocean-25.3-r0",
+        "cloud-init-datasource-digitalocean-pyc-25.3-r0",
+        "cloud-init-datasource-ec2-25.3-r0",
+        "cloud-init-datasource-ec2-pyc-25.3-r0",
+        "cloud-init-datasource-exoscale-25.3-r0",
+        "cloud-init-datasource-exoscale-pyc-25.3-r0",
+        "cloud-init-datasource-gce-25.3-r0",
+        "cloud-init-datasource-gce-pyc-25.3-r0",
+        "cloud-init-datasource-hetzner-25.3-r0",
+        "cloud-init-datasource-hetzner-pyc-25.3-r0",
+        "cloud-init-datasource-ibmcloud-25.3-r0",
+        "cloud-init-datasource-ibmcloud-pyc-25.3-r0",
+        "cloud-init-datasource-lxd-25.3-r0",
+        "cloud-init-datasource-lxd-pyc-25.3-r0",
+        "cloud-init-datasource-maas-25.3-r0",
+        "cloud-init-datasource-maas-pyc-25.3-r0",
+        "cloud-init-datasource-nocloud-25.3-r0",
+        "cloud-init-datasource-nocloud-pyc-25.3-r0",
+        "cloud-init-datasource-nwcs-25.3-r0",
+        "cloud-init-datasource-nwcs-pyc-25.3-r0",
+        "cloud-init-datasource-opennebula-25.3-r0",
+        "cloud-init-datasource-opennebula-pyc-25.3-r0",
+        "cloud-init-datasource-openstack-25.3-r0",
+        "cloud-init-datasource-openstack-pyc-25.3-r0",
+        "cloud-init-datasource-oracle-25.3-r0",
+        "cloud-init-datasource-oracle-pyc-25.3-r0",
+        "cloud-init-datasource-ovf-25.3-r0",
+        "cloud-init-datasource-ovf-pyc-25.3-r0",
+        "cloud-init-datasource-rbx-25.3-r0",
+        "cloud-init-datasource-rbx-pyc-25.3-r0",
+        "cloud-init-datasource-scaleway-25.3-r0",
+        "cloud-init-datasource-scaleway-pyc-25.3-r0",
+        "cloud-init-datasource-smartos-25.3-r0",
+        "cloud-init-datasource-smartos-pyc-25.3-r0",
+        "cloud-init-datasource-upcloud-25.3-r0",
+        "cloud-init-datasource-upcloud-pyc-25.3-r0",
+        "cloud-init-datasource-vmware-25.3-r0",
+        "cloud-init-datasource-vmware-pyc-25.3-r0",
+        "cloud-init-datasource-vultr-25.3-r0",
+        "cloud-init-datasource-vultr-pyc-25.3-r0",
+        "cloud-init-datasource-wsl-25.3-r0",
+        "cloud-init-datasource-wsl-pyc-25.3-r0",
+        "cloud-init-datasources-25.3-r0",
+        "cloud-init-openrc-25.3-r0",
+        "cloud-init-pyc-25.3-r0",
+        "cloud-utils-growpart-0.33-r1",
+        "coreutils-9.8-r1",
+        "coreutils-env-9.8-r1",
+        "coreutils-fmt-9.8-r1",
+        "coreutils-sha512sum-9.8-r1",
+        "cryptsetup-libs-2.8.1-r0",
+        "curl-8.23.0-r0",
+        "device-mapper-libs-2.03.35-r0",
+        "dhcpcd-10.3.0-r0",
+        "dhcpcd-openrc-10.3.0-r0",
+        "doas-6.8.2-r8",
+        "docbook-xml-4.5-r10",
+        "docbook-xsl-1.79.2-r13",
+        "docbook-xsl-nons-1.79.2-r13",
+        "docbook-xsl-ns-1.79.2-r13",
+        "dosfstools-4.2-r2",
+        "e2fsprogs-1.47.3-r0",
+        "e2fsprogs-dev-1.47.3-r0",
+        "e2fsprogs-extra-1.47.3-r0",
+        "e2fsprogs-libs-1.47.3-r0",
+        "file-5.46-r2",
+        "flex-2.6.4-r7",
+        "fortify-headers-1.1-r5",
+        "g++-15.2.0-r2",
+        "gawk-5.3.2-r2",
+        "gcc-15.2.0-r2",
+        "gdbm-1.26-r0",
+        "gettext-0.24.1-r1",
+        "gettext-asprintf-0.24.1-r1",
+        "gettext-dev-0.24.1-r1",
+        "gettext-envsubst-0.24.1-r1",
+        "gettext-libs-0.24.1-r1",
+        "glib-2.86.5-r0",
+        "glib-dev-2.86.5-r0",
+        "gmp-6.3.0-r4",
+        "gnutls-3.8.11-r0",
+        "grub-2.12-r8",
+        "grub-efi-2.12-r8",
+        "icu-data-en-76.1-r1",
+        "icu-libs-76.1-r1",
+        "ifupdown-ng-0.12.1-r7",
+        "ifupdown-ng-iproute2-0.12.1-r7",
+        "iproute2-minimal-6.17.0-r0",
+        "isl26-0.26-r1",
+        "jansson-2.14.1-r0",
+        "json-c-0.18-r1",
+        "keyutils-libs-1.6.3-r4",
+        "kmod-34.2-r1",
+        "kmod-libs-34.2-r1",
+        "krb5-conf-1.0-r2",
+        "krb5-dev-1.22.1-r0",
+        "krb5-libs-1.22.1-r0",
+        "krb5-server-ldap-1.22.1-r0",
+        "lddtree-1.27-r0",
+        "libapk-3.0.3-r1",
+        "libatomic-15.2.0-r2",
+        "libattr-2.5.2-r2",
+        "libblkid-2.41.6-r1",
+        "libbsd-0.12.2-r0",
+        "libbz2-1.0.8-r6",
+        "libcap2-2.77-r0",
+        "libcom_err-1.47.3-r0",
+        "libcrypto3-3.5.9-r0",
+        "libcurl-8.23.0-r0",
+        "libdw-0.194-r0",
+        "libeconf-0.8.3-r0",
+        "libedit-20251016.3.1-r0",
+        "libedit-dev-20251016.3.1-r0",
+        "libelf-0.194-r0",
+        "libev-4.33-r1",
+        "libevent-2.1.13-r0",
+        "libexpat-2.7.3-r0",
+        "libfdisk-2.41.6-r1",
+        "libffi-3.5.2-r0",
+        "libffi-dev-3.5.2-r0",
+        "libformw-6.5_p20251123-r0",
+        "libgcc-15.2.0-r2",
+        "libgcrypt-1.11.2-r0",
+        "libgcrypt-dev-1.11.2-r0",
+        "libgomp-15.2.0-r2",
+        "libgpg-error-1.55-r0",
+        "libgpg-error-dev-1.55-r0",
+        "libidn2-2.3.8-r0",
+        "libintl-0.24.1-r1",
+        "liblastlog2-2.41.6-r1",
+        "libldap-2.6.13-r0",
+        "libmagic-5.46-r2",
+        "libmd-1.1.0-r0",
+        "libmenuw-6.5_p20251123-r0",
+        "libmnl-1.0.5-r2",
+        "libmount-2.41.6-r1",
+        "libncurses++-6.5_p20251123-r0",
+        "libncursesw-6.5_p20251123-r0",
+        "libnvme-1.16.1-r0",
+        "libnvmemi-1.16.1-r0",
+        "libpanelw-6.5_p20251123-r0",
+        "libpcre2-16-10.49-r0",
+        "libpcre2-32-10.49-r0",
+        "libpsl-0.21.5-r3",
+        "libsasl-2.1.28-r9",
+        "libseccomp-2.6.0-r1",
+        "libsecret-0.21.7-r0",
+        "libsecret-dev-0.21.7-r0",
+        "libsmartcols-2.41.6-r1",
+        "libssl3-3.5.9-r0",
+        "libstdc++-15.2.0-r2",
+        "libstdc++-dev-15.2.0-r2",
+        "libtasn1-4.21.0-r0",
+        "libunistring-1.4.1-r0",
+        "libuuid-2.41.6-r1",
+        "libverto-0.3.2-r2",
+        "libverto-dev-0.3.2-r2",
+        "libverto-glib-0.3.2-r2",
+        "libverto-libev-0.3.2-r2",
+        "libverto-libevent-0.3.2-r2",
+        "libx11-1.8.12-r1",
+        "libx11-dev-1.8.12-r1",
+        "libxau-1.0.12-r0",
+        "libxau-dev-1.0.12-r0",
+        "libxcb-1.17.0-r1",
+        "libxcb-dev-1.17.0-r1",
+        "libxdmcp-1.1.5-r1",
+        "libxdmcp-dev-1.1.5-r1",
+        "libxkbfile-1.1.3-r0",
+        "libxkbfile-dev-1.1.3-r0",
+        "libxml2-2.13.9-r1",
+        "libxml2-utils-2.13.9-r1",
+        "libxslt-1.1.43-r3",
+        "libxxhash-0.8.3-r0",
+        "linux-headers-6.16.12-r0",
+        "linux-pam-1.7.1-r2",
+        "linux-virt-6.18.7-r0",
+        "lz4-libs-1.10.0-r0",
+        "m4-1.4.20-r0",
+        "make-4.4.1-r3",
+        "mdev-conf-4.9-r0",
+        "mkinitfs-3.13.0-r0",
+        "mount-2.41.2-r0",
+        "mpc1-1.3.1-r1",
+        "mpdecimal-4.0.1-r0",
+        "mpfr4-4.2.2-r0",
+        "musl-1.2.5-r24",
+        "musl-dev-1.2.5-r24",
+        "musl-fts-1.2.7-r7",
+        "musl-utils-1.2.5-r21",
+        "ncurses-dev-6.5_p20251123-r0",
+        "ncurses-terminfo-base-6.5_p20251123-r0",
+        "netcat-openbsd-1.234.1-r0",
+        "nettle-3.10.2-r0",
+        "nghttp2-libs-1.69.0-r0",
+        "nodejs-24.22.1-r1",
+        "nodejs-dev-24.22.1-r1",
+        "nodejs-libs-24.22.1-r1",
+        "npm-11.11.0-r0",
+        "nvme-cli-2.16-r1",
+        "openrc-0.63-r1",
+        "openrc-user-0.63-r1",
+        "openssh-10.2_p1-r0",
+        "openssh-client-common-10.2_p1-r0",
+        "openssh-client-default-10.2_p1-r0",
+        "openssh-keygen-10.2_p1-r0",
+        "openssh-server-10.2_p1-r0",
+        "openssh-server-common-10.2_p1-r0",
+        "openssh-server-common-openrc-10.2_p1-r0",
+        "openssh-server-pam-10.2_p1-r0",
+        "openssh-sftp-server-10.2_p1-r0",
+        "openssl-dev-3.5.9-r0",
+        "p11-kit-0.25.5-r2",
+        "partx-2.41.2-r0",
+        "patch-2.8-r0",
+        "pcre2-10.49-r0",
+        "pcre2-dev-10.49-r0",
+        "perl-5.42.2-r0",
+        "pkgconf-2.5.1-r0",
+        "popt-1.19-r4",
+        "py3-attrs-25.3.0-r0",
+        "py3-attrs-pyc-25.3.0-r0",
+        "py3-certifi-2025.11.12-r0",
+        "py3-certifi-pyc-2025.11.12-r0",
+        "py3-charset-normalizer-3.4.4-r0",
+        "py3-charset-normalizer-pyc-3.4.4-r0",
+        "py3-configobj-5.0.9-r1",
+        "py3-configobj-pyc-5.0.9-r1",
+        "py3-idna-3.11-r0",
+        "py3-idna-pyc-3.11-r0",
+        "py3-jinja2-3.1.6-r0",
+        "py3-jinja2-pyc-3.1.6-r0",
+        "py3-jsonpatch-1.33-r3",
+        "py3-jsonpatch-pyc-1.33-r3",
+        "py3-jsonpointer-3.0.0-r0",
+        "py3-jsonpointer-pyc-3.0.0-r0",
+        "py3-jsonschema-4.25.1-r0",
+        "py3-jsonschema-pyc-4.25.1-r0",
+        "py3-jsonschema-specifications-2025.9.1-r0",
+        "py3-jsonschema-specifications-pyc-2025.9.1-r0",
+        "py3-markupsafe-3.0.2-r0",
+        "py3-markupsafe-pyc-3.0.2-r0",
+        "py3-packaging-25.0-r0",
+        "py3-packaging-pyc-25.0-r0",
+        "py3-parsing-3.2.5-r0",
+        "py3-parsing-pyc-3.2.5-r0",
+        "py3-referencing-0.37.0-r0",
+        "py3-referencing-pyc-0.37.0-r0",
+        "py3-requests-2.32.5-r0",
+        "py3-requests-pyc-2.32.5-r0",
+        "py3-rpds-py-0.30.0-r0",
+        "py3-rpds-py-pyc-0.30.0-r0",
+        "py3-typing-extensions-4.15.0-r0",
+        "py3-typing-extensions-pyc-4.15.0-r0",
+        "py3-urllib3-2.6.3-r0",
+        "py3-urllib3-pyc-2.6.3-r0",
+        "py3-yaml-6.0.3-r0",
+        "py3-yaml-pyc-6.0.3-r0",
+        "pyc-3.12.12-r0",
+        "python3-3.12.12-r0",
+        "python3-pyc-3.12.12-r0",
+        "python3-pycache-pyc0-3.12.12-r0",
+        "readline-8.3.1-r0",
+        "rsync-3.5.2-r1",
+        "rsync-openrc-3.5.2-r1",
+        "scanelf-1.3.8-r2",
+        "sfdisk-2.41.2-r0",
+        "shadow-4.18.0-r0",
+        "simdjson-3.12.0-r0",
+        "simdutf-7.5.0-r1",
+        "skalibs-libs-2.14.4.0-r0",
+        "sqlite-3.53.4-r0",
+        "sqlite-dev-3.53.4-r0",
+        "sqlite-libs-3.53.4-r0",
+        "ssl_client-1.37.0-r30",
+        "strace-6.17-r0",
+        "sudo-1.9.17_p2-r0",
+        "tzdata-2025c-r0",
+        "util-linux-dev-2.41.6-r1",
+        "utmps-libs-0.1.3.1-r0",
+        "xcb-proto-1.17.0-r0",
+        "xcb-proto-pyc-1.17.0-r0",
+        "xorgproto-2024.1-r0",
+        "xtrans-1.6.0-r0",
+        "xz-5.8.4-r0",
+        "xz-libs-5.8.2-r0",
+        "yaml-0.2.5-r2",
+        "zlib-1.4-r0",
+        "zlib-dev-1.4-r0",
+        "zstd-libs-1.5.7-r2"
+      ]
+    },
+    "build_script_sha256": "40fcc26c369f1e5445f02e06714dea12102550d25e833455939b9df1402d4a2d",
+    "project_source": {
+      "schema": 1,
+      "project": "xxHash",
+      "version": "0.8.3",
+      "url": "https://github.com/Cyan4973/xxHash/archive/refs/tags/v0.8.3.tar.gz",
+      "sha256": "aae608dfe8213dfd05d909a57718ef82f30722c392344583d3f39050c7f29a80",
+      "build": "make -j2 xxhsum; make -C tests test_sanity",
+      "small_files": 2048,
+      "service": "Alpine Redis, exact APK closure recorded separately; appendonly yes, appendfsync always"
+    },
+    "qualification": "pinned closure materialization; not full source rebuild or fleet eligibility",
+    "toolchain.img": {
+      "sha256": "9b429cbaa233d84ebaa3f9f693b3de4dac7358211066b71f56cac8379ffb369c",
+      "bytes": 2214592512
+    },
+    "data.seed.img": {
+      "sha256": "135048ef8f76729ecac685fe288e70c513efed5d7332092baa6ca8750897aebf",
+      "bytes": 134217728
+    },
+    "cache.tar": {
+      "sha256": "89aae7876aeb1545a5e050ec48017d099e0bb4c0f84ea9cef02b78096726e38f",
+      "bytes": 333168640
+    },
+    "closure.json": {
+      "sha256": "e0dd72bb3c5fe816e0a64ecf079d4746750310fbb53bb5cfcebf7b1bbd46dfc1",
+      "bytes": 100873
+    }
+  },
+  "agent_selection": [
+    "codex",
+    "claude"
+  ],
+  "resources_per_vm": {
+    "vcpus": 2,
+    "memory_mib": 1024
+  },
+  "raw_evidence": "experiments/microvm/runs/20261111-hvi-agent-ssh-tls-validity",
+  "agents": [
+    {
+      "agent": "codex",
+      "version_stdout": "codex-cli 0.147.0",
+      "probe": {
+        "startup_samples": [
+          {
+            "repetition": 0,
+            "session_exit_seconds": 1.7829854169976898,
+            "cli_ready_events": [
+              {
+                "event": "thread.started",
+                "subtype": null,
+                "upper_bound_seconds": 1.4135059170075692
+              },
+              {
+                "event": "turn.started",
+                "subtype": null,
+                "upper_bound_seconds": 1.4362105829641223
+              }
+            ],
+            "initialization_upper_bound_seconds": 1.4362105829641223,
+            "startup_within_5_seconds": true,
+            "cli_exit_code": 1,
+            "real_vendor_guest_tls_dummy_key_status": 401
+          },
+          {
+            "repetition": 1,
+            "session_exit_seconds": 1.3220988340326585,
+            "cli_ready_events": [
+              {
+                "event": "thread.started",
+                "subtype": null,
+                "upper_bound_seconds": 1.1089881249936298
+              },
+              {
+                "event": "turn.started",
+                "subtype": null,
+                "upper_bound_seconds": 1.1118279590154998
+              }
+            ],
+            "initialization_upper_bound_seconds": 1.1118279590154998,
+            "startup_within_5_seconds": true,
+            "cli_exit_code": 1,
+            "real_vendor_guest_tls_dummy_key_status": 401
+          },
+          {
+            "repetition": 2,
+            "session_exit_seconds": 1.311891875055153,
+            "cli_ready_events": [
+              {
+                "event": "thread.started",
+                "subtype": null,
+                "upper_bound_seconds": 1.1050135000259615
+              },
+              {
+                "event": "turn.started",
+                "subtype": null,
+                "upper_bound_seconds": 1.1078225420205854
+              }
+            ],
+            "initialization_upper_bound_seconds": 1.1078225420205854,
+            "startup_within_5_seconds": true,
+            "cli_exit_code": 1,
+            "real_vendor_guest_tls_dummy_key_status": 401
+          },
+          {
+            "repetition": 3,
+            "session_exit_seconds": 1.3004624159657396,
+            "cli_ready_events": [
+              {
+                "event": "thread.started",
+                "subtype": null,
+                "upper_bound_seconds": 1.0830662910011597
+              },
+              {
+                "event": "turn.started",
+                "subtype": null,
+                "upper_bound_seconds": 1.086601790972054
+              }
+            ],
+            "initialization_upper_bound_seconds": 1.086601790972054,
+            "startup_within_5_seconds": true,
+            "cli_exit_code": 1,
+            "real_vendor_guest_tls_dummy_key_status": 401
+          },
+          {
+            "repetition": 4,
+            "session_exit_seconds": 1.368554541026242,
+            "cli_ready_events": [
+              {
+                "event": "thread.started",
+                "subtype": null,
+                "upper_bound_seconds": 1.1670839579892345
+              },
+              {
+                "event": "turn.started",
+                "subtype": null,
+                "upper_bound_seconds": 1.1708955410285853
+              }
+            ],
+            "initialization_upper_bound_seconds": 1.1708955410285853,
+            "startup_within_5_seconds": true,
+            "cli_exit_code": 1,
+            "real_vendor_guest_tls_dummy_key_status": 401
+          }
+        ],
+        "measurement_scope": "host before new pinned-key SSH exec to actual CLI initialization event; prepared VM and SSH reverse transport; vendor response separately verified",
+        "private_home_reused_within_prepared_vm": true,
+        "real_vendor_guest_tls_dummy_key_status": 401,
+        "guest_tls_verified": true,
+        "real_cli_untrusted_certificate_refused": true,
+        "tls_negative_events": [
+          {
+            "at": 471734.611423791,
+            "server_name": "api.openai.com",
+            "handshake_accepted": false,
+            "error": "[SSL: SSLV3_ALERT_CERTIFICATE_UNKNOWN] ssl/tls alert certificate unknown (_ssl.c:1081)"
+          }
+        ],
+        "negative_probe_supervised_stop": false,
+        "explicit_test_ca_positive": null,
+        "untrusted_certificate": {
+          "path": "/Users/dragos/Development/devcroft-codex/experiments/microvm/runs/20261111-hvi-agent-ssh-tls-validity/codex-untrusted-certificate/untrusted-tls.pem",
+          "sha256": "25cda81599e5dddf3da62896a4749861df1c69e02a94202905b9c72933bedc87"
+        },
+        "test_certificate_validity": {
+          "host_epoch": 1794408989.743534,
+          "guest_epoch": 1794408990,
+          "host_minus_guest_seconds": -0.2564659118652344,
+          "not_before": "20261111145129Z",
+          "not_after": "20261111155630Z",
+          "openssl": "/opt/homebrew/bin/openssl",
+          "openssl_version": "OpenSSL 3.6.3 9 Jun 2026 (Library: OpenSSL 3.6.3 9 Jun 2026)",
+          "scope": "local test certificate only; no clock change, trust bypass or vendor-certificate modification"
+        },
+        "startup_within_5_seconds": true,
+        "completed_agent_task": false,
+        "forward_wrong_address_port_dynamic_denied": true,
+        "fixed_host_destination": "api.openai.com:443",
+        "cancelled_listener_refused": true
+      }
+    },
+    {
+      "agent": "claude",
+      "version_stdout": "2.1.228 (Claude Code)",
+      "probe": {
+        "startup_samples": [
+          {
+            "repetition": 0,
+            "session_exit_seconds": 1.7670159590197727,
+            "cli_ready_events": [
+              {
+                "event": "system",
+                "subtype": "init",
+                "upper_bound_seconds": 1.5061996669974178
+              }
+            ],
+            "initialization_upper_bound_seconds": 1.5061996669974178,
+            "startup_within_5_seconds": true,
+            "cli_exit_code": 1,
+            "real_vendor_guest_tls_dummy_key_status": 401
+          },
+          {
+            "repetition": 1,
+            "session_exit_seconds": 1.6345699580269866,
+            "cli_ready_events": [
+              {
+                "event": "system",
+                "subtype": "init",
+                "upper_bound_seconds": 1.3869640000048093
+              }
+            ],
+            "initialization_upper_bound_seconds": 1.3869640000048093,
+            "startup_within_5_seconds": true,
+            "cli_exit_code": 1,
+            "real_vendor_guest_tls_dummy_key_status": 401
+          },
+          {
+            "repetition": 2,
+            "session_exit_seconds": 1.6136946660117246,
+            "cli_ready_events": [
+              {
+                "event": "system",
+                "subtype": "init",
+                "upper_bound_seconds": 1.376258999982383
+              }
+            ],
+            "initialization_upper_bound_seconds": 1.376258999982383,
+            "startup_within_5_seconds": true,
+            "cli_exit_code": 1,
+            "real_vendor_guest_tls_dummy_key_status": 401
+          },
+          {
+            "repetition": 3,
+            "session_exit_seconds": 1.6206770419958048,
+            "cli_ready_events": [
+              {
+                "event": "system",
+                "subtype": "init",
+                "upper_bound_seconds": 1.3946407919866033
+              }
+            ],
+            "initialization_upper_bound_seconds": 1.3946407919866033,
+            "startup_within_5_seconds": true,
+            "cli_exit_code": 1,
+            "real_vendor_guest_tls_dummy_key_status": 401
+          },
+          {
+            "repetition": 4,
+            "session_exit_seconds": 1.6293394170352258,
+            "cli_ready_events": [
+              {
+                "event": "system",
+                "subtype": "init",
+                "upper_bound_seconds": 1.3888087090454064
+              }
+            ],
+            "initialization_upper_bound_seconds": 1.3888087090454064,
+            "startup_within_5_seconds": true,
+            "cli_exit_code": 1,
+            "real_vendor_guest_tls_dummy_key_status": 401
+          }
+        ],
+        "measurement_scope": "host before new pinned-key SSH exec to actual CLI initialization event; prepared VM and SSH reverse transport; vendor response separately verified",
+        "private_home_reused_within_prepared_vm": true,
+        "real_vendor_guest_tls_dummy_key_status": 401,
+        "guest_tls_verified": true,
+        "real_cli_untrusted_certificate_refused": true,
+        "tls_negative_events": [
+          {
+            "at": 471752.078849916,
+            "server_name": "api.anthropic.com",
+            "handshake_accepted": true,
+            "application_bytes_received": 0,
+            "client_closed_without_application_data": true
+          },
+          {
+            "at": 471752.092858708,
+            "server_name": "api.anthropic.com",
+            "handshake_accepted": true,
+            "application_bytes_received": 0,
+            "client_closed_without_application_data": true
+          },
+          {
+            "at": 471752.0969365,
+            "server_name": "api.anthropic.com",
+            "handshake_accepted": true,
+            "application_bytes_received": 0,
+            "client_closed_without_application_data": true
+          },
+          {
+            "at": 471752.7192945,
+            "server_name": "api.anthropic.com",
+            "handshake_accepted": true,
+            "application_bytes_received": 0,
+            "client_closed_without_application_data": true
+          },
+          {
+            "at": 471752.721476041,
+            "server_name": "api.anthropic.com",
+            "handshake_accepted": true,
+            "application_bytes_received": 0,
+            "client_closed_without_application_data": true
+          },
+          {
+            "at": 471753.775834333,
+            "server_name": "api.anthropic.com",
+            "handshake_accepted": true,
+            "application_bytes_received": 0,
+            "client_closed_without_application_data": true
+          },
+          {
+            "at": 471753.866908875,
+            "server_name": "api.anthropic.com",
+            "handshake_accepted": true,
+            "application_bytes_received": 0,
+            "client_closed_without_application_data": true
+          },
+          {
+            "at": 471755.886012083,
+            "server_name": "api.anthropic.com",
+            "handshake_accepted": true,
+            "application_bytes_received": 0,
+            "client_closed_without_application_data": true
+          }
+        ],
+        "negative_probe_supervised_stop": true,
+        "explicit_test_ca_positive": [
+          {
+            "at": 471758.197607083,
+            "server_name": "api.anthropic.com",
+            "handshake_accepted": true,
+            "application_bytes_received": 155,
+            "client_closed_without_application_data": false
+          },
+          {
+            "at": 471758.205131833,
+            "server_name": "api.anthropic.com",
+            "handshake_accepted": true,
+            "application_bytes_received": 276,
+            "client_closed_without_application_data": false
+          },
+          {
+            "at": 471758.214284416,
+            "server_name": "api.anthropic.com",
+            "handshake_accepted": true,
+            "application_bytes_received": 314,
+            "client_closed_without_application_data": false
+          },
+          {
+            "at": 471758.239813791,
+            "server_name": "api.anthropic.com",
+            "handshake_accepted": true,
+            "application_bytes_received": 2173,
+            "client_closed_without_application_data": false
+          }
+        ],
+        "untrusted_certificate": {
+          "path": "/Users/dragos/Development/devcroft-codex/experiments/microvm/runs/20261111-hvi-agent-ssh-tls-validity/claude-untrusted-certificate/untrusted-tls.pem",
+          "sha256": "5ad9549883c319c48a5eaad45889e1b6939ef507041ecf0c298375010faacd60"
+        },
+        "test_certificate_validity": {
+          "host_epoch": 1794409007.234889,
+          "guest_epoch": 1794409007,
+          "host_minus_guest_seconds": 0.23488903045654297,
+          "not_before": "20261111145147Z",
+          "not_after": "20261111155647Z",
+          "openssl": "/opt/homebrew/bin/openssl",
+          "openssl_version": "OpenSSL 3.6.3 9 Jun 2026 (Library: OpenSSL 3.6.3 9 Jun 2026)",
+          "scope": "local test certificate only; no clock change, trust bypass or vendor-certificate modification"
+        },
+        "startup_within_5_seconds": true,
+        "completed_agent_task": false,
+        "forward_wrong_address_port_dynamic_denied": true,
+        "fixed_host_destination": "api.anthropic.com:443",
+        "cancelled_listener_refused": true
+      }
+    }
+  ],
+  "harness_sources": {
+    "agent_probe.py": "0d9169c3fc5e758ae74c3cc1a7e88ae5c58c3b552a35c8a2e3719b8a170b366e",
+    "smoke.py": "11b0c8e4f9b38ad86de1da496297dc7248502c3e6d4c4ce0e9a64c39ab05bf05",
+    "ssh_smoke.py": "cfddc0a941dab7ac5633d0c83e9649898e2622237d138e1084b9de94434e1a7e",
+    "workload_smoke.py": "9051808535ccbcf757b45f4b5afce31e030107d9c890a3ef29dae988b5fb15ff"
+  },
+  "measurement_protocol": {
+    "schema": 1,
+    "recorded_at": "2026-11-10T06:57:58.446244+00:00",
+    "owner_selection": "Ambele: Codex and Claude Code",
+    "platform": "macos-arm64-native",
+    "adapters": [
+      "libkrun",
+      "hvi"
+    ],
+    "instances": 1,
+    "vcpus": 2,
+    "memory_mib": 1024,
+    "repetitions_per_cli": 5,
+    "cli_versions": {
+      "codex": "0.147.0",
+      "claudeCode": "2.1.228"
+    },
+    "thresholds": {
+      "path": "fixtures/no-go-thresholds.json",
+      "sha256": "5db6e27a67179c45403b159684b22db7789d2bc019552ae205d8a1ca2ba3768e"
+    },
+    "measurement": "host monotonic clock immediately before a new pinned-key SSH exec until the actual CLI turn.started (Codex) or system/init (Claude) event is read; includes SSH overhead; VM and fixed reverse forward already prepared",
+    "cache_condition": "fresh private VM per adapter; immutable pinned agent closure; five new CLI/SSH sessions reuse that VM and its private home; OS caches not flushed",
+    "transport": "no NIC/TSI; existing fixed vsock SSH port; guest-only loopback 443 is forwarded by trusted OpenSSH client to exactly one vendor:443; immutable hosts aliases preserve real server name; TLS validation runs inside guest",
+    "credentials": "only deliberately invalid test keys; no real login/host credential import",
+    "positive_controls": [
+      "both real pinned CLI versions/help",
+      "verified HTTPS from guest to actual vendor returning 401",
+      "actual CLI initialization event plus vendor 401 for every repetition"
+    ],
+    "negative_controls": [
+      "wildcard, wrong and dynamic reverse ports refused",
+      "OpenSSH cancel removes guest listener",
+      "normal production keeper refuses all reverse forwarding by default",
+      "Each actual CLI reaches a live TLS endpoint with correct vendor SNI and a self-signed certificate. Codex sends an unknown-CA alert. Claude sends no application bytes with default trust and does send application bytes to the exact same endpoint when its public test CA is explicitly added in that child process; its retry loop is stopped under five-second supervision."
+    ],
+    "interpretation": "startup and dummy-key transport only; not a completed authenticated agent task; no concurrent-agent-density or production credential-channel qualification",
+    "comparison_rule": "any valid initialization sample above accepted five-second limit fails the startup row; failures and incomplete rows retained",
+    "revisions": [
+      {
+        "previous_sha256": "6090afa5d8219745cd165069bfb958dc360a132c93c099851623047a8c4db2cd",
+        "at": "2026-11-10T07:00:46.124766+00:00",
+        "reason": "Pilot showed the upstream rejects absent SNI before sending a certificate. Use an unrelated valid trust root with the correct SNI to test the client validator directly. Virtual HTTPS port is standard 443, preserving HTTP authority; nonstandard authority also timed out in the direct host control. No accepted E5 threshold changed."
+      },
+      {
+        "previous_sha256": "feb6e7b4f89850ac41f4b17cd54c9741fb065ffcc15f6b4a371937840009faad",
+        "at": "2026-11-10T07:04:13.955492+00:00",
+        "reason": "Codex uses bundled roots and did not honor replacing SSL_CERT_FILE; this is not a TLS validation failure. Replace the ineffective environment override with an actual self-signed server at the correct hostname. Startup thresholds unchanged."
+      },
+      {
+        "previous_sha256": "64248492ce649b73c17e2c2337d58f71faaada8d177ea303e3a2196b4f978b1c",
+        "at": "2026-11-10T07:14:52.285160+00:00",
+        "reason": "Pilot established that Bun completes the cryptographic handshake before dropping the connection without application data and reconnects without a final error. Verify default-trust versus explicit-test-CA behavior on the same endpoint; record SNI, byte counts and supervised stop. No TLS bypass observed. Startup threshold unchanged."
+      }
+    ]
+  },
+  "protocol_artifact": {
+    "path": "/Users/dragos/Development/devcroft-codex/experiments/microvm/fixtures/agent-start-protocol.json",
+    "sha256": "3934c9859cd3804513c861cd8682665a798bab7706c26944f4b30c08fdef53fa"
+  },
+  "kernel": {
+    "path": "/Users/dragos/Development/devcroft-codex/experiments/microvm/artifacts/kernel-landlock/Image",
+    "sha256": "2b8b6d4664f1521a0d9bcc22252c4cc2e0bc98a5bbcf2500cc1e45ef1e1275fb"
+  },
+  "agent_image": {
+    "path": "/Users/dragos/Development/devcroft-codex/experiments/microvm/artifacts/agents/toolchain.img",
+    "sha256": "9b429cbaa233d84ebaa3f9f693b3de4dac7358211066b71f56cac8379ffb369c"
+  },
+  "seed": {
+    "path": "/Users/dragos/Development/devcroft-codex/experiments/microvm/artifacts/agents/data.seed.img",
+    "sha256": "135048ef8f76729ecac685fe288e70c513efed5d7332092baa6ca8750897aebf"
+  },
+  "instance": {
+    "path": "/private/tmp/ds-4p62_wbn",
+    "boots": [
+      {
+        "boot": 1,
+        "greeting": "READY 1 state=1 ro=1 landlock=6 policy=1",
+        "ready_seconds": 8.720844291965477,
+        "exit_code": 0,
+        "forced_cleanup": false,
+        "log_overflow": false,
+        "ssh_console_captured": true,
+        "guest_console_stream": "stdout"
+      }
+    ]
+  },
+  "functional_status": "passed",
+  "agent_start_criterion": "passed",
+  "cleanup": {
+    "helper_reaped": true,
+    "endpoints_removed": true
+  }
+}

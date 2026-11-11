@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
 """Real Codex/Claude Code initialization and dummy-key HTTPS API transport."""
 import argparse
+import datetime
 import hashlib
 import json
 import os
 from pathlib import Path
 import shlex
+import shutil
 import signal
 import socket
 import ssl
@@ -85,16 +87,39 @@ def timed_cli(vm, agent, out, extra_ca=None, timeout=20):
 
 class UntrustedTlsEndpoint:
     """Negative fixture only: TLS handshake, no HTTP/request parser or relay."""
-    def __init__(self, host, out):
+    def __init__(self, host, out, guest_epoch):
         self.out, self.events = out, []
+        now = time.time()
+        require(abs(now - guest_epoch) <= 3600, 'guest/host wall clocks differ by more than one hour')
+        # The negative control must fail because of trust, not because a new
+        # certificate starts after the guest's wall clock. Keep TLS validation
+        # enabled and explicitly cover both observed clocks with this test cert.
+        before, after = min(now, guest_epoch) - 300, max(now, guest_epoch) + 3600
+        stamp = lambda epoch: datetime.datetime.fromtimestamp(epoch, datetime.timezone.utc).strftime('%Y%m%d%H%M%SZ')
+        openssl = shutil.which('openssl')
+        require(openssl, 'OpenSSL with explicit certificate validity controls is required')
+        version = command([openssl, 'version'], out, 'untrusted-tls-openssl-version')
+        require(version.returncode == 0, version.stderr)
+        self.validity = {'host_epoch': now, 'guest_epoch': guest_epoch,
+                         'host_minus_guest_seconds': now - guest_epoch,
+                         'not_before': stamp(before), 'not_after': stamp(after),
+                         'openssl': openssl, 'openssl_version': version.stdout.decode().strip(),
+                         'scope': 'local test certificate only; no clock change, trust bypass or vendor-certificate modification'}
+        (out / 'untrusted-tls-validity.json').write_text(json.dumps(self.validity, indent=2) + '\n')
         config = out / 'untrusted-tls.cnf'
         config.write_text('[req]\nprompt=no\ndistinguished_name=dn\nx509_extensions=extensions\n'
                           f'[dn]\nCN={host}\n[extensions]\nsubjectAltName=DNS:{host}\n'
                           'basicConstraints=critical,CA:TRUE\nextendedKeyUsage=serverAuth\n')
         self.cert, key = out / 'untrusted-tls.pem', out / 'untrusted-tls.key'
-        made = command(['openssl', 'req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-days', '1',
+        made = command([openssl, 'req', '-x509', '-newkey', 'rsa:2048', '-nodes',
+                        '-not_before', stamp(before), '-not_after', stamp(after),
                         '-config', config, '-out', self.cert, '-keyout', key], out, 'untrusted-tls-generate', timeout=15)
         require(made.returncode == 0, made.stderr)
+        for label, epoch in [('guest', guest_epoch), ('host', now)]:
+            valid = command([openssl, 'verify', '-attime', str(int(epoch)), '-purpose', 'sslserver',
+                             '-CAfile', self.cert, '-verify_hostname', host, self.cert],
+                            out, f'untrusted-tls-valid-at-{label}-clock')
+            require(valid.returncode == 0, ('test certificate invalid with explicit CA', label, valid.stderr))
         self.context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
         self.context.load_cert_chain(self.cert, key)
         self.context.set_alpn_protocols(['http/1.1'])
@@ -202,7 +227,9 @@ def probe_agent(vm, agent, out, repetitions):
         require(cancelled.returncode == 0, cancelled.stderr)
         negative = out / f'{agent}-untrusted-certificate'
         negative.mkdir()
-        endpoint = UntrustedTlsEndpoint(host, negative)
+        clock = vm.execute(agent + '-tls-clock', 'date +%s')
+        guest_epoch = int(clock.stdout.strip())
+        endpoint = UntrustedTlsEndpoint(host, negative, guest_epoch)
         try:
             mapped = command(['ssh', '-F', '/dev/null', '-S', control, '-O', 'forward', '-R',
                               f'127.0.0.1:443:127.0.0.1:{endpoint.port}', 'devcroft@guest'], out,
@@ -224,7 +251,10 @@ def probe_agent(vm, agent, out, repetitions):
                     and default_trust_events and all(e['server_name'] == host for e in default_trust_events)
                     and not any(e.get('application_bytes_received', 0) for e in default_trust_events),
                     ('application data reached untrusted TLS endpoint', bad_code, default_trust_events))
-            certificate_alert = any('CA' in e.get('error', '') or 'CERTIFICATE' in e.get('error', '') for e in default_trust_events)
+            certificate_alert = any('UNKNOWN_CA' in e.get('error', '').upper()
+                                    or 'CERTIFICATE_UNKNOWN' in e.get('error', '').upper()
+                                    or 'UNKNOWN CA' in e.get('error', '').upper()
+                                    for e in default_trust_events)
             explicit_trust_control = None
             if not certificate_alert:
                 require(agent == 'claude', ('no certificate rejection witness', default_trust_events))
@@ -253,6 +283,7 @@ def probe_agent(vm, agent, out, repetitions):
                 'private_home_reused_within_prepared_vm': True,
                 'real_vendor_guest_tls_dummy_key_status': 401, 'guest_tls_verified': True,
                 'real_cli_untrusted_certificate_refused': True, 'tls_negative_events': default_trust_events, 'negative_probe_supervised_stop': bounded_negative_stop, 'explicit_test_ca_positive': explicit_trust_control, 'untrusted_certificate': artifact(endpoint.cert),
+                'test_certificate_validity': endpoint.validity,
                 'startup_within_5_seconds': all(s['startup_within_5_seconds'] for s in samples),
                 'completed_agent_task': False, 'forward_wrong_address_port_dynamic_denied': True,
                 'fixed_host_destination': host + ':443', 'cancelled_listener_refused': True}

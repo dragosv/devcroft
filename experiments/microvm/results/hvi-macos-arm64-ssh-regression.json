@@ -361,5 +361,5 @@
     "all_owned_helpers_reaped": true,
     "endpoints_removed": true
   },
-  "raw_evidence": "experiments/microvm/runs/20261111-hvi-ssh-regression"
+  "raw_evidence": "/Users/dragos/Development/devcroft-codex/experiments/microvm/runs/20261111-hvi-ssh-regression"
 }

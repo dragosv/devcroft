@@ -4,6 +4,15 @@ This is the experimental implementation of `evaluate-microvm-runtimes`.
 `libkrun/` and `hvi/` have their own Cargo workspaces and lockfiles. The main devcroft build and
 published crate do not depend on it. No production VM dispatch exists yet.
 
+The [native assessment](results/macos-arm64-evaluation-assessment.json) now records
+the full 180-case macOS ARM64 comparison, clean reconstruction, final SSH fault
+recovery and real CLI/TLS regressions against the five backend criteria. Both
+adapters work on this host. Production adoption remains no-go under the current
+evidence: full preparation storage, controller authority separation and remaining
+platform/fault qualification are still open. The libkrun recommendation is only
+for the next scoped integration experiment, conditional on the recorded
+author-boundary criterion and the owner's acceptance.
+
 ## hvi macOS ARM64 comparison
 
 The isolated `hvi/` workspace now passes eight functional rows with the same
@@ -647,3 +656,19 @@ already exceeds the original 8-GiB limit before runtime or downloads are added.
 It also contains kernel-building and multiple-fixture infrastructure; a minimal
 per-project materializer has not been measured. This prevents treating the
 successful ~2.05-GiB deployed-runtime subtotal as a complete E5 storage pass.
+
+Final post-fix regressions retain fresh OpenSSH/keeper/SFTP/PTY/forwarding runs
+and five Codex/Claude sessions each on both adapters. All twenty initialization
+samples are below 1.52 seconds, with vendor TLS/401 and live certificate controls:
+`results/{libkrun,hvi}-macos-arm64-agent-start-ssh-fix.json`. These use the final
+keeper hash, while the original density/cold-preparation receipts retain theirs.
+
+TLS calibration found that a newly generated certificate's default `notBefore`
+could be later than the guest's wall clock. The local test now records both
+clocks, refuses skew above one hour, explicitly covers both in its short validity
+interval and independently verifies hostname, server purpose and dates with the
+public test CA at both clocks. It requires OpenSSL supporting explicit validity
+dates and records its actual path/version. Expiry alerts no longer count as a
+CA-rejection witness. The real CLIs keep TLS validation enabled; neither clock
+nor vendor trust is changed. Guest clock synchronization remains a product
+qualification item, especially for suspend/resume.
