@@ -1,0 +1,453 @@
+{
+  "schema": 1,
+  "status": "passed",
+  "qualification": "clean offline closure preparation; completed authenticated agent task not evaluated",
+  "platform": "macos-arm64-native",
+  "host": [
+    "Darwin",
+    "Dragoss-MacBook-Pro.local",
+    "24.6.0",
+    "Darwin Kernel Version 24.6.0: Mon Jan 19 22:01:58 PST 2026; root:xnu-11417.140.69.708.3~1/RELEASE_ARM64_T6041",
+    "arm64"
+  ],
+  "protocol": {
+    "schema": 1,
+    "recorded_at": "2026-11-10T17:13:16.365821+00:00",
+    "thresholds_sha256": "5db6e27a67179c45403b159684b22db7789d2bc019552ae205d8a1ca2ba3768e",
+    "fixture": "pinned Codex 0.147.0 and Claude Code 2.1.228 Nix closure",
+    "scope": "inputs already downloaded; fresh builder output namespace and empty destination Nix store, reconstruction in a network namespace with no external interfaces; not a full source compilation or cold OS page cache",
+    "includes": [
+      "start the dedicated stopped Linux materializer VM",
+      "transfer verified downloaded NAR archive and fixed definition/source inputs",
+      "re-evaluate locked definition against already downloaded immutable inputs",
+      "materialize/verify all NAR contents into an empty destination store without network",
+      "assemble immutable image/private seed and verify exported hashes",
+      "stop materializer before native guest verification",
+      "boot the clean image, apply nono/host confinement and verify both real CLI startup/HTTPS/TLS with dummy credentials",
+      "clean up owned VM/helpers/endpoints"
+    ],
+    "timing": "report offline preparation separately; compare the conservative complete end-to-end time including guest verification to accepted 600-second limit",
+    "preconditions": [
+      "no active native density collection",
+      "dedicated builder initially stopped; exclusive nested-runner lock",
+      "no host mounts or host credential import"
+    ],
+    "cache_conditions": "captured immutable NAR archive and Nix bootstrap already downloaded; builder Nix executable and immutable store inputs may already exist; destination store/workspace is new; host and guest page caches not flushed",
+    "output_policy": "separate clean verification image/receipt; baseline density images never overwritten; remove only verified reconstructible builder intermediates before export",
+    "qualification": "a passing reconstructed runtime verifies declared closure content, not fleet eligibility, source-level bit reproducibility, or completed authenticated agent tasks"
+  },
+  "protocol_sha256": "40db4e5f2965f6006f78dd44681b56585bd2b2343569ec19e8c13ea91c781dbe",
+  "raw_evidence": "/Users/dragos/Development/devcroft-codex/experiments/microvm/runs/20261110-native-evaluation-finish/cold-preparation",
+  "phases": [
+    {
+      "name": "builder-precondition",
+      "argv": [
+        "limactl",
+        "list",
+        "--json"
+      ],
+      "started_utc": "2026-11-10T20:28:54.001429+00:00",
+      "seconds": 0.14738195802783594,
+      "exit_code": 0
+    },
+    {
+      "name": "builder-start",
+      "argv": [
+        "limactl",
+        "start",
+        "--tty=false",
+        "kernel-build"
+      ],
+      "started_utc": "2026-11-10T20:28:54.149257+00:00",
+      "seconds": 26.963311332976446,
+      "exit_code": 0
+    },
+    {
+      "name": "create-empty-namespace",
+      "argv": [
+        "limactl",
+        "shell",
+        "kernel-build",
+        "mkdir",
+        "-p",
+        "/home/dragos.guest/devcroft-clean-agents-9c4f0d4f9bcb/definition"
+      ],
+      "started_utc": "2026-11-10T20:29:21.113620+00:00",
+      "seconds": 0.08132599998498335,
+      "exit_code": 0
+    },
+    {
+      "name": "reuse-downloaded-bootstrap",
+      "argv": [
+        "limactl",
+        "shell",
+        "kernel-build",
+        "cp",
+        "/home/dragos.guest/devcroft-nix/nix-bootstrap.tar.xz",
+        "/home/dragos.guest/devcroft-clean-agents-9c4f0d4f9bcb/nix-bootstrap.tar.xz"
+      ],
+      "started_utc": "2026-11-10T20:29:21.195501+00:00",
+      "seconds": 0.07312308298423886,
+      "exit_code": 0
+    },
+    {
+      "name": "input-0",
+      "argv": [
+        "limactl",
+        "copy",
+        "/Users/dragos/Development/devcroft-codex/experiments/microvm/nix/build.py",
+        "kernel-build:/home/dragos.guest/devcroft-clean-agents-9c4f0d4f9bcb/build.py"
+      ],
+      "started_utc": "2026-11-10T20:29:21.269277+00:00",
+      "seconds": 0.12602370901731774,
+      "exit_code": 0
+    },
+    {
+      "name": "input-1",
+      "argv": [
+        "limactl",
+        "copy",
+        "/Users/dragos/Development/devcroft-codex/experiments/microvm/agents/flake.nix",
+        "kernel-build:/home/dragos.guest/devcroft-clean-agents-9c4f0d4f9bcb/definition/flake.nix"
+      ],
+      "started_utc": "2026-11-10T20:29:21.395722+00:00",
+      "seconds": 0.12424795900005847,
+      "exit_code": 0
+    },
+    {
+      "name": "input-2",
+      "argv": [
+        "limactl",
+        "copy",
+        "/Users/dragos/Development/devcroft-codex/experiments/microvm/agents/flake.lock",
+        "kernel-build:/home/dragos.guest/devcroft-clean-agents-9c4f0d4f9bcb/definition/flake.lock"
+      ],
+      "started_utc": "2026-11-10T20:29:21.520403+00:00",
+      "seconds": 0.08677533396985382,
+      "exit_code": 0
+    },
+    {
+      "name": "input-3",
+      "argv": [
+        "limactl",
+        "copy",
+        "/Users/dragos/Development/devcroft-codex/experiments/microvm/fixtures/nix-bootstrap-aarch64.json",
+        "kernel-build:/home/dragos.guest/devcroft-clean-agents-9c4f0d4f9bcb/bootstrap.json"
+      ],
+      "started_utc": "2026-11-10T20:29:21.607578+00:00",
+      "seconds": 0.0759324170066975,
+      "exit_code": 0
+    },
+    {
+      "name": "input-4",
+      "argv": [
+        "limactl",
+        "copy",
+        "/Users/dragos/Development/devcroft-codex/experiments/microvm/fixtures/workload-source.json",
+        "kernel-build:/home/dragos.guest/devcroft-clean-agents-9c4f0d4f9bcb/source.json"
+      ],
+      "started_utc": "2026-11-10T20:29:21.683926+00:00",
+      "seconds": 0.0773884590016678,
+      "exit_code": 0
+    },
+    {
+      "name": "input-5",
+      "argv": [
+        "limactl",
+        "copy",
+        "/Users/dragos/Development/devcroft-codex/experiments/microvm/artifacts/workload/xxhash.tar.gz",
+        "kernel-build:/home/dragos.guest/devcroft-clean-agents-9c4f0d4f9bcb/xxhash.tar.gz"
+      ],
+      "started_utc": "2026-11-10T20:29:21.761750+00:00",
+      "seconds": 0.12323737499536946,
+      "exit_code": 0
+    },
+    {
+      "name": "downloaded-cache-transfer",
+      "argv": [
+        "limactl",
+        "copy",
+        "/Users/dragos/Development/devcroft-codex/experiments/microvm/artifacts/agents/cache.tar",
+        "kernel-build:/home/dragos.guest/devcroft-clean-agents-9c4f0d4f9bcb/downloaded-cache.tar"
+      ],
+      "started_utc": "2026-11-10T20:29:21.885461+00:00",
+      "seconds": 2.004790832987055,
+      "exit_code": 0
+    },
+    {
+      "name": "cache-receipt",
+      "argv": [
+        "limactl",
+        "shell",
+        "kernel-build",
+        "sha256sum",
+        "/home/dragos.guest/devcroft-clean-agents-9c4f0d4f9bcb/downloaded-cache.tar"
+      ],
+      "started_utc": "2026-11-10T20:29:23.890697+00:00",
+      "seconds": 0.29518049996113405,
+      "exit_code": 0
+    },
+    {
+      "name": "cache-unpack",
+      "argv": [
+        "limactl",
+        "shell",
+        "kernel-build",
+        "tar",
+        "-xf",
+        "/home/dragos.guest/devcroft-clean-agents-9c4f0d4f9bcb/downloaded-cache.tar",
+        "-C",
+        "/home/dragos.guest/devcroft-clean-agents-9c4f0d4f9bcb"
+      ],
+      "started_utc": "2026-11-10T20:29:24.186287+00:00",
+      "seconds": 0.2473639590316452,
+      "exit_code": 0
+    },
+    {
+      "name": "builder-uid",
+      "argv": [
+        "limactl",
+        "shell",
+        "kernel-build",
+        "id",
+        "-u"
+      ],
+      "started_utc": "2026-11-10T20:29:24.434004+00:00",
+      "seconds": 0.08307408401742578,
+      "exit_code": 0
+    },
+    {
+      "name": "builder-gid",
+      "argv": [
+        "limactl",
+        "shell",
+        "kernel-build",
+        "id",
+        "-g"
+      ],
+      "started_utc": "2026-11-10T20:29:24.517460+00:00",
+      "seconds": 0.048697291989810765,
+      "exit_code": 0
+    },
+    {
+      "name": "offline-materialize-verify-image",
+      "argv": [
+        "limactl",
+        "shell",
+        "kernel-build",
+        "sudo",
+        "unshare",
+        "--net",
+        "sudo",
+        "-u",
+        "#501",
+        "-g",
+        "#1001",
+        "env",
+        "PYTHONUNBUFFERED=1",
+        "python3",
+        "/home/dragos.guest/devcroft-clean-agents-9c4f0d4f9bcb/build.py",
+        "--work-dir",
+        "/home/dragos.guest/devcroft-clean-agents-9c4f0d4f9bcb",
+        "--required-binary",
+        "gcc",
+        "--required-binary",
+        "make",
+        "--required-binary",
+        "redis-server",
+        "--required-binary",
+        "codex",
+        "--required-binary",
+        "claude",
+        "--required-binary",
+        "python3",
+        "--required-binary",
+        "curl"
+      ],
+      "started_utc": "2026-11-10T20:29:24.566601+00:00",
+      "seconds": 18.93435104197124,
+      "exit_code": 0
+    },
+    {
+      "name": "receipt-build.json",
+      "argv": [
+        "limactl",
+        "copy",
+        "kernel-build:/home/dragos.guest/devcroft-clean-agents-9c4f0d4f9bcb/build.json",
+        "/Users/dragos/Development/devcroft-codex/experiments/microvm/runs/20261110-native-evaluation-finish/cold-preparation/build.json"
+      ],
+      "started_utc": "2026-11-10T20:29:43.502472+00:00",
+      "seconds": 0.13479716697474942,
+      "exit_code": 0
+    },
+    {
+      "name": "receipt-closure.json",
+      "argv": [
+        "limactl",
+        "copy",
+        "kernel-build:/home/dragos.guest/devcroft-clean-agents-9c4f0d4f9bcb/closure.json",
+        "/Users/dragos/Development/devcroft-codex/experiments/microvm/runs/20261110-native-evaluation-finish/cold-preparation/closure.json"
+      ],
+      "started_utc": "2026-11-10T20:29:43.637556+00:00",
+      "seconds": 0.0803441249881871,
+      "exit_code": 0
+    },
+    {
+      "name": "remove-intermediates",
+      "argv": [
+        "limactl",
+        "shell",
+        "kernel-build",
+        "sudo",
+        "rm",
+        "-rf",
+        "/home/dragos.guest/devcroft-clean-agents-9c4f0d4f9bcb/root",
+        "/home/dragos.guest/devcroft-clean-agents-9c4f0d4f9bcb/cache",
+        "/home/dragos.guest/devcroft-clean-agents-9c4f0d4f9bcb/cache.tar",
+        "/home/dragos.guest/devcroft-clean-agents-9c4f0d4f9bcb/downloaded-cache.tar"
+      ],
+      "started_utc": "2026-11-10T20:29:43.718775+00:00",
+      "seconds": 0.5506131250294857,
+      "exit_code": 0
+    },
+    {
+      "name": "trim-intermediates",
+      "argv": [
+        "limactl",
+        "shell",
+        "kernel-build",
+        "sudo",
+        "fstrim",
+        "-v",
+        "/"
+      ],
+      "started_utc": "2026-11-10T20:29:44.269867+00:00",
+      "seconds": 2.1237325000111014,
+      "exit_code": 0
+    },
+    {
+      "name": "export-toolchain.img",
+      "argv": [
+        "limactl",
+        "copy",
+        "kernel-build:/home/dragos.guest/devcroft-clean-agents-9c4f0d4f9bcb/toolchain.img",
+        "/Users/dragos/Development/devcroft-codex/experiments/microvm/runs/20261110-native-evaluation-finish/cold-preparation/toolchain.img"
+      ],
+      "started_utc": "2026-11-10T20:29:46.394118+00:00",
+      "seconds": 9.087430375046097,
+      "exit_code": 0
+    },
+    {
+      "name": "export-data.seed.img",
+      "argv": [
+        "limactl",
+        "copy",
+        "kernel-build:/home/dragos.guest/devcroft-clean-agents-9c4f0d4f9bcb/data.seed.img",
+        "/Users/dragos/Development/devcroft-codex/experiments/microvm/runs/20261110-native-evaluation-finish/cold-preparation/data.seed.img"
+      ],
+      "started_utc": "2026-11-10T20:29:56.505237+00:00",
+      "seconds": 0.9526966249686666,
+      "exit_code": 0
+    },
+    {
+      "name": "remove-builder-image-copies",
+      "argv": [
+        "limactl",
+        "shell",
+        "kernel-build",
+        "sudo",
+        "rm",
+        "-f",
+        "/home/dragos.guest/devcroft-clean-agents-9c4f0d4f9bcb/toolchain.img",
+        "/home/dragos.guest/devcroft-clean-agents-9c4f0d4f9bcb/data.seed.img"
+      ],
+      "started_utc": "2026-11-10T20:29:57.521301+00:00",
+      "seconds": 0.13322825002251193,
+      "exit_code": 0
+    },
+    {
+      "name": "trim-exported-copies",
+      "argv": [
+        "limactl",
+        "shell",
+        "kernel-build",
+        "sudo",
+        "fstrim",
+        "-v",
+        "/"
+      ],
+      "started_utc": "2026-11-10T20:29:57.654954+00:00",
+      "seconds": 0.34964825003407896,
+      "exit_code": 0
+    },
+    {
+      "name": "builder-stop",
+      "argv": [
+        "limactl",
+        "stop",
+        "kernel-build"
+      ],
+      "started_utc": "2026-11-10T20:29:58.005053+00:00",
+      "seconds": 3.600923874997534,
+      "exit_code": 0
+    },
+    {
+      "name": "clean-guest-verification",
+      "argv": [
+        "python3",
+        "/Users/dragos/Development/devcroft-codex/experiments/microvm/agent_probe.py",
+        "--adapter",
+        "libkrun",
+        "--repetitions",
+        "1",
+        "--image",
+        "/Users/dragos/Development/devcroft-codex/experiments/microvm/runs/20261110-native-evaluation-finish/cold-preparation/toolchain.img",
+        "--seed",
+        "/Users/dragos/Development/devcroft-codex/experiments/microvm/runs/20261110-native-evaluation-finish/cold-preparation/data.seed.img",
+        "--out",
+        "/Users/dragos/Development/devcroft-codex/experiments/microvm/runs/20261110-native-evaluation-finish/cold-preparation/verification"
+      ],
+      "started_utc": "2026-11-10T20:30:01.607091+00:00",
+      "seconds": 49.453192416985985,
+      "exit_code": 0
+    }
+  ],
+  "builder_namespace": "/home/dragos.guest/devcroft-clean-agents-9c4f0d4f9bcb",
+  "inputs": {
+    "build.py": {
+      "sha256": "40fcc26c369f1e5445f02e06714dea12102550d25e833455939b9df1402d4a2d",
+      "path": "/Users/dragos/Development/devcroft-codex/experiments/microvm/nix/build.py"
+    },
+    "definition/flake.nix": {
+      "sha256": "0fe6a619611ca37923232d5b0bd5808250402c45f3afe856dc134397c6e0ebd9",
+      "path": "/Users/dragos/Development/devcroft-codex/experiments/microvm/agents/flake.nix"
+    },
+    "definition/flake.lock": {
+      "sha256": "fae29563701304a37fbc90b3fa11ec813616feebbe1bcba5e7bfca5df8e2364d",
+      "path": "/Users/dragos/Development/devcroft-codex/experiments/microvm/agents/flake.lock"
+    },
+    "bootstrap.json": {
+      "sha256": "efb15639b47e45d84dd97690f30f7a1aa45722e3dd56f6f8db90a9b216f23803",
+      "path": "/Users/dragos/Development/devcroft-codex/experiments/microvm/fixtures/nix-bootstrap-aarch64.json"
+    },
+    "source.json": {
+      "sha256": "9225ef483e1b4d091cb6ab37378a54d09e9c7ae74124c529a03783078a7113cf",
+      "path": "/Users/dragos/Development/devcroft-codex/experiments/microvm/fixtures/workload-source.json"
+    },
+    "xxhash.tar.gz": {
+      "sha256": "aae608dfe8213dfd05d909a57718ef82f30722c392344583d3f39050c7f29a80",
+      "path": "/Users/dragos/Development/devcroft-codex/experiments/microvm/artifacts/workload/xxhash.tar.gz"
+    },
+    "cache.tar": {
+      "sha256": "89aae7876aeb1545a5e050ec48017d099e0bb4c0f84ea9cef02b78096726e38f",
+      "path": "/Users/dragos/Development/devcroft-codex/experiments/microvm/artifacts/agents/cache.tar"
+    }
+  },
+  "harness_sha256": "dd9e67241d98a8013136c85bd40c85b09276faf46f997786853fb9908b671550",
+  "input_verification_seconds": 0.633504583965987,
+  "clean_closure_verified": true,
+  "offline_preparation_seconds": 68.23773004196119,
+  "end_to_end_with_guest_verification_seconds": 117.69155374995898,
+  "cold_preparation_limit_seconds": 600,
+  "cold_preparation_criterion": "passed"
+}
