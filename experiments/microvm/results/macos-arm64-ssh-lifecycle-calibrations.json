@@ -29,7 +29,16 @@
         "runs/20261111-libkrun-agent-ssh-fix/report.json",
         "runs/20261111-hvi-agent-ssh-fix/report.json"
       ],
-      "correction": "Sample guest/host clocks, bound skew to one hour, set a short explicit validity interval covering both clocks and require UNKNOWN_CA or the explicit-CA application-data control; no TLS validation bypass"
+      "correction": "Sample guest/host clocks, bound skew to one hour, generate a short explicit validity interval covering both, independently verify hostname/purpose/validity with the public test CA at both clocks, and require an unknown-certificate/CA alert or the explicit-CA application-data control; no TLS validation bypass"
+    },
+    {
+      "name": "over-specific-codex-tls-alert-witness",
+      "status": "failed",
+      "scope": "with the corrected validity interval, Codex emitted CERTIFICATE_UNKNOWN rather than UNKNOWN_CA; the first strict witness rejected that diagnostic",
+      "evidence": [
+        "runs/20261111-libkrun-agent-ssh-clock-fixed/report.json"
+      ],
+      "correction": "Independently verify the certificate with its public test CA at host and guest clocks; accept unknown-certificate/CA alerts, never expiry alerts, while retaining the Claude explicit-CA application-data positive control"
     }
   ],
   "raw_evidence": "experiments/microvm/runs/20261111-ssh-lifecycle-validation"
