@@ -1,0 +1,13 @@
+{
+  "schema": 1,
+  "thresholds_sha256": "5db6e27a67179c45403b159684b22db7789d2bc019552ae205d8a1ca2ba3768e",
+  "scope": "Fresh private no-host-share 2-vCPU/4-GiB Linux materializer; downloaded immutable inputs, fresh Nix store, locked definition evaluation and clean runtime verification; not full source compilation or production hostile-recipe confinement",
+  "temporary_memory": "512-MiB tmpfs for the immutable compressed NAR cache and 2-GiB tmpfs for the fresh destination store, within the configured guest memory. Record guest memory before unmount, stop the builder before runtime verification. No redundant captured cache archive is generated.",
+  "method_reason": "Separate minimal per-project preparation from the original kernel/VMM development builder, whose retained disk exceeded the original single-environment storage limit",
+  "includes_in_timing": ["input verification", "fresh VM creation/start", "offline fixed tool installation and Nix bootstrap", "import/verify captured NARs and reevaluate locked definition", "empty destination-store reconstruction", "assemble/export/hash images", "trim/stop builder", "native guest xxHash/small-file/Redis and actual CLI/TLS verification"],
+  "excludes_from_timing": ["publication/download of immutable NAR, source, bootstrap, base-image and APK inputs", "flushing OS page caches"],
+  "storage_rule": "Charge the entire fresh stopped builder namespace, downloaded inputs, exported images, retained receipts/logs/sources, common native runtime and private guest/controller files to one environment; unique regular inodes once, stat blocks*512, no APFS shared-extent or amortized fleet-size claim",
+  "source_trust": "Use the prior trusted fixed-input publication receipt; independently verify all NAR contents, expected NAR hashes and freshly evaluated definition output path. Do not label this as an independent full source/signature-trust reconstruction",
+  "retention": "Keep original runtime artifacts, failed runs and the original 13.49-GiB builder observation; delete only verified exported duplicates/intermediates inside owned experimental builders",
+  "qualification": "Native macOS ARM64 preparation diagnostic; does not qualify missing native Linux hosts, production credential delivery or completed authenticated agent tasks"
+}

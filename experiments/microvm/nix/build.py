@@ -27,14 +27,16 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--work-dir', type=Path, default=WORK)
     parser.add_argument('--required-binary', action='append')
+    parser.add_argument('--offline-receipt', type=Path,
+                        help='frozen trusted publication receipt; evaluate definition and verify captured NARs without claiming fresh source-build trust')
     args = parser.parse_args()
     work = args.work_dir
     if not work.is_absolute() or work.is_symlink():
         raise RuntimeError('builder work directory must be an absolute non-symlink path')
-    materialize(work, args.required_binary or ('gcc', 'make', 'redis-server', 'code-server'))
+    materialize(work, args.required_binary or ('gcc', 'make', 'redis-server', 'code-server'), args.offline_receipt)
 
 
-def materialize(WORK, required_binaries):
+def materialize(WORK, required_binaries, offline_receipt=None):
     os.chdir(WORK)
     pin = json.loads((WORK / 'bootstrap.json').read_text())
     archive = WORK / 'nix-bootstrap.tar.xz'
@@ -67,26 +69,44 @@ def materialize(WORK, required_binaries):
     ref = f'path:{definition}'
     flags = ['--no-update-lock-file', '--no-write-lock-file']
     metadata = json.loads(run(nix, 'flake', 'metadata', '--json', *flags, ref, env=env, capture=True))
-    built = json.loads(run(nix, 'build', '--json', '--no-link', *flags,
-        ref + '#packages.aarch64-linux.default', env=env, capture=True))
-    profile = built[0]['outputs']['out']
+    if offline_receipt is None:
+        built = json.loads(run(nix, 'build', '--json', '--no-link', *flags,
+            ref + '#packages.aarch64-linux.default', env=env, capture=True))
+        profile = built[0]['outputs']['out']
+    else:
+        publication = json.loads(offline_receipt.read_text())
+        profile = run(nix, 'eval', '--offline', '--raw', *flags,
+                      ref + '#packages.aarch64-linux.default.outPath', env=env, capture=True).strip()
+        if profile != publication['original_profile']:
+            raise RuntimeError('fresh definition evaluation differs from the trusted published closure')
     if not profile.startswith('/nix/store/'):
         raise RuntimeError('unexpected closure root')
     versions = json.loads(run(nix, 'eval', '--json', *flags,
         ref + '#fixtureVersions.aarch64-linux', env=env, capture=True))
-    run(nix, 'store', 'verify', '--recursive', profile, env=env)
+    trust_flags = ['--no-trust'] if offline_receipt is not None else []
+    run(nix, 'store', 'verify', '--recursive', *trust_flags, profile, env=env)
     paths = json.loads(run(nix, 'path-info', '--json', '--recursive', profile, env=env, capture=True))
+    if offline_receipt is not None:
+        if {path: value['narHash'] for path, value in paths.items()} != publication['original_closure_nar_hashes']:
+            raise RuntimeError('imported NAR closure differs from the trusted publication')
     (WORK / 'closure.json').write_text(json.dumps(paths, indent=2) + '\n')
     cache = WORK / 'cache'
     cache.mkdir(exist_ok=True)
-    run(nix, 'copy', '--to', f'file://{cache}', profile, env=env)
+    if offline_receipt is None:
+        run(nix, 'copy', '--to', f'file://{cache}', profile, env=env)
     # An empty store reconstructs the runtime filesystem solely from the captured
     # NAR cache. The locally built top-level environment is intentionally unsigned;
     # source verification above checks cache signatures and local build trust.
     root = WORK / 'root'
     if root.exists():
-        run('sudo', 'rm', '-rf', root)
-    root.mkdir()
+        if root.is_mount():
+            if offline_receipt is None or any(root.iterdir()):
+                raise RuntimeError('only a clean offline destination may use an existing memory-backed mount')
+        else:
+            run('sudo', 'rm', '-rf', root)
+            root.mkdir()
+    else:
+        root.mkdir()
     offline = dict(env, NIX_CONFIG=env['NIX_CONFIG'] + '\nsubstituters =\n')
     isolated = ['sudo', 'unshare', '--net', 'sudo', '-u', f'#{os.getuid()}', '-g', f'#{os.getgid()}',
                 '--', 'env', *[f'{key}={value}' for key, value in sorted(offline.items())]]
@@ -139,21 +159,27 @@ def materialize(WORK, required_binaries):
     run('truncate', '-s', '128M', WORK / 'data.seed.img')
     run('mkfs.ext4', '-F', '-q', '-m', '0', '-O', '^orphan_file', '-U',
         'd31c0004-0000-4000-8000-000000000004', WORK / 'data.seed.img')
-    with tarfile.open(WORK / 'cache.tar', 'w') as out:
-        out.add(cache, arcname='cache')
+    if offline_receipt is None:
+        with tarfile.open(WORK / 'cache.tar', 'w') as out:
+            out.add(cache, arcname='cache')
     if before != {name: digest(definition / name) for name in before}:
         raise RuntimeError('flake definition or lock changed')
     receipt = {'schema': 1, 'architecture': 'aarch64-linux', 'bootstrap': pin, 'nix_version': version,
         'flake_sha256': before, 'flake_metadata': metadata, 'profile': profile, 'versions': versions,
         'closure_paths': len(paths), 'nar_bytes': size, 'closure_nar_hashes': nar_hashes(paths),
         'offline_materialization': {'fresh_store': True, 'network_namespace': 'unshare --net',
-            'nar_contents_verified': True, 'source_closure_trust_verified': True,
+            'nar_contents_verified': True, 'source_closure_trust_verified': offline_receipt is None,
             'destination_signature_check': 'disabled only for private locally produced cache; NAR hashes independently verified'},
         'builder': {'host_mounts': [], 'nix_build_sandbox': False, 'isolation': 'dedicated Lima Linux VM; trusted experiment recipe',
             'packages': run('apk', 'info', '-v', capture=True).splitlines()},
         'build_script_sha256': digest(Path(__file__)), 'project_source': source,
         'qualification': 'pinned closure materialization; not full source rebuild or fleet eligibility'}
-    for name in ('toolchain.img', 'data.seed.img', 'cache.tar', 'closure.json'):
+    if offline_receipt is not None:
+        receipt['captured_input_trust'] = {'publication_sha256': digest(offline_receipt),
+            'definition_outpath_re_evaluated': True,
+            'all_nar_hashes_match_publication': True,
+            'source_trust_scope': 'trusted fixed-input publication from prior verified fixture, not independently re-established source build/signature trust in this clean builder'}
+    for name in ('toolchain.img', 'data.seed.img', 'closure.json', *(['cache.tar'] if offline_receipt is None else [])):
         file = WORK / name
         receipt[name] = {'sha256': digest(file), 'bytes': file.stat().st_size}
     (WORK / 'build.json').write_text(json.dumps(receipt, indent=2) + '\n')

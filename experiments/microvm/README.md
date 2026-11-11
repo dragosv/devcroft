@@ -672,3 +672,61 @@ dates and records its actual path/version. Expiry alerts no longer count as a
 CA-rejection witness. The real CLIs keep TLS validation enabled; neither clock
 nor vendor trust is changed. Guest clock synchronization remains a product
 qualification item, especially for suspend/resume.
+
+### Controller separation and private preparation follow-up
+
+The current harness stores client keys, host pins, launch records and SSH master
+sockets in a separate short mode-0700 controller directory. The VMM runtime
+directory contains disks and the three permitted endpoints. Launch validation
+requires a private, singly linked record at its absolute canonical path outside
+the writable instance subtree. Symlink/hardlink and public-permission variants
+are rejected before boot. Future density accounting includes both directories.
+
+`controller_probe.py` passes on both native macOS ARM64 adapters: six protected
+targets refuse read/write access, a live controller socket refuses a new
+connection after confinement, and allowed runtime/file/thread/Unix controls
+continue to work. Two real builds and Redis services survive a cold restart.
+The complete OpenSSH and actual CLI/TLS regressions also pass with the new
+layout. Evidence: `results/{libkrun,hvi}-macos-arm64-controller-*.json` and
+`{libkrun,hvi}-macos-arm64-controller-separation.json`.
+
+The fresh private materializer now passes independently of the original
+development builder: **186.38 seconds** including clean guest verification and
+**6.59 GiB** retained for one complete environment. See
+`results/macos-arm64-minimal-private-preparation.json`. The total includes the
+entire stopped builder namespace, downloaded base/NAR/bootstrap/APK inputs,
+exported images and receipts/logs/sources, common kernel/helper/guest inputs and
+private guest/controller files. It does not amortize the builder across an
+invented fleet size. The original 13.49-GiB observation remains retained.
+
+`prepare_minimal_inputs.py` publishes a fixed trusted input bundle with receipts.
+`minimal_prepare.py` starts a fresh builder without host filesystem shares with its own user and Nix
+store, installs fixed tools and reconstructs without external interfaces inside
+the materialization namespace. It re-evaluates the locked definition and checks
+all 129 NAR hashes against the publication. A 512-MiB compressed-cache tmpfs and
+2-GiB destination-store tmpfs fit within its declared 4-GiB guest allocation;
+guest memory is captured before unmount. The builder stops before verification
+in the confined runtime VM. Verification also compiles/tests upstream xxHash,
+checks 2,048 files, writes/verifies 32 Redis keys and exercises both real CLIs.
+
+This is downloaded-input closure materialization from a trusted publication,
+not a full source rebuild or independently re-established vendor-signature
+trust. The temporary Lima builder runs a fixed trusted recipe; production
+confinement for hostile preparation code remains separate. Original density
+measurements retain their original helper/guest hashes and do not qualify these
+later artifacts automatically.
+
+Retention evidence is in `results/macos-arm64-preparation-retention.json`.
+Exported duplicates and unreferenced build dependencies were reclaimed only
+after protecting the fixed closures/source/Nix roots. Remote traces were
+removed only after comparing each file with the host archive. Guest fstrim did
+not substantially reduce physical host allocation, which remains recorded.
+Regenerable Cargo intermediates were then reclaimed under build-directory locks;
+the five protected runtime executable hashes were unchanged. Runtime images and
+all host diagnostic archives remain retained.
+
+The revised assessment is `results/macos-arm64-evaluation-assessment-v2.json`.
+It records these two closed experimental gaps while preserving the original
+assessment and its failed full-builder storage observation. Production adoption
+remains unapproved; trusted preparation, missing native platforms and the
+remaining SSH/fault controls still have explicit limits.

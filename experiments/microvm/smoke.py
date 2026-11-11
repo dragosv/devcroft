@@ -237,9 +237,8 @@ def main():
     launch = {"schema": 1, "kernel": artifact(args.kernel),
               "initramfs": guest["initramfs"], "runtime": guest["runtime"],
               "state": str(state), "instance_dir": str(instance), "vcpus": 1, "memory_mib": 256}
-    path = instance / "launch.json"
+    path = args.out.resolve() / "launch.json"
     path.write_text(json.dumps(launch, indent=2) + "\n")
-    (args.out / "launch.json").write_text(path.read_text())
     report = {"schema": 1, **helper_identity(args.helper), "host": list(os.uname()),
               "fixture": guest["fixture"], "qualification": "diagnostic-only",
               "instance_dir": str(instance), "boots": []}

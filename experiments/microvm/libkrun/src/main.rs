@@ -40,6 +40,12 @@ fn main() {
 
 fn entry() -> Result<(), String> {
     let args: Vec<_> = std::env::args_os().collect();
+    #[cfg(target_os = "macos")]
+    if args.len() == 5 && args[1] == "controller-test" {
+        let cfg = Launch::read(Path::new(&args[2]))?;
+        sandbox::close_inherited_fds()?;
+        return sandbox::controller_test(&cfg, Path::new(&args[3]), Path::new(&args[4]));
+    }
     if args.len() == 2 && args[1] == "version" {
         println!("libkrun 2.0.0-dev {REVISION}");
         return Ok(());

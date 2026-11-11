@@ -140,8 +140,19 @@ impl Plugin for BeforeGuest {
 }
 
 fn selftest(cfg: &Launch, outside: &Path) -> Result<(), String> {
+    selftest_impl(cfg, outside, None)
+}
+
+fn selftest_impl(cfg: &Launch, outside: &Path, socket: Option<&Path>) -> Result<(), String> {
     let mut runtime = File::open(&cfg.runtime.path).map_err(|e| e.to_string())?;
     File::open(outside).map_err(|e| e.to_string())?;
+    OpenOptions::new()
+        .write(true)
+        .open(outside)
+        .map_err(|e| e.to_string())?;
+    if let Some(socket) = socket {
+        UnixStream::connect(socket).map_err(|e| e.to_string())?;
+    }
     let state = OpenOptions::new()
         .read(true)
         .write(true)
@@ -156,6 +167,8 @@ fn selftest(cfg: &Launch, outside: &Path) -> Result<(), String> {
     let mut peer = UnixStream::connect(cfg.control_socket()).map_err(|e| e.to_string())?;
     hvi::sandbox::seatbelt::enter().map_err(|e| e.to_string())?;
     let outside_denied = denied(File::open(outside));
+    let outside_write_denied = denied(OpenOptions::new().write(true).open(outside));
+    let outside_unix_connect_denied = socket.map(|path| denied(UnixStream::connect(path)));
     let runtime_write_denied = denied(OpenOptions::new().write(true).open(&cfg.runtime.path));
     let tcp_denied = denied(std::net::TcpListener::bind("127.0.0.1:0"));
     let mut signature = [0; 20];
@@ -181,6 +194,8 @@ fn selftest(cfg: &Launch, outside: &Path) -> Result<(), String> {
             .is_ok();
     let thread_works = std::thread::spawn(|| 7).join().ok() == Some(7);
     let passed = outside_denied
+        && outside_write_denied
+        && outside_unix_connect_denied.unwrap_or(true)
         && runtime_write_denied
         && tcp_denied
         && readonly_input_works
@@ -190,6 +205,7 @@ fn selftest(cfg: &Launch, outside: &Path) -> Result<(), String> {
     println!(
         "{}",
         serde_json::json!({"outside_denied":outside_denied,"runtime_write_denied":runtime_write_denied,
+        "outside_write_denied":outside_write_denied,"outside_unix_connect_denied":outside_unix_connect_denied,
         "tcp_denied":tcp_denied,"readonly_input_works":readonly_input_works,
         "writable_state_works":writable_state_works,"unix_works":unix_works,"thread_works":thread_works,
         "passed":passed,"positive_controls":"retained pre-opened descriptors; all path reopening remains denied"})
@@ -203,6 +219,11 @@ fn selftest(cfg: &Launch, outside: &Path) -> Result<(), String> {
 
 fn entry() -> Result<(), String> {
     let args: Vec<_> = std::env::args_os().collect();
+    if args.len() == 5 && args[1] == "controller-test" {
+        let cfg = Launch::read(Path::new(&args[2]))?;
+        close_inherited_fds()?;
+        return selftest_impl(&cfg, Path::new(&args[3]), Some(Path::new(&args[4])));
+    }
     if args.len() == 2 && args[1] == "provenance" {
         println!(
             "{}",

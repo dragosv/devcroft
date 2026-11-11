@@ -1,0 +1,27 @@
+{
+  "schema": 1,
+  "status": "passed",
+  "qualification": "retention and fixed-input publication evidence; original failed storage observation retained",
+  "events": [
+    {
+      "raw_evidence": "experiments/microvm/runs/20261111-minimal-input-publication",
+      "report_sha256": "39eda409bcebd746abfce5f78af975c8ada61aa0efdf7b2d717f367aef4495cb",
+      "qualification": "trusted fixed-input publication, excluded from downloaded-input preparation timing"
+    },
+    {
+      "raw_evidence": "experiments/microvm/runs/20261111-builder-cache-reclaim",
+      "report_sha256": "f1e9012523636738d77bb422245514b9f8ac5c6e6f2dd531f1640bf3bf5b5287",
+      "qualification": "owned experimental builder cache cleanup; original runtime/evidence retained"
+    },
+    {
+      "raw_evidence": "experiments/microvm/runs/20261111-nested-trace-reclaim",
+      "report_sha256": "fcfcfc7accd919bf7bb1e1703e852305132463ac17cedc002ec362e2e43e7519",
+      "qualification": "verified remote trace duplicate cleanup; host archives retained"
+    },
+    {
+      "raw_evidence": "experiments/microvm/runs/20261111-compiler-cache-reclaim",
+      "report_sha256": "2c3f212b559e49ac47f10eb786d4c8d5891e2a31775042602ea989c3c0b85389",
+      "qualification": "regenerable workspace/experiment compiler cache cleanup; runtime files retained"
+    }
+  ]
+}

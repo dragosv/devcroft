@@ -34,6 +34,24 @@ pub struct Launch {
 
 impl Launch {
     pub fn read(path: &Path) -> Result<Self, String> {
+        let record_path = regular_file(path)?;
+        if !path.is_absolute() || path != record_path {
+            return Err("config: launch record must use its absolute canonical path".into());
+        }
+        let record_meta = fs::metadata(&record_path).map_err(|e| e.to_string())?;
+        let parent = record_path
+            .parent()
+            .ok_or("config: launch record has no parent")?;
+        let parent_meta = fs::metadata(parent).map_err(|e| e.to_string())?;
+        let uid = unsafe { libc::geteuid() };
+        if record_meta.uid() != uid
+            || record_meta.mode() & 0o077 != 0
+            || record_meta.nlink() != 1
+            || parent_meta.uid() != uid
+            || parent_meta.mode() & 0o077 != 0
+        {
+            return Err("config: launch record must be private, singly linked and inside an owned private controller directory".into());
+        }
         let mut bytes = Vec::new();
         File::open(path)
             .map_err(|e| format!("config: {}: {e}", path.display()))?
@@ -88,6 +106,11 @@ impl Launch {
         cfg.instance_dir = fs::canonicalize(&cfg.instance_dir)
             .map_err(|e| format!("config: instance directory: {e}"))?;
         let dir = fs::metadata(&cfg.instance_dir).map_err(|e| e.to_string())?;
+        if record_path.starts_with(&cfg.instance_dir) {
+            return Err(
+                "config: launch record must be outside the writable instance directory".into(),
+            );
+        }
         if !dir.is_dir() || dir.uid() != unsafe { libc::geteuid() } || dir.mode() & 0o077 != 0 {
             return Err(
                 "config: instance directory must be owned by this user with mode 0700".into(),
