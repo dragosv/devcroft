@@ -1,0 +1,331 @@
+{
+  "schema": 1,
+  "status": "failed",
+  "qualification": "native functional fault injection; no host power-loss or host-suspend claim",
+  "platform": "macos-arm64-native",
+  "host": [
+    "Darwin",
+    "Dragoss-MacBook-Pro.local",
+    "24.6.0",
+    "Darwin Kernel Version 24.6.0: Mon Jan 19 22:01:58 PST 2026; root:xnu-11417.140.69.708.3~1/RELEASE_ARM64_T6041",
+    "arm64"
+  ],
+  "adapter": "libkrun",
+  "helper_provenance": {
+    "patch_sha256": "7a25379a3e1291ecbace0cad78e804b70f3f4515cebbf8c35f0843d107d4c2cc",
+    "revision": "6151710f4ea627cf0e5dbce78e4192fb4d64c2e9"
+  },
+  "helper": {
+    "path": "/Users/dragos/Development/devcroft-codex/experiments/microvm/libkrun/target/debug/devcroft-krun-spike",
+    "sha256": "9fd46791e340f9b0c89c8947e91f528bcd688f22f170b06b13d8debfcdaa4b80"
+  },
+  "guest": {
+    "schema": 1,
+    "arch": "aarch64",
+    "fixture": "stage-b-nix-closure-ext4",
+    "zig_version": "0.17.0",
+    "source_sha256": "ada6355d1db490f6307a34c821c47bceb9ab6567fcc8863313de51748c4d1dac",
+    "nono": "0.77.0",
+    "keeper_sha256": "48e5a0dddd53a77a8332a581055de2f1f0a0f641200e778e77859ea894513da7",
+    "busybox_sha256": "198f6f675a49ac734082e054b823d3e2e947180ca2f632852ae1c09e950fd676",
+    "workload": true,
+    "nix": true,
+    "initramfs": {
+      "path": "/Users/dragos/Development/devcroft-codex/experiments/microvm/artifacts/stage-b-nix/initramfs.cpio",
+      "sha256": "35bbfb6ddc70dc96ee7ad0cc80a6b5a21a30a6d5e1644e9b69aeb810c08db292"
+    },
+    "runtime": {
+      "path": "/Users/dragos/Development/devcroft-codex/experiments/microvm/artifacts/stage-b-nix/runtime.img",
+      "sha256": "768f5b593e9f9f6888ea6930f6b6dc3adb65fd204b3c48361e0864dd6ae93f0c"
+    },
+    "sources": {
+      "src/keeper/connection.rs": "5ea9ab23a29a9eb73363759818af13d5619715e9bc3282409ebd0c4257363759",
+      "src/keeper/environment.rs": "dcf433c26bba99dbe3a28164e35cd38854c30a64521a21691dc92f15ddc29fc6",
+      "src/keeper/mod.rs": "2d93e061be8231d0e0f95b018405b7dac70973800f3a72eed951960d753573e9",
+      "src/keeper/protocol.rs": "a1fd3088992902e89022c229ed710d25487374bfeeeece8000dd2e5872572a2d",
+      "src/keeper/pty.rs": "be8ea1fda83d3932eebe6d54b509e2f96bae5df9aa313a00296e4fa41e580dca",
+      "src/keeper/registry.rs": "99d96e3c267247ecc2f2220f8c0667216998d2cdabd8aabf5284d21c38aa93ce",
+      "src/keeper/session.rs": "1d1a1fce6ff8daac07dc6a8cc95a5ef60362730ae7d22326658920d8a8cf195c",
+      "src/ssh/server.rs": "8c7ab0de47153e02c725684ef05fe1362f9d4af6204636304e4efc895552f986",
+      "src/ssh/sftp.rs": "805e6fc83c646b50df100010bb6bec3988733a8a79027ca1d6ce79ce745ae6ee",
+      "experiments/microvm/guest-keeper/src/bootstrap.rs": "9ad93deea140929f7b13c50411a8be1c46170ff3a118b75f9d32320a59b3e606",
+      "experiments/microvm/guest-keeper/src/linux.rs": "3cdaf225969c28c8f279067ff9aa60057b3bd83ce50ee52689c6afda42d72e72",
+      "experiments/microvm/guest-keeper/src/main.rs": "8195d8e46b245a42d9f20df636e9899c7a5bb9538968595850f8abfcb4fe7128",
+      "experiments/microvm/guest-keeper/Cargo.toml": "bf410f00c15228ec48cfda740c4a2c5a4f39e01e8f184edf4699ef3f96a2bb9f",
+      "experiments/microvm/guest-keeper/Cargo.lock": "c509b51fe02c1ae6842e01a302389076f615b27461f678b7b5af4e623b5e72b7",
+      "experiments/microvm/guest-keeper/zig-linker.sh": "28d89d7554ca99e4d1366d18d365253687076a7f9069d0488d9a011036626fd5",
+      "experiments/microvm/guest-keeper/zig-ar.sh": "8d9a92610ac547533bcce655621c435015305c043e273ea6a038ce999177935c",
+      "experiments/microvm/build_keeper_guest.py": "014709c331dfa3653bb2ae498803cabadd8f78d099460364fc1d2b44eb540b7d",
+      "experiments/microvm/build_guest.py": "b3e47c8936ed17862cb7c21475802520a596339a25f7fa1187bf2252a695b392",
+      "experiments/microvm/guest/init.c": "ada6355d1db490f6307a34c821c47bceb9ab6567fcc8863313de51748c4d1dac"
+    },
+    "busybox_package": {
+      "schema": 1,
+      "package": "busybox-static-1.37.0-r30",
+      "architecture": "aarch64",
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.23/main/aarch64/busybox-static-1.37.0-r30.apk",
+      "sha256": "44c9abdfb970f398fa72c8382fe2d8808eea16beaf82daf6ac708b92f1b8659e",
+      "member": "bin/busybox.static",
+      "purpose": "Real static shell and utilities for the keeper integration fixture; not a provider closure"
+    },
+    "rustc": "rustc 1.95.0 (59807616e 2026-04-14)"
+  },
+  "kernel": {
+    "path": "/Users/dragos/Development/devcroft-codex/experiments/microvm/artifacts/kernel-landlock/Image",
+    "sha256": "2b8b6d4664f1521a0d9bcc22252c4cc2e0bc98a5bbcf2500cc1e45ef1e1275fb"
+  },
+  "image": {
+    "path": "/Users/dragos/Development/devcroft-codex/experiments/microvm/artifacts/nix/toolchain.img",
+    "sha256": "f7a03966978e4b46ea3ae56e7593a969735332594581c9e4e92ffcbae258324f"
+  },
+  "seed": {
+    "path": "/Users/dragos/Development/devcroft-codex/experiments/microvm/artifacts/nix/data.seed.img",
+    "sha256": "efdc0a7295c7c0b93b2a9e5c210565b85c03c15e80b20f70798d1a8e0bfc536f"
+  },
+  "raw_evidence": "/Users/dragos/Development/devcroft-codex/experiments/microvm/runs/20261110-native-evaluation-finish/libkrun-faults",
+  "cases": [
+    {
+      "name": "abrupt-ssh-client-loss",
+      "status": "failed",
+      "error": "RuntimeError: SSH command survived abrupt client transport loss"
+    },
+    {
+      "name": "helper-process-pause-resume",
+      "status": "passed",
+      "evidence": {
+        "helper_only_pause_resume": true,
+        "host_suspended": false,
+        "sibling_run_id_unchanged": true,
+        "sibling_acknowledged_keys": 32
+      }
+    },
+    {
+      "name": "keeper-death-and-cold-recovery",
+      "status": "passed",
+      "evidence": {
+        "keeper_signal": "SIGKILL",
+        "pid1_control_survived": true,
+        "substrate_greeting_after_keeper_death": "READY 1 state=1 ro=1 landlock=6 policy=1",
+        "new_ssh_refused_until_restart": true,
+        "cold_restart_restored_keeper": true,
+        "existing_build_and_32_acknowledged_keys_recovered": true,
+        "sibling_run_id_unchanged": true,
+        "sibling_acknowledged_keys": 32
+      }
+    },
+    {
+      "name": "helper-term-and-cold-recovery",
+      "status": "passed",
+      "evidence": {
+        "signal": "SIGTERM",
+        "helper_exit_code": -15,
+        "cold_restart_restored_service": true,
+        "existing_build_and_32_acknowledged_keys_recovered": true,
+        "sibling_run_id_unchanged": true,
+        "sibling_acknowledged_keys": 32
+      }
+    }
+  ],
+  "instances": [
+    {
+      "label": "a",
+      "private_dir": "/private/tmp/ds-g2w4d088",
+      "boots": [
+        {
+          "boot": 1,
+          "greeting": "READY 1 state=1 ro=1 landlock=6 policy=1",
+          "ready_seconds": 7.660468416986987,
+          "nix_executables": [
+            "gcc /toolchain/nix/store/gw0vcpg33m9cqd6rscyqvds45apfrxfy-gcc-wrapper-15.3.0/bin/gcc",
+            "make /toolchain/nix/store/1dzsx5xcm25931cbdzs8cbjlzpc85mbp-gnumake-4.4.1/bin/make",
+            "redis-server /toolchain/nix/store/z558fjbsk7pmcimy3090ii7gcqas8brg-redis-8.8.1/bin/redis-server",
+            "code-server /toolchain/nix/store/dp4jqx583d9kqr9hbyqjhcyj2dx20rxp-code-server-4.115.0/bin/code-server"
+          ],
+          "build": {
+            "project": "xxHash 0.8.3",
+            "compiler_runs_in_guest": true,
+            "network": "no NIC/TSI; fixed source and toolchain pre-materialized",
+            "upstream_test_sanity": "passed",
+            "small_files_verified_and_hashed": 2048,
+            "sha256": {
+              "/workspace/project/xxhsum": "c9725549e1241f1e49e3719fd7030493854fad9ce467cf771598f58dcdec2908",
+              "/workspace/project/tests/sanity_test": "b3e6ad8529e779408daa6ff183c48100fc869bc180b722f387beaf3bd1057b73",
+              "/workspace/hashes.txt": "26c69ceea3b93f9eae742e6bcdcd946e379b0e9551ab55f20b0f33aebd1e6c34",
+              "/workspace/small/SHA256SUMS": "508278cbaea6f4ef5127f559bb3f52d86250010ba625ccd60d031c67eda21755"
+            },
+            "nix_elf_interpreter": "/nix/store/f8q4w2hbjvwy7qqwpnvbf5f4qwyww6cp-glibc-2.42-67/lib/ld-linux-aarch64.so.1"
+          },
+          "redis": {
+            "ready": true,
+            "run_id": "e006800d05c70d5e776503ad640bda34f37daa4f",
+            "appendonly": true,
+            "appendfsync": "always",
+            "arm64_madvise_free_fork_check": "OK",
+            "ignored_warnings": [],
+            "system_check_exit_code": 0,
+            "clocksource_warning": false,
+            "other_system_checks_qualified": false
+          },
+          "acknowledged_keys_written": 32,
+          "acknowledged_redis_keys_verified": {
+            "count": 32,
+            "sha256": "58d267a116f2900022ddae6f532f299a59176973e8c769ad04464a9eaae6643d"
+          },
+          "exit_code": 0,
+          "forced_cleanup": false,
+          "log_overflow": false,
+          "ssh_console_captured": true,
+          "guest_console_stream": "stderr"
+        },
+        {
+          "boot": 2,
+          "greeting": "READY 1 state=2 ro=1 landlock=6 policy=1",
+          "ready_seconds": 7.639716500008944,
+          "persisted_build_verified": {
+            "sha256": {
+              "/workspace/project/xxhsum": "c9725549e1241f1e49e3719fd7030493854fad9ce467cf771598f58dcdec2908",
+              "/workspace/project/tests/sanity_test": "b3e6ad8529e779408daa6ff183c48100fc869bc180b722f387beaf3bd1057b73",
+              "/workspace/hashes.txt": "26c69ceea3b93f9eae742e6bcdcd946e379b0e9551ab55f20b0f33aebd1e6c34",
+              "/workspace/small/SHA256SUMS": "508278cbaea6f4ef5127f559bb3f52d86250010ba625ccd60d031c67eda21755"
+            },
+            "small_files": 2048,
+            "existing_binary_test_sanity": "passed",
+            "rebuilt_before_check": false
+          },
+          "redis": {
+            "ready": true,
+            "run_id": "6c2fc6c9b99c634000ee0bc55d086c147edee1eb",
+            "appendonly": true,
+            "appendfsync": "always",
+            "arm64_madvise_free_fork_check": "OK",
+            "ignored_warnings": [],
+            "system_check_exit_code": 0,
+            "clocksource_warning": false,
+            "other_system_checks_qualified": false
+          },
+          "acknowledged_redis_keys_verified": {
+            "count": 32,
+            "sha256": "58d267a116f2900022ddae6f532f299a59176973e8c769ad04464a9eaae6643d"
+          },
+          "forced_stop": {
+            "expected": true,
+            "signal": "SIGTERM"
+          },
+          "exit_code": -15,
+          "forced_cleanup": false,
+          "log_overflow": false,
+          "ssh_console_captured": true,
+          "guest_console_stream": "stderr"
+        },
+        {
+          "boot": 3,
+          "greeting": "READY 1 state=3 ro=1 landlock=6 policy=1",
+          "ready_seconds": 7.633909332973417,
+          "persisted_build_verified": {
+            "sha256": {
+              "/workspace/project/xxhsum": "c9725549e1241f1e49e3719fd7030493854fad9ce467cf771598f58dcdec2908",
+              "/workspace/project/tests/sanity_test": "b3e6ad8529e779408daa6ff183c48100fc869bc180b722f387beaf3bd1057b73",
+              "/workspace/hashes.txt": "26c69ceea3b93f9eae742e6bcdcd946e379b0e9551ab55f20b0f33aebd1e6c34",
+              "/workspace/small/SHA256SUMS": "508278cbaea6f4ef5127f559bb3f52d86250010ba625ccd60d031c67eda21755"
+            },
+            "small_files": 2048,
+            "existing_binary_test_sanity": "passed",
+            "rebuilt_before_check": false
+          },
+          "redis": {
+            "ready": true,
+            "run_id": "7d34f37bd0ca4d079a14f7844250336292acfe17",
+            "appendonly": true,
+            "appendfsync": "always",
+            "arm64_madvise_free_fork_check": "OK",
+            "ignored_warnings": [],
+            "system_check_exit_code": 0,
+            "clocksource_warning": false,
+            "other_system_checks_qualified": false
+          },
+          "acknowledged_redis_keys_verified": {
+            "count": 32,
+            "sha256": "58d267a116f2900022ddae6f532f299a59176973e8c769ad04464a9eaae6643d"
+          },
+          "exit_code": 0,
+          "forced_cleanup": false,
+          "log_overflow": false,
+          "ssh_console_captured": true,
+          "guest_console_stream": "stderr"
+        }
+      ]
+    },
+    {
+      "label": "sibling",
+      "private_dir": "/private/tmp/ds-8n01hn5k",
+      "boots": [
+        {
+          "boot": 1,
+          "greeting": "READY 1 state=1 ro=1 landlock=6 policy=1",
+          "ready_seconds": 7.60912787495181,
+          "nix_executables": [
+            "gcc /toolchain/nix/store/gw0vcpg33m9cqd6rscyqvds45apfrxfy-gcc-wrapper-15.3.0/bin/gcc",
+            "make /toolchain/nix/store/1dzsx5xcm25931cbdzs8cbjlzpc85mbp-gnumake-4.4.1/bin/make",
+            "redis-server /toolchain/nix/store/z558fjbsk7pmcimy3090ii7gcqas8brg-redis-8.8.1/bin/redis-server",
+            "code-server /toolchain/nix/store/dp4jqx583d9kqr9hbyqjhcyj2dx20rxp-code-server-4.115.0/bin/code-server"
+          ],
+          "build": {
+            "project": "xxHash 0.8.3",
+            "compiler_runs_in_guest": true,
+            "network": "no NIC/TSI; fixed source and toolchain pre-materialized",
+            "upstream_test_sanity": "passed",
+            "small_files_verified_and_hashed": 2048,
+            "sha256": {
+              "/workspace/project/xxhsum": "c9725549e1241f1e49e3719fd7030493854fad9ce467cf771598f58dcdec2908",
+              "/workspace/project/tests/sanity_test": "b3e6ad8529e779408daa6ff183c48100fc869bc180b722f387beaf3bd1057b73",
+              "/workspace/hashes.txt": "26c69ceea3b93f9eae742e6bcdcd946e379b0e9551ab55f20b0f33aebd1e6c34",
+              "/workspace/small/SHA256SUMS": "508278cbaea6f4ef5127f559bb3f52d86250010ba625ccd60d031c67eda21755"
+            },
+            "nix_elf_interpreter": "/nix/store/f8q4w2hbjvwy7qqwpnvbf5f4qwyww6cp-glibc-2.42-67/lib/ld-linux-aarch64.so.1"
+          },
+          "redis": {
+            "ready": true,
+            "run_id": "e3766dc7c77a5d148d0d9f1db906de5adabed41e",
+            "appendonly": true,
+            "appendfsync": "always",
+            "arm64_madvise_free_fork_check": "OK",
+            "ignored_warnings": [],
+            "system_check_exit_code": 0,
+            "clocksource_warning": false,
+            "other_system_checks_qualified": false
+          },
+          "acknowledged_keys_written": 32,
+          "acknowledged_redis_keys_verified": {
+            "count": 32,
+            "sha256": "d515d5aa79102db86e001dc16f0ec261ff9c96fe0714d706c1d0352a08b1ee2a"
+          },
+          "exit_code": 0,
+          "forced_cleanup": false,
+          "log_overflow": false,
+          "ssh_console_captured": true,
+          "guest_console_stream": "stderr"
+        }
+      ]
+    }
+  ],
+  "planned_cases": [
+    "abrupt-ssh-client-loss",
+    "helper-process-pause-resume",
+    "keeper-death-and-cold-recovery",
+    "helper-term-and-cold-recovery"
+  ],
+  "not_run": [
+    {
+      "case": "init-death",
+      "reason": "baseline PID 1 has no fixed test-only exit injection"
+    },
+    {
+      "case": "host-suspend-resume",
+      "reason": "requires a physical-host maintenance window; helper SIGSTOP does not qualify it"
+    }
+  ],
+  "cleanup": {
+    "all_helpers_reaped": true,
+    "endpoints_removed": true
+  }
+}

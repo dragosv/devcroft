@@ -601,3 +601,18 @@ suspend and PID 1 death stay explicitly not-run. Independent phase failures
 remain visible and do not prevent collecting the other adapter's evidence.
 The continuation's `report.json` identifies its current phase; a waiting/running
 controller is not a completed evaluation or production approval.
+
+The complete native comparison is now retained in
+`results/macos-arm64-density.json`: all 180 Alpine/Nix launch/build/idle cases
+passed, and every measured runtime-memory/storage row meets the original
+limits. Clean offline agent-closure preparation took 68.24 seconds, or 117.69
+seconds including clean guest verification, against the accepted 600-second
+limit (`results/macos-arm64-cold-preparation.json`). These measurements used the
+original guest artifacts; later guest changes do not inherit the full matrix.
+
+The first fault runs found the same SSH lifecycle failure on both adapters:
+after abrupt client transport loss, the guest command stayed alive. The failed
+`results/{libkrun,hvi}-macos-arm64-faults.json` records are retained. Helper
+pause/resume, keeper death/cold recovery and helper SIGTERM/cold recovery passed,
+including existing builds, 32 acknowledged Redis keys, live sibling identity
+and helper/endpoint cleanup. Fixing and repeating SSH loss remains required.
