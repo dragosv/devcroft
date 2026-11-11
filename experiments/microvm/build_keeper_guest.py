@@ -22,6 +22,7 @@ def main():
     parser.add_argument('--agents', action='store_true', help='separate pinned real-agent probe; implies --nix')
     parser.add_argument('--adaptable', action='store_true')
     parser.add_argument('--setup-window', action='store_true')
+    parser.add_argument('--out', type=Path, help='separate guest artifacts; preserve earlier measured images')
     args = parser.parse_args()
     if args.agents:
         args.nix = True
@@ -47,6 +48,8 @@ def main():
         out = ROOT / ('artifacts/stage-c-setup' if args.setup_window else 'artifacts/stage-c-runtime')
     if args.agents:
         out = ROOT / 'artifacts/stage-b-agents'
+    if args.out:
+        out = args.out.resolve()
     out.mkdir(parents=True, exist_ok=True)
     pin = json.loads((ROOT / "fixtures/busybox-aarch64.json").read_text())
     package = out / "busybox.apk"

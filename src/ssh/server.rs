@@ -36,7 +36,7 @@ use russh::server::{self, Auth, ChannelOpenHandle, Config, Handler, Msg, Server 
 use russh::{Channel, ChannelId, ChannelOpenFailure, Pty};
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 
-use crate::keeper::connection::to_exit_status;
+use crate::keeper::connection::{DEFAULT_GRACE_PERIOD, to_exit_status};
 use crate::keeper::protocol::{ExitStatus, PtySize, SpawnRequest};
 use crate::keeper::session::SessionBackend;
 use crate::keeper::{pty, session};
@@ -90,7 +90,24 @@ struct PendingChannel {
 struct ActiveSession {
     stdin: Option<Box<dyn Write + Send>>,
     resize_handle: Option<File>,
-    pgid: libc::pid_t,
+    _cleanup: SessionCleanup,
+}
+
+enum SessionEvent {
+    OutputClosed,
+    Cancel,
+}
+
+/// Channel removal and whole-connection loss both drop this guard. Signals
+/// belong to the worker that owns the child, never a delayed raw PID callback:
+/// it keeps the group leader unreaped until its last signal, preventing PID
+/// reuse from redirecting cleanup into an unrelated session.
+struct SessionCleanup(std::sync::mpsc::Sender<SessionEvent>);
+
+impl Drop for SessionCleanup {
+    fn drop(&mut self) {
+        let _ = self.0.send(SessionEvent::Cancel);
+    }
 }
 
 struct SshServer {
@@ -169,18 +186,22 @@ impl SshServer {
                 return Ok(());
             }
         };
-        session.channel_success(channel_id)?;
+        // Register cleanup even if sending the acknowledgement fails after the
+        // child has already been spawned.
+        let acknowledged = session.channel_success(channel_id);
+        let stdin = spawned.stdin.take();
+        let resize_handle = spawned.resize_handle.take();
+        let cleanup = relay_session_to_channel(channel_id, spawned, session.handle());
 
         self.active.insert(
             channel_id,
             ActiveSession {
-                stdin: spawned.stdin.take(),
-                resize_handle: spawned.resize_handle.take(),
-                pgid: spawned.pgid,
+                stdin,
+                resize_handle,
+                _cleanup: cleanup,
             },
         );
-
-        relay_session_to_channel(channel_id, spawned, session.handle());
+        acknowledged?;
         Ok(())
     }
 }
@@ -199,7 +220,7 @@ fn relay_session_to_channel(
     channel_id: ChannelId,
     spawned: session::SpawnedSession,
     handle: server::Handle,
-) {
+) -> SessionCleanup {
     enum Event {
         Stdout(Vec<u8>),
         Stderr(Vec<u8>),
@@ -207,39 +228,93 @@ fn relay_session_to_channel(
     }
 
     let (tx, mut rx) = tokio::sync::mpsc::channel::<Event>(64);
+    let (cleanup_tx, cleanup_rx) = std::sync::mpsc::channel();
 
     let stdout_handle = {
         let tx = tx.clone();
+        let cleanup_tx = cleanup_tx.clone();
         let mut out = spawned.stdout;
-        thread::spawn(move || pump(&mut out, |bytes| tx.blocking_send(Event::Stdout(bytes))))
+        thread::spawn(move || {
+            pump(&mut out, |bytes| tx.blocking_send(Event::Stdout(bytes)));
+            let _ = cleanup_tx.send(SessionEvent::OutputClosed);
+        })
     };
+    let output_streams = 1 + usize::from(spawned.stderr.is_some());
     let stderr_handle = spawned.stderr.map(|mut err| {
         let tx = tx.clone();
-        thread::spawn(move || pump(&mut err, |bytes| tx.blocking_send(Event::Stderr(bytes))))
+        let cleanup_tx = cleanup_tx.clone();
+        thread::spawn(move || {
+            pump(&mut err, |bytes| tx.blocking_send(Event::Stderr(bytes)));
+            let _ = cleanup_tx.send(SessionEvent::OutputClosed);
+        })
     });
     {
         let tx = tx.clone();
         let mut child = spawned.child;
+        let pgid = spawned.pgid;
         thread::spawn(move || {
+            let mut closed = 0;
+            let status = loop {
+                // Until output drains, retain the child even if it exits: its
+                // PID reserves the group while descendants still hold pipes.
+                let event = if closed == output_streams {
+                    match child.try_wait() {
+                        Ok(Some(status)) => break Ok(status),
+                        Err(error) => break Err(error),
+                        Ok(None) => {}
+                    }
+                    match cleanup_rx.recv_timeout(std::time::Duration::from_millis(20)) {
+                        Ok(event) => event,
+                        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => continue,
+                        Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                            SessionEvent::Cancel
+                        }
+                    }
+                } else {
+                    cleanup_rx.recv().unwrap_or(SessionEvent::Cancel)
+                };
+                match event {
+                    SessionEvent::OutputClosed => closed += 1,
+                    SessionEvent::Cancel => {
+                        unsafe {
+                            libc::kill(-pgid, libc::SIGTERM);
+                        }
+                        thread::sleep(DEFAULT_GRACE_PERIOD);
+                        // Do not reap the leader during the grace period: the
+                        // group identity must remain reserved until this call.
+                        unsafe {
+                            libc::kill(-pgid, libc::SIGKILL);
+                        }
+                        break child.wait();
+                    }
+                }
+            };
             let _ = stdout_handle.join();
             if let Some(h) = stderr_handle {
                 let _ = h.join();
             }
-            let status = to_exit_status(child.wait());
+            let status = to_exit_status(status);
             let _ = tx.blocking_send(Event::Exit(status));
         });
     }
     drop(tx);
 
+    let relay_cleanup = cleanup_tx.clone();
     tokio::spawn(async move {
         while let Some(event) = rx.recv().await {
             match event {
                 Event::Stdout(bytes) => {
-                    let _ = handle.data(channel_id, bytes).await;
+                    if handle.data(channel_id, bytes).await.is_err() {
+                        let _ = relay_cleanup.send(SessionEvent::Cancel);
+                        break;
+                    }
                 }
                 // Extended data type 1 is stderr (RFC4254 5.2).
                 Event::Stderr(bytes) => {
-                    let _ = handle.extended_data(channel_id, 1, bytes).await;
+                    if handle.extended_data(channel_id, 1, bytes).await.is_err() {
+                        let _ = relay_cleanup.send(SessionEvent::Cancel);
+                        break;
+                    }
                 }
                 Event::Exit(status) => {
                     let code = status
@@ -253,6 +328,7 @@ fn relay_session_to_channel(
         let _ = handle.eof(channel_id).await;
         let _ = handle.close(channel_id).await;
     });
+    SessionCleanup(cleanup_tx)
 }
 
 /// A blocking read loop shared by the stdout/stderr pump threads above.
@@ -592,13 +668,8 @@ impl Handler for SshServer {
         Ok(())
     }
 
-    /// Terminates the session's process group unconditionally — a no-op
-    /// (`ESRCH`, silently ignored) if it had already exited on its own,
-    /// and orphan cleanup if the client went away mid-session. Simpler
-    /// than the control socket's grace-period escalation (`connection.rs`)
-    /// and sufficient here: `channel_close` only fires once the client is
-    /// truly done with this channel, unlike a raw disconnect the control
-    /// socket has to distinguish from "still attached".
+    /// Dropping the channel guard requests the same bounded cleanup that
+    /// dropping the whole connection does. Stdin EOF alone remains a half-close.
     async fn channel_close(
         &mut self,
         channel: ChannelId,
@@ -606,11 +677,7 @@ impl Handler for SshServer {
     ) -> Result<(), Self::Error> {
         self.channels.remove(&channel);
         self.pending.remove(&channel);
-        if let Some(active) = self.active.remove(&channel) {
-            unsafe {
-                libc::kill(-active.pgid, libc::SIGTERM);
-            }
-        }
+        self.active.remove(&channel);
         Ok(())
     }
 
@@ -810,7 +877,23 @@ mod tests {
         client_key: PrivateKey,
         authorized_key: PublicKey,
     ) -> (client::Handle<AcceptAnyServerKey>, bool) {
+        let (client, authenticated, _) =
+            authenticated_connection_with_transport(client_key, authorized_key).await;
+        (client, authenticated)
+    }
+
+    async fn authenticated_connection_with_transport(
+        client_key: PrivateKey,
+        authorized_key: PublicKey,
+    ) -> (
+        client::Handle<AcceptAnyServerKey>,
+        bool,
+        std::os::unix::net::UnixStream,
+    ) {
         let (client_stream, server_stream) = tokio::net::UnixStream::pair().unwrap();
+        let client_stream = client_stream.into_std().unwrap();
+        let transport = client_stream.try_clone().unwrap();
+        let client_stream = tokio::net::UnixStream::from_std(client_stream).unwrap();
 
         let host_key = PrivateKey::random(&mut rand::rng(), Algorithm::Ed25519).unwrap();
         let server_config = Arc::new(Config {
@@ -837,7 +920,7 @@ mod tests {
             )
             .await
             .unwrap();
-        (handle, result.success())
+        (handle, result.success(), transport)
     }
 
     async fn authenticate(client_key: PrivateKey, authorized_key: PublicKey) -> bool {
@@ -847,10 +930,160 @@ mod tests {
     #[tokio::test]
     async fn normal_keeper_rejects_remote_forwarding() {
         let key = PrivateKey::random(&mut rand::rng(), Algorithm::Ed25519).unwrap();
-        let (mut client, authorized) =
+        let (client, authorized) =
             authenticated_connection(key.clone(), key.public_key().clone()).await;
         assert!(authorized);
         assert!(client.tcpip_forward("127.0.0.1", 8082).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn transport_loss_or_channel_close_reaps_piped_and_pty_sessions() {
+        for (pty, close_channel) in [(false, false), (true, false), (false, true), (true, true)] {
+            let key = PrivateKey::random(&mut rand::rng(), Algorithm::Ed25519).unwrap();
+            let (client, authorized, transport) =
+                authenticated_connection_with_transport(key.clone(), key.public_key().clone())
+                    .await;
+            assert!(authorized);
+            let mut channel = client.channel_open_session().await.unwrap();
+            if pty {
+                channel
+                    .request_pty(false, "xterm", 80, 24, 0, 0, &[])
+                    .await
+                    .unwrap();
+            }
+            // Ignore TERM so this proves escalation as well as connection-drop
+            // notification. exec preserves the PID printed by the shell.
+            channel
+                .exec(
+                    true,
+                    "trap '' TERM; printf 'SESSION_PID=%s\\n' \"$$\"; exec sleep 30",
+                )
+                .await
+                .unwrap();
+            let pid = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+                let mut output = Vec::new();
+                loop {
+                    match channel.wait().await.unwrap() {
+                        russh::ChannelMsg::Data { data } => output.extend_from_slice(&data),
+                        russh::ChannelMsg::ExitStatus { exit_status } => {
+                            panic!("early exit {exit_status}")
+                        }
+                        _ => {}
+                    }
+                    if output.contains(&b'\n') {
+                        break String::from_utf8(output)
+                            .unwrap()
+                            .trim()
+                            .strip_prefix("SESSION_PID=")
+                            .unwrap()
+                            .parse::<libc::pid_t>()
+                            .unwrap();
+                    }
+                }
+            })
+            .await
+            .unwrap();
+            assert!(pid > 1);
+            assert_eq!(unsafe { libc::kill(pid, 0) }, 0, "positive control missing");
+            if close_channel {
+                channel.close().await.unwrap();
+            } else {
+                // No SSH disconnect or channel-close packet: destroy the
+                // transport while leaving the client handle/channel alive.
+                transport.shutdown(std::net::Shutdown::Both).unwrap();
+            }
+            let gone = tokio::time::timeout(std::time::Duration::from_secs(7), async {
+                loop {
+                    if unsafe { libc::kill(pid, 0) } == -1
+                        && io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH)
+                    {
+                        break;
+                    }
+                    tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+                }
+            })
+            .await;
+            if gone.is_err() {
+                // This is the still-live group identified by the positive
+                // control, well before its 30-second natural termination.
+                unsafe {
+                    libc::kill(-pid, libc::SIGKILL);
+                }
+            }
+            assert!(
+                gone.is_ok(),
+                "session survived cleanup (pty={pty}, close_channel={close_channel})"
+            );
+            if close_channel {
+                // Channel cleanup must leave this authenticated connection and
+                // independently opened sessions usable.
+                tokio::time::timeout(std::time::Duration::from_secs(5), async {
+                    let mut next = client.channel_open_session().await.unwrap();
+                    next.exec(true, "printf still-connected").await.unwrap();
+                    let mut output = Vec::new();
+                    loop {
+                        match next.wait().await.unwrap() {
+                            russh::ChannelMsg::Data { data } => output.extend_from_slice(&data),
+                            russh::ChannelMsg::ExitStatus { exit_status } => {
+                                assert_eq!(exit_status, 0);
+                                break;
+                            }
+                            _ => {}
+                        }
+                    }
+                    assert_eq!(output, b"still-connected");
+                })
+                .await
+                .unwrap();
+            }
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn stdin_eof_drains_buffered_output_before_exit_status() {
+        let key = PrivateKey::random(&mut rand::rng(), Algorithm::Ed25519).unwrap();
+        let (client, authorized) =
+            authenticated_connection(key.clone(), key.public_key().clone()).await;
+        assert!(authorized);
+        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            let mut channel = client.channel_open_session().await.unwrap();
+            // Accumulate stdin until EOF, then emit a large buffered response.
+            // This isolates half-close/exit ordering from stdin/stdout duplex
+            // backpressure in a native shell's cat implementation.
+            channel
+                .exec(true, "output=$(cat); printf %s \"$output\"; exit 29")
+                .await
+                .unwrap();
+            loop {
+                match channel.wait().await.unwrap() {
+                    russh::ChannelMsg::Success => break,
+                    russh::ChannelMsg::Failure => panic!("exec request refused"),
+                    _ => {}
+                }
+            }
+            let input = (0..131072)
+                .map(|index| b'a' + (index % 26) as u8)
+                .collect::<Vec<_>>();
+            channel.data_bytes(input.clone()).await.unwrap();
+            channel.eof().await.unwrap();
+            let mut output = Vec::new();
+            let mut status = None;
+            while let Some(message) = channel.wait().await {
+                match message {
+                    russh::ChannelMsg::Data { data } => output.extend_from_slice(&data),
+                    russh::ChannelMsg::ExitStatus { exit_status } => {
+                        assert_eq!(output, input, "exit status preceded buffered output");
+                        status = Some(exit_status);
+                    }
+                    russh::ChannelMsg::Close => break,
+                    _ => {}
+                }
+            }
+            assert_eq!(output, input);
+            assert_eq!(status, Some(29));
+        })
+        .await
+        .unwrap();
     }
 
     #[tokio::test]
