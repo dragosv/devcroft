@@ -1,0 +1,36 @@
+{
+  "schema": 1,
+  "status": "failed",
+  "qualification": "retained calibration failures and unresolved separate native duplex finding; not a qualifying run",
+  "rows": [
+    {
+      "name": "abrupt-ssh-client-loss-before-fix",
+      "status": "failed",
+      "scope": "native guest command survived client SIGKILL on both adapters",
+      "evidence": [
+        "results/libkrun-macos-arm64-faults.json",
+        "results/hvi-macos-arm64-faults.json"
+      ]
+    },
+    {
+      "name": "native-macos-direct-client-burst-duplex",
+      "status": "failed",
+      "scope": "128-KiB immediate cat echo timed out with direct russh client on both original and fixed server; separate from Linux guest OpenSSH and still open",
+      "evidence": [
+        "runs/20261111-ssh-lifecycle-validation/native-duplex-before.log",
+        "runs/20261111-ssh-lifecycle-validation/native-duplex-after.log"
+      ]
+    },
+    {
+      "name": "fresh-test-certificate-clock-validity",
+      "status": "failed",
+      "scope": "new certificate notBefore was later than guest clock; Claude explicit-CA positive control failed on both adapters; negative expiry alerts do not establish CA rejection",
+      "evidence": [
+        "runs/20261111-libkrun-agent-ssh-fix/report.json",
+        "runs/20261111-hvi-agent-ssh-fix/report.json"
+      ],
+      "correction": "Sample guest/host clocks, bound skew to one hour, set a short explicit validity interval covering both clocks and require UNKNOWN_CA or the explicit-CA application-data control; no TLS validation bypass"
+    }
+  ],
+  "raw_evidence": "experiments/microvm/runs/20261111-ssh-lifecycle-validation"
+}

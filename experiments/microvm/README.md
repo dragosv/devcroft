@@ -615,4 +615,35 @@ after abrupt client transport loss, the guest command stayed alive. The failed
 `results/{libkrun,hvi}-macos-arm64-faults.json` records are retained. Helper
 pause/resume, keeper death/cold recovery and helper SIGTERM/cold recovery passed,
 including existing builds, 32 acknowledged Redis keys, live sibling identity
-and helper/endpoint cleanup. Fixing and repeating SSH loss remains required.
+and helper/endpoint cleanup. That finding prompted the follow-up below.
+
+The follow-up keeper fixes SSH loss by dropping a per-session cancellation guard
+on whole-connection loss as well as channel close. The worker owning the child
+sends TERM, retains the unreaped group leader through the two-second grace
+period, then sends KILL before reaping; delayed cleanup never signals a PID
+after it was reaped. Stdin EOF remains a half-close. Both final native fault
+rows pass all four scenarios; initial failed reports remain unchanged. Their
+follow-ups are `results/{libkrun,hvi}-macos-arm64-faults-ssh-fix.json`.
+
+Local validation passes 442 library tests and warnings-denied all-target Clippy.
+New tests exercise pipe/PTY raw transport loss, pipe/PTY channel close with TERM
+ignored, a fresh session on the surviving connection, and 128-KiB buffered output
+before exit status after stdin EOF. A separate native macOS direct-russh-client
+burst echo diagnostic timed out on both the original and corrected servers; it
+remains an open duplex/backpressure finding, rather than being counted as a new
+regression or a passed Linux guest fixture. Raw before/after logs are retained
+under `runs/20261111-ssh-lifecycle-validation`.
+
+`build_keeper_guest.py --out <directory>` and `fault_probe.py --guest <receipt>`
+allow validating new guests without overwriting the original density artifacts.
+The 180-case comparison and cold-preparation timing therefore continue to
+identify their original binary hashes; they do not silently qualify a later
+keeper build.
+
+`storage_infrastructure.py` records global preparation/compiler/evidence costs
+separately from deployed VM storage. The stopped kernel/materializer builder's
+disk currently has 13.49 GiB allocated. Charging that builder to one environment
+already exceeds the original 8-GiB limit before runtime or downloads are added.
+It also contains kernel-building and multiple-fixture infrastructure; a minimal
+per-project materializer has not been measured. This prevents treating the
+successful ~2.05-GiB deployed-runtime subtotal as a complete E5 storage pass.

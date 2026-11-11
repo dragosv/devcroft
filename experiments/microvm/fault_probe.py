@@ -79,6 +79,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--adapter', choices=['libkrun', 'hvi'], required=True)
     parser.add_argument('--out', type=Path, required=True)
+    parser.add_argument('--guest', type=Path, default=ROOT / 'artifacts/stage-b-nix/guest.json')
     args = parser.parse_args()
     require_no_active_collector(ROOT / 'runs')
     lease = (ROOT / 'artifacts/nested-runner.lock').open('a')
@@ -86,12 +87,13 @@ def main():
     os.umask(0o077)
     args.out.mkdir(parents=True, exist_ok=False)
     helper = ROOT / ('hvi/target/debug/devcroft-hvi-spike' if args.adapter == 'hvi' else 'libkrun/target/debug/devcroft-krun-spike')
-    guest = json.loads((ROOT / 'artifacts/stage-b-nix/guest.json').read_text())
+    guest = json.loads(args.guest.read_text())
     image, seed, kernel = [ROOT / name for name in ('artifacts/nix/toolchain.img', 'artifacts/nix/data.seed.img', 'artifacts/kernel-landlock/Image')]
     report = {'schema': 1, 'status': 'failed', 'qualification': 'native functional fault injection; no host power-loss or host-suspend claim',
               'platform': 'macos-arm64-native', 'host': list(os.uname()), **helper_identity(helper),
               'helper': artifact(helper), 'guest': guest, 'kernel': artifact(kernel), 'image': artifact(image),
               'seed': artifact(seed), 'raw_evidence': str(args.out), 'cases': [], 'instances': []}
+    report['guest_receipt'] = artifact(args.guest)
     report['planned_cases'] = ['abrupt-ssh-client-loss', 'helper-process-pause-resume',
                                'keeper-death-and-cold-recovery', 'helper-term-and-cold-recovery']
     report['not_run'] = [{'case': 'init-death', 'reason': 'baseline PID 1 has no fixed test-only exit injection'},

@@ -1,0 +1,64 @@
+{
+  "schema": 1,
+  "status": "passed",
+  "qualification": "retained global experiment storage inventory; not a full per-environment storage pass",
+  "platform": "macos-arm64-native",
+  "measured_utc": "2026-11-11T11:30:03.557907+00:00",
+  "buckets": {
+    "stopped_builder_disk": {
+      "path": "/private/tmp/devcroft-kernel-builder/kernel-build/disk",
+      "regular_files": 1,
+      "logical_bytes": 21474836480,
+      "allocated_bytes": 14480084992,
+      "symlinks_not_followed": 0,
+      "errors": []
+    },
+    "retained_raw_evidence": {
+      "path": "/Users/dragos/Development/devcroft-codex/experiments/microvm/runs",
+      "regular_files": 22575,
+      "logical_bytes": 2944787110,
+      "allocated_bytes": 2982981632,
+      "symlinks_not_followed": 0,
+      "errors": []
+    },
+    "libkrun_compilation_cache": {
+      "path": "/Users/dragos/Development/devcroft-codex/experiments/microvm/libkrun/target",
+      "regular_files": 9,
+      "logical_bytes": 67282226,
+      "allocated_bytes": 67301376,
+      "symlinks_not_followed": 0,
+      "errors": []
+    },
+    "hvi_compilation_cache": {
+      "path": "/Users/dragos/Development/devcroft-codex/experiments/microvm/hvi/target",
+      "regular_files": 5,
+      "logical_bytes": 4488264,
+      "allocated_bytes": 4497408,
+      "symlinks_not_followed": 0,
+      "errors": []
+    },
+    "guest_keeper_compilation_cache": {
+      "path": "/Users/dragos/Development/devcroft-codex/experiments/microvm/guest-keeper/target",
+      "regular_files": 3197,
+      "logical_bytes": 755225318,
+      "allocated_bytes": 764772352,
+      "symlinks_not_followed": 0,
+      "errors": []
+    }
+  },
+  "thresholds_sha256": "5db6e27a67179c45403b159684b22db7789d2bc019552ae205d8a1ca2ba3768e",
+  "original_storage_limit_gib": 8,
+  "conservative_single_environment_builder_charge": {
+    "allocated_gib": 13.48563003540039,
+    "criterion": "failed",
+    "scope": "charge the existing dedicated kernel/materializer builder to one environment; excludes runtime, archives, compiler caches and logs, so it is only a lower bound for that charging scenario"
+  },
+  "allocation_rule": "Report global buckets separately. Count each regular inode once within its bucket; do not follow symlinks. Never silently amortize preparation infrastructure across an invented fleet size to pass E5.",
+  "limitations": [
+    "The builder also retains kernel-building and multiple-fixture infrastructure; this is not a fresh minimal per-project materializer.",
+    "stat st_blocks*512 is allocated file storage, not a measurement of unique APFS extents across files or snapshots.",
+    "Buckets are not summed into a per-environment cost: runtime/private accounting and overlapping immutable archives have separate reports.",
+    "Failed VM disks retained under private temporary paths are described in their raw reports; they are outside these bucket subtotals.",
+    "A full E5 storage pass still needs a bounded minimal preparation footprint and an explicit global allocation/retention policy."
+  ]
+}
