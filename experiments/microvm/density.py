@@ -148,8 +148,9 @@ class Cohort:
 
     def cleanup(self, successful):
         self.stop()
-        private_sizes = [usage([vm.path]) for vm in self.vms]
-        storage = usage([vm.path for vm in self.vms])
+        private_sizes = [usage([vm.path, vm.controller_dir]) for vm in self.vms]
+        storage = usage([path for vm in self.vms for path in (vm.path, vm.controller_dir)])
+        controller_storage = usage([vm.controller_dir for vm in self.vms])
         endpoints_gone = all(not (vm.path / name).exists() for vm in self.vms
                              for name in ('control.sock', 'keeper.sock', 'ssh.sock'))
         require(endpoints_gone, 'stale endpoint remains after cleanup')
@@ -158,10 +159,14 @@ class Cohort:
                 require(vm.path.parent == Path('/private/tmp') and vm.path.name.startswith('ds-')
                         and not vm.path.is_symlink() and vm.path.stat().st_uid == os.getuid(), 'unexpected private directory')
                 shutil.rmtree(vm.path)
+                require(vm.controller_dir.parent == Path('/private/tmp') and vm.controller_dir.name.startswith('dc-c-')
+                        and not vm.controller_dir.is_symlink() and vm.controller_dir.stat().st_uid == os.getuid(), 'unexpected controller directory')
+                shutil.rmtree(vm.controller_dir)
         write(self.out / 'instances.json', [{'instance': vm.label, 'boots': vm.boots} for vm in self.vms])
         common = usage([self.helper, self.kernel, Path(self.guest['initramfs']['path']),
                         Path(self.guest['runtime']['path']), self.image, self.seed])
         return {'private_before_cleanup': storage, 'common_deployed_inputs': common,
+                'controller_storage_included_in_private': controller_storage,
                 'cohort_total_allocated_bytes': storage['allocated_bytes'] + common['allocated_bytes'],
                 'per_environment_amortized_allocated_bytes': (storage['allocated_bytes'] + common['allocated_bytes']) / self.count,
                 'standalone_per_environment_upper_bound_allocated_bytes': common['allocated_bytes'] + max((p['allocated_bytes'] for p in private_sizes), default=0),

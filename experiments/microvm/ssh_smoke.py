@@ -73,16 +73,19 @@ class Instance:
         self.out = out / label
         self.out.mkdir()
         self.path = Path(tempfile.mkdtemp(prefix="ds-", dir="/private/tmp" if os.uname().sysname == "Darwin" else "/tmp"))
+        # This directory is never part of the helper's writable authority. Keep
+        # it short for OpenSSH's Unix control-socket pathname limit.
+        self.controller_dir = Path(tempfile.mkdtemp(prefix="dc-c-", dir="/private/tmp" if os.uname().sysname == "Darwin" else "/tmp"))
         self.id = secrets.token_hex(16)
         self.process = None
         self.boots = []
         for key in ("client", "host", "wrong-client"):
             result = command(["ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-C", "devcroft-microvm-test",
-                              "-f", self.path / key], self.out, f"keygen-{key}", timeout=5)
+                              "-f", self.controller_dir / key], self.out, f"keygen-{key}", timeout=5)
             require(result.returncode == 0, f"key generation failed: {result.stderr!r}")
         seed = json.dumps({"schema": 1, "instance_id": self.id,
-            "host_key": (self.path / "host").read_text(),
-            "authorized_key": (self.path / "client.pub").read_text()}).encode()
+            "host_key": (self.controller_dir / "host").read_text(),
+            "authorized_key": (self.controller_dir / "client.pub").read_text()}).encode()
         require(0 < len(seed) <= 16384, "SSH seed exceeds guest budget")
         state = self.path / "state.img"
         with state.open("xb") as f:
@@ -91,13 +94,15 @@ class Instance:
             f.write(b"DCSHKEY1" + struct.pack(">I", len(seed)) + seed)
         state.chmod(0o600)
         self.host_alias = f"guest-{self.id}"
-        self.known_hosts = self.path / "known_hosts"
-        self.known_hosts.write_text(self.host_alias + " " + (self.path / "host.pub").read_text())
+        self.known_hosts = self.controller_dir / "known_hosts"
+        self.known_hosts.write_text(self.host_alias + " " + (self.controller_dir / "host.pub").read_text())
+        self.known_hosts.chmod(0o600)
         self.launch = {"schema": 1, "kernel": artifact(kernel), "initramfs": guest["initramfs"],
             "runtime": guest["runtime"], "state": str(state), "instance_dir": str(self.path),
             "vcpus": 1, "memory_mib": 256}
-        self.launch_path = self.path / "launch.json"
+        self.launch_path = self.controller_dir / "launch.json"
         self.launch_path.write_text(json.dumps(self.launch, indent=2) + "\n")
+        self.launch_path.chmod(0o600)
         (self.out / "launch.json").write_text(self.launch_path.read_text())
 
     def options(self, key="client", known_hosts=None, endpoint=None):
@@ -108,7 +113,7 @@ class Instance:
                 "-o", "ForwardAgent=no", "-o", "StrictHostKeyChecking=yes",
                 "-o", f"UserKnownHostsFile={known_hosts or self.known_hosts}",
                 "-o", "GlobalKnownHostsFile=/dev/null", "-o", f"HostKeyAlias={self.host_alias}",
-                "-o", "ConnectTimeout=5", "-o", "ConnectionAttempts=1", "-i", str(self.path / key)]
+                "-o", "ConnectTimeout=5", "-o", "ConnectionAttempts=1", "-i", str(self.controller_dir / key)]
 
     def ssh(self, name, remote=None, data=b"", extra=(), **kwargs):
         argv = ["ssh", *self.options(**kwargs), *extra, "devcroft@guest"]
@@ -352,7 +357,7 @@ def main():
         for vm in instances:
             require(vm.probes()["status"] == "passed", vm.boots[-1]["probes"])
         a, b = instances
-        sibling_key = a.ssh("sibling-client-key", "printf unexpected", key=b.path / "client")
+        sibling_key = a.ssh("sibling-client-key", "printf unexpected", key=b.controller_dir / "client")
         require(sibling_key.returncode == 255 and b"Permission denied" in sibling_key.stderr,
                 (sibling_key.returncode, sibling_key.stderr))
         report["sibling_client_key_rejected"] = True

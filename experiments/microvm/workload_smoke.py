@@ -34,6 +34,7 @@ class WorkloadInstance(Instance):
     def __init__(self, label, out, helper, kernel, guest, workload, seed):
         super().__init__(label, out, helper, kernel, guest)
         self.nix = guest.get('nix', False)
+        self.agents = guest.get('agents', False)
         data = self.path / "data.img"
         sparse_copy(seed, data)
         self.launch.update(workload=artifact(workload), data=str(data), memory_mib=512, vcpus=2)
@@ -83,9 +84,10 @@ redis-cli --raw INFO server | grep '^run_id:'
 
     def build(self, import_sources=True):
         if self.nix:
+            binaries = 'gcc make redis-server ' + ('codex claude' if self.agents else 'code-server')
             layout = self.execute('nix-closure-layout', '''set -eu
 test "$(/bin/busybox readlink /nix)" = toolchain/nix
-for name in gcc make redis-server code-server; do
+for name in ''' + binaries + '''; do
  path=$(/bin/busybox readlink -f /usr/bin/$name)
  case "$path" in /toolchain/nix/store/*) printf '%s %s\\n' "$name" "$path";; *) exit 1;; esac
 done

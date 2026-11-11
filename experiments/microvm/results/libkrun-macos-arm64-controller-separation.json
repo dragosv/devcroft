@@ -1,0 +1,337 @@
+{
+  "schema": 1,
+  "status": "passed",
+  "qualification": "native controller separation and confined-helper negative controls; not a VMM escape demonstration",
+  "platform": "macos-arm64-native",
+  "adapter": "libkrun",
+  "helper_provenance": {
+    "patch_sha256": "7a25379a3e1291ecbace0cad78e804b70f3f4515cebbf8c35f0843d107d4c2cc",
+    "revision": "6151710f4ea627cf0e5dbce78e4192fb4d64c2e9"
+  },
+  "helper": {
+    "path": "/Users/dragos/Development/devcroft-codex/experiments/microvm/libkrun/target/debug/devcroft-krun-spike",
+    "sha256": "1b51045e1a0d3567afbe70b104dad785b6c03cf9b36be9831cae080215672b84"
+  },
+  "guest": {
+    "schema": 1,
+    "arch": "aarch64",
+    "fixture": "stage-b-nix-closure-ext4",
+    "zig_version": "0.17.0",
+    "source_sha256": "18a7223ffac37edc5471af2627b7f1ee352d39b91681ce823f342310f31a57af",
+    "nono": "0.77.0",
+    "keeper_sha256": "2e96bf0de960443b322df11b4d0e410fff4a861de7aeb55dd4bd2404919314a0",
+    "busybox_sha256": "198f6f675a49ac734082e054b823d3e2e947180ca2f632852ae1c09e950fd676",
+    "workload": true,
+    "nix": true,
+    "initramfs": {
+      "path": "/Users/dragos/Development/devcroft-codex/experiments/microvm/artifacts/stage-b-nix-ssh-loss-fix-final/initramfs.cpio",
+      "sha256": "46018a7a832fe2b63b0a9278824be89e3087e8bdaab6c9c39ece677c35d8ab37"
+    },
+    "runtime": {
+      "path": "/Users/dragos/Development/devcroft-codex/experiments/microvm/artifacts/stage-b-nix-ssh-loss-fix-final/runtime.img",
+      "sha256": "768f5b593e9f9f6888ea6930f6b6dc3adb65fd204b3c48361e0864dd6ae93f0c"
+    },
+    "sources": {
+      "src/keeper/connection.rs": "5ea9ab23a29a9eb73363759818af13d5619715e9bc3282409ebd0c4257363759",
+      "src/keeper/environment.rs": "dcf433c26bba99dbe3a28164e35cd38854c30a64521a21691dc92f15ddc29fc6",
+      "src/keeper/mod.rs": "2d93e061be8231d0e0f95b018405b7dac70973800f3a72eed951960d753573e9",
+      "src/keeper/protocol.rs": "a1fd3088992902e89022c229ed710d25487374bfeeeece8000dd2e5872572a2d",
+      "src/keeper/pty.rs": "be8ea1fda83d3932eebe6d54b509e2f96bae5df9aa313a00296e4fa41e580dca",
+      "src/keeper/registry.rs": "99d96e3c267247ecc2f2220f8c0667216998d2cdabd8aabf5284d21c38aa93ce",
+      "src/keeper/session.rs": "1d1a1fce6ff8daac07dc6a8cc95a5ef60362730ae7d22326658920d8a8cf195c",
+      "src/ssh/server.rs": "6db352d3a4150d2e89963787dc63c5e5d70eea1167a5f6c84bba8c1fdfede900",
+      "src/ssh/sftp.rs": "805e6fc83c646b50df100010bb6bec3988733a8a79027ca1d6ce79ce745ae6ee",
+      "experiments/microvm/guest-keeper/src/bootstrap.rs": "9ad93deea140929f7b13c50411a8be1c46170ff3a118b75f9d32320a59b3e606",
+      "experiments/microvm/guest-keeper/src/linux.rs": "63d0d745b0f4fb4f6f9df105e651dd954f854dc84a4650c90c60d799118c76d3",
+      "experiments/microvm/guest-keeper/src/main.rs": "8195d8e46b245a42d9f20df636e9899c7a5bb9538968595850f8abfcb4fe7128",
+      "experiments/microvm/guest-keeper/Cargo.toml": "bf410f00c15228ec48cfda740c4a2c5a4f39e01e8f184edf4699ef3f96a2bb9f",
+      "experiments/microvm/guest-keeper/Cargo.lock": "c509b51fe02c1ae6842e01a302389076f615b27461f678b7b5af4e623b5e72b7",
+      "experiments/microvm/guest-keeper/zig-linker.sh": "28d89d7554ca99e4d1366d18d365253687076a7f9069d0488d9a011036626fd5",
+      "experiments/microvm/guest-keeper/zig-ar.sh": "8d9a92610ac547533bcce655621c435015305c043e273ea6a038ce999177935c",
+      "experiments/microvm/build_keeper_guest.py": "f5d9c2ed82f9c97c0abf742dedb1394ee47a4d9075654615a1de003501f8e8d0",
+      "experiments/microvm/build_guest.py": "cdf605d85ff6252380321c84bea0f4b7f35c218339d555c0f5d83f8e6089b710",
+      "experiments/microvm/guest/init.c": "18a7223ffac37edc5471af2627b7f1ee352d39b91681ce823f342310f31a57af"
+    },
+    "busybox_package": {
+      "schema": 1,
+      "package": "busybox-static-1.37.0-r30",
+      "architecture": "aarch64",
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.23/main/aarch64/busybox-static-1.37.0-r30.apk",
+      "sha256": "44c9abdfb970f398fa72c8382fe2d8808eea16beaf82daf6ac708b92f1b8659e",
+      "member": "bin/busybox.static",
+      "purpose": "Real static shell and utilities for the keeper integration fixture; not a provider closure"
+    },
+    "rustc": "rustc 1.95.0 (59807616e 2026-04-14)"
+  },
+  "raw_evidence": "/Users/dragos/Development/devcroft-codex/experiments/microvm/runs/20261111-libkrun-controller-separated",
+  "checks": [
+    {
+      "name": "launch",
+      "status": "passed",
+      "target_sha256": "2228e3625fdeb4329f459af2a47e5621ce06de590b5386b2b8d59bd72d6f4aa5",
+      "controls": {
+        "outside_denied": true,
+        "outside_unix_connect_denied": true,
+        "outside_write_denied": true,
+        "passed": true,
+        "readonly_input_works": true,
+        "runtime_write_denied": true,
+        "tcp_denied": true,
+        "thread_works": true,
+        "unix_works": true,
+        "writable_state_works": true
+      }
+    },
+    {
+      "name": "client-key",
+      "status": "passed",
+      "target_sha256": "ef7b04a7f6dd953cc985568cf93a93504fc275683ef85390de17c4268e3793f2",
+      "controls": {
+        "outside_denied": true,
+        "outside_unix_connect_denied": true,
+        "outside_write_denied": true,
+        "passed": true,
+        "readonly_input_works": true,
+        "runtime_write_denied": true,
+        "tcp_denied": true,
+        "thread_works": true,
+        "unix_works": true,
+        "writable_state_works": true
+      }
+    },
+    {
+      "name": "known-hosts",
+      "status": "passed",
+      "target_sha256": "ed2152c280ca71d860b7bea71be19ddd00f18b35511df4a55ff8683ad29f015e",
+      "controls": {
+        "outside_denied": true,
+        "outside_unix_connect_denied": true,
+        "outside_write_denied": true,
+        "passed": true,
+        "readonly_input_works": true,
+        "runtime_write_denied": true,
+        "tcp_denied": true,
+        "thread_works": true,
+        "unix_works": true,
+        "writable_state_works": true
+      }
+    },
+    {
+      "name": "sibling-client-key",
+      "status": "passed",
+      "target_sha256": "fd0ded08c4bef70fc437cbb4344eb151be4931202844cd1874a1d86cd4f9ea02",
+      "controls": {
+        "outside_denied": true,
+        "outside_unix_connect_denied": true,
+        "outside_write_denied": true,
+        "passed": true,
+        "readonly_input_works": true,
+        "runtime_write_denied": true,
+        "tcp_denied": true,
+        "thread_works": true,
+        "unix_works": true,
+        "writable_state_works": true
+      }
+    },
+    {
+      "name": "checkout",
+      "status": "passed",
+      "target_sha256": "ff651406d678e14d42df3926859cdae5410048784fe2881a03bb3c38978c45be",
+      "controls": {
+        "outside_denied": true,
+        "outside_unix_connect_denied": true,
+        "outside_write_denied": true,
+        "passed": true,
+        "readonly_input_works": true,
+        "runtime_write_denied": true,
+        "tcp_denied": true,
+        "thread_works": true,
+        "unix_works": true,
+        "writable_state_works": true
+      }
+    },
+    {
+      "name": "shared-cache",
+      "status": "passed",
+      "target_sha256": "deb64c3574f6af5485adf594dbe9b5a8e74eccc5add9889f81faa8b2c1bbee40",
+      "controls": {
+        "outside_denied": true,
+        "outside_unix_connect_denied": true,
+        "outside_write_denied": true,
+        "passed": true,
+        "readonly_input_works": true,
+        "runtime_write_denied": true,
+        "tcp_denied": true,
+        "thread_works": true,
+        "unix_works": true,
+        "writable_state_works": true
+      }
+    }
+  ],
+  "instances": [
+    {
+      "label": "a",
+      "runtime_dir": "/private/tmp/ds-wvwdrn1c",
+      "controller_dir": "/private/tmp/dc-c-wkqxz46l",
+      "boots": [
+        {
+          "boot": 1,
+          "greeting": "READY 1 state=1 ro=1 landlock=6 policy=1",
+          "ready_seconds": 7.827134084014688,
+          "nix_executables": [
+            "gcc /toolchain/nix/store/gw0vcpg33m9cqd6rscyqvds45apfrxfy-gcc-wrapper-15.3.0/bin/gcc",
+            "make /toolchain/nix/store/1dzsx5xcm25931cbdzs8cbjlzpc85mbp-gnumake-4.4.1/bin/make",
+            "redis-server /toolchain/nix/store/z558fjbsk7pmcimy3090ii7gcqas8brg-redis-8.8.1/bin/redis-server",
+            "code-server /toolchain/nix/store/dp4jqx583d9kqr9hbyqjhcyj2dx20rxp-code-server-4.115.0/bin/code-server"
+          ],
+          "build": {
+            "project": "xxHash 0.8.3",
+            "compiler_runs_in_guest": true,
+            "network": "no NIC/TSI; fixed source and toolchain pre-materialized",
+            "upstream_test_sanity": "passed",
+            "small_files_verified_and_hashed": 2048,
+            "sha256": {
+              "/workspace/project/xxhsum": "c9725549e1241f1e49e3719fd7030493854fad9ce467cf771598f58dcdec2908",
+              "/workspace/project/tests/sanity_test": "b3e6ad8529e779408daa6ff183c48100fc869bc180b722f387beaf3bd1057b73",
+              "/workspace/hashes.txt": "26c69ceea3b93f9eae742e6bcdcd946e379b0e9551ab55f20b0f33aebd1e6c34",
+              "/workspace/small/SHA256SUMS": "508278cbaea6f4ef5127f559bb3f52d86250010ba625ccd60d031c67eda21755"
+            },
+            "nix_elf_interpreter": "/nix/store/f8q4w2hbjvwy7qqwpnvbf5f4qwyww6cp-glibc-2.42-67/lib/ld-linux-aarch64.so.1"
+          },
+          "redis": {
+            "ready": true,
+            "run_id": "a70532a21e75d6b34b26f4883ce2e97d2e3f8f2f",
+            "appendonly": true,
+            "appendfsync": "always",
+            "arm64_madvise_free_fork_check": "OK",
+            "ignored_warnings": [],
+            "system_check_exit_code": 0,
+            "clocksource_warning": false,
+            "other_system_checks_qualified": false
+          },
+          "acknowledged_keys_written": 32,
+          "acknowledged_redis_keys_verified": {
+            "count": 32,
+            "sha256": "377f3414a7007c24d1b7a22baec1356d1a574f656f73e10d58c4fa822323ed91"
+          },
+          "controller_separated_build": {
+            "/workspace/project/xxhsum": "c9725549e1241f1e49e3719fd7030493854fad9ce467cf771598f58dcdec2908",
+            "/workspace/project/tests/sanity_test": "b3e6ad8529e779408daa6ff183c48100fc869bc180b722f387beaf3bd1057b73",
+            "/workspace/hashes.txt": "26c69ceea3b93f9eae742e6bcdcd946e379b0e9551ab55f20b0f33aebd1e6c34",
+            "/workspace/small/SHA256SUMS": "508278cbaea6f4ef5127f559bb3f52d86250010ba625ccd60d031c67eda21755"
+          },
+          "exit_code": 0,
+          "forced_cleanup": false,
+          "log_overflow": false,
+          "ssh_console_captured": true,
+          "guest_console_stream": "stderr"
+        },
+        {
+          "boot": 2,
+          "greeting": "READY 1 state=2 ro=1 landlock=6 policy=1",
+          "ready_seconds": 7.737241207971238,
+          "persisted_build_verified": {
+            "sha256": {
+              "/workspace/project/xxhsum": "c9725549e1241f1e49e3719fd7030493854fad9ce467cf771598f58dcdec2908",
+              "/workspace/project/tests/sanity_test": "b3e6ad8529e779408daa6ff183c48100fc869bc180b722f387beaf3bd1057b73",
+              "/workspace/hashes.txt": "26c69ceea3b93f9eae742e6bcdcd946e379b0e9551ab55f20b0f33aebd1e6c34",
+              "/workspace/small/SHA256SUMS": "508278cbaea6f4ef5127f559bb3f52d86250010ba625ccd60d031c67eda21755"
+            },
+            "small_files": 2048,
+            "existing_binary_test_sanity": "passed",
+            "rebuilt_before_check": false
+          },
+          "redis": {
+            "ready": true,
+            "run_id": "2a90ed3aabdee764ffb2d76bbe6d4b230733e579",
+            "appendonly": true,
+            "appendfsync": "always",
+            "arm64_madvise_free_fork_check": "OK",
+            "ignored_warnings": [],
+            "system_check_exit_code": 0,
+            "clocksource_warning": false,
+            "other_system_checks_qualified": false
+          },
+          "acknowledged_redis_keys_verified": {
+            "count": 32,
+            "sha256": "377f3414a7007c24d1b7a22baec1356d1a574f656f73e10d58c4fa822323ed91"
+          },
+          "exit_code": 0,
+          "forced_cleanup": false,
+          "log_overflow": false,
+          "ssh_console_captured": true,
+          "guest_console_stream": "stderr"
+        }
+      ]
+    },
+    {
+      "label": "sibling",
+      "runtime_dir": "/private/tmp/ds-gp22g7a_",
+      "controller_dir": "/private/tmp/dc-c-ylmvq0w7",
+      "boots": [
+        {
+          "boot": 1,
+          "greeting": "READY 1 state=1 ro=1 landlock=6 policy=1",
+          "ready_seconds": 7.999667041993234,
+          "nix_executables": [
+            "gcc /toolchain/nix/store/gw0vcpg33m9cqd6rscyqvds45apfrxfy-gcc-wrapper-15.3.0/bin/gcc",
+            "make /toolchain/nix/store/1dzsx5xcm25931cbdzs8cbjlzpc85mbp-gnumake-4.4.1/bin/make",
+            "redis-server /toolchain/nix/store/z558fjbsk7pmcimy3090ii7gcqas8brg-redis-8.8.1/bin/redis-server",
+            "code-server /toolchain/nix/store/dp4jqx583d9kqr9hbyqjhcyj2dx20rxp-code-server-4.115.0/bin/code-server"
+          ],
+          "build": {
+            "project": "xxHash 0.8.3",
+            "compiler_runs_in_guest": true,
+            "network": "no NIC/TSI; fixed source and toolchain pre-materialized",
+            "upstream_test_sanity": "passed",
+            "small_files_verified_and_hashed": 2048,
+            "sha256": {
+              "/workspace/project/xxhsum": "c9725549e1241f1e49e3719fd7030493854fad9ce467cf771598f58dcdec2908",
+              "/workspace/project/tests/sanity_test": "b3e6ad8529e779408daa6ff183c48100fc869bc180b722f387beaf3bd1057b73",
+              "/workspace/hashes.txt": "26c69ceea3b93f9eae742e6bcdcd946e379b0e9551ab55f20b0f33aebd1e6c34",
+              "/workspace/small/SHA256SUMS": "508278cbaea6f4ef5127f559bb3f52d86250010ba625ccd60d031c67eda21755"
+            },
+            "nix_elf_interpreter": "/nix/store/f8q4w2hbjvwy7qqwpnvbf5f4qwyww6cp-glibc-2.42-67/lib/ld-linux-aarch64.so.1"
+          },
+          "redis": {
+            "ready": true,
+            "run_id": "5e6233896c608b0c837a810b970c75a44de31f6a",
+            "appendonly": true,
+            "appendfsync": "always",
+            "arm64_madvise_free_fork_check": "OK",
+            "ignored_warnings": [],
+            "system_check_exit_code": 0,
+            "clocksource_warning": false,
+            "other_system_checks_qualified": false
+          },
+          "acknowledged_keys_written": 32,
+          "acknowledged_redis_keys_verified": {
+            "count": 32,
+            "sha256": "bc70e91ac2c73be3c5578d693e49467e8eee3b6d4f6b1c2785bfe75446941d1d"
+          },
+          "controller_separated_build": {
+            "/workspace/project/xxhsum": "c9725549e1241f1e49e3719fd7030493854fad9ce467cf771598f58dcdec2908",
+            "/workspace/project/tests/sanity_test": "b3e6ad8529e779408daa6ff183c48100fc869bc180b722f387beaf3bd1057b73",
+            "/workspace/hashes.txt": "26c69ceea3b93f9eae742e6bcdcd946e379b0e9551ab55f20b0f33aebd1e6c34",
+            "/workspace/small/SHA256SUMS": "508278cbaea6f4ef5127f559bb3f52d86250010ba625ccd60d031c67eda21755"
+          },
+          "exit_code": 0,
+          "forced_cleanup": false,
+          "log_overflow": false,
+          "ssh_console_captured": true,
+          "guest_console_stream": "stderr"
+        }
+      ]
+    }
+  ],
+  "live_controls": {
+    "two_builds_and_redis_services": true,
+    "cold_restart_preserves_keys_and_build": true,
+    "sibling_survives_restart": true,
+    "controller_records_outside_vmm_write_grant": true
+  },
+  "cleanup": {
+    "all_owned_helpers_reaped": true,
+    "endpoints_removed": true
+  }
+}

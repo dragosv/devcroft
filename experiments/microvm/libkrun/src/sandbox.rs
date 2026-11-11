@@ -5,13 +5,45 @@ pub use crate::linux::{apply, selftest};
 
 #[cfg(not(target_os = "linux"))]
 pub fn selftest(cfg: &Launch, outside: &std::path::Path) -> Result<(), String> {
+    selftest_impl(cfg, outside, None)
+}
+
+#[cfg(target_os = "macos")]
+pub fn controller_test(
+    cfg: &Launch,
+    outside: &std::path::Path,
+    socket: &std::path::Path,
+) -> Result<(), String> {
+    selftest_impl(cfg, outside, Some(socket))
+}
+
+#[cfg(not(target_os = "linux"))]
+fn selftest_impl(
+    cfg: &Launch,
+    outside: &std::path::Path,
+    socket: Option<&std::path::Path>,
+) -> Result<(), String> {
     use std::fs::{File, OpenOptions};
     use std::io::{ErrorKind, Write};
     // This sentinel is created by the controller, never a user's real secret.
     File::open(outside).map_err(|e| format!("backend: unreadable baseline sentinel: {e}"))?;
+    OpenOptions::new()
+        .write(true)
+        .open(outside)
+        .map_err(|e| format!("backend: unwritable baseline sentinel: {e}"))?;
+    if let Some(socket) = socket {
+        std::os::unix::net::UnixStream::connect(socket)
+            .map_err(|e| format!("backend: controller socket positive control: {e}"))?;
+    }
     apply(cfg)?;
     let outside_denied =
         matches!(File::open(outside), Err(e) if e.kind() == ErrorKind::PermissionDenied);
+    let outside_write_denied = matches!(OpenOptions::new().write(true).open(outside),
+        Err(e) if e.kind() == ErrorKind::PermissionDenied);
+    let outside_unix_connect_denied = socket.map(|path| {
+        matches!(std::os::unix::net::UnixStream::connect(path),
+        Err(e) if e.kind() == ErrorKind::PermissionDenied)
+    });
     let runtime_write_denied = matches!(OpenOptions::new().write(true).open(&cfg.runtime.path),
         Err(e) if e.kind() == ErrorKind::PermissionDenied);
     let tcp_denied = matches!(std::net::TcpListener::bind("127.0.0.1:0"),
@@ -26,6 +58,8 @@ pub fn selftest(cfg: &Launch, outside: &std::path::Path) -> Result<(), String> {
         && std::os::unix::net::UnixListener::bind(cfg.ssh_socket()).is_ok();
     let thread_works = std::thread::spawn(|| 7).join().ok() == Some(7);
     let passed = outside_denied
+        && outside_write_denied
+        && outside_unix_connect_denied.unwrap_or(true)
         && runtime_write_denied
         && tcp_denied
         && readonly_input_works
@@ -35,6 +69,7 @@ pub fn selftest(cfg: &Launch, outside: &std::path::Path) -> Result<(), String> {
     println!(
         "{}",
         serde_json::json!({"outside_denied":outside_denied,
+        "outside_write_denied":outside_write_denied,"outside_unix_connect_denied":outside_unix_connect_denied,
         "runtime_write_denied":runtime_write_denied,"tcp_denied":tcp_denied,
         "readonly_input_works":readonly_input_works,"writable_state_works":writable_state_works,
         "unix_works":unix_works,"thread_works":thread_works,"passed":passed})

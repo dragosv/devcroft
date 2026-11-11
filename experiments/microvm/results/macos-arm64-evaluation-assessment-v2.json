@@ -1,0 +1,234 @@
+{
+  "schema": 1,
+  "status": "passed",
+  "qualification": "assessment publication; conditional native evidence, not production approval",
+  "platform": "macos-arm64-native",
+  "production_adoption": "no-go under current evidence; task 4.5 remains open",
+  "thresholds": {
+    "post_build_idle_memory_mib": 4096,
+    "cold_preparation_seconds": 600,
+    "agent_session_start_seconds": 5,
+    "physical_storage_per_environment_gib": 8
+  },
+  "measured_gates": {
+    "density": {
+      "status": "passed",
+      "cases": 180,
+      "scope": "original frozen guest binaries; not rerun for the SSH lifecycle fix"
+    },
+    "post_build_idle_memory": {
+      "status": "passed",
+      "maximum_per_environment_mib": {
+        "libkrun": 382.70518493652344,
+        "hvi": 405.6585159301758
+      }
+    },
+    "cold_preparation": {
+      "status": "passed",
+      "seconds_with_clean_guest_verification": 117.69155374995898,
+      "scope": "downloaded-input offline closure reconstruction; original guest; not full source compilation"
+    },
+    "agent_start_final_guest": {
+      "status": "passed",
+      "scope": "five prepared-VM CLI/SSH sessions per CLI/adapter; dummy-key API rejection, not completed agent task",
+      "maximum_seconds": {
+        "libkrun": {
+          "codex": 1.4362097079865634,
+          "claude": 1.5155036669457331
+        },
+        "hvi": {
+          "codex": 1.4362105829641223,
+          "claude": 1.5061996669974178
+        }
+      }
+    },
+    "fault_recovery_final_guest": {
+      "status": "passed",
+      "cases_per_adapter": 4,
+      "physical_host_suspend": "not-run",
+      "pid1_death": "not-run"
+    },
+    "full_storage": {
+      "status": "passed-scoped",
+      "physical_storage_gib": 6.586322784423828,
+      "scope": "Entire fresh private builder, immutable downloads, retained outputs/receipts, common runtime and guest/controller files charged to one environment; trusted fixed-recipe materializer only",
+      "repetitions": 1,
+      "original_builder_observation": "Retained original 13.49-GiB builder failed the same 8-GiB allocation; no retroactive reclassification"
+    },
+    "cold_preparation_follow_up": {
+      "status": "passed",
+      "seconds_with_clean_guest_verification": 186.38355533301365,
+      "scope": "fresh private downloaded-input closure reconstruction; not source compilation or production preparation confinement",
+      "repetitions": 1
+    },
+    "controller_separation": {
+      "status": "passed",
+      "scope": "Both native adapters: six protected targets, live Unix socket denial, allowed controls, real build/Redis/restart, full SSH and actual CLI/TLS regressions",
+      "density": "Not rerun for these new helper hashes"
+    }
+  },
+  "five_backend_criteria": {
+    "sandbox_core_composition": {
+      "libkrun": "partial: real keeper/nono works inside the confined guest; full product policy/lifecycle translation pending",
+      "hvi": "partial: same keeper/nono guest works; full product policy/lifecycle translation pending"
+    },
+    "fleet_needs": {
+      "libkrun": "partial: independent services/ports/private disks and native density proved; production admission, resource enforcement and credential delivery pending",
+      "hvi": "partial: same functional independence proved; fixed-port local patch and production admission/resource/credential work pending"
+    },
+    "real_toolchains": {
+      "libkrun": "passed scoped native ARM64 Alpine/Nix builds, service/editor fixtures and actual CLI initialization",
+      "hvi": "passed same scoped native ARM64 fixtures; no cross-platform inheritance"
+    },
+    "author_claimed_security_boundary": {
+      "libkrun": "not established under the recorded criterion: pinned security-model.md describes the VM boundary and delegates host-device/resource confinement to the integrator; our pre-vCPU Seatbelt is separately demonstrated",
+      "hvi": "explicit hostile-guest boundary claim at the pin, without external audit; the macOS ordering is proved, while Linux source ordering does not satisfy our E3 gate"
+    },
+    "rust_library_integration": {
+      "libkrun": "passed: pinned library embedded in an isolated Rust helper",
+      "hvi": "passed: pinned library embedded in an isolated Rust helper"
+    }
+  },
+  "integration_cost": {
+    "libkrun": [
+      "local vsock half-close patch",
+      "integrator-owned pre-vCPU macOS Seatbelt and Linux confinement",
+      "common kernel/keeper/bootstrap/SSH/raw-disk lifecycle",
+      "balloon/page-reporting integration and per-platform qualification"
+    ],
+    "hvi": [
+      "local fixed-vsock-port patch and cross-port parser controls",
+      "descriptor inventory and pre-first-entry probes",
+      "common kernel/keeper/bootstrap/SSH/raw-disk lifecycle",
+      "Linux ordering seam/port still pending; no RNG/balloon exposed at pin"
+    ]
+  },
+  "conditional_recommendation": {
+    "current_outcome": "no production go; retain the existing runtime",
+    "candidate_for_next_macos_arm64_spike": "libkrun, conditional on explicit acceptance of the integrator-owned boundary against criterion four",
+    "reason": "both native functional candidates work; libkrun has lower retained memory and its controlled eight-VM recovery leaves about 4.6-6.0 MiB per environment versus about 181 MiB for hvi in the recorded additional-stress case",
+    "limits": "one controlled repetition per configuration is not a tail/reliability estimate or a universal workload ranking; correctness/isolation gates precede performance",
+    "alternative": "hvi remains a working macOS ARM64 candidate with an explicit author boundary claim and stronger preopened-only host authority, but different recovery/device/API costs",
+    "required_next_evidence": [
+      "host-enforced confinement for hostile preparation code, admission and resource/credential lifecycle; current fixed trusted Lima materializer does not establish this",
+      "close the separate native direct-client duplex diagnostic and remaining fault/host-suspend controls",
+      "native Linux runners and per-platform release/regression criteria before any support claim",
+      "owner acceptance and revisit of docs/decisions.md before production adoption"
+    ]
+  },
+  "unavailable_native_rows": [
+    {
+      "id": "linux-arm64-native",
+      "status": "not-run",
+      "reason": "no native Linux ARM64 host provisioned in this workspace",
+      "regression_location": "required dedicated native Linux ARM64 runner; Landlock ABI >=6 and KVM required; not yet provisioned"
+    },
+    {
+      "id": "linux-x86_64-native",
+      "status": "not-run",
+      "reason": "no native Linux x86-64 host provisioned; architecture-matched kernel/closure and measured syscall filter pending",
+      "regression_location": "required dedicated native Linux x86-64 runner; not yet provisioned"
+    },
+    {
+      "id": "macos-x86_64-native",
+      "status": "not-run",
+      "reason": "no native Intel Mac available; pinned hvi macOS backend supports ARM64 only",
+      "regression_location": "Intel Mac required to determine libkrun support; hvi unsupported at pin"
+    }
+  ],
+  "nested_evidence": "Linux ARM64 VZ/KVM diagnostic only; does not qualify either native Linux row",
+  "remaining_limits": [
+    "No completed authenticated agent task, production credential broker or trusted Remote-SSH qualification",
+    "Guest/host wall-clock differences are recorded; test-certificate validity covers both clocks without changing either clock or bypassing TLS",
+    "Negative controls are not a security audit; exposed hypervisor/kernel interfaces and retained descriptors remain attack surface",
+    "Controller separation and minimal materialization close two experimental gaps; they do not qualify the full product backend or transfer the original 180-case density result to later binaries",
+    "The offline network namespace is guest-enforced in a trusted fixed recipe; it does not exclude escape by hostile guest root into the preparation VM network",
+    "Fresh preparation timing/storage are one complete sample, not a reliability or tail-latency estimate"
+  ],
+  "sources": {
+    "results/macos-arm64-density.json": {
+      "sha256": "444221aed69093dc676252ccf2a3e8c878d8244b94049d0d1908c44dab15992b"
+    },
+    "results/macos-arm64-cold-preparation.json": {
+      "sha256": "9d526e9116a1d5c4aff4db062d4004237a9f216664f50f5e3d13e04d09e54174"
+    },
+    "results/macos-arm64-preparation-storage.json": {
+      "sha256": "806ce46707efddb7f394adc026e448d74db9395b09367e8214577f9d4da6fcca"
+    },
+    "results/macos-arm64-closure-storage-overlap.json": {
+      "sha256": "21415e901b609bb63a127051cab1ee5381e9045c8b4d8433195bcfe60324ee4b"
+    },
+    "results/hvi-linux-ordering-audit.json": {
+      "sha256": "7133f4d87268fac3a7f5b9a18b4572a337419d629e14ab4540c5d6d677ab52d1"
+    },
+    "results/macos-arm64-ssh-lifecycle-calibrations.json": {
+      "sha256": "b036909a13912cb277dc9f69ca408dd2ee84318f0aba692af3ec92b7025b0404"
+    },
+    "fixtures/no-go-thresholds.json": {
+      "sha256": "5db6e27a67179c45403b159684b22db7789d2bc019552ae205d8a1ca2ba3768e"
+    },
+    "fixtures/hardware-matrix.json": {
+      "sha256": "e2cea9bf5083a0fc58c21bc8441e843adeacd4ba85c4b91ef32f79d393e0d310"
+    },
+    "results/libkrun-macos-arm64-faults-ssh-fix.json": {
+      "sha256": "3b1bbd231a5040da62a2f8b32fb94d696bdf6f6f5a8810dce07b69602fd30d77"
+    },
+    "results/libkrun-macos-arm64-ssh-regression.json": {
+      "sha256": "d0e6bec8d32f4e074a424a7ab8b9f987a46fbe33b050b77d711489160418ada8"
+    },
+    "results/libkrun-macos-arm64-agent-start-ssh-fix.json": {
+      "sha256": "b532be34ee2ad461257f0c0cd557544f3953f540bf3da1cefbc2c1351ec12bd8"
+    },
+    "results/hvi-macos-arm64-faults-ssh-fix.json": {
+      "sha256": "947b7d7916f32dd6c9ec107aba72b5c5afcbc9a5e010872c8533956fb4ca0ae5"
+    },
+    "results/hvi-macos-arm64-ssh-regression.json": {
+      "sha256": "60bd8dfdfc3f2d669346c1686f7d2535dccfa0dcfa90246fe2adf5b519abd013"
+    },
+    "results/hvi-macos-arm64-agent-start-ssh-fix.json": {
+      "sha256": "06be932736e01479836acdcebd9db55095afc15b83199a07fa375b92c90f05c4"
+    },
+    "results/macos-arm64-minimal-private-preparation.json": {
+      "sha256": "a387b9ec49cb3862e4373b37d5e6a51e8a24dd2738dce701ec9805ea1127a426"
+    },
+    "results/macos-arm64-preparation-retention.json": {
+      "sha256": "6c164bf59877191bdb0436b5c3070202a7c04f0fd5e069f79e47e5421aa163f7"
+    },
+    "results/libkrun-macos-arm64-controller-separation.json": {
+      "sha256": "5ecf5004fa09cf622a9d54252b9f81ad402b997524883be17bbde19373fdd292"
+    },
+    "results/libkrun-macos-arm64-controller-ssh.json": {
+      "sha256": "ca610d6365c4f17f1d8a17246991b67c25aac51de4d2bbc46250e362cb6ded29"
+    },
+    "results/libkrun-macos-arm64-controller-agent.json": {
+      "sha256": "6cae4d96158f133cf81aa3c64993f5e3203995fb858618e4347155e22e812815"
+    },
+    "results/hvi-macos-arm64-controller-separation.json": {
+      "sha256": "c8094cd1664d9558cc83e5b4921b8df3b1a13a2bbe1f61bbb5be6071be923f2f"
+    },
+    "results/hvi-macos-arm64-controller-ssh.json": {
+      "sha256": "4e8a5fe3b5e6b535a52afa98e11aafe63b67a76938397e6f555efbb24b47c3ef"
+    },
+    "results/hvi-macos-arm64-controller-agent.json": {
+      "sha256": "00c7dace048d9dceb3b8435720673a79ca2063e1b21b23f8108269e1db6b00e0"
+    }
+  },
+  "pinned_author_security_sources": {
+    "libkrun": {
+      "revision": "6151710f4ea627cf0e5dbce78e4192fb4d64c2e9",
+      "url": "https://github.com/containers/libkrun/blob/6151710f4ea627cf0e5dbce78e4192fb4d64c2e9/docs/security-model.md",
+      "sha256": "81170ab114eda4b90282ec1ea24816b33447b4fd27b4e80196ae692fcd72e460"
+    },
+    "hvi": {
+      "revision": "351d1a15728e998486232e4815ba075a22e44f56",
+      "url": "https://github.com/brig-sh/hvi-vmm/blob/351d1a15728e998486232e4815ba075a22e44f56/docs/security.md",
+      "sha256": "e073cdc3064ae4e0ce8a425533cf255241b319d78cfe9e3fb7e403ac8745c391"
+    }
+  },
+  "supersedes": {
+    "path": "results/macos-arm64-evaluation-assessment.json",
+    "sha256": "7fc589d24e83b223fe362a13cd704c7e09a439948469f13d8b800c1c3acd9e3b",
+    "scope": "follow-up evidence; original failed/limited observations remain immutable"
+  },
+  "assessment_revision": 2
+}

@@ -3,6 +3,7 @@ import copy
 import fcntl
 import hashlib
 import json
+import os
 from pathlib import Path
 import subprocess
 import tempfile
@@ -35,6 +36,7 @@ class LaunchValidation(unittest.TestCase):
     def check(self, cfg=None, raw=None):
         launch = self.root / "launch.json"
         launch.write_bytes(raw if raw is not None else json.dumps(cfg or self.cfg).encode())
+        launch.chmod(0o600)
         return subprocess.run([str(HELPER), "check", str(launch)], capture_output=True, text=True,
                               env={"PATH": "/usr/bin:/bin"}, timeout=5)
 
@@ -92,6 +94,37 @@ class LaunchValidation(unittest.TestCase):
     def test_oversized_record_is_refused(self):
         self.assertIn("exceeds 64 KiB", self.check(raw=b" " * 65537).stderr)
 
+    def record_check(self, path):
+        return subprocess.run([str(HELPER), "check", str(path)], capture_output=True,
+                              text=True, env={"PATH": "/usr/bin:/bin"}, timeout=5)
+
+    def test_launch_record_cannot_be_in_vmm_writable_directory(self):
+        path = self.instance / "launch.json"
+        path.write_text(json.dumps(self.cfg))
+        path.chmod(0o600)
+        self.assertIn("outside the writable instance", self.record_check(path).stderr)
+
+    def test_controller_record_must_not_be_hardlinked_into_runtime(self):
+        self.assertEqual(self.check().returncode, 0)
+        record = self.root / "launch.json"
+        os.link(record, self.instance / "launch-alias")
+        self.assertIn("singly linked", self.record_check(record).stderr)
+
+    def test_writable_runtime_symlink_cannot_select_controller_record(self):
+        self.assertEqual(self.check().returncode, 0)
+        alias = self.instance / "launch.json"
+        alias.symlink_to(self.root / "launch.json")
+        self.assertIn("absolute canonical path", self.record_check(alias).stderr)
+
+    def test_controller_record_and_directory_must_be_private(self):
+        self.assertEqual(self.check().returncode, 0)
+        record = self.root / "launch.json"
+        record.chmod(0o644)
+        self.assertIn("must be private", self.record_check(record).stderr)
+        record.chmod(0o600)
+        self.root.chmod(0o755)
+        self.assertIn("private controller directory", self.record_check(record).stderr)
+
     def test_stale_endpoints_and_dangling_links_are_refused(self):
         for name in ("control.sock", "keeper.sock", "ssh.sock"):
             with self.subTest(endpoint=name):
@@ -141,6 +174,7 @@ class LaunchValidation(unittest.TestCase):
         cfg = self.workload_config()
         launch = self.root / "launch.json"
         launch.write_text(json.dumps(cfg))
+        launch.chmod(0o600)
         with Path(cfg["data"]).open("r+b") as disk:
             fcntl.flock(disk, fcntl.LOCK_EX | fcntl.LOCK_NB)
             result = subprocess.run([str(HELPER), "run", str(launch)], capture_output=True,

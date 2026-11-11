@@ -1,0 +1,2650 @@
+{
+  "schema": 1,
+  "status": "passed",
+  "qualification": "fresh private downloaded-input closure reconstruction; not source compilation or production preparation confinement",
+  "platform": "macos-arm64-native",
+  "raw_evidence": "/Users/dragos/Development/devcroft-codex/experiments/microvm/runs/20261111-minimal-private-builder",
+  "builder_namespace": "/private/tmp/dc-min-5fea9fbff9",
+  "protocol": {
+    "schema": 1,
+    "thresholds_sha256": "5db6e27a67179c45403b159684b22db7789d2bc019552ae205d8a1ca2ba3768e",
+    "scope": "Fresh private no-host-share 2-vCPU/4-GiB Linux materializer; downloaded immutable inputs, fresh Nix store, locked definition evaluation and clean runtime verification; not full source compilation or production hostile-recipe confinement",
+    "temporary_memory": "512-MiB tmpfs for the immutable compressed NAR cache and 2-GiB tmpfs for the fresh destination store, within the configured guest memory. Record guest memory before unmount, stop the builder before runtime verification. No redundant captured cache archive is generated.",
+    "method_reason": "Separate minimal per-project preparation from the original kernel/VMM development builder, whose retained disk exceeded the original single-environment storage limit",
+    "includes_in_timing": [
+      "input verification",
+      "fresh VM creation/start",
+      "offline fixed tool installation and Nix bootstrap",
+      "import/verify captured NARs and reevaluate locked definition",
+      "empty destination-store reconstruction",
+      "assemble/export/hash images",
+      "trim/stop builder",
+      "native guest xxHash/small-file/Redis and actual CLI/TLS verification"
+    ],
+    "excludes_from_timing": [
+      "publication/download of immutable NAR, source, bootstrap, base-image and APK inputs",
+      "flushing OS page caches"
+    ],
+    "storage_rule": "Charge the entire fresh stopped builder namespace, downloaded inputs, exported images, retained receipts/logs/sources, common native runtime and private guest/controller files to one environment; unique regular inodes once, stat blocks*512, no APFS shared-extent or amortized fleet-size claim",
+    "source_trust": "Use the prior trusted fixed-input publication receipt; independently verify all NAR contents, expected NAR hashes and freshly evaluated definition output path. Do not label this as an independent full source/signature-trust reconstruction",
+    "retention": "Keep original runtime artifacts, failed runs and the original 13.49-GiB builder observation; delete only verified exported duplicates/intermediates inside owned experimental builders",
+    "qualification": "Native macOS ARM64 preparation diagnostic; does not qualify missing native Linux hosts, production credential delivery or completed authenticated agent tasks"
+  },
+  "publication_sha256": "39eda409bcebd746abfce5f78af975c8ada61aa0efdf7b2d717f367aef4495cb",
+  "phases": [
+    {
+      "name": "fresh-builder-start",
+      "argv": [
+        "limactl",
+        "start",
+        "--tty=false",
+        "--name=materialize",
+        "/Users/dragos/Development/devcroft-codex/experiments/microvm/runs/20261111-minimal-private-builder/builder.yaml"
+      ],
+      "started_utc": "2026-11-11T20:30:43.896401+00:00",
+      "exit_code": 0,
+      "seconds": 58.972621083958074
+    },
+    {
+      "name": "project-directory",
+      "argv": [
+        "limactl",
+        "shell",
+        "materialize",
+        "mkdir",
+        "-p",
+        "/home/devcroft/project/definition"
+      ],
+      "started_utc": "2026-11-11T20:31:42.869764+00:00",
+      "exit_code": 0,
+      "seconds": 0.08915808302117512
+    },
+    {
+      "name": "input-0",
+      "argv": [
+        "limactl",
+        "copy",
+        "/Users/dragos/Development/devcroft-codex/experiments/microvm/runs/20261111-minimal-private-builder/sources/build.py",
+        "materialize:/home/devcroft/project/build.py"
+      ],
+      "started_utc": "2026-11-11T20:31:42.959513+00:00",
+      "exit_code": 0,
+      "seconds": 0.13834516698261723
+    },
+    {
+      "name": "input-1",
+      "argv": [
+        "limactl",
+        "copy",
+        "/Users/dragos/Development/devcroft-codex/experiments/microvm/runs/20261111-minimal-private-builder/sources/driver.py",
+        "materialize:/home/devcroft/project/driver.py"
+      ],
+      "started_utc": "2026-11-11T20:31:43.098436+00:00",
+      "exit_code": 0,
+      "seconds": 0.0786490419995971
+    },
+    {
+      "name": "input-2",
+      "argv": [
+        "limactl",
+        "copy",
+        "/Users/dragos/Development/devcroft-codex/experiments/microvm/runs/20261111-minimal-private-builder/sources/definition/flake.nix",
+        "materialize:/home/devcroft/project/definition/flake.nix"
+      ],
+      "started_utc": "2026-11-11T20:31:43.177813+00:00",
+      "exit_code": 0,
+      "seconds": 0.0742174590122886
+    },
+    {
+      "name": "input-3",
+      "argv": [
+        "limactl",
+        "copy",
+        "/Users/dragos/Development/devcroft-codex/experiments/microvm/runs/20261111-minimal-private-builder/sources/definition/flake.lock",
+        "materialize:/home/devcroft/project/definition/flake.lock"
+      ],
+      "started_utc": "2026-11-11T20:31:43.252580+00:00",
+      "exit_code": 0,
+      "seconds": 0.08296120900195092
+    },
+    {
+      "name": "input-4",
+      "argv": [
+        "limactl",
+        "copy",
+        "/Users/dragos/Development/devcroft-codex/experiments/microvm/runs/20261111-minimal-private-builder/sources/bootstrap.json",
+        "materialize:/home/devcroft/project/bootstrap.json"
+      ],
+      "started_utc": "2026-11-11T20:31:43.336144+00:00",
+      "exit_code": 0,
+      "seconds": 0.08251141698565334
+    },
+    {
+      "name": "input-5",
+      "argv": [
+        "limactl",
+        "copy",
+        "/Users/dragos/Development/devcroft-codex/experiments/microvm/runs/20261111-minimal-private-builder/sources/source.json",
+        "materialize:/home/devcroft/project/source.json"
+      ],
+      "started_utc": "2026-11-11T20:31:43.419226+00:00",
+      "exit_code": 0,
+      "seconds": 0.08612145896768197
+    },
+    {
+      "name": "input-6",
+      "argv": [
+        "limactl",
+        "copy",
+        "/Users/dragos/Development/devcroft-codex/experiments/microvm/runs/20261111-minimal-private-builder/sources/xxhash.tar.gz",
+        "materialize:/home/devcroft/project/xxhash.tar.gz"
+      ],
+      "started_utc": "2026-11-11T20:31:43.505889+00:00",
+      "exit_code": 0,
+      "seconds": 0.1326124999905005
+    },
+    {
+      "name": "input-7",
+      "argv": [
+        "limactl",
+        "copy",
+        "/Users/dragos/Development/devcroft-codex/experiments/microvm/runs/20261111-minimal-private-builder/sources/publication.json",
+        "materialize:/home/devcroft/project/publication.json"
+      ],
+      "started_utc": "2026-11-11T20:31:43.639075+00:00",
+      "exit_code": 0,
+      "seconds": 0.08584604202769697
+    },
+    {
+      "name": "copy-inputs.tar",
+      "argv": [
+        "limactl",
+        "copy",
+        "/Users/dragos/Development/devcroft-codex/experiments/microvm/artifacts/minimal-inputs/inputs.tar",
+        "materialize:/home/devcroft/project/inputs.tar"
+      ],
+      "started_utc": "2026-11-11T20:31:43.725594+00:00",
+      "exit_code": 0,
+      "seconds": 2.765882874955423
+    },
+    {
+      "name": "copy-nix-bootstrap.tar.xz",
+      "argv": [
+        "limactl",
+        "copy",
+        "/Users/dragos/Development/devcroft-codex/experiments/microvm/artifacts/minimal-inputs/nix-bootstrap.tar.xz",
+        "materialize:/home/devcroft/project/nix-bootstrap.tar.xz"
+      ],
+      "started_utc": "2026-11-11T20:31:46.492074+00:00",
+      "exit_code": 0,
+      "seconds": 0.28029008297016844
+    },
+    {
+      "name": "offline-reconstruct",
+      "argv": [
+        "limactl",
+        "shell",
+        "materialize",
+        "sudo",
+        "unshare",
+        "--net",
+        "python3",
+        "/home/devcroft/project/driver.py",
+        "/home/devcroft/project"
+      ],
+      "started_utc": "2026-11-11T20:31:46.773045+00:00",
+      "exit_code": 0,
+      "seconds": 40.783923125010915
+    },
+    {
+      "name": "receipt-build.json",
+      "argv": [
+        "limactl",
+        "copy",
+        "materialize:/home/devcroft/project/build.json",
+        "/Users/dragos/Development/devcroft-codex/experiments/microvm/runs/20261111-minimal-private-builder/build.json"
+      ],
+      "started_utc": "2026-11-11T20:32:27.558667+00:00",
+      "exit_code": 0,
+      "seconds": 0.12808658403810114
+    },
+    {
+      "name": "receipt-closure.json",
+      "argv": [
+        "limactl",
+        "copy",
+        "materialize:/home/devcroft/project/closure.json",
+        "/Users/dragos/Development/devcroft-codex/experiments/microvm/runs/20261111-minimal-private-builder/closure.json"
+      ],
+      "started_utc": "2026-11-11T20:32:27.687667+00:00",
+      "exit_code": 0,
+      "seconds": 0.07758812501560897
+    },
+    {
+      "name": "receipt-materialization-memory.txt",
+      "argv": [
+        "limactl",
+        "copy",
+        "materialize:/home/devcroft/project/materialization-memory.txt",
+        "/Users/dragos/Development/devcroft-codex/experiments/microvm/runs/20261111-minimal-private-builder/materialization-memory.txt"
+      ],
+      "started_utc": "2026-11-11T20:32:27.765963+00:00",
+      "exit_code": 0,
+      "seconds": 0.07280641695251688
+    },
+    {
+      "name": "remove-offline-intermediates",
+      "argv": [
+        "limactl",
+        "shell",
+        "materialize",
+        "sudo",
+        "rm",
+        "-rf",
+        "/home/devcroft/project/root",
+        "/home/devcroft/project/cache",
+        "/home/devcroft/project/cache.tar",
+        "/home/devcroft/project/inputs.tar",
+        "/home/devcroft/project/apk",
+        "/home/devcroft/project/bootstrap",
+        "/home/devcroft/project/nix-bootstrap.tar.xz"
+      ],
+      "started_utc": "2026-11-11T20:32:27.839798+00:00",
+      "exit_code": 0,
+      "seconds": 0.04824487504083663
+    },
+    {
+      "name": "trim-offline-intermediates",
+      "argv": [
+        "limactl",
+        "shell",
+        "materialize",
+        "sudo",
+        "fstrim",
+        "-v",
+        "/"
+      ],
+      "started_utc": "2026-11-11T20:32:27.888711+00:00",
+      "exit_code": 0,
+      "seconds": 0.2934559580171481
+    },
+    {
+      "name": "export-toolchain.img",
+      "argv": [
+        "limactl",
+        "copy",
+        "materialize:/home/devcroft/project/toolchain.img",
+        "/Users/dragos/Development/devcroft-codex/experiments/microvm/runs/20261111-minimal-private-builder/toolchain.img"
+      ],
+      "started_utc": "2026-11-11T20:32:28.182780+00:00",
+      "exit_code": 0,
+      "seconds": 10.25311791698914
+    },
+    {
+      "name": "export-data.seed.img",
+      "argv": [
+        "limactl",
+        "copy",
+        "materialize:/home/devcroft/project/data.seed.img",
+        "/Users/dragos/Development/devcroft-codex/experiments/microvm/runs/20261111-minimal-private-builder/data.seed.img"
+      ],
+      "started_utc": "2026-11-11T20:32:39.498078+00:00",
+      "exit_code": 0,
+      "seconds": 0.8385544159682468
+    },
+    {
+      "name": "remove-builder-export-copies",
+      "argv": [
+        "limactl",
+        "shell",
+        "materialize",
+        "rm",
+        "-f",
+        "/home/devcroft/project/toolchain.img",
+        "/home/devcroft/project/data.seed.img"
+      ],
+      "started_utc": "2026-11-11T20:32:40.405364+00:00",
+      "exit_code": 0,
+      "seconds": 0.130364875018131
+    },
+    {
+      "name": "trim-builder-exports",
+      "argv": [
+        "limactl",
+        "shell",
+        "materialize",
+        "sudo",
+        "fstrim",
+        "-v",
+        "/"
+      ],
+      "started_utc": "2026-11-11T20:32:40.536887+00:00",
+      "exit_code": 0,
+      "seconds": 0.08143670798745006
+    },
+    {
+      "name": "stop-builder",
+      "argv": [
+        "limactl",
+        "stop",
+        "materialize"
+      ],
+      "started_utc": "2026-11-11T20:32:40.619041+00:00",
+      "exit_code": 0,
+      "seconds": 5.093563041999005
+    },
+    {
+      "name": "clean-guest-verification",
+      "argv": [
+        "python3",
+        "/Users/dragos/Development/devcroft-codex/experiments/microvm/agent_probe.py",
+        "--adapter",
+        "libkrun",
+        "--guest",
+        "/Users/dragos/Development/devcroft-codex/experiments/microvm/artifacts/stage-b-agents-ssh-loss-fix-final/guest.json",
+        "--repetitions",
+        "1",
+        "--verify-workload",
+        "--image",
+        "/Users/dragos/Development/devcroft-codex/experiments/microvm/runs/20261111-minimal-private-builder/toolchain.img",
+        "--seed",
+        "/Users/dragos/Development/devcroft-codex/experiments/microvm/runs/20261111-minimal-private-builder/data.seed.img",
+        "--out",
+        "/Users/dragos/Development/devcroft-codex/experiments/microvm/runs/20261111-minimal-private-builder/verification"
+      ],
+      "started_utc": "2026-11-11T20:32:45.713397+00:00",
+      "exit_code": 0,
+      "seconds": 64.17642950004665
+    }
+  ],
+  "offline_preparation_seconds": 122.20633720798651,
+  "end_to_end_with_verification_seconds": 186.38355533301365,
+  "storage": {
+    "builder": {
+      "logical_bytes": 10757135908,
+      "allocated_bytes": 4027408384,
+      "files": [
+        {
+          "path": "/private/tmp/dc-min-5fea9fbff9/_config/networks.yaml",
+          "logical_bytes": 1250,
+          "allocated_bytes": 4096
+        },
+        {
+          "path": "/private/tmp/dc-min-5fea9fbff9/_config/user",
+          "logical_bytes": 387,
+          "allocated_bytes": 4096
+        },
+        {
+          "path": "/private/tmp/dc-min-5fea9fbff9/_config/user.pub",
+          "logical_bytes": 86,
+          "allocated_bytes": 4096
+        },
+        {
+          "path": "/private/tmp/dc-min-5fea9fbff9/materialize/cidata.iso",
+          "logical_bytes": 19558400,
+          "allocated_bytes": 19558400
+        },
+        {
+          "path": "/private/tmp/dc-min-5fea9fbff9/materialize/cloud-config.yaml",
+          "logical_bytes": 536,
+          "allocated_bytes": 4096
+        },
+        {
+          "path": "/private/tmp/dc-min-5fea9fbff9/materialize/disk",
+          "logical_bytes": 10737418240,
+          "allocated_bytes": 4007657472
+        },
+        {
+          "path": "/private/tmp/dc-min-5fea9fbff9/materialize/ha.stderr.log",
+          "logical_bytes": 23843,
+          "allocated_bytes": 24576
+        },
+        {
+          "path": "/private/tmp/dc-min-5fea9fbff9/materialize/ha.stdout.log",
+          "logical_bytes": 380,
+          "allocated_bytes": 4096
+        },
+        {
+          "path": "/private/tmp/dc-min-5fea9fbff9/materialize/lima-version",
+          "logical_bytes": 5,
+          "allocated_bytes": 4096
+        },
+        {
+          "path": "/private/tmp/dc-min-5fea9fbff9/materialize/lima.yaml",
+          "logical_bytes": 927,
+          "allocated_bytes": 4096
+        },
+        {
+          "path": "/private/tmp/dc-min-5fea9fbff9/materialize/serialv.log",
+          "logical_bytes": 0,
+          "allocated_bytes": 0
+        },
+        {
+          "path": "/private/tmp/dc-min-5fea9fbff9/materialize/ssh.config",
+          "logical_bytes": 712,
+          "allocated_bytes": 4096
+        },
+        {
+          "path": "/private/tmp/dc-min-5fea9fbff9/materialize/vz-efi",
+          "logical_bytes": 131072,
+          "allocated_bytes": 131072
+        },
+        {
+          "path": "/private/tmp/dc-min-5fea9fbff9/materialize/vz-identifier",
+          "logical_bytes": 70,
+          "allocated_bytes": 4096
+        }
+      ],
+      "method": "stat size and blocks*512; unique inodes only; no claim of APFS shared-extent deduplication"
+    },
+    "downloaded_inputs": {
+      "logical_bytes": 654705675,
+      "allocated_bytes": 654712832,
+      "files": [
+        {
+          "path": "/Users/dragos/Development/devcroft-codex/experiments/microvm/artifacts/minimal-inputs/base.qcow2",
+          "logical_bytes": 235929600,
+          "allocated_bytes": 235929600
+        },
+        {
+          "path": "/Users/dragos/Development/devcroft-codex/experiments/microvm/artifacts/minimal-inputs/inputs.tar",
+          "logical_bytes": 395141632,
+          "allocated_bytes": 395145216
+        },
+        {
+          "path": "/Users/dragos/Development/devcroft-codex/experiments/microvm/artifacts/minimal-inputs/manifest.json",
+          "logical_bytes": 25791,
+          "allocated_bytes": 28672
+        },
+        {
+          "path": "/Users/dragos/Development/devcroft-codex/experiments/microvm/artifacts/minimal-inputs/nix-bootstrap.tar.xz",
+          "logical_bytes": 23608652,
+          "allocated_bytes": 23609344
+        }
+      ],
+      "method": "stat size and blocks*512; unique inodes only; no claim of APFS shared-extent deduplication"
+    },
+    "outputs_and_raw_receipts": {
+      "logical_bytes": 2350783868,
+      "allocated_bytes": 2351042560,
+      "files": [
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/build.json",
+          "logical_bytes": 29049,
+          "allocated_bytes": 32768
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/builder.yaml",
+          "logical_bytes": 927,
+          "allocated_bytes": 4096
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/clean-guest-verification.stderr",
+          "logical_bytes": 0,
+          "allocated_bytes": 0
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/clean-guest-verification.stdout",
+          "logical_bytes": 166,
+          "allocated_bytes": 4096
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/closure.json",
+          "logical_bytes": 100875,
+          "allocated_bytes": 102400
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/copy-inputs.tar.stderr",
+          "logical_bytes": 0,
+          "allocated_bytes": 0
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/copy-inputs.tar.stdout",
+          "logical_bytes": 0,
+          "allocated_bytes": 0
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/copy-nix-bootstrap.tar.xz.stderr",
+          "logical_bytes": 0,
+          "allocated_bytes": 0
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/copy-nix-bootstrap.tar.xz.stdout",
+          "logical_bytes": 0,
+          "allocated_bytes": 0
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/data.seed.img",
+          "logical_bytes": 134217728,
+          "allocated_bytes": 134217728
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/export-data.seed.img.stderr",
+          "logical_bytes": 0,
+          "allocated_bytes": 0
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/export-data.seed.img.stdout",
+          "logical_bytes": 0,
+          "allocated_bytes": 0
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/export-toolchain.img.stderr",
+          "logical_bytes": 0,
+          "allocated_bytes": 0
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/export-toolchain.img.stdout",
+          "logical_bytes": 0,
+          "allocated_bytes": 0
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/fresh-builder-start.stderr",
+          "logical_bytes": 3721,
+          "allocated_bytes": 4096
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/fresh-builder-start.stdout",
+          "logical_bytes": 0,
+          "allocated_bytes": 0
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/input-0.stderr",
+          "logical_bytes": 0,
+          "allocated_bytes": 0
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/input-0.stdout",
+          "logical_bytes": 0,
+          "allocated_bytes": 0
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/input-1.stderr",
+          "logical_bytes": 0,
+          "allocated_bytes": 0
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/input-1.stdout",
+          "logical_bytes": 0,
+          "allocated_bytes": 0
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/input-2.stderr",
+          "logical_bytes": 0,
+          "allocated_bytes": 0
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/input-2.stdout",
+          "logical_bytes": 0,
+          "allocated_bytes": 0
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/input-3.stderr",
+          "logical_bytes": 0,
+          "allocated_bytes": 0
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/input-3.stdout",
+          "logical_bytes": 0,
+          "allocated_bytes": 0
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/input-4.stderr",
+          "logical_bytes": 0,
+          "allocated_bytes": 0
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/input-4.stdout",
+          "logical_bytes": 0,
+          "allocated_bytes": 0
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/input-5.stderr",
+          "logical_bytes": 0,
+          "allocated_bytes": 0
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/input-5.stdout",
+          "logical_bytes": 0,
+          "allocated_bytes": 0
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/input-6.stderr",
+          "logical_bytes": 0,
+          "allocated_bytes": 0
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/input-6.stdout",
+          "logical_bytes": 0,
+          "allocated_bytes": 0
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/input-7.stderr",
+          "logical_bytes": 0,
+          "allocated_bytes": 0
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/input-7.stdout",
+          "logical_bytes": 0,
+          "allocated_bytes": 0
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/materialization-memory.txt",
+          "logical_bytes": 1420,
+          "allocated_bytes": 4096
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/offline-reconstruct.stderr",
+          "logical_bytes": 52387,
+          "allocated_bytes": 53248
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/offline-reconstruct.stdout",
+          "logical_bytes": 2757,
+          "allocated_bytes": 4096
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/project-directory.stderr",
+          "logical_bytes": 0,
+          "allocated_bytes": 0
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/project-directory.stdout",
+          "logical_bytes": 0,
+          "allocated_bytes": 0
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/receipt-build.json.stderr",
+          "logical_bytes": 0,
+          "allocated_bytes": 0
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/receipt-build.json.stdout",
+          "logical_bytes": 0,
+          "allocated_bytes": 0
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/receipt-closure.json.stderr",
+          "logical_bytes": 0,
+          "allocated_bytes": 0
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/receipt-closure.json.stdout",
+          "logical_bytes": 0,
+          "allocated_bytes": 0
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/receipt-materialization-memory.txt.stderr",
+          "logical_bytes": 0,
+          "allocated_bytes": 0
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/receipt-materialization-memory.txt.stdout",
+          "logical_bytes": 0,
+          "allocated_bytes": 0
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/remove-builder-export-copies.stderr",
+          "logical_bytes": 0,
+          "allocated_bytes": 0
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/remove-builder-export-copies.stdout",
+          "logical_bytes": 0,
+          "allocated_bytes": 0
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/remove-offline-intermediates.stderr",
+          "logical_bytes": 0,
+          "allocated_bytes": 0
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/remove-offline-intermediates.stdout",
+          "logical_bytes": 0,
+          "allocated_bytes": 0
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/report.json",
+          "logical_bytes": 104903,
+          "allocated_bytes": 106496
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/sources/bootstrap.json",
+          "logical_bytes": 420,
+          "allocated_bytes": 4096
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/sources/build.py",
+          "logical_bytes": 10812,
+          "allocated_bytes": 12288
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/sources/definition/flake.lock",
+          "logical_bytes": 593,
+          "allocated_bytes": 4096
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/sources/definition/flake.nix",
+          "logical_bytes": 1346,
+          "allocated_bytes": 4096
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/sources/driver.py",
+          "logical_bytes": 4305,
+          "allocated_bytes": 8192
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/sources/publication.json",
+          "logical_bytes": 25791,
+          "allocated_bytes": 28672
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/sources/source.json",
+          "logical_bytes": 406,
+          "allocated_bytes": 4096
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/sources/xxhash.tar.gz",
+          "logical_bytes": 1147630,
+          "allocated_bytes": 1150976
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/stop-builder.stderr",
+          "logical_bytes": 1710,
+          "allocated_bytes": 4096
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/stop-builder.stdout",
+          "logical_bytes": 0,
+          "allocated_bytes": 0
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/toolchain.img",
+          "logical_bytes": 2214592512,
+          "allocated_bytes": 2214592512
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/trim-builder-exports.stderr",
+          "logical_bytes": 0,
+          "allocated_bytes": 0
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/trim-builder-exports.stdout",
+          "logical_bytes": 37,
+          "allocated_bytes": 4096
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/trim-offline-intermediates.stderr",
+          "logical_bytes": 0,
+          "allocated_bytes": 0
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/trim-offline-intermediates.stdout",
+          "logical_bytes": 38,
+          "allocated_bytes": 4096
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/agent-vm/boot-1-acknowledged-write.stderr",
+          "logical_bytes": 0,
+          "allocated_bytes": 0
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/agent-vm/boot-1-acknowledged-write.stdout",
+          "logical_bytes": 470,
+          "allocated_bytes": 4096
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/agent-vm/boot-1-build.stderr",
+          "logical_bytes": 120,
+          "allocated_bytes": 4096
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/agent-vm/boot-1-build.stdout",
+          "logical_bytes": 3855,
+          "allocated_bytes": 4096
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/agent-vm/boot-1-claude-cancelled-listener.stderr",
+          "logical_bytes": 0,
+          "allocated_bytes": 0
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/agent-vm/boot-1-claude-cancelled-listener.stdout",
+          "logical_bytes": 0,
+          "allocated_bytes": 0
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/agent-vm/boot-1-claude-help.stderr",
+          "logical_bytes": 0,
+          "allocated_bytes": 0
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/agent-vm/boot-1-claude-help.stdout",
+          "logical_bytes": 16890,
+          "allocated_bytes": 20480
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/agent-vm/boot-1-claude-tls-clock.stderr",
+          "logical_bytes": 0,
+          "allocated_bytes": 0
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/agent-vm/boot-1-claude-tls-clock.stdout",
+          "logical_bytes": 11,
+          "allocated_bytes": 4096
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/agent-vm/boot-1-claude-tls-positive.stderr",
+          "logical_bytes": 3235,
+          "allocated_bytes": 4096
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/agent-vm/boot-1-claude-tls-positive.stdout",
+          "logical_bytes": 6,
+          "allocated_bytes": 4096
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/agent-vm/boot-1-claude-version.stderr",
+          "logical_bytes": 0,
+          "allocated_bytes": 0
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/agent-vm/boot-1-claude-version.stdout",
+          "logical_bytes": 22,
+          "allocated_bytes": 4096
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/agent-vm/boot-1-clean-materializer-redis-stop.stderr",
+          "logical_bytes": 0,
+          "allocated_bytes": 0
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/agent-vm/boot-1-clean-materializer-redis-stop.stdout",
+          "logical_bytes": 0,
+          "allocated_bytes": 0
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/agent-vm/boot-1-clean-materializer-redis.stderr",
+          "logical_bytes": 0,
+          "allocated_bytes": 0
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/agent-vm/boot-1-clean-materializer-redis.stdout",
+          "logical_bytes": 3222,
+          "allocated_bytes": 4096
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/agent-vm/boot-1-codex-cancelled-listener.stderr",
+          "logical_bytes": 0,
+          "allocated_bytes": 0
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/agent-vm/boot-1-codex-cancelled-listener.stdout",
+          "logical_bytes": 0,
+          "allocated_bytes": 0
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/agent-vm/boot-1-codex-help.stderr",
+          "logical_bytes": 0,
+          "allocated_bytes": 0
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/agent-vm/boot-1-codex-help.stdout",
+          "logical_bytes": 5585,
+          "allocated_bytes": 8192
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/agent-vm/boot-1-codex-tls-clock.stderr",
+          "logical_bytes": 0,
+          "allocated_bytes": 0
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/agent-vm/boot-1-codex-tls-clock.stdout",
+          "logical_bytes": 11,
+          "allocated_bytes": 4096
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/agent-vm/boot-1-codex-tls-positive.stderr",
+          "logical_bytes": 3952,
+          "allocated_bytes": 4096
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/agent-vm/boot-1-codex-tls-positive.stdout",
+          "logical_bytes": 6,
+          "allocated_bytes": 4096
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/agent-vm/boot-1-codex-version.stderr",
+          "logical_bytes": 0,
+          "allocated_bytes": 0
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/agent-vm/boot-1-codex-version.stdout",
+          "logical_bytes": 18,
+          "allocated_bytes": 4096
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/agent-vm/boot-1-export-xxhsum.stderr",
+          "logical_bytes": 0,
+          "allocated_bytes": 0
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/agent-vm/boot-1-export-xxhsum.stdout",
+          "logical_bytes": 145024,
+          "allocated_bytes": 147456
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/agent-vm/boot-1-nix-closure-layout.stderr",
+          "logical_bytes": 0,
+          "allocated_bytes": 0
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/agent-vm/boot-1-nix-closure-layout.stdout",
+          "logical_bytes": 439,
+          "allocated_bytes": 4096
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/agent-vm/boot-1-redis-kernel-check.stderr",
+          "logical_bytes": 0,
+          "allocated_bytes": 0
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/agent-vm/boot-1-redis-kernel-check.stdout",
+          "logical_bytes": 211,
+          "allocated_bytes": 4096
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/agent-vm/boot-1-redis-start.stderr",
+          "logical_bytes": 0,
+          "allocated_bytes": 0
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/agent-vm/boot-1-redis-start.stdout",
+          "logical_bytes": 172,
+          "allocated_bytes": 4096
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/agent-vm/boot-1-source-import.stderr",
+          "logical_bytes": 0,
+          "allocated_bytes": 0
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/agent-vm/boot-1-source-import.stdout",
+          "logical_bytes": 0,
+          "allocated_bytes": 0
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/agent-vm/boot-1-upload-public-test-ca.stderr",
+          "logical_bytes": 0,
+          "allocated_bytes": 0
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/agent-vm/boot-1-upload-public-test-ca.stdout",
+          "logical_bytes": 0,
+          "allocated_bytes": 0
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/agent-vm/boot-1.stderr.log",
+          "logical_bytes": 4552,
+          "allocated_bytes": 8192
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/agent-vm/boot-1.stdout.log",
+          "logical_bytes": 0,
+          "allocated_bytes": 0
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/agent-vm/check.stderr",
+          "logical_bytes": 0,
+          "allocated_bytes": 0
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/agent-vm/check.stdout",
+          "logical_bytes": 230,
+          "allocated_bytes": 4096
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/agent-vm/keygen-client.stderr",
+          "logical_bytes": 0,
+          "allocated_bytes": 0
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/agent-vm/keygen-client.stdout",
+          "logical_bytes": 0,
+          "allocated_bytes": 0
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/agent-vm/keygen-host.stderr",
+          "logical_bytes": 0,
+          "allocated_bytes": 0
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/agent-vm/keygen-host.stdout",
+          "logical_bytes": 0,
+          "allocated_bytes": 0
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/agent-vm/keygen-wrong-client.stderr",
+          "logical_bytes": 0,
+          "allocated_bytes": 0
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/agent-vm/keygen-wrong-client.stdout",
+          "logical_bytes": 0,
+          "allocated_bytes": 0
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/agent-vm/launch.json",
+          "logical_bytes": 1105,
+          "allocated_bytes": 4096
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/agent-vm/outside-sentinel",
+          "logical_bytes": 26,
+          "allocated_bytes": 4096
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/agent-vm/seatbelt.stderr",
+          "logical_bytes": 0,
+          "allocated_bytes": 0
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/agent-vm/seatbelt.stdout",
+          "logical_bytes": 241,
+          "allocated_bytes": 4096
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/agent-vm/xxhsum.aarch64.elf",
+          "logical_bytes": 145024,
+          "allocated_bytes": 147456
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/claude-denied-forward-0.stderr",
+          "logical_bytes": 58,
+          "allocated_bytes": 4096
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/claude-denied-forward-0.stdout",
+          "logical_bytes": 0,
+          "allocated_bytes": 0
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/claude-denied-forward-1.stderr",
+          "logical_bytes": 59,
+          "allocated_bytes": 4096
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/claude-denied-forward-1.stdout",
+          "logical_bytes": 0,
+          "allocated_bytes": 0
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/claude-denied-forward-2.stderr",
+          "logical_bytes": 56,
+          "allocated_bytes": 4096
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/claude-denied-forward-2.stdout",
+          "logical_bytes": 0,
+          "allocated_bytes": 0
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/claude-forward-cancel.stderr",
+          "logical_bytes": 0,
+          "allocated_bytes": 0
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/claude-forward-cancel.stdout",
+          "logical_bytes": 0,
+          "allocated_bytes": 0
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/claude-forward-ready.stderr",
+          "logical_bytes": 28,
+          "allocated_bytes": 4096
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/claude-forward-ready.stdout",
+          "logical_bytes": 0,
+          "allocated_bytes": 0
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/claude-forward.stderr",
+          "logical_bytes": 0,
+          "allocated_bytes": 0
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/claude-negative-forward-cancel.stderr",
+          "logical_bytes": 0,
+          "allocated_bytes": 0
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/claude-negative-forward-cancel.stdout",
+          "logical_bytes": 0,
+          "allocated_bytes": 0
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/claude-negative-forward.stderr",
+          "logical_bytes": 0,
+          "allocated_bytes": 0
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/claude-negative-forward.stdout",
+          "logical_bytes": 0,
+          "allocated_bytes": 0
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/claude-session-0/claude-session.stderr",
+          "logical_bytes": 0,
+          "allocated_bytes": 0
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/claude-session-0/claude-session.stdout",
+          "logical_bytes": 3070,
+          "allocated_bytes": 4096
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/claude-session-0/sample.json",
+          "logical_bytes": 374,
+          "allocated_bytes": 4096
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/claude-untrusted-certificate/claude-session.stderr",
+          "logical_bytes": 0,
+          "allocated_bytes": 0
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/claude-untrusted-certificate/claude-session.stdout",
+          "logical_bytes": 0,
+          "allocated_bytes": 0
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/claude-untrusted-certificate/explicit-test-ca/claude-session.stderr",
+          "logical_bytes": 0,
+          "allocated_bytes": 0
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/claude-untrusted-certificate/explicit-test-ca/claude-session.stdout",
+          "logical_bytes": 3119,
+          "allocated_bytes": 4096
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/claude-untrusted-certificate/untrusted-tls-events.json",
+          "logical_bytes": 2183,
+          "allocated_bytes": 4096
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/claude-untrusted-certificate/untrusted-tls-generate.stderr",
+          "logical_bytes": 770,
+          "allocated_bytes": 4096
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/claude-untrusted-certificate/untrusted-tls-generate.stdout",
+          "logical_bytes": 0,
+          "allocated_bytes": 0
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/claude-untrusted-certificate/untrusted-tls-openssl-version.stderr",
+          "logical_bytes": 0,
+          "allocated_bytes": 0
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/claude-untrusted-certificate/untrusted-tls-openssl-version.stdout",
+          "logical_bytes": 61,
+          "allocated_bytes": 4096
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/claude-untrusted-certificate/untrusted-tls-valid-at-guest-clock.stderr",
+          "logical_bytes": 0,
+          "allocated_bytes": 0
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/claude-untrusted-certificate/untrusted-tls-valid-at-guest-clock.stdout",
+          "logical_bytes": 163,
+          "allocated_bytes": 4096
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/claude-untrusted-certificate/untrusted-tls-valid-at-host-clock.stderr",
+          "logical_bytes": 0,
+          "allocated_bytes": 0
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/claude-untrusted-certificate/untrusted-tls-valid-at-host-clock.stdout",
+          "logical_bytes": 163,
+          "allocated_bytes": 4096
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/claude-untrusted-certificate/untrusted-tls-validity.json",
+          "logical_bytes": 420,
+          "allocated_bytes": 4096
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/claude-untrusted-certificate/untrusted-tls.cnf",
+          "logical_bytes": 203,
+          "allocated_bytes": 4096
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/claude-untrusted-certificate/untrusted-tls.key",
+          "logical_bytes": 1704,
+          "allocated_bytes": 4096
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/claude-untrusted-certificate/untrusted-tls.pem",
+          "logical_bytes": 1159,
+          "allocated_bytes": 4096
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/codex-denied-forward-0.stderr",
+          "logical_bytes": 58,
+          "allocated_bytes": 4096
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/codex-denied-forward-0.stdout",
+          "logical_bytes": 0,
+          "allocated_bytes": 0
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/codex-denied-forward-1.stderr",
+          "logical_bytes": 59,
+          "allocated_bytes": 4096
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/codex-denied-forward-1.stdout",
+          "logical_bytes": 0,
+          "allocated_bytes": 0
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/codex-denied-forward-2.stderr",
+          "logical_bytes": 56,
+          "allocated_bytes": 4096
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/codex-denied-forward-2.stdout",
+          "logical_bytes": 0,
+          "allocated_bytes": 0
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/codex-forward-cancel.stderr",
+          "logical_bytes": 0,
+          "allocated_bytes": 0
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/codex-forward-cancel.stdout",
+          "logical_bytes": 0,
+          "allocated_bytes": 0
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/codex-forward-ready.stderr",
+          "logical_bytes": 28,
+          "allocated_bytes": 4096
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/codex-forward-ready.stdout",
+          "logical_bytes": 0,
+          "allocated_bytes": 0
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/codex-forward.stderr",
+          "logical_bytes": 0,
+          "allocated_bytes": 0
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/codex-negative-forward-cancel.stderr",
+          "logical_bytes": 0,
+          "allocated_bytes": 0
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/codex-negative-forward-cancel.stdout",
+          "logical_bytes": 0,
+          "allocated_bytes": 0
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/codex-negative-forward.stderr",
+          "logical_bytes": 0,
+          "allocated_bytes": 0
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/codex-negative-forward.stdout",
+          "logical_bytes": 0,
+          "allocated_bytes": 0
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/codex-session-0/codex-session.stderr",
+          "logical_bytes": 39,
+          "allocated_bytes": 4096
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/codex-session-0/codex-session.stdout",
+          "logical_bytes": 799,
+          "allocated_bytes": 4096
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/codex-session-0/sample.json",
+          "logical_bytes": 493,
+          "allocated_bytes": 4096
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/codex-untrusted-certificate/codex-session.stderr",
+          "logical_bytes": 39,
+          "allocated_bytes": 4096
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/codex-untrusted-certificate/codex-session.stdout",
+          "logical_bytes": 389,
+          "allocated_bytes": 4096
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/codex-untrusted-certificate/untrusted-tls-events.json",
+          "logical_bytes": 212,
+          "allocated_bytes": 4096
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/codex-untrusted-certificate/untrusted-tls-generate.stderr",
+          "logical_bytes": 878,
+          "allocated_bytes": 4096
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/codex-untrusted-certificate/untrusted-tls-generate.stdout",
+          "logical_bytes": 0,
+          "allocated_bytes": 0
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/codex-untrusted-certificate/untrusted-tls-openssl-version.stderr",
+          "logical_bytes": 0,
+          "allocated_bytes": 0
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/codex-untrusted-certificate/untrusted-tls-openssl-version.stdout",
+          "logical_bytes": 61,
+          "allocated_bytes": 4096
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/codex-untrusted-certificate/untrusted-tls-valid-at-guest-clock.stderr",
+          "logical_bytes": 0,
+          "allocated_bytes": 0
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/codex-untrusted-certificate/untrusted-tls-valid-at-guest-clock.stdout",
+          "logical_bytes": 162,
+          "allocated_bytes": 4096
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/codex-untrusted-certificate/untrusted-tls-valid-at-host-clock.stderr",
+          "logical_bytes": 0,
+          "allocated_bytes": 0
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/codex-untrusted-certificate/untrusted-tls-valid-at-host-clock.stdout",
+          "logical_bytes": 162,
+          "allocated_bytes": 4096
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/codex-untrusted-certificate/untrusted-tls-validity.json",
+          "logical_bytes": 422,
+          "allocated_bytes": 4096
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/codex-untrusted-certificate/untrusted-tls.cnf",
+          "logical_bytes": 197,
+          "allocated_bytes": 4096
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/codex-untrusted-certificate/untrusted-tls.key",
+          "logical_bytes": 1704,
+          "allocated_bytes": 4096
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/codex-untrusted-certificate/untrusted-tls.pem",
+          "logical_bytes": 1147,
+          "allocated_bytes": 4096
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/report.json",
+          "logical_bytes": 50929,
+          "allocated_bytes": 53248
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/sources/agent_probe.py",
+          "logical_bytes": 26441,
+          "allocated_bytes": 28672
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/sources/smoke.py",
+          "logical_bytes": 13996,
+          "allocated_bytes": 16384
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/sources/ssh_smoke.py",
+          "logical_bytes": 22175,
+          "allocated_bytes": 24576
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/sources/workload_smoke.py",
+          "logical_bytes": 15872,
+          "allocated_bytes": 16384
+        }
+      ],
+      "method": "stat size and blocks*512; unique inodes only; no claim of APFS shared-extent deduplication"
+    },
+    "common_runtime": {
+      "logical_bytes": 37487416,
+      "allocated_bytes": 20721664,
+      "files": [
+        {
+          "path": "/Users/dragos/Development/devcroft-codex/experiments/microvm/libkrun/target/debug/devcroft-krun-spike",
+          "logical_bytes": 7710976,
+          "allocated_bytes": 7712768
+        },
+        {
+          "path": "/Users/dragos/Development/devcroft-codex/experiments/microvm/artifacts/kernel-landlock/Image",
+          "logical_bytes": 5758984,
+          "allocated_bytes": 5763072
+        },
+        {
+          "path": "/Users/dragos/Development/devcroft-codex/experiments/microvm/artifacts/stage-b-agents-ssh-loss-fix-final/initramfs.cpio",
+          "logical_bytes": 7240240,
+          "allocated_bytes": 7241728
+        },
+        {
+          "path": "/Users/dragos/Development/devcroft-codex/experiments/microvm/artifacts/stage-b-agents-ssh-loss-fix-final/runtime.img",
+          "logical_bytes": 16777216,
+          "allocated_bytes": 4096
+        }
+      ],
+      "method": "stat size and blocks*512; unique inodes only; no claim of APFS shared-extent deduplication"
+    },
+    "private_environment": {
+      "logical_bytes": 150997749,
+      "allocated_bytes": 18124800,
+      "files": [
+        {
+          "path": "/private/tmp/ds-4q9wpz_0/data.img",
+          "logical_bytes": 134217728,
+          "allocated_bytes": 18071552
+        },
+        {
+          "path": "/private/tmp/ds-4q9wpz_0/sandbox-positive",
+          "logical_bytes": 16,
+          "allocated_bytes": 4096
+        },
+        {
+          "path": "/private/tmp/ds-4q9wpz_0/state.img",
+          "logical_bytes": 16777216,
+          "allocated_bytes": 16384
+        },
+        {
+          "path": "/private/tmp/dc-c-se0vt9hq/client",
+          "logical_bytes": 411,
+          "allocated_bytes": 4096
+        },
+        {
+          "path": "/private/tmp/dc-c-se0vt9hq/client.pub",
+          "logical_bytes": 103,
+          "allocated_bytes": 4096
+        },
+        {
+          "path": "/private/tmp/dc-c-se0vt9hq/host",
+          "logical_bytes": 411,
+          "allocated_bytes": 4096
+        },
+        {
+          "path": "/private/tmp/dc-c-se0vt9hq/host.pub",
+          "logical_bytes": 103,
+          "allocated_bytes": 4096
+        },
+        {
+          "path": "/private/tmp/dc-c-se0vt9hq/known_hosts",
+          "logical_bytes": 142,
+          "allocated_bytes": 4096
+        },
+        {
+          "path": "/private/tmp/dc-c-se0vt9hq/launch.json",
+          "logical_bytes": 1105,
+          "allocated_bytes": 4096
+        },
+        {
+          "path": "/private/tmp/dc-c-se0vt9hq/wrong-client",
+          "logical_bytes": 411,
+          "allocated_bytes": 4096
+        },
+        {
+          "path": "/private/tmp/dc-c-se0vt9hq/wrong-client.pub",
+          "logical_bytes": 103,
+          "allocated_bytes": 4096
+        }
+      ],
+      "method": "stat size and blocks*512; unique inodes only; no claim of APFS shared-extent deduplication"
+    },
+    "full_single_environment": {
+      "logical_bytes": 13951110616,
+      "allocated_bytes": 7072010240,
+      "files": [
+        {
+          "path": "/private/tmp/dc-min-5fea9fbff9/_config/networks.yaml",
+          "logical_bytes": 1250,
+          "allocated_bytes": 4096
+        },
+        {
+          "path": "/private/tmp/dc-min-5fea9fbff9/_config/user",
+          "logical_bytes": 387,
+          "allocated_bytes": 4096
+        },
+        {
+          "path": "/private/tmp/dc-min-5fea9fbff9/_config/user.pub",
+          "logical_bytes": 86,
+          "allocated_bytes": 4096
+        },
+        {
+          "path": "/private/tmp/dc-min-5fea9fbff9/materialize/cidata.iso",
+          "logical_bytes": 19558400,
+          "allocated_bytes": 19558400
+        },
+        {
+          "path": "/private/tmp/dc-min-5fea9fbff9/materialize/cloud-config.yaml",
+          "logical_bytes": 536,
+          "allocated_bytes": 4096
+        },
+        {
+          "path": "/private/tmp/dc-min-5fea9fbff9/materialize/disk",
+          "logical_bytes": 10737418240,
+          "allocated_bytes": 4007657472
+        },
+        {
+          "path": "/private/tmp/dc-min-5fea9fbff9/materialize/ha.stderr.log",
+          "logical_bytes": 23843,
+          "allocated_bytes": 24576
+        },
+        {
+          "path": "/private/tmp/dc-min-5fea9fbff9/materialize/ha.stdout.log",
+          "logical_bytes": 380,
+          "allocated_bytes": 4096
+        },
+        {
+          "path": "/private/tmp/dc-min-5fea9fbff9/materialize/lima-version",
+          "logical_bytes": 5,
+          "allocated_bytes": 4096
+        },
+        {
+          "path": "/private/tmp/dc-min-5fea9fbff9/materialize/lima.yaml",
+          "logical_bytes": 927,
+          "allocated_bytes": 4096
+        },
+        {
+          "path": "/private/tmp/dc-min-5fea9fbff9/materialize/serialv.log",
+          "logical_bytes": 0,
+          "allocated_bytes": 0
+        },
+        {
+          "path": "/private/tmp/dc-min-5fea9fbff9/materialize/ssh.config",
+          "logical_bytes": 712,
+          "allocated_bytes": 4096
+        },
+        {
+          "path": "/private/tmp/dc-min-5fea9fbff9/materialize/vz-efi",
+          "logical_bytes": 131072,
+          "allocated_bytes": 131072
+        },
+        {
+          "path": "/private/tmp/dc-min-5fea9fbff9/materialize/vz-identifier",
+          "logical_bytes": 70,
+          "allocated_bytes": 4096
+        },
+        {
+          "path": "experiments/microvm/artifacts/minimal-inputs/base.qcow2",
+          "logical_bytes": 235929600,
+          "allocated_bytes": 235929600
+        },
+        {
+          "path": "experiments/microvm/artifacts/minimal-inputs/inputs.tar",
+          "logical_bytes": 395141632,
+          "allocated_bytes": 395145216
+        },
+        {
+          "path": "experiments/microvm/artifacts/minimal-inputs/manifest.json",
+          "logical_bytes": 25791,
+          "allocated_bytes": 28672
+        },
+        {
+          "path": "experiments/microvm/artifacts/minimal-inputs/nix-bootstrap.tar.xz",
+          "logical_bytes": 23608652,
+          "allocated_bytes": 23609344
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/build.json",
+          "logical_bytes": 29049,
+          "allocated_bytes": 32768
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/builder.yaml",
+          "logical_bytes": 927,
+          "allocated_bytes": 4096
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/clean-guest-verification.stderr",
+          "logical_bytes": 0,
+          "allocated_bytes": 0
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/clean-guest-verification.stdout",
+          "logical_bytes": 166,
+          "allocated_bytes": 4096
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/closure.json",
+          "logical_bytes": 100875,
+          "allocated_bytes": 102400
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/copy-inputs.tar.stderr",
+          "logical_bytes": 0,
+          "allocated_bytes": 0
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/copy-inputs.tar.stdout",
+          "logical_bytes": 0,
+          "allocated_bytes": 0
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/copy-nix-bootstrap.tar.xz.stderr",
+          "logical_bytes": 0,
+          "allocated_bytes": 0
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/copy-nix-bootstrap.tar.xz.stdout",
+          "logical_bytes": 0,
+          "allocated_bytes": 0
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/data.seed.img",
+          "logical_bytes": 134217728,
+          "allocated_bytes": 134217728
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/export-data.seed.img.stderr",
+          "logical_bytes": 0,
+          "allocated_bytes": 0
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/export-data.seed.img.stdout",
+          "logical_bytes": 0,
+          "allocated_bytes": 0
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/export-toolchain.img.stderr",
+          "logical_bytes": 0,
+          "allocated_bytes": 0
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/export-toolchain.img.stdout",
+          "logical_bytes": 0,
+          "allocated_bytes": 0
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/fresh-builder-start.stderr",
+          "logical_bytes": 3721,
+          "allocated_bytes": 4096
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/fresh-builder-start.stdout",
+          "logical_bytes": 0,
+          "allocated_bytes": 0
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/input-0.stderr",
+          "logical_bytes": 0,
+          "allocated_bytes": 0
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/input-0.stdout",
+          "logical_bytes": 0,
+          "allocated_bytes": 0
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/input-1.stderr",
+          "logical_bytes": 0,
+          "allocated_bytes": 0
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/input-1.stdout",
+          "logical_bytes": 0,
+          "allocated_bytes": 0
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/input-2.stderr",
+          "logical_bytes": 0,
+          "allocated_bytes": 0
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/input-2.stdout",
+          "logical_bytes": 0,
+          "allocated_bytes": 0
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/input-3.stderr",
+          "logical_bytes": 0,
+          "allocated_bytes": 0
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/input-3.stdout",
+          "logical_bytes": 0,
+          "allocated_bytes": 0
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/input-4.stderr",
+          "logical_bytes": 0,
+          "allocated_bytes": 0
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/input-4.stdout",
+          "logical_bytes": 0,
+          "allocated_bytes": 0
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/input-5.stderr",
+          "logical_bytes": 0,
+          "allocated_bytes": 0
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/input-5.stdout",
+          "logical_bytes": 0,
+          "allocated_bytes": 0
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/input-6.stderr",
+          "logical_bytes": 0,
+          "allocated_bytes": 0
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/input-6.stdout",
+          "logical_bytes": 0,
+          "allocated_bytes": 0
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/input-7.stderr",
+          "logical_bytes": 0,
+          "allocated_bytes": 0
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/input-7.stdout",
+          "logical_bytes": 0,
+          "allocated_bytes": 0
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/materialization-memory.txt",
+          "logical_bytes": 1420,
+          "allocated_bytes": 4096
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/offline-reconstruct.stderr",
+          "logical_bytes": 52387,
+          "allocated_bytes": 53248
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/offline-reconstruct.stdout",
+          "logical_bytes": 2757,
+          "allocated_bytes": 4096
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/project-directory.stderr",
+          "logical_bytes": 0,
+          "allocated_bytes": 0
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/project-directory.stdout",
+          "logical_bytes": 0,
+          "allocated_bytes": 0
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/receipt-build.json.stderr",
+          "logical_bytes": 0,
+          "allocated_bytes": 0
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/receipt-build.json.stdout",
+          "logical_bytes": 0,
+          "allocated_bytes": 0
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/receipt-closure.json.stderr",
+          "logical_bytes": 0,
+          "allocated_bytes": 0
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/receipt-closure.json.stdout",
+          "logical_bytes": 0,
+          "allocated_bytes": 0
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/receipt-materialization-memory.txt.stderr",
+          "logical_bytes": 0,
+          "allocated_bytes": 0
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/receipt-materialization-memory.txt.stdout",
+          "logical_bytes": 0,
+          "allocated_bytes": 0
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/remove-builder-export-copies.stderr",
+          "logical_bytes": 0,
+          "allocated_bytes": 0
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/remove-builder-export-copies.stdout",
+          "logical_bytes": 0,
+          "allocated_bytes": 0
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/remove-offline-intermediates.stderr",
+          "logical_bytes": 0,
+          "allocated_bytes": 0
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/remove-offline-intermediates.stdout",
+          "logical_bytes": 0,
+          "allocated_bytes": 0
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/report.json",
+          "logical_bytes": 104903,
+          "allocated_bytes": 106496
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/sources/bootstrap.json",
+          "logical_bytes": 420,
+          "allocated_bytes": 4096
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/sources/build.py",
+          "logical_bytes": 10812,
+          "allocated_bytes": 12288
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/sources/definition/flake.lock",
+          "logical_bytes": 593,
+          "allocated_bytes": 4096
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/sources/definition/flake.nix",
+          "logical_bytes": 1346,
+          "allocated_bytes": 4096
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/sources/driver.py",
+          "logical_bytes": 4305,
+          "allocated_bytes": 8192
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/sources/publication.json",
+          "logical_bytes": 25791,
+          "allocated_bytes": 28672
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/sources/source.json",
+          "logical_bytes": 406,
+          "allocated_bytes": 4096
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/sources/xxhash.tar.gz",
+          "logical_bytes": 1147630,
+          "allocated_bytes": 1150976
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/stop-builder.stderr",
+          "logical_bytes": 1710,
+          "allocated_bytes": 4096
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/stop-builder.stdout",
+          "logical_bytes": 0,
+          "allocated_bytes": 0
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/toolchain.img",
+          "logical_bytes": 2214592512,
+          "allocated_bytes": 2214592512
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/trim-builder-exports.stderr",
+          "logical_bytes": 0,
+          "allocated_bytes": 0
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/trim-builder-exports.stdout",
+          "logical_bytes": 37,
+          "allocated_bytes": 4096
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/trim-offline-intermediates.stderr",
+          "logical_bytes": 0,
+          "allocated_bytes": 0
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/trim-offline-intermediates.stdout",
+          "logical_bytes": 38,
+          "allocated_bytes": 4096
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/agent-vm/boot-1-acknowledged-write.stderr",
+          "logical_bytes": 0,
+          "allocated_bytes": 0
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/agent-vm/boot-1-acknowledged-write.stdout",
+          "logical_bytes": 470,
+          "allocated_bytes": 4096
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/agent-vm/boot-1-build.stderr",
+          "logical_bytes": 120,
+          "allocated_bytes": 4096
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/agent-vm/boot-1-build.stdout",
+          "logical_bytes": 3855,
+          "allocated_bytes": 4096
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/agent-vm/boot-1-claude-cancelled-listener.stderr",
+          "logical_bytes": 0,
+          "allocated_bytes": 0
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/agent-vm/boot-1-claude-cancelled-listener.stdout",
+          "logical_bytes": 0,
+          "allocated_bytes": 0
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/agent-vm/boot-1-claude-help.stderr",
+          "logical_bytes": 0,
+          "allocated_bytes": 0
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/agent-vm/boot-1-claude-help.stdout",
+          "logical_bytes": 16890,
+          "allocated_bytes": 20480
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/agent-vm/boot-1-claude-tls-clock.stderr",
+          "logical_bytes": 0,
+          "allocated_bytes": 0
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/agent-vm/boot-1-claude-tls-clock.stdout",
+          "logical_bytes": 11,
+          "allocated_bytes": 4096
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/agent-vm/boot-1-claude-tls-positive.stderr",
+          "logical_bytes": 3235,
+          "allocated_bytes": 4096
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/agent-vm/boot-1-claude-tls-positive.stdout",
+          "logical_bytes": 6,
+          "allocated_bytes": 4096
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/agent-vm/boot-1-claude-version.stderr",
+          "logical_bytes": 0,
+          "allocated_bytes": 0
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/agent-vm/boot-1-claude-version.stdout",
+          "logical_bytes": 22,
+          "allocated_bytes": 4096
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/agent-vm/boot-1-clean-materializer-redis-stop.stderr",
+          "logical_bytes": 0,
+          "allocated_bytes": 0
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/agent-vm/boot-1-clean-materializer-redis-stop.stdout",
+          "logical_bytes": 0,
+          "allocated_bytes": 0
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/agent-vm/boot-1-clean-materializer-redis.stderr",
+          "logical_bytes": 0,
+          "allocated_bytes": 0
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/agent-vm/boot-1-clean-materializer-redis.stdout",
+          "logical_bytes": 3222,
+          "allocated_bytes": 4096
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/agent-vm/boot-1-codex-cancelled-listener.stderr",
+          "logical_bytes": 0,
+          "allocated_bytes": 0
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/agent-vm/boot-1-codex-cancelled-listener.stdout",
+          "logical_bytes": 0,
+          "allocated_bytes": 0
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/agent-vm/boot-1-codex-help.stderr",
+          "logical_bytes": 0,
+          "allocated_bytes": 0
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/agent-vm/boot-1-codex-help.stdout",
+          "logical_bytes": 5585,
+          "allocated_bytes": 8192
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/agent-vm/boot-1-codex-tls-clock.stderr",
+          "logical_bytes": 0,
+          "allocated_bytes": 0
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/agent-vm/boot-1-codex-tls-clock.stdout",
+          "logical_bytes": 11,
+          "allocated_bytes": 4096
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/agent-vm/boot-1-codex-tls-positive.stderr",
+          "logical_bytes": 3952,
+          "allocated_bytes": 4096
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/agent-vm/boot-1-codex-tls-positive.stdout",
+          "logical_bytes": 6,
+          "allocated_bytes": 4096
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/agent-vm/boot-1-codex-version.stderr",
+          "logical_bytes": 0,
+          "allocated_bytes": 0
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/agent-vm/boot-1-codex-version.stdout",
+          "logical_bytes": 18,
+          "allocated_bytes": 4096
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/agent-vm/boot-1-export-xxhsum.stderr",
+          "logical_bytes": 0,
+          "allocated_bytes": 0
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/agent-vm/boot-1-export-xxhsum.stdout",
+          "logical_bytes": 145024,
+          "allocated_bytes": 147456
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/agent-vm/boot-1-nix-closure-layout.stderr",
+          "logical_bytes": 0,
+          "allocated_bytes": 0
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/agent-vm/boot-1-nix-closure-layout.stdout",
+          "logical_bytes": 439,
+          "allocated_bytes": 4096
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/agent-vm/boot-1-redis-kernel-check.stderr",
+          "logical_bytes": 0,
+          "allocated_bytes": 0
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/agent-vm/boot-1-redis-kernel-check.stdout",
+          "logical_bytes": 211,
+          "allocated_bytes": 4096
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/agent-vm/boot-1-redis-start.stderr",
+          "logical_bytes": 0,
+          "allocated_bytes": 0
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/agent-vm/boot-1-redis-start.stdout",
+          "logical_bytes": 172,
+          "allocated_bytes": 4096
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/agent-vm/boot-1-source-import.stderr",
+          "logical_bytes": 0,
+          "allocated_bytes": 0
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/agent-vm/boot-1-source-import.stdout",
+          "logical_bytes": 0,
+          "allocated_bytes": 0
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/agent-vm/boot-1-upload-public-test-ca.stderr",
+          "logical_bytes": 0,
+          "allocated_bytes": 0
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/agent-vm/boot-1-upload-public-test-ca.stdout",
+          "logical_bytes": 0,
+          "allocated_bytes": 0
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/agent-vm/boot-1.stderr.log",
+          "logical_bytes": 4552,
+          "allocated_bytes": 8192
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/agent-vm/boot-1.stdout.log",
+          "logical_bytes": 0,
+          "allocated_bytes": 0
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/agent-vm/check.stderr",
+          "logical_bytes": 0,
+          "allocated_bytes": 0
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/agent-vm/check.stdout",
+          "logical_bytes": 230,
+          "allocated_bytes": 4096
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/agent-vm/keygen-client.stderr",
+          "logical_bytes": 0,
+          "allocated_bytes": 0
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/agent-vm/keygen-client.stdout",
+          "logical_bytes": 0,
+          "allocated_bytes": 0
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/agent-vm/keygen-host.stderr",
+          "logical_bytes": 0,
+          "allocated_bytes": 0
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/agent-vm/keygen-host.stdout",
+          "logical_bytes": 0,
+          "allocated_bytes": 0
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/agent-vm/keygen-wrong-client.stderr",
+          "logical_bytes": 0,
+          "allocated_bytes": 0
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/agent-vm/keygen-wrong-client.stdout",
+          "logical_bytes": 0,
+          "allocated_bytes": 0
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/agent-vm/launch.json",
+          "logical_bytes": 1105,
+          "allocated_bytes": 4096
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/agent-vm/outside-sentinel",
+          "logical_bytes": 26,
+          "allocated_bytes": 4096
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/agent-vm/seatbelt.stderr",
+          "logical_bytes": 0,
+          "allocated_bytes": 0
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/agent-vm/seatbelt.stdout",
+          "logical_bytes": 241,
+          "allocated_bytes": 4096
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/agent-vm/xxhsum.aarch64.elf",
+          "logical_bytes": 145024,
+          "allocated_bytes": 147456
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/claude-denied-forward-0.stderr",
+          "logical_bytes": 58,
+          "allocated_bytes": 4096
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/claude-denied-forward-0.stdout",
+          "logical_bytes": 0,
+          "allocated_bytes": 0
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/claude-denied-forward-1.stderr",
+          "logical_bytes": 59,
+          "allocated_bytes": 4096
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/claude-denied-forward-1.stdout",
+          "logical_bytes": 0,
+          "allocated_bytes": 0
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/claude-denied-forward-2.stderr",
+          "logical_bytes": 56,
+          "allocated_bytes": 4096
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/claude-denied-forward-2.stdout",
+          "logical_bytes": 0,
+          "allocated_bytes": 0
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/claude-forward-cancel.stderr",
+          "logical_bytes": 0,
+          "allocated_bytes": 0
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/claude-forward-cancel.stdout",
+          "logical_bytes": 0,
+          "allocated_bytes": 0
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/claude-forward-ready.stderr",
+          "logical_bytes": 28,
+          "allocated_bytes": 4096
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/claude-forward-ready.stdout",
+          "logical_bytes": 0,
+          "allocated_bytes": 0
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/claude-forward.stderr",
+          "logical_bytes": 0,
+          "allocated_bytes": 0
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/claude-negative-forward-cancel.stderr",
+          "logical_bytes": 0,
+          "allocated_bytes": 0
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/claude-negative-forward-cancel.stdout",
+          "logical_bytes": 0,
+          "allocated_bytes": 0
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/claude-negative-forward.stderr",
+          "logical_bytes": 0,
+          "allocated_bytes": 0
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/claude-negative-forward.stdout",
+          "logical_bytes": 0,
+          "allocated_bytes": 0
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/claude-session-0/claude-session.stderr",
+          "logical_bytes": 0,
+          "allocated_bytes": 0
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/claude-session-0/claude-session.stdout",
+          "logical_bytes": 3070,
+          "allocated_bytes": 4096
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/claude-session-0/sample.json",
+          "logical_bytes": 374,
+          "allocated_bytes": 4096
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/claude-untrusted-certificate/claude-session.stderr",
+          "logical_bytes": 0,
+          "allocated_bytes": 0
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/claude-untrusted-certificate/claude-session.stdout",
+          "logical_bytes": 0,
+          "allocated_bytes": 0
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/claude-untrusted-certificate/explicit-test-ca/claude-session.stderr",
+          "logical_bytes": 0,
+          "allocated_bytes": 0
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/claude-untrusted-certificate/explicit-test-ca/claude-session.stdout",
+          "logical_bytes": 3119,
+          "allocated_bytes": 4096
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/claude-untrusted-certificate/untrusted-tls-events.json",
+          "logical_bytes": 2183,
+          "allocated_bytes": 4096
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/claude-untrusted-certificate/untrusted-tls-generate.stderr",
+          "logical_bytes": 770,
+          "allocated_bytes": 4096
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/claude-untrusted-certificate/untrusted-tls-generate.stdout",
+          "logical_bytes": 0,
+          "allocated_bytes": 0
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/claude-untrusted-certificate/untrusted-tls-openssl-version.stderr",
+          "logical_bytes": 0,
+          "allocated_bytes": 0
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/claude-untrusted-certificate/untrusted-tls-openssl-version.stdout",
+          "logical_bytes": 61,
+          "allocated_bytes": 4096
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/claude-untrusted-certificate/untrusted-tls-valid-at-guest-clock.stderr",
+          "logical_bytes": 0,
+          "allocated_bytes": 0
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/claude-untrusted-certificate/untrusted-tls-valid-at-guest-clock.stdout",
+          "logical_bytes": 163,
+          "allocated_bytes": 4096
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/claude-untrusted-certificate/untrusted-tls-valid-at-host-clock.stderr",
+          "logical_bytes": 0,
+          "allocated_bytes": 0
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/claude-untrusted-certificate/untrusted-tls-valid-at-host-clock.stdout",
+          "logical_bytes": 163,
+          "allocated_bytes": 4096
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/claude-untrusted-certificate/untrusted-tls-validity.json",
+          "logical_bytes": 420,
+          "allocated_bytes": 4096
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/claude-untrusted-certificate/untrusted-tls.cnf",
+          "logical_bytes": 203,
+          "allocated_bytes": 4096
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/claude-untrusted-certificate/untrusted-tls.key",
+          "logical_bytes": 1704,
+          "allocated_bytes": 4096
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/claude-untrusted-certificate/untrusted-tls.pem",
+          "logical_bytes": 1159,
+          "allocated_bytes": 4096
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/codex-denied-forward-0.stderr",
+          "logical_bytes": 58,
+          "allocated_bytes": 4096
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/codex-denied-forward-0.stdout",
+          "logical_bytes": 0,
+          "allocated_bytes": 0
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/codex-denied-forward-1.stderr",
+          "logical_bytes": 59,
+          "allocated_bytes": 4096
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/codex-denied-forward-1.stdout",
+          "logical_bytes": 0,
+          "allocated_bytes": 0
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/codex-denied-forward-2.stderr",
+          "logical_bytes": 56,
+          "allocated_bytes": 4096
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/codex-denied-forward-2.stdout",
+          "logical_bytes": 0,
+          "allocated_bytes": 0
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/codex-forward-cancel.stderr",
+          "logical_bytes": 0,
+          "allocated_bytes": 0
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/codex-forward-cancel.stdout",
+          "logical_bytes": 0,
+          "allocated_bytes": 0
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/codex-forward-ready.stderr",
+          "logical_bytes": 28,
+          "allocated_bytes": 4096
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/codex-forward-ready.stdout",
+          "logical_bytes": 0,
+          "allocated_bytes": 0
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/codex-forward.stderr",
+          "logical_bytes": 0,
+          "allocated_bytes": 0
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/codex-negative-forward-cancel.stderr",
+          "logical_bytes": 0,
+          "allocated_bytes": 0
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/codex-negative-forward-cancel.stdout",
+          "logical_bytes": 0,
+          "allocated_bytes": 0
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/codex-negative-forward.stderr",
+          "logical_bytes": 0,
+          "allocated_bytes": 0
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/codex-negative-forward.stdout",
+          "logical_bytes": 0,
+          "allocated_bytes": 0
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/codex-session-0/codex-session.stderr",
+          "logical_bytes": 39,
+          "allocated_bytes": 4096
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/codex-session-0/codex-session.stdout",
+          "logical_bytes": 799,
+          "allocated_bytes": 4096
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/codex-session-0/sample.json",
+          "logical_bytes": 493,
+          "allocated_bytes": 4096
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/codex-untrusted-certificate/codex-session.stderr",
+          "logical_bytes": 39,
+          "allocated_bytes": 4096
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/codex-untrusted-certificate/codex-session.stdout",
+          "logical_bytes": 389,
+          "allocated_bytes": 4096
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/codex-untrusted-certificate/untrusted-tls-events.json",
+          "logical_bytes": 212,
+          "allocated_bytes": 4096
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/codex-untrusted-certificate/untrusted-tls-generate.stderr",
+          "logical_bytes": 878,
+          "allocated_bytes": 4096
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/codex-untrusted-certificate/untrusted-tls-generate.stdout",
+          "logical_bytes": 0,
+          "allocated_bytes": 0
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/codex-untrusted-certificate/untrusted-tls-openssl-version.stderr",
+          "logical_bytes": 0,
+          "allocated_bytes": 0
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/codex-untrusted-certificate/untrusted-tls-openssl-version.stdout",
+          "logical_bytes": 61,
+          "allocated_bytes": 4096
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/codex-untrusted-certificate/untrusted-tls-valid-at-guest-clock.stderr",
+          "logical_bytes": 0,
+          "allocated_bytes": 0
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/codex-untrusted-certificate/untrusted-tls-valid-at-guest-clock.stdout",
+          "logical_bytes": 162,
+          "allocated_bytes": 4096
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/codex-untrusted-certificate/untrusted-tls-valid-at-host-clock.stderr",
+          "logical_bytes": 0,
+          "allocated_bytes": 0
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/codex-untrusted-certificate/untrusted-tls-valid-at-host-clock.stdout",
+          "logical_bytes": 162,
+          "allocated_bytes": 4096
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/codex-untrusted-certificate/untrusted-tls-validity.json",
+          "logical_bytes": 422,
+          "allocated_bytes": 4096
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/codex-untrusted-certificate/untrusted-tls.cnf",
+          "logical_bytes": 197,
+          "allocated_bytes": 4096
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/codex-untrusted-certificate/untrusted-tls.key",
+          "logical_bytes": 1704,
+          "allocated_bytes": 4096
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/codex-untrusted-certificate/untrusted-tls.pem",
+          "logical_bytes": 1147,
+          "allocated_bytes": 4096
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/report.json",
+          "logical_bytes": 50929,
+          "allocated_bytes": 53248
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/sources/agent_probe.py",
+          "logical_bytes": 26441,
+          "allocated_bytes": 28672
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/sources/smoke.py",
+          "logical_bytes": 13996,
+          "allocated_bytes": 16384
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/sources/ssh_smoke.py",
+          "logical_bytes": 22175,
+          "allocated_bytes": 24576
+        },
+        {
+          "path": "experiments/microvm/runs/20261111-minimal-private-builder/verification/sources/workload_smoke.py",
+          "logical_bytes": 15872,
+          "allocated_bytes": 16384
+        },
+        {
+          "path": "/Users/dragos/Development/devcroft-codex/experiments/microvm/libkrun/target/debug/devcroft-krun-spike",
+          "logical_bytes": 7710976,
+          "allocated_bytes": 7712768
+        },
+        {
+          "path": "/Users/dragos/Development/devcroft-codex/experiments/microvm/artifacts/kernel-landlock/Image",
+          "logical_bytes": 5758984,
+          "allocated_bytes": 5763072
+        },
+        {
+          "path": "/Users/dragos/Development/devcroft-codex/experiments/microvm/artifacts/stage-b-agents-ssh-loss-fix-final/initramfs.cpio",
+          "logical_bytes": 7240240,
+          "allocated_bytes": 7241728
+        },
+        {
+          "path": "/Users/dragos/Development/devcroft-codex/experiments/microvm/artifacts/stage-b-agents-ssh-loss-fix-final/runtime.img",
+          "logical_bytes": 16777216,
+          "allocated_bytes": 4096
+        },
+        {
+          "path": "/private/tmp/ds-4q9wpz_0/data.img",
+          "logical_bytes": 134217728,
+          "allocated_bytes": 18071552
+        },
+        {
+          "path": "/private/tmp/ds-4q9wpz_0/sandbox-positive",
+          "logical_bytes": 16,
+          "allocated_bytes": 4096
+        },
+        {
+          "path": "/private/tmp/ds-4q9wpz_0/state.img",
+          "logical_bytes": 16777216,
+          "allocated_bytes": 16384
+        },
+        {
+          "path": "/private/tmp/dc-c-se0vt9hq/client",
+          "logical_bytes": 411,
+          "allocated_bytes": 4096
+        },
+        {
+          "path": "/private/tmp/dc-c-se0vt9hq/client.pub",
+          "logical_bytes": 103,
+          "allocated_bytes": 4096
+        },
+        {
+          "path": "/private/tmp/dc-c-se0vt9hq/host",
+          "logical_bytes": 411,
+          "allocated_bytes": 4096
+        },
+        {
+          "path": "/private/tmp/dc-c-se0vt9hq/host.pub",
+          "logical_bytes": 103,
+          "allocated_bytes": 4096
+        },
+        {
+          "path": "/private/tmp/dc-c-se0vt9hq/known_hosts",
+          "logical_bytes": 142,
+          "allocated_bytes": 4096
+        },
+        {
+          "path": "/private/tmp/dc-c-se0vt9hq/launch.json",
+          "logical_bytes": 1105,
+          "allocated_bytes": 4096
+        },
+        {
+          "path": "/private/tmp/dc-c-se0vt9hq/wrong-client",
+          "logical_bytes": 411,
+          "allocated_bytes": 4096
+        },
+        {
+          "path": "/private/tmp/dc-c-se0vt9hq/wrong-client.pub",
+          "logical_bytes": 103,
+          "allocated_bytes": 4096
+        }
+      ],
+      "method": "stat size and blocks*512; unique inodes only; no claim of APFS shared-extent deduplication"
+    }
+  },
+  "criteria": {
+    "cold_preparation": "passed",
+    "complete_retained_single_environment_storage": "passed"
+  }
+}

@@ -176,7 +176,7 @@ class UntrustedTlsEndpoint:
 
 def probe_agent(vm, agent, out, repetitions):
     host, path = VENDORS[agent]
-    control = vm.path / 'agent-ssh-control'
+    control = vm.controller_dir / 'agent-ssh-control'
     error_file = (out / f'{agent}-forward.stderr').open('wb')
     forward = None
     try:
@@ -302,6 +302,7 @@ def main():
     parser.add_argument('--inspect', action='store_true', help='versions/help only, not agent readiness')
     parser.add_argument('--trace-claude', action='store_true', help='diagnose pinned CLI under the unchanged guest policy')
     parser.add_argument('--repetitions', type=int, default=5)
+    parser.add_argument('--verify-workload', action='store_true', help='also compile/test xxHash, verify small files and use real Redis before CLI checks')
     parser.add_argument('--image', type=Path, default=ROOT / 'artifacts/agents/toolchain.img')
     parser.add_argument('--seed', type=Path, default=ROOT / 'artifacts/agents/data.seed.img')
     parser.add_argument('--guest', type=Path, default=ROOT / 'artifacts/stage-b-agents/guest.json')
@@ -346,11 +347,19 @@ def main():
     vm.launch['memory_mib'] = 1024
     vm.launch_path.write_text(json.dumps(vm.launch, indent=2) + '\n')
     (vm.out / 'launch.json').write_text(vm.launch_path.read_text())
-    report['instance'] = {'path': str(vm.path), 'boots': vm.boots}
+    report['instance'] = {'path': str(vm.path), 'controller_dir': str(vm.controller_dir), 'boots': vm.boots}
     try:
         vm.prepare(validation_timeout=90)
         vm.start()
         vm.ready(timeout=120)
+        if args.verify_workload:
+            hashes = vm.build()
+            run_id = vm.start_redis()
+            vm.write_acknowledged()
+            vm.verify_values('clean-materializer-redis')
+            vm.execute('clean-materializer-redis-stop', 'redis-cli SHUTDOWN')
+            report['clean_workload_verification'] = {'build_sha256': hashes, 'redis_run_id': run_id,
+                'small_files': 2048, 'acknowledged_keys': 32, 'status': 'passed'}
         if args.trace_claude:
             vm.execute('trace-directory', 'mkdir -p /workspace/tracer')
             trace_files = ROOT / 'artifacts/agents/tracer'
