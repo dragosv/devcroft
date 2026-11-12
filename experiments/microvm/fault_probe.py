@@ -100,7 +100,7 @@ def main():
                          {'case': 'host-suspend-resume', 'reason': 'requires a physical-host maintenance window; helper SIGSTOP does not qualify it'}]
     snapshots = args.out / 'sources'
     snapshots.mkdir()
-    for name in ('fault_probe.py', 'smoke.py', 'ssh_smoke.py', 'workload_smoke.py'):
+    for name in ('fault_probe.py', 'smoke.py', 'ssh_smoke.py', 'ssh_transport.py', 'workload_smoke.py'):
         (snapshots / name).write_bytes((ROOT / name).read_bytes())
     instances = []
 

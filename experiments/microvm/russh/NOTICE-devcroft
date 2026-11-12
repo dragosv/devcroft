@@ -1,0 +1,4 @@
+Vendored from russh 0.62.5, Apache-2.0, with original copyright notices retained.
+Upstream crate SHA-256: da7c230e0ed9cbeb92fbad6c8848985d6df2a1464c0dc247a021abd666e9005e
+Local modifications: ../patches/russh-consumed-input-windows.patch.
+This copy is used only by the experimental guest keeper.

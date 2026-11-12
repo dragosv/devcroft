@@ -313,7 +313,7 @@ def main():
     sources = args.out / 'sources'
     sources.mkdir()
     source_hashes = {}
-    for name in ('agent_probe.py', 'smoke.py', 'ssh_smoke.py', 'workload_smoke.py'):
+    for name in ('agent_probe.py', 'smoke.py', 'ssh_smoke.py', 'ssh_transport.py', 'workload_smoke.py'):
         content = (ROOT / name).read_bytes()
         (sources / name).write_bytes(content)
         source_hashes[name] = hashlib.sha256(content).hexdigest()

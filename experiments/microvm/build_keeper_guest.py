@@ -24,6 +24,14 @@ def main():
     parser.add_argument('--setup-window', action='store_true')
     parser.add_argument('--out', type=Path, help='separate guest artifacts; preserve earlier measured images')
     args = parser.parse_args()
+    ssh_pin = json.loads((ROOT / 'fixtures/ssh-consumption-windows.json').read_text())
+    expected = {ROOT / 'russh' / name: digest for name, digest in ssh_pin['vendor_files'].items()}
+    expected[ROOT / ssh_pin['keeper_fork']['path']] = ssh_pin['keeper_fork']['sha256']
+    expected[ROOT / ssh_pin['patch']['path']] = ssh_pin['patch']['sha256']
+    expected[ROOT / ssh_pin['keeper_fork']['patch']] = ssh_pin['keeper_fork']['patch_sha256']
+    for source, digest in expected.items():
+        if source.is_symlink() or hashlib.sha256(source.read_bytes()).hexdigest() != digest:
+            raise RuntimeError('experimental SSH source pin changed: ' + str(source))
     if args.agents:
         args.nix = True
     if args.setup_window and not args.adaptable or args.nix and args.adaptable:
@@ -79,6 +87,7 @@ def main():
                *sorted((crate / "src").glob("*.rs")), crate / "Cargo.toml", crate / "Cargo.lock",
                crate / "zig-linker.sh", crate / "zig-ar.sh", ROOT / "build_keeper_guest.py",
                ROOT / "build_guest.py", ROOT / "guest/init.c"]
+    sources.extend([ROOT / 'fixtures/ssh-consumption-windows.json', ROOT / 'freeze_ssh_sources.py', *sorted(expected)])
     if args.adaptable:
         sources.extend([ROOT / 'fixtures/adaptable-recipe-aarch64.json', ROOT / 'adaptable/recipe.py'])
     receipt["sources"] = {str(p.relative_to(ROOT.parent.parent)): hashlib.sha256(p.read_bytes()).hexdigest()

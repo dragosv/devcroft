@@ -8,7 +8,7 @@ mod keeper;
 #[path = "../../../../src/ssh/sftp.rs"]
 mod sftp;
 #[allow(dead_code)]
-#[path = "../../../../src/ssh/server.rs"]
+#[path = "ssh_server.rs"]
 mod ssh_server;
 
 #[cfg(any(target_os = "linux", test))]

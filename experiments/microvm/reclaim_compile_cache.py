@@ -20,6 +20,7 @@ def sha(path):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--out', type=Path, required=True)
+    parser.add_argument('--root-only', action='store_true', help='keep experimental cross-compilation caches')
     args = parser.parse_args()
     require_no_active_collector(ROOT / 'runs')
     lease = (ROOT / 'artifacts/nested-runner.lock').open('a')
@@ -30,6 +31,8 @@ def main():
     workspace = ROOT.parent.parent
     targets = [workspace / 'target/debug', ROOT / 'libkrun/target/debug', ROOT / 'hvi/target/debug',
                ROOT / 'guest-keeper/target/release', ROOT / 'guest-keeper/target/aarch64-unknown-linux-musl/release']
+    if args.root_only:
+        targets = targets[:1]
     locks = []
     for target in targets:
         if target.exists():
@@ -44,7 +47,8 @@ def main():
     before = {str(path): sha(path) for path in protected}
     report = {'schema': 1, 'status': 'failed', 'qualification': 'regenerable workspace/experiment compiler cache cleanup; runtime files retained',
               'raw_evidence': str(args.out), 'free_bytes_before': shutil.disk_usage('/private/tmp').free,
-              'protected_executable_sha256': before, 'removed_directories': [], 'removed_libraries': []}
+              'protected_executable_sha256': before, 'removed_directories': [], 'removed_libraries': [],
+              'root_only': args.root_only}
     for target in targets:
         if not target.exists():
             continue

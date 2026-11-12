@@ -17,6 +17,7 @@ import shlex
 import signal
 import struct
 import subprocess
+import sys
 import tempfile
 import termios
 import threading
@@ -107,7 +108,8 @@ class Instance:
 
     def options(self, key="client", known_hosts=None, endpoint=None):
         # OpenSSH itself prefixes ProxyCommand with exec before invoking sh.
-        proxy = "/usr/bin/nc -U " + shlex.quote(str((endpoint or self.path) / "ssh.sock"))
+        proxy = ' '.join(map(shlex.quote, [sys.executable, str(ROOT / 'ssh_transport.py'),
+                                          str((endpoint or self.path) / 'ssh.sock')]))
         return ["-F", "/dev/null", "-o", f"ProxyCommand={proxy}",
                 "-o", "BatchMode=yes", "-o", "IdentitiesOnly=yes", "-o", "IdentityAgent=none",
                 "-o", "ForwardAgent=no", "-o", "StrictHostKeyChecking=yes",
@@ -324,7 +326,7 @@ def main():
         report.update(fixture='Nix flake closure' if guest.get('nix') else 'Alpine workload fixture',
             workload_artifact=artifact(args.workload), seed_artifact=artifact(args.seed),
             resources_per_vm={'vcpus': 2, 'memory_mib': 512})
-    sources = [Path(__file__), ROOT / "smoke.py", ROOT / "keeper_probe.py",
+    sources = [Path(__file__), ROOT / "smoke.py", ROOT / "ssh_transport.py", ROOT / "keeper_probe.py",
                *sorted((ROOT / report["adapter"] / "src").glob("*.rs")), ROOT / report["adapter"] / "Cargo.lock"]
     if args.workload:
         sources.append(ROOT / 'workload_smoke.py')
