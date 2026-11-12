@@ -2410,8 +2410,6 @@ dependencies = [
 [[package]]
 name = "russh"
 version = "0.62.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "da7c230e0ed9cbeb92fbad6c8848985d6df2a1464c0dc247a021abd666e9005e"
 dependencies = [
  "aes",
  "aws-lc-rs",

@@ -1,0 +1,80 @@
+{
+  "schema": 1,
+  "status": "partial",
+  "qualification": "retained calibration/failure inventory; not a blanket passing test-suite claim",
+  "raw_evidence": "experiments/microvm/runs/20261112-ssh-consumed-validation",
+  "rows": [
+    {
+      "name": "baseline-native-unpaced-russh",
+      "status": "failed",
+      "evidence": "runs/20261111-ssh-duplex-repair/before.log",
+      "scope": "128-KiB echo timed out before the prototype"
+    },
+    {
+      "name": "bounded-queue-without-consumed-window",
+      "status": "failed",
+      "evidence": "runs/20261112-libkrun-duplex/report.json",
+      "scope": "valid 16-MiB transfer hit the 8-MiB queue cap; strategy discarded in favor of consumed-input credit"
+    },
+    {
+      "name": "native-nc-proxy",
+      "status": "failed",
+      "evidence": "runs/20261111-ssh-duplex-repair/openssh-nc-failed.log",
+      "scope": "16-MiB duplex stalled; threaded Unix ProxyCommand passes"
+    },
+    {
+      "name": "mux-client-kill-is-not-master-loss",
+      "status": "failed",
+      "evidence": "runs/20261112-libkrun-consumed-window-cancel/report.json",
+      "scope": "killing only a multiplex client left its command alive; final proof kills the master/proxy process group and checks original guest identity is gone"
+    },
+    {
+      "name": "mux-stdio-drain",
+      "status": "failed",
+      "evidence": "runs/20261112-libkrun-ssh-flow-final/report.json",
+      "scope": "client exit preceded final master stdio writes; harness now drains until actual pipe EOF"
+    },
+    {
+      "name": "native-direct-russh-multiplex-burst",
+      "status": "open",
+      "evidence": "experiments/microvm/runs/20261112-ssh-consumed-validation/keeper-serial.log",
+      "scope": "nonreading-stdin direct-russh test intermittently times out; OpenSSH VM proof passes on both adapters"
+    },
+    {
+      "name": "native-common-pty-calibration",
+      "status": "failed",
+      "evidence": "experiments/microvm/runs/20261112-ssh-consumed-validation/keeper-parallel.log",
+      "scope": "unchanged common PTY test returned empty output once; not silently counted as a passing final all-tests run"
+    },
+    {
+      "name": "russh-strict-lib-clippy",
+      "status": "failed",
+      "evidence": "experiments/microvm/runs/20261112-ssh-consumed-validation/russh-strict-clippy.log",
+      "scope": "two manual_saturating_arithmetic style findings in unchanged upstream src/session.rs; not a clean upstream strict-Clippy claim"
+    },
+    {
+      "name": "pinned-russh-unit-tests",
+      "status": "passed",
+      "tests": 154,
+      "evidence": "experiments/microvm/runs/20261112-ssh-consumed-validation/russh-tests-passed.log"
+    },
+    {
+      "name": "keeper-ssh-native-tests",
+      "status": "passed-scoped",
+      "tests": 10,
+      "explicit_native_openssh_test": "passed separately",
+      "evidence": "experiments/microvm/runs/20261112-ssh-consumed-validation/keeper-ssh-tests-passed.log",
+      "scope": "One passing run; later native direct-russh intermittent failure remains retained"
+    },
+    {
+      "name": "keeper-all-targets-clippy",
+      "status": "passed",
+      "evidence": "experiments/microvm/runs/20261112-ssh-consumed-validation/keeper-clippy.log"
+    },
+    {
+      "name": "native-openssh-16mib",
+      "status": "passed",
+      "evidence": "experiments/microvm/runs/20261112-ssh-consumed-validation/openssh-passed.log"
+    }
+  ]
+}

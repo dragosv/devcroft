@@ -238,7 +238,7 @@ def main():
     args.out.mkdir(parents=True, exist_ok=False)
     (args.out / 'runner.pid').write_text(str(os.getpid()) + '\n')
     source_names = ['density.py', 'observe_macos.py', 'measure_macos.c', 'memory_stress.c',
-                    'smoke.py', 'ssh_smoke.py', 'workload_smoke.py', 'keeper_probe.py']
+                    'smoke.py', 'ssh_smoke.py', 'ssh_transport.py', 'workload_smoke.py', 'keeper_probe.py']
     frozen = args.out / 'sources'
     frozen.mkdir()
     source_hashes = {}

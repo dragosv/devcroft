@@ -1,0 +1,415 @@
+--- a/src/client/encrypted.rs
++++ b/src/client/encrypted.rs
+@@ -455,7 +455,7 @@
+                 let channel_num = map_err!(ChannelId::decode(&mut r))?;
+                 let data = map_err!(Bytes::decode(&mut r))?;
+                 map_err!(ensure_end(&r))?;
+-                let target = self.common.config.window_size;
++                let target = self.target_window_size;
+                 if let Some(ref mut enc) = self.common.encrypted {
+                     if enc.adjust_window_size(channel_num, &data, target)? {
+                         let next_window =
+@@ -478,7 +478,7 @@
+                 let extended_code = map_err!(u32::decode(&mut r))?;
+                 let data = map_err!(Bytes::decode(&mut r))?;
+                 map_err!(ensure_end(&r))?;
+-                let target = self.common.config.window_size;
++                let target = self.target_window_size;
+                 if let Some(ref mut enc) = self.common.encrypted {
+                     if enc.adjust_window_size(channel_num, &data, target)? {
+                         let next_window =
+--- a/src/server/encrypted.rs
++++ b/src/server/encrypted.rs
+@@ -150,10 +150,9 @@
+     use std::num::Wrapping;
+     use std::sync::Arc;
+ 
+-    use bytes::BytesMut;
+     use crate::compression::{Compression, Decompress};
+     use crate::helpers::sign_with_hash_alg;
+-    use crate::kex::{SessionKexState, KEXES, NONE as KEX_NONE};
++    use crate::kex::{KEXES, NONE as KEX_NONE, SessionKexState};
+     use crate::keys::PrivateKeyWithHashAlg;
+     use crate::tests::raw_no_crypto::{
+         MSG_SERVICE_REQUEST, MSG_USERAUTH_FAILURE, MSG_USERAUTH_REQUEST, RawSession,
+@@ -161,6 +160,7 @@
+         raw_auth_request_signal, raw_channel_request_signal, raw_service_request_signal,
+         read_packet, timeout,
+     };
++    use bytes::BytesMut;
+ 
+     #[tokio::test]
+     async fn malformed_pty_req_truncated_modes_rejected_by_server() {
+@@ -372,11 +372,17 @@
+ 
+         let probe = publickey_probe_packet("alice", &pk_ok_key);
+         let mut probe = BytesMut::from(probe.as_slice());
+-        session.process_packet(&mut handler, &mut probe).await.unwrap();
++        session
++            .process_packet(&mut handler, &mut probe)
++            .await
++            .unwrap();
+ 
+         let signed = publickey_signed_packet("alice", Arc::new(signed_private), &signed_key);
+         let mut signed = BytesMut::from(signed.as_slice());
+-        session.process_packet(&mut handler, &mut signed).await.unwrap();
++        session
++            .process_packet(&mut handler, &mut signed)
++            .await
++            .unwrap();
+ 
+         assert!(
+             !handler.final_auth_reached_for_signed_key,
+@@ -415,6 +421,53 @@
+         assert!(
+             !handler.window_adjusted_called,
+             "window_adjusted was called before server-open channel confirmation"
++        );
++    }
++
++    #[tokio::test]
++    #[allow(clippy::unwrap_used)]
++    async fn manual_receive_window_stays_consumed_and_rejects_excess_input() {
++        let mut session = test_authenticated_session();
++        let manual = insert_unconfirmed_server_open(&mut session);
++        let automatic = insert_unconfirmed_server_open(&mut session);
++        for id in [manual, automatic] {
++            let params = session
++                .common
++                .encrypted
++                .as_mut()
++                .unwrap()
++                .channels
++                .get_mut(&id)
++                .unwrap();
++            params.confirmed = true;
++            params.sender_window_size = 64;
++        }
++        session.manual_receive_window(manual).unwrap();
++        let mut handler = ChannelCallbackProbe::default();
++        for id in [manual, automatic] {
++            let mut packet = vec![msg::CHANNEL_DATA];
++            id.encode(&mut packet).unwrap();
++            encode_string(&mut packet, &[7; 33]);
++            session.process_packet(&mut handler, &packet).await.unwrap();
++        }
++        let channels = &session.common.encrypted.as_ref().unwrap().channels;
++        assert_eq!(channels[&manual].sender_window_size, 31);
++        assert_eq!(
++            channels[&automatic].sender_window_size,
++            session.common.config.window_size
++        );
++        let mut overrun = vec![msg::CHANNEL_DATA];
++        manual.encode(&mut overrun).unwrap();
++        encode_string(&mut overrun, &[9; 32]);
++        assert!(
++            session
++                .process_packet(&mut handler, &overrun)
++                .await
++                .is_err()
++        );
++        assert_eq!(
++            session.common.encrypted.as_ref().unwrap().channels[&manual].sender_window_size,
++            31
+         );
+     }
+ 
+@@ -522,6 +575,7 @@
+         let handle = Handle {
+             sender,
+             channel_buffer_size: config.channel_buffer_size,
++            receive_credits: Default::default(),
+         };
+ 
+         Session {
+@@ -547,6 +601,7 @@
+             pending_reads: Vec::new(),
+             pending_len: 0,
+             channels: std::collections::HashMap::new(),
++            manual_receive_windows: Default::default(),
+             open_global_requests: std::collections::VecDeque::new(),
+             kex: SessionKexState::Idle,
+         }
+@@ -1083,9 +1138,7 @@
+         r: &mut R,
+     ) -> Result<(), H::Error> {
+         match msg {
+-            msg::CHANNEL_OPEN => self
+-                .server_handle_channel_open(handler, r)
+-                .await,
++            msg::CHANNEL_OPEN => self.server_handle_channel_open(handler, r).await,
+             msg::CHANNEL_CLOSE => {
+                 let channel_num = map_err!(ChannelId::decode(r))?;
+                 map_err!(ensure_end(r))?;
+@@ -1103,6 +1156,7 @@
+                     chan.send(ChannelMsg::Close).await.unwrap_or(())
+                 }
+                 self.channels.remove(&channel_num);
++                self.manual_receive_windows.remove(&channel_num);
+                 debug!("handler.channel_close {channel_num:?}");
+                 handler.channel_close(channel_num, self).await
+             }
+@@ -1135,7 +1189,18 @@
+                 let target = self.target_window_size;
+ 
+                 if let Some(ref mut enc) = self.common.encrypted {
+-                    if enc.adjust_window_size(channel_num, &data, target)? {
++                    if self.manual_receive_windows.contains(&channel_num) {
++                        let channel = enc
++                            .channels
++                            .get_mut(&channel_num)
++                            .ok_or(Error::Inconsistent)?;
++                        channel.sender_window_size = channel
++                            .sender_window_size
++                            .checked_sub(
++                                u32::try_from(data.len()).map_err(|_| Error::Inconsistent)?,
++                            )
++                            .ok_or(Error::Inconsistent)?;
++                    } else if enc.adjust_window_size(channel_num, &data, target)? {
+                         let window = handler.adjust_window(channel_num, self.target_window_size);
+                         if window > 0 {
+                             self.target_window_size = window
+@@ -1281,7 +1346,8 @@
+                                     return Err(Error::Inconsistent.into());
+                                 }
+                                 if let Some(code) = Pty::from_u8(code) {
+-                                    #[allow(clippy::indexing_slicing)] // i < modes.len() checked above
++                                    #[allow(clippy::indexing_slicing)]
++                                    // i < modes.len() checked above
+                                     {
+                                         modes[i] = (code, num);
+                                     }
+@@ -1711,16 +1777,13 @@
+             channel_ref,
+             channel_params,
+         };
+-        let reply = ChannelOpenHandle::new(
+-            self.sender.sender.clone(),
+-            pending,
+-            |pending, result| Msg::ChannelOpenReply { pending, result },
+-        );
++        let reply =
++            ChannelOpenHandle::new(self.sender.sender.clone(), pending, |pending, result| {
++                Msg::ChannelOpenReply { pending, result }
++            });
+ 
+         match &msg.typ {
+-            ChannelType::Session => {
+-                handler.channel_open_session(channel, reply, self).await
+-            }
++            ChannelType::Session => handler.channel_open_session(channel, reply, self).await,
+             ChannelType::X11 {
+                 originator_address,
+                 originator_port,
+--- a/src/server/mod.rs
++++ b/src/server/mod.rs
+@@ -1066,6 +1066,7 @@
+     let handle = server::session::Handle {
+         sender,
+         channel_buffer_size: config.channel_buffer_size,
++        receive_credits: Default::default(),
+     };
+ 
+     let common = read_ssh_id(config, &mut stream).await?;
+@@ -1077,6 +1078,7 @@
+         pending_reads: Vec::new(),
+         pending_len: 0,
+         channels: HashMap::new(),
++        manual_receive_windows: Default::default(),
+         open_global_requests: VecDeque::new(),
+         kex: SessionKexState::Idle,
+     };
+--- a/src/server/session.rs
++++ b/src/server/session.rs
+@@ -1,6 +1,6 @@
+-use std::collections::{HashMap, VecDeque};
++use std::collections::{HashMap, HashSet, VecDeque};
+ use std::io::ErrorKind;
+-use std::sync::Arc;
++use std::sync::{Arc, Mutex};
+ 
+ use channels::WindowSizeRef;
+ use kex::ServerKex;
+@@ -25,6 +25,7 @@
+     pub(crate) pending_reads: Vec<Vec<u8>>,
+     pub(crate) pending_len: u32,
+     pub(crate) channels: HashMap<ChannelId, ChannelRef>,
++    pub(crate) manual_receive_windows: HashSet<ChannelId>,
+     pub(crate) open_global_requests: VecDeque<GlobalRequestResponse>,
+     pub(crate) kex: SessionKexState<ServerKex>,
+ }
+@@ -110,9 +111,37 @@
+ pub struct Handle {
+     pub(crate) sender: Sender<Msg>,
+     pub(crate) channel_buffer_size: usize,
++    pub(crate) receive_credits: Arc<ReceiveCredits>,
+ }
+ 
++/// Credits are control traffic, independent of the bounded application-output
++/// queue: a window-blocked stdout channel must not stall another channel's stdin.
++#[derive(Debug, Default)]
++pub(crate) struct ReceiveCredits {
++    pending: Mutex<HashMap<ChannelId, u32>>,
++    notify: tokio::sync::Notify,
++}
++
+ impl Handle {
++    /// Acknowledge bytes actually consumed by a manual-window channel's sink.
++    /// Safe from a blocking I/O worker; coalesces credits and wakes the session.
++    pub fn consumed(&self, id: ChannelId, bytes: u32) -> Result<(), Error> {
++        if self.sender.is_closed() {
++            return Err(Error::SendError);
++        }
++        if bytes > 0 {
++            let mut pending = self
++                .receive_credits
++                .pending
++                .lock()
++                .map_err(|_| Error::Inconsistent)?;
++            let amount = pending.entry(id).or_default();
++            *amount = amount.checked_add(bytes).ok_or(Error::Inconsistent)?;
++            drop(pending);
++            self.receive_credits.notify.notify_one();
++        }
++        Ok(())
++    }
+     /// Send data to the session referenced by this handler.
+     pub async fn data(
+         &self,
+@@ -611,7 +640,8 @@
+                 description,
+                 language_tag,
+             } => {
+-                self.common.disconnect(reason, &description, &language_tag)?;
++                self.common
++                    .disconnect(reason, &description, &language_tag)?;
+             }
+             Msg::ChannelOpenReply { pending, result } => {
+                 self.finalize_channel_open_reply(pending, result)?;
+@@ -657,6 +687,7 @@
+         pin!(reading);
+         let mut is_reading = None;
+ 
++        let receive_credits = self.sender.receive_credits.clone();
+         #[allow(clippy::panic)] // false positive in macro
+         while !self.common.disconnected {
+             self.common.received_data = false;
+@@ -704,6 +735,12 @@
+             }
+ 
+             tokio::select! {
++                () = receive_credits.notify.notified(), if !self.kex.active() => {
++                    let credits = std::mem::take(&mut *receive_credits.pending.lock().map_err(|_| Error::Inconsistent)?);
++                    for (channel, amount) in credits {
++                        self.replenish_receive_window(channel, amount)?;
++                    }
++                }
+                 r = &mut reading => {
+                     let (stream_read, mut buffer, mut opening_cipher) = match r {
+                         Ok((_, stream_read, buffer, opening_cipher)) => (stream_read, buffer, opening_cipher),
+@@ -819,6 +856,42 @@
+     /// Get a handle to this session.
+     pub fn handle(&self) -> Handle {
+         self.sender.clone()
++    }
++
++    /// Disable automatic receive-window replenishment for this channel. Its
++    /// application must call Handle::consumed only after consuming input bytes.
++    /// Other channels retain their existing automatic window management.
++    pub fn manual_receive_window(&mut self, channel: ChannelId) -> Result<(), Error> {
++        let enc = self.common.encrypted.as_ref().ok_or(Error::Inconsistent)?;
++        if !enc.channels.contains_key(&channel) {
++            return Err(Error::Inconsistent);
++        }
++        self.manual_receive_windows.insert(channel);
++        Ok(())
++    }
++
++    fn replenish_receive_window(&mut self, channel: ChannelId, amount: u32) -> Result<(), Error> {
++        if amount == 0 || !self.manual_receive_windows.contains(&channel) {
++            return Ok(()); // Late credits after channel close are harmless.
++        }
++        if let Some(enc) = self.common.encrypted.as_mut() {
++            if let Some(params) = enc.channels.get_mut(&channel) {
++                let next = params
++                    .sender_window_size
++                    .checked_add(amount)
++                    .ok_or(Error::Inconsistent)?;
++                if next > self.common.config.window_size {
++                    return Err(Error::Inconsistent);
++                }
++                params.sender_window_size = next;
++                push_packet!(enc.write, {
++                    msg::CHANNEL_WINDOW_ADJUST.encode(&mut enc.write)?;
++                    params.recipient_channel.encode(&mut enc.write)?;
++                    amount.encode(&mut enc.write)?;
++                });
++            }
++        }
++        Ok(())
+     }
+ 
+     pub fn writable_packet_size(&self, channel: &ChannelId) -> u32 {
+@@ -1499,6 +1572,7 @@
+         let handle = Handle {
+             sender,
+             channel_buffer_size: config.channel_buffer_size,
++            receive_credits: Default::default(),
+         };
+ 
+         Session {
+@@ -1543,9 +1617,54 @@
+             pending_reads: Vec::new(),
+             pending_len: 0,
+             channels: HashMap::new(),
++            manual_receive_windows: Default::default(),
+             open_global_requests: VecDeque::new(),
+             kex: SessionKexState::Idle,
+         }
++    }
++
++    #[test]
++    #[allow(clippy::unwrap_used)]
++    fn consumed_credits_bypass_application_backlog_and_cannot_inflate_window() {
++        let mut session = authenticated_session();
++        let channel = session.channel_open_session().unwrap();
++        session.manual_receive_window(channel).unwrap();
++        let maximum = session.common.config.window_size;
++        session
++            .common
++            .encrypted
++            .as_mut()
++            .unwrap()
++            .channels
++            .get_mut(&channel)
++            .unwrap()
++            .sender_window_size = maximum - 15;
++        // Fill the existing bounded application channel. Credits must still be
++        // accepted/coalesced without waiting for stdout to become writable.
++        let handle = session.handle();
++        while handle
++            .sender
++            .try_send(Msg::Channel(channel, ChannelMsg::Eof))
++            .is_ok()
++        {}
++        handle.consumed(channel, 7).unwrap();
++        handle.consumed(channel, 8).unwrap();
++        let credits = std::mem::take(&mut *handle.receive_credits.pending.lock().unwrap());
++        assert_eq!(credits[&channel], 15);
++        session
++            .replenish_receive_window(channel, credits[&channel])
++            .unwrap();
++        assert_eq!(
++            session.common.encrypted.as_ref().unwrap().channels[&channel].sender_window_size,
++            maximum
++        );
++        assert!(session.replenish_receive_window(channel, 1).is_err());
++        session.manual_receive_windows.remove(&channel);
++        session.replenish_receive_window(channel, 15).unwrap();
++        assert_eq!(
++            session.common.encrypted.as_ref().unwrap().channels[&channel].sender_window_size,
++            maximum
++        );
+     }
+ 
+     fn compressed_debug_payload(payload_len: usize) -> Vec<u8> {

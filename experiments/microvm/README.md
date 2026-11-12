@@ -730,3 +730,42 @@ It records these two closed experimental gaps while preserving the original
 assessment and its failed full-builder storage observation. Production adoption
 remains unapproved; trusted preparation, missing native platforms and the
 remaining SSH/fault controls still have explicit limits.
+
+
+### Consumed-input SSH window prototype
+
+Both native macOS ARM64 adapters pass binary OpenSSH echo at 128 KiB and
+16 MiB, with exact hashes and nonzero exit status, using the same fixed guest.
+A nonreading command throttles input while another channel on the same SSH
+master remains usable. Killing the master/proxy transport reaps the original
+command identity; a new connection works and owned helpers/endpoints are
+removed. Evidence: `results/{libkrun,hvi}-macos-arm64-ssh-flow-control.json`.
+These are functional samples, not agent-start or density measurements.
+
+The earlier bounded stdin queue rejected valid fast input. The replacement
+returns receive-window credit only after writing to the child's stdin. Tiny
+frames coalesce into bounded chunks. A channel write half respects the remote
+stdout window, and connection/channel loss interrupts that wait and releases
+output pumps. Control credits bypass the application-output backlog.
+
+This is an isolated fork in `guest-keeper/src/ssh_server.rs`, derived from the
+recorded production server, plus vendored russh 0.62.5. The root dependency and
+production SSH source are unchanged. `fixtures/ssh-consumption-windows.json`
+records the upstream crate checksum, 84 vendored input hashes and reconstructible
+patches. `freeze_ssh_sources.py` deliberately refreshes these pins; guest builds
+verify them before compilation. The extra input worker per active session and
+patch maintenance need qualification before any production port.
+
+The trusted host ProxyCommand now moves both socket directions independently;
+the previous single `nc` proxy stalled in the native large-duplex calibration.
+Readers drain the multiplex master's stdio to actual EOF rather than stopping
+at the mux client's earlier exit notification. No real credentials are used.
+
+Failures remain in `results/macos-arm64-ssh-flow-calibrations.json`. The pinned
+russh library passes 154 unit tests, the keeper passes warnings-denied all-target
+Clippy, and the explicit native OpenSSH 16-MiB test passes. A direct-russh
+unpaced multiplex diagnostic still intermittently stalls; the full native
+keeper suite is not claimed clean. An unchanged common macOS PTY test also
+returned empty output once. Upstream strict library Clippy reports two unchanged
+saturating-arithmetic style findings. The original 180-case density and private
+preparation reports retain their older binary/source hashes.

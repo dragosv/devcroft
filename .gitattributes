@@ -1,0 +1,4 @@
+# Unified patch context and imported upstream documentation retain exact bytes.
+experiments/microvm/patches/*consumed-input*.patch -whitespace
+experiments/microvm/russh/README.md -whitespace
+experiments/microvm/russh/LICENSE-APACHE -whitespace

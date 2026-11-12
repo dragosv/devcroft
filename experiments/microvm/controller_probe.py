@@ -34,7 +34,7 @@ def main():
               'guest': guest, 'raw_evidence': str(args.out), 'checks': [], 'instances': []}
     sources = args.out / 'sources'
     sources.mkdir()
-    for name in ('controller_probe.py', 'ssh_smoke.py', 'smoke.py', 'workload_smoke.py',
+    for name in ('controller_probe.py', 'ssh_smoke.py', 'ssh_transport.py', 'smoke.py', 'workload_smoke.py',
                  'libkrun/src/config.rs', 'libkrun/src/sandbox.rs', 'libkrun/src/main.rs', 'hvi/src/main.rs'):
         target = sources / name
         target.parent.mkdir(parents=True, exist_ok=True)
