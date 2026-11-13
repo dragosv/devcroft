@@ -652,6 +652,9 @@ struct DevenvProcess {
     linux: Option<DevenvLinux>,
     #[serde(rename = "process-compose", default)]
     process_compose: BTreeMap<String, serde_json::Value>,
+    /// Whatever this struct does not name — see `provider::Unconsumed`.
+    #[serde(flatten)]
+    rest: super::Unconsumed,
 }
 
 /// devenv's `ready`, from its own `src/modules/lib/ready.nix`.
@@ -677,12 +680,18 @@ struct DevenvReady {
     success_threshold: u32,
     #[serde(default)]
     failure_threshold: u32,
+    /// Whatever this struct does not name — see `provider::Unconsumed`.
+    #[serde(flatten)]
+    rest: super::Unconsumed,
 }
 
 #[derive(serde::Deserialize)]
 struct DevenvReadyHttp {
     #[serde(default)]
     get: Option<DevenvReadyHttpGet>,
+    /// Whatever this struct does not name — see `provider::Unconsumed`.
+    #[serde(flatten)]
+    rest: super::Unconsumed,
 }
 
 #[derive(serde::Deserialize)]
@@ -691,6 +700,9 @@ struct DevenvReadyHttpGet {
     port: u16,
     path: String,
     scheme: String,
+    /// Whatever this struct does not name — see `provider::Unconsumed`.
+    #[serde(flatten)]
+    rest: super::Unconsumed,
 }
 
 #[derive(serde::Deserialize)]
@@ -699,6 +711,9 @@ struct DevenvRestart {
     on: Option<String>,
     #[serde(default)]
     max: Option<u32>,
+    /// Whatever this struct does not name — see `provider::Unconsumed`.
+    #[serde(flatten)]
+    rest: super::Unconsumed,
 }
 
 #[derive(serde::Deserialize)]
@@ -707,12 +722,18 @@ struct DevenvShutdown {
     signal: Option<i32>,
     #[serde(default)]
     grace: Option<u64>,
+    /// Whatever this struct does not name — see `provider::Unconsumed`.
+    #[serde(flatten)]
+    rest: super::Unconsumed,
 }
 
 #[derive(serde::Deserialize)]
 struct DevenvStart {
     #[serde(default)]
     enable: Option<bool>,
+    /// Whatever this struct does not name — see `provider::Unconsumed`.
+    #[serde(flatten)]
+    rest: super::Unconsumed,
 }
 
 #[derive(serde::Deserialize)]
@@ -721,18 +742,27 @@ struct DevenvWatch {
     paths: Vec<String>,
     #[serde(default)]
     extensions: Vec<String>,
+    /// Whatever this struct does not name — see `provider::Unconsumed`.
+    #[serde(flatten)]
+    rest: super::Unconsumed,
 }
 
 #[derive(serde::Deserialize)]
 struct DevenvProxy {
     #[serde(default)]
     hostname: Option<String>,
+    /// Whatever this struct does not name — see `provider::Unconsumed`.
+    #[serde(flatten)]
+    rest: super::Unconsumed,
 }
 
 #[derive(serde::Deserialize)]
 struct DevenvLinux {
     #[serde(default)]
     capabilities: Vec<String>,
+    /// Whatever this struct does not name — see `provider::Unconsumed`.
+    #[serde(flatten)]
+    rest: super::Unconsumed,
 }
 
 /// The prefix devenv's task graph uses for a process node.
@@ -782,6 +812,7 @@ fn translate_process(
             Some(DevenvShutdown {
                 signal: Some(signal),
                 grace,
+                ..
             }) => super::Shutdown::Signal {
                 signal: *signal,
                 grace: grace.unwrap_or(0),
@@ -979,6 +1010,7 @@ fn restart_policy(
 /// A refusal is recoverable — remove the field, or wait for support. A
 /// silent drop is not, because nothing surfaces it.
 fn refuse_unsupported(name: &str, process: &DevenvProcess) -> Result<(), ProviderError> {
+    refuse_unconsumed(name, process)?;
     if !process.listen.is_empty() {
         return Err(unsupported(
             name,
@@ -1058,6 +1090,45 @@ fn refuse_unsupported(name: &str, process: &DevenvProcess) -> Result<(), Provide
             "process-compose",
             "devcroft generates its own supervisor configuration and carries no              supervisor-specific block; express a dependency as              `after = [ \"devenv:processes:<name>\" ]` instead",
         ));
+    }
+    Ok(())
+}
+
+/// Refuse a field devenv emitted that no struct above names, where it
+/// declares something.
+///
+/// Named fields are what devcroft was written against; this is what keeps
+/// the *next* devenv option from being dropped without a word. Null, false
+/// and empty values pass, because devenv's submodule emits every option
+/// with its default — see `provider::first_declared_unconsumed` for why
+/// that line, and what it costs.
+fn refuse_unconsumed(name: &str, p: &DevenvProcess) -> Result<(), ProviderError> {
+    let ready = p.ready.as_ref();
+    let http = ready.and_then(|r| r.http.as_ref());
+    let unconsumed = [
+        ("", Some(&p.rest)),
+        ("ready", ready.map(|r| &r.rest)),
+        ("ready.http", http.map(|h| &h.rest)),
+        (
+            "ready.http.get",
+            http.and_then(|h| h.get.as_ref()).map(|g| &g.rest),
+        ),
+        ("restart", p.restart.as_ref().map(|r| &r.rest)),
+        ("shutdown", p.shutdown.as_ref().map(|s| &s.rest)),
+        ("start", p.start.as_ref().map(|s| &s.rest)),
+        ("watch", p.watch.as_ref().map(|w| &w.rest)),
+        ("proxy", p.proxy.as_ref().map(|x| &x.rest)),
+        ("linux", p.linux.as_ref().map(|l| &l.rest)),
+    ];
+    for (prefix, rest) in unconsumed {
+        if let Some(field) = rest.and_then(|r| super::first_declared_unconsumed(prefix, r)) {
+            return Err(unsupported(
+                name,
+                &field,
+                "it is not among the devenv process options devcroft reads, so devcroft has \
+                 no reading of it",
+            ));
+        }
     }
     Ok(())
 }
@@ -1442,6 +1513,41 @@ mod tests {
             Err(ProviderError::ResolutionFailed(msg)) => msg,
             other => panic!("expected a refusal for {extra}, got {other:?}"),
         }
+    }
+
+    /// `fix-lossy-service-translation`: an option devcroft's structs do not
+    /// name is refused by name — the next one devenv adds included — at any
+    /// depth.
+    #[test]
+    fn a_devenv_option_devcroft_does_not_read_is_refused_by_name() {
+        for (extra, field) in [
+            (r#""nice": 10"#, "`nice`"),
+            (
+                r#""restart": {"on": "always", "delay": 3}"#,
+                "`restart.delay`",
+            ),
+            (
+                r#""ready": {"http": {"get": {"host": "h", "port": 1, "path": "/", "scheme": "http", "headers": {"A": "b"}}}}"#,
+                "`ready.http.get.headers`",
+            ),
+        ] {
+            let msg = refusal("web", extra);
+            assert!(msg.contains(field), "must name {field}: {msg}");
+            assert!(msg.contains("`web`"), "must name the process: {msg}");
+        }
+    }
+
+    /// The line `first_declared_unconsumed` draws: devenv's submodule emits
+    /// every option with its default, so an unknown option that says
+    /// nothing must not refuse every project that never set it.
+    #[test]
+    fn an_unknown_devenv_option_at_its_empty_default_is_not_refused() {
+        translate(
+            "web",
+            r#""nice": null, "detached": false, "labels": [], "extra": {"a": null}, "tag": """#,
+            &[],
+        )
+        .expect("options that declare nothing are not refused");
     }
 
     #[test]

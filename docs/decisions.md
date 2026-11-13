@@ -694,6 +694,75 @@ bought is one supervisor devcroft owns: uniform `status`/`ps`/`logs`
 across providers, teardown verified by process absence, and one
 service instance per sandbox rather than one per project.
 
+### Decided: one supervisor, process-compose, behind a named seam
+
+**Question this answers:** "why is process-compose hardcoded — what if a
+provider's services are based on something else?"
+(`fix-lossy-service-translation`).
+
+**What is coupled, measured.** devcroft touches its supervisor at exactly
+four points, and all four sit behind `services::Supervisor`: the
+executable that must be in the resolved environment (`binary`), the config
+devcroft writes for it (`render_config`), how it is launched
+(`spawn_args`), and how it is asked what is running (`query`, HTTP over a
+unix socket). Everything else in `src/services` is devcroft's own and
+supervisor-agnostic: `socket_path`, `config_path`, `log_path`,
+`artifact_dir`, `reconcile`, `ServiceState`. A supervisor answers in
+devcroft's vocabulary; it cannot suppress `reconcile` by reporting
+differently.
+
+**What is not built: a second implementation, or any way to choose
+one.** `services::supervisor()` is a function returning `ProcessCompose`,
+not configuration. The reason is a measurement, not taste. The services
+of every provider devcroft supports are process-compose-backed upstream:
+flox uses it internally, devenv's `processes` are process-compose
+processes, and devbox plugins ship `process-compose.yaml` files. A second
+implementer today would be a test double. This project rejects that shape
+elsewhere, for example when it dropped `up_with_resolution` as "a second
+entry point whose only distinction is covering less of the real path". A
+selection mechanism with one option is easier to add later than to remove
+once something depends on it.
+
+**The coupling that did lose information was the other one.** It was the
+*declaration vocabulary*, `ServiceDecl`, not the supervisor. Provider
+readers translating into it dropped keys they did not name: serde ignores
+unknown fields, and flox's reader skipped its documented `systems`
+outright. Since `fix-lossy-service-translation`, every reader (flox,
+devenv, devbox) captures what it did not consume (`provider::Unconsumed`)
+and refuses it by name at layer `provider`, before any state is written.
+For devenv the refusal is limited to keys that *declare* something.
+devenv's Nix submodule emits every option at its default, so an empty or
+`false` value is not refused (`provider::first_declared_unconsumed` says
+why the line is drawn there).
+
+**What would change the answer:**
+
+- a provider whose services are genuinely supervised by something other
+  than process-compose, whose declarations do not map onto process-compose
+  semantics;
+- process-compose becoming unavailable, unlicensable, or incompatible.
+
+In either case the trait above is the seam, and the second
+implementation starts from those four methods rather than a blank page.
+
+**If a second supervisor is ever built, it is devcroft's own code, not a
+dependency.** No crate supplies one, measured: `duct` 1.1.2 and
+`subprocess` 1.2.1 spawn processes, `command-group` 5.0.1 manages process
+groups (useful for reaping), `procfile` 0.2.1 parses Procfiles, and
+`supervisor` 0.1.0 is a placeholder. Nothing offers "supervise N processes
+and expose their status". That is an application concern, which is why
+process-compose is a binary everyone shells out to. A minimal supervisor
+would be roughly 150 lines on `std`.
+
+**And it would prove less than it appears to.** Such a supervisor would
+test the *lifecycle* half of services only: does the keeper start it, does
+`down` reap it, does `status` report it. It would test nothing about
+service *semantics*. Restart policy, dependency ordering, readiness and
+daemon handling are the reason process-compose was chosen
+(`add-flox-services` decision 1). `reconcile` asserted against a
+supervisor that always accepts is circular. Any change that builds one
+must say this, because a green board looks the same either way.
+
 ### Rejected: `initializeCommand` (host-side lifecycle hook)
 
 **Why:** it runs project-defined code on the host, outside any boundary,

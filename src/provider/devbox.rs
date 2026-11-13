@@ -246,6 +246,19 @@ fn parse_plugin_config(
         ))
     })?;
 
+    // A top-level key applies to every process in the file (process-compose
+    // has a global `environment`, for one), so dropping it changes all of
+    // them at once.
+    if let Some(field) = super::first_declared_unconsumed("", &parsed.rest) {
+        return Err(ProviderError::ResolutionFailed(format!(
+            "devbox plugin `{plugin}` declares top-level `{field}` in {}, which devcroft \
+             cannot carry: it is not part of the plugin schema devcroft reads (`processes`). \
+             devcroft refuses rather than starting services that differ from what the plugin \
+             declared",
+            config.display()
+        )));
+    }
+
     let mut out = Vec::new();
     for (name, process) in parsed.processes {
         out.push(translate_plugin_process(plugin, &name, process)?);
@@ -263,6 +276,14 @@ fn parse_plugin_config(
 struct PluginConfig {
     #[serde(default)]
     processes: BTreeMap<String, PluginProcess>,
+    /// process-compose's config schema version. Named so it is not
+    /// mistaken for a declaration devcroft dropped; it describes the file,
+    /// not any service.
+    #[serde(default, rename = "version")]
+    _version: serde_json::Value,
+    /// Whatever this struct does not name — see `provider::Unconsumed`.
+    #[serde(flatten)]
+    rest: super::Unconsumed,
 }
 
 #[derive(serde::Deserialize)]
@@ -282,6 +303,9 @@ struct PluginProcess {
     working_dir: Option<String>,
     #[serde(default)]
     depends_on: BTreeMap<String, serde_norway::Value>,
+    /// Whatever this struct does not name — see `provider::Unconsumed`.
+    #[serde(flatten)]
+    rest: super::Unconsumed,
 }
 
 #[derive(serde::Deserialize)]
@@ -292,6 +316,9 @@ struct PluginShutdown {
     signal: Option<i32>,
     #[serde(default)]
     timeout: Option<u64>,
+    /// Whatever this struct does not name — see `provider::Unconsumed`.
+    #[serde(flatten)]
+    rest: super::Unconsumed,
 }
 
 #[derive(serde::Deserialize)]
@@ -300,6 +327,9 @@ struct PluginAvailability {
     restart: Option<String>,
     #[serde(default)]
     max_restarts: Option<u32>,
+    /// Whatever this struct does not name — see `provider::Unconsumed`.
+    #[serde(flatten)]
+    rest: super::Unconsumed,
 }
 
 #[derive(serde::Deserialize)]
@@ -318,11 +348,17 @@ struct PluginReadiness {
     success_threshold: u32,
     #[serde(default)]
     failure_threshold: u32,
+    /// Whatever this struct does not name — see `provider::Unconsumed`.
+    #[serde(flatten)]
+    rest: super::Unconsumed,
 }
 
 #[derive(serde::Deserialize)]
 struct PluginReadinessExec {
     command: String,
+    /// Whatever this struct does not name — see `provider::Unconsumed`.
+    #[serde(flatten)]
+    rest: super::Unconsumed,
 }
 
 #[derive(serde::Deserialize)]
@@ -334,6 +370,9 @@ struct PluginReadinessHttp {
     path: String,
     #[serde(default = "http_scheme")]
     scheme: String,
+    /// Whatever this struct does not name — see `provider::Unconsumed`.
+    #[serde(flatten)]
+    rest: super::Unconsumed,
 }
 
 fn localhost() -> String {
@@ -359,6 +398,36 @@ fn translate_plugin_process(
             "devbox plugin `{plugin}` declares `{field}` on service `{name}`, which devcroft              cannot carry: {why}. devcroft refuses rather than starting a service that differs              from what the plugin declared"
         ))
     };
+
+    // Before anything is translated: a key no field below names is one
+    // this function would otherwise drop without a word.
+    let readiness = process.readiness_probe.as_ref();
+    let unconsumed = [
+        ("", Some(&process.rest)),
+        ("shutdown", process.shutdown.as_ref().map(|s| &s.rest)),
+        (
+            "availability",
+            process.availability.as_ref().map(|a| &a.rest),
+        ),
+        ("readiness_probe", readiness.map(|r| &r.rest)),
+        (
+            "readiness_probe.exec",
+            readiness.and_then(|r| r.exec.as_ref()).map(|e| &e.rest),
+        ),
+        (
+            "readiness_probe.http_get",
+            readiness.and_then(|r| r.http_get.as_ref()).map(|h| &h.rest),
+        ),
+    ];
+    for (prefix, rest) in unconsumed {
+        if let Some(field) = rest.and_then(|r| super::first_declared_unconsumed(prefix, r)) {
+            return Err(refuse(
+                &field,
+                "it is not among the process-compose fields devcroft reads, so devcroft has \
+                 no reading of it",
+            ));
+        }
+    }
 
     if !process.depends_on.is_empty() {
         return Err(refuse(
@@ -1273,6 +1342,59 @@ processes:
         assert!(msg.contains("weird"), "must name the plugin: {msg}");
         assert!(msg.contains("two"), "must name the process: {msg}");
         assert!(msg.contains("depends_on"), "must name the field: {msg}");
+    }
+
+    fn plugin_refusal(name: &str, config: &str) -> String {
+        let root = tempdir(name);
+        write_devbox_project(&root, r#"{"packages": ["odd@latest"]}"#, None);
+        write_plugin(&root, "odd", config);
+        match capture_plugin_services(&root) {
+            Err(ProviderError::ResolutionFailed(msg)) => msg,
+            other => panic!("expected a provider-layer refusal, got {other:?}"),
+        }
+    }
+
+    /// `fix-lossy-service-translation`: a key the reader does not name is
+    /// refused by name, at every depth, rather than dropped by serde.
+    /// `disabled` is the sharp case — process-compose's own field for a
+    /// process that must not start, which a dropping reader would start.
+    #[test]
+    fn a_plugin_field_devcroft_does_not_read_is_refused_by_name() {
+        for (case, config, field) in [
+            (
+                "plugin-unknown-top",
+                "version: \"0.5\"\nprocesses:\n  p:\n    command: \"true\"\n    disabled: true\n",
+                "`disabled`",
+            ),
+            (
+                "plugin-unknown-nested",
+                "processes:\n  p:\n    command: \"true\"\n    readiness_probe:\n      exec:\n        command: \"true\"\n      timeout: 5\n",
+                "`readiness_probe.timeout`",
+            ),
+            (
+                "plugin-unknown-global",
+                "version: \"0.5\"\nenvironment:\n  - \"A=1\"\nprocesses:\n  p:\n    command: \"true\"\n",
+                "top-level `environment`",
+            ),
+        ] {
+            let msg = plugin_refusal(case, config);
+            assert!(msg.contains("odd"), "{case}: must name the plugin: {msg}");
+            assert!(msg.contains(field), "{case}: must name {field}: {msg}");
+        }
+    }
+
+    /// The other half: the file-level `version` every plugin carries, and a
+    /// key whose value says nothing, are not refusals.
+    #[test]
+    fn a_plugin_version_and_empty_keys_are_not_refused() {
+        let root = tempdir("plugin-benign");
+        write_devbox_project(&root, r#"{"packages": ["ok@latest"]}"#, None);
+        write_plugin(
+            &root,
+            "ok",
+            "version: \"0.5\"\nprocesses:\n  p:\n    command: \"true\"\n    disabled: false\n    description: \"\"\n",
+        );
+        assert_eq!(services_of(&root).len(), 1);
     }
 
     /// A config devcroft cannot parse fails loudly rather than yielding a

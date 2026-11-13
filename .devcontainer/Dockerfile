@@ -139,6 +139,36 @@ RUN set -eu; \
 # host-side, then restrict".
 ENV DEVBOX_NO_TELEMETRY=1
 
+# devenv provider (add-devenv-provider). Without it every devenv test in
+# this container skips itself — `devenv_provider_e2e`,
+# `devenv_capture_contract` and the devenv half of `services_e2e`, 24 tests
+# that a green `cargo test` here reported as passing while measuring
+# nothing (found by `fix-lossy-service-translation` group 0, which needed
+# exactly those tests to say whether its guard refuses a real devenv
+# project).
+#
+# Same install CI's devenv leg uses (`.github/workflows/ci.yml`), at the
+# same pin: devenv's own flake, the version the provider was written and
+# measured against. `--accept-flake-config` takes the `devenv.cachix.org`
+# substituter from that flake's `nixConfig`, the difference between a
+# download and a Rust build of devenv; it is honoured because this runs as
+# root, the only trusted user in flox's nix.conf.
+#
+# Root at build time also means no nix-daemon is needed: the store is
+# root-owned and `build-users-group` is empty in flox's nix.conf, so nix
+# writes the store directly. The profile lives under
+# /nix/var/nix/profiles, which makes it a GC root — a profile elsewhere
+# could be collected out from under the symlink.
+#
+# UNVERIFIED beyond this build step, the same posture as the flox and
+# devbox installs above: no rebuild has exercised it from here.
+ARG DEVENV_VERSION=v2.2.2
+RUN set -eu; \
+    nix profile install --profile /nix/var/nix/profiles/devenv \
+        --accept-flake-config "github:cachix/devenv/${DEVENV_VERSION}" \
+    && ln -s /nix/var/nix/profiles/devenv/bin/devenv /usr/local/bin/devenv \
+    && devenv version
+
 # Drop root. Not only lint hygiene: devcroft runs as an unprivileged user, so
 # a confinement spike executed as root would be measuring a process that does
 # not resemble the one being designed for. The official rust image already

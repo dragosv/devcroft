@@ -178,6 +178,49 @@ impl ServiceSupport {
     }
 }
 
+/// What a provider's service reader was handed and did not consume.
+///
+/// Captured with `#[serde(flatten)]` beside the fields a reader names, so
+/// a key nobody wrote code for lands here rather than being dropped by
+/// serde without anyone noticing — the silence
+/// `fix-lossy-service-translation` exists to remove. A reader that names
+/// every field it knows still loses the next one its provider adds; this
+/// is what makes that loud.
+pub(crate) type Unconsumed = BTreeMap<String, serde_json::Value>;
+
+/// The first key in `rest` that *declares something*, dotted under
+/// `prefix` (`"ready.http"` → `"ready.http.foo"`); `None` when nothing
+/// unconsumed says anything.
+///
+/// **Null, `false` and empty values are not declarations**, and the line
+/// is drawn there on purpose. devenv's `processes` come from a Nix
+/// submodule, which emits every option with its default, so a new devenv
+/// option reaches devcroft in every project whether or not the project set
+/// it. Refusing those would refuse every devenv project on the day devenv
+/// added an option. An unknown option whose *default* says something (a
+/// non-empty string, `true`, a number) does still fail every project — by
+/// name, at layer `provider` — which is the trade chosen over the
+/// alternative: that a declaration someone did write is dropped.
+pub(crate) fn first_declared_unconsumed(prefix: &str, rest: &Unconsumed) -> Option<String> {
+    rest.iter()
+        .find(|(_, v)| declares_something(v))
+        .map(|(k, _)| match prefix {
+            "" => k.clone(),
+            p => format!("{p}.{k}"),
+        })
+}
+
+fn declares_something(value: &serde_json::Value) -> bool {
+    use serde_json::Value;
+    match value {
+        Value::Null | Value::Bool(false) => false,
+        Value::String(s) => !s.is_empty(),
+        Value::Array(a) => !a.is_empty(),
+        Value::Object(o) => o.values().any(declares_something),
+        Value::Bool(true) | Value::Number(_) => true,
+    }
+}
+
 /// One service the provider's manifest declares. `command` is project
 /// code and is only ever executed inside the sandbox, after restriction
 /// — never during resolution.

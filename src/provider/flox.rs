@@ -142,28 +142,10 @@ fn restore_project_context(
 /// break the day those grants are tightened. See add-flox-services'
 /// design.md decision 1 for the full comparison.
 fn read_service_declarations(project_root: &Path) -> Result<ServiceSupport, ProviderError> {
-    let manifest_path = project_root.join(".flox/env/manifest.toml");
-    let text = match std::fs::read_to_string(&manifest_path) {
-        Ok(t) => t,
-        // No manifest to read is not "no services declared" — but
-        // `ensure_environment_present` already established `.flox/`
-        // exists, so this is an unreadable environment, not an absent one.
-        Err(e) => {
-            return Err(ProviderError::ResolutionFailed(format!(
-                "reading {}: {e}",
-                manifest_path.display()
-            )));
-        }
-    };
-
-    // `toml::Table`, not `toml::Value`: in toml 1.x parsing a whole
-    // document as `Value` rejects flox's real manifest outright
-    // ("unexpected content, expected nothing"), which is why
-    // `config::parse` already uses `Table` for devcroft.toml. Caught by
-    // the existing against-real-flox test, not by reasoning.
-    let parsed = text.parse::<toml::Table>().map_err(|e| {
-        ProviderError::ResolutionFailed(format!("parsing {}: {e}", manifest_path.display()))
-    })?;
+    // The manifest flox activates, which for a composed environment is
+    // not `manifest.toml` — see `effective_manifest`.
+    let parsed = effective_manifest(project_root)?;
+    let system = flox_system();
 
     let Some(table) = parsed.get("services") else {
         // flox supports services; this environment declares none.
@@ -177,6 +159,50 @@ fn read_service_declarations(project_root: &Path) -> Result<ServiceSupport, Prov
 
     let mut declared = Vec::new();
     for (name, value) in table {
+        let Some(descriptor) = value.as_table() else {
+            return Err(ProviderError::ResolutionFailed(format!(
+                "`services.{name}` in the flox manifest is not a service descriptor table"
+            )));
+        };
+        refuse_unconsumed_service_keys(name, descriptor)?;
+
+        // flox's documented `systems`: "an optional list of systems on
+        // which to run this service". Carried, not refused — it is a
+        // statement about *where*, which devcroft can honour exactly by
+        // not declaring the service elsewhere. Dropping it (as this
+        // reader did until `fix-lossy-service-translation`) started a
+        // service the project had restricted to another platform.
+        if let Some(systems) = descriptor.get("systems") {
+            let systems = systems
+                .as_array()
+                .and_then(|a| {
+                    a.iter()
+                        .map(toml::Value::as_str)
+                        .collect::<Option<Vec<_>>>()
+                })
+                .ok_or_else(|| {
+                    ProviderError::ResolutionFailed(format!(
+                        "service `{name}`: `systems` must be a list of strings"
+                    ))
+                })?;
+            match system {
+                Some(this) if !systems.contains(&this) => continue,
+                Some(_) => {}
+                // A host flox has no name for cannot be matched against
+                // the list, and guessing either way would be the silent
+                // translation this function refuses elsewhere.
+                None => {
+                    return Err(ProviderError::ResolutionFailed(format!(
+                        "service `{name}` is restricted by `systems`, and this host's \
+                         platform ({}-{}) is not one flox names, so devcroft cannot tell \
+                         whether it applies",
+                        std::env::consts::ARCH,
+                        std::env::consts::OS
+                    )));
+                }
+            }
+        }
+
         // A shape flox no longer produces must fail loudly rather than
         // yielding a silently empty list — the schema-drift risk
         // design.md names.
@@ -271,6 +297,203 @@ fn read_service_declarations(project_root: &Path) -> Result<ServiceSupport, Prov
     // BTreeMap iteration order from toml's table is already sorted by
     // key, which keeps resolution deterministic.
     Ok(ServiceSupport::Declared(declared))
+}
+
+/// This host as flox names a system (`x86_64-linux`, `aarch64-darwin`),
+/// or `None` for one flox does not support.
+fn flox_system() -> Option<&'static str> {
+    use std::env::consts::{ARCH, OS};
+    Some(match (ARCH, OS) {
+        ("x86_64", "linux") => "x86_64-linux",
+        ("aarch64", "linux") => "aarch64-linux",
+        ("x86_64", "macos") => "x86_64-darwin",
+        ("aarch64", "macos") => "aarch64-darwin",
+        _ => return None,
+    })
+}
+
+/// Refuse any key in a flox service descriptor this reader does not
+/// carry, naming it.
+///
+/// flox's parser is itself strict (measured, flox 1.14: an unknown key is
+/// "unknown field `restart`, expected one of `command`, `vars`,
+/// `is-daemon`, `shutdown`, `systemd`, `systems`"), so a manifest flox
+/// accepts can hold only those six. That is why this is not redundant:
+/// the list grows with flox, and a key a newer flox accepts is one this
+/// reader would otherwise drop without a word.
+fn refuse_unconsumed_service_keys(
+    name: &str,
+    descriptor: &toml::Table,
+) -> Result<(), ProviderError> {
+    let refuse = |field: &str, why: &str| {
+        ProviderError::ResolutionFailed(format!(
+            "flox service `{name}` declares `{field}`, which devcroft cannot carry: {why}. \
+             devcroft refuses rather than starting a service that differs from what the \
+             project declared"
+        ))
+    };
+    for key in descriptor.keys() {
+        match key.as_str() {
+            "command" | "vars" | "is-daemon" | "systems" => {}
+            "shutdown" => {
+                if let Some(extra) = descriptor["shutdown"]
+                    .as_table()
+                    .and_then(|s| s.keys().find(|k| *k != "command"))
+                {
+                    return Err(refuse(
+                        &format!("shutdown.{extra}"),
+                        "flox's `shutdown` has only `command`, and this is a field devcroft \
+                         has no reading of",
+                    ));
+                }
+            }
+            // In flox's parser but not its documentation (measured, flox
+            // 1.14): a systemd unit — `unit.{requires,after,…}` and
+            // `service.{restart,memory_max,…}` among others. Every part of
+            // it is ordering, restart or resource policy devcroft would not
+            // honour, so it is refused whole rather than read in part.
+            "systemd" => {
+                return Err(refuse(
+                    "systemd",
+                    "it describes a systemd unit (ordering, restart and resource limits), \
+                     none of which devcroft's supervisor would apply",
+                ));
+            }
+            other => {
+                return Err(refuse(
+                    other,
+                    "it is not part of the flox service schema devcroft reads (`command`, \
+                     `vars`, `is-daemon`, `shutdown.command`, `systems`)",
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// The manifest flox actually activates, as a TOML table.
+///
+/// For most environments that is `manifest.toml` itself. For a
+/// **composed** one it is not: what included environments contribute —
+/// hooks, services, profile scripts, packages — exists only in the merged
+/// manifest flox records in `manifest.lock` (`flox list --config` prints
+/// the same thing). Reading `manifest.toml` there was measured, with an
+/// included environment declaring a hook and a service, to
+///
+/// - drop the included service: `up` counted one service of two; and
+/// - **miss the included `[hook].on-activate`**, which sent the project
+///   down the un-derived path, where flox ran the merged hook on the
+///   host, unconfined, during `up` — a marker written outside the project
+///   root proved it. That is the two-phase invariant broken, through a
+///   section of the manifest nobody had looked at.
+///
+/// Composition is a non-empty `include.environments`, **not the presence
+/// of `[include]`**: `flox init`'s stock manifest ships an empty
+/// `[include]` table, so testing for the table would treat every flox
+/// project as composed.
+///
+/// A composed environment whose lock is missing or out of date with its
+/// manifest fails here rather than being read anyway: the merged manifest
+/// in such a lock is not this environment's, and guessing at a hook is
+/// exactly how it ran on the host. `flox list` re-locks one without
+/// running any hook (measured), so that is what the error says to run.
+fn effective_manifest(project_root: &Path) -> Result<toml::Table, ProviderError> {
+    let env = project_root.join(".flox/env");
+    let path = env.join("manifest.toml");
+    // No manifest to read is not "no services declared" or "no hook" —
+    // `ensure_environment_present` already established `.flox/` exists,
+    // so this is an unreadable environment, not an absent one.
+    let text = std::fs::read_to_string(&path)
+        .map_err(|e| ProviderError::ResolutionFailed(format!("reading {}: {e}", path.display())))?;
+    // `toml::Table`, not `toml::Value`: in toml 1.x parsing a whole
+    // document as `Value` rejects flox's real manifest outright
+    // ("unexpected content, expected nothing"), which is why
+    // `config::parse` already uses `Table` for devcroft.toml. Caught by
+    // the existing against-real-flox test, not by reasoning.
+    let declared = text.parse::<toml::Table>().map_err(|e| {
+        ProviderError::ResolutionFailed(format!(
+            "parsing {}: {e}\n\
+             devcroft must parse this manifest to separate materialization from \
+             `[hook].on-activate`; it will not fall back to running the hook on the host",
+            path.display()
+        ))
+    })?;
+    if !is_composed(&declared) {
+        return Ok(declared);
+    }
+
+    let lock_path = env.join("manifest.lock");
+    let unusable = |why: String| {
+        ProviderError::ResolutionFailed(format!(
+            "this flox environment composes others (`include.environments`), and what they \
+             contribute — hooks and services among it — exists only in the merged manifest \
+             flox records in {}, which {why}. devcroft will not guess at it, since an \
+             included hook it cannot see would run on the host; run `flox list` in the \
+             project (it re-locks without running any hook) and retry",
+            lock_path.display()
+        ))
+    };
+    let lock_text = std::fs::read_to_string(&lock_path)
+        .map_err(|e| unusable(format!("could not be read ({e})")))?;
+    let lock: serde_json::Value = serde_json::from_str(&lock_text)
+        .map_err(|e| unusable(format!("could not be parsed ({e})")))?;
+    let composer = lock
+        .pointer("/compose/composer")
+        .ok_or_else(|| unusable("records no composition".to_string()))?;
+    let declared_json = serde_json::to_value(&declared)
+        .map_err(|e| ProviderError::ResolutionFailed(format!("reading the flox manifest: {e}")))?;
+    // Compared section by section, and only the sections read from the
+    // merged view: flox normalizes what it records (an absent `[options]`
+    // comes back as `{}`, measured), so a whole-document comparison would
+    // call every lock stale.
+    for section in ["include", "hook", "profile", "services"] {
+        if pruned(declared_json.get(section)) != pruned(composer.get(section)) {
+            return Err(unusable(format!(
+                "is out of date with `manifest.toml`'s `[{section}]`"
+            )));
+        }
+    }
+    let merged = lock
+        .get("manifest")
+        .ok_or_else(|| unusable("records no merged manifest".to_string()))?;
+    serde_json::from_value::<toml::Table>(pruned(Some(merged))).map_err(|e| {
+        unusable(format!(
+            "holds a merged manifest devcroft cannot read ({e})"
+        ))
+    })
+}
+
+fn is_composed(manifest: &toml::Table) -> bool {
+    manifest
+        .get("include")
+        .and_then(|i| i.get("environments"))
+        .and_then(toml::Value::as_array)
+        .is_some_and(|a| !a.is_empty())
+}
+
+/// `value` with nulls and empty tables removed at every depth, absent
+/// becoming an empty table: the normalization under which a manifest and
+/// the copy of it flox records compare equal. Also what makes the merged
+/// manifest representable as TOML, which has no null.
+fn pruned(value: Option<&serde_json::Value>) -> serde_json::Value {
+    use serde_json::Value;
+    fn prune(v: &Value) -> Option<Value> {
+        match v {
+            Value::Null => None,
+            Value::Object(o) => {
+                let kept: serde_json::Map<_, _> = o
+                    .iter()
+                    .filter_map(|(k, v)| prune(v).map(|v| (k.clone(), v)))
+                    .collect();
+                (!kept.is_empty()).then_some(Value::Object(kept))
+            }
+            Value::Array(a) => Some(Value::Array(a.iter().filter_map(prune).collect())),
+            other => Some(other.clone()),
+        }
+    }
+    value
+        .and_then(prune)
+        .unwrap_or_else(|| Value::Object(Default::default()))
 }
 
 /// `up` fails at layer `provider` with the `flox init` hint (spec: "Missing
@@ -382,8 +605,22 @@ fn derive_hook_free_env(project_root: &Path) -> Result<std::path::PathBuf, Provi
 fn lock_without_hook(lock_text: &str) -> Result<String, ProviderError> {
     let mut lock: serde_json::Value = serde_json::from_str(lock_text)
         .map_err(|e| ProviderError::ResolutionFailed(format!("parsing the flox lock: {e}")))?;
-    if let Some(manifest) = lock.get_mut("manifest").and_then(|m| m.as_object_mut()) {
-        manifest.remove("hook");
+    // Every manifest the lock records, not only the merged one: a composed
+    // environment's lock also keeps the composing manifest and a snapshot
+    // of each included one (`compose.composer`, `compose.include[].manifest`),
+    // and a hook left in any of them is a hook flox could merge back in.
+    // The composer must lose it regardless, to agree with the derived
+    // `manifest.toml` it records — the same reason the merged one does.
+    let mut manifests = vec!["/manifest".to_string(), "/compose/composer".to_string()];
+    let included = lock
+        .pointer("/compose/include")
+        .and_then(|i| i.as_array())
+        .map_or(0, Vec::len);
+    manifests.extend((0..included).map(|i| format!("/compose/include/{i}/manifest")));
+    for pointer in manifests {
+        if let Some(manifest) = lock.pointer_mut(&pointer).and_then(|m| m.as_object_mut()) {
+            manifest.remove("hook");
+        }
     }
     serde_json::to_string_pretty(&lock)
         .map_err(|e| ProviderError::ResolutionFailed(format!("serialising the derived lock: {e}")))
@@ -428,10 +665,10 @@ fn stale_project_lock(project_root: &Path) -> Result<Option<String>, ProviderErr
     let Ok(lock) = std::fs::read_to_string(env.join("manifest.lock")) else {
         return Ok(None);
     };
-    let manifest: toml::Table = std::fs::read_to_string(env.join("manifest.toml"))
-        .map_err(|e| ProviderError::ResolutionFailed(format!("reading the flox manifest: {e}")))?
-        .parse()
-        .map_err(|e| ProviderError::ResolutionFailed(format!("parsing the flox manifest: {e}")))?;
+    // What flox activates: a composed environment locks its included
+    // environments' packages too, which `manifest.toml` alone would call
+    // "locked but no longer declared".
+    let manifest = effective_manifest(project_root)?;
     let declared: std::collections::BTreeSet<String> = manifest
         .get("install")
         .and_then(|i| i.as_table())
@@ -518,17 +755,11 @@ fn strip_hook(manifest_text: &str) -> Result<String, ProviderError> {
 /// `[hook]` section whose `on-activate` is commented out; a substring
 /// search would treat every freshly created environment as hooked.
 fn activation_hook_script(project_root: &Path) -> Result<Option<String>, ProviderError> {
-    let path = project_root.join(".flox/env/manifest.toml");
-    let text = std::fs::read_to_string(&path)
-        .map_err(|e| ProviderError::ResolutionFailed(format!("reading {}: {e}", path.display())))?;
-    let parsed = text.parse::<toml::Table>().map_err(|e| {
-        ProviderError::ResolutionFailed(format!(
-            "parsing {}: {e}\n\
-             devcroft must parse this manifest to separate materialization from \
-             `[hook].on-activate`; it will not fall back to running the hook on the host",
-            path.display()
-        ))
-    })?;
+    // The merged manifest for a composed environment, whose hook is the
+    // included ones' and this one's concatenated (measured) — reading
+    // `manifest.toml` alone missed an included hook, and that hook then
+    // ran on the host. See `effective_manifest`.
+    let parsed = effective_manifest(project_root)?;
     Ok(parsed
         .get("hook")
         .and_then(|h| h.as_table())
@@ -550,10 +781,7 @@ fn activation_hook_script(project_root: &Path) -> Result<Option<String>, Provide
 /// `profile_warning` says so once at `up` rather than letting it go
 /// missing silently.
 pub fn declared_profile_scripts(project_root: &Path) -> Vec<&'static str> {
-    let Ok(text) = std::fs::read_to_string(project_root.join(".flox/env/manifest.toml")) else {
-        return Vec::new();
-    };
-    let Ok(parsed) = text.parse::<toml::Table>() else {
+    let Ok(parsed) = effective_manifest(project_root) else {
         return Vec::new();
     };
     let Some(profile) = parsed.get("profile").and_then(|p| p.as_table()) else {
@@ -1019,5 +1247,172 @@ mod tests {
             }
             other => panic!("expected ResolutionFailed, got {other:?}"),
         }
+    }
+
+    fn service_refusal(name: &str, manifest: &str) -> String {
+        let root = tempdir(name);
+        flox_env(&root, manifest, None);
+        match read_service_declarations(&root) {
+            Err(ProviderError::ResolutionFailed(msg)) => msg,
+            other => panic!("expected a provider-layer refusal, got {other:?}"),
+        }
+    }
+
+    /// `fix-lossy-service-translation` 2.1: a key this reader does not
+    /// carry is refused, naming the service and the field — at the top of
+    /// the descriptor, inside `shutdown`, and for `systemd`, which flox's
+    /// parser accepts but devcroft's supervisor would not honour.
+    #[test]
+    fn a_service_key_devcroft_does_not_carry_is_refused_by_name() {
+        for (case, manifest, field) in [
+            (
+                "residue-top",
+                "version = 1\n[services.api]\ncommand = \"x\"\nrestart = \"always\"\n",
+                "`restart`",
+            ),
+            (
+                "residue-shutdown",
+                "version = 1\n[services.api]\ncommand = \"x\"\nshutdown.command = \"y\"\nshutdown.timeout = 5\n",
+                "`shutdown.timeout`",
+            ),
+            (
+                "residue-systemd",
+                "version = 1\n[services.api]\ncommand = \"x\"\nsystemd.service.restart = \"always\"\n",
+                "`systemd`",
+            ),
+        ] {
+            let msg = service_refusal(case, manifest);
+            assert!(
+                msg.contains("`api`") && msg.contains(field),
+                "{case}: must name the service and {field}: {msg}"
+            );
+        }
+    }
+
+    /// 2.2: every form flox documents still reads, `systems` included —
+    /// the regression this change most plausibly causes.
+    #[test]
+    fn every_documented_service_form_still_reads() {
+        let this = flox_system().expect("tests run on a host flox supports");
+        let root = tempdir("services-documented");
+        flox_env(
+            &root,
+            &format!(
+                r#"
+                version = 1
+                [services.db]
+                command = "pg_ctl start"
+                vars.PGPORT = "5433"
+                is-daemon = true
+                shutdown.command = "pg_ctl stop"
+                systems = ["{this}"]
+                "#
+            ),
+            None,
+        );
+        let ServiceSupport::Declared(services) = read_service_declarations(&root).unwrap() else {
+            panic!("expected declared services");
+        };
+        assert_eq!(services.len(), 1);
+        assert_eq!(services[0].name, "db");
+    }
+
+    /// `systems` is carried, not dropped: a service restricted to another
+    /// platform is not declared here. Dropping the key started it anyway.
+    #[test]
+    fn a_service_restricted_to_another_system_is_not_declared() {
+        let other = if flox_system() == Some("x86_64-linux") {
+            "aarch64-darwin"
+        } else {
+            "x86_64-linux"
+        };
+        let root = tempdir("services-systems");
+        flox_env(
+            &root,
+            &format!(
+                "version = 1\n[services.here]\ncommand = \"a\"\n\
+                 [services.elsewhere]\ncommand = \"b\"\nsystems = [\"{other}\"]\n"
+            ),
+            None,
+        );
+        let ServiceSupport::Declared(services) = read_service_declarations(&root).unwrap() else {
+            panic!("expected declared services");
+        };
+        let names: Vec<_> = services.iter().map(|s| s.name.as_str()).collect();
+        assert_eq!(names, ["here"]);
+    }
+
+    /// A composed environment's services come from the merged manifest
+    /// flox records in its lock, not from `manifest.toml` alone — which
+    /// was measured to drop every service an included environment adds.
+    #[test]
+    fn a_composed_environment_reads_services_from_the_merged_manifest() {
+        let root = tempdir("services-composed");
+        let manifest = "version = 1\n\
+                        [include]\nenvironments = [{ dir = \"../common\" }]\n\
+                        [services.own]\ncommand = \"a\"\n";
+        let lock = r#"{
+          "manifest": {"version": 1, "services": {
+            "own": {"command": "a"},
+            "included": {"command": "b"}
+          }},
+          "compose": {"composer": {
+            "version": 1,
+            "include": {"environments": [{"dir": "../common"}]},
+            "services": {"own": {"command": "a"}}
+          }},
+          "packages": []
+        }"#;
+        flox_env(&root, manifest, Some(lock));
+        let ServiceSupport::Declared(services) = read_service_declarations(&root).unwrap() else {
+            panic!("expected declared services");
+        };
+        let names: Vec<_> = services.iter().map(|s| s.name.as_str()).collect();
+        assert_eq!(names, ["included", "own"]);
+    }
+
+    /// A lock whose recorded composer no longer matches the manifest is
+    /// refused rather than read: its merged view is another environment's.
+    #[test]
+    fn a_composed_environment_with_a_stale_lock_is_refused() {
+        let root = tempdir("services-composed-stale");
+        let manifest = "version = 1\n\
+                        [include]\nenvironments = [{ dir = \"../common\" }]\n\
+                        [services.own]\ncommand = \"changed\"\n";
+        let lock = r#"{
+          "manifest": {"version": 1, "services": {"own": {"command": "a"}}},
+          "compose": {"composer": {
+            "version": 1,
+            "include": {"environments": [{"dir": "../common"}]},
+            "services": {"own": {"command": "a"}}
+          }},
+          "packages": []
+        }"#;
+        flox_env(&root, manifest, Some(lock));
+        match read_service_declarations(&root) {
+            Err(ProviderError::ResolutionFailed(msg)) => {
+                assert!(
+                    msg.contains("[services]") && msg.contains("flox list"),
+                    "{msg}"
+                );
+            }
+            other => panic!("expected a refusal naming the stale section, got {other:?}"),
+        }
+    }
+
+    /// `flox init`'s stock manifest ships an empty `[include]`; that is not
+    /// composition, and must not send every project to the lock.
+    #[test]
+    fn an_empty_include_table_is_not_composition() {
+        let root = tempdir("services-empty-include");
+        flox_env(
+            &root,
+            "version = 1\n[include]\n[services.api]\ncommand = \"a\"\n",
+            None,
+        );
+        assert!(matches!(
+            read_service_declarations(&root).unwrap(),
+            ServiceSupport::Declared(s) if s.len() == 1
+        ));
     }
 }
