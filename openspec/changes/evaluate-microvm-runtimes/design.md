@@ -178,6 +178,12 @@ condition this plan meets.
   shutdown result. Require correlated controller shutdown intent/acknowledgement
   and helper identity before classifying an orderly stop; qualify a stop-reason
   seam separately. hvi's distinct `SystemReset` is retained in the comparison.
+- Interrupted private setup may expose incomplete state → preserve the observed
+  unbootable baseline and partial recipe failures, stage changes outside the
+  published rootfs, and use an atomic directory exchange after syncing the
+  completed recipe/marker. Five synchronized native crash points cover the
+  fixed fixture; arbitrary mid-write timing, full-tree equivalence, host power
+  loss and peak storage for the staging copy require separate qualification.
 
 ## Migration Plan
 

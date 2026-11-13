@@ -115,14 +115,19 @@ def main():
     parser.add_argument('--helper', type=Path, default=ROOT / 'libkrun/target/debug/devcroft-krun-spike')
     parser.add_argument('--inputs', type=Path, default=ROOT / 'artifacts/adaptable/toolchain.img')
     parser.add_argument('--seed', type=Path, default=ROOT / 'artifacts/adaptable/data.seed.img')
+    parser.add_argument('--runtime-guest', type=Path, default=ROOT / 'artifacts/stage-c-runtime')
+    parser.add_argument('--setup-guest', type=Path, default=ROOT / 'artifacts/stage-c-setup')
     parser.add_argument('--out', type=Path, default=ROOT / 'runs' / time.strftime('%Y%m%d-%H%M%S-adaptable'))
     args = parser.parse_args()
     os.umask(0o077)
     args.out.mkdir(parents=True, exist_ok=False)
     recipe = load(ROOT / 'fixtures/adaptable-recipe-aarch64.json')
     recipe_id = hashlib.sha256(encoded(recipe)).hexdigest()
-    runtime = json.loads((ROOT / 'artifacts/stage-c-runtime/guest.json').read_text())
-    setup = json.loads((ROOT / 'artifacts/stage-c-setup/guest.json').read_text())
+    runtime = json.loads((args.runtime_guest / 'guest.json').read_text())
+    setup = json.loads((args.setup_guest / 'guest.json').read_text())
+    require(not runtime['setup_window'] and setup['setup_window']
+            and not setup.get('setup_fault_probe') and not runtime.get('setup_fault_probe'),
+            'runtime/setup guest roles do not match their receipts')
     require(runtime['setup_recipe_sha256'] == setup['setup_recipe_sha256'] == recipe_id, 'guest/recipe mismatch')
     report = {'schema': 1, **helper_identity(args.helper), 'qualification': 'diagnostic-only', 'status': 'failed',
         'host': list(os.uname()), 'kernel_artifact': artifact(args.kernel), 'helper_artifact': artifact(args.helper),

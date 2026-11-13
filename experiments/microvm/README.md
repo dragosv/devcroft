@@ -4,7 +4,7 @@ This is the experimental implementation of `evaluate-microvm-runtimes`.
 `libkrun/` and `hvi/` have their own Cargo workspaces and lockfiles. The main devcroft build and
 published crate do not depend on it. No production VM dispatch exists yet.
 
-The [native assessment](results/macos-arm64-evaluation-assessment-v3.json) records
+The [native assessment](results/macos-arm64-evaluation-assessment-v4.json) records
 the full 180-case macOS ARM64 comparison, clean reconstruction, final SSH fault
 recovery and real CLI/TLS regressions against the five backend criteria. Both
 adapters work on this host. Production adoption remains no-go under the current
@@ -842,3 +842,53 @@ It closes the explicitly scoped duplex and PID 1 gaps while retaining previous
 results and their exact artifact generations. Physical host suspend, other native
 platforms and renewed density/preparation/CLI-start qualification for the latest
 keeper remain open. Production adoption remains unapproved.
+
+### Interrupted adaptable setup and atomic publication (2026-11-13)
+
+The unfinished follow-up recovered from another agent reproduced two setup
+failures on both native adapters. Interrupting baseline creation before its
+publication left the private base unbootable. Interrupting the package install
+before its recipe marker exposed a partial package/header/marker signature to
+ordinary sessions. Those captures remain in
+`results/{libkrun,hvi}-macos-arm64-setup-interruption-before.json`. Their harness
+status records successful reproduction; `atomic: false` is the failed setup gate.
+
+The corrected setup removes unpublished staging trees on startup, copies the
+baseline into `rootfs.next`, installs the pinned offline recipe there, and syncs
+its completed contents and marker. `renameat2(RENAME_EXCHANGE)` publishes the
+prepared tree in one exchange. The old baseline remains under `rootfs.next`
+until it can be discarded, including on the next boot after an interruption.
+
+Build separate runtime, setup and fault guests with `python3 experiments/microvm/build_keeper_guest.py
+--adaptable --out <directory>`, adding `--setup-window` for setup and both
+`--setup-window --setup-fault-probe` for the disposable fault fixture. The fault
+builder refuses to overwrite an existing guest. Its five one-time, synchronized
+stalls are absent from ordinary runtime/setup binaries.
+
+`python3 experiments/microvm/setup_interrupt_probe.py --mode atomic --runtime-guest <directory>
+--setup-guest <directory> --fault-guest <directory> --out <new-run>` exercises
+baseline copy, recipe staging, package installation, marker creation and the
+directory exchange. Select hvi with
+`--helper experiments/microvm/hvi/target/debug/devcroft-hvi-spike`.
+The harness verifies fixture roles and pinned recipe/input/seed identities,
+holds the exclusive native-runner lease, snapshots its sources, and removes
+owned helpers, endpoints, private disks and controller directories.
+
+Fresh reviewed runs pass all five interruptions on each adapter, across 26
+boots. The observed signature is baseline at the first four points and applied
+after the exchange. Four recovered dependency/build hashes match a fresh
+uninterrupted reconstruction on each adapter. Earlier five-boot ordinary
+adaptation/reconstruction regressions are also retained: their kernel, helper,
+boot artifacts, inputs and seed match these builds exactly, so they are reused
+without being counted as new repetitions. All 57 Python tests pass.
+
+Evidence is in `results/{libkrun,hvi}-macos-arm64-setup-interruption-atomic.json`,
+`results/{libkrun,hvi}-macos-arm64-adaptable-atomic.json`, and
+`results/macos-arm64-setup-interruption-validation.json`. The five fixed stalls
+sync before SIGKILL and the host page cache survives. They do not establish
+arbitrary mid-write timing or physical host power-loss durability. Classification
+checks the fixed package/header/marker signature and four final artifact hashes,
+rather than whole-filesystem equivalence. Peak storage from the extra staging
+copy still needs measurement. The updated assessment is
+`results/macos-arm64-evaluation-assessment-v4.json`; production adoption remains
+unapproved.
