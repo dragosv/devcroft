@@ -24,6 +24,8 @@ def main():
     parser.add_argument('--setup-window', action='store_true')
     parser.add_argument('--pid1-exit-probe', action='store_true',
                         help='compile fixed PID 1 exit injection into a separate Nix fault fixture')
+    parser.add_argument('--setup-fault-probe', action='store_true',
+                        help='compile test-only setup interruption stalls into a separate setup fixture')
     parser.add_argument('--out', type=Path, help='separate guest artifacts; preserve earlier measured images')
     args = parser.parse_args()
     if args.pid1_exit_probe and (not args.nix or not args.out or args.agents or args.adaptable):
@@ -31,6 +33,11 @@ def main():
     if args.pid1_exit_probe and args.out.exists() and (
             not args.out.is_dir() or any(p.name != 'busybox.apk' for p in args.out.iterdir())):
         parser.error('PID 1 exit fixture --out must be new or contain only its pinned busybox.apk')
+    if args.setup_fault_probe and (not args.adaptable or not args.setup_window or not args.out):
+        parser.error('--setup-fault-probe requires --adaptable --setup-window --out')
+    if args.setup_fault_probe and args.out.exists() and (
+            not args.out.is_dir() or any(p.name != 'busybox.apk' for p in args.out.iterdir())):
+        parser.error('setup fault fixture --out must be new or contain only its pinned busybox.apk')
     ssh_pin = json.loads((ROOT / 'fixtures/ssh-consumption-windows.json').read_text())
     expected = {ROOT / 'russh' / name: digest for name, digest in ssh_pin['vendor_files'].items()}
     expected[ROOT / ssh_pin['keeper_fork']['path']] = ssh_pin['keeper_fork']['sha256']
@@ -88,7 +95,7 @@ def main():
     keeper = crate / "target/aarch64-unknown-linux-musl/release/devcroft-guest-keeper"
     build(out, "aarch64", zig, keeper=keeper, busybox=busybox, workload=args.workload, nix=args.nix,
           adaptable=args.adaptable, setup=args.setup_window, agents=args.agents,
-          pid1_exit_probe=args.pid1_exit_probe)
+          pid1_exit_probe=args.pid1_exit_probe, setup_fault_probe=args.setup_fault_probe)
     receipt = json.loads((out / "guest.json").read_text())
     sources = [*sorted((ROOT.parent.parent / "src/keeper").glob("*.rs")),
                ROOT.parent.parent / "src/ssh/server.rs", ROOT.parent.parent / "src/ssh/sftp.rs",

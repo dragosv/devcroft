@@ -26,11 +26,14 @@ def entry(out, name, data=b"", mode=stat.S_IFDIR | 0o755, ino=1, major=0, minor=
     out.write(b"\0" * (-out.tell() % 4))
 
 
-def build(out_dir, arch, zig, keeper=None, busybox=None, workload=False, nix=False, adaptable=False, setup=False, agents=False, pid1_exit_probe=False):
+def build(out_dir, arch, zig, keeper=None, busybox=None, workload=False, nix=False, adaptable=False, setup=False, agents=False, pid1_exit_probe=False,
+          setup_fault_probe=False):
     if nix and not workload:
         raise ValueError('Nix fixture requires the workload block devices')
     if pid1_exit_probe and (not keeper or not nix or agents or adaptable):
         raise ValueError('PID 1 exit injection requires a separate Nix keeper fault fixture')
+    if setup_fault_probe and (not keeper or not workload or not adaptable or not setup or nix or agents or pid1_exit_probe):
+        raise ValueError('setup interruption stalls require a separate setup-window fault fixture')
     out_dir.mkdir(parents=True, exist_ok=True)
     init = out_dir / "init"
     env = dict(os.environ, ZIG_GLOBAL_CACHE_DIR=str(ROOT / ".zig-cache"))
@@ -59,6 +62,8 @@ def build(out_dir, arch, zig, keeper=None, busybox=None, workload=False, nix=Fal
         command.extend(['-DENABLE_ADAPTABLE=1', '-include', str(header)])
         if setup:
             command.append('-DENABLE_SETUP_WINDOW=1')
+        if setup_fault_probe:
+            command.append('-DENABLE_SETUP_FAULT_PROBE=1')
     elif setup:
         raise ValueError('setup window requires the adaptable fixture')
     subprocess.run(command, check=True, env=env)
@@ -113,6 +118,8 @@ def build(out_dir, arch, zig, keeper=None, busybox=None, workload=False, nix=Fal
     if adaptable:
         result.update(fixture='stage-c-private-adaptable-base', adaptable=True,
                       setup_window=setup, setup_recipe_sha256=recipe_hash)
+        if setup_fault_probe:
+            result['setup_fault_probe'] = True
     for key, file in [("initramfs", path), ("runtime", runtime)]:
         result[key] = {"path": str(file.resolve()), "sha256": hashlib.sha256(file.read_bytes()).hexdigest()}
     (out_dir / "guest.json").write_text(json.dumps(result, indent=2) + "\n")

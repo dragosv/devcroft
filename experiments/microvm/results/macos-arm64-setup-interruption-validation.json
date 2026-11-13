@@ -1,0 +1,133 @@
+{
+  "schema": 1,
+  "status": "passed",
+  "qualification": "scoped native fixed-point interrupted-setup recovery on macOS ARM64; previous non-atomic failures retained; not production approval",
+  "raw_evidence": "experiments/microvm/runs/20261113-setup-reviewed-validation",
+  "prior_work": "Recovered unfinished other-agent atomic-setup changes and native observations; reviewed guards, added tests, then repeated both adapters with current harness snapshots.",
+  "mechanism": [
+    "Discard unpublished rootfs.pending and rootfs.next on the next boot",
+    "Copy the published baseline into rootfs.next; apply the pinned offline APK recipe only to that copy",
+    "Sync the completed staged recipe and marker, atomically exchange rootfs.next/rootfs with renameat2(RENAME_EXCHANGE), then discard the superseded tree"
+  ],
+  "python_tests": {
+    "status": "passed",
+    "count": 57,
+    "evidence": {
+      "path": "experiments/microvm/runs/20261113-setup-reviewed-validation/python-tests-passed.log",
+      "sha256": "3c46045e66d579a2feaf469ee6eb5a189dc52c275012352d30c314c4b5a18840"
+    }
+  },
+  "fixture_guard_evidence": {
+    "path": "experiments/microvm/runs/20261113-setup-reviewed-validation/fixture-controls.json",
+    "sha256": "6a3955522fbf06ed5a7f5e77529a4001418a919797b2255522e8202977adc8c8"
+  },
+  "retained_ordinary_identity_verification": {
+    "path": "experiments/microvm/runs/20261113-setup-reviewed-validation/retained-ordinary-regressions.json",
+    "sha256": "55d19b4b1e3842cdc859085c257718f53a501e64cfaa50a477ba8ffe10329f66"
+  },
+  "adapters": [
+    {
+      "adapter": "libkrun",
+      "before_gate": "failed",
+      "before_observations": {
+        "after_baseline_copy": "unbootable",
+        "after_recipe_install_before_marker": "partial"
+      },
+      "after_gate": "passed-scoped",
+      "interruption_points": 5,
+      "new_native_boots": 13,
+      "observed_signatures": [
+        "baseline",
+        "baseline",
+        "baseline",
+        "baseline",
+        "applied"
+      ],
+      "recovered_four_artifact_hashes_match_uninterrupted": true,
+      "ordinary_regression_reused_by_exact_boot_and_input_hashes": true,
+      "ordinary_regression_boots": 5,
+      "evidence": {
+        "before": {
+          "path": "experiments/microvm/results/libkrun-macos-arm64-setup-interruption-before.json",
+          "sha256": "8722e2bf2f875c0cce2d2e63ae279d452094d158996816a0f42558498436e4d4"
+        },
+        "atomic": {
+          "path": "experiments/microvm/results/libkrun-macos-arm64-setup-interruption-atomic.json",
+          "sha256": "6922c2183698be21c67182e482cf46cb9ac94fab51236e66f5766576e60acbb9"
+        },
+        "ordinary": {
+          "path": "experiments/microvm/results/libkrun-macos-arm64-adaptable-atomic.json",
+          "sha256": "f78e98b99646fd96665cf26246f1da0785881a7a60c1e006e8799145815bec3e"
+        }
+      }
+    },
+    {
+      "adapter": "hvi",
+      "before_gate": "failed",
+      "before_observations": {
+        "after_baseline_copy": "unbootable",
+        "after_recipe_install_before_marker": "partial"
+      },
+      "after_gate": "passed-scoped",
+      "interruption_points": 5,
+      "new_native_boots": 13,
+      "observed_signatures": [
+        "baseline",
+        "baseline",
+        "baseline",
+        "baseline",
+        "applied"
+      ],
+      "recovered_four_artifact_hashes_match_uninterrupted": true,
+      "ordinary_regression_reused_by_exact_boot_and_input_hashes": true,
+      "ordinary_regression_boots": 5,
+      "evidence": {
+        "before": {
+          "path": "experiments/microvm/results/hvi-macos-arm64-setup-interruption-before.json",
+          "sha256": "39536f2be6f38ccd7f9839b6421d3d9c56fab2d6258cb51e0eb4ccca07302fa8"
+        },
+        "atomic": {
+          "path": "experiments/microvm/results/hvi-macos-arm64-setup-interruption-atomic.json",
+          "sha256": "882c4daec030dca94b113377d2b454debd2750762c460ddb312caf1d1b1e5290"
+        },
+        "ordinary": {
+          "path": "experiments/microvm/results/hvi-macos-arm64-adaptable-atomic.json",
+          "sha256": "070ba66635be5531150b29bc894571405c72715c2e0a53587c6ca2f3438415d6"
+        }
+      }
+    }
+  ],
+  "fresh_interruption_vm_boots": 26,
+  "interruption_cases": 10,
+  "final_artifact_sha256": {
+    "/usr/include/zlib.h": "2c404dcaa08709c2a129aea18f3dad4fb5acc5cb52ef12b6223bf8e78c195801",
+    "/usr/lib/libz.so.1": "5f05cb927503c68316a56a1588611cb72b7d05c160b780d92bfa6b8cfccda762",
+    "/workspace/probe.c": "79cf823cf7b9c7baf7cff1b7737e4ff47cefa45afb94c174f1414c50aa9e90ea",
+    "/workspace/app": "4bf43dc93b800e88339e4631c3450d52805ece9de5b6ab58ff1434368f4a2bb7"
+  },
+  "source_sha256": {
+    "guest/init.c": "63296ef03a3fd480733ca3171eab02047d5836f872022a58b79f3e1c5a2cf53d",
+    "build_guest.py": "3fbbf7cbab9d761d472eaaaa7c1340c9125b060b2b821d9b2f14bf7de0e7ddce",
+    "build_keeper_guest.py": "a10b18622903ca9d966a4a7a2e91675e423d666563df8f31fb9bef06629ff892",
+    "adaptable_smoke.py": "b089bd06483af7eb111169b493abb1e7f4277feb8420b13614a6a508b2967d85",
+    "setup_interrupt_probe.py": "2c8fbfc4a800b1492b3cb95654e758d643c012abaac773ec593899698a4d2b3a",
+    "test_setup_interrupt.py": "2efdc309081753fbc53f5d81ae0b2de72292d7b29909ad6a301b93030f5062fe"
+  },
+  "retained_calibrations": [
+    {
+      "path": "experiments/microvm/runs/20261113-libkrun-setup-interrupt-before-crlf-calibration/report.json",
+      "sha256": "627b051a90e5518516e44e1b3c823023c5413b140393243bbe7eee41993f8298"
+    },
+    {
+      "path": "experiments/microvm/runs/20261113-libkrun-setup-interrupt-before-buffered-drain-calibration/report.json",
+      "sha256": "ca0bceedc632944958094665715b0978c37d50162eff29a67aa22fbdb20d0d8a"
+    }
+  ],
+  "remaining_limits": [
+    "Five deterministic stalls execute sync before host SIGKILL; host page cache survives. This is not host power-loss durability or arbitrary instruction/timing coverage.",
+    "The classification observes the zlib header, apk package entry and recipe marker. Four final build/dependency hashes match a new reference; this is not full-filesystem equivalence or an audit.",
+    "Uninterrupted adaptation/reconstruction rows are retained other-agent runs with byte-identical boot artifacts, kernel, helper, inputs and seed. They were not counted as new repetitions.",
+    "Peak disk/storage cost of the extra staging copy is not measured against the full 8-GiB preparation limit.",
+    "Production hostile-recipe confinement, other native platforms, physical host suspend and libkrun stop/crash classification remain open."
+  ]
+}

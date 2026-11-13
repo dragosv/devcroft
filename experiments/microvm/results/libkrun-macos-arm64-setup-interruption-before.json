@@ -1,0 +1,434 @@
+{
+  "schema": 1,
+  "adapter": "libkrun",
+  "helper_provenance": {
+    "patch_sha256": "7a25379a3e1291ecbace0cad78e804b70f3f4515cebbf8c35f0843d107d4c2cc",
+    "revision": "6151710f4ea627cf0e5dbce78e4192fb4d64c2e9"
+  },
+  "qualification": "diagnostic-only",
+  "mode": "before",
+  "status": "passed",
+  "host": [
+    "Darwin",
+    "Dragoss-MacBook-Pro.local",
+    "24.6.0",
+    "Darwin Kernel Version 24.6.0: Mon Jan 19 22:01:58 PST 2026; root:xnu-11417.140.69.708.3~1/RELEASE_ARM64_T6041",
+    "arm64"
+  ],
+  "kernel_artifact": {
+    "path": "/Users/dragos/Development/devcroft-codex/experiments/microvm/artifacts/kernel-landlock/Image",
+    "sha256": "2b8b6d4664f1521a0d9bcc22252c4cc2e0bc98a5bbcf2500cc1e45ef1e1275fb"
+  },
+  "helper_artifact": {
+    "path": "/Users/dragos/Development/devcroft-codex/experiments/microvm/libkrun/target/debug/devcroft-krun-spike",
+    "sha256": "1b51045e1a0d3567afbe70b104dad785b6c03cf9b36be9831cae080215672b84"
+  },
+  "recipe_sha256": "f247b7ee16ee3da6eb6a2d8f6da85916e2591abb3b075a30daf7207fbc0a7285",
+  "inputs": {
+    "path": "/Users/dragos/Development/devcroft-codex/experiments/microvm/artifacts/adaptable/toolchain.img",
+    "sha256": "14a476e2d39d3baf64cefdee4956a6fdde7aedab8244f84730d9e2eb69bb4d0f"
+  },
+  "seed": {
+    "path": "/Users/dragos/Development/devcroft-codex/experiments/microvm/artifacts/adaptable/data.seed.img",
+    "sha256": "6c1bf72dfb7382912e80ea2fbb437aa8bf2635f91c370418cbdf259db34ed454"
+  },
+  "guests": {
+    "runtime": {
+      "schema": 1,
+      "arch": "aarch64",
+      "fixture": "stage-c-private-adaptable-base",
+      "zig_version": "0.17.0",
+      "source_sha256": "9b15a6dac747eac795a8bd97c0f78582d606825fa3adab6e71c4d0a994386bcf",
+      "nono": "0.77.0",
+      "keeper_sha256": "5eace2a64b88fb23f772bc94b340bfb6a60452fd004095665ad8026c7c9ee83e",
+      "busybox_sha256": "198f6f675a49ac734082e054b823d3e2e947180ca2f632852ae1c09e950fd676",
+      "workload": true,
+      "adaptable": true,
+      "setup_window": false,
+      "setup_recipe_sha256": "f247b7ee16ee3da6eb6a2d8f6da85916e2591abb3b075a30daf7207fbc0a7285",
+      "initramfs": {
+        "path": "/Users/dragos/Development/devcroft-codex/experiments/microvm/artifacts/stage-c-runtime/initramfs.cpio",
+        "sha256": "2478b59c5fe10c193e76c4dfc70c286cf8910223bbef7856ffff75d2cdb32965"
+      },
+      "runtime": {
+        "path": "/Users/dragos/Development/devcroft-codex/experiments/microvm/artifacts/stage-c-runtime/runtime.img",
+        "sha256": "768f5b593e9f9f6888ea6930f6b6dc3adb65fd204b3c48361e0864dd6ae93f0c"
+      },
+      "sources": {
+        "src/keeper/connection.rs": "5ea9ab23a29a9eb73363759818af13d5619715e9bc3282409ebd0c4257363759",
+        "src/keeper/environment.rs": "dcf433c26bba99dbe3a28164e35cd38854c30a64521a21691dc92f15ddc29fc6",
+        "src/keeper/mod.rs": "2d93e061be8231d0e0f95b018405b7dac70973800f3a72eed951960d753573e9",
+        "src/keeper/protocol.rs": "a1fd3088992902e89022c229ed710d25487374bfeeeece8000dd2e5872572a2d",
+        "src/keeper/pty.rs": "be8ea1fda83d3932eebe6d54b509e2f96bae5df9aa313a00296e4fa41e580dca",
+        "src/keeper/registry.rs": "99d96e3c267247ecc2f2220f8c0667216998d2cdabd8aabf5284d21c38aa93ce",
+        "src/keeper/session.rs": "1d1a1fce6ff8daac07dc6a8cc95a5ef60362730ae7d22326658920d8a8cf195c",
+        "src/ssh/server.rs": "8c7ab0de47153e02c725684ef05fe1362f9d4af6204636304e4efc895552f986",
+        "src/ssh/sftp.rs": "805e6fc83c646b50df100010bb6bec3988733a8a79027ca1d6ce79ce745ae6ee",
+        "experiments/microvm/guest-keeper/src/bootstrap.rs": "9ad93deea140929f7b13c50411a8be1c46170ff3a118b75f9d32320a59b3e606",
+        "experiments/microvm/guest-keeper/src/linux.rs": "05227bc26ad0cc5f1903eed8c93fda8a18d474e04d2188c459acbf49eb505ac3",
+        "experiments/microvm/guest-keeper/src/main.rs": "8195d8e46b245a42d9f20df636e9899c7a5bb9538968595850f8abfcb4fe7128",
+        "experiments/microvm/guest-keeper/Cargo.toml": "bf410f00c15228ec48cfda740c4a2c5a4f39e01e8f184edf4699ef3f96a2bb9f",
+        "experiments/microvm/guest-keeper/Cargo.lock": "c509b51fe02c1ae6842e01a302389076f615b27461f678b7b5af4e623b5e72b7",
+        "experiments/microvm/guest-keeper/zig-linker.sh": "28d89d7554ca99e4d1366d18d365253687076a7f9069d0488d9a011036626fd5",
+        "experiments/microvm/guest-keeper/zig-ar.sh": "8d9a92610ac547533bcce655621c435015305c043e273ea6a038ce999177935c",
+        "experiments/microvm/build_keeper_guest.py": "3d27902d4a04988f1dc7faf4b9be927f8fc2e1ac3b8b230012904dcbb364af69",
+        "experiments/microvm/build_guest.py": "2a7ab92a57a27e19219e092eb7d85d4ae231333259264fd6a17eec1a78337c21",
+        "experiments/microvm/guest/init.c": "9b15a6dac747eac795a8bd97c0f78582d606825fa3adab6e71c4d0a994386bcf",
+        "experiments/microvm/fixtures/adaptable-recipe-aarch64.json": "f247b7ee16ee3da6eb6a2d8f6da85916e2591abb3b075a30daf7207fbc0a7285",
+        "experiments/microvm/adaptable/recipe.py": "0a00c9ba1b66c651b1b6ea164c64be8c7d5a15c5a78720e3abf18079ff040c50"
+      },
+      "busybox_package": {
+        "schema": 1,
+        "package": "busybox-static-1.37.0-r30",
+        "architecture": "aarch64",
+        "url": "https://dl-cdn.alpinelinux.org/alpine/v3.23/main/aarch64/busybox-static-1.37.0-r30.apk",
+        "sha256": "44c9abdfb970f398fa72c8382fe2d8808eea16beaf82daf6ac708b92f1b8659e",
+        "member": "bin/busybox.static",
+        "purpose": "Real static shell and utilities for the keeper integration fixture; not a provider closure"
+      },
+      "rustc": "rustc 1.95.0 (59807616e 2026-04-14)"
+    },
+    "setup": {
+      "schema": 1,
+      "arch": "aarch64",
+      "fixture": "stage-c-private-adaptable-base",
+      "zig_version": "0.17.0",
+      "source_sha256": "9b15a6dac747eac795a8bd97c0f78582d606825fa3adab6e71c4d0a994386bcf",
+      "nono": "0.77.0",
+      "keeper_sha256": "5eace2a64b88fb23f772bc94b340bfb6a60452fd004095665ad8026c7c9ee83e",
+      "busybox_sha256": "198f6f675a49ac734082e054b823d3e2e947180ca2f632852ae1c09e950fd676",
+      "workload": true,
+      "adaptable": true,
+      "setup_window": true,
+      "setup_recipe_sha256": "f247b7ee16ee3da6eb6a2d8f6da85916e2591abb3b075a30daf7207fbc0a7285",
+      "initramfs": {
+        "path": "/Users/dragos/Development/devcroft-codex/experiments/microvm/artifacts/stage-c-setup/initramfs.cpio",
+        "sha256": "7a6f5bff557cf79eaa83e42a19f505f8babd06fcc4a1513293c81fc4d85da3e8"
+      },
+      "runtime": {
+        "path": "/Users/dragos/Development/devcroft-codex/experiments/microvm/artifacts/stage-c-setup/runtime.img",
+        "sha256": "768f5b593e9f9f6888ea6930f6b6dc3adb65fd204b3c48361e0864dd6ae93f0c"
+      },
+      "sources": {
+        "src/keeper/connection.rs": "5ea9ab23a29a9eb73363759818af13d5619715e9bc3282409ebd0c4257363759",
+        "src/keeper/environment.rs": "dcf433c26bba99dbe3a28164e35cd38854c30a64521a21691dc92f15ddc29fc6",
+        "src/keeper/mod.rs": "2d93e061be8231d0e0f95b018405b7dac70973800f3a72eed951960d753573e9",
+        "src/keeper/protocol.rs": "a1fd3088992902e89022c229ed710d25487374bfeeeece8000dd2e5872572a2d",
+        "src/keeper/pty.rs": "be8ea1fda83d3932eebe6d54b509e2f96bae5df9aa313a00296e4fa41e580dca",
+        "src/keeper/registry.rs": "99d96e3c267247ecc2f2220f8c0667216998d2cdabd8aabf5284d21c38aa93ce",
+        "src/keeper/session.rs": "1d1a1fce6ff8daac07dc6a8cc95a5ef60362730ae7d22326658920d8a8cf195c",
+        "src/ssh/server.rs": "8c7ab0de47153e02c725684ef05fe1362f9d4af6204636304e4efc895552f986",
+        "src/ssh/sftp.rs": "805e6fc83c646b50df100010bb6bec3988733a8a79027ca1d6ce79ce745ae6ee",
+        "experiments/microvm/guest-keeper/src/bootstrap.rs": "9ad93deea140929f7b13c50411a8be1c46170ff3a118b75f9d32320a59b3e606",
+        "experiments/microvm/guest-keeper/src/linux.rs": "05227bc26ad0cc5f1903eed8c93fda8a18d474e04d2188c459acbf49eb505ac3",
+        "experiments/microvm/guest-keeper/src/main.rs": "8195d8e46b245a42d9f20df636e9899c7a5bb9538968595850f8abfcb4fe7128",
+        "experiments/microvm/guest-keeper/Cargo.toml": "bf410f00c15228ec48cfda740c4a2c5a4f39e01e8f184edf4699ef3f96a2bb9f",
+        "experiments/microvm/guest-keeper/Cargo.lock": "c509b51fe02c1ae6842e01a302389076f615b27461f678b7b5af4e623b5e72b7",
+        "experiments/microvm/guest-keeper/zig-linker.sh": "28d89d7554ca99e4d1366d18d365253687076a7f9069d0488d9a011036626fd5",
+        "experiments/microvm/guest-keeper/zig-ar.sh": "8d9a92610ac547533bcce655621c435015305c043e273ea6a038ce999177935c",
+        "experiments/microvm/build_keeper_guest.py": "3d27902d4a04988f1dc7faf4b9be927f8fc2e1ac3b8b230012904dcbb364af69",
+        "experiments/microvm/build_guest.py": "2a7ab92a57a27e19219e092eb7d85d4ae231333259264fd6a17eec1a78337c21",
+        "experiments/microvm/guest/init.c": "9b15a6dac747eac795a8bd97c0f78582d606825fa3adab6e71c4d0a994386bcf",
+        "experiments/microvm/fixtures/adaptable-recipe-aarch64.json": "f247b7ee16ee3da6eb6a2d8f6da85916e2591abb3b075a30daf7207fbc0a7285",
+        "experiments/microvm/adaptable/recipe.py": "0a00c9ba1b66c651b1b6ea164c64be8c7d5a15c5a78720e3abf18079ff040c50"
+      },
+      "busybox_package": {
+        "schema": 1,
+        "package": "busybox-static-1.37.0-r30",
+        "architecture": "aarch64",
+        "url": "https://dl-cdn.alpinelinux.org/alpine/v3.23/main/aarch64/busybox-static-1.37.0-r30.apk",
+        "sha256": "44c9abdfb970f398fa72c8382fe2d8808eea16beaf82daf6ac708b92f1b8659e",
+        "member": "bin/busybox.static",
+        "purpose": "Real static shell and utilities for the keeper integration fixture; not a provider closure"
+      },
+      "rustc": "rustc 1.95.0 (59807616e 2026-04-14)"
+    },
+    "fault": {
+      "schema": 1,
+      "arch": "aarch64",
+      "fixture": "stage-c-private-adaptable-base",
+      "zig_version": "0.17.0",
+      "source_sha256": "95c134b239fca1a80f364e9907ecdf873bd928d3edacca1ddf2e4f2210d6c84b",
+      "nono": "0.77.0",
+      "keeper_sha256": "d82bd8336200ba98e74c76ed27b15db9f21b900fc6b37f48410f81896f769082",
+      "busybox_sha256": "198f6f675a49ac734082e054b823d3e2e947180ca2f632852ae1c09e950fd676",
+      "workload": true,
+      "adaptable": true,
+      "setup_window": true,
+      "setup_recipe_sha256": "f247b7ee16ee3da6eb6a2d8f6da85916e2591abb3b075a30daf7207fbc0a7285",
+      "setup_fault_probe": true,
+      "initramfs": {
+        "path": "/Users/dragos/Development/devcroft-codex/experiments/microvm/artifacts/stage-c-setup-fault-before/initramfs.cpio",
+        "sha256": "a96c22d1f865559fb9fa7efb7890a4d13bc77968b0d917cd3d7bf7cf86f1da77"
+      },
+      "runtime": {
+        "path": "/Users/dragos/Development/devcroft-codex/experiments/microvm/artifacts/stage-c-setup-fault-before/runtime.img",
+        "sha256": "768f5b593e9f9f6888ea6930f6b6dc3adb65fd204b3c48361e0864dd6ae93f0c"
+      },
+      "sources": {
+        "src/keeper/connection.rs": "5ea9ab23a29a9eb73363759818af13d5619715e9bc3282409ebd0c4257363759",
+        "src/keeper/environment.rs": "dcf433c26bba99dbe3a28164e35cd38854c30a64521a21691dc92f15ddc29fc6",
+        "src/keeper/mod.rs": "2d93e061be8231d0e0f95b018405b7dac70973800f3a72eed951960d753573e9",
+        "src/keeper/protocol.rs": "a1fd3088992902e89022c229ed710d25487374bfeeeece8000dd2e5872572a2d",
+        "src/keeper/pty.rs": "be8ea1fda83d3932eebe6d54b509e2f96bae5df9aa313a00296e4fa41e580dca",
+        "src/keeper/registry.rs": "99d96e3c267247ecc2f2220f8c0667216998d2cdabd8aabf5284d21c38aa93ce",
+        "src/keeper/session.rs": "1d1a1fce6ff8daac07dc6a8cc95a5ef60362730ae7d22326658920d8a8cf195c",
+        "src/ssh/server.rs": "6db352d3a4150d2e89963787dc63c5e5d70eea1167a5f6c84bba8c1fdfede900",
+        "src/ssh/sftp.rs": "805e6fc83c646b50df100010bb6bec3988733a8a79027ca1d6ce79ce745ae6ee",
+        "experiments/microvm/guest-keeper/src/bootstrap.rs": "9ad93deea140929f7b13c50411a8be1c46170ff3a118b75f9d32320a59b3e606",
+        "experiments/microvm/guest-keeper/src/linux.rs": "63d0d745b0f4fb4f6f9df105e651dd954f854dc84a4650c90c60d799118c76d3",
+        "experiments/microvm/guest-keeper/src/main.rs": "d435d924645fdfc46ed0ce63a2923e0bf30b788ce298aeda09f0721a22137fce",
+        "experiments/microvm/guest-keeper/src/ssh_server.rs": "9e0095948d3f0634fab7e7598fe207aa2c88b447d12c661d05a2b76fda57882e",
+        "experiments/microvm/guest-keeper/Cargo.toml": "2c18499a5623cbe56346431e4dbbc71ee2414e1c4ab5d46d8d227f23a489c124",
+        "experiments/microvm/guest-keeper/Cargo.lock": "95ff159c50f5e72178fbf8943550de52a68cf80e8f1a92516ea9cdf7f4dc25a1",
+        "experiments/microvm/guest-keeper/zig-linker.sh": "28d89d7554ca99e4d1366d18d365253687076a7f9069d0488d9a011036626fd5",
+        "experiments/microvm/guest-keeper/zig-ar.sh": "8d9a92610ac547533bcce655621c435015305c043e273ea6a038ce999177935c",
+        "experiments/microvm/build_keeper_guest.py": "ac7393d67149cce01a6c27d8b8802df83a8e9a571fd87f0051d67ccc09322225",
+        "experiments/microvm/build_guest.py": "9d558fc568fe9fdbe300ca589176d36f2e8f912318e7e4c8ef099ae56820ef40",
+        "experiments/microvm/guest/init.c": "95c134b239fca1a80f364e9907ecdf873bd928d3edacca1ddf2e4f2210d6c84b",
+        "experiments/microvm/fixtures/ssh-consumption-windows.json": "fd4233f092d8c39b0b5961f321a8acfcce8d65ef922ec6fc795276e8a0759e83",
+        "experiments/microvm/freeze_ssh_sources.py": "8649c58c607f5acd4e60789514e4eba189392824f5c38fdfe50092dc28548c70",
+        "experiments/microvm/patches/keeper-ssh-consumed-input.patch": "8f90e50db3563ac1f2f74d1e27d3e886efeca598009f92c93cde2c612787a325",
+        "experiments/microvm/patches/russh-consumed-input-windows.patch": "ea8aebe6932622f515d7f31f7edcd1dee3f45b28aca376a2f5dded4364b32cf1",
+        "experiments/microvm/russh/.cargo_vcs_info.json": "e72de4350a46ef4b4c096542eeb7a16b66c049d764ee2431f9cdb694857fdd95",
+        "experiments/microvm/russh/Cargo.lock": "8a51dc46546288e5e4aa49f7f688a3bdb3109a16bad40e9ce8b95d7265814caa",
+        "experiments/microvm/russh/Cargo.toml": "e12fd33e82e3a171bdcf5b6b7cc479f5f4b31a6d28b1a52525fb94a232892b80",
+        "experiments/microvm/russh/Cargo.toml.orig": "5b6c0ce614626418d89e48a36f7d62586cfbfc0a957427bd7016a45ca9e0d068",
+        "experiments/microvm/russh/LICENSE-APACHE": "c6596eb7be8581c18be736c846fb9173b69eccf6ef94c5135893ec56bd92ba08",
+        "experiments/microvm/russh/NOTICE-devcroft": "2a198488a1ee1d733ef67adecb28fffe840b70594e83b30046de38767176d9ab",
+        "experiments/microvm/russh/README.md": "51919b8b3f427182342be3a7b33c9a55dbb861fb8f00dff0197e7ebe40a09a70",
+        "experiments/microvm/russh/benches/ciphers.rs": "8eed524c8e6d71b62ef484a6f75ea7695a5d2bb0d1824e430f8793d41e7d0b6f",
+        "experiments/microvm/russh/examples/client_exec_interactive.rs": "485a4fa3bb6e0a590e5cd03985a51aba79d06e0088bda0f90c4a69ae92c7993f",
+        "experiments/microvm/russh/examples/client_exec_simple.rs": "1e7158ea8a1fba454a960ca96bf9294d984ee1492a21e4a3450c321187910db2",
+        "experiments/microvm/russh/examples/client_open_direct_tcpip.rs": "54f2404bb607adb13bfaa227755a760fb7f4d24ef32b215c34b0262fc36c714a",
+        "experiments/microvm/russh/examples/echoserver.rs": "7182112ceddf6434cfedf1fb47514de41619aa5d4e934f2eb14e4a6177c6bc40",
+        "experiments/microvm/russh/examples/ratatui_app.rs": "f4897741e2a1d16963c3e84443703370ba97fc468b27bf418f4bd6be7fedab7c",
+        "experiments/microvm/russh/examples/ratatui_shared_app.rs": "ea502dae7589c8e43e81e1dba4ed4ee8aa12ebfc78435fb696bcdcca14c38e28",
+        "experiments/microvm/russh/examples/sftp_client.rs": "ac7a8bbcece3474cbc8ef4e41e4385b176b9ab2079655fc8d455e6ab06158d73",
+        "experiments/microvm/russh/examples/sftp_server.rs": "6f62f9c0d2c8d1789c37b8c47e1e2e2cc98f335c724519908aa8c63507ed60ab",
+        "experiments/microvm/russh/examples/test.rs": "a915c21950bcdca89559b4c0cea770634ac37635e835b9ecd311867c43d35e96",
+        "experiments/microvm/russh/src/auth.rs": "eeede6d82adbd1b17dbbef8ac1fe29217fe37dc0dabfd69b0609fdf44ee85495",
+        "experiments/microvm/russh/src/cert.rs": "690241c97a426034cf774091b8b99d9b25c09964700f9a166bb5af434df3760c",
+        "experiments/microvm/russh/src/channels/channel_ref.rs": "8d6678c43cae06d095ae4cc242ae33ca1bf65efcdef9a5948d382cbffb101f06",
+        "experiments/microvm/russh/src/channels/channel_stream.rs": "990be739b58d69e18682575a66eee123d7055a228f71429b9fb1276ed5419b9a",
+        "experiments/microvm/russh/src/channels/io/mod.rs": "d058ed66458c0d5a7da50c270cb6c6a9c067c68cc328cc91a990d3ff39be8c1d",
+        "experiments/microvm/russh/src/channels/io/rx.rs": "c0abe5e882c9e07ff9c0f9007e85c99afcedfcd8a8753a8add0a265059985631",
+        "experiments/microvm/russh/src/channels/io/tx.rs": "0cb5678927bda56fd665f9e0fc390aee33ce993b28b7e6cc4b0da9811903d695",
+        "experiments/microvm/russh/src/channels/mod.rs": "3014bcac395161f8935f92c8b76ee29b565be58b010193d3c142e6255847807d",
+        "experiments/microvm/russh/src/cipher/benchmark.rs": "1632912cbd81f39684fdc57ef49f240677fd72c9176fa548eb9944b5d66ffeb9",
+        "experiments/microvm/russh/src/cipher/block.rs": "1abade93fa680ee57634f2287f6a3ad378aaf5557e21d12ed198a4620cfc33a4",
+        "experiments/microvm/russh/src/cipher/cbc.rs": "5349c7a22b070501fb237da568c8e4ccbf31268b393289355de17200cbac2523",
+        "experiments/microvm/russh/src/cipher/chacha20poly1305.rs": "461cf944d4d2fab4e0d494ad5bd0923e44795d34e03dc6556122f1a28ba4e47f",
+        "experiments/microvm/russh/src/cipher/clear.rs": "0d3c514e38f353f5134e939a0912e72a3e6e01cccf7f134a2304253b56a4e238",
+        "experiments/microvm/russh/src/cipher/gcm.rs": "f734b060f43e14aabfd8fc48891f57fab804d0f378374579b4bc3a5098a7b2e4",
+        "experiments/microvm/russh/src/cipher/mod.rs": "5793fb7f08d3494517c74264179adf78872ae8bdc5c7cedc8ed69f4a6cce52ec",
+        "experiments/microvm/russh/src/client/encrypted.rs": "6821431e1ebd77fd3f005d427ab8ec24984d9f8cfe7915fb445e8c4341bc3b48",
+        "experiments/microvm/russh/src/client/kex.rs": "4f540d935df565b1a1994784cee88186ae7b9b7fe4cd8ff68b771599d8d8b460",
+        "experiments/microvm/russh/src/client/mod.rs": "79c1769860ef9aa42848984a5ecd190d2fe7ade40f61ea88a957301442910497",
+        "experiments/microvm/russh/src/client/session.rs": "5b28e6c68847eaad489e80e801e0632ad4289ca785760b545d2f495548cedacc",
+        "experiments/microvm/russh/src/client/test.rs": "7a56c59007b3b16a5bf5ea5e6ad39b153f7cce3cd9d3d70fefa3e68e53607a04",
+        "experiments/microvm/russh/src/compression.rs": "774b59e33ff0746e2898d896074bcf800ab167f7174750c20ddfca69ada03c2c",
+        "experiments/microvm/russh/src/helpers.rs": "e92055a34871f714c284f85c9d38491c87e74ee18a047db263488032f1d19821",
+        "experiments/microvm/russh/src/kex/curve25519.rs": "b7d3813fa204892b2d7865f4ec1b83ab4dcc42680b76e60e045bf0f6827df0e5",
+        "experiments/microvm/russh/src/kex/dh/groups.rs": "0699b803048c2bf750b9789a76c9243f4967bee7cb8f0e78ef873358aaec1d24",
+        "experiments/microvm/russh/src/kex/dh/mod.rs": "c03651d5654fbb910efeab4528e6949c17a772d7b4145eb4c59133aa1827843e",
+        "experiments/microvm/russh/src/kex/ecdh_nistp.rs": "0bb7c452200130edf71be0966983ebdc311ca57154343d93eeab509ec2beaf17",
+        "experiments/microvm/russh/src/kex/hybrid_mlkem.rs": "c12f092465624e9d5bef94cbce3f2510ae1784c9a112aac3ea92e0527ba9a342",
+        "experiments/microvm/russh/src/kex/mod.rs": "c5e32cdbefe0e50a58dd0cdb14b08116e0c55c04ae8d6252b79198ca31f5795a",
+        "experiments/microvm/russh/src/kex/none.rs": "8c0d847c2caadd7a2db77d34877d3182e38cb2e90ed44e3823b53361a770960d",
+        "experiments/microvm/russh/src/keys/agent/client.rs": "c3ec1417037e0b5b03110e6bc2b187db2bbf3f37a79007a6d1436110d64e682b",
+        "experiments/microvm/russh/src/keys/agent/mod.rs": "5652be6d2079a3fdc8361f7e31cfe3a602bdc85a773b491d0bef91c909181e54",
+        "experiments/microvm/russh/src/keys/agent/msg.rs": "3461e3f12792ddbddc2aaddaca25f4e074e91a3e58488fe6b82dc087590134bc",
+        "experiments/microvm/russh/src/keys/agent/server.rs": "94876dc20ce2261881da41a36a9342b6970586937d2275b32364d98367f0f91f",
+        "experiments/microvm/russh/src/keys/format/mod.rs": "7ca4a796a523df1063f0ea0bac1b6d869288dd100d041a6455f8bd7d73b15678",
+        "experiments/microvm/russh/src/keys/format/openssh.rs": "e345287a5c5af34b95740c90431e322b86ba4230be4e116b2194c7de7bd99816",
+        "experiments/microvm/russh/src/keys/format/pkcs5.rs": "0891a67497ac4f793fcbdb83ed3fda03430ec267a09668c5c6c0ff05b0998582",
+        "experiments/microvm/russh/src/keys/format/pkcs8.rs": "69db6690bcedeaabac613859967b6ddc8ea156b41c9a0a4ca0b36614487c99d3",
+        "experiments/microvm/russh/src/keys/format/pkcs8_legacy.rs": "c751866710db20fa55fda72a8245a6d32c9b7acd49675309f08de9ae6f58b9c8",
+        "experiments/microvm/russh/src/keys/format/tests.rs": "977939953f4ad8db5b86d7b539f0f63bfbc6d2a2de0d1307ca3e9707b3fc7d19",
+        "experiments/microvm/russh/src/keys/key.rs": "17b75a90739c32fc4b2fbeb31103b9cc8dd5f70c0b7de885bf1238b41b0b50e7",
+        "experiments/microvm/russh/src/keys/known_hosts.rs": "13802e03e9d8c11a25673ac29bddccaebedbbd759465b2d2ec847ba86e8e1049",
+        "experiments/microvm/russh/src/keys/mod.rs": "a68f9e90eed19a372f82245d722b46c5808a8e8a5f1fa15510e92d8f7d5e034f",
+        "experiments/microvm/russh/src/lib.rs": "8398c8b25509efa7d56b8577ec9c46e27f8ab9b20ac0f2068e7390ddfad883a9",
+        "experiments/microvm/russh/src/lib_inner.rs": "fc87e04485e357e249340fe08c5362356da32dac59b82344865a955ba4b18d14",
+        "experiments/microvm/russh/src/mac/crypto.rs": "a6f8f5a98a6d342f925bb2842650b0c92e4c57c91036caf93aa2fdaa28a0b218",
+        "experiments/microvm/russh/src/mac/crypto_etm.rs": "36f76c3e30556c182bac25cc4b2918d6ce7f2be666531df849db4baf8fb02148",
+        "experiments/microvm/russh/src/mac/mod.rs": "a3418bb9fdc1cf9102ffd968811946e9c92cb4a3d50a0759f5cdb091cce6d18e",
+        "experiments/microvm/russh/src/mac/none.rs": "c58fe761c9e07df4956a8e349f2053e2d3fd28988b99a4af7b152f73a7db1211",
+        "experiments/microvm/russh/src/msg.rs": "c377a22642b6fd62d5be3676874e79173cd26d72e6a2a6bdc8ff86b1671eb20f",
+        "experiments/microvm/russh/src/negotiation.rs": "fbafc312dda74641c1cde8efff22c536ccfcb1130033af5b9ace4dfbb7b2bc36",
+        "experiments/microvm/russh/src/parsing.rs": "8d1fada82c271ff3165b4ce3328440e9f4cd02e28e1074ef60cf66d803e5fb5b",
+        "experiments/microvm/russh/src/pty.rs": "db018a9139923b907999fb9870aad0e9bc93fe03d11b65752f3f08fe63c4eb3b",
+        "experiments/microvm/russh/src/server/encrypted.rs": "ed3ef3ef29774fb7db7ad872b931711466ec7704226bea4e8acd1e3a3a5652e2",
+        "experiments/microvm/russh/src/server/kex.rs": "e1975ea44e2233de66b33830eafc6eeea62a743961b5440feba07e5295afdc45",
+        "experiments/microvm/russh/src/server/mod.rs": "22cc9fefda374c3661a12a580bc738664aa017efc3071e1fe38385d154b2747c",
+        "experiments/microvm/russh/src/server/session.rs": "2c500fb93f7af57142d361a131719645a321a914a970f06c855fd7a4e25bb01f",
+        "experiments/microvm/russh/src/session.rs": "e7fb99defa0e4a93ca12c98bd677a5c90d8944eac33c7ef44bbb3397ff9fc9d4",
+        "experiments/microvm/russh/src/ssh_read.rs": "469bc85924824923372391eba9815e72434388e36f6f8c34d33aed2e95127a2f",
+        "experiments/microvm/russh/src/sshbuffer.rs": "94880ce7a3a2896aa147fdf6fd59a8b19107fb1a8991d09de33738b7afba89c3",
+        "experiments/microvm/russh/src/tests.rs": "23e5e9d41b489d8a74978bce028a3e061d64e08c44e767da9fffc167ef58a5a0",
+        "experiments/microvm/russh/tests/auth_state_reset.rs": "16205bf1adc46ab74102e6546df7ef361b2e89f2693c99f04ba98967a50185cd",
+        "experiments/microvm/russh/tests/test_backpressure.rs": "d5a1a53b19de748749539b63e09f89d23d85a48206310dce80a236c8aafc5cfd",
+        "experiments/microvm/russh/tests/test_data_stream.rs": "fcfdbb74cbcdb625e45214fbbf79ce94bbb5247b3d4e28ca2354dbf1ab125a16",
+        "experiments/microvm/russh/tests/test_kex_shared_secret.rs": "9243b67db867de1272ed78b9978c9cb0409a96e96116d3b4066e5c431313c4b3",
+        "experiments/microvm/russh/tests/test_max_channel_packet_size.rs": "286cb7b9c2d2250e2a9ba254b7c6c6f403745d535a5d2e18c01bdc0dc258f2b5",
+        "experiments/microvm/russh/tests/test_mlkem_kex.rs": "592b03d1c6911ee9e27084465acdd564c51fbb7f70a6c96b03c96c1af11f7841",
+        "experiments/microvm/russh/tests/test_rekey_strict_kex.rs": "e283332421a5bdf8acfd557517b8fd7352ea47581a42309fafa0f41904be8937",
+        "experiments/microvm/fixtures/adaptable-recipe-aarch64.json": "f247b7ee16ee3da6eb6a2d8f6da85916e2591abb3b075a30daf7207fbc0a7285",
+        "experiments/microvm/adaptable/recipe.py": "0a00c9ba1b66c651b1b6ea164c64be8c7d5a15c5a78720e3abf18079ff040c50"
+      },
+      "busybox_package": {
+        "schema": 1,
+        "package": "busybox-static-1.37.0-r30",
+        "architecture": "aarch64",
+        "url": "https://dl-cdn.alpinelinux.org/alpine/v3.23/main/aarch64/busybox-static-1.37.0-r30.apk",
+        "sha256": "44c9abdfb970f398fa72c8382fe2d8808eea16beaf82daf6ac708b92f1b8659e",
+        "member": "bin/busybox.static",
+        "purpose": "Real static shell and utilities for the keeper integration fixture; not a provider closure"
+      },
+      "rustc": "rustc 1.95.0 (59807616e 2026-04-14)"
+    }
+  },
+  "probe_sources": {
+    "setup_interrupt_probe.py": "54b86c9bfb096ce92a75c6c5f944271b39093a21c52c9a40ffad970015a4a68a",
+    "adaptable_smoke.py": "f934450922321f217a4b40ba869dbc4ac713cf49e71e2786cf6e9cded4b5e650",
+    "guest/init.c": "95c134b239fca1a80f364e9907ecdf873bd928d3edacca1ddf2e4f2210d6c84b",
+    "build_guest.py": "9d558fc568fe9fdbe300ca589176d36f2e8f912318e7e4c8ef099ae56820ef40",
+    "build_keeper_guest.py": "ac7393d67149cce01a6c27d8b8802df83a8e9a571fd87f0051d67ccc09322225"
+  },
+  "interruption": "helper SIGKILL at a test-only PID 1 stall; host page cache survives, so this is guest power loss, not host power loss",
+  "cases": [
+    {
+      "label": "baseline-copy",
+      "id": "3b03c02d5214cdae0587d9b22d57c5bf",
+      "directory": "/private/tmp/ds-yfob7idb",
+      "boots": [
+        {
+          "boot": 1,
+          "guest": "fault-setup",
+          "guest_initramfs": {
+            "path": "/Users/dragos/Development/devcroft-codex/experiments/microvm/artifacts/stage-c-setup-fault-before/initramfs.cpio",
+            "sha256": "a96c22d1f865559fb9fa7efb7890a4d13bc77968b0d917cd3d7bf7cf86f1da77"
+          },
+          "exit_code": -9,
+          "forced_cleanup": false,
+          "log_overflow": false,
+          "ssh_console_captured": false,
+          "guest_console_stream": "stderr",
+          "stall_point": "baseline-copy",
+          "helper_signal": "SIGKILL"
+        },
+        {
+          "boot": 2,
+          "guest": "runtime",
+          "guest_initramfs": {
+            "path": "/Users/dragos/Development/devcroft-codex/experiments/microvm/artifacts/stage-c-runtime/initramfs.cpio",
+            "sha256": "2478b59c5fe10c193e76c4dfc70c286cf8910223bbef7856ffff75d2cdb32965"
+          },
+          "exit_code": 0,
+          "forced_cleanup": false,
+          "log_overflow": false,
+          "ssh_console_captured": false,
+          "guest_console_stream": "stderr",
+          "reached_ready": false,
+          "error": "helper exited before READY: 0",
+          "guest_failure": [
+            "guest: pending base exists: File exists"
+          ]
+        },
+        {
+          "boot": 3,
+          "guest": "setup",
+          "guest_initramfs": {
+            "path": "/Users/dragos/Development/devcroft-codex/experiments/microvm/artifacts/stage-c-setup/initramfs.cpio",
+            "sha256": "7a6f5bff557cf79eaa83e42a19f505f8babd06fcc4a1513293c81fc4d85da3e8"
+          },
+          "exit_code": 0,
+          "forced_cleanup": false,
+          "log_overflow": false,
+          "ssh_console_captured": false,
+          "guest_console_stream": "stderr"
+        }
+      ],
+      "runtime_after": "unbootable",
+      "setup_after": "unbootable: helper exited before READY: 0"
+    },
+    {
+      "label": "recipe-installed",
+      "id": "b34cd02a1121570b4563b4a85f2f9b37",
+      "directory": "/private/tmp/ds-6g_mg4hz",
+      "boots": [
+        {
+          "boot": 1,
+          "guest": "runtime",
+          "guest_initramfs": {
+            "path": "/Users/dragos/Development/devcroft-codex/experiments/microvm/artifacts/stage-c-runtime/initramfs.cpio",
+            "sha256": "2478b59c5fe10c193e76c4dfc70c286cf8910223bbef7856ffff75d2cdb32965"
+          },
+          "greeting": "READY 1 state=1 ro=1 landlock=6 policy=1 setup=closed",
+          "ready_seconds": 2.6897222499828786,
+          "reached_ready": true,
+          "classification": "baseline",
+          "observed": [
+            "absent /usr/include/zlib.h",
+            "absent /private-base/rootfs/.recipe-applied",
+            "zlib-dev-db 0"
+          ],
+          "exit_code": 0,
+          "forced_cleanup": false,
+          "log_overflow": false,
+          "ssh_console_captured": true,
+          "guest_console_stream": "stderr",
+          "discarded_on_boot": []
+        },
+        {
+          "boot": 2,
+          "guest": "fault-setup",
+          "guest_initramfs": {
+            "path": "/Users/dragos/Development/devcroft-codex/experiments/microvm/artifacts/stage-c-setup-fault-before/initramfs.cpio",
+            "sha256": "a96c22d1f865559fb9fa7efb7890a4d13bc77968b0d917cd3d7bf7cf86f1da77"
+          },
+          "greeting": "READY 1 state=2 ro=1 landlock=6 policy=1 setup=open",
+          "ready_seconds": 2.2298720000544563,
+          "exit_code": -9,
+          "forced_cleanup": false,
+          "log_overflow": false,
+          "ssh_console_captured": false,
+          "guest_console_stream": "stderr",
+          "stall_point": "recipe-installed",
+          "helper_signal": "SIGKILL"
+        },
+        {
+          "boot": 3,
+          "guest": "runtime",
+          "guest_initramfs": {
+            "path": "/Users/dragos/Development/devcroft-codex/experiments/microvm/artifacts/stage-c-runtime/initramfs.cpio",
+            "sha256": "2478b59c5fe10c193e76c4dfc70c286cf8910223bbef7856ffff75d2cdb32965"
+          },
+          "greeting": "READY 1 state=3 ro=1 landlock=6 policy=1 setup=closed",
+          "ready_seconds": 2.3273601250257343,
+          "reached_ready": true,
+          "classification": "partial",
+          "observed": [
+            "present /usr/include/zlib.h",
+            "absent /private-base/rootfs/.recipe-applied",
+            "zlib-dev-db 1"
+          ],
+          "exit_code": 0,
+          "forced_cleanup": false,
+          "log_overflow": false,
+          "ssh_console_captured": true,
+          "guest_console_stream": "stderr",
+          "discarded_on_boot": []
+        }
+      ],
+      "runtime_before": "baseline",
+      "runtime_after": "partial"
+    }
+  ],
+  "atomic": false,
+  "cleanup": {
+    "helpers_reaped": true,
+    "endpoints_removed": true
+  }
+}

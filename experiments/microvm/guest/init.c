@@ -82,14 +82,46 @@ static void write_marker(const char *path, const char *value) {
     close(fd);
 }
 
+#ifdef ENABLE_SETUP_FAULT_PROBE
+/* Disposable interruption fixture only. Each named point stalls PID 1 exactly
+ * once per private disk, so the host can kill the helper there and the next
+ * boot proceeds to the following point. Absent from ordinary guest binaries. */
+static void fault_point(const char *name) {
+    char path[96];
+    snprintf(path, sizeof(path), "/private-base/.test-fault-%s", name);
+    if (!access(path, F_OK)) return;
+    write_marker(path, name);
+    sync();
+    dprintf(2, "guest: test-only setup stall point=%s\n", name);
+    for (;;) pause();
+}
+#else
+#define fault_point(name) ((void)0)
+#endif
+
+/* Staging trees are never published state. A pending baseline was never
+ * renamed into place; rootfs.next is either an unexchanged partial recipe or
+ * the superseded tree after the exchange. Removing either is always safe. */
+static void discard_staging(const char *path) {
+    struct stat st;
+    if (lstat(path, &st)) { if (errno == ENOENT) return; fail("inspect staging tree"); }
+    char *argv[] = {"/bin/busybox", "rm", "-rf", (char *)path, NULL};
+    if (!run_fixed(argv, 120)) fail("discard staging tree");
+    sync();
+    dprintf(2, "guest: discarded interrupted %s\n", path);
+}
+
 static void prepare_private_base(void) {
     if (mkdir("/private-base/workspace", 0700) && errno != EEXIST) fail("private workspace");
+    discard_staging("/private-base/rootfs.pending");
+    discard_staging("/private-base/rootfs.next");
     if (access("/private-base/rootfs/.baseline-ready", F_OK)) {
         if (mkdir("/private-base/rootfs.pending", 0700)) fail("pending base exists");
         char *argv[] = {"/bin/busybox", "cp", "-a", "/toolchain/usr", "/toolchain/lib",
             "/toolchain/etc", "/toolchain/bin", "/toolchain/sbin", "/toolchain/var",
             "/private-base/rootfs.pending/", NULL};
         if (!run_fixed(argv, 120)) fail("copy private baseline");
+        fault_point("baseline-copy");
         write_marker("/private-base/rootfs.pending/.baseline-ready", "baseline-v1\n");
         if (rename("/private-base/rootfs.pending", "/private-base/rootfs")) fail("publish baseline");
         sync();
@@ -108,14 +140,30 @@ static int recipe_applied(void) {
 }
 
 #ifdef ENABLE_SETUP_WINDOW
+/* Apply the recipe to a copy and publish it with one atomic exchange, so an
+ * interruption at any point leaves exactly the baseline or exactly the applied
+ * base, never a package manager's partial write. The published tree's own apk
+ * runs against the copy; it is never modified in place. */
 static int install_recipe(void) {
     char *check[] = {"/bin/busybox", "sha256sum", "-c", "/toolchain/adaptable/SHA256SUMS", NULL};
-    char *install[] = {"/private-base/rootfs/sbin/apk", "--root", "/private-base/rootfs",
+    char *stage[] = {"/bin/busybox", "cp", "-a", "/private-base/rootfs", "/private-base/rootfs.next", NULL};
+    char *install[] = {"/private-base/rootfs/sbin/apk", "--root", "/private-base/rootfs.next",
         "--no-network", "--no-scripts", "--force-non-repository", "--keys-dir",
         "/toolchain/etc/apk/keys", "add", SETUP_PACKAGES, NULL};
-    if (!run_fixed(check, 30) || !run_fixed(install, 30)) return 0;
-    write_marker("/private-base/rootfs/.recipe-applied", SETUP_RECIPE_HASH);
+    discard_staging("/private-base/rootfs.next");
+    if (!run_fixed(check, 30)) return 0;
+    if (!run_fixed(stage, 120)) { discard_staging("/private-base/rootfs.next"); return 0; }
+    fault_point("recipe-staged");
+    if (!run_fixed(install, 30)) { discard_staging("/private-base/rootfs.next"); return 0; }
+    fault_point("recipe-installed");
+    write_marker("/private-base/rootfs.next/.recipe-applied", SETUP_RECIPE_HASH);
     sync();
+    fault_point("recipe-marked");
+    if (syscall(SYS_renameat2, AT_FDCWD, "/private-base/rootfs.next",
+                AT_FDCWD, "/private-base/rootfs", RENAME_EXCHANGE)) fail("publish recipe");
+    sync();
+    fault_point("recipe-exchanged");
+    discard_staging("/private-base/rootfs.next");
     return 1;
 }
 #endif
