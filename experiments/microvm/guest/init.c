@@ -54,6 +54,17 @@ static int send_all(int fd, const char *data) {
     return 0;
 }
 
+static int shutdown_token(const char *request, unsigned int state, char token[65]) {
+    const char *generation = request + 9; /* after "SHUTDOWN " */
+    size_t digits = strspn(generation, "0123456789");
+    if (!digits || digits > 7 || generation[digits] != ' ') return 0;
+    const char *nonce = generation + digits + 1;
+    if (strlen(nonce) != 64 || strspn(nonce, "0123456789abcdef") != 64 ||
+        strtoul(generation, NULL, 10) != state) return 0;
+    memcpy(token, nonce, 65);
+    return 1;
+}
+
 #ifdef ENABLE_ADAPTABLE
 /* Fixed argv only. Wire commands cannot choose paths, packages or a shell. */
 static int run_fixed(char *const argv[], unsigned int seconds) {
@@ -297,6 +308,9 @@ static void start_keeper(void) {
 
 int main(void) {
     signal(SIGPIPE, SIG_IGN);
+#ifdef ENABLE_PID1_EXIT_PROBE
+    int stop_exit_probe_armed = 0;
+#endif
     mount_required("proc", "/proc");
     mount_required("sysfs", "/sys");
     if (mount("devtmpfs", "/dev", "devtmpfs", MS_NOSUID, NULL) < 0) fail("devtmpfs");
@@ -399,6 +413,9 @@ int main(void) {
             if (!strncmp(line, "PING ", 5)) {
                 send_all(fd, "PONG "); send_all(fd, line + 5); send_all(fd, "\n");
 #ifdef ENABLE_PID1_EXIT_PROBE
+            } else if (!strcmp(line, "TEST PID1 ARM STOP")) {
+                stop_exit_probe_armed = 1;
+                send_all(fd, "ARMED stop-exit\n");
             } else if (!strcmp(line, "TEST PID1 EXIT 86")) {
                 /* Disposable fault fixture only. No sync or orderly shutdown:
                  * exiting global PID 1 must cause the kernel's init-death panic.
@@ -406,10 +423,32 @@ int main(void) {
                 dprintf(2, "guest: test-only PID1 exit=86\n");
                 _exit(86);
 #endif
-            } else if (!strcmp(line, "SHUTDOWN")) {
-                send_all(fd, "BYE\n");
-                close(fd);
+            } else if (!strcmp(line, "SHUTDOWN") || !strncmp(line, "SHUTDOWN ", 9)) {
+                int legacy = !strcmp(line, "SHUTDOWN");
+                char token[65];
+                if (!legacy && !shutdown_token(line, state, token)) {
+                    send_all(fd, "ERR shutdown\n");
+                    used = 0;
+                    continue;
+                }
+#ifdef ENABLE_PID1_EXIT_PROBE
+                if (stop_exit_probe_armed) {
+                    dprintf(2, "guest: test-only PID1 exit=86 during shutdown\n");
+                    _exit(86);
+                }
+#endif
+                /* Acknowledgement certifies only that this fixture completed
+                 * sync(), never companion service stop/unmount or host power-loss
+                 * durability. Send it after sync so a controller can correlate it. */
                 sync();
+                dprintf(2, "guest: shutdown synced state=%u\n", state);
+                if (legacy) send_all(fd, "BYE\n");
+                else {
+                    char reply[96];
+                    snprintf(reply, sizeof(reply), "SYNCED %u %s\n", state, token);
+                    send_all(fd, reply);
+                }
+                close(fd);
                 reboot(RB_POWER_OFF);
                 fail("poweroff returned");
             } else {

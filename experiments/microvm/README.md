@@ -4,7 +4,7 @@ This is the experimental implementation of `evaluate-microvm-runtimes`.
 `libkrun/` and `hvi/` have their own Cargo workspaces and lockfiles. The main devcroft build and
 published crate do not depend on it. No production VM dispatch exists yet.
 
-The [native assessment](results/macos-arm64-evaluation-assessment-v5.json) records
+The [native assessment](results/macos-arm64-evaluation-assessment-v6.json) records
 the full 180-case macOS ARM64 comparison, clean reconstruction, final SSH fault
 recovery and real CLI/TLS regressions against the five backend criteria. Both
 adapters work on this host. Production adoption remains no-go under the current
@@ -921,3 +921,46 @@ qualify the complete 8-GiB storage gate or transfer the older materializer's
 result to this fixture. The updated assessment is
 `results/macos-arm64-evaluation-assessment-v5.json`; production adoption remains
 unapproved.
+
+### Cooperative stop receipts and zero-status panics (2026-11-13)
+
+The experimental guest now supports `SHUTDOWN <boot-generation> <nonce>` and
+replies `SYNCED <boot-generation> <nonce>` only after `sync()`. The nonce is 64
+lowercase hex characters and serves freshness/correlation, not authentication.
+Wrong generations and malformed tokens are refused without stopping the guest.
+The legacy `SHUTDOWN`/`BYE` exchange remains supported, with its reply also moved
+after sync. Fresh receipts advertise `shutdown_receipt_schema=1`.
+
+`stop_receipt.py` keeps the expected helper PID and native kernel creation
+identity, guest boot generation, stop intent and nonce. A reply must match the
+prepared intent and helper identity exactly. Exit zero alone is a crash; only a
+matching sync reply plus the owned child's clean exit yields the prototype's
+`orderly` result. Explicit host termination remains `forced-stop`. Native
+creation identity comes from the existing `artifacts/measure-macos` observer;
+the report retains its executable hash, source snapshot and query output.
+
+Run `python3 experiments/microvm/stop_probe.py --adapter <libkrun|hvi>
+--guest <fresh-pid1-exit-receipt> --control-guest <fresh-ordinary-receipt>
+--out <new-run>`. Build the separate Nix guests as in the PID 1 follow-up.
+Only the exit fixture accepts `TEST PID1 ARM STOP`, which injects a real
+init-death panic after a valid shutdown request reaches PID 1 but before sync
+and acknowledgement. The ordinary live sibling refuses both exit-test commands.
+
+Both adapters pass six final cases, across twelve new boots: panic with no
+intent, panic during an accepted stop before acknowledgement, correlated clean
+stop, stale real acknowledgement/wrong-generation/malformed/PONG refusals, host
+forced stop, and correlated clean stop after another boot. The libkrun panics
+still return zero and are classified as crashes; hvi returns one. Existing
+build outputs and 32 acknowledged Redis keys recover, while sibling helper and
+Redis identities survive. All 74 Python tests pass, including synthetic PID
+reuse, stale receipts and response bounds. Evidence:
+`results/{libkrun,hvi}-macos-arm64-stop-receipts.json` and
+`results/macos-arm64-stop-receipt-validation.json`.
+
+This is a cooperative fixture sync contract. It does not attest a guest's
+truthfulness or qualify a failure after a valid acknowledgement, companion
+service stop/unmount, offline filesystem checks, persistent supervisor recovery
+or host power loss. Native fixtures retain their private diagnostic disks and
+controller directories; helper/endpoint cleanup is verified. The raw backend
+ambiguity and production integration gate remain explicit in
+`results/macos-arm64-evaluation-assessment-v6.json`.

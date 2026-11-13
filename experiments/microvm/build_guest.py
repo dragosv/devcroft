@@ -103,6 +103,7 @@ def build(out_dir, arch, zig, keeper=None, busybox=None, workload=False, nix=Fal
     result = {"schema": 1, "arch": arch, "fixture": "stage-a-raw-disks",
               "zig_version": subprocess.check_output([zig, "version"], text=True).strip(),
               "source_sha256": hashlib.sha256((ROOT / "guest/init.c").read_bytes()).hexdigest()}
+    result['shutdown_receipt_schema'] = 1
     if pid1_exit_probe:
         result['pid1_exit_probe'] = True
     if keeper:
