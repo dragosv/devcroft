@@ -1,0 +1,141 @@
+{
+  "schema": 1,
+  "status": "passed",
+  "platform": "macos-arm64-native",
+  "qualification": "scoped experimental cooperative sync receipts and stop classification; not production adoption or companion lifecycle qualification",
+  "raw_evidence": "experiments/microvm/runs/20261113-stop-receipt-validation",
+  "native_cases": 12,
+  "native_boots": 12,
+  "protocol": {
+    "receipt_schema": 1,
+    "request": "SHUTDOWN <guest-boot-generation> <64-lowercase-hex-nonce>",
+    "reply": "SYNCED <guest-boot-generation> <nonce>",
+    "ack_bound_bytes": 160,
+    "identity": "owned helper PID plus kernel ri_proc_start_abstime from the existing native observer",
+    "legacy": "SHUTDOWN/BYE remains supported, with BYE now after sync"
+  },
+  "python_tests": {
+    "status": "passed",
+    "count": 74,
+    "evidence": {
+      "path": "experiments/microvm/runs/20261113-stop-receipt-validation/python-tests-final.log",
+      "sha256": "5884716c77c06ca90ae5fd8aef32865fc8aa475a1936b15380db4a9d67994b70"
+    }
+  },
+  "fixture_controls": {
+    "path": "experiments/microvm/runs/20261113-stop-receipt-validation/fixture-controls-final.json",
+    "sha256": "3fc0608e36ce1bc72908cd76945fbe29997a44d4b04f71389481f1c785a4ef12"
+  },
+  "adapters": [
+    {
+      "adapter": "libkrun",
+      "status": "passed",
+      "cases": 6,
+      "boots": 6,
+      "classifications": {
+        "crash": 2,
+        "orderly": 2,
+        "forced-stop": 1
+      },
+      "live_negative_control_case": 1,
+      "raw_panic_helper_exit_codes": [
+        0,
+        0
+      ],
+      "valid_shutdown_reached_pre_ack_panic": true,
+      "actual_old_ack_rejected_on_new_boot": true,
+      "native_identity_observations": 19,
+      "legacy_shutdown_after_sync_control": "passed on ordinary sibling",
+      "evidence": {
+        "path": "experiments/microvm/results/libkrun-macos-arm64-stop-receipts.json",
+        "sha256": "709ebaa230dc734dbdb85f01f66e82387a45c03afb56adaaae64c8e9ef40b2e9"
+      },
+      "retained_test_resources": [
+        {
+          "private_dir": "/private/tmp/ds-9ecpp0lw",
+          "matching_controller_dirs": [
+            "/private/tmp/dc-c-u1yzvttr"
+          ],
+          "method": "matched instance_dir in retained controller launch records; no secrets read"
+        },
+        {
+          "private_dir": "/private/tmp/ds-to93g9er",
+          "matching_controller_dirs": [
+            "/private/tmp/dc-c-zqbpq_k3"
+          ],
+          "method": "matched instance_dir in retained controller launch records; no secrets read"
+        }
+      ]
+    },
+    {
+      "adapter": "hvi",
+      "status": "passed",
+      "cases": 6,
+      "boots": 6,
+      "classifications": {
+        "crash": 2,
+        "orderly": 2,
+        "forced-stop": 1
+      },
+      "live_negative_control_case": 1,
+      "raw_panic_helper_exit_codes": [
+        1,
+        1
+      ],
+      "valid_shutdown_reached_pre_ack_panic": true,
+      "actual_old_ack_rejected_on_new_boot": true,
+      "native_identity_observations": 19,
+      "legacy_shutdown_after_sync_control": "passed on ordinary sibling",
+      "evidence": {
+        "path": "experiments/microvm/results/hvi-macos-arm64-stop-receipts.json",
+        "sha256": "3bace4ec72ae1af50ecb038b9936bf83de139c00b5218194e05d607e7fa3c7f4"
+      },
+      "retained_test_resources": [
+        {
+          "private_dir": "/private/tmp/ds-r8k1ob9c",
+          "matching_controller_dirs": [
+            "/private/tmp/dc-c-bnasxvk_"
+          ],
+          "method": "matched instance_dir in retained controller launch records; no secrets read"
+        },
+        {
+          "private_dir": "/private/tmp/ds-ov4rqjvn",
+          "matching_controller_dirs": [
+            "/private/tmp/dc-c-2h9l5xx7"
+          ],
+          "method": "matched instance_dir in retained controller launch records; no secrets read"
+        }
+      ]
+    }
+  ],
+  "source_sha256": {
+    "stop_probe.py": "658064e27e4275c64d60258fa6b027a5baf89086235296d6f0cd4fa4f8c26590",
+    "stop_receipt.py": "23fbe3bfecd083ce2e44984a35349daedb6667d1338521528fd8c06cbf7f1950",
+    "fault_probe.py": "88a5847cad51297f59829109ce8677d345b6e8bd89bd662c91a861d64a8d6e56",
+    "smoke.py": "76a30ba6de208b8716fd34fb5ca25db3946c9449721cc7f6f89bd5e84b42cbcc",
+    "ssh_smoke.py": "946fda1d65d6753449e313c2295c12fbe7c09ef018b8ae8bd2c5f3fc3636ff3e",
+    "ssh_transport.py": "6a1721908b7166ad46c4993d926ccd981fc56d8a9cb5b5cd2eb9e3a6d40d4d46",
+    "workload_smoke.py": "83eb42ac9732b472fe195fa3bce8e848607e449df00dea53d7c17d21a21f304d",
+    "cold_prepare.py": "dd9e67241d98a8013136c85bd40c85b09276faf46f997786853fb9908b671550",
+    "guest/init.c": "44dda9cb471346f5c10ea2091ebe344b48b6915cacbc1385eb6adb381ee9e707",
+    "measure_macos.c": "88dbe980ac1b1bf904019e027da48ef400ae11af9735190e96871a3860ccfd2d",
+    "build_guest.py": "dc1c81d350aa533192178cad6dfc6e9a7d846ae87d2050d90b187a39736411ed",
+    "test_stop_receipt.py": "d4315a6c6ddea9c8f6c15ad21b45cbdff8dbbcc8677c151bda645f65d0e5fa25"
+  },
+  "retained_calibration": {
+    "evidence": {
+      "path": "experiments/microvm/runs/20261113-libkrun-stop-receipts/report.json",
+      "sha256": "ae71e01a8f4cc3ea283b59728af3673af2628d499cf62e0b2dabb698dd329faf"
+    },
+    "scope": "earlier passing libkrun calibration injected panic after recording intent but before sending the stop packet; final proofs strengthen this by accepting a valid stop request before the injected panic"
+  },
+  "remaining_limits": [
+    "The orderly label means a cooperative fixture sync acknowledgement plus owned-child clean exit. It does not establish companion service shutdown/unmount, offline filesystem checks or completed production stop.",
+    "A compromised guest can lie about sync; this is not attestation. Failures after a valid acknowledgement and arbitrary timing windows are not qualified by the tested pre-ack panic cases.",
+    "The raw libkrun backend still returns zero for both observed panic and poweroff. Only the experimental controller predicate is qualified here; production controller/supervisor integration and journal recovery remain open.",
+    "Intent evidence files are fsynced before sending the stop request; host power-loss durability, atomic directory publication and controller restart/replay recovery are not tested.",
+    "PID reuse is tested with synthetic native-identity records; real PID reuse is not forced on the host. Old real wire acknowledgements and guest boot-generation refusal are tested natively.",
+    "Test private disks/controller directories are retained for diagnostics; active helper and endpoint cleanup is verified. No production resource-retention policy is claimed.",
+    "One six-case sample per adapter on native macOS ARM64; other host/architecture rows, host suspend and new-binary density/preparation/agent-start qualification remain outside this proof."
+  ]
+}
