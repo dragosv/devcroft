@@ -1,0 +1,213 @@
+{
+  "schema": 1,
+  "status": "passed",
+  "platform": "macos-arm64-native",
+  "qualification": "scoped storage observations during atomic private setup/recovery; observed maxima only, not production approval or a full E5 storage pass",
+  "raw_evidence": "experiments/microvm/runs/20261113-setup-storage-validation",
+  "native_boots": 26,
+  "interruption_points": 10,
+  "python_tests": {
+    "status": "passed",
+    "count": 64,
+    "evidence": {
+      "path": "experiments/microvm/runs/20261113-setup-storage-validation/python-tests-final.log",
+      "sha256": "0844cd98bbf4cfc35888d8e6ea1f61f7bd0c8a5c1e0151750686765f2169b3bc"
+    }
+  },
+  "fixture_controls": {
+    "path": "experiments/microvm/runs/20261113-setup-storage-validation/fixture-controls.json",
+    "sha256": "b5ba83268a79e6640ce744be388ee181c657ddaf2e2e3cca751804b516eb2b4c"
+  },
+  "source_sha256": {
+    "guest/init.c": "a4c345753c77682455b3ebdac70d347b3d45885ef5c8221c93068cb6132d9aa8",
+    "build_guest.py": "45cca9308b6a30e7e8f69da4eeec99c04b338c7484c6f076c794dfa2e2420abb",
+    "setup_interrupt_probe.py": "45503f57a8f9d36805ca38b8ffdfe84dc06d1ae3be12b4458f8ebaad061ab06b",
+    "setup_storage.py": "9e8a486b198da2eb72327e62868c93cf4e3cbd241573fa3673c2e93ab411ea54",
+    "test_setup_storage.py": "63474f851fbba13f60157e18e43598eeca9ba1abdeed28f91e3af2206eecb91a"
+  },
+  "adapters": [
+    {
+      "adapter": "libkrun",
+      "native_boots": 13,
+      "synchronized_interruption_points": 5,
+      "guest_first_stall_used_bytes": 190377984,
+      "guest_checkpoint_maximum_used_bytes": 381132800,
+      "guest_final_recovered_used_bytes": 190812160,
+      "guest_used_freed_after_staged_copy_bytes": 190357504,
+      "guest_free_did_not_reduce_host_allocation_at_staged_recovery": true,
+      "points": [
+        {
+          "point": "baseline-copy",
+          "guest_used_at_stall_bytes": 190377984,
+          "guest_used_after_recovery_bytes": 190390272,
+          "guest_used_change_on_recovery_bytes": 12288,
+          "host_allocated_at_stall_bytes": 224120832,
+          "host_allocated_after_recovery_bytes": 227725312,
+          "host_allocation_change_on_recovery_bytes": 3604480
+        },
+        {
+          "point": "recipe-staged",
+          "guest_used_at_stall_bytes": 380751872,
+          "guest_used_after_recovery_bytes": 190394368,
+          "guest_used_change_on_recovery_bytes": -190357504,
+          "host_allocated_at_stall_bytes": 417239040,
+          "host_allocated_after_recovery_bytes": 417697792,
+          "host_allocation_change_on_recovery_bytes": 458752
+        },
+        {
+          "point": "recipe-installed",
+          "guest_used_at_stall_bytes": 381120512,
+          "guest_used_after_recovery_bytes": 190398464,
+          "guest_used_change_on_recovery_bytes": -190722048,
+          "host_allocated_at_stall_bytes": 423366656,
+          "host_allocated_after_recovery_bytes": 423825408,
+          "host_allocation_change_on_recovery_bytes": 458752
+        },
+        {
+          "point": "recipe-marked",
+          "guest_used_at_stall_bytes": 381128704,
+          "guest_used_after_recovery_bytes": 190402560,
+          "guest_used_change_on_recovery_bytes": -190726144,
+          "host_allocated_at_stall_bytes": 431067136,
+          "host_allocated_after_recovery_bytes": 431525888,
+          "host_allocation_change_on_recovery_bytes": 458752
+        },
+        {
+          "point": "recipe-exchanged",
+          "guest_used_at_stall_bytes": 381132800,
+          "guest_used_after_recovery_bytes": 190783488,
+          "guest_used_change_on_recovery_bytes": -190349312,
+          "host_allocated_at_stall_bytes": 432640000,
+          "host_allocated_after_recovery_bytes": 433082368,
+          "host_allocation_change_on_recovery_bytes": 442368
+        }
+      ],
+      "host_cases": [
+        {
+          "case": "sequential-interruptions",
+          "sample_count": 3609,
+          "requested_interval_seconds": 0.02,
+          "maximum_completed_sample_gap_seconds": 0.04097637499216944,
+          "initial_private_allocated_bytes": 34639872,
+          "observed_peak_private_allocated_bytes": 433295360,
+          "retained_private_allocated_bytes_before_removal": 433295360,
+          "workspace_image_logical_capacity_bytes": 805306368,
+          "workspace_image_allocation_at_total_peak_bytes": 416481280
+        },
+        {
+          "case": "uninterrupted-reference",
+          "sample_count": 458,
+          "requested_interval_seconds": 0.02,
+          "maximum_completed_sample_gap_seconds": 0.029237958951853216,
+          "initial_private_allocated_bytes": 34639872,
+          "observed_peak_private_allocated_bytes": 416403456,
+          "retained_private_allocated_bytes_before_removal": 416403456,
+          "workspace_image_logical_capacity_bytes": 805306368,
+          "workspace_image_allocation_at_total_peak_bytes": 399589376
+        }
+      ],
+      "evidence": {
+        "path": "experiments/microvm/results/libkrun-macos-arm64-setup-storage.json",
+        "sha256": "41f40ad21346cbb11a4e9c21474db1ae511f0d522db8c3130a73720463777510"
+      }
+    },
+    {
+      "adapter": "hvi",
+      "native_boots": 13,
+      "synchronized_interruption_points": 5,
+      "guest_first_stall_used_bytes": 190377984,
+      "guest_checkpoint_maximum_used_bytes": 381132800,
+      "guest_final_recovered_used_bytes": 190812160,
+      "guest_used_freed_after_staged_copy_bytes": 190357504,
+      "guest_free_did_not_reduce_host_allocation_at_staged_recovery": true,
+      "points": [
+        {
+          "point": "baseline-copy",
+          "guest_used_at_stall_bytes": 190377984,
+          "guest_used_after_recovery_bytes": 190390272,
+          "guest_used_change_on_recovery_bytes": 12288,
+          "host_allocated_at_stall_bytes": 224088064,
+          "host_allocated_after_recovery_bytes": 227758080,
+          "host_allocation_change_on_recovery_bytes": 3670016
+        },
+        {
+          "point": "recipe-staged",
+          "guest_used_at_stall_bytes": 380751872,
+          "guest_used_after_recovery_bytes": 190394368,
+          "guest_used_change_on_recovery_bytes": -190357504,
+          "host_allocated_at_stall_bytes": 417271808,
+          "host_allocated_after_recovery_bytes": 417730560,
+          "host_allocation_change_on_recovery_bytes": 458752
+        },
+        {
+          "point": "recipe-installed",
+          "guest_used_at_stall_bytes": 381120512,
+          "guest_used_after_recovery_bytes": 190398464,
+          "guest_used_change_on_recovery_bytes": -190722048,
+          "host_allocated_at_stall_bytes": 427528192,
+          "host_allocated_after_recovery_bytes": 427970560,
+          "host_allocation_change_on_recovery_bytes": 442368
+        },
+        {
+          "point": "recipe-marked",
+          "guest_used_at_stall_bytes": 381128704,
+          "guest_used_after_recovery_bytes": 190402560,
+          "guest_used_change_on_recovery_bytes": -190726144,
+          "host_allocated_at_stall_bytes": 429510656,
+          "host_allocated_after_recovery_bytes": 429969408,
+          "host_allocation_change_on_recovery_bytes": 458752
+        },
+        {
+          "point": "recipe-exchanged",
+          "guest_used_at_stall_bytes": 381132800,
+          "guest_used_after_recovery_bytes": 190783488,
+          "guest_used_change_on_recovery_bytes": -190349312,
+          "host_allocated_at_stall_bytes": 433033216,
+          "host_allocated_after_recovery_bytes": 433475584,
+          "host_allocation_change_on_recovery_bytes": 442368
+        }
+      ],
+      "host_cases": [
+        {
+          "case": "sequential-interruptions",
+          "sample_count": 3770,
+          "requested_interval_seconds": 0.02,
+          "maximum_completed_sample_gap_seconds": 0.036798249930143356,
+          "initial_private_allocated_bytes": 34635776,
+          "observed_peak_private_allocated_bytes": 433672192,
+          "retained_private_allocated_bytes_before_removal": 433672192,
+          "workspace_image_logical_capacity_bytes": 805306368,
+          "workspace_image_allocation_at_total_peak_bytes": 416858112
+        },
+        {
+          "case": "uninterrupted-reference",
+          "sample_count": 466,
+          "requested_interval_seconds": 0.02,
+          "maximum_completed_sample_gap_seconds": 0.03395450010430068,
+          "initial_private_allocated_bytes": 34635776,
+          "observed_peak_private_allocated_bytes": 416337920,
+          "retained_private_allocated_bytes_before_removal": 416337920,
+          "workspace_image_logical_capacity_bytes": 805306368,
+          "workspace_image_allocation_at_total_peak_bytes": 399523840
+        }
+      ],
+      "evidence": {
+        "path": "experiments/microvm/results/hvi-macos-arm64-setup-storage.json",
+        "sha256": "d085212b99367eae160371eb4cb74e39ddb81d85e7ff5d37f5ceb300e8273717"
+      }
+    }
+  ],
+  "finding": "The fixed copy roughly doubles guest used space at the staged checkpoints. Recovery frees guest filesystem blocks, while the private host file allocation did not fall at the matched staged-copy recovery checkpoint on either adapter. Guest free space cannot stand in for host physical allocation.",
+  "complete_environment_storage_gate": {
+    "status": "not-run",
+    "limit_gib": 8,
+    "reason": "this measurement isolates private files and guest filesystem counters; complete preparation/common/companion accounting is excluded"
+  },
+  "remaining_limits": [
+    "The host maximum is sampled, with a requested 20-ms interval and actual maximum gaps reported. Sub-interval or unsampled future peaks are not bounded.",
+    "Guest statvfs/stat counters cover the entire private filesystem, including test state and workspace; checkpoint differences are not an isolated staging-tree inventory.",
+    "Host allocation is stat st_blocks*512 for regular private image/state/controller files, deduplicated by inode. It is not unique APFS extent or snapshot accounting.",
+    "Common helpers/kernel/guest/toolchain files, downloaded inputs, private preparation builder, compiler/evidence storage and the proposed companion VM are excluded. No full 8-GiB environment storage pass is inferred.",
+    "One synchronized five-point run plus a fresh one-pass reference per adapter; not host power loss, arbitrary mid-write timing, agent/density measurements or a reliability estimate."
+  ]
+}

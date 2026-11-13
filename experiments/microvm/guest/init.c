@@ -21,6 +21,7 @@
 #include <sys/reboot.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
+#include <sys/statvfs.h>
 #include <sys/syscall.h>
 #include <sys/wait.h>
 #include <unistd.h>
@@ -92,6 +93,11 @@ static void fault_point(const char *name) {
     if (!access(path, F_OK)) return;
     write_marker(path, name);
     sync();
+    struct statvfs space;
+    if (statvfs("/private-base", &space)) fail("setup storage sample");
+    dprintf(2, "guest: test-only setup storage point=%s block_size=%llu blocks=%llu free=%llu available=%llu\n",
+            name, (unsigned long long)space.f_frsize, (unsigned long long)space.f_blocks,
+            (unsigned long long)space.f_bfree, (unsigned long long)space.f_bavail);
     dprintf(2, "guest: test-only setup stall point=%s\n", name);
     for (;;) pause();
 }

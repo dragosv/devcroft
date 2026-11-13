@@ -120,6 +120,7 @@ def build(out_dir, arch, zig, keeper=None, busybox=None, workload=False, nix=Fal
                       setup_window=setup, setup_recipe_sha256=recipe_hash)
         if setup_fault_probe:
             result['setup_fault_probe'] = True
+            result['setup_storage_schema'] = 1
     for key, file in [("initramfs", path), ("runtime", runtime)]:
         result[key] = {"path": str(file.resolve()), "sha256": hashlib.sha256(file.read_bytes()).hexdigest()}
     (out_dir / "guest.json").write_text(json.dumps(result, indent=2) + "\n")
