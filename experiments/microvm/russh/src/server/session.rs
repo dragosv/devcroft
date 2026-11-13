@@ -686,6 +686,7 @@ impl Session {
         let reading = start_reading(stream_read, buffer, opening_cipher);
         pin!(reading);
         let mut is_reading = None;
+        let mut wire = PendingWire::default();
 
         let receive_credits = self.sender.receive_credits.clone();
         #[allow(clippy::panic)] // false positive in macro
@@ -705,9 +706,14 @@ impl Session {
             // Leave application messages in the bounded receiver once a peer's
             // channel window is exhausted. Network reads remain active so a
             // window adjustment can release the queued data.
-            if !self.kex.active() && !self.common.has_any_pending_data() {
+            if !self.kex.active()
+                && !self.common.has_any_pending_data()
+                && wire.can_accept_application(self.common.pending_packet_bytes())
+            {
                 let mut drained = 0;
-                while drained < MAX_MESSAGES_PER_BATCH {
+                while drained < MAX_MESSAGES_PER_BATCH
+                    && wire.can_accept_application(self.common.pending_packet_bytes())
+                {
                     // Only Empty/Disconnected end the drain; both mean "nothing
                     // more to hand off right now", so treat them the same.
                     let Ok(msg) = self.receiver.try_recv() else {
@@ -721,12 +727,7 @@ impl Session {
                 }
                 if drained > 0 {
                     self.flush()?;
-                    map_err!(
-                        self.common
-                            .packet_writer
-                            .flush_into(&mut stream_write)
-                            .await
-                    )?;
+                    map_err!(wire.enqueue(self.common.packet_writer.take_pending()))?;
                 }
                 // A drained Disconnect sets this; don't block in `select!` after.
                 if self.common.disconnected {
@@ -734,7 +735,9 @@ impl Session {
                 }
             }
 
+            let writable = !wire.is_empty();
             tokio::select! {
+                result = wire.write_one(&mut stream_write), if writable => { map_err!(result)?; }
                 () = receive_credits.notify.notified(), if !self.kex.active() => {
                     let credits = std::mem::take(&mut *receive_credits.pending.lock().map_err(|_| Error::Inconsistent)?);
                     for (channel, amount) in credits {
@@ -789,7 +792,7 @@ impl Session {
                     debug!("timeout");
                     return Err(crate::Error::InactivityTimeout.into());
                 }
-                msg = self.receiver.recv(), if !self.kex.active() && !self.common.has_any_pending_data() => {
+                msg = self.receiver.recv(), if !self.kex.active() && !self.common.has_any_pending_data() && wire.can_accept_application(self.common.pending_packet_bytes()) => {
                     match msg {
                         Some(msg) => self.dispatch_msg(msg)?,
                         None => {
@@ -800,12 +803,7 @@ impl Session {
             }
             self.flush()?;
 
-            map_err!(
-                self.common
-                    .packet_writer
-                    .flush_into(&mut stream_write)
-                    .await
-            )?;
+            map_err!(wire.enqueue(self.common.packet_writer.take_pending()))?;
 
             if self.common.received_data {
                 // Reset the number of failed keepalive attempts. We don't
@@ -831,6 +829,9 @@ impl Session {
                     sleep.as_mut().reset(tokio::time::Instant::now() + d);
                 }
             }
+        }
+        if self.common.disconnected {
+            map_err!(wire.finish(&mut stream_write).await)?;
         }
         debug!("disconnected");
         // Shutdown

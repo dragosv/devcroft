@@ -1,6 +1,7 @@
 /libkrun/target/
 /hvi/target/
 /guest-keeper/target/
+/russh/target/
 /artifacts/
 /runs/
 __pycache__/

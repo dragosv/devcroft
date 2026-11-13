@@ -133,6 +133,16 @@ impl WindowSizeRef {
         self.notifier.notify_one();
     }
 
+    pub(crate) async fn increase(&self, amount: u32, protocol_remaining: u32) {
+        // Writers reserve credit before their messages reach the session loop.
+        // Replacing that credit with the protocol's absolute window would grant
+        // those queued bytes twice, leaving pending data on a blocked channel
+        // and preventing unrelated application messages from being dispatched.
+        let mut available = self.value.lock().await;
+        *available = available.saturating_add(amount).min(protocol_remaining);
+        self.notifier.notify_one();
+    }
+
     pub(crate) fn subscribe(&self) -> Arc<Notify> {
         Arc::clone(&self.notifier)
     }
@@ -339,11 +349,7 @@ impl<S: From<(ChannelId, ChannelMsg)> + Send + Sync + 'static> ChannelWriteHalf<
     }
 
     /// Send owned extended data to a channel without copying it into the `AsyncWrite` path.
-    pub async fn extended_data_bytes(
-        &self,
-        ext: u32,
-        data: impl Into<Bytes>,
-    ) -> Result<(), Error> {
+    pub async fn extended_data_bytes(&self, ext: u32, data: impl Into<Bytes>) -> Result<(), Error> {
         self.send_bytes(Some(ext), data.into()).await
     }
 
@@ -630,11 +636,7 @@ impl<S: From<(ChannelId, ChannelMsg)> + Send + Sync + 'static> Channel<S> {
     }
 
     /// Send owned extended data to a channel without copying it into the `AsyncWrite` path.
-    pub async fn extended_data_bytes(
-        &self,
-        ext: u32,
-        data: impl Into<Bytes>,
-    ) -> Result<(), Error> {
+    pub async fn extended_data_bytes(&self, ext: u32, data: impl Into<Bytes>) -> Result<(), Error> {
         self.write_half.extended_data_bytes(ext, data).await
     }
 
@@ -816,6 +818,30 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn window_adjustment_preserves_credit_reserved_by_queued_messages() {
+        let window = WindowSizeRef::new(100);
+        let (writer, mut receiver) = test_write_half(window.clone(), 100);
+        writer.data_bytes(vec![0; 80]).await.unwrap();
+
+        // The peer consumed 40 bytes, but the protocol loop has not dispatched
+        // our queued 80-byte write yet. Its absolute window still reads 140.
+        window.increase(40, 140).await;
+        assert_eq!(writer.writable_packet_size().await, 60);
+        writer.data_bytes(vec![0; 60]).await.unwrap();
+        assert_eq!(writer.writable_packet_size().await, 0);
+        assert!(
+            matches!(receiver.recv().await, Some((_, ChannelMsg::Data { data })) if data.len() == 80)
+        );
+        assert!(
+            matches!(receiver.recv().await, Some((_, ChannelMsg::Data { data })) if data.len() == 60)
+        );
+
+        // Direct session writes may have consumed protocol credit as well.
+        window.increase(100, 30).await;
+        assert_eq!(writer.writable_packet_size().await, 30);
+    }
+
+    #[tokio::test]
     async fn data_bytes_rejects_zero_max_packet_size() {
         let (write_half, mut receiver) = test_write_half(WindowSizeRef::new(1024), 0);
 
@@ -831,7 +857,10 @@ mod tests {
         let (channel, _reference) =
             Channel::<(ChannelId, ChannelMsg)>::new(ChannelId(9), sender, 1024, 1024, 8);
 
-        channel.data_bytes(Bytes::from_static(b"channel")).await.unwrap();
+        channel
+            .data_bytes(Bytes::from_static(b"channel"))
+            .await
+            .unwrap();
 
         match receiver.recv().await.unwrap() {
             (ChannelId(9), ChannelMsg::Data { data }) => {

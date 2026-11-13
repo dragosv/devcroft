@@ -1,6 +1,127 @@
+--- a/src/channels/io/rx.rs
++++ b/src/channels/io/rx.rs
+@@ -1,7 +1,7 @@
+ use std::borrow::BorrowMut;
+ use std::io;
+ use std::pin::Pin;
+-use std::task::{ready, Context, Poll};
++use std::task::{Context, Poll, ready};
+ 
+ use tokio::io::AsyncRead;
+ 
+--- a/src/channels/io/tx.rs
++++ b/src/channels/io/tx.rs
+@@ -5,7 +5,7 @@
+ use std::ops::DerefMut;
+ use std::pin::Pin;
+ use std::sync::Arc;
+-use std::task::{ready, Context, Poll};
++use std::task::{Context, Poll, ready};
+ 
+ use futures::FutureExt;
+ use tokio::io::AsyncWrite;
+--- a/src/channels/mod.rs
++++ b/src/channels/mod.rs
+@@ -130,6 +130,16 @@
+ 
+     pub(crate) async fn update(&self, value: u32) {
+         *self.value.lock().await = value;
++        self.notifier.notify_one();
++    }
++
++    pub(crate) async fn increase(&self, amount: u32, protocol_remaining: u32) {
++        // Writers reserve credit before their messages reach the session loop.
++        // Replacing that credit with the protocol's absolute window would grant
++        // those queued bytes twice, leaving pending data on a blocked channel
++        // and preventing unrelated application messages from being dispatched.
++        let mut available = self.value.lock().await;
++        *available = available.saturating_add(amount).min(protocol_remaining);
+         self.notifier.notify_one();
+     }
+ 
+@@ -339,11 +349,7 @@
+     }
+ 
+     /// Send owned extended data to a channel without copying it into the `AsyncWrite` path.
+-    pub async fn extended_data_bytes(
+-        &self,
+-        ext: u32,
+-        data: impl Into<Bytes>,
+-    ) -> Result<(), Error> {
++    pub async fn extended_data_bytes(&self, ext: u32, data: impl Into<Bytes>) -> Result<(), Error> {
+         self.send_bytes(Some(ext), data.into()).await
+     }
+ 
+@@ -630,11 +636,7 @@
+     }
+ 
+     /// Send owned extended data to a channel without copying it into the `AsyncWrite` path.
+-    pub async fn extended_data_bytes(
+-        &self,
+-        ext: u32,
+-        data: impl Into<Bytes>,
+-    ) -> Result<(), Error> {
++    pub async fn extended_data_bytes(&self, ext: u32, data: impl Into<Bytes>) -> Result<(), Error> {
+         self.write_half.extended_data_bytes(ext, data).await
+     }
+ 
+@@ -816,6 +818,30 @@
+     }
+ 
+     #[tokio::test]
++    async fn window_adjustment_preserves_credit_reserved_by_queued_messages() {
++        let window = WindowSizeRef::new(100);
++        let (writer, mut receiver) = test_write_half(window.clone(), 100);
++        writer.data_bytes(vec![0; 80]).await.unwrap();
++
++        // The peer consumed 40 bytes, but the protocol loop has not dispatched
++        // our queued 80-byte write yet. Its absolute window still reads 140.
++        window.increase(40, 140).await;
++        assert_eq!(writer.writable_packet_size().await, 60);
++        writer.data_bytes(vec![0; 60]).await.unwrap();
++        assert_eq!(writer.writable_packet_size().await, 0);
++        assert!(
++            matches!(receiver.recv().await, Some((_, ChannelMsg::Data { data })) if data.len() == 80)
++        );
++        assert!(
++            matches!(receiver.recv().await, Some((_, ChannelMsg::Data { data })) if data.len() == 60)
++        );
++
++        // Direct session writes may have consumed protocol credit as well.
++        window.increase(100, 30).await;
++        assert_eq!(writer.writable_packet_size().await, 30);
++    }
++
++    #[tokio::test]
+     async fn data_bytes_rejects_zero_max_packet_size() {
+         let (write_half, mut receiver) = test_write_half(WindowSizeRef::new(1024), 0);
+ 
+@@ -831,7 +857,10 @@
+         let (channel, _reference) =
+             Channel::<(ChannelId, ChannelMsg)>::new(ChannelId(9), sender, 1024, 1024, 8);
+ 
+-        channel.data_bytes(Bytes::from_static(b"channel")).await.unwrap();
++        channel
++            .data_bytes(Bytes::from_static(b"channel"))
++            .await
++            .unwrap();
+ 
+         match receiver.recv().await.unwrap() {
+             (ChannelId(9), ChannelMsg::Data { data }) => {
 --- a/src/client/encrypted.rs
 +++ b/src/client/encrypted.rs
-@@ -455,7 +455,7 @@
+@@ -441,7 +441,9 @@
+                 }
+ 
+                 if let Some(sender) = self.channels.remove(&channel_num) {
+-                    let _ = sender.send(ChannelMsg::OpenFailure(reason_code.clone())).await;
++                    let _ = sender
++                        .send(ChannelMsg::OpenFailure(reason_code.clone()))
++                        .await;
+                 }
+ 
+                 let _ = self.sender.send(Reply::ChannelOpenFailure);
+@@ -455,7 +457,7 @@
                  let channel_num = map_err!(ChannelId::decode(&mut r))?;
                  let data = map_err!(Bytes::decode(&mut r))?;
                  map_err!(ensure_end(&r))?;
@@ -9,7 +130,7 @@
                  if let Some(ref mut enc) = self.common.encrypted {
                      if enc.adjust_window_size(channel_num, &data, target)? {
                          let next_window =
-@@ -478,7 +478,7 @@
+@@ -478,7 +480,7 @@
                  let extended_code = map_err!(u32::decode(&mut r))?;
                  let data = map_err!(Bytes::decode(&mut r))?;
                  map_err!(ensure_end(&r))?;
@@ -18,6 +139,177 @@
                  if let Some(ref mut enc) = self.common.encrypted {
                      if enc.adjust_window_size(channel_num, &data, target)? {
                          let next_window =
+@@ -613,10 +615,10 @@
+                         as u32;
+                 }
+                 if let Some(chan) = self.channels.get(&channel_num) {
+-                    chan.window_size().update(new_size).await;
++                    chan.window_size().increase(amount, new_size).await;
+                     // Use try_send to avoid blocking the session loop when channel buffer is full.
+                     // WindowAdjusted is informational - the critical side effect (updating
+-                    // WindowSizeRef and notifying ChannelTx) already happens in update().
++                    // WindowSizeRef and notifying ChannelTx) already happens in increase().
+                     let _ = chan.try_send(ChannelMsg::WindowAdjusted { new_size });
+                 }
+                 client.window_adjusted(channel_num, new_size, self).await
+@@ -721,7 +723,9 @@
+ 
+                 match &msg.typ {
+                     ChannelType::Session => {
+-                        client.server_channel_open_session(channel, reply, self).await?
++                        client
++                            .server_channel_open_session(channel, reply, self)
++                            .await?
+                     }
+                     ChannelType::DirectTcpip(d) => {
+                         client
+@@ -790,7 +794,9 @@
+                     }
+                     ChannelType::Unknown { typ } => {
+                         if client.should_accept_unknown_server_channel(id, typ).await {
+-                            client.server_channel_open_unknown(channel, reply, self).await?;
++                            client
++                                .server_channel_open_unknown(channel, reply, self)
++                                .await?;
+                         } else {
+                             debug!("unknown channel type: {typ}");
+                             if let Some(ref mut enc) = self.common.encrypted {
+--- a/src/client/mod.rs
++++ b/src/client/mod.rs
+@@ -67,7 +67,7 @@
+ use crate::msg::{is_kex_msg, validate_server_msg_strict_kex};
+ use crate::session::{CommonSession, EncryptedState, GlobalRequestResponse, NewKeys};
+ use crate::ssh_read::SshRead;
+-use crate::sshbuffer::{IncomingSshPacket, PacketWriter, SSHBuffer, SshId};
++use crate::sshbuffer::{IncomingSshPacket, PacketWriter, PendingWire, SSHBuffer, SshId};
+ use crate::{
+     ChannelId, ChannelOpenFailure, Disconnect, Error, Limits, MethodSet, Sig, auth, map_err, msg,
+     negotiation,
+@@ -1190,6 +1190,8 @@
+ 
+         let reading = start_reading(stream_read, buffer, opening_cipher);
+         pin!(reading);
++        let mut wire = PendingWire::default();
++        let mut remote_disconnect = false;
+ 
+         #[allow(clippy::panic)] // false positive in select! macro
+         while !self.common.disconnected {
+@@ -1198,9 +1200,12 @@
+             // Keep reading the network for window adjustments, but leave
+             // application output in its bounded receivers while a channel is
+             // window-blocked.
+-            let can_receive_outbound =
+-                !self.kex.active() && !self.common.has_any_pending_data();
++            let can_receive_outbound = !self.kex.active()
++                && !self.common.has_any_pending_data()
++                && wire.can_accept_application(self.common.pending_packet_bytes());
++            let writable = !wire.is_empty();
+             tokio::select! {
++                result = wire.write_one(&mut *stream_write), if writable => { map_err!(result)?; }
+                 r = &mut reading => {
+                     let (stream_read, mut buffer, mut opening_cipher) = match r {
+                         Ok((_, stream_read, buffer, opening_cipher)) => (stream_read, buffer, opening_cipher),
+@@ -1217,6 +1222,7 @@
+                     if !pkt.buffer.is_empty() {
+                         #[allow(clippy::indexing_slicing)] // length checked
+                         if pkt.buffer[0] == crate::msg::DISCONNECT {
++                            remote_disconnect = true;
+                             debug!("received disconnect");
+                             result = self.process_disconnect(&pkt).map_err(H::Error::from);
+                         } else {
+@@ -1256,7 +1262,7 @@
+                     };
+ 
+                     // eagerly take all outgoing messages so writes are batched
+-                    while !self.kex.active() && !self.common.has_any_pending_data() {
++                    while !self.kex.active() && !self.common.has_any_pending_data() && wire.can_accept_application(self.common.pending_packet_bytes()) {
+                         match self.receiver.try_recv() {
+                             Ok(next) => self.handle_msg(next)?,
+                             Err(_) => break
+@@ -1270,7 +1276,7 @@
+                     }
+ 
+                     // eagerly take all outgoing messages so writes are batched
+-                    while !self.kex.active() && !self.common.has_any_pending_data() {
++                    while !self.kex.active() && !self.common.has_any_pending_data() && wire.can_accept_application(self.common.pending_packet_bytes()) {
+                         match self.inbound_channel_receiver.try_recv() {
+                             Ok(next) => self.handle_msg(next)?,
+                             Err(_) => break
+@@ -1280,7 +1286,7 @@
+             };
+ 
+             self.flush()?;
+-            map_err!(self.common.packet_writer.flush_into(stream_write).await)?;
++            map_err!(wire.enqueue(self.common.packet_writer.take_pending()))?;
+ 
+             if let Some(ref mut enc) = self.common.encrypted {
+                 if let EncryptedState::InitCompression = enc.state {
+@@ -1318,6 +1324,9 @@
+             }
+         }
+ 
++        if self.common.disconnected && !remote_disconnect {
++            map_err!(wire.finish(stream_write).await)?;
++        }
+         result
+     }
+ 
+--- a/src/client/session.rs
++++ b/src/client/session.rs
+@@ -4,7 +4,7 @@
+ 
+ use crate::client::Session;
+ use crate::session::EncryptedState;
+-use crate::{map_err, msg, ChannelId, Disconnect, Pty, Sig};
++use crate::{ChannelId, Disconnect, Pty, Sig, map_err, msg};
+ 
+ impl Session {
+     fn channel_open_generic<F>(
+@@ -442,7 +442,11 @@
+         Ok(())
+     }
+ 
+-    pub fn data(&mut self, channel: ChannelId, data: impl Into<bytes::Bytes>) -> Result<(), crate::Error> {
++    pub fn data(
++        &mut self,
++        channel: ChannelId,
++        data: impl Into<bytes::Bytes>,
++    ) -> Result<(), crate::Error> {
+         let is_rekeying = self.kex.active();
+         let common = &mut self.common;
+         if let Some(enc) = common.encrypted.as_mut() {
+@@ -477,7 +481,13 @@
+         let is_rekeying = self.kex.active();
+         let common = &mut self.common;
+         if let Some(enc) = common.encrypted.as_mut() {
+-            enc.extended_data_with_writer(&mut common.packet_writer, channel, ext, data, is_rekeying)
++            enc.extended_data_with_writer(
++                &mut common.packet_writer,
++                channel,
++                ext,
++                data,
++                is_rekeying,
++            )
+         } else {
+             unreachable!()
+         }
+--- a/src/client/test.rs
++++ b/src/client/test.rs
+@@ -8,12 +8,12 @@
+     use tokio::net::TcpListener;
+ 
+     // Import client types directly since we're in the client module
++    use crate::Error;
+     use crate::client::{Config, Handler, connect};
+     use crate::keys::PrivateKeyWithHashAlg;
+-    use rand::rng;
+     use crate::server::{self, Auth, Handler as ServerHandler, Server, Session};
+     use crate::{ChannelId, SshId}; // Import directly from crate root
+-    use crate::Error;
++    use rand::rng;
+ 
+     #[derive(Clone)]
+     struct TestServer {
 --- a/src/server/encrypted.rs
 +++ b/src/server/encrypted.rs
 @@ -150,10 +150,9 @@
@@ -169,6 +461,19 @@
                          let window = handler.adjust_window(channel_num, self.target_window_size);
                          if window > 0 {
                              self.target_window_size = window
+@@ -1186,10 +1251,10 @@
+                         as u32;
+                 }
+                 if let Some(chan) = self.channels.get(&channel_num) {
+-                    chan.window_size().update(new_size).await;
++                    chan.window_size().increase(amount, new_size).await;
+                     // Use try_send to avoid blocking the session loop when channel buffer is full.
+                     // WindowAdjusted is informational - the critical side effect (updating
+-                    // WindowSizeRef and notifying ChannelTx) already happens in update().
++                    // WindowSizeRef and notifying ChannelTx) already happens in increase().
+                     let _ = chan.try_send(ChannelMsg::WindowAdjusted { new_size });
+                 }
+                 debug!("handler.window_adjusted {channel_num:?}");
 @@ -1281,7 +1346,8 @@
                                      return Err(Error::Inconsistent.into());
                                  }
@@ -286,18 +591,55 @@
              }
              Msg::ChannelOpenReply { pending, result } => {
                  self.finalize_channel_open_reply(pending, result)?;
-@@ -657,6 +687,7 @@
+@@ -656,7 +686,9 @@
+         let reading = start_reading(stream_read, buffer, opening_cipher);
          pin!(reading);
          let mut is_reading = None;
- 
+-
++        let mut wire = PendingWire::default();
++
 +        let receive_credits = self.sender.receive_credits.clone();
          #[allow(clippy::panic)] // false positive in macro
          while !self.common.disconnected {
              self.common.received_data = false;
-@@ -704,6 +735,12 @@
+@@ -674,9 +706,14 @@
+             // Leave application messages in the bounded receiver once a peer's
+             // channel window is exhausted. Network reads remain active so a
+             // window adjustment can release the queued data.
+-            if !self.kex.active() && !self.common.has_any_pending_data() {
++            if !self.kex.active()
++                && !self.common.has_any_pending_data()
++                && wire.can_accept_application(self.common.pending_packet_bytes())
++            {
+                 let mut drained = 0;
+-                while drained < MAX_MESSAGES_PER_BATCH {
++                while drained < MAX_MESSAGES_PER_BATCH
++                    && wire.can_accept_application(self.common.pending_packet_bytes())
++                {
+                     // Only Empty/Disconnected end the drain; both mean "nothing
+                     // more to hand off right now", so treat them the same.
+                     let Ok(msg) = self.receiver.try_recv() else {
+@@ -690,12 +727,7 @@
+                 }
+                 if drained > 0 {
+                     self.flush()?;
+-                    map_err!(
+-                        self.common
+-                            .packet_writer
+-                            .flush_into(&mut stream_write)
+-                            .await
+-                    )?;
++                    map_err!(wire.enqueue(self.common.packet_writer.take_pending()))?;
+                 }
+                 // A drained Disconnect sets this; don't block in `select!` after.
+                 if self.common.disconnected {
+@@ -703,7 +735,15 @@
+                 }
              }
  
++            let writable = !wire.is_empty();
              tokio::select! {
++                result = wire.write_one(&mut stream_write), if writable => { map_err!(result)?; }
 +                () = receive_credits.notify.notified(), if !self.kex.active() => {
 +                    let credits = std::mem::take(&mut *receive_credits.pending.lock().map_err(|_| Error::Inconsistent)?);
 +                    for (channel, amount) in credits {
@@ -307,7 +649,40 @@
                  r = &mut reading => {
                      let (stream_read, mut buffer, mut opening_cipher) = match r {
                          Ok((_, stream_read, buffer, opening_cipher)) => (stream_read, buffer, opening_cipher),
-@@ -819,6 +856,42 @@
+@@ -752,7 +792,7 @@
+                     debug!("timeout");
+                     return Err(crate::Error::InactivityTimeout.into());
+                 }
+-                msg = self.receiver.recv(), if !self.kex.active() && !self.common.has_any_pending_data() => {
++                msg = self.receiver.recv(), if !self.kex.active() && !self.common.has_any_pending_data() && wire.can_accept_application(self.common.pending_packet_bytes()) => {
+                     match msg {
+                         Some(msg) => self.dispatch_msg(msg)?,
+                         None => {
+@@ -763,12 +803,7 @@
+             }
+             self.flush()?;
+ 
+-            map_err!(
+-                self.common
+-                    .packet_writer
+-                    .flush_into(&mut stream_write)
+-                    .await
+-            )?;
++            map_err!(wire.enqueue(self.common.packet_writer.take_pending()))?;
+ 
+             if self.common.received_data {
+                 // Reset the number of failed keepalive attempts. We don't
+@@ -795,6 +830,9 @@
+                 }
+             }
+         }
++        if self.common.disconnected {
++            map_err!(wire.finish(&mut stream_write).await)?;
++        }
+         debug!("disconnected");
+         // Shutdown
+         map_err!(stream_write.shutdown().await)?;
+@@ -819,6 +857,42 @@
      /// Get a handle to this session.
      pub fn handle(&self) -> Handle {
          self.sender.clone()
@@ -350,7 +725,7 @@
      }
  
      pub fn writable_packet_size(&self, channel: &ChannelId) -> u32 {
-@@ -1499,6 +1572,7 @@
+@@ -1499,6 +1573,7 @@
          let handle = Handle {
              sender,
              channel_buffer_size: config.channel_buffer_size,
@@ -358,7 +733,7 @@
          };
  
          Session {
-@@ -1543,9 +1617,54 @@
+@@ -1543,9 +1618,54 @@
              pending_reads: Vec::new(),
              pending_len: 0,
              channels: HashMap::new(),
@@ -413,3 +788,269 @@
      }
  
      fn compressed_debug_payload(payload_len: usize) -> Vec<u8> {
+--- a/src/session.rs
++++ b/src/session.rs
+@@ -18,8 +18,8 @@
+ use std::mem::replace;
+ use std::num::Wrapping;
+ 
++use byteorder::{BigEndian, ByteOrder};
+ use bytes::Bytes;
+-use byteorder::{BigEndian, ByteOrder};
+ use log::{debug, trace};
+ use ssh_encoding::Encode;
+ use tokio::sync::oneshot;
+@@ -128,6 +128,12 @@
+ }
+ 
+ impl<C> CommonSession<C> {
++    pub(crate) fn pending_packet_bytes(&self) -> usize {
++        self.packet_writer
++            .pending_bytes()
++            .saturating_add(self.encrypted.as_ref().map_or(0, |enc| enc.write.len()))
++    }
++
+     pub(crate) fn has_any_pending_data(&self) -> bool {
+         self.encrypted
+             .as_ref()
+@@ -189,8 +195,7 @@
+                     .init_compress(self.packet_writer.compress());
+             }
+             if !enc.server_compression.is_deferred() {
+-                enc.server_compression
+-                    .init_decompress(&mut enc.decompress);
++                enc.server_compression.init_decompress(&mut enc.decompress);
+             }
+         }
+     }
+@@ -1154,11 +1159,9 @@
+         let mut staged = test_encrypted();
+         let mut direct = test_encrypted();
+         let mut staged_channel = test_channel(channel_id, 42, false, false);
+-        staged_channel.pending_data =
+-            VecDeque::from([(Bytes::from_static(b"hello"), Some(1), 0)]);
++        staged_channel.pending_data = VecDeque::from([(Bytes::from_static(b"hello"), Some(1), 0)]);
+         let mut direct_channel = test_channel(channel_id, 42, false, false);
+-        direct_channel.pending_data =
+-            VecDeque::from([(Bytes::from_static(b"hello"), Some(1), 0)]);
++        direct_channel.pending_data = VecDeque::from([(Bytes::from_static(b"hello"), Some(1), 0)]);
+         staged.channels.insert(channel_id, staged_channel);
+         direct.channels.insert(channel_id, direct_channel);
+ 
+@@ -1270,10 +1273,7 @@
+             .data_with_writer(&mut direct_writer, channel_id, payload, false)
+             .unwrap();
+ 
+-        assert_eq!(
+-            direct_writer.buffer().buffer,
+-            staged_writer.buffer().buffer
+-        );
++        assert_eq!(direct_writer.buffer().buffer, staged_writer.buffer().buffer);
+         assert_eq!(
+             direct.channels[&channel_id].recipient_window_size,
+             staged.channels[&channel_id].recipient_window_size
+@@ -1307,10 +1307,7 @@
+             .extended_data_with_writer(&mut direct_writer, channel_id, 1, payload, false)
+             .unwrap();
+ 
+-        assert_eq!(
+-            direct_writer.buffer().buffer,
+-            staged_writer.buffer().buffer
+-        );
++        assert_eq!(direct_writer.buffer().buffer, staged_writer.buffer().buffer);
+         assert_eq!(
+             direct.channels[&channel_id].recipient_window_size,
+             staged.channels[&channel_id].recipient_window_size
+@@ -1448,7 +1445,10 @@
+             .unwrap();
+ 
+         let channel = &encrypted.channels[&channel_id];
+-        assert_eq!(clear_packet_types(&writer.buffer().buffer), vec![msg::CHANNEL_DATA]);
++        assert_eq!(
++            clear_packet_types(&writer.buffer().buffer),
++            vec![msg::CHANNEL_DATA]
++        );
+         assert_eq!(channel.recipient_window_size, 0);
+         assert_eq!(channel.pending_data.len(), 1);
+         let pending = channel.pending_data.back().unwrap();
+--- a/src/sshbuffer.rs
++++ b/src/sshbuffer.rs
+@@ -17,11 +17,11 @@
+ use std::borrow::Cow;
+ use std::num::Wrapping;
+ 
++use super::cipher::SealingKey;
+ use bytes::{Bytes, BytesMut};
++use compression::Compress;
+ use log::debug;
+ use ssh_encoding::Writer;
+-use super::cipher::SealingKey;
+-use compression::Compress;
+ use tokio::io::{AsyncWrite, AsyncWriteExt};
+ 
+ use super::*;
+@@ -371,6 +371,15 @@
+ }
+ 
+ impl PacketWriter {
++    pub(crate) fn pending_bytes(&self) -> usize {
++        self.write_buffer.buffer.len()
++    }
++
++    /// Sealed bytes retain their sequence/cipher state in this writer. Moving
++    /// only the wire buffer lets the protocol read while a socket write waits.
++    pub(crate) fn take_pending(&mut self) -> Vec<u8> {
++        std::mem::take(&mut self.write_buffer.buffer)
++    }
+     // SSH packet prefix = packet_length (cipher::PACKET_LENGTH_LEN bytes)
+     // + padding_length (1 byte).
+     const PACKET_PREFIX_LEN: usize = cipher::PACKET_LENGTH_LEN + 1;
+@@ -515,7 +524,8 @@
+         // Reserving a small fixed margin avoids repeated output-buffer growth
+         // without coupling callers to individual cipher padding formulas.
+         let per_packet_margin = Self::PACKET_PREFIX_LEN + self.cipher.tag_len() + 32;
+-        let additional = payload_bytes.saturating_add(packet_count.saturating_mul(per_packet_margin));
++        let additional =
++            payload_bytes.saturating_add(packet_count.saturating_mul(per_packet_margin));
+         self.write_buffer.buffer.reserve(additional);
+     }
+ 
+@@ -572,3 +582,138 @@
+         Ok(())
+     }
+ }
++
++/// A bounded queue of already-sealed packets. Application producers stop at
++/// the soft limit; control replies can use the remaining hard-limit reserve.
++/// Each poll performs one cancellation-safe write or flush, so reads can make
++/// progress while the peer is simultaneously sending a large batch.
++#[derive(Default)]
++pub(crate) struct PendingWire {
++    chunks: std::collections::VecDeque<Vec<u8>>,
++    offset: usize,
++    allocated: usize,
++    flush_pending: bool,
++}
++
++impl PendingWire {
++    pub(crate) const SOFT_LIMIT: usize = 256 * 1024;
++    const HARD_LIMIT: usize = 8 * 1024 * 1024;
++
++    pub(crate) fn can_accept_application(&self, pending_bytes: usize) -> bool {
++        self.allocated.saturating_add(pending_bytes) < Self::SOFT_LIMIT
++    }
++
++    pub(crate) fn is_empty(&self) -> bool {
++        self.chunks.is_empty() && !self.flush_pending
++    }
++
++    pub(crate) fn enqueue(&mut self, bytes: Vec<u8>) -> std::io::Result<()> {
++        if bytes.is_empty() {
++            return Ok(());
++        }
++        let allocated = self
++            .allocated
++            .checked_add(bytes.capacity())
++            .ok_or_else(|| std::io::Error::other("SSH outbound allocation overflow"))?;
++        if allocated > Self::HARD_LIMIT {
++            return Err(std::io::Error::other(
++                "SSH outbound control buffer limit exceeded",
++            ));
++        }
++        self.allocated = allocated;
++        self.chunks.push_back(bytes);
++        Ok(())
++    }
++
++    pub(crate) async fn write_one<W: AsyncWrite + Unpin>(
++        &mut self,
++        writer: &mut W,
++    ) -> std::io::Result<()> {
++        if self.flush_pending {
++            writer.flush().await?;
++            self.flush_pending = false;
++            return Ok(());
++        }
++        let Some(front) = self.chunks.front() else {
++            return Ok(());
++        };
++        let remaining = front
++            .get(self.offset..)
++            .ok_or_else(|| std::io::Error::other("invalid SSH outbound offset"))?;
++        let count = writer.write(remaining).await?;
++        if count == 0 {
++            return Err(std::io::ErrorKind::WriteZero.into());
++        }
++        self.offset += count;
++        if self.offset == front.len() {
++            self.allocated -= front.capacity();
++            self.chunks.pop_front();
++            self.offset = 0;
++            self.flush_pending = self.chunks.is_empty();
++        }
++        Ok(())
++    }
++
++    pub(crate) async fn finish<W: AsyncWrite + Unpin>(
++        &mut self,
++        writer: &mut W,
++    ) -> std::io::Result<()> {
++        while !self.is_empty() {
++            self.write_one(writer).await?;
++        }
++        Ok(())
++    }
++}
++
++#[cfg(test)]
++mod pending_wire_tests {
++    use super::PendingWire;
++    use tokio::io::AsyncReadExt;
++
++    #[tokio::test]
++    async fn partial_writes_and_cancelled_wait_preserve_wire_order() {
++        let (mut writer, mut reader) = tokio::io::duplex(3);
++        let mut wire = PendingWire::default();
++        wire.enqueue(b"first".to_vec()).unwrap();
++        wire.enqueue(b"second".to_vec()).unwrap();
++        wire.write_one(&mut writer).await.unwrap();
++
++        // The transport is full. Drop the pending write just as select! does
++        // when the protocol read wins, then resume from the saved byte offset.
++        assert!(
++            tokio::time::timeout(
++                std::time::Duration::from_millis(10),
++                wire.write_one(&mut writer),
++            )
++            .await
++            .is_err()
++        );
++        let mut output = [0; 11];
++        let (sent, received) =
++            tokio::join!(wire.finish(&mut writer), reader.read_exact(&mut output),);
++        sent.unwrap();
++        received.unwrap();
++        assert_eq!(&output, b"firstsecond");
++        assert!(wire.is_empty());
++        assert_eq!(wire.allocated, 0);
++        assert!(wire.can_accept_application(0));
++    }
++
++    #[test]
++    fn application_backpressure_leaves_bounded_control_reserve() {
++        let mut wire = PendingWire::default();
++        wire.enqueue(vec![0; PendingWire::SOFT_LIMIT]).unwrap();
++        assert!(!wire.can_accept_application(0));
++        wire.enqueue(b"control".to_vec()).unwrap();
++        let allocated = wire.allocated;
++        assert!(wire.enqueue(vec![0; PendingWire::HARD_LIMIT]).is_err());
++        assert_eq!(wire.allocated, allocated);
++        assert_eq!(wire.chunks.len(), 2);
++
++        // Charge retained allocations, even if the actual data is tiny.
++        let mut oversized = Vec::with_capacity(PendingWire::HARD_LIMIT + 1);
++        oversized.push(1);
++        assert!(PendingWire::default().enqueue(oversized).is_err());
++        assert!(!PendingWire::default().can_accept_application(PendingWire::SOFT_LIMIT));
++    }
++}

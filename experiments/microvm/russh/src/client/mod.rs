@@ -67,7 +67,7 @@ use crate::keys::PrivateKeyWithHashAlg;
 use crate::msg::{is_kex_msg, validate_server_msg_strict_kex};
 use crate::session::{CommonSession, EncryptedState, GlobalRequestResponse, NewKeys};
 use crate::ssh_read::SshRead;
-use crate::sshbuffer::{IncomingSshPacket, PacketWriter, SSHBuffer, SshId};
+use crate::sshbuffer::{IncomingSshPacket, PacketWriter, PendingWire, SSHBuffer, SshId};
 use crate::{
     ChannelId, ChannelOpenFailure, Disconnect, Error, Limits, MethodSet, Sig, auth, map_err, msg,
     negotiation,
@@ -1190,6 +1190,8 @@ impl Session {
 
         let reading = start_reading(stream_read, buffer, opening_cipher);
         pin!(reading);
+        let mut wire = PendingWire::default();
+        let mut remote_disconnect = false;
 
         #[allow(clippy::panic)] // false positive in select! macro
         while !self.common.disconnected {
@@ -1198,9 +1200,12 @@ impl Session {
             // Keep reading the network for window adjustments, but leave
             // application output in its bounded receivers while a channel is
             // window-blocked.
-            let can_receive_outbound =
-                !self.kex.active() && !self.common.has_any_pending_data();
+            let can_receive_outbound = !self.kex.active()
+                && !self.common.has_any_pending_data()
+                && wire.can_accept_application(self.common.pending_packet_bytes());
+            let writable = !wire.is_empty();
             tokio::select! {
+                result = wire.write_one(&mut *stream_write), if writable => { map_err!(result)?; }
                 r = &mut reading => {
                     let (stream_read, mut buffer, mut opening_cipher) = match r {
                         Ok((_, stream_read, buffer, opening_cipher)) => (stream_read, buffer, opening_cipher),
@@ -1217,6 +1222,7 @@ impl Session {
                     if !pkt.buffer.is_empty() {
                         #[allow(clippy::indexing_slicing)] // length checked
                         if pkt.buffer[0] == crate::msg::DISCONNECT {
+                            remote_disconnect = true;
                             debug!("received disconnect");
                             result = self.process_disconnect(&pkt).map_err(H::Error::from);
                         } else {
@@ -1256,7 +1262,7 @@ impl Session {
                     };
 
                     // eagerly take all outgoing messages so writes are batched
-                    while !self.kex.active() && !self.common.has_any_pending_data() {
+                    while !self.kex.active() && !self.common.has_any_pending_data() && wire.can_accept_application(self.common.pending_packet_bytes()) {
                         match self.receiver.try_recv() {
                             Ok(next) => self.handle_msg(next)?,
                             Err(_) => break
@@ -1270,7 +1276,7 @@ impl Session {
                     }
 
                     // eagerly take all outgoing messages so writes are batched
-                    while !self.kex.active() && !self.common.has_any_pending_data() {
+                    while !self.kex.active() && !self.common.has_any_pending_data() && wire.can_accept_application(self.common.pending_packet_bytes()) {
                         match self.inbound_channel_receiver.try_recv() {
                             Ok(next) => self.handle_msg(next)?,
                             Err(_) => break
@@ -1280,7 +1286,7 @@ impl Session {
             };
 
             self.flush()?;
-            map_err!(self.common.packet_writer.flush_into(stream_write).await)?;
+            map_err!(wire.enqueue(self.common.packet_writer.take_pending()))?;
 
             if let Some(ref mut enc) = self.common.encrypted {
                 if let EncryptedState::InitCompression = enc.state {
@@ -1318,6 +1324,9 @@ impl Session {
             }
         }
 
+        if self.common.disconnected && !remote_disconnect {
+            map_err!(wire.finish(stream_write).await)?;
+        }
         result
     }
 

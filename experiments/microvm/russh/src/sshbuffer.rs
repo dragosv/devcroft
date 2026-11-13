@@ -17,11 +17,11 @@ use core::fmt;
 use std::borrow::Cow;
 use std::num::Wrapping;
 
+use super::cipher::SealingKey;
 use bytes::{Bytes, BytesMut};
+use compression::Compress;
 use log::debug;
 use ssh_encoding::Writer;
-use super::cipher::SealingKey;
-use compression::Compress;
 use tokio::io::{AsyncWrite, AsyncWriteExt};
 
 use super::*;
@@ -371,6 +371,15 @@ impl Debug for PacketWriter {
 }
 
 impl PacketWriter {
+    pub(crate) fn pending_bytes(&self) -> usize {
+        self.write_buffer.buffer.len()
+    }
+
+    /// Sealed bytes retain their sequence/cipher state in this writer. Moving
+    /// only the wire buffer lets the protocol read while a socket write waits.
+    pub(crate) fn take_pending(&mut self) -> Vec<u8> {
+        std::mem::take(&mut self.write_buffer.buffer)
+    }
     // SSH packet prefix = packet_length (cipher::PACKET_LENGTH_LEN bytes)
     // + padding_length (1 byte).
     const PACKET_PREFIX_LEN: usize = cipher::PACKET_LENGTH_LEN + 1;
@@ -515,7 +524,8 @@ impl PacketWriter {
         // Reserving a small fixed margin avoids repeated output-buffer growth
         // without coupling callers to individual cipher padding formulas.
         let per_packet_margin = Self::PACKET_PREFIX_LEN + self.cipher.tag_len() + 32;
-        let additional = payload_bytes.saturating_add(packet_count.saturating_mul(per_packet_margin));
+        let additional =
+            payload_bytes.saturating_add(packet_count.saturating_mul(per_packet_margin));
         self.write_buffer.buffer.reserve(additional);
     }
 
@@ -570,5 +580,140 @@ impl PacketWriter {
             self.write_buffer.buffer.clear();
         }
         Ok(())
+    }
+}
+
+/// A bounded queue of already-sealed packets. Application producers stop at
+/// the soft limit; control replies can use the remaining hard-limit reserve.
+/// Each poll performs one cancellation-safe write or flush, so reads can make
+/// progress while the peer is simultaneously sending a large batch.
+#[derive(Default)]
+pub(crate) struct PendingWire {
+    chunks: std::collections::VecDeque<Vec<u8>>,
+    offset: usize,
+    allocated: usize,
+    flush_pending: bool,
+}
+
+impl PendingWire {
+    pub(crate) const SOFT_LIMIT: usize = 256 * 1024;
+    const HARD_LIMIT: usize = 8 * 1024 * 1024;
+
+    pub(crate) fn can_accept_application(&self, pending_bytes: usize) -> bool {
+        self.allocated.saturating_add(pending_bytes) < Self::SOFT_LIMIT
+    }
+
+    pub(crate) fn is_empty(&self) -> bool {
+        self.chunks.is_empty() && !self.flush_pending
+    }
+
+    pub(crate) fn enqueue(&mut self, bytes: Vec<u8>) -> std::io::Result<()> {
+        if bytes.is_empty() {
+            return Ok(());
+        }
+        let allocated = self
+            .allocated
+            .checked_add(bytes.capacity())
+            .ok_or_else(|| std::io::Error::other("SSH outbound allocation overflow"))?;
+        if allocated > Self::HARD_LIMIT {
+            return Err(std::io::Error::other(
+                "SSH outbound control buffer limit exceeded",
+            ));
+        }
+        self.allocated = allocated;
+        self.chunks.push_back(bytes);
+        Ok(())
+    }
+
+    pub(crate) async fn write_one<W: AsyncWrite + Unpin>(
+        &mut self,
+        writer: &mut W,
+    ) -> std::io::Result<()> {
+        if self.flush_pending {
+            writer.flush().await?;
+            self.flush_pending = false;
+            return Ok(());
+        }
+        let Some(front) = self.chunks.front() else {
+            return Ok(());
+        };
+        let remaining = front
+            .get(self.offset..)
+            .ok_or_else(|| std::io::Error::other("invalid SSH outbound offset"))?;
+        let count = writer.write(remaining).await?;
+        if count == 0 {
+            return Err(std::io::ErrorKind::WriteZero.into());
+        }
+        self.offset += count;
+        if self.offset == front.len() {
+            self.allocated -= front.capacity();
+            self.chunks.pop_front();
+            self.offset = 0;
+            self.flush_pending = self.chunks.is_empty();
+        }
+        Ok(())
+    }
+
+    pub(crate) async fn finish<W: AsyncWrite + Unpin>(
+        &mut self,
+        writer: &mut W,
+    ) -> std::io::Result<()> {
+        while !self.is_empty() {
+            self.write_one(writer).await?;
+        }
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod pending_wire_tests {
+    use super::PendingWire;
+    use tokio::io::AsyncReadExt;
+
+    #[tokio::test]
+    async fn partial_writes_and_cancelled_wait_preserve_wire_order() {
+        let (mut writer, mut reader) = tokio::io::duplex(3);
+        let mut wire = PendingWire::default();
+        wire.enqueue(b"first".to_vec()).unwrap();
+        wire.enqueue(b"second".to_vec()).unwrap();
+        wire.write_one(&mut writer).await.unwrap();
+
+        // The transport is full. Drop the pending write just as select! does
+        // when the protocol read wins, then resume from the saved byte offset.
+        assert!(
+            tokio::time::timeout(
+                std::time::Duration::from_millis(10),
+                wire.write_one(&mut writer),
+            )
+            .await
+            .is_err()
+        );
+        let mut output = [0; 11];
+        let (sent, received) =
+            tokio::join!(wire.finish(&mut writer), reader.read_exact(&mut output),);
+        sent.unwrap();
+        received.unwrap();
+        assert_eq!(&output, b"firstsecond");
+        assert!(wire.is_empty());
+        assert_eq!(wire.allocated, 0);
+        assert!(wire.can_accept_application(0));
+    }
+
+    #[test]
+    fn application_backpressure_leaves_bounded_control_reserve() {
+        let mut wire = PendingWire::default();
+        wire.enqueue(vec![0; PendingWire::SOFT_LIMIT]).unwrap();
+        assert!(!wire.can_accept_application(0));
+        wire.enqueue(b"control".to_vec()).unwrap();
+        let allocated = wire.allocated;
+        assert!(wire.enqueue(vec![0; PendingWire::HARD_LIMIT]).is_err());
+        assert_eq!(wire.allocated, allocated);
+        assert_eq!(wire.chunks.len(), 2);
+
+        // Charge retained allocations, even if the actual data is tiny.
+        let mut oversized = Vec::with_capacity(PendingWire::HARD_LIMIT + 1);
+        oversized.push(1);
+        assert!(PendingWire::default().enqueue(oversized).is_err());
+        assert!(!PendingWire::default().can_accept_application(PendingWire::SOFT_LIMIT));
     }
 }

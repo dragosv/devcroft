@@ -10,6 +10,7 @@ import signal
 import subprocess
 import threading
 import time
+import traceback
 
 from cold_prepare import require_no_active_collector
 from fault_probe import process_start
@@ -187,7 +188,8 @@ def main():
             return {**witness, 'master_transport_lost': True}
 
         row = stream(vm, 'blocked-input', "trap '' TERM; printf 'SESSION_PID=%s\\n' \"$$\"; exec sleep 60", b'x' * (12 * 1024 * 1024), extra=extra, before_send=live, blocked=lose_transport)
-        report['cases'].append({'name': 'nonreading-command-flow-control', **row})
+        row['name'] = 'nonreading-command-flow-control'
+        report['cases'].append(row)
         require(row['exit_code'] != 0 and 'SSH stdin backlog exceeded' not in row['stderr'], row)
         positive = row['positive_control']
         deadline = time.monotonic() + 7
@@ -202,6 +204,7 @@ def main():
         report['status'] = 'passed'
     except BaseException as error:
         report['error'] = f'{type(error).__name__}: {error}'
+        report['traceback'] = traceback.format_exc()
     finally:
         if master:
             if master.poll() is None:

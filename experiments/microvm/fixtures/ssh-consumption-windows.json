@@ -11,16 +11,40 @@
   "reason": "Couple exec/shell SSH receive credit to consumed stdin, keeping connection loop and independent channels responsive. Preserve automatic windows for other channel types.",
   "patch": {
     "path": "patches/russh-consumed-input-windows.patch",
-    "sha256": "db1c10be85a61d1bd035ae2149d40b189f81d83efb7df57c0103e029990d6268"
+    "sha256": "ea8aebe6932622f515d7f31f7edcd1dee3f45b28aca376a2f5dded4364b32cf1"
   },
   "modified_upstream_files": {
+    "src/channels/io/rx.rs": {
+      "original_sha256": "6e241986dcb5f75fdf9788000fa7e9f6c0dc7500c7062fbb16cbcba0c6e0d166",
+      "patched_sha256": "c0abe5e882c9e07ff9c0f9007e85c99afcedfcd8a8753a8add0a265059985631"
+    },
+    "src/channels/io/tx.rs": {
+      "original_sha256": "8c62048b5176ba6b330c5b74148a328172920ca950bfe6bddd1ba5b1a2d16767",
+      "patched_sha256": "0cb5678927bda56fd665f9e0fc390aee33ce993b28b7e6cc4b0da9811903d695"
+    },
+    "src/channels/mod.rs": {
+      "original_sha256": "27a7e4eb3fec2f75287160ee0e03b412a419ee685d749466e7b8e759e7d7b7ba",
+      "patched_sha256": "3014bcac395161f8935f92c8b76ee29b565be58b010193d3c142e6255847807d"
+    },
     "src/client/encrypted.rs": {
       "original_sha256": "e12894a4f8ee625a2c4ad35968242e013b874350b1f03da48d9c720bf8e3cd8c",
-      "patched_sha256": "bc1d6208c43883696580938b79746e0a36785a2aec88b8a4fb61625c40c7c8b6"
+      "patched_sha256": "6821431e1ebd77fd3f005d427ab8ec24984d9f8cfe7915fb445e8c4341bc3b48"
+    },
+    "src/client/mod.rs": {
+      "original_sha256": "dd93d932377561b1f91e0c1d6d1b9e71a31e5d78db9b3850c281a83032360457",
+      "patched_sha256": "79c1769860ef9aa42848984a5ecd190d2fe7ade40f61ea88a957301442910497"
+    },
+    "src/client/session.rs": {
+      "original_sha256": "d4996f1e00f456f02bb791101300d5f93c84e2db54101a27d69f1a0aa29518f6",
+      "patched_sha256": "5b28e6c68847eaad489e80e801e0632ad4289ca785760b545d2f495548cedacc"
+    },
+    "src/client/test.rs": {
+      "original_sha256": "c5b9ac2342f0c488c7d637bcaeef6d37dc95b0e089709de93f84cad2d22d30f8",
+      "patched_sha256": "7a56c59007b3b16a5bf5ea5e6ad39b153f7cce3cd9d3d70fefa3e68e53607a04"
     },
     "src/server/encrypted.rs": {
       "original_sha256": "e28238302e48c2982234aad3f586500f835d039fe436f8cff5de6ce75cfc03fa",
-      "patched_sha256": "0e7d5fe1eed3e4b7935adc76d0937f95f21695df12f4d9771aa95cb00e38892c"
+      "patched_sha256": "ed3ef3ef29774fb7db7ad872b931711466ec7704226bea4e8acd1e3a3a5652e2"
     },
     "src/server/mod.rs": {
       "original_sha256": "2998d66b2b15915ef5114848d4d2b9bf6397f35b053a2fcb8ba25c9b3ec65c8e",
@@ -28,7 +52,15 @@
     },
     "src/server/session.rs": {
       "original_sha256": "e974cac3ff89a3554544bb6c3993cfd8be4be9bc6a45a9c755c223d09d652fd0",
-      "patched_sha256": "e8a863a826a121fbcede96e7c60540d19d063644205198894788d5c6a083d390"
+      "patched_sha256": "2c500fb93f7af57142d361a131719645a321a914a970f06c855fd7a4e25bb01f"
+    },
+    "src/session.rs": {
+      "original_sha256": "c00360d731d709d35cdec64b7fa43ee30b51a78ec1060b1bdd52cf59e7656b9a",
+      "patched_sha256": "e7fb99defa0e4a93ca12c98bd677a5c90d8944eac33c7ef44bbb3397ff9fc9d4"
+    },
+    "src/sshbuffer.rs": {
+      "original_sha256": "ecd35c32beae59d63b9683ca30d1043bbf628a020c75cdbfe8d06fbf98a3680d",
+      "patched_sha256": "94880ce7a3a2896aa147fdf6fd59a8b19107fb1a8991d09de33738b7afba89c3"
     }
   },
   "client_control": "Honor Handler::adjust_window for the existing target_window_size, needed by the exhausted-window negative control; default target remains unchanged",
@@ -56,9 +88,9 @@
     "src/channels/channel_ref.rs": "8d6678c43cae06d095ae4cc242ae33ca1bf65efcdef9a5948d382cbffb101f06",
     "src/channels/channel_stream.rs": "990be739b58d69e18682575a66eee123d7055a228f71429b9fb1276ed5419b9a",
     "src/channels/io/mod.rs": "d058ed66458c0d5a7da50c270cb6c6a9c067c68cc328cc91a990d3ff39be8c1d",
-    "src/channels/io/rx.rs": "6e241986dcb5f75fdf9788000fa7e9f6c0dc7500c7062fbb16cbcba0c6e0d166",
-    "src/channels/io/tx.rs": "8c62048b5176ba6b330c5b74148a328172920ca950bfe6bddd1ba5b1a2d16767",
-    "src/channels/mod.rs": "27a7e4eb3fec2f75287160ee0e03b412a419ee685d749466e7b8e759e7d7b7ba",
+    "src/channels/io/rx.rs": "c0abe5e882c9e07ff9c0f9007e85c99afcedfcd8a8753a8add0a265059985631",
+    "src/channels/io/tx.rs": "0cb5678927bda56fd665f9e0fc390aee33ce993b28b7e6cc4b0da9811903d695",
+    "src/channels/mod.rs": "3014bcac395161f8935f92c8b76ee29b565be58b010193d3c142e6255847807d",
     "src/cipher/benchmark.rs": "1632912cbd81f39684fdc57ef49f240677fd72c9176fa548eb9944b5d66ffeb9",
     "src/cipher/block.rs": "1abade93fa680ee57634f2287f6a3ad378aaf5557e21d12ed198a4620cfc33a4",
     "src/cipher/cbc.rs": "5349c7a22b070501fb237da568c8e4ccbf31268b393289355de17200cbac2523",
@@ -66,11 +98,11 @@
     "src/cipher/clear.rs": "0d3c514e38f353f5134e939a0912e72a3e6e01cccf7f134a2304253b56a4e238",
     "src/cipher/gcm.rs": "f734b060f43e14aabfd8fc48891f57fab804d0f378374579b4bc3a5098a7b2e4",
     "src/cipher/mod.rs": "5793fb7f08d3494517c74264179adf78872ae8bdc5c7cedc8ed69f4a6cce52ec",
-    "src/client/encrypted.rs": "bc1d6208c43883696580938b79746e0a36785a2aec88b8a4fb61625c40c7c8b6",
+    "src/client/encrypted.rs": "6821431e1ebd77fd3f005d427ab8ec24984d9f8cfe7915fb445e8c4341bc3b48",
     "src/client/kex.rs": "4f540d935df565b1a1994784cee88186ae7b9b7fe4cd8ff68b771599d8d8b460",
-    "src/client/mod.rs": "dd93d932377561b1f91e0c1d6d1b9e71a31e5d78db9b3850c281a83032360457",
-    "src/client/session.rs": "d4996f1e00f456f02bb791101300d5f93c84e2db54101a27d69f1a0aa29518f6",
-    "src/client/test.rs": "c5b9ac2342f0c488c7d637bcaeef6d37dc95b0e089709de93f84cad2d22d30f8",
+    "src/client/mod.rs": "79c1769860ef9aa42848984a5ecd190d2fe7ade40f61ea88a957301442910497",
+    "src/client/session.rs": "5b28e6c68847eaad489e80e801e0632ad4289ca785760b545d2f495548cedacc",
+    "src/client/test.rs": "7a56c59007b3b16a5bf5ea5e6ad39b153f7cce3cd9d3d70fefa3e68e53607a04",
     "src/compression.rs": "774b59e33ff0746e2898d896074bcf800ab167f7174750c20ddfca69ada03c2c",
     "src/helpers.rs": "e92055a34871f714c284f85c9d38491c87e74ee18a047db263488032f1d19821",
     "src/kex/curve25519.rs": "b7d3813fa204892b2d7865f4ec1b83ab4dcc42680b76e60e045bf0f6827df0e5",
@@ -103,13 +135,13 @@
     "src/negotiation.rs": "fbafc312dda74641c1cde8efff22c536ccfcb1130033af5b9ace4dfbb7b2bc36",
     "src/parsing.rs": "8d1fada82c271ff3165b4ce3328440e9f4cd02e28e1074ef60cf66d803e5fb5b",
     "src/pty.rs": "db018a9139923b907999fb9870aad0e9bc93fe03d11b65752f3f08fe63c4eb3b",
-    "src/server/encrypted.rs": "0e7d5fe1eed3e4b7935adc76d0937f95f21695df12f4d9771aa95cb00e38892c",
+    "src/server/encrypted.rs": "ed3ef3ef29774fb7db7ad872b931711466ec7704226bea4e8acd1e3a3a5652e2",
     "src/server/kex.rs": "e1975ea44e2233de66b33830eafc6eeea62a743961b5440feba07e5295afdc45",
     "src/server/mod.rs": "22cc9fefda374c3661a12a580bc738664aa017efc3071e1fe38385d154b2747c",
-    "src/server/session.rs": "e8a863a826a121fbcede96e7c60540d19d063644205198894788d5c6a083d390",
-    "src/session.rs": "c00360d731d709d35cdec64b7fa43ee30b51a78ec1060b1bdd52cf59e7656b9a",
+    "src/server/session.rs": "2c500fb93f7af57142d361a131719645a321a914a970f06c855fd7a4e25bb01f",
+    "src/session.rs": "e7fb99defa0e4a93ca12c98bd677a5c90d8944eac33c7ef44bbb3397ff9fc9d4",
     "src/ssh_read.rs": "469bc85924824923372391eba9815e72434388e36f6f8c34d33aed2e95127a2f",
-    "src/sshbuffer.rs": "ecd35c32beae59d63b9683ca30d1043bbf628a020c75cdbfe8d06fbf98a3680d",
+    "src/sshbuffer.rs": "94880ce7a3a2896aa147fdf6fd59a8b19107fb1a8991d09de33738b7afba89c3",
     "src/tests.rs": "23e5e9d41b489d8a74978bce028a3e061d64e08c44e767da9fffc167ef58a5a0",
     "tests/auth_state_reset.rs": "16205bf1adc46ab74102e6546df7ef361b2e89f2693c99f04ba98967a50185cd",
     "tests/test_backpressure.rs": "d5a1a53b19de748749539b63e09f89d23d85a48206310dce80a236c8aafc5cfd",
@@ -121,9 +153,9 @@
   },
   "keeper_fork": {
     "path": "guest-keeper/src/ssh_server.rs",
-    "sha256": "4970cf3e9b3dcb7ed7de153c7fac63ea37271f55f7ce90abad97f53cc4445d8f",
+    "sha256": "9e0095948d3f0634fab7e7598fe207aa2c88b447d12c661d05a2b76fda57882e",
     "patch": "patches/keeper-ssh-consumed-input.patch",
-    "patch_sha256": "90cbd2f97aabfbe94b46e1ee0d5437700c1ce217b0e73a4510c8a27b082de361",
+    "patch_sha256": "8f90e50db3563ac1f2f74d1e27d3e886efeca598009f92c93cde2c612787a325",
     "reconstruction": "Copy the recorded common-server baseline to the experimental ssh_server.rs, then apply the keeper patch there; do not patch the production source"
   }
 }

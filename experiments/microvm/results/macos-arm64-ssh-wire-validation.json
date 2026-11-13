@@ -1,0 +1,168 @@
+{
+  "schema": 1,
+  "status": "passed",
+  "platform": "macos-arm64-native",
+  "host": [
+    "Darwin",
+    "Dragoss-MacBook-Pro.local",
+    "24.6.0",
+    "Darwin Kernel Version 24.6.0: Mon Jan 19 22:01:58 PST 2026; root:xnu-11417.140.69.708.3~1/RELEASE_ARM64_T6041",
+    "arm64"
+  ],
+  "qualification": "scoped experimental SSH duplex/queued-credit validation; production integration, host suspend, PID 1 death and a repeated density/preparation matrix remain unqualified",
+  "raw_evidence": "experiments/microvm/runs/20261113-ssh-wire-validation",
+  "source_pin": {
+    "path": "experiments/microvm/fixtures/ssh-consumption-windows.json",
+    "sha256": "fd4233f092d8c39b0b5961f321a8acfcce8d65ef922ec6fc795276e8a0759e83"
+  },
+  "guest_keeper_sha256": "d82bd8336200ba98e74c76ed27b15db9f21b900fc6b37f48410f81896f769082",
+  "mechanisms": [
+    "Bounded sealed-output queue with cancellation-safe partial writes; both protocol loops keep reading under socket backpressure",
+    "256-KiB application soft threshold includes staged plaintext; 8-MiB hard cap charges queued Vec capacities",
+    "Window adjustment adds newly received credit, capped by actual protocol credit, preserving queued-writer reservations",
+    "Native probe retains original guest process identity/reaping and new-connection checks in its published case row"
+  ],
+  "tests": [
+    {
+      "name": "keeper-all-including-native-openssh",
+      "status": "passed",
+      "tests": 36,
+      "evidence": {
+        "path": "experiments/microvm/runs/20261113-ssh-wire-validation/keeper-final-passed.log",
+        "sha256": "e6c3d8c0c150bfcce7acd3d1c3e42f829a983bb388229deb0bcb353d37b577e0"
+      }
+    },
+    {
+      "name": "russh-library-and-selected-integration",
+      "status": "passed",
+      "library_tests": 157,
+      "integration_tests": 5,
+      "evidence": {
+        "path": "experiments/microvm/runs/20261113-ssh-wire-validation/russh-final-passed.log",
+        "sha256": "136697aa160d2b2a355588236092a24f8774d343f5399d5bf8c9b2becd902fc7"
+      }
+    },
+    {
+      "name": "previously-intermittent-direct-russh-regressions",
+      "status": "passed",
+      "tests": 2,
+      "runs_each": 10,
+      "application_echo_pacing": false,
+      "evidence": {
+        "path": "experiments/microvm/runs/20261113-ssh-wire-validation/verified-repeated-regressions.json",
+        "sha256": "d762c6e5dbc29f2b6f2d7afbf59028685925f50b70b3bcc5a21bd5a8f8a4e4f3"
+      }
+    },
+    {
+      "name": "keeper-all-targets-clippy-warnings-denied",
+      "status": "passed",
+      "evidence": {
+        "path": "experiments/microvm/runs/20261113-ssh-wire-validation/keeper-clippy-passed.log",
+        "sha256": "32f5b0968808398d00ffce5b2715de8b4083c80989660081bdae11e998ea78ef"
+      }
+    },
+    {
+      "name": "russh-lib-clippy-scoped",
+      "status": "passed",
+      "allowed_lint": "clippy::manual_saturating_arithmetic",
+      "evidence": {
+        "path": "experiments/microvm/runs/20261113-ssh-wire-validation/russh-clippy-final.log",
+        "sha256": "6846f586ba72c1b82964d0bfb79c4a6442088131328f36a662e0a86a56b1ce0f"
+      }
+    },
+    {
+      "name": "source-and-patch-reconstruction",
+      "status": "passed",
+      "evidence": {
+        "path": "experiments/microvm/runs/20261113-ssh-wire-validation/source-reconstruction.json",
+        "sha256": "f3f6f81445416806661d697ac20d30463785206940e2cba6ebe0efb23745c4c6"
+      }
+    }
+  ],
+  "native_vm_proofs": [
+    {
+      "adapter": "libkrun",
+      "status": "passed",
+      "result": "experiments/microvm/results/libkrun-macos-arm64-ssh-wire-progress.json",
+      "sha256": "8f49cf2d2c713fd9488687b05f37b343e9dce1e3380c0f379740c832b49325e4"
+    },
+    {
+      "adapter": "hvi",
+      "status": "passed",
+      "result": "experiments/microvm/results/hvi-macos-arm64-ssh-wire-progress.json",
+      "sha256": "f633ccbeadf34c5536e39f4f07db153aa21f976536d430e6c0b62a94d32129f5"
+    }
+  ],
+  "retained_failures": [
+    {
+      "name": "nonreading-multiplex-before-credit-fix",
+      "kind": "code",
+      "evidence": {
+        "path": "experiments/microvm/runs/20261113-ssh-wire-validation/nonreading-first.log",
+        "sha256": "79815a1f0396e956c69d8127e7064caaff0c8d854b534754de2e19db9e7cd778"
+      },
+      "resolution": "final queued-credit fix; 10 consecutive passing runs"
+    },
+    {
+      "name": "initial-sandboxed-russh-network-tests",
+      "kind": "environment",
+      "evidence": {
+        "path": "experiments/microvm/runs/20261113-ssh-wire-validation/russh-lib.log",
+        "sha256": "586a753ac29da978ba3f7ceb9d572a18f99f9900d400e72ceb28d3595c0f089c"
+      },
+      "resolution": "local socket bind was denied; native final run passes"
+    },
+    {
+      "name": "compiler-space-exhaustion",
+      "kind": "environment",
+      "evidence": {
+        "path": "experiments/microvm/runs/20261113-ssh-wire-validation/russh-native-final.log",
+        "sha256": "108962b814dffe072cef05047c36ea18bb0d3be77e212a42e071bd0493589109"
+      },
+      "resolution": "regenerable compiler caches/objects reclaimed; final compile and tests pass"
+    },
+    {
+      "name": "new-wire-code-strict-clippy",
+      "kind": "code",
+      "evidence": {
+        "path": "experiments/microvm/runs/20261113-ssh-wire-validation/russh-clippy-scoped.log",
+        "sha256": "a7f548df9915edf24c38247b7e4842e2ac5ecdf5c721872b81e7171db1b57fb9"
+      },
+      "resolution": "checked remaining-slice access and removal of pop_front expect; scoped final Clippy passes"
+    },
+    {
+      "name": "libkrun-proof-permission-error",
+      "kind": "host-or-harness-unclassified",
+      "path": "experiments/microvm/runs/20261113-libkrun-wire-qualified/report.json",
+      "resolution": "separate final native run passes; failed report is retained without claiming a diagnosed cause"
+    }
+  ],
+  "remaining_limits": [
+    {
+      "name": "russh-unmodified-upstream-strict-clippy",
+      "status": "failed",
+      "findings": 2,
+      "lint": "manual_saturating_arithmetic",
+      "evidence": {
+        "path": "experiments/microvm/runs/20261113-ssh-wire-validation/russh-strict-upstream.log",
+        "sha256": "d77f947493d50d17b8ce24c573e6468db31118ce2aa128e311f91d4cd370b2de"
+      }
+    },
+    {
+      "name": "production-port",
+      "status": "not-run"
+    },
+    {
+      "name": "physical-host-suspend-resume",
+      "status": "not-run"
+    },
+    {
+      "name": "pid1-death",
+      "status": "not-run"
+    },
+    {
+      "name": "new-binary-full-density-and-preparation-matrix",
+      "status": "not-run"
+    }
+  ]
+}
