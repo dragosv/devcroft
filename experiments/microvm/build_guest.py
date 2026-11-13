@@ -26,9 +26,11 @@ def entry(out, name, data=b"", mode=stat.S_IFDIR | 0o755, ino=1, major=0, minor=
     out.write(b"\0" * (-out.tell() % 4))
 
 
-def build(out_dir, arch, zig, keeper=None, busybox=None, workload=False, nix=False, adaptable=False, setup=False, agents=False):
+def build(out_dir, arch, zig, keeper=None, busybox=None, workload=False, nix=False, adaptable=False, setup=False, agents=False, pid1_exit_probe=False):
     if nix and not workload:
         raise ValueError('Nix fixture requires the workload block devices')
+    if pid1_exit_probe and (not keeper or not nix or agents or adaptable):
+        raise ValueError('PID 1 exit injection requires a separate Nix keeper fault fixture')
     out_dir.mkdir(parents=True, exist_ok=True)
     init = out_dir / "init"
     env = dict(os.environ, ZIG_GLOBAL_CACHE_DIR=str(ROOT / ".zig-cache"))
@@ -38,6 +40,8 @@ def build(out_dir, arch, zig, keeper=None, busybox=None, workload=False, nix=Fal
         command.append("-DENABLE_KEEPER=1")
     if workload:
         command.append("-DENABLE_WORKLOAD=1")
+    if pid1_exit_probe:
+        command.append('-DENABLE_PID1_EXIT_PROBE=1')
     if agents:
         if not nix or not keeper:
             raise ValueError('agent probe requires the isolated Nix keeper fixture')
@@ -94,6 +98,8 @@ def build(out_dir, arch, zig, keeper=None, busybox=None, workload=False, nix=Fal
     result = {"schema": 1, "arch": arch, "fixture": "stage-a-raw-disks",
               "zig_version": subprocess.check_output([zig, "version"], text=True).strip(),
               "source_sha256": hashlib.sha256((ROOT / "guest/init.c").read_bytes()).hexdigest()}
+    if pid1_exit_probe:
+        result['pid1_exit_probe'] = True
     if keeper:
         result.update(fixture="stage-b-real-keeper", nono="0.77.0",
                       keeper_sha256=hashlib.sha256(keeper.read_bytes()).hexdigest(),

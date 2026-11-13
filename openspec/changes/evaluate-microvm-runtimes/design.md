@@ -173,6 +173,11 @@ condition this plan meets.
   and record helper overhead and physical disk growth.
 - Negative probes are not a security audit → retain residual VMM/device/parser
   risks in the adoption report.
+- Helper exit zero may hide a guest panic → the native PID 1 exit probe returned
+  zero through pinned libkrun/HVF, whose PSCI reset and poweroff share the same
+  shutdown result. Require correlated controller shutdown intent/acknowledgement
+  and helper identity before classifying an orderly stop; qualify a stop-reason
+  seam separately. hvi's distinct `SystemReset` is retained in the comparison.
 
 ## Migration Plan
 

@@ -22,8 +22,15 @@ def main():
     parser.add_argument('--agents', action='store_true', help='separate pinned real-agent probe; implies --nix')
     parser.add_argument('--adaptable', action='store_true')
     parser.add_argument('--setup-window', action='store_true')
+    parser.add_argument('--pid1-exit-probe', action='store_true',
+                        help='compile fixed PID 1 exit injection into a separate Nix fault fixture')
     parser.add_argument('--out', type=Path, help='separate guest artifacts; preserve earlier measured images')
     args = parser.parse_args()
+    if args.pid1_exit_probe and (not args.nix or not args.out or args.agents or args.adaptable):
+        parser.error('--pid1-exit-probe requires --nix --out and excludes --agents/--adaptable')
+    if args.pid1_exit_probe and args.out.exists() and (
+            not args.out.is_dir() or any(p.name != 'busybox.apk' for p in args.out.iterdir())):
+        parser.error('PID 1 exit fixture --out must be new or contain only its pinned busybox.apk')
     ssh_pin = json.loads((ROOT / 'fixtures/ssh-consumption-windows.json').read_text())
     expected = {ROOT / 'russh' / name: digest for name, digest in ssh_pin['vendor_files'].items()}
     expected[ROOT / ssh_pin['keeper_fork']['path']] = ssh_pin['keeper_fork']['sha256']
@@ -80,7 +87,8 @@ def main():
         busybox.write_bytes(archive.extractfile(members[0]).read())
     keeper = crate / "target/aarch64-unknown-linux-musl/release/devcroft-guest-keeper"
     build(out, "aarch64", zig, keeper=keeper, busybox=busybox, workload=args.workload, nix=args.nix,
-          adaptable=args.adaptable, setup=args.setup_window, agents=args.agents)
+          adaptable=args.adaptable, setup=args.setup_window, agents=args.agents,
+          pid1_exit_probe=args.pid1_exit_probe)
     receipt = json.loads((out / "guest.json").read_text())
     sources = [*sorted((ROOT.parent.parent / "src/keeper").glob("*.rs")),
                ROOT.parent.parent / "src/ssh/server.rs", ROOT.parent.parent / "src/ssh/sftp.rs",
