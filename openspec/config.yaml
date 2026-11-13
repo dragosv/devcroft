@@ -28,6 +28,38 @@ context: |
   trusted ones, and fleet admission rests on environment evidence from a reference
   revision. The base package mechanism is open, constrained to hash-pinned inputs.
 
+  ## Planning scope update (2026-11-13)
+
+  Adversarial review of the owner's 2026-11-10..12 companion and Asterinas
+  documents, which are kept outside the repository, produced two planning
+  changes. Like the VM chain above, these are plans, not shipped behaviour.
+  - `add-vm-service-companion` (Stage 1): a private per-sandbox companion VM runs
+    only profiles from a trusted service catalog (PostgreSQL, Redis), never
+    provider-declared service commands, which are project code. Both VMs run Linux
+    LTS under the VMM that `evaluate-microvm-runtimes` 4.5 selects. No secret is
+    delivered, so every server identity other than the workload's client role is
+    unreachable through the relay. Each helper is confined before the first vCPU,
+    including which Unix sockets it can reach: Seatbelt on macOS; on Linux,
+    Landlock, a seccomp allowlist and a per-role mount namespace, because neither
+    Landlock ABI 6 nor seccomp mediates `connect()`. It does not protect data
+    reachable through the workload's granted client role; design C9 states the
+    limits.
+  - `qualify-asterinas-companion-kernel`: deferred. It keeps verified ARM64
+    blockers at Asterinas `c4b7ed57`; Stage 1 does not depend on it.
+  - Decided by the owner on 2026-11-13: (1) Asterinas is deferred, and the GOAL
+    preference for the workload kernel stands; (2) the companion guest base
+    (NixOS minimal vs. pinned closure + dedicated init) is chosen by measurement;
+    (3) the companion's only host channels are a single-opcode `SHUTDOWN` control
+    and a diagnostic stream, both host-initiated: an approved exception to the
+    2026-11-11 rule "no controller API, no direct host collector"; (4) a crashed
+    companion restarts automatically, through disk check and service recovery,
+    from a per-instance companion supervisor with bounded retries. Everything else
+    in these two changes is not individually confirmed.
+  - Positioning discipline: devcroft claims end-to-end integration (isolated
+    preparation + workload VM + host-confined VMM + private service companion +
+    verified clean fleet reconstruction), never that a Nix lockfile makes unreviewed
+    code benign, nor unverified superlatives over `microvm.nix` / `devenv`.
+
   ## Purpose
 
   devcroft provides isolated, reproducible development environments built on
