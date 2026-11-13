@@ -32,7 +32,7 @@
       consume every key they carry — `services_e2e` 8/8 and
       `devbox_provider_e2e` 10/10 ran for real, nothing refused.
       `devenv-services-sample` is checked in 0.4.
-- [ ] 0.4 Run the devenv suites (`devenv_provider_e2e`,
+- [x] 0.4 Run the devenv suites (`devenv_provider_e2e`,
       `devenv_capture_contract`) with devenv present. They self-skipped on
       this devcontainer — 24 tests reported as passing that measured
       nothing — because the image never installed devenv;
@@ -40,6 +40,12 @@
       devenv is the one reader where the guard can bite without a project
       changing anything: its Nix submodule emits every option at its
       default.
+      **Measured with devenv 2.2.2:** `devenv_provider_e2e` 20/20,
+      `devenv_capture_contract` 4/4, `services_e2e` 8/8, none skipped;
+      `devenv-services-sample` comes up with both processes declared
+      (`api` with its readiness probe, `probe` ordered after it). Nothing
+      devenv emits at its defaults is refused — the guard is inert for
+      every existing devenv project, as group 0 hoped.
 - [x] 0.3 If 0.1 finds something already dropped, decide before writing any
       code whether it is carried or refused. A guard whose first act is to
       break a working flox project is a different change and needs saying so.
