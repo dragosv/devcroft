@@ -183,7 +183,11 @@ condition this plan meets.
   published rootfs, and use an atomic directory exchange after syncing the
   completed recipe/marker. Five synchronized native crash points cover the
   fixed fixture; arbitrary mid-write timing, full-tree equivalence, host power
-  loss and peak storage for the staging copy require separate qualification.
+  loss and a bound on transient storage require separate qualification. The
+  staging-storage follow-up records guest checkpoint use and sampled host
+  allocation separately: recovery frees guest blocks without reducing the
+  matched host allocation. Full preparation/common/companion storage still
+  needs accounting; guest free blocks are not evidence of host reclamation.
 
 ## Migration Plan
 

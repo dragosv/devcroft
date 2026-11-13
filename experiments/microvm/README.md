@@ -4,7 +4,7 @@ This is the experimental implementation of `evaluate-microvm-runtimes`.
 `libkrun/` and `hvi/` have their own Cargo workspaces and lockfiles. The main devcroft build and
 published crate do not depend on it. No production VM dispatch exists yet.
 
-The [native assessment](results/macos-arm64-evaluation-assessment-v4.json) records
+The [native assessment](results/macos-arm64-evaluation-assessment-v5.json) records
 the full 180-case macOS ARM64 comparison, clean reconstruction, final SSH fault
 recovery and real CLI/TLS regressions against the five backend criteria. Both
 adapters work on this host. Production adoption remains no-go under the current
@@ -891,4 +891,33 @@ checks the fixed package/header/marker signature and four final artifact hashes,
 rather than whole-filesystem equivalence. Peak storage from the extra staging
 copy still needs measurement. The updated assessment is
 `results/macos-arm64-evaluation-assessment-v4.json`; production adoption remains
+unapproved.
+
+### Staging storage observations (2026-11-13)
+
+Add `--measure-storage` to the atomic interruption probe with freshly built
+`setup_storage_schema=1` fault fixtures. The test-only init reports `statvfs`
+counters at each synchronized stall. Ordinary recovery and final verification
+query the same filesystem through BusyBox `stat`. A host sampler requests a
+20-ms interval over the private image/state/controller files, preserving its
+sample count, actual maximum sample gap, first/final allocation and observed
+maximum. The storage marker is absent from ordinary setup/runtime binaries.
+
+Both adapters pass the five interruption/recovery points again, across 26 new
+boots, with 64 Python tests passing. Guest used space reaches 363.5 MiB at the
+measured staging checkpoints and returns to about 182.0 MiB after final recovery.
+The observed host private-file maximum is 413.2 MiB on libkrun and 413.6 MiB on
+hvi in the repeated-interruption fixture. At the matched staged-copy recovery
+checkpoint, guest used space decreases but host allocation does not. Guest free
+space therefore cannot substitute for host allocation in admission accounting.
+
+Evidence: `results/{libkrun,hvi}-macos-arm64-setup-storage.json` and
+`results/macos-arm64-setup-storage-validation.json`. These are filesystem-wide
+guest counters and sampled host regular-file allocations, not isolated copy
+bytes, a bound on sub-interval peaks, or unique APFS extent/snapshot accounting.
+The common runtime, toolchain/downloads, preparation builder, compiler/evidence
+storage and the proposed companion VM are excluded. This subtotal does not
+qualify the complete 8-GiB storage gate or transfer the older materializer's
+result to this fixture. The updated assessment is
+`results/macos-arm64-evaluation-assessment-v5.json`; production adoption remains
 unapproved.

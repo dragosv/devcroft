@@ -27,6 +27,7 @@ from adaptable_smoke import AdaptableInstance
 from cold_prepare import require_no_active_collector
 from smoke import helper_identity, ROOT, artifact, connect, LOG_LIMIT
 from ssh_smoke import require, SOCKETS, ENV
+from setup_storage import HostAllocationSampler, checkpoint_space, runtime_space
 
 
 def live_drain(stream, data, overflow):
@@ -88,6 +89,10 @@ def validate_inputs(recipe, build, inputs, seed):
 
 
 class InterruptInstance(AdaptableInstance):
+    def storage_state(self, name):
+        output = self.execute(name, "/bin/busybox stat -f -c 'setup-space %S %b %f %a' /private-base").stdout
+        return {'guest': runtime_space(output), 'host': self.storage_sampler.capture(name)}
+
     def begin(self, kind, guest):
         if self.guest is not guest:
             self.select(guest)
@@ -135,6 +140,10 @@ class InterruptInstance(AdaptableInstance):
                 time.sleep(0.05)
             else:
                 raise TimeoutError(f'stall {point} not observed')
+            if getattr(self, 'storage_sampler', None):
+                self.boots[-1]['storage_at_stall'] = {
+                    'guest': checkpoint_space(self.console(), point),
+                    'host': self.storage_sampler.capture('stall-' + point)}
             os.killpg(self.process.pid, signal.SIGKILL)
             code = self.process.wait(timeout=10)
         finally:
@@ -162,6 +171,8 @@ class InterruptInstance(AdaptableInstance):
         lines = result.stdout.decode().splitlines()
         state = classify_output(result.stdout, self.recipe_id)
         record.update(classification=state, observed=lines)
+        if getattr(self, 'storage_sampler', None):
+            record['storage_after_recovery'] = self.storage_state('runtime-after-recovery')
         self.shutdown()
         record['discarded_on_boot'] = [d.decode() for d in DISCARD.findall(self.console())]
         return state
@@ -177,8 +188,12 @@ def main():
     parser.add_argument('--runtime-guest', type=Path, required=True)
     parser.add_argument('--setup-guest', type=Path, required=True)
     parser.add_argument('--fault-guest', type=Path, required=True)
+    parser.add_argument('--measure-storage', action='store_true',
+                        help='sample host allocation and fixed guest filesystem checkpoints (atomic mode only)')
     parser.add_argument('--out', type=Path, default=ROOT / 'runs' / time.strftime('%Y%m%d-%H%M%S-setup-interrupt'))
     args = parser.parse_args()
+    if args.measure_storage and args.mode != 'atomic':
+        parser.error('--measure-storage requires --mode atomic and the instrumented fault guest')
     require_no_active_collector(ROOT / 'runs')
     lease = (ROOT / 'artifacts/nested-runner.lock').open('a')
     fcntl.flock(lease, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -190,12 +205,16 @@ def main():
               for name, path in [('runtime', args.runtime_guest), ('setup', args.setup_guest), ('fault', args.fault_guest)]}
     runtime, setup, fault = guests['runtime'], guests['setup'], guests['fault']
     validate_guests(guests, recipe_id, args.mode)
+    if args.measure_storage and (type(fault.get('setup_storage_schema')) is not int
+                                 or fault['setup_storage_schema'] != 1):
+        parser.error('--measure-storage requires a fault guest with setup_storage_schema=1')
     build = json.loads((args.inputs.parent / 'build.json').read_text())
     inputs, seed = artifact(args.inputs), artifact(args.seed)
     validate_inputs(recipe, build, inputs, seed)
     sources = ['setup_interrupt_probe.py', 'adaptable_smoke.py', 'guest/init.c', 'build_guest.py',
                'build_keeper_guest.py', 'smoke.py', 'ssh_smoke.py', 'ssh_transport.py', 'workload_smoke.py',
                'cold_prepare.py', 'adaptable/recipe.py']
+    sources.extend(['setup_storage.py', 'density.py'])
     for name in sources:
         target = args.out / 'sources' / name
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -220,6 +239,9 @@ def main():
         vm.prepare(validation_timeout=30)
         case = {'label': label, 'id': vm.id, 'directory': str(vm.path), 'boots': vm.boots}
         report['cases'].append(case)
+        if args.measure_storage:
+            vm.storage_sampler = HostAllocationSampler([vm.path, vm.controller_dir])
+            vm.storage_sampler.start()
         return vm, case
 
     try:
@@ -262,12 +284,20 @@ def main():
             c.shutdown()
             c.begin('runtime', runtime); c.ready()
             recovered = c.verify(recipe_id)
+            if args.measure_storage:
+                c.boots[-1]['storage_final'] = c.storage_state('recovered-final-storage')
             c.shutdown()
             # An uninterrupted fresh reconstruction on its own disk is the reference.
             d, ref = new('uninterrupted-reference')
             d.begin('setup', setup); d.ready(); d.apply(recipe_id)
             expected = d.verify(recipe_id)
+            if args.measure_storage:
+                d.boots[-1]['storage_final'] = d.storage_state('uninterrupted-final-storage')
             d.shutdown()
+            if args.measure_storage:
+                report['storage_measurement_scope'] = (
+                    '20-ms requested host private-allocation sampling and guest statvfs at synchronized stalls '
+                    'and ordinary recovery; observed maxima, not a full 8-GiB preparation/storage gate')
             report['recovered_artifacts_match_uninterrupted'] = recovered == expected
             report['artifact_sha256'] = expected
             require(recovered == expected, 'recovered reconstruction differs from the uninterrupted reference')
@@ -281,6 +311,13 @@ def main():
     finally:
         for vm in instances:
             vm.stop()
+            sampler = getattr(vm, 'storage_sampler', None)
+            if sampler:
+                try:
+                    record = sampler.finish()
+                    next(c for c in report['cases'] if c['id'] == vm.id)['host_storage_samples'] = record
+                except Exception as error:
+                    report.update(status='failed', storage_error=f'{type(error).__name__}: {error}')
         report['cleanup'] = {'helpers_reaped': all(vm.process is None for vm in instances),
             'endpoints_removed': all(not (vm.path / name).exists() for vm in instances for name in SOCKETS)}
         if not all(report['cleanup'].values()):
