@@ -441,7 +441,9 @@ impl Session {
                 }
 
                 if let Some(sender) = self.channels.remove(&channel_num) {
-                    let _ = sender.send(ChannelMsg::OpenFailure(reason_code.clone())).await;
+                    let _ = sender
+                        .send(ChannelMsg::OpenFailure(reason_code.clone()))
+                        .await;
                 }
 
                 let _ = self.sender.send(Reply::ChannelOpenFailure);
@@ -613,10 +615,10 @@ impl Session {
                         as u32;
                 }
                 if let Some(chan) = self.channels.get(&channel_num) {
-                    chan.window_size().update(new_size).await;
+                    chan.window_size().increase(amount, new_size).await;
                     // Use try_send to avoid blocking the session loop when channel buffer is full.
                     // WindowAdjusted is informational - the critical side effect (updating
-                    // WindowSizeRef and notifying ChannelTx) already happens in update().
+                    // WindowSizeRef and notifying ChannelTx) already happens in increase().
                     let _ = chan.try_send(ChannelMsg::WindowAdjusted { new_size });
                 }
                 client.window_adjusted(channel_num, new_size, self).await
@@ -721,7 +723,9 @@ impl Session {
 
                 match &msg.typ {
                     ChannelType::Session => {
-                        client.server_channel_open_session(channel, reply, self).await?
+                        client
+                            .server_channel_open_session(channel, reply, self)
+                            .await?
                     }
                     ChannelType::DirectTcpip(d) => {
                         client
@@ -790,7 +794,9 @@ impl Session {
                     }
                     ChannelType::Unknown { typ } => {
                         if client.should_accept_unknown_server_channel(id, typ).await {
-                            client.server_channel_open_unknown(channel, reply, self).await?;
+                            client
+                                .server_channel_open_unknown(channel, reply, self)
+                                .await?;
                         } else {
                             debug!("unknown channel type: {typ}");
                             if let Some(ref mut enc) = self.common.encrypted {

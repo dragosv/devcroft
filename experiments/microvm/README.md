@@ -763,9 +763,44 @@ at the mux client's earlier exit notification. No real credentials are used.
 
 Failures remain in `results/macos-arm64-ssh-flow-calibrations.json`. The pinned
 russh library passes 154 unit tests, the keeper passes warnings-denied all-target
-Clippy, and the explicit native OpenSSH 16-MiB test passes. A direct-russh
-unpaced multiplex diagnostic still intermittently stalls; the full native
-keeper suite is not claimed clean. An unchanged common macOS PTY test also
+Clippy, and the explicit native OpenSSH 16-MiB test passes. At that checkpoint,
+the direct-russh unpaced multiplex diagnostic still intermittently stalled;
+the full native keeper suite was not claimed clean. A common macOS PTY test also
 returned empty output once. Upstream strict library Clippy reports two unchanged
 saturating-arithmetic style findings. The original 180-case density and private
 preparation reports retain their older binary/source hashes.
+
+
+### SSH duplex and queued-credit follow-up (2026-11-13)
+
+The isolated russh fork now queues sealed output behind a cancellation-safe
+partial-write cursor. Its client and server continue reading packets while the
+socket is blocked. Application producers stop at a 256-KiB soft threshold;
+control replies retain a bounded reserve, with an 8-MiB cap on queued buffer
+capacities. Staged plaintext also counts toward application backpressure.
+Cipher state, packet order, half-close and final disconnect output are retained.
+
+Window adjustments now add only the newly received credit, capped by the
+protocol window, preserving credit already reserved by messages awaiting the
+session loop. Previously, replacing that credit with the absolute protocol
+window could grant queued bytes twice and stall unrelated channels behind
+pending data. The regression sends unpaced input directly through russh at
+128 KiB and 16 MiB, without echo-based application pacing.
+
+The follow-up passes all 36 keeper tests including native OpenSSH, all 157 russh
+library tests, and five integration tests for backpressure, channel streams and
+strict rekeying. The unpaced duplex and nonreading-stdin multiplex regressions
+each pass ten consecutive runs. Keeper all-target Clippy passes with warnings
+denied. Russh library Clippy passes with only the pre-existing
+`manual_saturating_arithmetic` lint allowed; strict mode still reports its two
+unchanged upstream findings. Evidence and source hashes are recorded in
+`results/macos-arm64-ssh-wire-validation.json`; earlier failures remain retained.
+
+Fresh native OpenSSH VM proofs use the separately built, pinned guest in
+`artifacts/stage-b-nix-wire-v2`. Their results are
+`results/{libkrun,hvi}-macos-arm64-ssh-wire-progress.json`. The probe now retains
+its post-transport-loss process-reaping and new-connection checks in the result
+row itself, alongside exact transfer hashes and owned-resource cleanup.
+These close the direct-client diagnostic for this experimental fork. Production
+porting, physical host suspend, PID 1 death, and a repeated density/preparation
+matrix for this new binary remain outside this validation.

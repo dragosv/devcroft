@@ -18,8 +18,8 @@ use std::fmt::{Debug, Formatter};
 use std::mem::replace;
 use std::num::Wrapping;
 
-use bytes::Bytes;
 use byteorder::{BigEndian, ByteOrder};
+use bytes::Bytes;
 use log::{debug, trace};
 use ssh_encoding::Encode;
 use tokio::sync::oneshot;
@@ -128,6 +128,12 @@ impl ChannelFlushResult {
 }
 
 impl<C> CommonSession<C> {
+    pub(crate) fn pending_packet_bytes(&self) -> usize {
+        self.packet_writer
+            .pending_bytes()
+            .saturating_add(self.encrypted.as_ref().map_or(0, |enc| enc.write.len()))
+    }
+
     pub(crate) fn has_any_pending_data(&self) -> bool {
         self.encrypted
             .as_ref()
@@ -189,8 +195,7 @@ impl<C> CommonSession<C> {
                     .init_compress(self.packet_writer.compress());
             }
             if !enc.server_compression.is_deferred() {
-                enc.server_compression
-                    .init_decompress(&mut enc.decompress);
+                enc.server_compression.init_decompress(&mut enc.decompress);
             }
         }
     }
@@ -1154,11 +1159,9 @@ mod tests {
         let mut staged = test_encrypted();
         let mut direct = test_encrypted();
         let mut staged_channel = test_channel(channel_id, 42, false, false);
-        staged_channel.pending_data =
-            VecDeque::from([(Bytes::from_static(b"hello"), Some(1), 0)]);
+        staged_channel.pending_data = VecDeque::from([(Bytes::from_static(b"hello"), Some(1), 0)]);
         let mut direct_channel = test_channel(channel_id, 42, false, false);
-        direct_channel.pending_data =
-            VecDeque::from([(Bytes::from_static(b"hello"), Some(1), 0)]);
+        direct_channel.pending_data = VecDeque::from([(Bytes::from_static(b"hello"), Some(1), 0)]);
         staged.channels.insert(channel_id, staged_channel);
         direct.channels.insert(channel_id, direct_channel);
 
@@ -1270,10 +1273,7 @@ mod tests {
             .data_with_writer(&mut direct_writer, channel_id, payload, false)
             .unwrap();
 
-        assert_eq!(
-            direct_writer.buffer().buffer,
-            staged_writer.buffer().buffer
-        );
+        assert_eq!(direct_writer.buffer().buffer, staged_writer.buffer().buffer);
         assert_eq!(
             direct.channels[&channel_id].recipient_window_size,
             staged.channels[&channel_id].recipient_window_size
@@ -1307,10 +1307,7 @@ mod tests {
             .extended_data_with_writer(&mut direct_writer, channel_id, 1, payload, false)
             .unwrap();
 
-        assert_eq!(
-            direct_writer.buffer().buffer,
-            staged_writer.buffer().buffer
-        );
+        assert_eq!(direct_writer.buffer().buffer, staged_writer.buffer().buffer);
         assert_eq!(
             direct.channels[&channel_id].recipient_window_size,
             staged.channels[&channel_id].recipient_window_size
@@ -1448,7 +1445,10 @@ mod tests {
             .unwrap();
 
         let channel = &encrypted.channels[&channel_id];
-        assert_eq!(clear_packet_types(&writer.buffer().buffer), vec![msg::CHANNEL_DATA]);
+        assert_eq!(
+            clear_packet_types(&writer.buffer().buffer),
+            vec![msg::CHANNEL_DATA]
+        );
         assert_eq!(channel.recipient_window_size, 0);
         assert_eq!(channel.pending_data.len(), 1);
         let pending = channel.pending_data.back().unwrap();

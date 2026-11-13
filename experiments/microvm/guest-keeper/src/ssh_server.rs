@@ -1488,10 +1488,8 @@ mod tests {
         let (client, authorized) =
             authenticated_connection(key.clone(), key.public_key().clone()).await;
         assert!(authorized);
-        // Exercise the previously failing payload size and >100 total input
-        // frames with a 32-KiB application window. Unpaced direct-russh bursts
-        // remain a separate retained diagnostic; the native OpenSSH fixture
-        // below independently exercises an unpaced sixteen-MiB input.
+        // Both directions must progress without application-level echo credits.
+        // The large case crosses the SSH window and socket capacity repeatedly.
         for size in [131072, 16 * 1024 * 1024] {
             tokio::time::timeout(std::time::Duration::from_secs(20), async {
                 let mut channel = client.channel_open_session().await.unwrap();
@@ -1507,16 +1505,8 @@ mod tests {
                     .map(|index| (index % 251) as u8)
                     .collect::<Vec<_>>();
                 let (mut reader, writer) = channel.split();
-                let credits = tokio::sync::Semaphore::new(32768);
                 let send = async {
-                    for chunk in input.chunks(32768) {
-                        credits
-                            .acquire_many(chunk.len() as u32)
-                            .await
-                            .unwrap()
-                            .forget();
-                        writer.data_bytes(chunk.to_vec()).await.unwrap();
-                    }
+                    writer.data_bytes(input.clone()).await.unwrap();
                     writer.eof().await.unwrap();
                 };
                 let receive = async {
@@ -1525,7 +1515,6 @@ mod tests {
                     while let Some(message) = reader.wait().await {
                         match message {
                             russh::ChannelMsg::Data { data } => {
-                                credits.add_permits(data.len());
                                 output.extend_from_slice(&data);
                             }
                             russh::ChannelMsg::ExitStatus { exit_status } => {
