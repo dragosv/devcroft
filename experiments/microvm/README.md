@@ -4,12 +4,12 @@ This is the experimental implementation of `evaluate-microvm-runtimes`.
 `libkrun/` and `hvi/` have their own Cargo workspaces and lockfiles. The main devcroft build and
 published crate do not depend on it. No production VM dispatch exists yet.
 
-The [native assessment](results/macos-arm64-evaluation-assessment.json) now records
+The [native assessment](results/macos-arm64-evaluation-assessment-v3.json) records
 the full 180-case macOS ARM64 comparison, clean reconstruction, final SSH fault
 recovery and real CLI/TLS regressions against the five backend criteria. Both
 adapters work on this host. Production adoption remains no-go under the current
-evidence: full preparation storage, controller authority separation and remaining
-platform/fault qualification are still open. The libkrun recommendation is only
+evidence: hostile preparation confinement, production lifecycle/resource/credential
+handling and remaining platform/fault qualification are still open. The libkrun recommendation is only
 for the next scoped integration experiment, conditional on the recorded
 author-boundary criterion and the owner's acceptance.
 
@@ -804,3 +804,41 @@ row itself, alongside exact transfer hashes and owned-resource cleanup.
 These close the direct-client diagnostic for this experimental fork. Production
 porting, physical host suspend, PID 1 death, and a repeated density/preparation
 matrix for this new binary remain outside this validation.
+
+### Controlled PID 1 death and recovery (2026-11-13)
+
+`build_keeper_guest.py --nix --pid1-exit-probe --out <separate-directory>` builds
+an explicit fault fixture. Its compile-time-only branch accepts exactly
+`TEST PID1 EXIT 86` on the administrative control channel and calls `_exit(86)`
+without synchronizing or shutting down the guest first. Ordinary builds omit
+the branch. The builder refuses to overwrite an existing guest with this fixture.
+
+Run `fault_probe.py --adapter <libkrun|hvi> --guest <fault-receipt>
+--control-guest <ordinary-receipt> --pid1-exit --out <new-run>` to add init death
+to the existing four fault cases. The two receipts must match init source,
+keeper, shell and runtime hashes, with distinct initramfs hashes and opposite
+hook settings. The ordinary sibling must refuse the exact exit command and
+remain responsive; the enabled fixture must refuse three non-fixed commands.
+
+Both native macOS ARM64 adapters pass all five cases, across ten total boots.
+The console records the actual `Attempted to kill init!` panic with exit code
+`0x00005600`. Helpers terminate without a host kill; owned endpoints are removed,
+existing compiled outputs and 32 acknowledged Redis keys recover without
+rebuilding, and the live sibling retains its Redis identity/data. The paired
+builds pass C warnings-as-errors; 38 Python tests cover opt-in guards and existing
+framing, recipe and launch validation. Evidence:
+`results/{libkrun,hvi}-macos-arm64-faults-pid1.json` and
+`results/macos-arm64-pid1-fault-validation.json`.
+
+The test also exposes a lifecycle distinction. At the pinned libkrun HVF backend,
+PSCI reset and poweroff both become `Shutdown`; the PID 1 panic returns helper
+status zero, just like clean shutdown. hvi exposes `SystemReset`, which this
+helper reports as an error with status one. A controller cannot classify clean
+shutdown from a zero helper status alone; it needs correlated shutdown intent,
+acknowledgement and process identity. This remains a production integration gate.
+
+The revised assessment is `results/macos-arm64-evaluation-assessment-v3.json`.
+It closes the explicitly scoped duplex and PID 1 gaps while retaining previous
+results and their exact artifact generations. Physical host suspend, other native
+platforms and renewed density/preparation/CLI-start qualification for the latest
+keeper remain open. Production adoption remains unapproved.

@@ -1,0 +1,113 @@
+{
+  "schema": 1,
+  "status": "passed",
+  "platform": "macos-arm64-native",
+  "qualification": "five scoped native fault/recovery cases per adapter, including compile-time test-only global PID 1 exit; no production, host power-loss, host-suspend or full-density claim",
+  "raw_evidence": "experiments/microvm/runs/20261113-pid1-validation",
+  "guest_keeper_sha256": "d82bd8336200ba98e74c76ed27b15db9f21b900fc6b37f48410f81896f769082",
+  "ordinary_control_guest_receipt": {
+    "path": "experiments/microvm/artifacts/stage-b-nix-pid1-control/guest.json",
+    "sha256": "78335d426252c289d1b877ca9efabfce51139c8751efdccd987c70123dd8a7a9"
+  },
+  "test_only_exit_guest_receipt": {
+    "path": "experiments/microvm/artifacts/stage-b-nix-pid1-exit/guest.json",
+    "sha256": "3941b4190a4120f6f298abbaf34c0208ecacf3fddb01780d59dda8c0906a5bdb"
+  },
+  "fixture_validation": {
+    "path": "experiments/microvm/runs/20261113-pid1-validation/fixture-controls.json",
+    "sha256": "925fefe8c0a3ee47a79f5ab1713eddcfeabbe09e893a38970ed597a30cba45ab"
+  },
+  "python_validation": {
+    "status": "passed",
+    "tests": 38,
+    "rows": [
+      {
+        "tests": 8,
+        "path": "experiments/microvm/runs/20261113-pid1-validation/unit-tests.log",
+        "sha256": "1f385ff4448444e181cdfcf5278556bcad93f1202fc989dd44ab80edabaf3443"
+      },
+      {
+        "tests": 4,
+        "path": "experiments/microvm/runs/20261113-pid1-validation/control-frame-tests.log",
+        "sha256": "c96f3818d79a3c049b0da287d70b0382a1a9ccfa5501baa046093e9f79811dda"
+      },
+      {
+        "tests": 7,
+        "path": "experiments/microvm/runs/20261113-pid1-validation/adaptable-recipe-tests.log",
+        "sha256": "9e243a44571391a4f48b2fa58467f939378f525355544acc8c28271d3a8297c8"
+      },
+      {
+        "tests": 19,
+        "path": "experiments/microvm/runs/20261113-pid1-validation/launch-validation-tests.log",
+        "sha256": "ebde7ca71d68ed56491bde3f54dd1e78f1b405dac0c9175ec3b01ea0511a5860"
+      }
+    ]
+  },
+  "native_fault_proofs": [
+    {
+      "adapter": "libkrun",
+      "status": "passed",
+      "cases": 5,
+      "boots": 5,
+      "path": "experiments/microvm/results/libkrun-macos-arm64-faults-pid1.json",
+      "sha256": "cf99dc4d0d24479de139fe10ec2c1ff613c3d56c44cdb8e06da831e50aad3cc2"
+    },
+    {
+      "adapter": "hvi",
+      "status": "passed",
+      "cases": 5,
+      "boots": 5,
+      "path": "experiments/microvm/results/hvi-macos-arm64-faults-pid1.json",
+      "sha256": "241ed1df7320ae66899b692022bc4ac21d370dfd08bb29e7661d651060acbe30"
+    }
+  ],
+  "helper_stop_classification": {
+    "status": "partial",
+    "adapters": {
+      "libkrun": {
+        "clean_shutdown_helper_exit_code": 0,
+        "pid1_panic_helper_exit_code": 0,
+        "exit_status_distinguishes_this_panic_from_clean_shutdown": false,
+        "console_evidence": [
+          {
+            "path": "experiments/microvm/runs/20261113-libkrun-pid1-faults/a/boot-3.stdout.log",
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          {
+            "path": "experiments/microvm/runs/20261113-libkrun-pid1-faults/a/boot-3.stderr.log",
+            "sha256": "c6e6c451b824c7120197235500eb584f2dff354d2e354fae96afb7e56881cb57"
+          }
+        ],
+        "qualification": "one controlled init-exit panic with panic=-1; not a universal exit classification guarantee"
+      },
+      "hvi": {
+        "clean_shutdown_helper_exit_code": 0,
+        "pid1_panic_helper_exit_code": 1,
+        "exit_status_distinguishes_this_panic_from_clean_shutdown": true,
+        "console_evidence": [
+          {
+            "path": "experiments/microvm/runs/20261113-hvi-pid1-faults/a/boot-3.stdout.log",
+            "sha256": "2e904f0166219359c42fa592f8d75535b77443f0397648306c9e143804d216cc"
+          },
+          {
+            "path": "experiments/microvm/runs/20261113-hvi-pid1-faults/a/boot-3.stderr.log",
+            "sha256": "7dd182def39104f39e642e58c5fe2488332e097e3ae23153381c19024398c6b2"
+          }
+        ],
+        "qualification": "one controlled init-exit panic with panic=-1; not a universal exit classification guarantee"
+      }
+    },
+    "source_trace": {
+      "path": "experiments/microvm/runs/20261113-pid1-validation/stop-source-trace.json",
+      "sha256": "f3a0a6e552bc04960c0bcf407e79ba1de575b657e61983ed391675adaf654015"
+    },
+    "finding": "Pinned libkrun HVF maps SYSTEM_OFF and SYSTEM_RESET to Shutdown and exits 0 for both; hvi exposes SystemReset and this helper exits 1. A controller must correlate shutdown intent/acknowledgement and helper identity rather than accepting exit 0 alone.",
+    "production_lifecycle_qualification": "not established by this experiment"
+  },
+  "remaining_not_run": [
+    "physical-host-suspend-resume",
+    "host-power-loss",
+    "native Linux and Intel Mac fault rows",
+    "density/preparation matrix for these new initramfs hashes"
+  ]
+}

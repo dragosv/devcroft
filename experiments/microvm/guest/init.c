@@ -344,6 +344,14 @@ int main(void) {
 #endif
             if (!strncmp(line, "PING ", 5)) {
                 send_all(fd, "PONG "); send_all(fd, line + 5); send_all(fd, "\n");
+#ifdef ENABLE_PID1_EXIT_PROBE
+            } else if (!strcmp(line, "TEST PID1 EXIT 86")) {
+                /* Disposable fault fixture only. No sync or orderly shutdown:
+                 * exiting global PID 1 must cause the kernel's init-death panic.
+                 * This entire branch is absent from ordinary guest binaries. */
+                dprintf(2, "guest: test-only PID1 exit=86\n");
+                _exit(86);
+#endif
             } else if (!strcmp(line, "SHUTDOWN")) {
                 send_all(fd, "BYE\n");
                 close(fd);

@@ -9,11 +9,34 @@ import select
 import signal
 import subprocess
 import time
+import traceback
 
 from cold_prepare import require_no_active_collector
 from smoke import ROOT, artifact, connect, helper_identity, line
 from ssh_smoke import ENV, SOCKETS, require
 from workload_smoke import WorkloadInstance
+
+
+def validate_pid1_fixture_pair(guest, control):
+    """Do not turn a normal receipt or a mismatched sibling into an exit test."""
+    if guest.get('pid1_exit_probe') is not True or control.get('pid1_exit_probe', False) is not False:
+        raise ValueError('PID 1 exit requires an enabled fault fixture and a disabled control fixture')
+    for name in ('arch', 'source_sha256', 'keeper_sha256', 'busybox_sha256', 'nix'):
+        if name not in guest or guest[name] != control.get(name):
+            raise ValueError('PID 1 fault/control fixture mismatch: ' + name)
+    if guest['arch'] != 'aarch64' or guest['nix'] is not True:
+        raise ValueError('PID 1 probe currently qualifies only the native ARM64 Nix fixture')
+    if guest['runtime']['sha256'] != control['runtime']['sha256']:
+        raise ValueError('PID 1 fault/control runtime mismatch')
+    if guest['initramfs']['sha256'] == control['initramfs']['sha256']:
+        raise ValueError('PID 1 fault/control initramfs must differ')
+
+
+def control_reply(vm, request):
+    sock, _ = connect(vm.path / 'control.sock', vm.process, time.monotonic() + 5, vm.overflow)
+    with sock:
+        sock.sendall(request + b'\n')
+        return line(sock)
 
 
 def process_start(vm, pid, name):
@@ -80,14 +103,26 @@ def main():
     parser.add_argument('--adapter', choices=['libkrun', 'hvi'], required=True)
     parser.add_argument('--out', type=Path, required=True)
     parser.add_argument('--guest', type=Path, default=ROOT / 'artifacts/stage-b-nix/guest.json')
+    parser.add_argument('--pid1-exit', action='store_true', help='also exercise the fixed test-only PID 1 exit')
+    parser.add_argument('--control-guest', type=Path, help='matching ordinary guest used as a live negative-control sibling')
     args = parser.parse_args()
+    guest = json.loads(args.guest.read_text())
+    control_guest = json.loads(args.control_guest.read_text()) if args.control_guest else guest
+    if args.pid1_exit:
+        if not args.control_guest:
+            parser.error('--pid1-exit requires a matching --control-guest with no exit hook')
+        try:
+            validate_pid1_fixture_pair(guest, control_guest)
+        except (ValueError, KeyError) as error:
+            parser.error(str(error))
+    elif args.control_guest:
+        parser.error('--control-guest is used only with --pid1-exit')
     require_no_active_collector(ROOT / 'runs')
     lease = (ROOT / 'artifacts/nested-runner.lock').open('a')
     fcntl.flock(lease, fcntl.LOCK_EX | fcntl.LOCK_NB)
     os.umask(0o077)
     args.out.mkdir(parents=True, exist_ok=False)
     helper = ROOT / ('hvi/target/debug/devcroft-hvi-spike' if args.adapter == 'hvi' else 'libkrun/target/debug/devcroft-krun-spike')
-    guest = json.loads(args.guest.read_text())
     image, seed, kernel = [ROOT / name for name in ('artifacts/nix/toolchain.img', 'artifacts/nix/data.seed.img', 'artifacts/kernel-landlock/Image')]
     report = {'schema': 1, 'status': 'failed', 'qualification': 'native functional fault injection; no host power-loss or host-suspend claim',
               'platform': 'macos-arm64-native', 'host': list(os.uname()), **helper_identity(helper),
@@ -96,12 +131,20 @@ def main():
     report['guest_receipt'] = artifact(args.guest)
     report['planned_cases'] = ['abrupt-ssh-client-loss', 'helper-process-pause-resume',
                                'keeper-death-and-cold-recovery', 'helper-term-and-cold-recovery']
-    report['not_run'] = [{'case': 'init-death', 'reason': 'baseline PID 1 has no fixed test-only exit injection'},
-                         {'case': 'host-suspend-resume', 'reason': 'requires a physical-host maintenance window; helper SIGSTOP does not qualify it'}]
+    report['not_run'] = [{'case': 'host-suspend-resume', 'reason': 'requires a physical-host maintenance window; helper SIGSTOP does not qualify it'}]
+    if args.pid1_exit:
+        report['planned_cases'].append('init-death-and-cold-recovery')
+        report['control_guest'] = control_guest
+        report['control_guest_receipt'] = artifact(args.control_guest)
+    else:
+        report['not_run'].append({'case': 'init-death', 'reason': 'requires --pid1-exit and a separate enabled fixture plus ordinary control guest'})
     snapshots = args.out / 'sources'
     snapshots.mkdir()
-    for name in ('fault_probe.py', 'smoke.py', 'ssh_smoke.py', 'ssh_transport.py', 'workload_smoke.py'):
-        (snapshots / name).write_bytes((ROOT / name).read_bytes())
+    for name in ('fault_probe.py', 'smoke.py', 'ssh_smoke.py', 'ssh_transport.py', 'workload_smoke.py',
+                 'build_guest.py', 'build_keeper_guest.py', 'guest/init.c'):
+        target = snapshots / name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes((ROOT / name).read_bytes())
     instances = []
 
     def save():
@@ -115,14 +158,18 @@ def main():
             row['status'] = 'passed'
         except Exception as error:
             row['error'] = f'{type(error).__name__}: {error}'
+            row['traceback'] = traceback.format_exc()
         save()
         print(json.dumps(row), flush=True)
 
     try:
         for label in ('a', 'sibling'):
-            vm = WorkloadInstance(label, args.out, helper, kernel, guest, image, seed)
+            vm_guest = control_guest if label == 'sibling' else guest
+            vm = WorkloadInstance(label, args.out, helper, kernel, vm_guest, image, seed)
             instances.append(vm)
-            report['instances'].append({'label': label, 'private_dir': str(vm.path), 'boots': vm.boots})
+            report['instances'].append({'label': label, 'private_dir': str(vm.path), 'boots': vm.boots,
+                                        'guest_initramfs_sha256': vm_guest['initramfs']['sha256'],
+                                        'pid1_exit_probe': vm_guest.get('pid1_exit_probe', False)})
             vm.prepare(validation_timeout=90)
             vm.start()
             vm.ready(timeout=120)
@@ -195,11 +242,53 @@ def main():
             return {'signal': 'SIGTERM', 'helper_exit_code': code, 'cold_restart_restored_service': True,
                     'existing_build_and_32_acknowledged_keys_recovered': True, **witness}
         case('helper-term-and-cold-recovery', helper_death)
+
+        if args.pid1_exit:
+            def init_death():
+                # Prove the exact destructive command is absent in the ordinary
+                # guest, then keep that same live sibling as the crash witness.
+                refused = control_reply(sibling, b'TEST PID1 EXIT 86')
+                require(refused == b'ERR command\n', refused)
+                require(control_reply(sibling, b'PING pid1-control') == b'PONG pid1-control\n',
+                        'ordinary guest stopped responding after refusing the exit command')
+                for command in (b'TEST PID1 EXIT', b'TEST PID1 EXIT 0', b'TEST PID1 EXIT 86 extra'):
+                    require(control_reply(a, command) == b'ERR command\n', 'exit hook accepted a non-fixed command')
+                require(process_start(a, 1, 'pid1-live-before-exit') is not None, 'PID 1 positive control missing')
+                a.boots[-1]['forced_stop'] = {'expected': True, 'guest_pid': 1, 'guest_exit_code': 86,
+                                             'injection': 'compile-time test-only fixed control command'}
+                sock, _ = connect(a.path / 'control.sock', a.process, time.monotonic() + 5, a.overflow)
+                started = time.monotonic()
+                with sock:
+                    sock.sendall(b'TEST PID1 EXIT 86\n')
+                code = a.process.wait(timeout=15)
+                stopped_seconds = time.monotonic() - started
+                a.stop()
+                console = bytes(a.stdout + a.stderr)
+                require(b'guest: test-only PID1 exit=86' in console, 'PID 1 injection marker missing')
+                require(b'Kernel panic - not syncing: Attempted to kill init!' in console
+                        and b'exitcode=0x00005600' in console, 'expected PID 1 exit panic missing')
+                require(not a.boots[-1]['forced_cleanup'] and not a.boots[-1]['log_overflow'],
+                        'PID 1 panic did not terminate the helper without host cleanup')
+                require(all(not (a.path / name).exists() for name in SOCKETS), 'stale crash endpoints remain')
+                witness = sibling_unchanged()
+                a.start()
+                a.ready(timeout=120)
+                a.verify_build(builds[a.label])
+                a.start_redis()
+                a.verify_values('after-init-death-recovery')
+                return {'test_only_exit_hook': True, 'guest_pid': 1, 'guest_exit_code': 86,
+                        'normal_guest_refused_exact_exit_command': True, 'nonfixed_commands_refused': 3,
+                        'kernel_init_death_panic_observed': True, 'helper_exit_code': code,
+                        'helper_stopped_seconds': stopped_seconds, 'host_forced_cleanup_needed': False,
+                        'owned_endpoints_removed_before_restart': True, 'cold_restart_restored_service': True,
+                        'existing_build_and_32_acknowledged_keys_recovered': True, **witness}
+            case('init-death-and-cold-recovery', init_death)
         for vm in instances:
             vm.clean_shutdown()
         report['status'] = 'passed' if all(row['status'] == 'passed' for row in report['cases']) else 'failed'
     except BaseException as error:
         report['error'] = f'{type(error).__name__}: {error}'
+        report['traceback'] = traceback.format_exc()
     finally:
         for vm in instances:
             vm.stop()
