@@ -4,8 +4,10 @@ use std::{env, fs, path::PathBuf, process::Command};
 fn main() {
     let root = PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").unwrap()).join("..");
     let patch = root.join("patches/libkrun-vsock-host-half-close.patch");
+    let reset_patch = root.join("patches/libkrun-macos-reset-exit.patch");
     let source = root.join("artifacts/libkrun-source");
     println!("cargo:rerun-if-changed={}", patch.display());
+    println!("cargo:rerun-if-changed={}", reset_patch.display());
     println!(
         "cargo:rerun-if-changed={}",
         root.join("build_helper.py").display()
@@ -35,4 +37,6 @@ fn main() {
     println!("cargo:rustc-env=DEVCROFT_KRUN_LINUX_FILTER_SHA256={filter_hash}");
     let hash = format!("{:x}", Sha256::digest(fs::read(patch).unwrap()));
     println!("cargo:rustc-env=DEVCROFT_KRUN_PATCH_SHA256={hash}");
+    let reset_hash = format!("{:x}", Sha256::digest(fs::read(reset_patch).unwrap()));
+    println!("cargo:rustc-env=DEVCROFT_KRUN_RESET_PATCH_SHA256={reset_hash}");
 }

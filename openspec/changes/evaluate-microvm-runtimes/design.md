@@ -181,8 +181,13 @@ condition this plan meets.
   The cooperative stop-receipt follow-up now exercises this predicate with
   native helper creation identity, persisted intent and boot/nonce-bound sync
   replies, including an accepted stop request that panics before its reply.
-  It does not qualify production supervisor recovery, companion service
-  stop/unmount, a forged reply or failure after a valid acknowledgement.
+  A later post-ack panic counterexample invalidates ACK-plus-zero as a sufficient
+  predicate for the original libkrun helper. The isolated macOS ARM64 reset-exit
+  patch now separates PSCI reset from poweroff, and the receipt defaults to
+  unverified without explicit backend exit qualification. Native fixed-window
+  post-ack panic checks cover both adapters. This does not qualify production
+  supervisor recovery, companion service stop/unmount, a forged reply or
+  arbitrary failure timing after a valid acknowledgement.
 - Interrupted private setup may expose incomplete state → preserve the observed
   unbootable baseline and partial recipe failures, stage changes outside the
   published rootfs, and use an atomic directory exchange after syncing the

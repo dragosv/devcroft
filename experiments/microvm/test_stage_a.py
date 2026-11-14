@@ -4,6 +4,7 @@ import fcntl
 import hashlib
 import json
 import os
+import platform
 from pathlib import Path
 import subprocess
 import tempfile
@@ -61,6 +62,14 @@ class LaunchValidation(unittest.TestCase):
         result = self.check()
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("SHA-256 mismatch", result.stderr)
+
+    def test_macos_reset_semantics_require_the_reviewed_backend_patch(self):
+        if platform.system() != 'Darwin' or platform.machine() != 'arm64':
+            self.skipTest('macOS ARM64 backend seam only')
+        info = json.loads(subprocess.check_output([str(HELPER), 'provenance'], timeout=5))
+        patch = ROOT / 'patches/libkrun-macos-reset-exit.patch'
+        self.assertEqual(info['macos_reset_exit_patch_sha256'], hashlib.sha256(patch.read_bytes()).hexdigest())
+        self.assertEqual(info['macos_stop_semantics'], 'psci-system-off=0,system-reset=1')
 
     def test_unknown_network_switch_is_refused(self):
         cfg = copy.deepcopy(self.cfg)

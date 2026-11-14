@@ -4,7 +4,7 @@ This is the experimental implementation of `evaluate-microvm-runtimes`.
 `libkrun/` and `hvi/` have their own Cargo workspaces and lockfiles. The main devcroft build and
 published crate do not depend on it. No production VM dispatch exists yet.
 
-The [native assessment](results/macos-arm64-evaluation-assessment-v7.json) records
+The [native assessment](results/macos-arm64-evaluation-assessment-v8.json) records
 the full 180-case macOS ARM64 comparison, clean reconstruction, final SSH fault
 recovery and real CLI/TLS regressions against the five backend criteria. Both
 adapters work on this host. Production adoption remains no-go under the current
@@ -436,8 +436,8 @@ Only the keeper environment-name filter moved out of host lifecycle code;
 native session behavior and the public activation constants remain unchanged.
 
 `build_helper.py` fetches the exact Git revision into ignored artifacts, applies
-the reviewed patch and verifies the complete effective diff before building and
-signing. The helper embeds the patch hash in its provenance. `--from CHECKOUT`
+the reviewed patch series and verifies the complete effective diff before building and
+signing. The helper embeds the patch hashes in its provenance. `--from CHECKOUT`
 can seed this from an existing repository at the pin. The source tree is not a
 modified global Cargo cache.
 
@@ -933,9 +933,10 @@ after sync. Fresh receipts advertise `shutdown_receipt_schema=1`.
 
 `stop_receipt.py` keeps the expected helper PID and native kernel creation
 identity, guest boot generation, stop intent and nonce. A reply must match the
-prepared intent and helper identity exactly. Exit zero alone is a crash; only a
-matching sync reply plus the owned child's clean exit yields the prototype's
-`orderly` result. Explicit host termination remains `forced-stop`. Native
+prepared intent and helper identity exactly. At this checkpoint a matching sync
+reply plus the owned child's zero exit yielded the prototype's `orderly` result.
+The post-ack follow-up below exposes a counterexample and adds a backend exit
+qualification requirement. Explicit host termination remains `forced-stop`. Native
 creation identity comes from the existing `artifacts/measure-macos` observer;
 the report retains its executable hash, source snapshot and query output.
 
@@ -1038,3 +1039,54 @@ explicitly rather than relabelling earlier results as current-source tests.
 Complete extension trees and the complete editor builder closure are not pinned
 by manifest/archive checks. Assessment v7 incorporates this trusted row and
 preserves the earlier measurements, missing platform rows and production no-go.
+
+### Panic after sync acknowledgement and backend reset exits (2026-11-14)
+
+The preserved original libkrun helper demonstrates a counterexample to the v6
+predicate: PID 1 sends a real matching `SYNCED` reply, then exits after a fixed
+250-ms delivery window. The kernel panics, but the helper returns zero and the
+old predicate reports `orderly`. The failed baseline is retained in
+`results/libkrun-macos-arm64-postack-before.json`; recovery still verifies the
+existing build, 32 acknowledged Redis keys and the live sibling's identity/data.
+
+The local [reset-exit patch](patches/libkrun-macos-reset-exit.patch) keeps macOS
+ARM64 PSCI `SYSTEM_RESET` distinct from `SYSTEM_OFF` through HVF and the vCPU
+exit response. Reset follows the nonzero error path; poweroff retains zero. This
+is an experimental integrator patch, not an upstream fix or Linux/x86-64 claim.
+The helper embeds its patch hash and advertises the narrow PSCI semantics.
+`build_helper.py` checks both patches and the complete effective diff. An older
+single-patch source artifact is refused: retain it separately, then prepare a
+fresh artifact with `--from <retained-checkout>`. The earlier executable and
+source tree remain retained for the counterexample.
+
+`StopReceipt` now defaults to refusing an orderly classification for ambiguous
+zero exits: intent plus a matching acknowledgement yields `unverified-stop`
+until the trusted caller explicitly supplies backend exit qualification. The
+native probe requires libkrun's reviewed reset patch provenance, or the exact
+previously reviewed hvi helper hash/provenance. It also checks the executable
+hash before every new helper incarnation and at the end. hvi's wrapper already
+accepts only `Stop::SystemOff`; its binary is unchanged.
+
+The final seven-case set passes on each adapter across sixteen fresh boots,
+including the post-ack panic. All three panic cases return one and classify as
+crashes; two confirmed poweroffs return zero, and explicit host force remains
+distinct. The earlier protocol refusal controls, existing build/32-key recovery
+and sibling survival also pass. All 77 Python tests pass. Evidence:
+`results/{libkrun,hvi}-macos-arm64-postack.json` and
+`results/macos-arm64-postack-validation.json`. These runs use fresh ordinary and
+compile-time fault fixtures (`pid1_exit_probe_schema=2`); the ordinary sibling
+refuses the new `TEST PID1 ARM POSTACK` command.
+
+The baseline uses `--post-ack-only --helper <preserved-helper>`. The final
+`stop_probe.py` invocation runs all seven cases by default. `--discard-private`
+removes only that run's private disks/controller directories after owned helper
+and endpoint cleanup; raw reports, exports, console/identity evidence and intent
+records remain. An initial calibration rebuilt the helper path during execution;
+it was interrupted, marked invalid and excluded before the immutable baseline.
+
+The proof covers a fixed post-ack panic window in a cooperative fixture. A guest
+can lie about sync or deliberately power off; this is not attestation, complete
+service shutdown/unmount, supervisor replay, host power-loss durability or
+arbitrary failure-timing coverage. Earlier Remote-SSH, density, preparation and
+CLI/TLS results stay bound to their own helper/guest hashes. Assessment v8
+retains those results and the production no-go.

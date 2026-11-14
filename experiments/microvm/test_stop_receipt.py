@@ -5,8 +5,9 @@ from stop_receipt import HelperIdentity, StopReceipt
 
 
 class StopReceiptValidation(unittest.TestCase):
-    def receipt(self, generation=1, nonce='a' * 64):
-        return StopReceipt(HelperIdentity(42, 12345), generation, nonce)
+    def receipt(self, generation=1, nonce='a' * 64, qualified=True):
+        return StopReceipt(HelperIdentity(42, 12345), generation, nonce,
+                           poweroff_exit_qualified=qualified)
 
     def ack(self, receipt):
         return f'SYNCED {receipt.generation} {receipt.nonce}\n'.encode()
@@ -82,6 +83,18 @@ class StopReceiptValidation(unittest.TestCase):
     def test_running_process_cannot_be_classified_as_exited(self):
         with self.assertRaises(ValueError):
             self.receipt().classify(HelperIdentity(42, 12345), None)
+
+    def test_ambiguous_zero_remains_unverified_even_after_a_matching_ack(self):
+        receipt = StopReceipt(HelperIdentity(42, 12345), 1)
+        receipt.request(receipt.identity)
+        self.assertTrue(receipt.accept_ack(receipt.identity, self.ack(receipt)))
+        self.assertEqual(receipt.classify(receipt.identity, 0), 'unverified-stop')
+        self.assertEqual(receipt.classify(receipt.identity, 1), 'crash')
+
+    def test_exit_qualification_cannot_be_an_accidental_truthy_value(self):
+        for value in (1, 'true', None):
+            with self.assertRaises(ValueError):
+                self.receipt(qualified=value)
 
 
 if __name__ == '__main__':

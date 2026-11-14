@@ -108,6 +108,7 @@ def build(out_dir, arch, zig, keeper=None, busybox=None, workload=False, nix=Fal
     result['shutdown_receipt_schema'] = 1
     if pid1_exit_probe:
         result['pid1_exit_probe'] = True
+        result['pid1_exit_probe_schema'] = 2
     if keeper:
         result.update(fixture="stage-b-real-keeper", nono="0.77.0",
                       keeper_sha256=hashlib.sha256(keeper.read_bytes()).hexdigest(),
