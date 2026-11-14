@@ -1,0 +1,164 @@
+{
+  "schema": 1,
+  "status": "passed",
+  "platform": "macos-arm64-native",
+  "qualification": "read-only reconciliation of existing other-agent native evidence from commit 58287b45ec8374acce86bb935b4633cc86cd8515; no new native runs",
+  "native_cases": 4,
+  "native_boots": 8,
+  "editor_sessions": 8,
+  "checked_digest_references": 25,
+  "probe_matches_current_source": true,
+  "vscode": {
+    "version": "1.146.0",
+    "commit": "69047191fc427f2f92828279aae1d90d8eeda7ab",
+    "remote_ssh_version": "0.128.0"
+  },
+  "rows": [
+    {
+      "adapter": "hvi",
+      "fixture": "alpine",
+      "status": "passed",
+      "boots": 2,
+      "sessions": 2,
+      "evidence": {
+        "path": "experiments/microvm/results/hvi-macos-arm64-remote-ssh-alpine.json",
+        "sha256": "e5470500ba1b418da27bc493412b8aa8abe81ff295ca9b3de3da7aa7199da7a1"
+      },
+      "raw_report": {
+        "path": "experiments/microvm/runs/20261114-hvi-remote-ssh-alpine/report.json",
+        "sha256": "185ea6831a58f38b8dd83eb891b6c79ef6b2be81e5e7fddca8a1d8a3d7d3fb7f"
+      },
+      "task_seconds": [
+        14.373489124933258,
+        14.350595792056993
+      ],
+      "first_session_files_persisted": true,
+      "installed_server_reused": true,
+      "clean_helpers_and_endpoints": true,
+      "guest_keeper_sha256": "279e0f7e0833e37db8206348927a6e20bc65712c82dfde26492d72695e7b39e8",
+      "guest_init_source_sha256": "44dda9cb471346f5c10ea2091ebe344b48b6915cacbc1385eb6adb381ee9e707",
+      "current_guest_source_differences": [
+        {
+          "path": "experiments/microvm/build_keeper_guest.py",
+          "measured_sha256": "493f221dff07c87e6d7a792983cf1b2483561196437a9f6e18183cd855bd901d",
+          "current_sha256": "fa10337c70b67f1d796ff455727e5f1219020dffb3d6934ee6e8f33a15d44e15"
+        },
+        {
+          "path": "experiments/microvm/build_guest.py",
+          "measured_sha256": "dc1c81d350aa533192178cad6dfc6e9a7d846ae87d2050d90b187a39736411ed",
+          "current_sha256": "f0927857e61d2343b2c947bd506986206022f26c6e8e030dd7c2e4afc1f2a875"
+        },
+        {
+          "path": "experiments/microvm/guest/init.c",
+          "measured_sha256": "44dda9cb471346f5c10ea2091ebe344b48b6915cacbc1385eb6adb381ee9e707",
+          "current_sha256": "f4151c0d58e228e97dbcf17114d6c9fb734835174c12d37baec6acac05cd7a82"
+        }
+      ]
+    },
+    {
+      "adapter": "hvi",
+      "fixture": "nix",
+      "status": "passed",
+      "boots": 2,
+      "sessions": 2,
+      "evidence": {
+        "path": "experiments/microvm/results/hvi-macos-arm64-remote-ssh-nix.json",
+        "sha256": "6bb81f26f01559d0378580090506a4c214920b7cb149b045038c8124b532d504"
+      },
+      "raw_report": {
+        "path": "experiments/microvm/runs/20261114-hvi-remote-ssh-nix/report.json",
+        "sha256": "83c7afb137b33c114e29eafd8536259c122c3157431277f8eaef48e74f8c97ba"
+      },
+      "task_seconds": [
+        14.518825207953341,
+        14.40047462505754
+      ],
+      "first_session_files_persisted": true,
+      "installed_server_reused": true,
+      "clean_helpers_and_endpoints": true,
+      "guest_keeper_sha256": "279e0f7e0833e37db8206348927a6e20bc65712c82dfde26492d72695e7b39e8",
+      "guest_init_source_sha256": "f4151c0d58e228e97dbcf17114d6c9fb734835174c12d37baec6acac05cd7a82",
+      "current_guest_source_differences": []
+    },
+    {
+      "adapter": "libkrun",
+      "fixture": "alpine",
+      "status": "passed",
+      "boots": 2,
+      "sessions": 2,
+      "evidence": {
+        "path": "experiments/microvm/results/libkrun-macos-arm64-remote-ssh-alpine.json",
+        "sha256": "1eceb90cbe003752e9f451bd363a8203dc2638bc6aa719a301987b981e8e674b"
+      },
+      "raw_report": {
+        "path": "experiments/microvm/runs/20261114-libkrun-remote-ssh-alpine/report.json",
+        "sha256": "1769bcc20c27c5febdd92536660dac358e794ca308f245c32338706be80c8cbf"
+      },
+      "task_seconds": [
+        14.369110791012645,
+        14.47143087501172
+      ],
+      "first_session_files_persisted": true,
+      "installed_server_reused": true,
+      "clean_helpers_and_endpoints": true,
+      "guest_keeper_sha256": "279e0f7e0833e37db8206348927a6e20bc65712c82dfde26492d72695e7b39e8",
+      "guest_init_source_sha256": "44dda9cb471346f5c10ea2091ebe344b48b6915cacbc1385eb6adb381ee9e707",
+      "current_guest_source_differences": [
+        {
+          "path": "experiments/microvm/build_keeper_guest.py",
+          "measured_sha256": "493f221dff07c87e6d7a792983cf1b2483561196437a9f6e18183cd855bd901d",
+          "current_sha256": "fa10337c70b67f1d796ff455727e5f1219020dffb3d6934ee6e8f33a15d44e15"
+        },
+        {
+          "path": "experiments/microvm/build_guest.py",
+          "measured_sha256": "dc1c81d350aa533192178cad6dfc6e9a7d846ae87d2050d90b187a39736411ed",
+          "current_sha256": "f0927857e61d2343b2c947bd506986206022f26c6e8e030dd7c2e4afc1f2a875"
+        },
+        {
+          "path": "experiments/microvm/guest/init.c",
+          "measured_sha256": "44dda9cb471346f5c10ea2091ebe344b48b6915cacbc1385eb6adb381ee9e707",
+          "current_sha256": "f4151c0d58e228e97dbcf17114d6c9fb734835174c12d37baec6acac05cd7a82"
+        }
+      ]
+    },
+    {
+      "adapter": "libkrun",
+      "fixture": "nix",
+      "status": "passed",
+      "boots": 2,
+      "sessions": 2,
+      "evidence": {
+        "path": "experiments/microvm/results/libkrun-macos-arm64-remote-ssh-nix.json",
+        "sha256": "d71589457e7e944ff4cdef5be89bec2652bd5c6fa164527fa760180a5b8e91c7"
+      },
+      "raw_report": {
+        "path": "experiments/microvm/runs/20261114-libkrun-remote-ssh-nix/report.json",
+        "sha256": "16426e41eecde0c267e31f03352ac268602254833cb7dcdfe2a080e4a289b1d2"
+      },
+      "task_seconds": [
+        14.432975666946732,
+        14.3805081670871
+      ],
+      "first_session_files_persisted": true,
+      "installed_server_reused": true,
+      "clean_helpers_and_endpoints": true,
+      "guest_keeper_sha256": "279e0f7e0833e37db8206348927a6e20bc65712c82dfde26492d72695e7b39e8",
+      "guest_init_source_sha256": "f4151c0d58e228e97dbcf17114d6c9fb734835174c12d37baec6acac05cd7a82",
+      "current_guest_source_differences": []
+    }
+  ],
+  "findings": {
+    "path": "experiments/microvm/results/macos-arm64-remote-ssh-findings.json",
+    "sha256": "c18dd8fbd477a6829c33c692f0a2179c640a6868487b3070109e4598c7777533"
+  },
+  "remaining_limits": [
+    "Trusted disposable projects only: workspace trust disabled and automatic folder-open tasks allowed; no qualification of untrusted editor paths.",
+    "Host stages hash-pinned CLI/server archives. Extension-driven downloading/scp remains unresolved and is not qualified.",
+    "This reconciliation verifies retained exports, output, persistence, artifact/archive/manifest hashes and report consistency; it does not repeat the UI or VM sessions.",
+    "Alpine results record earlier hashes for the three builder/init files listed per row. Nix source receipts match current files. No new native regression or equivalence claim is made for later source revisions.",
+    "Only extension package.json hashes were recorded; this does not pin complete installed extension trees or establish the entire editor builder closure.",
+    "Two boots per adapter/fixture and a second folder after restart; the same-folder automatic task did not rerun in retained diagnostics.",
+    "Editor task timings include compilation and differ from the accepted five-second actual agent-session gate; no transfer of density, preparation or full storage limits to the Remote-SSH artifacts.",
+    "Other native platforms, marketplace/agent-host integrations and fleet eligibility remain unqualified."
+  ]
+}
