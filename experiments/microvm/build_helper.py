@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Prepare the exact upstream revision plus the reviewed patch, then build/sign.
+"""Prepare the exact upstream revision plus reviewed patches, then build/sign.
 
 The source checkout is an ignored artifact, never a change to a Cargo registry
 cache. --from may seed it from an existing checkout containing the exact pin.
@@ -14,6 +14,8 @@ import subprocess
 ROOT = Path(__file__).resolve().parent
 SOURCE = ROOT / "artifacts/libkrun-source"
 PATCH = ROOT / "patches/libkrun-vsock-host-half-close.patch"
+RESET_PATCH = ROOT / "patches/libkrun-macos-reset-exit.patch"
+PATCHES = (PATCH, RESET_PATCH)
 REVISION = "6151710f4ea627cf0e5dbce78e4192fb4d64c2e9"
 URL = "https://github.com/containers/libkrun"
 STAMP = ".devcroft-patches.json"
@@ -32,8 +34,9 @@ def verify_source():
     stamp = json.loads((SOURCE / STAMP).read_text())
     if git("rev-parse", "HEAD", capture=True).decode().strip() != REVISION:
         raise ValueError("upstream checkout is not at the recorded revision")
-    if stamp["patch_sha256"] != digest(PATCH):
-        raise ValueError("patch changed; prepare a fresh source artifact explicitly")
+    expected_patches = [{"path": str(p.relative_to(ROOT)), "sha256": digest(p)} for p in PATCHES]
+    if stamp.get("patches") != expected_patches:
+        raise ValueError("patch series changed; prepare a fresh source artifact explicitly")
     dirty = set(git("diff", "HEAD", "--name-only", capture=True).decode().splitlines())
     if dirty != set(stamp["files"]):
         raise ValueError("unexpected upstream modifications outside the recorded patch")
@@ -45,8 +48,8 @@ def verify_source():
     # modes, paths and hunks must match the reviewed file byte-for-byte.
     normalize = lambda data: b"\n".join(line for line in data.splitlines()
                                        if not line.startswith(b"index "))
-    if normalize(actual) != normalize(PATCH.read_bytes()):
-        raise ValueError("effective upstream diff does not match the reviewed patch")
+    if normalize(actual) != normalize(b"".join(p.read_bytes() for p in PATCHES)):
+        raise ValueError("effective upstream diff does not match the reviewed patch series")
     for file, expected in stamp["files"].items():
         if digest(SOURCE / file) != expected:
             raise ValueError(f"patched source drift: {file}")
@@ -63,10 +66,12 @@ def prepare(seed):
             git("init")
             git("fetch", "--depth", "1", URL, REVISION)
         git("checkout", "--detach", REVISION)
-        git("apply", "--check", str(PATCH))
-        git("apply", str(PATCH))
+        for patch in PATCHES:
+            git("apply", "--check", str(patch))
+            git("apply", str(patch))
         files = git("diff", "--name-only", capture=True).decode().splitlines()
-        stamp = {"schema": 1, "revision": REVISION, "patch_sha256": digest(PATCH),
+        stamp = {"schema": 2, "revision": REVISION, "patch_sha256": digest(PATCH),
+                 "patches": [{"path": str(p.relative_to(ROOT)), "sha256": digest(p)} for p in PATCHES],
                  "files": {file: digest(SOURCE / file) for file in files}}
         (SOURCE / STAMP).write_text(json.dumps(stamp, indent=2) + "\n")
     return verify_source()

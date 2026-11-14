@@ -1,0 +1,53 @@
+diff --git a/src/hvf/src/lib.rs b/src/hvf/src/lib.rs
+index 461f76c..1819a24 100644
+--- a/src/hvf/src/lib.rs
++++ b/src/hvf/src/lib.rs
+@@ -351,6 +351,7 @@ pub enum VcpuExit<'a> {
+     PsciHandled,
+     SecureMonitorCall,
+     Shutdown,
++    SystemReset,
+     SystemRegister,
+     VtimerActivated,
+     WaitForEvent,
+@@ -640,7 +641,7 @@ impl HvfVcpu<'_> {
+                 Ok(VcpuExit::Shutdown)
+             },
+             0x8400_0009 /* QEMU_PSCI_0_2_FN_SYSTEM_RESET */ => {
+-                Ok(VcpuExit::Shutdown)
++                Ok(VcpuExit::SystemReset)
+             },
+             0xc400_0003 /* QEMU_PSCI_0_2_FN64_CPU_ON */ => {
+                 let mpidr = self.read_reg(hv_reg_t_HV_REG_X1)?;
+diff --git a/src/libkrun/src/vmm/macos/vstate.rs b/src/libkrun/src/vmm/macos/vstate.rs
+index caf4e40..6a62d90 100644
+--- a/src/libkrun/src/vmm/macos/vstate.rs
++++ b/src/libkrun/src/vmm/macos/vstate.rs
+@@ -52,6 +52,8 @@ pub enum Error {
+     VcpuCountNotInitialized,
+     /// Cannot run the VCPUs.
+     VcpuRun,
++    /// Guest requested a system reset, not a poweroff.
++    GuestReset,
+     /// Cannot spawn a new vCPU thread.
+     VcpuSpawn(io::Error),
+     /// Cannot cleanly initialize vcpu TLS.
+@@ -73,6 +75,7 @@ impl Display for Error {
+             VcpuCountNotInitialized => write!(f, "vCPU count is not initialized"),
+             VmSetup(e) => write!(f, "Cannot configure the microvm: {e:?}"),
+             VcpuRun => write!(f, "Cannot run the VCPUs"),
++            GuestReset => write!(f, "Guest requested a system reset"),
+             NotEnoughMemorySlots => write!(
+                 f,
+                 "The number of configured slots is bigger than the maximum reported by KVM"
+@@ -523,6 +526,10 @@ impl Vcpu {
+                     debug!("vCPU {vcpuid} SMC");
+                     Ok(VcpuEmulation::Handled)
+                 }
++                VcpuExit::SystemReset => {
++                    warn!("vCPU {vcpuid} requested system reset, not poweroff");
++                    Err(Error::GuestReset)
++                }
+                 VcpuExit::Shutdown => {
+                     info!("vCPU {vcpuid} received shutdown signal");
+                     Ok(VcpuEmulation::Stopped)

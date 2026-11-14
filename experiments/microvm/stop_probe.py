@@ -2,10 +2,12 @@
 """Native cooperative shutdown receipts versus zero-status guest panics."""
 import argparse
 import fcntl
+import hashlib
 import json
 import os
 from pathlib import Path
 import signal
+import shutil
 import time
 import traceback
 
@@ -28,12 +30,19 @@ def persist(path, value):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--adapter', choices=['libkrun', 'hvi'], required=True)
+    parser.add_argument('--helper', type=Path, help='explicit immutable helper copy for a baseline')
     parser.add_argument('--guest', type=Path, required=True, help='separate enabled PID 1 exit fixture')
     parser.add_argument('--control-guest', type=Path, required=True)
     parser.add_argument('--out', type=Path, required=True)
+    parser.add_argument('--discard-private', action='store_true',
+                        help='remove only this run\'s private disks/controller directories after owned cleanup')
+    parser.add_argument('--post-ack-only', action='store_true',
+                        help='baseline diagnostic only: omit the six earlier stop cases')
     args = parser.parse_args()
     guest, control = [json.loads(p.read_text()) for p in (args.guest, args.control_guest)]
     validate_pid1_fixture_pair(guest, control)
+    require(type(guest.get('pid1_exit_probe_schema')) is int and guest['pid1_exit_probe_schema'] == 2,
+            'fresh post-ack PID 1 fault fixture required')
     require(all(type(g.get('shutdown_receipt_schema')) is int and g['shutdown_receipt_schema'] == 1
                 for g in (guest, control)), 'fresh shutdown_receipt_schema=1 guests required')
     require_no_active_collector(ROOT / 'runs')
@@ -41,11 +50,30 @@ def main():
     fcntl.flock(lease, fcntl.LOCK_EX | fcntl.LOCK_NB)
     os.umask(0o077)
     args.out.mkdir(parents=True, exist_ok=False)
-    helper = ROOT / ('hvi/target/debug/devcroft-hvi-spike' if args.adapter == 'hvi' else 'libkrun/target/debug/devcroft-krun-spike')
+    helper = args.helper.resolve() if args.helper else ROOT / (
+        'hvi/target/debug/devcroft-hvi-spike' if args.adapter == 'hvi' else 'libkrun/target/debug/devcroft-krun-spike')
+    expected_helper = artifact(helper)
+    helper_info = helper_identity(helper)
+    require(helper_info['adapter'] == args.adapter, 'helper adapter mismatch')
+    provenance = helper_info['helper_provenance']
+    # hvi's reviewed wrapper succeeds only for Stop::SystemOff. libkrun's
+    # original HVF backend merged OFF and RESET; demand the reviewed seam.
+    if args.adapter == 'hvi':
+        reference = ROOT / 'results/hvi-macos-arm64-stop-receipts.json'
+        prior = json.loads(reference.read_text())
+        poweroff_qualified = (expected_helper['sha256'] == prior['helper']['sha256']
+                              and provenance == prior['helper_provenance'])
+    else:
+        reference = ROOT / 'patches/libkrun-macos-reset-exit.patch'
+        poweroff_qualified = (
+            provenance.get('macos_stop_semantics') == 'psci-system-off=0,system-reset=1'
+            and provenance.get('macos_reset_exit_patch_sha256') == hashlib.sha256(reference.read_bytes()).hexdigest())
     kernel, image, seed, observer = [ROOT / name for name in (
         'artifacts/kernel-landlock/Image', 'artifacts/nix/toolchain.img', 'artifacts/nix/data.seed.img',
         'artifacts/measure-macos')]
-    report = {'schema': 1, 'status': 'failed', 'platform': 'macos-arm64-native', **helper_identity(helper),
+    report = {'schema': 1, 'status': 'failed', 'platform': 'macos-arm64-native', **helper_info,
+              'poweroff_exit_qualified': poweroff_qualified,
+              'exit_qualification_reference': artifact(reference),
               'qualification': 'experimental cooperative PID 1 sync receipt and owned-child stop classification; not production supervisor, service-stop/unmount, guest attestation or host power-loss qualification',
               'raw_evidence': str(args.out), 'helper': artifact(helper), 'kernel': artifact(kernel),
               'image': artifact(image), 'seed': artifact(seed), 'identity_observer': artifact(observer),
@@ -70,7 +98,7 @@ def main():
     def receipt(vm):
         live = identity(vm)
         require(live == vm.owned_identity, 'helper incarnation changed')
-        return StopReceipt(live, vm.boots[-1]['boot'])
+        return StopReceipt(live, vm.boots[-1]['boot'], poweroff_exit_qualified=poweroff_qualified)
 
     def intent(vm, name):
         value = receipt(vm)
@@ -93,6 +121,7 @@ def main():
 
     try:
         for name, fixture in [('a', guest), ('sibling', control)]:
+            require(artifact(helper) == expected_helper, 'helper binary changed during the run')
             vm = WorkloadInstance(name, args.out, helper, kernel, fixture, image, seed)
             instances.append(vm)
             report['instances'].append({'label': name, 'private_dir': str(vm.path), 'boots': vm.boots})
@@ -109,6 +138,8 @@ def main():
                 'ordinary sibling unexpectedly enabled the exit hook')
         require(control_reply(sibling, b'TEST PID1 ARM STOP') == b'ERR command\n',
                 'ordinary sibling unexpectedly enabled the shutdown exit hook')
+        require(control_reply(sibling, b'TEST PID1 ARM POSTACK') == b'ERR command\n',
+                'ordinary sibling unexpectedly enabled the post-ack exit hook')
 
         def sibling_ok():
             sibling.verify_values('sibling-stop-check')
@@ -118,6 +149,7 @@ def main():
             return {'sibling_helper_and_redis_identity_unchanged': True, 'sibling_acknowledged_keys': 32}
 
         def recover():
+            require(artifact(helper) == expected_helper, 'helper binary changed during the run')
             a.start(); a.ready(timeout=120)
             a.owned_identity = identity(a)
             a.verify_build(builds['a'])
@@ -159,8 +191,9 @@ def main():
                     'kernel_panic_observed': True, 'validated_stop_request_reached_pre_ack_panic': with_intent,
                     'existing_build_and_32_keys_recovered': True, **witness}
 
-        case('panic-without-stop-intent', lambda: panic('no-intent', False))
-        case('panic-during-valid-shutdown-before-ack', lambda: panic('pending-intent', True))
+        if not args.post_ack_only:
+            case('panic-without-stop-intent', lambda: panic('no-intent', False))
+            case('panic-during-valid-shutdown-before-ack', lambda: panic('pending-intent', True))
 
         def orderly(name):
             a.execute(name + '-redis-stop', 'redis-cli SHUTDOWN')
@@ -189,7 +222,8 @@ def main():
             first_ack.append(ack)
             recover()
             return {**evidence, 'existing_build_and_32_keys_recovered': True}
-        case('correlated-sync-and-clean-exit', first_orderly)
+        if not args.post_ack_only:
+            case('correlated-sync-and-clean-exit', first_orderly)
 
         def stale_controls():
             value, _ = intent(a, 'stale-controls')
@@ -208,7 +242,8 @@ def main():
                     'wrong_generation_and_malformed_packets_refused': len(requests),
                     'unrelated_pong_rejected': True, 'current_helper_remains_live': True,
                     'diagnostic_scope': 'fresh intent prepared; valid shutdown packet deliberately withheld', **sibling_ok()}
-        case('stale-ack-generation-and-malformed-controls', stale_controls)
+        if not args.post_ack_only:
+            case('stale-ack-generation-and-malformed-controls', stale_controls)
 
         def forced_stop():
             value, _ = intent(a, 'forced-stop')
@@ -223,8 +258,46 @@ def main():
             recover()
             return {**value.record(), 'helper_exit_code': code, 'classification': outcome,
                     'existing_build_and_32_keys_recovered': True, **witness}
-        case('persisted-intent-and-host-forced-stop', forced_stop)
-        case('new-boot-correlated-sync-and-clean-exit', lambda: orderly('final-orderly')[0])
+        if not args.post_ack_only:
+            case('persisted-intent-and-host-forced-stop', forced_stop)
+            case('new-boot-correlated-sync-and-clean-exit', lambda: orderly('final-orderly')[0])
+            recover()
+
+        def post_ack_panic():
+            value, packet = intent(a, 'post-ack-panic')
+            require(control_reply(a, b'TEST PID1 ARM POSTACK') == b'ARMED postack-exit\n',
+                    'post-ack exit injection did not arm')
+            a.boots[-1]['forced_stop'] = {'expected': True, 'guest_pid': 1, 'guest_exit_code': 86}
+            child = a.process
+            sock, greeting = connect(a.path / 'control.sock', child, time.monotonic() + 5, a.overflow)
+            require(greeting.decode().strip() == a.boots[-1]['greeting'], 'post-ack probe reached a stale boot')
+            with sock:
+                sock.sendall(packet)
+                ack = line(sock, deadline=time.monotonic() + 10)
+            require(value.accept_ack(a.owned_identity, ack), 'post-ack panic lacked a real matching acknowledgement')
+            persist(args.out / 'post-ack-panic-ack.json', {**value.record(), 'wire_ack': ack.decode()})
+            code = child.wait(timeout=15)
+            outcome = value.classify(a.owned_identity, code)
+            a.stop()
+            console = bytes(a.stdout + a.stderr)
+            require(b'guest: test-only PID1 exit=86 after shutdown ack' in console
+                    and b'Kernel panic - not syncing: Attempted to kill init!' in console
+                    and b'exitcode=0x00005600' in console, 'actual post-ack init-death panic missing')
+            witness = sibling_ok()
+            recover()
+            evidence = {**value.record(), 'wire_ack': ack.decode(), 'helper_exit_code': code,
+                        'classification': outcome, 'kernel_panic_observed': True,
+                        'prior_v6_predicate_classification': 'orderly' if code == 0 else 'crash',
+                        'post_ack_delivery_window_ms': 250,
+                        'existing_build_and_32_keys_recovered': True, **witness}
+            # Retain the complete witness even when the old helper falsely
+            # classifies the panic as orderly. Never turn that baseline green.
+            report['post_ack_observation'] = evidence
+            require(outcome == 'crash', f'post-ack panic was misclassified: {outcome}, helper exit {code}')
+            return evidence
+
+        case('panic-after-correlated-sync-ack', post_ack_panic)
+        require(artifact(helper) == expected_helper, 'helper binary changed during the run')
         sibling.clean_shutdown()
         report['status'] = 'passed'
     except Exception as error:
@@ -236,6 +309,14 @@ def main():
                              'endpoints_removed': all(not (vm.path / name).exists() for vm in instances for name in SOCKETS)}
         if not all(report['cleanup'].values()):
             report.update(status='failed', error='owned resources survived cleanup')
+        elif args.discard_private:
+            report['discarded_private_resources'] = []
+            for vm in instances:
+                for path in (vm.path, vm.controller_dir):
+                    shutil.rmtree(path)
+                    report['discarded_private_resources'].append(str(path))
+            report['cleanup']['private_resources_removed'] = all(
+                not Path(path).exists() for path in report['discarded_private_resources'])
         save()
     print(json.dumps({'status': report['status'], 'error': report.get('error')}))
     raise SystemExit(report['status'] != 'passed')

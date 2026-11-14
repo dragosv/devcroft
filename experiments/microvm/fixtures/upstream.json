@@ -15,6 +15,11 @@
         "path": "patches/libkrun-vsock-host-half-close.patch",
         "sha256": "7a25379a3e1291ecbace0cad78e804b70f3f4515cebbf8c35f0843d107d4c2cc",
         "status": "local experimental correction; not upstream merged"
+      },
+      {
+        "path": "patches/libkrun-macos-reset-exit.patch",
+        "sha256": "a0cd8f2867697e766c5ea323893d6dd0d6cfc2287227f6cef9f580457305bb1e",
+        "status": "local experimental macOS ARM64 PSCI reset/poweroff distinction; not upstream merged; native qualification recorded separately"
       }
     ],
     "verified_api": [

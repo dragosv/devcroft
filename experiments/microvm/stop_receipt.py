@@ -40,10 +40,13 @@ def owned_identity(process, observer, evidence=None):
 
 
 class StopReceipt:
-    def __init__(self, identity, generation, nonce=None):
+    def __init__(self, identity, generation, nonce=None, *, poweroff_exit_qualified=False):
         if not isinstance(identity, HelperIdentity) or type(generation) is not int or not 1 <= generation <= 1000001:
             raise ValueError('owned helper identity and bounded guest boot generation required')
         self.identity, self.generation = identity, generation
+        if type(poweroff_exit_qualified) is not bool:
+            raise ValueError('explicit boolean backend exit qualification required')
+        self.poweroff_exit_qualified = poweroff_exit_qualified
         self.nonce = secrets.token_hex(32) if nonce is None else nonce
         if not isinstance(self.nonce, str) or TOKEN.fullmatch(self.nonce) is None:
             raise ValueError('64 lowercase hexadecimal stop nonce required')
@@ -73,9 +76,12 @@ class StopReceipt:
             raise ValueError('a reaped child exit code is required')
         if forced:
             return 'forced-stop'
-        return 'orderly' if self.intent and self.acknowledged and exit_code == 0 else 'crash'
+        if self.intent and self.acknowledged and exit_code == 0:
+            return 'orderly' if self.poweroff_exit_qualified else 'unverified-stop'
+        return 'crash'
 
     def record(self):
         return {'helper_identity': asdict(self.identity), 'guest_generation': self.generation,
                 'nonce': self.nonce, 'stop_intent': self.intent, 'sync_acknowledged': self.acknowledged,
+                'poweroff_exit_qualified': self.poweroff_exit_qualified,
                 'qualification': 'cooperative fixture sync receipt; not companion service-stop/unmount, guest attestation or supervisor recovery'}

@@ -1,0 +1,188 @@
+{
+  "schema": 1,
+  "status": "passed",
+  "platform": "macos-arm64-native",
+  "qualification": "experimental fixed post-ack panic regression and macOS ARM64 PSCI reset/poweroff exit distinction; not production adoption",
+  "final_native_cases": 14,
+  "final_native_boots": 16,
+  "adapters": [
+    {
+      "adapter": "libkrun",
+      "status": "passed",
+      "cases": 7,
+      "boots": 8,
+      "classifications": {
+        "crash": 3,
+        "orderly": 2,
+        "live-negative-controls": 1,
+        "forced-stop": 1
+      },
+      "panic_helper_exit_codes": [
+        1,
+        1,
+        1
+      ],
+      "post_ack_panic_classification": "crash",
+      "helper": {
+        "path": "/Users/dragos/Development/devcroft-codex/experiments/microvm/libkrun/target/debug/devcroft-krun-spike",
+        "sha256": "8c6221e30c806dd25f57775ede539b55918ebcddeb24346c4ad425b1c5d8456e"
+      },
+      "native_identity_observations": 23,
+      "cleanup": {
+        "helpers_reaped": true,
+        "endpoints_removed": true,
+        "private_resources_removed": true
+      },
+      "evidence": {
+        "path": "experiments/microvm/results/libkrun-macos-arm64-postack.json",
+        "sha256": "c7d87188bfa75a8b0cc447ac8b0fb0eb807a937dff30b688c487e56e5bf5d48d"
+      }
+    },
+    {
+      "adapter": "hvi",
+      "status": "passed",
+      "cases": 7,
+      "boots": 8,
+      "classifications": {
+        "crash": 3,
+        "orderly": 2,
+        "live-negative-controls": 1,
+        "forced-stop": 1
+      },
+      "panic_helper_exit_codes": [
+        1,
+        1,
+        1
+      ],
+      "post_ack_panic_classification": "crash",
+      "helper": {
+        "path": "/Users/dragos/Development/devcroft-codex/experiments/microvm/hvi/target/debug/devcroft-hvi-spike",
+        "sha256": "397023c12b7493e697f73b6e6ae7a781b40552e2d6f7b767126cdfe3ee3b98bd"
+      },
+      "native_identity_observations": 23,
+      "cleanup": {
+        "helpers_reaped": true,
+        "endpoints_removed": true,
+        "private_resources_removed": true
+      },
+      "evidence": {
+        "path": "experiments/microvm/results/hvi-macos-arm64-postack.json",
+        "sha256": "7b53e7aeaef98ff93526056971c7ebccf3fbee2dc4d50ffc6156a9918269216a"
+      }
+    }
+  ],
+  "failed_baseline": {
+    "status": "failed-as-observed",
+    "evidence": {
+      "path": "experiments/microvm/results/libkrun-macos-arm64-postack-before.json",
+      "sha256": "74e9cc5d3f499f5da1d4c72e891b703949b716b50b9bbad1bb3d1c580b9f0932"
+    },
+    "cases": 1,
+    "boots": 3,
+    "helper_exit_code": 0,
+    "classification": "orderly",
+    "actual_outcome": "kernel init-death panic after a real matching sync acknowledgement",
+    "classifier_source_identical_to_v6": true,
+    "helper_binary_identical_to_v6": true,
+    "cleanup": {
+      "helpers_reaped": true,
+      "endpoints_removed": true,
+      "private_resources_removed": true
+    }
+  },
+  "excluded_calibration": {
+    "status": "invalid-calibration",
+    "evidence": {
+      "path": "experiments/microvm/runs/20261114-postack-validation/invalid-calibration.json",
+      "sha256": "71ee3e9f89918849b3f5ca4e05dd95b88ffa8aff4f08dd47787757976fbc212c"
+    },
+    "raw_report": {
+      "path": "experiments/microvm/runs/20261114-libkrun-postack-before/report.json",
+      "sha256": "8dee508fee4c92832493b31150ae256152a9642b02ac9989f47e55c1f088b983"
+    },
+    "reason": "helper path rebuilt while running; interrupted, cleaned and excluded; immutable helper baseline repeated separately"
+  },
+  "classifier": {
+    "default_ambiguous_ack_plus_zero": "unverified-stop",
+    "orderly_requires": "recorded intent, matching boot/nonce/helper identity acknowledgement, explicit backend exit qualification, and owned child exit zero",
+    "hvi_qualification": "exact retained reviewed helper hash/provenance; wrapper accepts only SystemOff",
+    "libkrun_qualification": "reviewed reset-patch hash and macOS ARM64 PSCI semantics embedded in helper provenance"
+  },
+  "backend_patch": {
+    "path": "experiments/microvm/patches/libkrun-macos-reset-exit.patch",
+    "sha256": "a0cd8f2867697e766c5ea323893d6dd0d6cfc2287227f6cef9f580457305bb1e"
+  },
+  "patched_source_receipt": {
+    "path": "experiments/microvm/runs/20261114-postack-validation/patched-source-receipt.json",
+    "sha256": "7e33929e6582bae02b4485eddca1139eb9a0d4b48d7bfbc65ad10d5bfbac5f62"
+  },
+  "retained_old_source_receipt": {
+    "path": "experiments/microvm/runs/20261114-postack-validation/baseline-source-receipt.json",
+    "sha256": "344f988839b84f30f79e3ce02febfdcac145de843a1970d5623e06a4820ef83a"
+  },
+  "retained_patched_helper": {
+    "path": "experiments/microvm/artifacts/libkrun-macos-reset/devcroft-krun-spike",
+    "sha256": "8c6221e30c806dd25f57775ede539b55918ebcddeb24346c4ad425b1c5d8456e"
+  },
+  "retained_original_helper": {
+    "path": "/Users/dragos/Development/devcroft-codex/experiments/microvm/artifacts/libkrun-before-reset/devcroft-krun-spike",
+    "sha256": "1b51045e1a0d3567afbe70b104dad785b6c03cf9b36be9831cae080215672b84"
+  },
+  "python_tests": {
+    "status": "passed",
+    "count": 77,
+    "evidence": {
+      "path": "experiments/microvm/runs/20261114-postack-validation/python-tests-final.log",
+      "sha256": "c91d86ef70d3b14825bba6f840f4848867b3d370e51e5e6257005e68231373d7"
+    }
+  },
+  "rust_fmt": {
+    "status": "passed",
+    "evidence": {
+      "path": "experiments/microvm/runs/20261114-postack-validation/rust-fmt.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    }
+  },
+  "rust_clippy": {
+    "status": "passed",
+    "command": "cargo clippy --manifest-path experiments/microvm/libkrun/Cargo.toml --locked --offline -- -D warnings",
+    "evidence": "completed successfully in this session; no separate log retained"
+  },
+  "source_verification": {
+    "status": "passed",
+    "evidence": {
+      "path": "experiments/microvm/runs/20261114-postack-validation/source-verification.json",
+      "sha256": "7e33929e6582bae02b4485eddca1139eb9a0d4b48d7bfbc65ad10d5bfbac5f62"
+    },
+    "old_single_patch_source_refused": {
+      "path": "experiments/microvm/runs/20261114-postack-validation/old-source-refusal.log",
+      "sha256": "efdf50b8433394d031dba0a0f423be6b186341c64d7ecd97a04bd695e542d45b"
+    }
+  },
+  "source_sha256": {
+    "stop_probe.py": "5344315c9ca9c0bdafd8c2887f59138f8e3a5f9f5c60becdb4f2cbcdc004503f",
+    "stop_receipt.py": "34527e6968fb707ff1b75d2d47aa22baad3f829107230795a4c48f74eef290d3",
+    "guest/init.c": "a222bb0da280b7390ad85db1a5c46255b8c9811df0c9dfbf1ede6c84673f868c",
+    "build_guest.py": "bdebeb7f33f3d8ac4bce2e021762374a4876e9b3a868ca32b2c4e9ed3e8fe0fb",
+    "build_keeper_guest.py": "fa10337c70b67f1d796ff455727e5f1219020dffb3d6934ee6e8f33a15d44e15",
+    "build_helper.py": "1f214a2d53b13e62491ddbeefeeec0daedff5a0d186405cc1f08e70121ba7527",
+    "libkrun/build.rs": "edd394f25a73a89066ca0212701f5168bc0f4729d9a1b3e4c8d2d80e7cb2135e",
+    "libkrun/src/main.rs": "38e1b52e29a3a8eea3d68551997e1291820510e1f417109ce21f480832cdb365",
+    "libkrun/src/sandbox.rs": "25f3a06b41abf1a5d0ff49a24c65a1daea9986c4d1570e6cd739d0045a6bc19d",
+    "hvi/src/main.rs": "04ab62818719432723b27e682238d38c229825f3a03cd4480a8b9b337a2c20b8",
+    "patches/libkrun-macos-reset-exit.patch": "a0cd8f2867697e766c5ea323893d6dd0d6cfc2287227f6cef9f580457305bb1e",
+    "patches/libkrun-vsock-host-half-close.patch": "7a25379a3e1291ecbace0cad78e804b70f3f4515cebbf8c35f0843d107d4c2cc",
+    "fixtures/upstream.json": "303e7b955df39e67098487b9c80976f019f2d44680f50828a68c54aa028d7ce5",
+    "test_stop_receipt.py": "2e0ce76fe181637bc612fc86f9157fc295d75b0e1dbc90fb5b9063b919a192ba",
+    "test_stage_a.py": "62ce784060311dbf5f859dd35efb27d50cf3ec35bcd407bb52dbae6f262dd569"
+  },
+  "remaining_limits": [
+    "One seven-case run per adapter and one three-boot old-helper counterexample. The initial mixed-helper calibration is invalid and excluded; no reliability or tail-latency estimate.",
+    "The test-only guest requests a 250-ms delivery sleep after sending its sync acknowledgement, then exits global PID 1. This is a fixed injection site, not measured sleep duration or arbitrary scheduler/failure timing coverage.",
+    "The new exit seam distinguishes macOS ARM64 PSCI SYSTEM_RESET from SYSTEM_OFF. Other backend exit paths, Linux/x86-64 and physical host suspend remain unqualified.",
+    "A guest can forge sync completion or deliberately request poweroff. Backend exit distinction and correlated receipts are not guest attestation or proof of complete service stop/unmount.",
+    "Production controller/companion supervisor integration, persistent journal replay, offline filesystem checks and host power-loss durability remain untested.",
+    "New private disks/controller directories were removed after verified owned helper/endpoint cleanup. Raw logs, identity snapshots, stop records, source snapshots and reports remain; no production retention/accounting policy is inferred.",
+    "Prior Remote-SSH, density, preparation, storage and CLI/TLS measurements remain tied to their earlier helper/guest artifacts; none transfers to the new helper by this fault proof."
+  ]
+}

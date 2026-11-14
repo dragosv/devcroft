@@ -424,6 +424,9 @@ int main(void) {
             } else if (!strcmp(line, "TEST PID1 ARM STOP")) {
                 stop_exit_probe_armed = 1;
                 send_all(fd, "ARMED stop-exit\n");
+            } else if (!strcmp(line, "TEST PID1 ARM POSTACK")) {
+                stop_exit_probe_armed = 2;
+                send_all(fd, "ARMED postack-exit\n");
             } else if (!strcmp(line, "TEST PID1 EXIT 86")) {
                 /* Disposable fault fixture only. No sync or orderly shutdown:
                  * exiting global PID 1 must cause the kernel's init-death panic.
@@ -440,7 +443,7 @@ int main(void) {
                     continue;
                 }
 #ifdef ENABLE_PID1_EXIT_PROBE
-                if (stop_exit_probe_armed) {
+                if (stop_exit_probe_armed == 1) {
                     dprintf(2, "guest: test-only PID1 exit=86 during shutdown\n");
                     _exit(86);
                 }
@@ -457,6 +460,16 @@ int main(void) {
                     send_all(fd, reply);
                 }
                 close(fd);
+#ifdef ENABLE_PID1_EXIT_PROBE
+                if (stop_exit_probe_armed == 2) {
+                    /* Test-only delivery window, not a durability guarantee.
+                     * The host must receive the actual correlated ACK before
+                     * accepting this as the post-ack panic counterexample. */
+                    usleep(250000);
+                    dprintf(2, "guest: test-only PID1 exit=86 after shutdown ack\n");
+                    _exit(86);
+                }
+#endif
                 reboot(RB_POWER_OFF);
                 fail("poweroff returned");
             } else {
