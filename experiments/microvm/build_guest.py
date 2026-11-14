@@ -27,7 +27,7 @@ def entry(out, name, data=b"", mode=stat.S_IFDIR | 0o755, ino=1, major=0, minor=
 
 
 def build(out_dir, arch, zig, keeper=None, busybox=None, workload=False, nix=False, adaptable=False, setup=False, agents=False, pid1_exit_probe=False,
-          setup_fault_probe=False):
+          setup_fault_probe=False, remote_ssh=False):
     if nix and not workload:
         raise ValueError('Nix fixture requires the workload block devices')
     if pid1_exit_probe and (not keeper or not nix or agents or adaptable):
@@ -45,6 +45,8 @@ def build(out_dir, arch, zig, keeper=None, busybox=None, workload=False, nix=Fal
         command.append("-DENABLE_WORKLOAD=1")
     if pid1_exit_probe:
         command.append('-DENABLE_PID1_EXIT_PROBE=1')
+    if remote_ssh and nix:
+        command.append('-DENABLE_REMOTE_SSH_FIXTURE=1')
     if agents:
         if not nix or not keeper:
             raise ValueError('agent probe requires the isolated Nix keeper fixture')

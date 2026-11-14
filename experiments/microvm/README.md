@@ -964,3 +964,66 @@ or host power loss. Native fixtures retain their private diagnostic disks and
 controller directories; helper/endpoint cleanup is verified. The raw backend
 ambiguity and production integration gate remain explicit in
 `results/macos-arm64-evaluation-assessment-v6.json`.
+
+### Trusted VS Code Remote-SSH row (2026-11-14)
+
+VS Code Remote-SSH is reported only as a separately labelled **trusted** row: its
+server and extensions run on the remote and can drive the local client, so it
+never stands in for the untrusted terminal or guest-served editor paths. The
+probe uses an isolated VS Code (own user-data and extensions directories,
+copied from the installed Remote-SSH), disables workspace trust and allows the
+project's folder-open task, all stated in the result.
+
+The guest has no network, so the trusted host harness stages the CLI and server
+archives for VS Code's commit, SHA-256 pinned in
+[vscode-remote-ssh-aarch64.json](fixtures/vscode-remote-ssh-aarch64.json), where
+the installer and CLI look for them. A fixture-only keeper feature
+(`remote-ssh-fixture`) adds exactly one guest-loopback port, 9091, which
+`remote.SSH.serverPickPortsFromRange` pins. Ordinary guests do not have it.
+
+Neither existing guest could run it, and both failures are recorded rather than
+patched over: the minimal Alpine guest has no `bash` (`NoBash`), and the Nix
+closure has neither a glibc loader the prebuilt server can find nor a musl one
+(`LinuxPrereqs`). The qualifying fixtures are explicit:
+
+- **Nix** (`nix/remote-ssh/flake.nix`): the closure adds a `vscode-server-sysroot`
+  link farm (glibc plus libstdc++; `buildEnv` links none of glibc's `lib/`),
+  `patchelf`, `getconf`, `procps` and `which`. The fixture guest's keeper
+  environment carries VS Code's documented `VSCODE_SERVER_CUSTOM_GLIBC_*`
+  variables, so the server's node is rewritten to the closure's own loader.
+- **Alpine** (separate APK pin set): adds `bash`, `alpine-release` and
+  `musl-utils`, and recreates BusyBox applet links under a merged `/usr`,
+  because APK `--no-scripts` skips the BusyBox trigger and the guest's `/bin` is
+  its initramfs.
+
+On both native adapters and both fixtures, the folder-open task compiles and
+runs a C program in the remote terminal about 14 seconds after launch; SSH
+reads verify its output and an exported AArch64 ELF. After a cold restart the
+installed server is reused (`Found existing installation`, no download), the
+first session's output and binary hash are unchanged, and a second folder's
+task runs. Reopening the *same* folder does not rerun its folder-open task:
+VS Code's persisted remote state under `data/User` and `data/Machine` suppresses
+it (diagnostic runs in the findings file), so a second folder proves the
+reconnect without deleting that state.
+
+```sh
+rtk proxy python3 experiments/microvm/build_nix.py --definition experiments/microvm/nix/remote-ssh \
+  --out experiments/microvm/artifacts/nix-remote-ssh --required-binary bash --required-binary patchelf \
+  --required-binary getconf --required-binary ps
+rtk proxy python3 experiments/microvm/build_workload.py --pins experiments/microvm/fixtures/workload-remote-ssh-packages-aarch64.json \
+  --out experiments/microvm/artifacts/workload-remote-ssh --extra-package bash --extra-package alpine-release \
+  --extra-package musl-utils --merge-bin-into-usr
+rtk proxy python3 experiments/microvm/build_keeper_guest.py --nix --remote-ssh-fixture --out experiments/microvm/artifacts/stage-b-nix-remote-ssh
+rtk proxy python3 experiments/microvm/build_keeper_guest.py --workload --remote-ssh-fixture --out experiments/microvm/artifacts/stage-b-remote-ssh
+rtk proxy python3 experiments/microvm/make_seed.py --mib 3072 --out experiments/microvm/artifacts/seed-3g/data.seed.img
+rtk proxy python3 experiments/microvm/remote_ssh_probe.py --fixture nix --guest experiments/microvm/artifacts/stage-b-nix-remote-ssh \
+  --toolchain experiments/microvm/artifacts/nix-remote-ssh/toolchain.img [--helper <hvi helper>]
+```
+
+The extension's own download and terminal-driven `scp` path is not qualified:
+its copy never completed although the identical command run by hand did, and it
+is not attributed. Marketplace extensions, Copilot/agent-host features, git and
+telemetry are offline or unavailable. Evidence:
+`results/{libkrun,hvi}-macos-arm64-remote-ssh-{nix,alpine}.json` and
+`results/macos-arm64-remote-ssh-findings.json`. Linux/x86-64 hosts and fleet
+eligibility remain unqualified.

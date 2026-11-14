@@ -15,6 +15,11 @@ russh = "=0.62.5"
 russh-sftp = "=2.4.0"
 tokio = { version = "1", features = ["rt-multi-thread", "net", "sync", "time", "macros", "io-util"] }
 
+[features]
+# Separately labelled trusted Remote-SSH fixture only: one fixed guest-loopback
+# port for the VS Code server. Ordinary guest keepers never enable it.
+remote-ssh-fixture = []
+
 [dev-dependencies]
 rand = "0.10.2"
 tempfile = "3"

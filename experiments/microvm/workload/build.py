@@ -21,6 +21,10 @@ def digest(path):
 def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--freeze-inputs", action="store_true")
+    p.add_argument("--extra-package", action="append", default=[],
+                   help="additional top-level APK resolved into a separate pin set")
+    p.add_argument("--merge-bin-into-usr", action="store_true",
+                   help="link every /bin entry under /usr/bin (merged-/usr layout); the guest's /bin is its initramfs")
     args = p.parse_args()
     work = Path("/tmp/devcroft-workload")
     work.mkdir(exist_ok=True)
@@ -30,7 +34,7 @@ def main():
     pin_path = work / "packages.json"
     if args.freeze_inputs:
         urls = subprocess.check_output(["apk", "fetch", "--recursive", "--url",
-            "gcc", "musl-dev", "make", "redis", "alpine-baselayout"], text=True).splitlines()
+            "gcc", "musl-dev", "make", "redis", "alpine-baselayout", *args.extra_package], text=True).splitlines()
         records = []
         for url in sorted(set(urls)):
             if not url.startswith("https://dl-cdn.alpinelinux.org/alpine/v3.23/"):
@@ -56,6 +60,23 @@ def main():
     run("sudo", "apk", "--root", root, "--initdb", "--no-scripts", "--no-network", "--force-non-repository",
         "--keys-dir", "/etc/apk/keys", "add", *[apks / x["file"] for x in pins["packages"]])
     run("sudo", "chown", "-R", f"{os.getuid()}:{os.getgid()}", root)
+    merged = []
+    if args.merge_bin_into_usr:
+        # --no-scripts skipped busybox's trigger (`busybox --install -s`); recreate its
+        # applet links, pointing at this root's own busybox rather than the builder's.
+        applets = subprocess.check_output([str(root / "bin/busybox"), "--list-full"], text=True).split()
+        for applet in applets:
+            link = root / applet
+            if applet.startswith("/") or ".." in applet or link.exists() or link.is_symlink():
+                continue
+            link.parent.mkdir(parents=True, exist_ok=True)
+            link.symlink_to(os.path.relpath(root / "bin/busybox", link.parent))
+        for entry in sorted((root / "bin").iterdir()):
+            target = root / "usr/bin" / entry.name
+            if not target.exists() and not target.is_symlink():
+                # Relative: /usr resolves to /toolchain/usr in the guest, so this reaches /toolchain/bin.
+                target.symlink_to(f"../../bin/{entry.name}")
+                merged.append(entry.name)
     fixture = root / "fixture"
     (fixture / "xxHash").mkdir(parents=True)
     run("tar", "-xzf", archive, "--strip-components=1", "-C", fixture / "xxHash")
@@ -79,6 +100,7 @@ def main():
         for file in sorted(apks.glob("*.apk")):
             out.add(file, arcname=file.name)
     metadata = {"schema": 1, "architecture": "aarch64", "source": source,
+                "extra_packages": args.extra_package, "merged_bin_into_usr": merged,
                 "packages": pins, "build_network": "apk install uses --no-network after complete hash verification",
                 "filesystem": "ext4; immutable toolchain plus per-instance writable workspace",
                 "reproducibility": "reconstruction recipe and exact source/APK inputs; not a bit-reproducible filesystem claim"}

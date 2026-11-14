@@ -26,6 +26,8 @@ def main():
                         help='compile fixed PID 1 exit injection into a separate Nix fault fixture')
     parser.add_argument('--setup-fault-probe', action='store_true',
                         help='compile test-only setup interruption stalls into a separate setup fixture')
+    parser.add_argument('--remote-ssh-fixture', action='store_true',
+                        help='separate trusted Remote-SSH guest whose keeper adds fixed port 9091')
     parser.add_argument('--out', type=Path, help='separate guest artifacts; preserve earlier measured images')
     args = parser.parse_args()
     if args.pid1_exit_probe and (not args.nix or not args.out or args.agents or args.adaptable):
@@ -38,6 +40,8 @@ def main():
     if args.setup_fault_probe and args.out.exists() and (
             not args.out.is_dir() or any(p.name != 'busybox.apk' for p in args.out.iterdir())):
         parser.error('setup fault fixture --out must be new or contain only its pinned busybox.apk')
+    if args.remote_ssh_fixture and (not args.workload and not args.nix or not args.out or args.adaptable or args.agents):
+        parser.error('--remote-ssh-fixture requires --workload or --nix, --out, and excludes --adaptable/--agents')
     ssh_pin = json.loads((ROOT / 'fixtures/ssh-consumption-windows.json').read_text())
     expected = {ROOT / 'russh' / name: digest for name, digest in ssh_pin['vendor_files'].items()}
     expected[ROOT / ssh_pin['keeper_fork']['path']] = ssh_pin['keeper_fork']['sha256']
@@ -63,8 +67,11 @@ def main():
                AR_aarch64_unknown_linux_musl=str(crate / "zig-ar.sh"),
                CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER=str(crate / "zig-linker.sh"),
                CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_RUSTFLAGS="-C link-self-contained=no")
+    target_dir = crate / ("target-remote-ssh" if args.remote_ssh_fixture else "target")
     subprocess.run(["cargo", "build", "--manifest-path", str(crate / "Cargo.toml"), "--locked",
-                    "--target", "aarch64-unknown-linux-musl", "--release"], check=True, env=env, timeout=900)
+                    "--target", "aarch64-unknown-linux-musl", "--release", "--target-dir", str(target_dir),
+                    *(["--features", "remote-ssh-fixture"] if args.remote_ssh_fixture else [])],
+                   check=True, env=env, timeout=900)
     out = ROOT / ("artifacts/stage-b-nix" if args.nix else "artifacts/stage-b-workload" if args.workload else "artifacts/stage-b")
     if args.adaptable:
         out = ROOT / ('artifacts/stage-c-setup' if args.setup_window else 'artifacts/stage-c-runtime')
@@ -92,10 +99,11 @@ def main():
             raise RuntimeError("unexpected busybox payload")
         busybox = out / "busybox"
         busybox.write_bytes(archive.extractfile(members[0]).read())
-    keeper = crate / "target/aarch64-unknown-linux-musl/release/devcroft-guest-keeper"
+    keeper = target_dir / "aarch64-unknown-linux-musl/release/devcroft-guest-keeper"
     build(out, "aarch64", zig, keeper=keeper, busybox=busybox, workload=args.workload, nix=args.nix,
           adaptable=args.adaptable, setup=args.setup_window, agents=args.agents,
-          pid1_exit_probe=args.pid1_exit_probe, setup_fault_probe=args.setup_fault_probe)
+          pid1_exit_probe=args.pid1_exit_probe, setup_fault_probe=args.setup_fault_probe,
+          remote_ssh=args.remote_ssh_fixture)
     receipt = json.loads((out / "guest.json").read_text())
     sources = [*sorted((ROOT.parent.parent / "src/keeper").glob("*.rs")),
                ROOT.parent.parent / "src/ssh/server.rs", ROOT.parent.parent / "src/ssh/sftp.rs",
@@ -108,6 +116,8 @@ def main():
     receipt["sources"] = {str(p.relative_to(ROOT.parent.parent)): hashlib.sha256(p.read_bytes()).hexdigest()
                           for p in sources}
     receipt["busybox_package"] = pin
+    if args.remote_ssh_fixture:
+        receipt["remote_ssh_fixture"] = {"keeper_feature": "remote-ssh-fixture", "extra_loopback_port": 9091}
     receipt["rustc"] = subprocess.check_output(["rustc", "--version"], text=True).strip()
     (out / "guest.json").write_text(json.dumps(receipt, indent=2) + "\n")
 
