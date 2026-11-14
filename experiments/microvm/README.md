@@ -4,7 +4,7 @@ This is the experimental implementation of `evaluate-microvm-runtimes`.
 `libkrun/` and `hvi/` have their own Cargo workspaces and lockfiles. The main devcroft build and
 published crate do not depend on it. No production VM dispatch exists yet.
 
-The [native assessment](results/macos-arm64-evaluation-assessment-v6.json) records
+The [native assessment](results/macos-arm64-evaluation-assessment-v7.json) records
 the full 180-case macOS ARM64 comparison, clean reconstruction, final SSH fault
 recovery and real CLI/TLS regressions against the five backend criteria. Both
 adapters work on this host. Production adoption remains no-go under the current
@@ -1027,3 +1027,14 @@ telemetry are offline or unavailable. Evidence:
 `results/{libkrun,hvi}-macos-arm64-remote-ssh-{nix,alpine}.json` and
 `results/macos-arm64-remote-ssh-findings.json`. Linux/x86-64 hosts and fleet
 eligibility remain unqualified.
+
+The [Remote-SSH reconciliation](results/macos-arm64-remote-ssh-validation.json)
+checks these four retained other-agent runs (eight boots/eight editor sessions)
+against their raw reports, exported binaries, persisted first-session output,
+artifact/archive hashes and extension manifest hashes. It adds no new native
+repetitions. Both Alpine receipts retain three earlier builder/init source
+hashes; the Nix receipts match the current files. These differences are listed
+explicitly rather than relabelling earlier results as current-source tests.
+Complete extension trees and the complete editor builder closure are not pinned
+by manifest/archive checks. Assessment v7 incorporates this trusted row and
+preserves the earlier measurements, missing platform rows and production no-go.
