@@ -173,6 +173,12 @@ condition this plan meets.
   and record helper overhead and physical disk growth.
 - Negative probes are not a security audit → retain residual VMM/device/parser
   risks in the adoption report.
+- Keeper framing and phase validation → reject unknown structured fields,
+  invalid header-only combinations and unexpected messages on an established
+  session. The scoped native malformed-message sample preserves the original
+  local-execution/ignored-frame baseline and verifies connection-local cleanup
+  with live same-VM/sibling canaries. This does not qualify the VMM's host-side
+  parsers, general replay/authorization, connection admission or read deadlines.
 - Helper exit zero may hide a guest panic → the native PID 1 exit probe returned
   zero through pinned libkrun/HVF, whose PSCI reset and poweroff share the same
   shutdown result. Require correlated controller shutdown intent/acknowledgement

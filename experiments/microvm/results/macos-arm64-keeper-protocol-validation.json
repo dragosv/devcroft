@@ -1,0 +1,188 @@
+{
+  "schema": 1,
+  "status": "passed",
+  "platform": "macos-arm64-native",
+  "qualification": "scoped keeper frame-schema and connection-phase validation through ordinary minimal guests; fixed sample, not VMM host-parser fuzzing or production VM adoption",
+  "final_native_cases": 48,
+  "final_native_boots": 6,
+  "adapters": [
+    {
+      "adapter": "libkrun",
+      "status": "passed",
+      "cases": 24,
+      "boots": 3,
+      "initial_message_cases": 18,
+      "established_session_cases": 4,
+      "after_restart_cases": 2,
+      "header_refusal_observed_seconds": {
+        "unknown-tag-without-body": 0.00024116598069667816,
+        "query-declared-payload-without-body": 0.00017358409240841866
+      },
+      "continuous_same_vm_and_sibling_canaries": true,
+      "binary_echo_bytes_per_vm": 16384,
+      "valid_signal_control": true,
+      "native_helper_and_sibling_identity_checks": true,
+      "helper_same_binary_as_v8_postack_row": true,
+      "evidence": {
+        "path": "experiments/microvm/results/libkrun-macos-arm64-keeper-protocol.json",
+        "sha256": "ab7a3c87d86bc25e2f8bfcf466a1199370282f343f2a1c79ca1cf86d5b6e507e"
+      },
+      "cleanup": {
+        "helpers_reaped": true,
+        "endpoints_removed": true,
+        "private_resources_removed": true
+      }
+    },
+    {
+      "adapter": "hvi",
+      "status": "passed",
+      "cases": 24,
+      "boots": 3,
+      "initial_message_cases": 18,
+      "established_session_cases": 4,
+      "after_restart_cases": 2,
+      "header_refusal_observed_seconds": {
+        "unknown-tag-without-body": 0.0001639580586925149,
+        "query-declared-payload-without-body": 0.0001289999345317483
+      },
+      "continuous_same_vm_and_sibling_canaries": true,
+      "binary_echo_bytes_per_vm": 16384,
+      "valid_signal_control": true,
+      "native_helper_and_sibling_identity_checks": true,
+      "helper_same_binary_as_v8_postack_row": true,
+      "evidence": {
+        "path": "experiments/microvm/results/hvi-macos-arm64-keeper-protocol.json",
+        "sha256": "e6538e2dd689ff230ee08913e1389fe017928e9df2a7b116f66a3da575e1619d"
+      },
+      "cleanup": {
+        "helpers_reaped": true,
+        "endpoints_removed": true,
+        "private_resources_removed": true
+      }
+    }
+  ],
+  "failed_baseline": {
+    "status": "failed-as-observed",
+    "cases": 22,
+    "failed_refusal_conditions": 11,
+    "boots": 2,
+    "evidence": {
+      "path": "experiments/microvm/results/libkrun-macos-arm64-keeper-protocol-before.json",
+      "sha256": "7c52906ded5c891de70d5ebf3ae599fbad14849c58866d459be6254ef4fff732"
+    },
+    "forged_command_spawn_console_records_by_vm": {
+      "a": 4,
+      "sibling": 0
+    },
+    "interpretation": "unknown selectors were ignored and four ordinary commands ran in the addressed VM; no cross-VM routing or escape was observed",
+    "valid_binary_echo_and_signal_controls": true,
+    "cleanup": {
+      "helpers_reaped": true,
+      "endpoints_removed": true,
+      "private_resources_removed": true
+    }
+  },
+  "shared_parser_changes": [
+    "refuse invalid tags and nonzero Query/StdinClosed lengths before reading or allocating a body",
+    "deny unknown fields in structured request and response schemas, including nested PTY/session records",
+    "end established connections on unexpected frames through the existing owned-session cleanup path"
+  ],
+  "wire_compatibility": "canonical typed frame shapes and 16-MiB maximum remain; previously tolerated malformed/extra-field or out-of-phase messages are now refused",
+  "guest_keeper_sha256": "cd56f38623d239eb1c8eb97550307042cae0991c96ee7c012dbd26ac825477ca",
+  "previous_guest_keeper_sha256": "d82bd8336200ba98e74c76ed27b15db9f21b900fc6b37f48410f81896f769082",
+  "shared_source_sha256": {
+    "src/keeper/protocol.rs": "7563740c8cd0dedba1e98c353bb6eef5412d9a1c1916cfc31d84f9f1a0ccc770",
+    "src/keeper/connection.rs": "6a9a1eb582a45148e28f6be0f5611237e3207362297fa90ad20ecd906aa424f8"
+  },
+  "experiment_source_sha256": {
+    "protocol_probe.py": "ce17682895922d62524da88f3a0925a5b88abbb69bf0493d5015e3b103098c02",
+    "keeper_probe.py": "65932e55e49bb1cee55a38ad35ceb1d7b307b103d5aff373273afc72d83bca83",
+    "ssh_smoke.py": "946fda1d65d6753449e313c2295c12fbe7c09ef018b8ae8bd2c5f3fc3636ff3e",
+    "smoke.py": "76a30ba6de208b8716fd34fb5ca25db3946c9449721cc7f6f89bd5e84b42cbcc",
+    "ssh_transport.py": "6a1721908b7166ad46c4993d926ccd981fc56d8a9cb5b5cd2eb9e3a6d40d4d46",
+    "stop_receipt.py": "34527e6968fb707ff1b75d2d47aa22baad3f829107230795a4c48f74eef290d3",
+    "guest/init.c": "a222bb0da280b7390ad85db1a5c46255b8c9811df0c9dfbf1ede6c84673f868c",
+    "build_guest.py": "bdebeb7f33f3d8ac4bce2e021762374a4876e9b3a868ca32b2c4e9ed3e8fe0fb",
+    "build_keeper_guest.py": "fa10337c70b67f1d796ff455727e5f1219020dffb3d6934ee6e8f33a15d44e15"
+  },
+  "rust_regression_before": {
+    "status": "failed-as-observed",
+    "passed": 22,
+    "failed": 5,
+    "evidence": {
+      "path": "experiments/microvm/runs/20261114-keeper-protocol-validation/rust-before.log",
+      "sha256": "e8814c00eaf933a0f035e267fff70371e3fe0577ab86a8137bbe9a37b99bac23"
+    }
+  },
+  "rust_reused_keeper_and_ssh_suite": {
+    "status": "passed",
+    "passed": 41,
+    "failed": 0,
+    "ignored": 1,
+    "evidence": {
+      "path": "experiments/microvm/runs/20261114-keeper-protocol-validation/rust-after.log",
+      "sha256": "127db64802d77c3c8e9280494036e368f0fbfe0eb33434c25ef6077fe60b43ad"
+    },
+    "ignored_test": "ssh_server::tests::openssh_streams_sixteen_mib_bidirectionally; pre-existing opt-in native OpenSSH/Python diagnostic"
+  },
+  "python_tests": {
+    "status": "passed",
+    "count": 77,
+    "evidence": {
+      "path": "experiments/microvm/runs/20261114-keeper-protocol-validation/python-tests.log",
+      "sha256": "fbced83ad5a5a40e2ff62e3d3db3d969261a08c93cb5363921365372cb050e6d"
+    }
+  },
+  "clippy": {
+    "status": "passed",
+    "scope": "experimental keeper crate --all-targets --locked --offline -- -D warnings",
+    "evidence": {
+      "path": "experiments/microvm/runs/20261114-keeper-protocol-validation/clippy.log",
+      "sha256": "ee775c8d6fea5e18f6b99fc5a2f2bb5777ba5d835e46126898763de0c200d3a9"
+    }
+  },
+  "format": {
+    "status": "passed",
+    "scope": "root workspace cargo fmt --all --check",
+    "evidence": {
+      "path": "experiments/microvm/runs/20261114-keeper-protocol-validation/format.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    }
+  },
+  "compiler_cache_cleanup": [
+    {
+      "evidence": {
+        "path": "experiments/microvm/runs/20261114-protocol-root-cache-cleanup/report.json",
+        "sha256": "e33b0f3779ce57b9bdf9336db135aeea7b85ae2af1241c82a271de827a0aff65"
+      },
+      "observed_free_bytes_delta": 0,
+      "qualification": "regenerable compiler cache only; protected runtime executables unchanged at cleanup; no environment budget inference"
+    },
+    {
+      "evidence": {
+        "path": "experiments/microvm/runs/20261114-protocol-compile-cache-cleanup/report.json",
+        "sha256": "dd7f23f2d463c8558c9d6300701026e2bc24a0a0f0ab79de5623388d6733c7dc"
+      },
+      "observed_free_bytes_delta": 1352450048,
+      "qualification": "regenerable compiler cache only; protected runtime executables unchanged at cleanup; no environment budget inference"
+    },
+    {
+      "evidence": {
+        "path": "experiments/microvm/runs/20261114-protocol-post-build-cache-cleanup/report.json",
+        "sha256": "57f5333cd51af07980bcbfc82c6082d45da5872e1e4ccb321be3c242d4b7889d"
+      },
+      "observed_free_bytes_delta": 686936064,
+      "qualification": "regenerable compiler cache only; protected runtime executables unchanged at cleanup; no environment budget inference"
+    }
+  ],
+  "remaining_limits": [
+    "One 24-case run per adapter on native macOS ARM64, plus one 22-case old-keeper baseline. No fuzz corpus, random mutation campaign, reliability estimate or other native platform qualification.",
+    "These probes address the keeper inside the guest and the shared codec. They do not qualify the VMM host vsock multiplexer, host administrative parser, broader forbidden-egress or shared-cache matrices.",
+    "Closed payload schemas and connection-owned controls are not authentication or general replay prevention; there is no new global instance/session selection API.",
+    "Known valid headers can still declare up to 16 MiB and wait for incomplete bodies. Per-connection read deadlines, connection/thread admission, aggregate memory and denial-of-service behavior remain unqualified.",
+    "Per-read probe timeouts are diagnostics for these fixed fixtures; reported header-refusal observations are not a universal latency bound.",
+    "The minimal guests have no Nix/service/agent/editor workload. Earlier density, preparation, stop-receipt, CLI/TLS and trusted Remote-SSH rows retain their original keeper hashes and are not transferred to this new keeper.",
+    "The Rust suite reuses the exact shared keeper files and experimental SSH server. One existing OpenSSH test remains ignored by default; the root project full integration suite and Linux confinement rows were not rerun here.",
+    "New private disks/controller directories are removed after owned helper/endpoint cleanup. Compiler cache pruning preserves runtime executables and evidence; it does not establish a full 8-GiB environment storage pass."
+  ]
+}

@@ -4,7 +4,7 @@ This is the experimental implementation of `evaluate-microvm-runtimes`.
 `libkrun/` and `hvi/` have their own Cargo workspaces and lockfiles. The main devcroft build and
 published crate do not depend on it. No production VM dispatch exists yet.
 
-The [native assessment](results/macos-arm64-evaluation-assessment-v8.json) records
+The [native assessment](results/macos-arm64-evaluation-assessment-v9.json) records
 the full 180-case macOS ARM64 comparison, clean reconstruction, final SSH fault
 recovery and real CLI/TLS regressions against the five backend criteria. Both
 adapters work on this host. Production adoption remains no-go under the current
@@ -1090,3 +1090,51 @@ service shutdown/unmount, supervisor replay, host power-loss durability or
 arbitrary failure-timing coverage. Earlier Remote-SSH, density, preparation and
 CLI/TLS results stay bound to their own helper/guest hashes. Assessment v8
 retains those results and the production no-go.
+
+### Keeper frame schemas and connection phases (2026-11-14)
+
+`protocol_probe.py` exercises the real common keeper parser through the fixed
+Unix/vsock mapping on two ordinary minimal guests. The preserved libkrun
+baseline fails 11 of 22 refusal conditions: unknown tags and nonempty `Query`
+headers wait for bodies, unknown instance/session/boot selectors are ignored,
+and unexpected frames on an established session are ignored or interpreted as
+stdin EOF. Four forged-selector requests execute their ordinary command in the
+addressed VM; console records show none executing in the sibling. This is a
+message-validation counterexample, not an observed cross-VM escape.
+
+The shared `src/keeper/protocol.rs` now refuses invalid tags and nonzero payload
+lengths for `Query`/`StdinClosed` before body allocation/read. Structured requests
+and responses reject unknown fields, including nested PTY/session records.
+Canonical wire shapes and the existing 16-MiB frame cap remain. In
+`src/keeper/connection.rs`, an unexpected frame after `Spawn` ends that
+connection through the existing TERM/grace/KILL cleanup path. Signal and resize
+remain tied to the owning connection; no wire field selects another session.
+
+Both native macOS ARM64 adapters pass all 24 final cases across six fresh boots:
+18 initial-message checks, four established-session checks and two refusal
+checks after one VM cold restarts. Every case checks that existing cat sessions
+in the same VM and the sibling remain live and echo exactly. Additional controls
+echo 16 KiB of binary input per VM, terminate a deliberately selected session
+with a valid signal, and verify the sibling helper's native creation identity
+survives the restart. All owned helpers/endpoints and new private directories
+are cleaned up. The baseline's two boots are counted separately.
+
+Five new Rust regression tests fail before the correction. Afterwards the reused
+keeper/SSH crate passes 41 tests with one pre-existing ignored OpenSSH diagnostic;
+all 77 Python tests, Clippy and formatting checks pass. Run:
+
+```sh
+rtk proxy python3 experiments/microvm/protocol_probe.py --adapter libkrun \
+  --guest experiments/microvm/artifacts/stage-b-protocol-final/guest.json \
+  --out <new-run>
+```
+
+Evidence: `results/{libkrun,hvi}-macos-arm64-keeper-protocol.json`, the failed
+`results/libkrun-macos-arm64-keeper-protocol-before.json`, and
+`results/macos-arm64-keeper-protocol-validation.json`. This is a fixed malformed
+message sample, not host VMM/vsock parser fuzzing, an authorization protocol,
+general replay prevention or denial-of-service qualification. Valid incomplete
+frames, concurrency, aggregate memory and read deadlines remain separate gaps.
+This row does not qualify the broader egress/shared-cache checks, full project
+policy, other platforms or production VM adoption. Earlier performance, workload,
+stop and Remote-SSH results keep their own keeper hashes in assessment v9.

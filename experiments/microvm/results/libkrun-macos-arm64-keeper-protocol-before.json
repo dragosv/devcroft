@@ -1,0 +1,552 @@
+{
+  "schema": 1,
+  "status": "failed",
+  "platform": "macos-arm64-native",
+  "adapter": "libkrun",
+  "helper_provenance": {
+    "macos_reset_exit_patch_sha256": "a0cd8f2867697e766c5ea323893d6dd0d6cfc2287227f6cef9f580457305bb1e",
+    "macos_stop_semantics": "psci-system-off=0,system-reset=1",
+    "patch_sha256": "7a25379a3e1291ecbace0cad78e804b70f3f4515cebbf8c35f0843d107d4c2cc",
+    "revision": "6151710f4ea627cf0e5dbce78e4192fb4d64c2e9"
+  },
+  "qualification": "bounded malformed-message sample and connection-scoped keeper controls; not host parser fuzzing, hostile-guest containment audit or denial-of-service qualification",
+  "raw_evidence": "experiments/microvm/runs/20261114-libkrun-keeper-protocol-before",
+  "helper": {
+    "path": "/Users/dragos/Development/devcroft-codex/experiments/microvm/libkrun/target/debug/devcroft-krun-spike",
+    "sha256": "8c6221e30c806dd25f57775ede539b55918ebcddeb24346c4ad425b1c5d8456e"
+  },
+  "kernel": {
+    "path": "/Users/dragos/Development/devcroft-codex/experiments/microvm/artifacts/kernel-landlock/Image",
+    "sha256": "2b8b6d4664f1521a0d9bcc22252c4cc2e0bc98a5bbcf2500cc1e45ef1e1275fb"
+  },
+  "guest": {
+    "schema": 1,
+    "arch": "aarch64",
+    "fixture": "stage-b-real-keeper",
+    "zig_version": "0.17.0",
+    "source_sha256": "a222bb0da280b7390ad85db1a5c46255b8c9811df0c9dfbf1ede6c84673f868c",
+    "shutdown_receipt_schema": 1,
+    "nono": "0.77.0",
+    "keeper_sha256": "d82bd8336200ba98e74c76ed27b15db9f21b900fc6b37f48410f81896f769082",
+    "busybox_sha256": "198f6f675a49ac734082e054b823d3e2e947180ca2f632852ae1c09e950fd676",
+    "initramfs": {
+      "path": "/Users/dragos/Development/devcroft-codex/experiments/microvm/artifacts/stage-b-protocol-before/initramfs.cpio",
+      "sha256": "a9ad464ede0b347c54bfff4727226755512cfe27135a312e6b7611903dba5ce8"
+    },
+    "runtime": {
+      "path": "/Users/dragos/Development/devcroft-codex/experiments/microvm/artifacts/stage-b-protocol-before/runtime.img",
+      "sha256": "768f5b593e9f9f6888ea6930f6b6dc3adb65fd204b3c48361e0864dd6ae93f0c"
+    },
+    "reused_keeper_receipt": {
+      "path": "/Users/dragos/Development/devcroft-codex/experiments/microvm/artifacts/stage-b-nix-postack-control/guest.json",
+      "sha256": "3d1083445f0b4929c75543ba729c12f542261b9e0dadbf3bcde360bffba22e34"
+    },
+    "keeper_sources": {
+      "src/keeper/connection.rs": "5ea9ab23a29a9eb73363759818af13d5619715e9bc3282409ebd0c4257363759",
+      "src/keeper/environment.rs": "dcf433c26bba99dbe3a28164e35cd38854c30a64521a21691dc92f15ddc29fc6",
+      "src/keeper/mod.rs": "2d93e061be8231d0e0f95b018405b7dac70973800f3a72eed951960d753573e9",
+      "src/keeper/protocol.rs": "a1fd3088992902e89022c229ed710d25487374bfeeeece8000dd2e5872572a2d",
+      "src/keeper/pty.rs": "be8ea1fda83d3932eebe6d54b509e2f96bae5df9aa313a00296e4fa41e580dca",
+      "src/keeper/registry.rs": "99d96e3c267247ecc2f2220f8c0667216998d2cdabd8aabf5284d21c38aa93ce",
+      "src/keeper/session.rs": "1d1a1fce6ff8daac07dc6a8cc95a5ef60362730ae7d22326658920d8a8cf195c",
+      "experiments/microvm/guest-keeper/src/bootstrap.rs": "9ad93deea140929f7b13c50411a8be1c46170ff3a118b75f9d32320a59b3e606",
+      "experiments/microvm/guest-keeper/src/linux.rs": "a01213ed8615d9d4e0355abc9df578c6727b6ef849ba27db77586239f206607c",
+      "experiments/microvm/guest-keeper/src/main.rs": "d435d924645fdfc46ed0ce63a2923e0bf30b788ce298aeda09f0721a22137fce",
+      "experiments/microvm/guest-keeper/src/ssh_server.rs": "9e0095948d3f0634fab7e7598fe207aa2c88b447d12c661d05a2b76fda57882e",
+      "experiments/microvm/guest-keeper/Cargo.toml": "4ed55386f94ce6cbe1ee39b9c7b1b65d89a86988006f37c191d7ad023b619e7f",
+      "experiments/microvm/guest-keeper/Cargo.lock": "95ff159c50f5e72178fbf8943550de52a68cf80e8f1a92516ea9cdf7f4dc25a1",
+      "experiments/microvm/guest-keeper/zig-linker.sh": "28d89d7554ca99e4d1366d18d365253687076a7f9069d0488d9a011036626fd5",
+      "experiments/microvm/guest-keeper/zig-ar.sh": "8d9a92610ac547533bcce655621c435015305c043e273ea6a038ce999177935c"
+    }
+  },
+  "guest_receipt": {
+    "path": "/Users/dragos/Development/devcroft-codex/experiments/microvm/artifacts/stage-b-protocol-before/guest.json",
+    "sha256": "43ea10164460e4ac852f7aebbd8fe4bfd0cff1440c8e5cb273f4e36fa8200d3b"
+  },
+  "cases": [
+    {
+      "name": "unknown-tag-without-body",
+      "status": "failed",
+      "evidence": {
+        "request_sha256": "fe3cadca21b011a121f0d0c766d20d8001bf32c366b31f3bbb4d54e8fb0a14ab",
+        "request_bytes": 5,
+        "header_hex": "ff00001000",
+        "half_close": false,
+        "read_timeout_seconds": 2,
+        "refused": false,
+        "response": "timeout-awaiting-body-or-response",
+        "seconds": 2.002099166973494,
+        "both_existing_canaries_live_and_echo_exact": true,
+        "canary_session_ids": [
+          1,
+          1
+        ]
+      }
+    },
+    {
+      "name": "query-declared-payload-without-body",
+      "status": "failed",
+      "evidence": {
+        "request_sha256": "f84ede771de21e9fdfc13ef1f1ce6c1f01ce5704b9f5c8d2ec28cb5fd38f23a4",
+        "request_bytes": 5,
+        "header_hex": "0b01000000",
+        "half_close": false,
+        "read_timeout_seconds": 2,
+        "refused": false,
+        "response": "timeout-awaiting-body-or-response",
+        "seconds": 2.0014467909932137,
+        "both_existing_canaries_live_and_echo_exact": true,
+        "canary_session_ids": [
+          1,
+          1
+        ]
+      }
+    },
+    {
+      "name": "query-forged-instance-payload",
+      "status": "failed",
+      "evidence": {
+        "request_sha256": "b09d1073049e72e4200d307abe1cccea1fffa202aa1a492dd43ea5a8327438c1",
+        "request_bytes": 56,
+        "header_hex": "0b00000033",
+        "half_close": false,
+        "read_timeout_seconds": 2,
+        "refused": false,
+        "response_tag": 12,
+        "seconds": 0.00020112493075430393,
+        "both_existing_canaries_live_and_echo_exact": true,
+        "canary_session_ids": [
+          1,
+          1
+        ]
+      }
+    },
+    {
+      "name": "spawn-forged-instance-selector",
+      "status": "failed",
+      "evidence": {
+        "request_sha256": "2e501583fa3264ba80309a4310687cb0e260ffa043c3bbce94b7c621db48c654",
+        "request_bytes": 170,
+        "header_hex": "01000000a5",
+        "half_close": false,
+        "read_timeout_seconds": 2,
+        "refused": false,
+        "response_tag": 2,
+        "unexpected_spawn_output": "accepted-forged-selector",
+        "unexpected_spawn_status": {
+          "code": 0,
+          "signal": null
+        },
+        "seconds": 0.0009068339131772518,
+        "both_existing_canaries_live_and_echo_exact": true,
+        "canary_session_ids": [
+          1,
+          1
+        ]
+      }
+    },
+    {
+      "name": "spawn-forged-session-selector",
+      "status": "failed",
+      "evidence": {
+        "request_sha256": "5a06f3e2586cb955fe416fb9b00a4b5122b0219e6942adc07fc73dc5ddec9d8f",
+        "request_bytes": 136,
+        "header_hex": "0100000083",
+        "half_close": false,
+        "read_timeout_seconds": 2,
+        "refused": false,
+        "response_tag": 2,
+        "unexpected_spawn_output": "accepted-forged-selector",
+        "unexpected_spawn_status": {
+          "code": 0,
+          "signal": null
+        },
+        "seconds": 0.0005777499172836542,
+        "both_existing_canaries_live_and_echo_exact": true,
+        "canary_session_ids": [
+          1,
+          1
+        ]
+      }
+    },
+    {
+      "name": "spawn-forged-boot-selector",
+      "status": "failed",
+      "evidence": {
+        "request_sha256": "cc5ff81cbeb706d22b45dd8cc94a8c30aae074de5a3e5632c8235d4be854caba",
+        "request_bytes": 141,
+        "header_hex": "0100000088",
+        "half_close": false,
+        "read_timeout_seconds": 2,
+        "refused": false,
+        "response_tag": 2,
+        "unexpected_spawn_output": "accepted-forged-selector",
+        "unexpected_spawn_status": {
+          "code": 0,
+          "signal": null
+        },
+        "seconds": 0.0006389159243553877,
+        "both_existing_canaries_live_and_echo_exact": true,
+        "canary_session_ids": [
+          1,
+          1
+        ]
+      }
+    },
+    {
+      "name": "pty-forged-session-selector",
+      "status": "failed",
+      "evidence": {
+        "request_sha256": "50cb6dc5bd75a57eae05804e1feb9b1583a0b636665f2893767a9c60cb12dfac",
+        "request_bytes": 156,
+        "header_hex": "0100000097",
+        "half_close": false,
+        "read_timeout_seconds": 2,
+        "refused": false,
+        "response_tag": 2,
+        "unexpected_spawn_output": "accepted-forged-selector",
+        "unexpected_spawn_status": {
+          "code": 0,
+          "signal": null
+        },
+        "seconds": 0.0006044580368325114,
+        "both_existing_canaries_live_and_echo_exact": true,
+        "canary_session_ids": [
+          1,
+          1
+        ]
+      }
+    },
+    {
+      "name": "oversized-header",
+      "status": "passed",
+      "evidence": {
+        "request_sha256": "de354bac1c67073a87dc4ed9b675287373e4698cdf168b803b29f122e3892618",
+        "request_bytes": 5,
+        "header_hex": "0101000001",
+        "half_close": false,
+        "read_timeout_seconds": 2,
+        "refused": true,
+        "response": "eof",
+        "seconds": 0.00014062505215406418,
+        "both_existing_canaries_live_and_echo_exact": true,
+        "canary_session_ids": [
+          1,
+          1
+        ]
+      }
+    },
+    {
+      "name": "maximum-u32-length",
+      "status": "passed",
+      "evidence": {
+        "request_sha256": "55129995984005aba3d9c2f4c4b01cdfe8c7e379f871572b519b1c042d04af41",
+        "request_bytes": 5,
+        "header_hex": "04ffffffff",
+        "half_close": false,
+        "read_timeout_seconds": 2,
+        "refused": true,
+        "response": "eof",
+        "seconds": 0.00011737504974007607,
+        "both_existing_canaries_live_and_echo_exact": true,
+        "canary_session_ids": [
+          1,
+          1
+        ]
+      }
+    },
+    {
+      "name": "invalid-json",
+      "status": "passed",
+      "evidence": {
+        "request_sha256": "c97a912061a8b44995da2f1e3d97f96295f10b20352e34cf273615474b0b46cb",
+        "request_bytes": 6,
+        "header_hex": "0100000001",
+        "half_close": false,
+        "read_timeout_seconds": 2,
+        "refused": true,
+        "response": "eof",
+        "seconds": 0.0001163750421255827,
+        "both_existing_canaries_live_and_echo_exact": true,
+        "canary_session_ids": [
+          1,
+          1
+        ]
+      }
+    },
+    {
+      "name": "invalid-utf8-json",
+      "status": "passed",
+      "evidence": {
+        "request_sha256": "9b4aeb137ee1ea7cd4af313e89003701a3baaed92801a0217c8cf200f6e710de",
+        "request_bytes": 6,
+        "header_hex": "0100000001",
+        "half_close": false,
+        "read_timeout_seconds": 2,
+        "refused": true,
+        "response": "eof",
+        "seconds": 0.0001273748930543661,
+        "both_existing_canaries_live_and_echo_exact": true,
+        "canary_session_ids": [
+          1,
+          1
+        ]
+      }
+    },
+    {
+      "name": "duplicate-command-field",
+      "status": "passed",
+      "evidence": {
+        "request_sha256": "81b89c9a35debea35557873b5f6d6dd60977a81d052a2340d3b5a6ed2e3c5ff4",
+        "request_bytes": 88,
+        "header_hex": "0100000053",
+        "half_close": false,
+        "read_timeout_seconds": 2,
+        "refused": true,
+        "response": "eof",
+        "seconds": 0.00017358292825520039,
+        "both_existing_canaries_live_and_echo_exact": true,
+        "canary_session_ids": [
+          1,
+          1
+        ]
+      }
+    },
+    {
+      "name": "wrong-argument-type",
+      "status": "passed",
+      "evidence": {
+        "request_sha256": "a91e2e66bf79584d1366c9c133d4a8289e91620ba4ac64cc4359bceff8c9cc59",
+        "request_bytes": 92,
+        "header_hex": "0100000057",
+        "half_close": false,
+        "read_timeout_seconds": 2,
+        "refused": true,
+        "response": "eof",
+        "seconds": 0.00016974995378404856,
+        "both_existing_canaries_live_and_echo_exact": true,
+        "canary_session_ids": [
+          1,
+          1
+        ]
+      }
+    },
+    {
+      "name": "truncated-header",
+      "status": "passed",
+      "evidence": {
+        "request_sha256": "47dc540c94ceb704a23875c11273e16bb0b8a87aed84de911f2133568115f254",
+        "request_bytes": 2,
+        "header_hex": "0100",
+        "half_close": true,
+        "read_timeout_seconds": 2,
+        "refused": true,
+        "response": "eof",
+        "seconds": 0.00013045803643763065,
+        "both_existing_canaries_live_and_echo_exact": true,
+        "canary_session_ids": [
+          1,
+          1
+        ]
+      }
+    },
+    {
+      "name": "truncated-body",
+      "status": "passed",
+      "evidence": {
+        "request_sha256": "c36da908548b17f52ec1ac156c908d2342fd7f9f0bb0767471ac4533c14acf53",
+        "request_bytes": 6,
+        "header_hex": "0100000008",
+        "half_close": true,
+        "read_timeout_seconds": 2,
+        "refused": true,
+        "response": "eof",
+        "seconds": 0.00012208404950797558,
+        "both_existing_canaries_live_and_echo_exact": true,
+        "canary_session_ids": [
+          1,
+          1
+        ]
+      }
+    },
+    {
+      "name": "stdin-before-spawn",
+      "status": "passed",
+      "evidence": {
+        "request_sha256": "2fbdc05fe839c0c8677e88dfdc0951c967919655a97097378d8a15d626e31670",
+        "request_bytes": 15,
+        "header_hex": "040000000a",
+        "half_close": false,
+        "read_timeout_seconds": 2,
+        "refused": true,
+        "response_tag": 3,
+        "seconds": 0.0001365420175716281,
+        "both_existing_canaries_live_and_echo_exact": true,
+        "canary_session_ids": [
+          1,
+          1
+        ]
+      }
+    },
+    {
+      "name": "server-spawn-ok-before-spawn",
+      "status": "passed",
+      "evidence": {
+        "request_sha256": "9a7b58b75d8891deb793fd23c2aa8dc39c58982879b228cceff72a6bc7f29775",
+        "request_bytes": 22,
+        "header_hex": "0200000011",
+        "half_close": false,
+        "read_timeout_seconds": 2,
+        "refused": true,
+        "response_tag": 3,
+        "seconds": 0.00012204190716147423,
+        "both_existing_canaries_live_and_echo_exact": true,
+        "canary_session_ids": [
+          1,
+          1
+        ]
+      }
+    },
+    {
+      "name": "forged-cross-session-signal",
+      "status": "passed",
+      "evidence": {
+        "request_sha256": "f0080dd11c574ab1942549b2caaa82facba21f563ce6f2acff37883c397e7ab9",
+        "request_bytes": 40,
+        "header_hex": "0900000023",
+        "half_close": false,
+        "read_timeout_seconds": 2,
+        "refused": true,
+        "response": "eof",
+        "seconds": 0.00015358300879597664,
+        "both_existing_canaries_live_and_echo_exact": true,
+        "canary_session_ids": [
+          1,
+          1
+        ]
+      }
+    },
+    {
+      "name": "second-spawn-on-live-session",
+      "status": "failed",
+      "evidence": {
+        "owned_session_id": 6,
+        "request_sha256": "6e92cdd0eb5e238d2f5602137dc75b6b02e2f6cb5d82e69178421e28c9a8a6f8",
+        "header_hex": "0100000072",
+        "read_timeout_seconds": 3,
+        "refused": false,
+        "response": "unexpected-frame-ignored-session-remains-live",
+        "both_existing_canaries_live_and_echo_exact": true,
+        "canary_session_ids": [
+          1,
+          1
+        ]
+      }
+    },
+    {
+      "name": "server-response-on-live-session",
+      "status": "failed",
+      "evidence": {
+        "owned_session_id": 7,
+        "request_sha256": "9a7b58b75d8891deb793fd23c2aa8dc39c58982879b228cceff72a6bc7f29775",
+        "header_hex": "0200000011",
+        "read_timeout_seconds": 3,
+        "refused": false,
+        "response": "unexpected-frame-ignored-session-remains-live",
+        "both_existing_canaries_live_and_echo_exact": true,
+        "canary_session_ids": [
+          1,
+          1
+        ]
+      }
+    },
+    {
+      "name": "query-on-live-session",
+      "status": "failed",
+      "evidence": {
+        "owned_session_id": 8,
+        "request_sha256": "952708d43ddcea7ebc938989c3581416f7196d934f5ef36d87fd80607e0dece0",
+        "header_hex": "0b00000000",
+        "read_timeout_seconds": 3,
+        "refused": false,
+        "response": "unexpected-frame-ignored-session-remains-live",
+        "both_existing_canaries_live_and_echo_exact": true,
+        "canary_session_ids": [
+          1,
+          1
+        ]
+      }
+    },
+    {
+      "name": "nonempty-stdin-close-on-live-session",
+      "status": "failed",
+      "evidence": {
+        "owned_session_id": 9,
+        "request_sha256": "4770f8f45719ad7d073e1e1a3d1f491bef1247ff1c18a3c74c3d3c8ad36aa76d",
+        "header_hex": "0500000006",
+        "read_timeout_seconds": 3,
+        "refused": false,
+        "owned_session_exit": {
+          "code": 0,
+          "signal": null
+        },
+        "both_existing_canaries_live_and_echo_exact": true,
+        "canary_session_ids": [
+          1,
+          1
+        ]
+      }
+    }
+  ],
+  "instances": [
+    {
+      "label": "a",
+      "boots": [
+        {
+          "boot": 1,
+          "greeting": "READY 1 state=1 ro=1 landlock=6 policy=1",
+          "ready_seconds": 0.32785979204345495,
+          "exit_code": 0,
+          "forced_cleanup": false,
+          "log_overflow": false,
+          "ssh_console_captured": true,
+          "guest_console_stream": "stderr"
+        }
+      ]
+    },
+    {
+      "label": "sibling",
+      "boots": [
+        {
+          "boot": 1,
+          "greeting": "READY 1 state=1 ro=1 landlock=6 policy=1",
+          "ready_seconds": 0.28366433398332447,
+          "exit_code": 0,
+          "forced_cleanup": false,
+          "log_overflow": false,
+          "ssh_console_captured": true,
+          "guest_console_stream": "stderr"
+        }
+      ]
+    }
+  ],
+  "binary_echo_positive_control_bytes_per_vm": 16384,
+  "valid_signal_positive_control": {
+    "both_existing_canaries_live_and_echo_exact": true,
+    "canary_session_ids": [
+      1,
+      1
+    ]
+  },
+  "cleanup": {
+    "helpers_reaped": true,
+    "endpoints_removed": true,
+    "private_resources_removed": true
+  },
+  "discarded_private_resources": [
+    "/private/tmp/ds-h5vgwn21",
+    "/private/tmp/dc-c-libjc9s0",
+    "/private/tmp/ds-h15ci11i",
+    "/private/tmp/dc-c-2p75ve2t"
+  ]
+}
