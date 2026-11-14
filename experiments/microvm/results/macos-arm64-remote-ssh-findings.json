@@ -1,0 +1,87 @@
+{
+  "schema": 1,
+  "platform": "macos-arm64-native",
+  "qualification": "diagnostic record of failures and rejected hypotheses behind the trusted Remote-SSH row",
+  "vscode": {
+    "version": "1.146.0",
+    "commit": "69047191fc427f2f92828279aae1d90d8eeda7ab",
+    "extensions": {
+      "ms-vscode-remote.remote-ssh": {
+        "version": "0.128.0",
+        "source": "/Users/dragos/.vscode/extensions/ms-vscode-remote.remote-ssh-0.128.0",
+        "package_json_sha256": "34e93594e8dba06b2c036d02e04a166ec32169ba3121fff8b6940316ee1dadff"
+      },
+      "ms-vscode-remote.remote-ssh-edit": {
+        "version": "0.87.0",
+        "source": "/Users/dragos/.vscode/extensions/ms-vscode-remote.remote-ssh-edit-0.87.0",
+        "package_json_sha256": "16e3c9f3e2dc74f8882b00c1fcc5022705dc00214f36eb73842667c7efc2794a"
+      },
+      "ms-vscode.remote-explorer": {
+        "version": "0.5.0",
+        "source": "/Users/dragos/.vscode/extensions/ms-vscode.remote-explorer-0.5.0",
+        "package_json_sha256": "e44bd5c6322d05ae08e662572c5bff0c01bd12a0efd09ac5c64437e64f8f90b4"
+      }
+    }
+  },
+  "findings": [
+    {
+      "case": "minimal Alpine workload guest",
+      "result": "failed",
+      "cause": "Remote-SSH requires bash (NoBash); the guest has only initramfs BusyBox applets",
+      "evidence": [
+        "experiments/microvm/runs/20261113-libkrun-remote-ssh-exploratory/alpine-minimal-nobash",
+        "experiments/microvm/runs/20261114-libkrun-remote-ssh-alpine-minimal"
+      ]
+    },
+    {
+      "case": "existing Nix closure guest",
+      "result": "failed",
+      "cause": "LinuxPrereqs (exit 207): neither a glibc loader/libstdc++ discoverable by the server nor a musl loader; the static CLI itself runs",
+      "evidence": [
+        "experiments/microvm/runs/20261113-libkrun-remote-ssh-exploratory/nix-closure-linuxprereqs"
+      ]
+    },
+    {
+      "case": "Nix closure with glibc listed in buildEnv",
+      "result": "failed",
+      "cause": "buildEnv linked none of glibc's lib/, so the custom linker path did not exist; fixed with a dedicated vscode-server-sysroot link farm",
+      "evidence": [
+        "experiments/microvm/nix/remote-ssh/flake.nix"
+      ]
+    },
+    {
+      "case": "offline guest without staged server",
+      "result": "failed",
+      "cause": "the CLI downloads the server itself inside the guest; ServerUnexpectedExit after the guest download fails. The harness now stages the pinned server archive"
+    },
+    {
+      "case": "extension-driven scp of the CLI archive",
+      "result": "not completed, unresolved",
+      "cause": "the extension runs scp through a VS Code terminal; it never completed although the identical command run by hand succeeded. Not attributed; the harness stages archives instead"
+    },
+    {
+      "case": "Alpine image with bash only",
+      "result": "failed",
+      "cause": "date/touch/chmod/ps/getconf missing (APK --no-scripts skipped the busybox applet trigger); the installer's port arithmetic then failed and the CLI bind was refused by Landlock (EACCES)",
+      "evidence": [
+        "experiments/microvm/runs/20261114-libkrun-remote-ssh-alpine-missing-applets"
+      ]
+    },
+    {
+      "case": "reopening the same folder after cold restart",
+      "result": "folder-open task not started",
+      "cause": "VS Code's persisted remote state under data/User and data/Machine suppresses it. Disabling persistent terminals/task reconnection did not help; clearing workspaceStorage alone did not help; clearing data/User and data/Machine did. The qualifying run keeps that state and proves the reconnect with a second folder after verifying the first session's files persisted",
+      "evidence": [
+        "experiments/microvm/runs/20261114-libkrun-remote-ssh-nix-reconnect-task-not-run",
+        "experiments/microvm/runs/20261114-libkrun-remote-ssh-nix-no-persistent-terminals-still-not-run",
+        "experiments/microvm/runs/20261114-libkrun-remote-ssh-nix-diag-cleared-storage",
+        "experiments/microvm/runs/20261114-libkrun-remote-ssh-nix-diag-cleared-user-machine"
+      ]
+    },
+    {
+      "case": "earlier attribution corrected",
+      "result": "retracted",
+      "cause": "the exec-server installer always requests cli-alpine-<arch> on Linux (static musl CLI); it was not a getconf mis-detection as first reported"
+    }
+  ]
+}

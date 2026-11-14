@@ -292,7 +292,15 @@ static void start_keeper(void) {
         char *argv[] = {"/guest-keeper", NULL};
         char *env[] = {"PATH=/usr/bin:/bin", "HOME=/home/devcroft", "SHELL=/bin/sh",
                       "DEVCROFT_TASK=fixture-task", "DEVCROFT_SHELL=/bin/sh",
-                      "DEVCROFT_SSH_HOST_KEY=fixture-not-a-key", NULL};
+                      "DEVCROFT_SSH_HOST_KEY=fixture-not-a-key",
+#ifdef ENABLE_REMOTE_SSH_FIXTURE
+                      /* Trusted Remote-SSH Nix fixture only: VS Code Server's documented
+                       * custom-glibc route, pointed at the closure's own loader and libs. */
+                      "VSCODE_SERVER_CUSTOM_GLIBC_LINKER=/lib/vscode-sysroot/ld-linux-aarch64.so.1",
+                      "VSCODE_SERVER_CUSTOM_GLIBC_PATH=/lib/vscode-sysroot",
+                      "VSCODE_SERVER_PATCHELF_PATH=/usr/bin/patchelf",
+#endif
+                      NULL};
         execve(argv[0], argv, env);
         _exit(127);
     }

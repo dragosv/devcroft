@@ -1,6 +1,7 @@
 /libkrun/target/
 /hvi/target/
 /guest-keeper/target/
+/guest-keeper/target-remote-ssh/
 /russh/target/
 /artifacts/
 /runs/

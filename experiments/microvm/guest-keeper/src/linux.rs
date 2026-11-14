@@ -185,6 +185,13 @@ pub(super) fn run() -> Result<(), Box<dyn std::error::Error>> {
     {
         caps = caps.allow_tcp_connect(9090).allow_tcp_bind(9090);
     }
+    #[cfg(feature = "remote-ssh-fixture")]
+    {
+        // Trusted Remote-SSH row only: VS Code's server is pinned to this port
+        // by `remote.SSH.serverPickPortsFromRange`; no other port is added.
+        caps = caps.allow_tcp_connect(9091).allow_tcp_bind(9091);
+        eprintln!("guest keeper: trusted Remote-SSH fixture port 9091");
+    }
     Sandbox::apply_landlock(&caps)?;
     // Denials must have a working baseline: PID 1 created these fixtures.
     let denials = [

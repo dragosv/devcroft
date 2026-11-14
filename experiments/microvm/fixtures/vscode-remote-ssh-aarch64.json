@@ -1,0 +1,23 @@
+{
+  "schema": 1,
+  "archives": {
+    "69047191fc427f2f92828279aae1d90d8eeda7ab/cli-alpine-arm64": {
+      "url": "https://update.code.visualstudio.com/commit:69047191fc427f2f92828279aae1d90d8eeda7ab/cli-alpine-arm64/stable",
+      "sha256": "e3ae49fd87e958daec0297d970b678e4415a2aa6526ad6c8c45e6c8e9474fc71",
+      "bytes": 11786208,
+      "frozen_utc": "2026-11-14T09:18:56Z"
+    },
+    "69047191fc427f2f92828279aae1d90d8eeda7ab/server-linux-arm64": {
+      "url": "https://update.code.visualstudio.com/commit:69047191fc427f2f92828279aae1d90d8eeda7ab/server-linux-arm64/stable",
+      "sha256": "f25e7fdbb570a37f24f9bed027269b785a76b14545cdb46ccee107505d9aa0c6",
+      "bytes": 236720088,
+      "frozen_utc": "2026-11-14T09:37:34Z"
+    },
+    "69047191fc427f2f92828279aae1d90d8eeda7ab/server-alpine-arm64": {
+      "url": "https://update.code.visualstudio.com/commit:69047191fc427f2f92828279aae1d90d8eeda7ab/server-alpine-arm64/stable",
+      "sha256": "cac1172b1987dd98e3c9de4cc0ab5431b52d0ac2942e0d5bbfbdcd95faafae52",
+      "bytes": 237655784,
+      "frozen_utc": "2026-11-14T10:03:35Z"
+    }
+  }
+}
