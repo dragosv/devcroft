@@ -1,17 +1,17 @@
 [sandbox]
-name = "devenvgemini"
+name = "devenvagy"
 
 [env]
 provider = "devenv"
 # Keys reach the sandbox from your shell, never from this file.
 forward = ["GEMINI_API_KEY"]
 
-# The agent's own configuration (README.md says why each is needed).
-[env.vars]
-GEMINI_CLI_TRUST_WORKSPACE = "true"
-
 [network]
 default = "deny"
+# agy starts an embedded language server on ports the kernel picks
+# (`127.0.0.1:0`) and connects to it, with no flag to fix them. Any port on
+# the sandbox's *own* loopback; refused on macOS (README.md says why).
+loopback = "any"
 # The agent's API, and nothing else (see README.md for what it also tries).
 allow = [
   "generativelanguage.googleapis.com",

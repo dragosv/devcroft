@@ -518,6 +518,29 @@ not gated).
 named. Closing it properly would need something Seatbelt does not offer; the
 honest position is the declared degradation.
 
+## `network.loopback = "any"` is Linux-only
+
+`network.loopback = "any"` lets a sandbox bind and connect on any loopback
+TCP port, including one the kernel picks (`bind 127.0.0.1:0`). The
+Antigravity CLI needs this for its embedded language server. On Linux it is
+safe because every `default = "deny"` sandbox has a network namespace of its
+own with no route out. The key removes Landlock's TCP port filter entirely
+and leans on that namespace (`allow-loopback-ephemeral-ports`).
+
+**macOS refuses it at `up`**, by name. Seatbelt can express `localhost:*`,
+but a macOS sandbox shares the host's loopback, so that grant would reach
+every service listening on your Mac's loopback rather than only the
+sandbox's own. The same refusal applies on a Linux host that cannot create
+network namespaces, and with `network.default = "allow"`.
+
+How much the namespace matters was measured, not assumed. With the refusal
+bypassed and no namespace, an `"any"` sandbox connected to `1.1.1.1`
+directly, past the egress proxy (`tests/loopback_any_port.rs`'s teeth-check).
+
+The consequence: Antigravity does not run in a devcroft sandbox on macOS.
+What would change that is a flag in `agy` that fixes its language server's
+ports. None exists in 1.4.1 or 1.5.6.
+
 ## A sandbox on macOS had no temporary directory at all — fixed
 
 Measured with a probe inside a live sandbox: neither `/tmp` nor

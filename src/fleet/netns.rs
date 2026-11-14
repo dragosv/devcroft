@@ -163,6 +163,43 @@ pub fn bring_loopback_up() -> io::Result<()> {
     ))
 }
 
+/// The first route out of the calling process's network namespace, read
+/// from `/proc/self/net`, or `None` when it has none.
+///
+/// `network.loopback = "any"` (`allow-loopback-ephemeral-ports` design.md L3)
+/// is safe only because the sandbox's namespace has no route anywhere: it
+/// installs no Landlock TCP filter at all. A fresh namespace has none by
+/// construction, so today this always returns `None`. It exists so that a
+/// future topology that adds one (slirp4netns, pasta: `add-linux-agent-fleet`
+/// D5) makes `"any"` fail closed rather than quietly become an egress hole.
+pub fn route_out() -> io::Result<Option<String>> {
+    let v4 = std::fs::read_to_string("/proc/self/net/route")?;
+    // Absent on a kernel without IPv6: no IPv6 route, then.
+    let v6 = std::fs::read_to_string("/proc/self/net/ipv6_route").unwrap_or_default();
+    Ok(first_route_out(&v4, &v6))
+}
+
+/// [`route_out`]'s parsing, separate so it is testable without a namespace.
+///
+/// IPv4: `/proc/net/route` shows the main table only. Loopback's own routes
+/// live in the local table, so after its header line any row at all is a
+/// route out. IPv6: one row per route with the device last; rows on `lo`
+/// are the kernel's own (loopback and the reject entries), and any other
+/// device is a route out.
+pub fn first_route_out(ipv4_route: &str, ipv6_route: &str) -> Option<String> {
+    if let Some(row) = ipv4_route.lines().skip(1).find(|l| !l.trim().is_empty()) {
+        return Some(format!(
+            "IPv4 route: {}",
+            row.split_whitespace().collect::<Vec<_>>().join(" ")
+        ));
+    }
+    ipv6_route
+        .lines()
+        .filter_map(|l| l.split_whitespace().last().map(|dev| (dev, l)))
+        .find(|(dev, _)| *dev != "lo")
+        .map(|(dev, _)| format!("IPv6 route via {dev}"))
+}
+
 /// Whether this host can give an agent its own network namespace at all.
 ///
 /// Probed by running the real thing in a throwaway child, never by
@@ -181,4 +218,42 @@ pub fn probe(exe: &std::path::Path) -> io::Result<bool> {
         .arg("__netns_probe")
         .output()?;
     Ok(out.status.success())
+}
+
+#[cfg(test)]
+mod route_tests {
+    use super::first_route_out;
+
+    const V4_HEADER: &str =
+        "Iface\tDestination\tGateway \tFlags\tRefCnt\tUse\tMetric\tMask\t\tMTU\tWindow\tIRTT\n";
+    /// What a fresh devcroft sandbox namespace showed in
+    /// `allow-loopback-ephemeral-ports` task 0.2, verbatim in shape.
+    const V6_LO_ONLY: &str = "\
+00000000000000000000000000000000 00 00000000000000000000000000000000 00 00000000000000000000000000000000 ffffffff 00000001 00000000 00200200       lo
+00000000000000000000000000000001 80 00000000000000000000000000000000 00 00000000000000000000000000000000 00000000 00000002 00000000 80200001       lo
+";
+
+    #[test]
+    fn a_fresh_namespace_has_no_route_out() {
+        assert_eq!(first_route_out(V4_HEADER, V6_LO_ONLY), None);
+        assert_eq!(first_route_out(V4_HEADER, ""), None);
+    }
+
+    #[test]
+    fn an_ipv4_default_route_is_a_route_out() {
+        let v4 = format!("{V4_HEADER}tap0\t00000000\t0202000A\t0003\t0\t0\t0\t00000000\t0\t0\t0\n");
+        let found = first_route_out(&v4, V6_LO_ONLY).expect("a default route is a route out");
+        assert!(found.contains("tap0"), "{found}");
+    }
+
+    #[test]
+    fn an_ipv6_route_on_another_device_is_a_route_out() {
+        let v6 = format!(
+            "{V6_LO_ONLY}00000000000000000000000000000000 00 00000000000000000000000000000000 00 fe800000000000000000000000000001 00000400 00000001 00000000 00000003     tap0\n"
+        );
+        assert_eq!(
+            first_route_out(V4_HEADER, &v6).as_deref(),
+            Some("IPv6 route via tap0")
+        );
+    }
 }

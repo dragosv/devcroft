@@ -26,6 +26,14 @@
 //! declaring no service ports, this one included. One line in each golden,
 //! and no rule moved. That commit left both goldens behind, so this test
 //! failed on every platform until it was noticed.
+//!
+//! **And once more, the same way** (`allow-loopback-ephemeral-ports`): the
+//! compiled policy gained `network_loopback_any`, `false` for any manifest
+//! that does not set `network.loopback = "any"`. One line in each golden;
+//! no rule moved. This golden is the `Debug` form, so it shows the field.
+//! `profile.json` does not: the field is skipped when false, which
+//! `policy::capability_set::tests::loopback_key_leaves_an_unset_profile_byte_identical`
+//! asserts.
 
 use devcroft::policy::compile;
 

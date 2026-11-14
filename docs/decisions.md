@@ -361,7 +361,7 @@ mode. `up` failing with a `flox init` hint is the right answer.
 same as passthrough, because it is passthrough for one binary.
 
 The shortcut is always the same proposal: the user already has `claude` (or
-`codex`, or `gemini`) on the host, so grant that one file read+exec and put
+`codex`, or `agy`) on the host, so grant that one file read+exec and put
 it on the sandbox's `PATH`. It fails on what the binary is, not on how it is
 granted. A host-installed agent is host-linked — against the host's libc, or
 a host `node`, or a vendor-managed directory that updates itself — so the

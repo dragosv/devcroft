@@ -31,9 +31,17 @@ invariant below, because its manifest declares no shell, which is what
 every real flox manifest looks like.
 `devenv-claude-sample` is a coding agent (Claude Code, from nixpkgs, so
 `devenv.yaml` sets `allowUnfree`) running inside a sandbox, with only
-`api.anthropic.com` allowed; ten siblings do the same for Codex, Gemini CLI,
+`api.anthropic.com` allowed; ten siblings do the same for Codex, Antigravity,
 OpenCode, Copilot, Aider, Goose, Amp, Cursor, Qwen Code and Crush, each with
-one provider and its host alone (`docs/agents.md` is the matrix). It depends on the sandbox having a PID
+one provider and its host alone (`docs/agents.md` is the matrix).
+`devenv-antigravity-sample` replaced `devenv-gemini-sample` on 2026-11-14
+(Gemini CLI no longer exists), and is the one agent that needs
+`network.loopback = "any"` (`allow-loopback-ephemeral-ports`): `agy` binds
+its language server on `127.0.0.1:0`. That key drops Landlock's TCP filter
+and leans entirely on the sandbox's route-less namespace, so it is refused,
+never degraded, wherever there is none (macOS, `default = "allow"`, a host
+without network namespaces). Measured: without the namespace it reached
+`1.1.1.1` directly, past the proxy. It depends on the sandbox having a PID
 namespace of its own (`add-up-pid-namespace`): the agent is a Bun binary
 that aborts without `/proc`.
 `port-allocation-sample` is two sandboxes of one project running the same

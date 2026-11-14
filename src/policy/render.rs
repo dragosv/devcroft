@@ -33,6 +33,19 @@ pub fn render(compiled: &CompiledPolicy) -> String {
             writeln!(out, "  {:<40} {}", p.value, p.origin).unwrap();
         }
     }
+    // Only when set, so a manifest without the key renders as it did
+    // before the key existed. When set, it is the rule that matters: under
+    // it the `network.ports` list above grants nothing extra, and the
+    // compiled profile carries no TCP port rule at all, so this line is the
+    // only place a reader learns why (`allow-loopback-ephemeral-ports` L4).
+    if compiled.network_loopback_any {
+        writeln!(
+            out,
+            "network.loopback: {:<30} manifest:network.loopback",
+            "any port, own namespace only"
+        )
+        .unwrap();
+    }
     // Where every port in this policy actually lives — its own line
     // rather than a footnote under `network.ports`, because network
     // isolation is a property of the *sandbox*, not of the ports.
@@ -390,6 +403,33 @@ mod tests {
             "{line}"
         );
         assert!(line.trim_end().ends_with("baseline"), "{line}");
+    }
+
+    /// `allow-loopback-ephemeral-ports` spec: "Rendering a sandbox that
+    /// opted in", and its default: absent when the key is.
+    #[test]
+    fn render_shows_loopback_any_with_its_origin_and_scope_only_when_set() {
+        let (m, _) =
+            parse("[sandbox]\nname = \"lb\"\n[network]\ndefault = \"deny\"\nloopback = \"any\"\n")
+                .unwrap();
+        let out = render(&compile(&m));
+        let lines: Vec<_> = out
+            .lines()
+            .filter(|l| l.starts_with("network.loopback"))
+            .collect();
+        assert_eq!(lines.len(), 1, "exactly one rule: {out}");
+        assert!(
+            lines[0].contains("manifest:network.loopback"),
+            "{}",
+            lines[0]
+        );
+        assert!(lines[0].contains("own namespace only"), "{}", lines[0]);
+
+        let (m, _) = parse("[sandbox]\nname = \"lb\"\n[network]\ndefault = \"deny\"\n").unwrap();
+        assert!(
+            !render(&compile(&m)).contains("network.loopback"),
+            "a manifest without the key renders as before"
+        );
     }
 
     #[test]

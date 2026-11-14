@@ -119,6 +119,9 @@ read = ["/opt/reference-data"]   # read-only, and only if something needs it
 default = "deny"
 allow = ["api.example.com", "index.crates.io"]
 ports = [5432]
+# loopback = "any"         # any port on the sandbox's *own* loopback, for a
+                           # program that binds 127.0.0.1:0; Linux only, and
+                           # refused with default = "allow"
 
 [ssh]
 forward_agent = false      # off unless the project says otherwise

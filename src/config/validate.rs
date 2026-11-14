@@ -16,7 +16,10 @@ const SECTIONS: &[(&str, &[&str])] = &[
         ],
     ),
     ("filesystem", &["allow", "read", "deny"]),
-    ("network", &["default", "allow", "ports", "services"]),
+    (
+        "network",
+        &["default", "allow", "ports", "loopback", "services"],
+    ),
     ("ssh", &["forward_agent"]),
     ("hooks", &["post_create", "post_start"]),
     ("provisioning", &["network"]),

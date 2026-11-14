@@ -137,7 +137,8 @@ pub fn bridge_unix_to_tcp(unix: std::os::unix::net::UnixListener, tcp_port: u16)
 ///
 /// **Why not leave it to the client** (`add-agent-workload`, measured
 /// 2026-10-18, eleven coding agents inside one sandbox): five could not use
-/// a token in the proxy URL's userinfo. Gemini CLI, Qwen Code and Cursor's
+/// a token in the proxy URL's userinfo. Gemini CLI (since replaced in the
+/// matrix by Antigravity), Qwen Code and Cursor's
 /// agent sent no `Proxy-Authorization` at all and got 407; OpenCode and Amp,
 /// built on Bun, read `<token>@127.0.0.1` as the host name. The userinfo
 /// shape assumed "every standard HTTP client" honours it, and that is false

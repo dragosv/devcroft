@@ -20,7 +20,7 @@ they were measured with; their READMEs say what to swap for another.
 |---|---|---|---|---|---|---|
 | Claude Code 2.1.293 | [devenv-claude-sample](../samples/devenv-claude-sample/) | `claude-code` (unfree) | `ANTHROPIC_API_KEY` | `api.anthropic.com` | `http-intake.logs.us5.datadoghq.com` | — |
 | Codex 0.161.0 | [devenv-codex-sample](../samples/devenv-codex-sample/) | `codex` | `CODEX_API_KEY` | `api.openai.com` | `chatgpt.com`, `api.github.com` | `exec --skip-git-repo-check` outside a repo |
-| Gemini CLI 0.47.0 | [devenv-gemini-sample](../samples/devenv-gemini-sample/) | `gemini-cli` | `GEMINI_API_KEY` | `generativelanguage.googleapis.com` | `play.googleapis.com` | `GEMINI_CLI_TRUST_WORKSPACE=true` |
+| Antigravity CLI (`agy`) 1.4.1 | [devenv-antigravity-sample](../samples/devenv-antigravity-sample/) | `antigravity-cli` (unfree) | `GEMINI_API_KEY` | `generativelanguage.googleapis.com` | `antigravity-unleash.goog`, `play.googleapis.com` | `modelProvider = "gemini"` in its settings; `network.loopback = "any"` (Linux only) |
 | OpenCode 1.18.35 | [devenv-opencode-sample](../samples/devenv-opencode-sample/) | `opencode` | the provider's own (here `OPENAI_API_KEY`) | that provider's host | `models.opencode.ai`, `registry.npmjs.org` | — |
 | GitHub Copilot CLI | [devenv-copilot-sample](../samples/devenv-copilot-sample/) | `github-copilot-cli` (unfree) | `COPILOT_GITHUB_TOKEN` | `api.github.com`, `api.githubcopilot.com` | — | a fine-grained token (`github_pat_…`) |
 | Aider 0.86.1 | [devenv-aider-sample](../samples/devenv-aider-sample/) | `aider-chat` | `OPENAI_API_KEY` | `api.openai.com` | `raw.githubusercontent.com` | `--no-check-update`; a git repo or `--no-git` |
@@ -34,19 +34,32 @@ they were measured with; their READMEs say what to swap for another.
 reached its API: telemetry, update checks, model catalogues. Allow any of
 them deliberately if you want what they do; none was needed for a request.
 
-Two of those refusals print misleading errors, worth knowing before reading
-them as a sandbox failure:
+One of those refusals prints a misleading error, worth knowing before reading
+it as a sandbox failure:
 
-- **Gemini CLI** reports `An unexpected critical error occurred:[object
-  Object]` when its telemetry host is refused; the API's own answer is in
-  `--debug` output.
 - **Qwen Code** reports `Value of "this" must be of DOMException` when its
   API host is refused. `--auth-type openai` defaults to Alibaba's DashScope,
   not OpenAI, which is the host to allow.
 
 The "Needs" column is the agent's own configuration, the same on the host:
-Goose wants a system keyring that a sandbox does not have, Gemini wants a
-trusted directory, Copilot rejects a classic `ghp_` token locally.
+Goose wants a system keyring that a sandbox does not have, Antigravity uses
+its key only once a setting asks for API-key mode, and Copilot rejects a
+classic `ghp_` token locally.
+
+**Antigravity is the one agent that needs a devcroft key beyond the usual.**
+It starts an embedded language server on ports the kernel picks and connects
+to them, so it needs `network.loopback = "any"`: any port on the sandbox's
+*own* loopback, inside its route-less namespace (`allow-loopback-ephemeral-ports`).
+macOS refuses that key, since its sandboxes share the host's loopback, so
+`agy` does not run in a devcroft sandbox there. A flag for the language
+server's ports would make the key unnecessary; none exists in agy 1.4.1 or
+1.5.6. It replaced Gemini CLI in this matrix on 2026-11-14.
+
+**Whose endpoint can be moved** matters for brokering a credential at the
+proxy (`add-agent-workload`): the sandbox would hold a placeholder, and the
+proxy would put in the real key. Measured so far for Antigravity only:
+`GOOGLE_GEMINI_BASE_URL` moves it, and it then sends plain HTTP with the key
+in `X-Goog-Api-Key`. The other ten are not yet measured.
 
 ## What devcroft had to fix
 
@@ -61,7 +74,7 @@ agents, stopped the rest, and each is fixed:
   --render`) and sets `SSL_CERT_FILE` when the environment names nothing.
 - **The proxy's token in the URL.** The proxy URL carried a per-session token
   as userinfo, on the reasoning that every HTTP client sends it. Five did
-  not: Gemini, Qwen and Cursor sent no credentials (407), and OpenCode and
+  not: Gemini CLI (since replaced by Antigravity), Qwen and Cursor sent no credentials (407), and OpenCode and
   Amp, built on Bun, read `<token>@127.0.0.1` as a host name. An isolated
   sandbox now gets a plain `http://127.0.0.1:<port>`; its traffic reaches the
   proxy only through the unix socket, whose bridge presents the token, so the

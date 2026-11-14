@@ -144,6 +144,13 @@ pub struct Network {
     /// `0.0.0.0` bind on this platform — so this maps to `open_port`, and
     /// binding a non-loopback address stays denied.
     pub ports: Vec<u16>,
+    /// Which loopback TCP ports the sandbox may bind and connect on
+    /// (`allow-loopback-ephemeral-ports`). `"declared"`, the default, is
+    /// `ports`, declared service ports and the proxy port. `"any"` adds every
+    /// port, including one the kernel chooses (`bind :0`), and is valid only
+    /// where the sandbox has a loopback of its own: refused here with
+    /// `default = "allow"`, and at `up` wherever no network namespace exists.
+    pub loopback: NetworkLoopback,
     /// Ports the provider's declared services bind, keyed by service name
     /// (`network.services.<name>`), and whether each is exposed on the host.
     ///
@@ -183,9 +190,19 @@ impl Default for Network {
             default: NetworkDefault::Deny,
             allow: Vec::new(),
             ports: Vec::new(),
+            loopback: NetworkLoopback::Declared,
             services: BTreeMap::new(),
         }
     }
+}
+
+/// `network.loopback`; see [`Network::loopback`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum NetworkLoopback {
+    #[default]
+    Declared,
+    Any,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
@@ -424,6 +441,18 @@ pub fn parse(text: &str) -> Result<(Manifest, Vec<Warning>), ConfigError> {
     }
 
     crate::provider::validate_provider(&raw.env.provider).map_err(ConfigError::InvalidProvider)?;
+    // A sandbox with `default = "allow"` shares the host's loopback (no
+    // network namespace is made for it), so "any port on its loopback"
+    // would be any port on the host's: a wider grant than the one written.
+    if raw.network.loopback == NetworkLoopback::Any && raw.network.default == NetworkDefault::Allow
+    {
+        return Err(ConfigError::Parse(
+            "network.loopback = \"any\" cannot be combined with network.default = \"allow\": \
+             an allow-default sandbox shares the host's loopback, so \"any\" would grant \
+             every port on the host's loopback rather than on the sandbox's own"
+                .to_string(),
+        ));
+    }
     for (name, service) in &raw.network.services {
         if service.port == Some(0) {
             return Err(ConfigError::Parse(format!(
@@ -835,6 +864,32 @@ mod tests {
         .unwrap();
         assert_eq!(m.network.default, NetworkDefault::Allow);
         assert_eq!(m.network.allow, vec!["github.com"]);
+    }
+
+    #[test]
+    fn network_loopback_defaults_to_declared_and_parses_any() {
+        let (m, _) = parse("[sandbox]\nname = \"m\"\n").unwrap();
+        assert_eq!(m.network.loopback, NetworkLoopback::Declared);
+        let (m, _) = parse("[sandbox]\nname = \"m\"\n[network]\nloopback = \"any\"\n").unwrap();
+        assert_eq!(m.network.loopback, NetworkLoopback::Any);
+        let (m, _) =
+            parse("[sandbox]\nname = \"m\"\n[network]\nloopback = \"declared\"\n").unwrap();
+        assert_eq!(m.network.loopback, NetworkLoopback::Declared);
+        assert!(parse("[sandbox]\nname = \"m\"\n[network]\nloopback = \"all\"\n").is_err());
+    }
+
+    /// Spec: "Allow-default network".
+    #[test]
+    fn loopback_any_with_allow_default_is_refused_naming_both_keys() {
+        let err =
+            parse("[sandbox]\nname = \"m\"\n[network]\ndefault = \"allow\"\nloopback = \"any\"\n")
+                .unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("network.loopback") && msg.contains("network.default"),
+            "{msg}"
+        );
+        assert!(msg.contains("host's loopback"), "{msg}");
     }
 
     #[test]

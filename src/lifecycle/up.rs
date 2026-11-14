@@ -263,6 +263,13 @@ fn up_locked(
         )));
     }
 
+    // `allow-loopback-ephemeral-ports`: refused here, before the health
+    // decision can tear anything down and before any state is written,
+    // wherever the sandbox would not have a loopback of its own.
+    refuse_loopback_any_without_own_namespace(manifest, || {
+        keeper_exe().is_ok_and(|exe| matches!(crate::fleet::netns::probe(&exe), Ok(true)))
+    })?;
+
     let outcome = if opts.recreate {
         // `terminate_and_wait` reads and identity-verifies each pidfile
         // itself (`is_same_process` — a resurrected unrelated process
@@ -784,6 +791,14 @@ fn up_process(
         // less costly than the egress it would break.
         && match &proxy {
             Some((port, _)) if compiled.proxy_port_collides_with_declared_ports(*port) => {
+                if compiled.network_loopback_any {
+                    return Err(UpError::Backend(format!(
+                        "network.loopback = \"any\" needs this sandbox's own network \
+                         namespace, which is skipped because the egress proxy was assigned \
+                         port {port}, also declared in `network.ports`; re-run `up` to draw \
+                         a different proxy port"
+                    )));
+                }
                 eprintln!(
                     "devcroft: warning: network isolation is skipped for this sandbox: \
                      the egress proxy was assigned port {port}, which this manifest also \
@@ -798,6 +813,15 @@ fn up_process(
         && match crate::fleet::netns::probe(&exe) {
             Ok(true) => true,
             Ok(false) | Err(_) => {
+                // Probed already at the top of `up`; failing now is a race,
+                // and still a refusal for the same reason.
+                if compiled.network_loopback_any {
+                    return Err(UpError::Backend(
+                        "network.loopback = \"any\" needs a network namespace of the \
+                         sandbox's own, and this host could not create one"
+                            .to_string(),
+                    ));
+                }
                 warn_network_isolation_degraded(&compiled, starts_services);
                 false
             }
@@ -1913,6 +1937,7 @@ fn spawn_keeper(
     let confinement = Confinement {
         isolate_filesystem,
         isolate_network,
+        require_route_less: plan.network_loopback_any,
         mount_root,
         mount_grants,
         proxy_socket_for_view,
@@ -2068,6 +2093,10 @@ fn run_provisioning(
     let confinement = Confinement {
         isolate_filesystem,
         isolate_network,
+        // The provisioning policy never carries `network.loopback = "any"`
+        // (`CompiledPolicy::for_provisioning`), so there is nothing to
+        // re-verify for it.
+        require_route_less: false,
         mount_root: paths.mount_root.clone(),
         mount_grants: mount_grants.to_vec(),
         proxy_socket_for_view: relay.as_ref().map(|(_, sock)| sock.clone()),
@@ -2313,6 +2342,40 @@ fn host_user_name(uid: libc::uid_t) -> Option<String> {
     }
 }
 
+/// `network.loopback = "any"` is a grant on the sandbox's *own* loopback, so
+/// it is refused, never degraded, wherever there is none to give
+/// (`allow-loopback-ephemeral-ports` design.md L3). With `default = "allow"`
+/// it never parses. Here: macOS, which has no network namespace and whose
+/// Seatbelt `localhost:*` would reach every host loopback service, and a
+/// Linux host whose `fleet::netns::probe` fails, where `up` would otherwise
+/// degrade onto the host's loopback with a warning.
+fn refuse_loopback_any_without_own_namespace(
+    manifest: &Manifest,
+    netns_available: impl FnOnce() -> bool,
+) -> Result<(), UpError> {
+    if manifest.network.loopback != crate::config::NetworkLoopback::Any {
+        return Ok(());
+    }
+    if !cfg!(target_os = "linux") {
+        return Err(UpError::Backend(
+            "network.loopback = \"any\" is not supported on this platform: it has no \
+             per-sandbox loopback, so the grant would reach every service listening on \
+             the host's loopback rather than only the sandbox's own ports (Linux only; see \
+             docs/known-gaps.md)"
+                .to_string(),
+        ));
+    }
+    if netns_available() {
+        return Ok(());
+    }
+    Err(UpError::Backend(
+        "network.loopback = \"any\" needs a network namespace of the sandbox's own, \
+         and this host cannot create unprivileged network namespaces; without one the \
+         grant would cover the host's loopback (see `devcroft doctor`)"
+            .to_string(),
+    ))
+}
+
 /// Where a sandboxed process `up` spawns is confined before it execs: its
 /// own mount namespace and view, and its network namespace, when the host
 /// has them (`spawn_keeper`'s comments give the order and why it matters).
@@ -2321,6 +2384,10 @@ fn host_user_name(uid: libc::uid_t) -> Option<String> {
 struct Confinement {
     isolate_filesystem: bool,
     isolate_network: bool,
+    /// `network.loopback = "any"`: refuse to exec unless the new network
+    /// namespace has no route out (`allow-loopback-ephemeral-ports` L3),
+    /// since that is the only boundary such a sandbox has on TCP.
+    require_route_less: bool,
     mount_root: PathBuf,
     mount_grants: Vec<policy::ResolvedGrant>,
     proxy_socket_for_view: Option<PathBuf>,
@@ -2332,6 +2399,7 @@ fn confine_on_exec(cmd: &mut Command, c: Confinement) {
     let Confinement {
         isolate_filesystem,
         isolate_network,
+        require_route_less,
         mount_root,
         mount_grants,
         proxy_socket_for_view,
@@ -2357,6 +2425,22 @@ fn confine_on_exec(cmd: &mut Command, c: Confinement) {
                 crate::fleet::mount::enter_mount_namespace_with_network(isolate_network)?;
                 if isolate_network {
                     crate::fleet::netns::bring_loopback_up()?;
+                }
+                // Read before the view replaces `/proc`: `/proc/self/net`
+                // follows the reading process's network namespace.
+                if require_route_less {
+                    if !isolate_network {
+                        return Err(io::Error::other(
+                            "network.loopback = \"any\" requires the sandbox's own network \
+                             namespace, and this spawn has none",
+                        ));
+                    }
+                    if let Some(route) = crate::fleet::netns::route_out()? {
+                        return Err(io::Error::other(format!(
+                            "network.loopback = \"any\" requires a network namespace with \
+                             no route out, and this one has one ({route})"
+                        )));
+                    }
                 }
                 crate::fleet::mount::make_propagation_private()?;
                 crate::fleet::mount::construct_view(
@@ -2864,6 +2948,66 @@ mod tests {
         )
         .unwrap();
         root
+    }
+
+    fn loopback_manifest(extra: &str) -> Manifest {
+        crate::config::parse(&format!(
+            "[sandbox]\nname = \"lb\"\n[network]\ndefault = \"deny\"\n{extra}"
+        ))
+        .unwrap()
+        .0
+    }
+
+    /// `allow-loopback-ephemeral-ports` spec: "A host that cannot give the
+    /// sandbox its own namespace". The probe is not even consulted for a
+    /// manifest that does not ask, so the default path pays nothing.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn loopback_any_is_refused_at_backend_without_a_network_namespace() {
+        let err = refuse_loopback_any_without_own_namespace(
+            &loopback_manifest("loopback = \"any\"\n"),
+            || false,
+        )
+        .expect_err("no namespace must refuse, not degrade");
+        let UpError::Backend(msg) = err else {
+            panic!("expected layer backend, got {err:?}");
+        };
+        assert!(
+            msg.contains("network.loopback") && msg.contains("host's loopback"),
+            "{msg}"
+        );
+
+        assert!(
+            refuse_loopback_any_without_own_namespace(
+                &loopback_manifest("loopback = \"any\"\n"),
+                || true
+            )
+            .is_ok()
+        );
+        assert!(
+            refuse_loopback_any_without_own_namespace(&loopback_manifest(""), || {
+                panic!("a manifest without the key must not probe")
+            })
+            .is_ok()
+        );
+    }
+
+    /// Spec: "macOS". Written, not yet run: this devcontainer is Linux.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn loopback_any_is_refused_at_backend_on_macos() {
+        let err = refuse_loopback_any_without_own_namespace(
+            &loopback_manifest("loopback = \"any\"\n"),
+            || true,
+        )
+        .expect_err("macOS has no per-sandbox loopback");
+        let UpError::Backend(msg) = err else {
+            panic!("expected layer backend, got {err:?}");
+        };
+        assert!(
+            msg.contains("network.loopback") && msg.contains("Linux only"),
+            "{msg}"
+        );
     }
 
     /// `add-devbox-provider` task 3.6 / `add-devenv-services` task 3.3:

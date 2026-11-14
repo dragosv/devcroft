@@ -53,6 +53,11 @@ pub struct CapabilityPlan {
     pub filesystem_deny: Vec<String>,
     pub network_block: bool,
     pub network_ports: Vec<u16>,
+    /// See [`CompiledPolicy::network_loopback_any`]. Skipped when false, so
+    /// a `profile.json` without the key is byte-identical to one written
+    /// before it existed, and an old one still deserializes.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub network_loopback_any: bool,
     /// See [`CompiledPolicy::network_proxy_port`]'s doc — `Some` only when
     /// `up` actually started the egress proxy for this sandbox.
     pub network_proxy_port: Option<u16>,
@@ -134,6 +139,7 @@ impl CompiledPolicy {
                 .collect(),
             network_block: self.network_block,
             network_ports: self.network_ports.iter().map(|p| p.value).collect(),
+            network_loopback_any: self.network_loopback_any,
             network_proxy_port: self.network_proxy_port,
             unix_socket_bind: self
                 .unix_socket_bind
@@ -304,13 +310,28 @@ impl CapabilityPlan {
         // Landlock `NetPort`/Seatbelt rule, confirmed live on this host's
         // ABI V6) is the right primitive rather than the seccomp-notify
         // path `apply_auto` reserves for pre-V4 kernels.
-        caps = match self.network_proxy_port {
-            Some(port) => caps.proxy_only(port),
-            None if self.network_block => caps.block_network(),
-            None => caps.set_network_mode(NetworkMode::AllowAll),
-        };
-        for port in &self.network_ports {
-            caps = caps.allow_localhost_port(*port);
+        // `network.loopback = "any"` (`allow-loopback-ephemeral-ports`
+        // design.md L1): Landlock's TCP port filter is not installed at all.
+        // nono 0.77 leaves `handled_access_net` empty under `AllowAll` with
+        // no explicit TCP port lists, measured in that change's group 0.
+        // That is safe *only* because the sandbox's own route-less network
+        // namespace is the boundary, which `up` verifies before the keeper
+        // gets here, refusing the key everywhere it does not hold. Egress
+        // still leaves only through the relay to the proxy; this changes
+        // which loopback ports the sandbox's own processes may use, nothing
+        // else. Per-port rules would be meaningless under it, so none are
+        // added.
+        if self.network_loopback_any {
+            caps = caps.set_network_mode(NetworkMode::AllowAll);
+        } else {
+            caps = match self.network_proxy_port {
+                Some(port) => caps.proxy_only(port),
+                None if self.network_block => caps.block_network(),
+                None => caps.set_network_mode(NetworkMode::AllowAll),
+            };
+            for port in &self.network_ports {
+                caps = caps.allow_localhost_port(*port);
+            }
         }
 
         // macOS only, and not an oversight elsewhere: Seatbelt classifies
@@ -606,6 +627,35 @@ fn resolve(value: &str, project_root: &Path) -> (PathBuf, bool) {
 
 #[cfg(test)]
 mod tests {
+    /// `allow-loopback-ephemeral-ports` spec: "An existing manifest is
+    /// unaffected". The serialized plan, which is what `profile.json`
+    /// carries, has no trace of the key unless it is set.
+    #[test]
+    fn loopback_key_leaves_an_unset_profile_byte_identical() {
+        let plan = |extra: &str| {
+            let (m, _) = crate::config::parse(&format!(
+                "[sandbox]\nname = \"lb\"\n[network]\ndefault = \"deny\"\nports = [8080]\n{extra}"
+            ))
+            .unwrap();
+            let compiled = super::super::compile(&m);
+            (
+                serde_json::to_string(&compiled).unwrap(),
+                serde_json::to_string(&compiled.to_capability_plan()).unwrap(),
+            )
+        };
+        let (policy, plan_json) = plan("");
+        assert!(!policy.contains("loopback") && !plan_json.contains("loopback"));
+        // `"declared"` spelled out is the default, and must serialize as
+        // the absence of the key does.
+        assert_eq!(plan("loopback = \"declared\"\n"), (policy, plan_json));
+        let (policy, plan_json) = plan("loopback = \"any\"\n");
+        assert!(policy.contains("\"network_loopback_any\":true"), "{policy}");
+        assert!(
+            plan_json.contains("\"network_loopback_any\":true"),
+            "{plan_json}"
+        );
+    }
+
     use super::*;
     use crate::config::parse;
     use crate::policy::compile;
@@ -631,6 +681,49 @@ mod tests {
             std::process::id(),
             NEXT.fetch_add(1, Ordering::Relaxed)
         ))
+    }
+
+    /// design.md L1, as compiled: `"any"` is `AllowAll` with no per-port
+    /// rule, which nono 0.77 turns into an empty `handled_access_net`. The
+    /// proxy port and the declared ports must not leak back in as rules,
+    /// or Landlock would handle TCP again and refuse every other port.
+    #[test]
+    fn loopback_any_compiles_to_no_tcp_port_rule_at_all() {
+        let root = project_dir();
+        std::fs::create_dir_all(&root).unwrap();
+        let (manifest, _) = parse(
+            "[sandbox]\nname = \"capsettest\"\n[network]\ndefault = \"deny\"\n\
+             allow = [\"example.com\"]\nports = [8080]\nloopback = \"any\"\n",
+        )
+        .unwrap();
+        let caps = compile(&manifest)
+            .with_proxy_port(45000)
+            .to_capability_plan()
+            .to_capability_set(&root)
+            .unwrap();
+        assert_eq!(*caps.network_mode(), NetworkMode::AllowAll);
+        assert!(
+            caps.localhost_ports().is_empty(),
+            "{:?}",
+            caps.localhost_ports()
+        );
+
+        // The control: the same manifest without the key is still gated.
+        let (manifest, _) = parse(
+            "[sandbox]\nname = \"capsettest\"\n[network]\ndefault = \"deny\"\n\
+             allow = [\"example.com\"]\nports = [8080]\n",
+        )
+        .unwrap();
+        let caps = compile(&manifest)
+            .with_proxy_port(45000)
+            .to_capability_plan()
+            .to_capability_set(&root)
+            .unwrap();
+        assert!(matches!(
+            caps.network_mode(),
+            NetworkMode::ProxyOnly { port: 45000, .. }
+        ));
+        assert_eq!(caps.localhost_ports(), &[8080]);
     }
 
     #[test]

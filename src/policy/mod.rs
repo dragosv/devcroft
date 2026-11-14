@@ -336,6 +336,16 @@ pub struct CompiledPolicy {
     /// answer different questions (outbound egress vs local listeners),
     /// which is why a deny-all sandbox can still run a dev server.
     pub network_ports: Vec<AnnotatedPort>,
+    /// `network.loopback = "any"` (`allow-loopback-ephemeral-ports`): every
+    /// loopback TCP port, bind and connect, origin `manifest:network.loopback`.
+    /// Only ever honoured inside a network namespace of the sandbox's own,
+    /// which `up` verifies and otherwise refuses — see
+    /// [`CapabilityPlan::to_capability_set`] for what it compiles to.
+    ///
+    /// Skipped when false, so a manifest without the key serializes exactly
+    /// as it did before the key existed.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub network_loopback_any: bool,
     /// `network.services.<name>.var` requests, as (service, variable), and
     /// the port each was allocated once `up` has recorded one
     /// (`add-port-allocation`). `None` is pending: before the first `up`,
@@ -490,6 +500,7 @@ pub fn compile(manifest: &Manifest) -> CompiledPolicy {
         network_block: manifest.network.default == NetworkDefault::Deny,
         network_allow_domain,
         network_ports,
+        network_loopback_any: manifest.network.loopback == crate::config::NetworkLoopback::Any,
         allocations: manifest
             .network
             .services
@@ -599,6 +610,7 @@ impl CompiledPolicy {
                 })
                 .collect(),
             network_ports: Vec::new(),
+            network_loopback_any: false,
             allocations: Vec::new(),
             network_proxy_port: None,
             ..self.clone()

@@ -86,6 +86,7 @@ CompiledPolicy {
         },
     ],
     network_ports: [],
+    network_loopback_any: false,
     allocations: [],
     network_proxy_port: None,
     unix_socket_bind: [],

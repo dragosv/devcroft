@@ -6,7 +6,7 @@ agent itself coming from the project's closure rather than from your machine.
 There is no application code here. The subject is the agent: what it takes
 for one to run confined, and what it can and cannot reach once it does.
 
-Ten other agents (Codex, Gemini CLI, OpenCode, Copilot, Aider, Goose, Amp,
+Ten other agents (Codex, Antigravity, OpenCode, Copilot, Aider, Goose, Amp,
 Cursor, Qwen Code, Crush) were run the same way; the matrix of what each
 needs is [docs/agents.md](../../docs/agents.md).
 

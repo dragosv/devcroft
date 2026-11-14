@@ -991,6 +991,7 @@ fn bind_probe_main(args: &[String]) -> i32 {
         filesystem_deny: Vec::new(),
         network_block: true,
         network_ports: vec![port],
+        network_loopback_any: false,
         network_proxy_port: None,
         // This probe is about TCP port binding; it creates no unix sockets.
         unix_socket_bind: Vec::new(),

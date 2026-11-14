@@ -470,7 +470,7 @@ fn a_credential_the_shell_lacks_or_the_project_sets_fails_up() {
 const AGENTS: [(&str, &str); 11] = [
     ("claude-code", "claude"),
     ("codex", "codex"),
-    ("gemini-cli", "gemini"),
+    ("antigravity-cli", "agy"),
     ("opencode", "opencode"),
     ("github-copilot-cli", "copilot"),
     ("aider-chat", "aider"),
