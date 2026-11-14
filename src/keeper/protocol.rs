@@ -9,6 +9,9 @@
 //! length][payload]`. Structured frames carry a JSON payload (consistent
 //! with the rest of devcroft — see the policy compiler's JSON profile);
 //! `Stdin`/`Stdout`/`Stderr` carry raw bytes directly, unframed further.
+//! Structured payloads use closed schemas: unknown routing/session fields
+//! are refused, and the payload-free `Query`/`StdinClosed` frames require zero
+//! length. Header-only errors are rejected before reading or allocating a body.
 
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -32,6 +35,7 @@ const TAG_QUERY: u8 = 11;
 const TAG_QUERY_RESULT: u8 = 12;
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct PtySize {
     pub rows: u16,
     pub cols: u16,
@@ -42,6 +46,7 @@ pub struct PtySize {
 /// already carries the provider's captured activation diff (design.md
 /// decision 2, "sessions inherit it for free") — rather than replacing it.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct SpawnRequest {
     pub cmd: String,
     pub args: Vec<String>,
@@ -74,6 +79,7 @@ impl SessionSignal {
 /// `WIFEXITED`/`WIFSIGNALED`), `code` alone if the wait itself failed —
 /// see the `unknown` scenario in `to_exit_status`.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct ExitStatus {
     pub code: Option<i32>,
     pub signal: Option<i32>,
@@ -118,6 +124,7 @@ pub enum Frame {
 /// `keeper::registry::SessionInfo` (wire-friendly: a unix timestamp
 /// instead of `SystemTime`).
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct SessionSummary {
     pub id: u64,
     pub command: String,
@@ -125,17 +132,20 @@ pub struct SessionSummary {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct QueryResult {
     pub uptime_secs: u64,
     pub sessions: Vec<SessionSummary>,
 }
 
 #[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct SpawnOkPayload {
     session_id: u64,
 }
 
 #[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct SpawnErrPayload {
     message: String,
 }
@@ -150,6 +160,18 @@ pub fn read_frame<R: Read>(r: &mut R) -> io::Result<Frame> {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
             format!("frame of {len} bytes exceeds max {MAX_FRAME_LEN}"),
+        ));
+    }
+    if !matches!(tag_buf[0], TAG_SPAWN..=TAG_QUERY_RESULT) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("unknown frame tag {}", tag_buf[0]),
+        ));
+    }
+    if matches!(tag_buf[0], TAG_QUERY | TAG_STDIN_CLOSED) && len != 0 {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("frame tag {} requires an empty payload", tag_buf[0]),
         ));
     }
     let mut payload = vec![0u8; len as usize];
@@ -355,5 +377,109 @@ mod tests {
         let mut cursor = Cursor::new(vec![TAG_STDIN, 0, 0, 0, 5, 1, 2]); // says 5 bytes, has 2
         let err = read_frame(&mut cursor).unwrap_err();
         assert_eq!(err.kind(), io::ErrorKind::UnexpectedEof);
+    }
+
+    #[test]
+    fn invalid_headers_are_rejected_before_requesting_a_body() {
+        for (tag, length) in [
+            (0xff, 4096),
+            (TAG_QUERY, MAX_FRAME_LEN),
+            (TAG_STDIN_CLOSED, 1),
+            (TAG_STDIN, MAX_FRAME_LEN + 1),
+        ] {
+            let mut header = vec![tag];
+            header.extend_from_slice(&length.to_be_bytes());
+            let mut reader = Cursor::new(header);
+            assert_eq!(
+                read_frame(&mut reader).unwrap_err().kind(),
+                io::ErrorKind::InvalidData
+            );
+            assert_eq!(reader.position(), 5);
+        }
+    }
+
+    #[test]
+    fn spawn_rejects_forged_routing_and_session_fields() {
+        let normal = serde_json::json!({"cmd":"/bin/cat", "args":[], "cwd":"/workspace",
+                                        "env":{}, "pty":null});
+        for field in ["instance_id", "session_id", "boot_generation"] {
+            let mut forged = normal.clone();
+            forged[field] = serde_json::json!(42);
+            let mut bytes = Vec::new();
+            write_json(&mut bytes, TAG_SPAWN, &forged).unwrap();
+            assert_eq!(
+                read_frame(&mut Cursor::new(bytes)).unwrap_err().kind(),
+                io::ErrorKind::InvalidData
+            );
+        }
+        let mut forged = normal;
+        forged["pty"] = serde_json::json!({"rows":24, "cols":80, "session_id":42});
+        let mut bytes = Vec::new();
+        write_json(&mut bytes, TAG_SPAWN, &forged).unwrap();
+        assert_eq!(
+            read_frame(&mut Cursor::new(bytes)).unwrap_err().kind(),
+            io::ErrorKind::InvalidData
+        );
+    }
+
+    #[test]
+    fn structured_frames_reject_unknown_authority_fields() {
+        for (tag, value) in [
+            (
+                TAG_SPAWN_OK,
+                serde_json::json!({"session_id":1,"instance_id":"other"}),
+            ),
+            (
+                TAG_SPAWN_ERR,
+                serde_json::json!({"message":"failed","instance_id":"other"}),
+            ),
+            (
+                TAG_EXIT,
+                serde_json::json!({"code":0,"signal":null,"boot_generation":1}),
+            ),
+            (
+                TAG_RESIZE,
+                serde_json::json!({"rows":24,"cols":80,"session_id":1}),
+            ),
+            (
+                TAG_QUERY_RESULT,
+                serde_json::json!({"uptime_secs":1,"sessions":[],"instance_id":"other"}),
+            ),
+            (
+                TAG_QUERY_RESULT,
+                serde_json::json!({"uptime_secs":1,"sessions":[
+                {"id":1,"command":"cat","started_unix":1,"pgid":42}]}),
+            ),
+        ] {
+            let mut bytes = Vec::new();
+            write_json(&mut bytes, tag, &value).unwrap();
+            assert_eq!(
+                read_frame(&mut Cursor::new(bytes)).unwrap_err().kind(),
+                io::ErrorKind::InvalidData
+            );
+        }
+    }
+
+    #[test]
+    fn empty_control_frames_reject_payload_bytes() {
+        for tag in [TAG_QUERY, TAG_STDIN_CLOSED] {
+            let mut bytes = Vec::new();
+            write_raw(&mut bytes, tag, b"forged").unwrap();
+            assert_eq!(
+                read_frame(&mut Cursor::new(bytes)).unwrap_err().kind(),
+                io::ErrorKind::InvalidData
+            );
+        }
+    }
+
+    #[test]
+    fn raw_stdin_bytes_do_not_change_the_next_frame_boundary() {
+        let payload = vec![0xff, 0, 0, 0, 1, TAG_QUERY, 0];
+        let mut bytes = Vec::new();
+        write_frame(&mut bytes, &Frame::Stdin(payload.clone())).unwrap();
+        write_frame(&mut bytes, &Frame::Query).unwrap();
+        let mut reader = Cursor::new(bytes);
+        assert_eq!(read_frame(&mut reader).unwrap(), Frame::Stdin(payload));
+        assert_eq!(read_frame(&mut reader).unwrap(), Frame::Query);
     }
 }

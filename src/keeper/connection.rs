@@ -191,7 +191,10 @@ pub fn handle_with_grace(
             Ok(Frame::Signal(sig)) => unsafe {
                 libc::kill(-pgid, sig.as_libc());
             },
-            Ok(_) => {} // control frames from the client are not expected past Spawn
+            // Each connection owns exactly one session. Unexpected requests
+            // and server-only responses end it through the same cleanup path
+            // as malformed input; they never select or create another session.
+            Ok(_) => break,
             Err(_) => break,
         }
         if !registry.contains(session_id) {
@@ -543,6 +546,51 @@ mod tests {
         drop(client);
         conn_thread.join().unwrap();
         // A Query must never register a session.
+        assert_eq!(registry.len(), 0);
+    }
+
+    #[test]
+    fn query_after_spawn_ends_only_the_owning_connection_session() {
+        let registry = Arc::new(Registry::new());
+        let mut clients = Vec::new();
+        let mut servers = Vec::new();
+        let mut ids = Vec::new();
+        for _ in 0..2 {
+            let (mut client, server) = UnixStream::pair().unwrap();
+            client
+                .set_read_timeout(Some(Duration::from_secs(3)))
+                .unwrap();
+            let registry = Arc::clone(&registry);
+            servers.push(thread::spawn(move || {
+                handle_with_grace(
+                    server,
+                    registry,
+                    Instant::now(),
+                    Arc::new(LocalSessionBackend),
+                    Duration::from_millis(50),
+                );
+            }));
+            protocol::write_frame(&mut client, &Frame::Spawn(spawn_request("cat", &[], None)))
+                .unwrap();
+            ids.push(expect_spawn_ok(&mut client));
+            clients.push(client);
+        }
+        // Query is permitted only as the first frame on its own connection.
+        protocol::write_frame(&mut clients[0], &Frame::Query).unwrap();
+        let (output, status) = read_until_exit(&mut clients[0]);
+        assert!(output.is_empty());
+        assert_eq!(status.signal, Some(libc::SIGTERM));
+        assert!(!registry.contains(ids[0]));
+        assert!(registry.contains(ids[1]));
+        protocol::write_frame(&mut clients[1], &Frame::Stdin(b"still-live".to_vec())).unwrap();
+        protocol::write_frame(&mut clients[1], &Frame::StdinClosed).unwrap();
+        let (output, status) = read_until_exit(&mut clients[1]);
+        assert_eq!(output, b"still-live");
+        assert_eq!(status.code, Some(0));
+        drop(clients);
+        for server in servers {
+            server.join().unwrap();
+        }
         assert_eq!(registry.len(), 0);
     }
 }
