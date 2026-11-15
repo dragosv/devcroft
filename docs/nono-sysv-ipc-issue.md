@@ -1,7 +1,8 @@
 # Feature request for nono: a typed capability for System V IPC on macOS
 
 Draft for <https://github.com/nolabs-ai/nono>, in the fields of its
-`feature_request.yml` template. Verified against **nono 0.77.0** (the
+`feature_request.yml` template. Verified against **nono 0.77.0**, and
+unchanged in 0.82.0 (no `ipc-sysv` rule in its Seatbelt profile; the
 `ipc-sysv*` situation is unchanged from 0.74.0, where it was first
 measured); measurements on macOS 15.7.4 / aarch64-darwin. Not yet filed —
 filing is the maintainer's to do, in their own name; strip this preamble.

@@ -225,8 +225,10 @@ pub fn capabilities() -> &'static [Capability] {
                     Measured on macOS 15.7.4: with the rules the same gcc \
                     is refused at execve and the closure's gcc still runs; \
                     without them the assertion fails. The same e2e test \
-                    now runs on both platforms. Typed upstream form \
-                    proposed in docs/nono-process-exec-issue.md.",
+                    now runs on both platforms. nono 0.82 scopes exec to \
+                    its read grants itself; devcroft's rules are kept until \
+                    a macOS run shows them redundant \
+                    (docs/nono-process-exec-issue.md).",
             },
             linux_probe: Some(crate::policy::backend_supported),
             macos_probe: Some(crate::policy::backend_supported),

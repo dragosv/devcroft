@@ -447,6 +447,12 @@ implementation; until it lands, the raw rules are the fix, and they are
 derived from `caps.fs_capabilities()` so they cannot drift from what
 Seatbelt was actually granted.
 
+**Landed upstream in nono 0.82.0** (pinned 2026-11-15): the library now
+scopes `process-exec*` to its read grants itself. devcroft's rules are kept,
+redundant but harmless, until a macOS run of `tests/devbox_provider_e2e.rs`
+shows the host-gcc assertion still passing without them. Not yet measured
+on macOS.
+
 ## A C toolchain from a closure cannot link on macOS
 
 Related to the above but a separate cause, and it makes the devbox/nix closure
@@ -578,7 +584,7 @@ DETAIL:  Failed system call was shmget(key=..., size=56, 03600).
 ```
 
 **The cause is now known: the sandbox denies System V shared memory, and
-the backend library's Seatbelt profile never allows it.** `nono` 0.74.0 (and 0.77.0, now pinned — unchanged)
+the backend library's Seatbelt profile never allows it.** `nono` 0.74.0 (and 0.77.0, and 0.82.0, now pinned — unchanged)
 emits `ipc-posix-sem`, `ipc-posix-shm-read-data`,
 `ipc-posix-shm-write-create` and `ipc-posix-shm-write-data` — the whole
 POSIX family — and no System V operation at all. Under its

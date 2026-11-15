@@ -1,5 +1,14 @@
 # Feature request for nono: scope `process-exec` to the read grants on macOS
 
+> **Superseded upstream (2026-11-15): do not file.** nono 0.82.0, now
+> pinned, scopes `process-exec*` to the read set itself
+> (`src/sandbox/macos.rs`: "process-exec* is scoped to the read set
+> below"), with one `(allow process-exec* …)` per read grant and no
+> unconditional allow. That is what this draft asks for. devcroft's own
+> rules (`policy::capability_set::scope_exec_to_read_grants`) are now
+> redundant on macOS but kept until a macOS run shows the e2e assertion
+> passing without them. The draft stays as the record of the measurement.
+
 Draft for <https://github.com/nolabs-ai/nono>, in the fields of its
 `feature_request.yml` template. Verified against **nono 0.77.0** (the
 rule is unchanged from 0.74.0, where devcroft first measured it; it dates
