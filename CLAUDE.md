@@ -132,10 +132,11 @@ warning-free, and the name is free on both registries (2026-08-31).
 **The first release is `0.0.1`, not `0.1.0`, deliberately.** `0.0.z` is
 the only range cargo treats as incompatible with itself, which is the only
 numbering consistent with what `src/lib.rs` already states — internals
-published so `tests/` can drive them, no stability offered — and it avoids
+published so `tests/` can drive them, no stability offered — and it avoided
 putting a confident number on a boundary `tests/unix_socket_not_mediated.rs`
-still shows open. `docs/roadmap.md` holds the rule and says when `0.1.0`
-gets cut (when `add-mount-isolation` lands). Task 6.5, the editor matrix,
+then showed open. `docs/roadmap.md` holds the rule: `0.1.0` is cut when
+`add-mount-isolation` lands, and it has (archived 2026-11-08), so what is
+left for `0.1.0` is cutting and publishing, not code. Task 6.5, the editor matrix,
 was closed on its deliverable rather than on Zed working: the matrix
 documents what each editor needs, negatives included
 (`docs/ssh-validation.md`), and a release held on a third party's
@@ -281,7 +282,8 @@ test fixture, `tests/common/mod.rs`) is archived too (2026-11-10), its
 specs likewise unsynced. So is `fix-lossy-service-translation`
 (2026-11-14): every provider's service reader refuses, by name, any key
 it does not carry (`provider::Unconsumed`), and devenv's defaults were
-measured not to trip it. Those plus `add-mvp-core` are the
+measured not to trip it. So is `allow-loopback-ephemeral-ports`
+(2026-11-15), which added `network.loopback = "any"`. Those plus `add-mvp-core` are the
 changes actually implemented; run `openspec list` for the rest, which are
 in flight or not started.
 
@@ -297,13 +299,16 @@ not candidates.
 1.0 each have to be true for, and why in that order. Two entries there
 matter before touching the relevant change:
 
-- **`add-mount-isolation` is 0.2, ahead of everything else**, because it
-  makes a *shipped* claim true rather than adding a new one. Landlock does
-  not mediate AF_UNIX, so every sandbox today reaches any world-accessible
-  unix socket — the nix daemon's included, with `/nix` ungranted.
-  `tests/unix_socket_not_mediated.rs` asserts that gap and passes *because
-  it is open*; closing it must correct that test and three documents
-  together. The fix is a mount namespace, not seccomp (measured).
+- **0.2's boundary fix is done**: `add-mount-isolation` is archived
+  (2026-11-08); `add-macos-unix-socket-scoping` is still active (32/34).
+  Landlock does not mediate AF_UNIX, so
+  sandboxes used to reach any world-accessible unix socket, the nix
+  daemon's included. On Linux every sandbox now gets its own mount
+  namespace and view (`fleet::mount::construct_view`), and an ungranted
+  socket fails `ENOENT`; on macOS Seatbelt's deny-default network mode
+  refuses it `EPERM`. `tests/unix_socket_not_mediated.rs` was inverted
+  accordingly and now passes *because the gap is closed*. The fix was a
+  mount namespace, not seccomp (measured).
 - **Fleet's D9 gate is conditional, not struck.** It declared "no proxy
   work starts until the seccomp handoff resolves", reasoning that a
   userspace network helper makes proxy variables cooperative. The shipped
