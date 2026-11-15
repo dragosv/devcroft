@@ -82,6 +82,61 @@
       "case": "earlier attribution corrected",
       "result": "retracted",
       "cause": "the exec-server installer always requests cli-alpine-<arch> on Linux (static musl CLI); it was not a getconf mis-detection as first reported"
+    },
+    {
+      "case": "2026-11-15 rerun, Nix second session, window closed by the operator",
+      "result": "failed, attributed",
+      "cause": "the operator closed the isolated editor window 26 s after the remote connected (renderer sent terminate to the local extension host); not a guest, transport or Remote-SSH result",
+      "evidence": [
+        "experiments/microvm/runs/20261115-libkrun-remote-ssh-nix-window-closed-by-user"
+      ]
+    },
+    {
+      "case": "2026-11-15 rerun interrupted by the operator",
+      "result": "excluded",
+      "cause": "the batch was stopped mid-run; its isolated VS Code instance survived the harness and kept writing its temporary profile until it was terminated at 12:33",
+      "evidence": [
+        "experiments/microvm/runs/20261115-libkrun-remote-ssh-nix-interrupted"
+      ]
+    },
+    {
+      "case": "2026-11-15 rows with Copilot sign-in dialogs over the isolated editor",
+      "result": "passed, excluded",
+      "cause": "an empty VS Code 1.146 profile opens Copilot sign-in dialogs; the rows passed at 21-47 s to task output while the operator dismissed dialogs. The probe now sets chat.disableAIFeatures=true",
+      "evidence": [
+        "experiments/microvm/runs/20261115-hvi-remote-ssh-nix-copilot-prompts",
+        "experiments/microvm/runs/20261115-hvi-remote-ssh-alpine-copilot-prompts"
+      ]
+    },
+    {
+      "case": "2026-11-15 rows run concurrently by two agent sessions",
+      "result": "excluded (Alpine passed, hvi Nix failed)",
+      "cause": "a second session ran the Nix rows while this one ran the Alpine rows: two VMs and two isolated editors at once. One libkrun Nix run directory was also moved mid-run. Process listing in this environment shows only part of the host's processes (ps), so the overlap was found from file timestamps and pgrep; batches now take a shared lock",
+      "evidence": [
+        "experiments/microvm/runs/20261115-libkrun-remote-ssh-nix-concurrent",
+        "experiments/microvm/runs/20261115-hvi-remote-ssh-nix-concurrent",
+        "experiments/microvm/runs/20261115-libkrun-remote-ssh-alpine-concurrent",
+        "experiments/microvm/runs/20261115-hvi-remote-ssh-alpine-concurrent"
+      ]
+    },
+    {
+      "case": "2026-11-15 Nix second session with the unsupported-glibc prompt left to the operator",
+      "result": "failed (three runs), attribution partial",
+      "cause": "the Nix server runs through the custom-glibc route, so the workbench asks whether to connect to an unsupported OS; Cancel/Esc reopens the window without the remote, while an unanswered prompt does not block the connection. On 2026-11-14, with nobody interacting, the same rows passed; on 2026-11-15, with the operator answering dialogs, three Nix second sessions connected but never ran the folder-open task. With Allow pre-recorded (remote.unsupportedConnectionChoice.ssh-remote+rsvm=true) all four rows passed at about 14.4 s per session. Which interaction suppressed the task in each failed run was not logged",
+      "evidence": [
+        "experiments/microvm/runs/20261115-hvi-remote-ssh-nix-before-glibc-choice",
+        "experiments/microvm/runs/20261115-hvi-remote-ssh-nix-concurrent",
+        "experiments/microvm/runs/20261115-libkrun-remote-ssh-nix-window-closed-by-user",
+        "experiments/microvm/runs/20261115-libkrun-remote-ssh-nix"
+      ]
+    },
+    {
+      "case": "extension provenance before 2026-11-15",
+      "result": "corrected",
+      "cause": "the 2026-11-14 rows copied extensions from ~/.vscode/extensions and recorded only package.json hashes. Those package.json files are unchanged and every installed file of all three extensions equals the now-pinned VSIX content apart from VS Code's __metadata; this is consistency on 2026-11-15, not proof of the 2026-11-14 tree",
+      "evidence": [
+        "experiments/microvm/fixtures/vscode-remote-ssh-aarch64.json"
+      ]
     }
   ]
 }
