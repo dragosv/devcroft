@@ -179,6 +179,12 @@ condition this plan meets.
   local-execution/ignored-frame baseline and verifies connection-local cleanup
   with live same-VM/sibling canaries. This does not qualify the VMM's host-side
   parsers, general replay/authorization, connection admission or read deadlines.
+- Egress/cache observations must identify the enforcing layer → the native
+  Alpine follow-up distinguishes TCP `EACCES`, external IPv4 `ENETUNREACH`,
+  allowed loopback UDP, absent IPv6 and filesystem/device read-only refusals.
+  `BLKROSET` success does not prove a driver RO flag was cleared: the recorded
+  `BLKROGET` remains one. Preserve the failed bypass precondition and keep direct
+  malicious virtqueue/backend-write qualification separate from these checks.
 - Helper exit zero may hide a guest panic → the native PID 1 exit probe returned
   zero through pinned libkrun/HVF, whose PSCI reset and poweroff share the same
   shutdown result. Require correlated controller shutdown intent/acknowledgement

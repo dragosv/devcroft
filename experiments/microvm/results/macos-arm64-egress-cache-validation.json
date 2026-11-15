@@ -1,0 +1,242 @@
+{
+  "schema": 1,
+  "status": "passed-scoped",
+  "platform": "macos-arm64-native",
+  "qualification": "fixed Alpine keeper-child/host-profile cache and IPv4 sample, explicitly attributed by enforcing layer; not a general firewall, direct virtqueue bypass or production adoption",
+  "final_native_checks": 130,
+  "final_native_boots": 6,
+  "adapters": [
+    {
+      "adapter": "libkrun",
+      "status": "passed-scoped",
+      "checks": 65,
+      "boots": 3,
+      "enforcement_layers": {
+        "host-profile-or-ordinary-hook-control": 3,
+        "positive-control": 15,
+        "guest-landlock": 18,
+        "guest-no-route": 6,
+        "guest-readonly-mount": 21,
+        "guest-block-readonly": 2
+      },
+      "ipv4_interfaces": [
+        "lo"
+      ],
+      "udp_unlisted_loopback": "delivered; not Landlock-filtered",
+      "ipv6": "not-run: compiled out of pinned kernel",
+      "guest_ro_after_clear": 1,
+      "raw_cache_write_errno": 1,
+      "direct_vmm_backend_bypass_qualified": false,
+      "source_and_copied_cache_unchanged": true,
+      "helper_binary_unchanged_from_v9": true,
+      "cleanup": {
+        "helpers_reaped": true,
+        "endpoints_removed": true,
+        "private_resources_removed": true,
+        "verified_cache_copy_removed": true
+      },
+      "evidence": {
+        "path": "experiments/microvm/results/libkrun-macos-arm64-egress-cache.json",
+        "sha256": "eac3f87a7a504023fe0d91c2113d161ecc536b6a9bea3fa8cfaf8820ea06e942"
+      }
+    },
+    {
+      "adapter": "hvi",
+      "status": "passed-scoped",
+      "checks": 65,
+      "boots": 3,
+      "enforcement_layers": {
+        "host-profile-or-ordinary-hook-control": 3,
+        "positive-control": 15,
+        "guest-landlock": 18,
+        "guest-no-route": 6,
+        "guest-readonly-mount": 21,
+        "guest-block-readonly": 2
+      },
+      "ipv4_interfaces": [
+        "lo"
+      ],
+      "udp_unlisted_loopback": "delivered; not Landlock-filtered",
+      "ipv6": "not-run: compiled out of pinned kernel",
+      "guest_ro_after_clear": 1,
+      "raw_cache_write_errno": 1,
+      "direct_vmm_backend_bypass_qualified": false,
+      "source_and_copied_cache_unchanged": true,
+      "helper_binary_unchanged_from_v9": true,
+      "cleanup": {
+        "helpers_reaped": true,
+        "endpoints_removed": true,
+        "private_resources_removed": true,
+        "verified_cache_copy_removed": true
+      },
+      "evidence": {
+        "path": "experiments/microvm/results/hvi-macos-arm64-egress-cache.json",
+        "sha256": "c4b0121ca1782ff884af54a2f768a30557d1f1fb2e02e143f662e3b8442c4ea1"
+      }
+    }
+  ],
+  "failed_calibrations": [
+    {
+      "status": "failed-precondition",
+      "not_counted_in_final_qualification": true,
+      "boots": 2,
+      "evidence": {
+        "path": "experiments/microvm/results/libkrun-macos-arm64-egress-cache-mounted-calibration.json",
+        "sha256": "2b8a964b9e875c0b14ff8d5b4bd1ecebb959c169238738c00167a0670e4af253"
+      },
+      "scope_note": {
+        "path": "experiments/microvm/runs/20261115-boundary-validation/mounted-calibration.json",
+        "sha256": "65c56e8e3a10eb7df2029f1acf75c67359e6ac72203b4cf5f1f93f62111c6047"
+      },
+      "unchanged_diagnostic_cache_copy_retained": {
+        "path": "/Users/dragos/Development/devcroft-codex/experiments/microvm/runs/20261115-libkrun-egress-cache/disposable-cache.img",
+        "sha256": "9d3c6a36a43e238c2b88df3f0a9a418a1af1edbbba70bf16ba466e91814bc45b"
+      }
+    },
+    {
+      "status": "failed-precondition",
+      "not_counted_in_final_qualification": true,
+      "boots": 2,
+      "evidence": {
+        "path": "experiments/microvm/results/libkrun-macos-arm64-egress-cache-bypass-calibration.json",
+        "sha256": "f35cf54b86031f02cdaf7de22bdf07fdf5b1c32e27772f60fbdb61db36bed42e"
+      },
+      "scope_note": {
+        "path": "experiments/microvm/runs/20261115-boundary-validation/raw-bypass-calibration.json",
+        "sha256": "50805b0e39c362ec30450b01421c98fef6776599bd592d2602ff7d5c8fdb5042"
+      },
+      "unchanged_diagnostic_cache_copy_retained": {
+        "path": "/Users/dragos/Development/devcroft-codex/experiments/microvm/runs/20261115-libkrun-egress-cache-premount/disposable-cache.img",
+        "sha256": "9d3c6a36a43e238c2b88df3f0a9a418a1af1edbbba70bf16ba466e91814bc45b"
+      }
+    }
+  ],
+  "child_matrix": {
+    "samples_per_adapter": 3,
+    "checks_per_sample": 20,
+    "phases": [
+      "first VM",
+      "ordinary sibling",
+      "first VM after cold restart"
+    ],
+    "http_identity": "exact per-instance match",
+    "canaries": "same-VM and sibling exact echoes after each phase; native sibling identity unchanged",
+    "cache_filesystem_attempts": [
+      "append",
+      "truncate",
+      "create",
+      "unlink",
+      "rename",
+      "hardlink",
+      "write through workspace symlink"
+    ],
+    "raw_device_reads": "cache, private workspace and bootstrap state refused EACCES through real keeper children"
+  },
+  "raw_device_observation": {
+    "phase": "before data mounts and keeper startup",
+    "samples_per_adapter": 2,
+    "clear_ioctl_return": 0,
+    "guest_readonly_flag_after_clear": 1,
+    "cache_write_return": -1,
+    "cache_write_errno": 1,
+    "cache_sector_unchanged": true,
+    "private_unmounted_state_write_read_restore": true,
+    "enforcement_layer": "guest-block-readonly",
+    "direct_vmm_backend_bypass_qualified": false,
+    "interpretation": "BLKROSET success alone does not show that read-only was cleared; the recorded refusal must not be credited as a driver-bypassing VMM write test"
+  },
+  "network_interpretation": {
+    "tcp_unlisted": "EACCES from guest Landlock with functioning allowed/live-destination controls",
+    "external_ipv4_tcp_on_allowed_port_and_udp": "ENETUNREACH; no route, not credited as a Landlock/UDP firewall refusal",
+    "udp_unlisted_loopback": "delivered, permitted inside this guest",
+    "ipv6": "not-run: kernel configuration excludes IPv6, socket returns EAFNOSUPPORT"
+  },
+  "fixture_build": {
+    "path": "experiments/microvm/artifacts/cache-boundary-20261115-premount/build.json",
+    "sha256": "60cef28d79592551fd282cd96ddd235f0cfdfe793a792a13840f377f885c6590"
+  },
+  "probe": {
+    "path": "/Users/dragos/Development/devcroft-codex/experiments/microvm/artifacts/cache-boundary-20261115-premount/boundary-probe",
+    "sha256": "c6dd1e31c83e393e056fdfce750dd1e48a90a796f82759a1495911dd1a279390"
+  },
+  "ordinary_guest": {
+    "path": "/Users/dragos/Development/devcroft-codex/experiments/microvm/artifacts/cache-boundary-20261115-premount/ordinary/guest.json",
+    "sha256": "b7e080b01334b163e42679d8f19d747b3ffc1787862a41765f2ff1b4e3693e83"
+  },
+  "challenge_guest": {
+    "path": "/Users/dragos/Development/devcroft-codex/experiments/microvm/artifacts/cache-boundary-20261115-premount/challenge/guest.json",
+    "sha256": "956cb6c6126ca1df5de36f0e872352bb93997f71e108d3b73ee75e5ec80a9732"
+  },
+  "reused_keeper_sha256": "cd56f38623d239eb1c8eb97550307042cae0991c96ee7c012dbd26ac825477ca",
+  "source_cache": {
+    "path": "/Users/dragos/Development/devcroft-codex/experiments/microvm/artifacts/workload/toolchain.img",
+    "sha256": "9d3c6a36a43e238c2b88df3f0a9a418a1af1edbbba70bf16ba466e91814bc45b"
+  },
+  "python_tests": {
+    "status": "passed",
+    "count": 84,
+    "evidence": {
+      "path": "experiments/microvm/runs/20261115-boundary-validation/python-tests-layered.log",
+      "sha256": "4b796c3cf9da3a542d985b6d7f6e8c18a8218a278e72ea0b5582759afc7e7ce2"
+    }
+  },
+  "c_build": {
+    "status": "passed",
+    "warnings": "-Wall -Wextra -Werror",
+    "evidence": {
+      "path": "experiments/microvm/runs/20261115-boundary-validation/guest-build-premount.log",
+      "sha256": "5aac796317d0710741dc7689a50785a18126c99474c054a9a6353423b837a12e"
+    }
+  },
+  "format": {
+    "status": "passed",
+    "scope": "root cargo fmt --all --check",
+    "evidence": {
+      "path": "experiments/microvm/runs/20261115-boundary-validation/format.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    }
+  },
+  "source_sha256": {
+    "build_guest.py": "1182a616ed573cb4ccebc830fad549c3ee7d09f775e810492a0876495d56480d",
+    "build_boundary_guest.py": "cc33c94a510f27896a8cbb6256252a06698d902a4e530daffcf12a483ed0afa9",
+    "boundary_probe.py": "b8192b831d30627477efe2a2b077c7d6fd22e2d5b7ce9f404e44d38a7a8ea308",
+    "guest/init.c": "22bd310aacaf1464f7ebe2bf10ad95ab9977a125d4d9aed3eb443201af9359c7",
+    "guest/boundary_probe.c": "1272b4f432cd5f3005909412e7f8647d3cb55cf5d154e187218fd6b6e0506c71",
+    "test_boundary_probe.py": "8fac28e38a0a324ae2888df42ea656e2354386c232b18e272fb9283dfc5242d3",
+    "guest-keeper/src/linux.rs": "a01213ed8615d9d4e0355abc9df578c6727b6ef849ba27db77586239f206607c",
+    "keeper_probe.py": "65932e55e49bb1cee55a38ad35ceb1d7b307b103d5aff373273afc72d83bca83",
+    "protocol_probe.py": "ce17682895922d62524da88f3a0925a5b88abbb69bf0493d5015e3b103098c02",
+    "ssh_smoke.py": "946fda1d65d6753449e313c2295c12fbe7c09ef018b8ae8bd2c5f3fc3636ff3e",
+    "workload_smoke.py": "83eb42ac9732b472fe195fa3bce8e848607e449df00dea53d7c17d21a21f304d",
+    "fault_probe.py": "88a5847cad51297f59829109ce8677d345b6e8bd89bd662c91a861d64a8d6e56",
+    "smoke.py": "76a30ba6de208b8716fd34fb5ca25db3946c9449721cc7f6f89bd5e84b42cbcc",
+    "stop_receipt.py": "34527e6968fb707ff1b75d2d47aa22baad3f829107230795a4c48f74eef290d3"
+  },
+  "shared_keeper_sources": {
+    "src/keeper/connection.rs": "6a9a1eb582a45148e28f6be0f5611237e3207362297fa90ad20ecd906aa424f8",
+    "src/keeper/environment.rs": "dcf433c26bba99dbe3a28164e35cd38854c30a64521a21691dc92f15ddc29fc6",
+    "src/keeper/mod.rs": "2d93e061be8231d0e0f95b018405b7dac70973800f3a72eed951960d753573e9",
+    "src/keeper/protocol.rs": "7563740c8cd0dedba1e98c353bb6eef5412d9a1c1916cfc31d84f9f1a0ccc770",
+    "src/keeper/pty.rs": "be8ea1fda83d3932eebe6d54b509e2f96bae5df9aa313a00296e4fa41e580dca",
+    "src/keeper/registry.rs": "99d96e3c267247ecc2f2220f8c0667216998d2cdabd8aabf5284d21c38aa93ce",
+    "src/keeper/session.rs": "1d1a1fce6ff8daac07dc6a8cc95a5ef60362730ae7d22326658920d8a8cf195c",
+    "experiments/microvm/guest-keeper/src/bootstrap.rs": "9ad93deea140929f7b13c50411a8be1c46170ff3a118b75f9d32320a59b3e606",
+    "experiments/microvm/guest-keeper/src/linux.rs": "a01213ed8615d9d4e0355abc9df578c6727b6ef849ba27db77586239f206607c",
+    "experiments/microvm/guest-keeper/src/main.rs": "d435d924645fdfc46ed0ce63a2923e0bf30b788ce298aeda09f0721a22137fce",
+    "experiments/microvm/guest-keeper/src/ssh_server.rs": "9e0095948d3f0634fab7e7598fe207aa2c88b447d12c661d05a2b76fda57882e",
+    "experiments/microvm/guest-keeper/Cargo.toml": "4ed55386f94ce6cbe1ee39b9c7b1b65d89a86988006f37c191d7ad023b619e7f",
+    "experiments/microvm/guest-keeper/Cargo.lock": "95ff159c50f5e72178fbf8943550de52a68cf80e8f1a92516ea9cdf7f4dc25a1",
+    "experiments/microvm/guest-keeper/zig-linker.sh": "28d89d7554ca99e4d1366d18d365253687076a7f9069d0488d9a011036626fd5",
+    "experiments/microvm/guest-keeper/zig-ar.sh": "8d9a92610ac547533bcce655621c435015305c043e273ea6a038ce999177935c"
+  },
+  "remaining_limits": [
+    "One 65-check sample per adapter across three boots each; the two failed precondition calibrations are retained separately and not counted as successful repetitions or reliability evidence.",
+    "UDP loopback is allowed; the external IPv4 result relies on the absence of a NIC/TSI and route. This is not an arbitrary topology, UDP or domain firewall qualification. IPv6 is compiled out and not qualified.",
+    "The raw write is blocked with guest BLKROGET still one. The older startup ro=1 check likewise cannot alone demonstrate that a software read-only flag was bypassed. Host descriptor/profile proofs are separate; malicious virtqueue writes and direct VMM-backend bypass remain unqualified.",
+    "Cache filesystem refusals in these samples are EROFS, and raw device reads through keeper children are EACCES. Do not merge these distinct layers into an all-purpose guest/host isolation claim.",
+    "Only copied Alpine toolchain input is challenged. Nix/fleet cache namespaces, cache poisoning beyond these fixed operations, hostile preparation, guest-root attestation, host parser fuzzing and other platform rows remain open.",
+    "The test-only PID 1 diagnostic is absent from ordinary guests. Its private positive control uses reserved sector zero of the unmounted state disk, disjoint from boot/bootstrap offsets; no arbitrary device or pathname is accepted from the wire.",
+    "Final verified cache copies and private runtime/controller directories are removed after owned helper/endpoint cleanup; two unchanged calibration copies remain for diagnostics. Source cache images and all earlier raw results are preserved. No storage budget pass is inferred.",
+    "The keeper and VMM binaries are byte-identical to their qualified earlier generations, but this Alpine policy/guest fixture does not inherit prior density, preparation, stop, Nix workload, CLI/TLS or trusted Remote-SSH measurements."
+  ]
+}

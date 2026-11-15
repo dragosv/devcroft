@@ -204,6 +204,70 @@ static int readonly_probe(void) {
     return denied;
 }
 
+#ifdef ENABLE_CACHE_BOUNDARY_PROBE
+/* Fixed test-only devices and a reserved boot sector, never wire-owned paths.
+ * Use only disposable cache copies/private images. No production store input
+ * belongs in this fixture: a failed backend could accept the challenged write. */
+static char cache_boundary_result[768];
+
+static void prepare_cache_boundary_probe(void) {
+    unsigned char original[512], attempt[512], observed[512];
+    int cache = open("/dev/vdc", O_RDONLY | O_CLOEXEC);
+    if (cache < 0 || pread(cache, original, sizeof(original), 0) != sizeof(original)) {
+        int baseline_errno = errno;
+        if (cache >= 0) close(cache);
+        snprintf(cache_boundary_result, sizeof(cache_boundary_result),
+                 "{\"schema\":1,\"baseline_errno\":%d}\n", baseline_errno);
+        return;
+    }
+    memcpy(attempt, original, sizeof(attempt));
+    attempt[64] ^= 0x5a;
+    int writable = 0;
+    errno = 0;
+    int clear = ioctl(cache, BLKROSET, &writable), clear_errno = errno;
+    int ro_after = -1;
+    int inspect = ioctl(cache, BLKROGET, &ro_after);
+    close(cache);
+    errno = 0;
+    cache = open("/dev/vdc", O_RDWR | O_CLOEXEC);
+    int open_write_rc = cache >= 0 ? 0 : -1, open_write_errno = errno;
+    errno = 0;
+    ssize_t changed = cache >= 0 ? pwrite(cache, attempt, sizeof(attempt), 0) : -2;
+    int write_errno = errno;
+    int unchanged = cache >= 0 && pread(cache, observed, sizeof(observed), 0) == sizeof(observed)
+                    && !memcmp(original, observed, sizeof(original));
+    if (cache >= 0) close(cache);
+
+    /* The state disk is private and unmounted. Its reserved sector zero is
+     * disjoint from the boot counter (4096) and bootstrap record (8192). */
+    int private = open("/dev/vdb", O_RDWR | O_CLOEXEC), private_ok = 0;
+    if (private >= 0 && pread(private, original, sizeof(original), 0) == sizeof(original)) {
+        memcpy(attempt, original, sizeof(attempt));
+        attempt[64] ^= 0xa5;
+        private_ok = pwrite(private, attempt, sizeof(attempt), 0) == sizeof(attempt)
+                     && !fsync(private)
+                     && pread(private, observed, sizeof(observed), 0) == sizeof(observed)
+                     && !memcmp(attempt, observed, sizeof(attempt));
+        /* Restore only our private positive control, even if its check failed. */
+        private_ok = pwrite(private, original, sizeof(original), 0) == sizeof(original)
+                     && !fsync(private)
+                     && pread(private, observed, sizeof(observed), 0) == sizeof(observed)
+                     && !memcmp(original, observed, sizeof(original)) && private_ok;
+    }
+    if (private >= 0) close(private);
+    snprintf(cache_boundary_result, sizeof(cache_boundary_result),
+             "{\"schema\":1,\"phase\":\"before-mount-and-keeper\","
+             "\"clear_ro_rc\":%d,\"clear_ro_errno\":%d,"
+             "\"inspect_ro_rc\":%d,\"guest_ro_after_clear\":%d,"
+             "\"cache_open_write_rc\":%d,\"cache_open_write_errno\":%d,"
+             "\"cache_write_rc\":%zd,\"cache_write_errno\":%d,"
+             "\"cache_sector_unchanged\":%s,\"private_write_read_restore\":%s}\n",
+             clear, clear_errno, inspect, ro_after, open_write_rc, open_write_errno,
+             changed, write_errno, unchanged ? "true" : "false",
+             private_ok ? "true" : "false");
+}
+#endif
+
 static unsigned int update_state(void) {
     unsigned char sector[512] = {0};
     int fd = open("/dev/vdb", O_RDWR | O_CLOEXEC);
@@ -324,6 +388,11 @@ int main(void) {
     if (mount("devtmpfs", "/dev", "devtmpfs", MS_NOSUID, NULL) < 0) fail("devtmpfs");
     mount_required("tmpfs", "/run");
     mount_required("tmpfs", "/tmp");
+#ifdef ENABLE_CACHE_BOUNDARY_PROBE
+    /* Avoid the independent mounted-block-device write prohibition. The
+     * privileged challenge must reach the VMM before either data disk mounts. */
+    prepare_cache_boundary_probe();
+#endif
 #ifdef ENABLE_WORKLOAD
     if (mount("/dev/vdc", "/toolchain", "ext4", MS_RDONLY | MS_NOSUID | MS_NODEV, NULL))
         fail("mount immutable toolchain");
@@ -420,6 +489,10 @@ int main(void) {
 #endif
             if (!strncmp(line, "PING ", 5)) {
                 send_all(fd, "PONG "); send_all(fd, line + 5); send_all(fd, "\n");
+#ifdef ENABLE_CACHE_BOUNDARY_PROBE
+            } else if (!strcmp(line, "TEST CACHE WRITE")) {
+                send_all(fd, cache_boundary_result);
+#endif
 #ifdef ENABLE_PID1_EXIT_PROBE
             } else if (!strcmp(line, "TEST PID1 ARM STOP")) {
                 stop_exit_probe_armed = 1;

@@ -27,13 +27,16 @@ def entry(out, name, data=b"", mode=stat.S_IFDIR | 0o755, ino=1, major=0, minor=
 
 
 def build(out_dir, arch, zig, keeper=None, busybox=None, workload=False, nix=False, adaptable=False, setup=False, agents=False, pid1_exit_probe=False,
-          setup_fault_probe=False, remote_ssh=False):
+          setup_fault_probe=False, remote_ssh=False, cache_boundary_probe=False):
     if nix and not workload:
         raise ValueError('Nix fixture requires the workload block devices')
     if pid1_exit_probe and (not keeper or not nix or agents or adaptable):
         raise ValueError('PID 1 exit injection requires a separate Nix keeper fault fixture')
     if setup_fault_probe and (not keeper or not workload or not adaptable or not setup or nix or agents or pid1_exit_probe):
         raise ValueError('setup interruption stalls require a separate setup-window fault fixture')
+    if cache_boundary_probe and (not keeper or not workload or nix or adaptable or setup or agents
+                                 or pid1_exit_probe or setup_fault_probe or remote_ssh):
+        raise ValueError('cache boundary hook requires a separate ordinary Alpine keeper/workload fixture')
     out_dir.mkdir(parents=True, exist_ok=True)
     init = out_dir / "init"
     env = dict(os.environ, ZIG_GLOBAL_CACHE_DIR=str(ROOT / ".zig-cache"))
@@ -45,6 +48,8 @@ def build(out_dir, arch, zig, keeper=None, busybox=None, workload=False, nix=Fal
         command.append("-DENABLE_WORKLOAD=1")
     if pid1_exit_probe:
         command.append('-DENABLE_PID1_EXIT_PROBE=1')
+    if cache_boundary_probe:
+        command.append('-DENABLE_CACHE_BOUNDARY_PROBE=1')
     if remote_ssh and nix:
         command.append('-DENABLE_REMOTE_SSH_FIXTURE=1')
     if agents:
@@ -106,6 +111,8 @@ def build(out_dir, arch, zig, keeper=None, busybox=None, workload=False, nix=Fal
               "zig_version": subprocess.check_output([zig, "version"], text=True).strip(),
               "source_sha256": hashlib.sha256((ROOT / "guest/init.c").read_bytes()).hexdigest()}
     result['shutdown_receipt_schema'] = 1
+    if cache_boundary_probe:
+        result['cache_boundary_probe_schema'] = 1
     if pid1_exit_probe:
         result['pid1_exit_probe'] = True
         result['pid1_exit_probe_schema'] = 2
