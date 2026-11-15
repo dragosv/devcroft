@@ -468,7 +468,7 @@ and run against the same agents.
 - nono 0.82 dropped its HTTP client, so `rustls` is no longer in the tree
   for free. The earlier claim here that the own-proxy route "adds no
   crate" is true only on 0.77. After the upgrade it is 3.
-- The 95 crates `nono-proxy` adds include AWS (15), SPIFFE with
+- The 95 crates `nono-proxy` adds include the AWS SDK (21), SPIFFE with
   `tonic`/`prost`, `rcgen` and `x509-parser`. None of them is behind a
   feature. devcroft would link them and use none.
 
