@@ -1040,6 +1040,49 @@ Complete extension trees and the complete editor builder closure are not pinned
 by manifest/archive checks. Assessment v7 incorporates this trusted row and
 preserves the earlier measurements, missing platform rows and production no-go.
 
+#### Pinned extensions and current-source rerun (2026-11-15)
+
+The probe no longer copies extensions from the user's `~/.vscode/extensions`.
+It downloads Remote-SSH 0.128.0, Remote-SSH Edit 0.87.0 and Remote Explorer
+0.5.0 as VSIX packages, pins each package's SHA-256 and content digest in
+[vscode-remote-ssh-aarch64.json](fixtures/vscode-remote-ssh-aarch64.json), and
+installs them into the isolated profile with `code --install-extension`. Every
+installed file is then compared with the package. VS Code's installer makes
+exactly two changes: it copies `extension.vsixmanifest` to `.vsixmanifest`, and
+it adds a `__metadata` object (install timestamp, size, target platform) to
+`package.json`. Anything else fails the run. The 2026-11-14 copies match the
+same content today, which is consistency, not proof of yesterday's tree.
+
+Two settings were added to the isolated profile. Both are recorded in each report:
+
+- `chat.disableAIFeatures=true`: an empty 1.146 profile opens Copilot sign-in
+  dialogs over the window.
+- `remote.unsupportedConnectionChoice.ssh-remote+rsvm=true`, written to the
+  profile's application storage before launch. This is a trusted setting. The
+  Nix server runs through the custom-glibc route, so the workbench asks whether
+  to connect to an unsupported OS, and Cancel or Esc reopens the window without
+  the remote. On 2026-11-15, while an operator answered dialogs, three Nix
+  second sessions connected but never ran their task. With Allow pre-recorded,
+  all four rows passed.
+
+All four rows were rerun from current sources, sequentially and under a shared
+lock: guests rebuilt as `stage-b-{nix-,}remote-ssh-v2` with the current keeper
+and init, the reset-patched libkrun helper and the unchanged hvi helper. Each of
+the eight editor sessions reached task output in 14.4-14.6 s. The exported
+binaries are byte-identical to 2026-11-14 per fixture (Nix `d44b7d87…`, Alpine
+`aed8a3be…`), and cold restart reused the installed server. Evidence:
+`results/{libkrun,hvi}-macos-arm64-remote-ssh-{nix,alpine}-pinned.json`. The
+excluded runs are listed in the findings file: an operator-closed window, an
+interrupted batch, rows run under Copilot dialogs, and rows run concurrently
+by two agent sessions.
+
+What is still not pinned:
+
+- the VS Code application bundle, identified only by version and commit;
+- `~/.vscode-shared`, the application shared storage, which lies outside the
+  isolated profile;
+- the complete code-server editor builder closure.
+
 ### Panic after sync acknowledgement and backend reset exits (2026-11-14)
 
 The preserved original libkrun helper demonstrates a counterexample to the v6

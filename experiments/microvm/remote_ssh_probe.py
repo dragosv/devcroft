@@ -4,7 +4,7 @@
 Remote-SSH runs a server and extensions on the remote that can drive the local
 client, so this row never stands in for the untrusted terminal/guest-served
 editor paths. It runs an isolated VS Code (own user-data and extensions dirs,
-copied from the installed Remote-SSH), disables workspace trust and allows the
+installed from SHA-256 pinned VSIX packages and checked against them), disables workspace trust and allows the
 project's folder-open task: both are trusted-project settings, stated in the
 report. The guest is offline: the hash-pinned VS Code CLI archive is staged by
 this trusted host harness where the installer looks for it.
@@ -21,10 +21,12 @@ import re
 from pathlib import Path
 import shutil
 import signal
+import sqlite3
 import subprocess
 import tempfile
 import time
 import urllib.request
+import zipfile
 
 from smoke import helper_identity, ROOT, artifact
 from ssh_smoke import command, require, SOCKETS
@@ -32,7 +34,10 @@ from workload_smoke import WorkloadInstance
 
 ALIAS = 'rsvm'
 INSTALL = '/workspace/.vscode-server'
-EXTENSIONS = ('ms-vscode-remote.remote-ssh', 'ms-vscode-remote.remote-ssh-edit', 'ms-vscode.remote-explorer')
+UNSUPPORTED_GLIBC_CHOICE = f'remote.unsupportedConnectionChoice.ssh-remote+{ALIAS}'
+# Remote-SSH and its extensionPack members, at the versions the 2026-11-14 rows ran.
+EXTENSIONS = {'ms-vscode-remote.remote-ssh': '0.128.0', 'ms-vscode-remote.remote-ssh-edit': '0.87.0',
+              'ms-vscode.remote-explorer': '0.5.0'}
 TASKS = {'version': '2.0.0', 'tasks': [{
     'label': 'devcroft-remote-ssh-probe', 'type': 'shell',
     'command': 'date > started.txt && gcc -O2 main.c -o app && ./app > out.txt && uname -m >> out.txt && echo task-ok >> out.txt',
@@ -47,15 +52,70 @@ def digest(path):
 
 def vscode_identity():
     lines = subprocess.check_output(['code', '--version'], text=True, timeout=30).split()
-    extensions = {}
-    for name in EXTENSIONS:
-        found = sorted(Path.home().glob(f'.vscode/extensions/{name}-[0-9]*'))
-        require(found, f'installed extension missing: {name}')
-        source = found[-1]
-        manifest = json.loads((source / 'package.json').read_text())
-        extensions[name] = {'version': manifest['version'], 'source': str(source),
-                            'package_json_sha256': digest(source / 'package.json')}
-    return {'version': lines[0], 'commit': lines[1], 'extensions': extensions}
+    return {'version': lines[0], 'commit': lines[1]}
+
+
+def vsix_content_digest(entries):
+    """Digest of an extension's file set: sorted relative path plus per-file SHA-256."""
+    h = hashlib.sha256()
+    for rel in sorted(entries):
+        h.update(f'{rel} {hashlib.sha256(entries[rel]).hexdigest()}\n'.encode())
+    return h.hexdigest()
+
+
+def pinned_extensions(pins_path, cache, staging):
+    """Download, SHA-256 pin and install the Remote-SSH extensions into an isolated directory.
+
+    Nothing is taken from the user's own ~/.vscode. The installed tree is checked against
+    the VSIX byte for byte, with the two changes VS Code's installer makes: it copies the
+    package's extension.vsixmanifest to .vsixmanifest and adds a __metadata object
+    (install timestamp, size, target platform) to package.json.
+    """
+    pins = json.loads(pins_path.read_text())
+    pins.setdefault('extensions', {})
+    records = {}
+    user_data = staging.parent / 'install-user-data'
+    for name, version in EXTENSIONS.items():
+        publisher, short = name.split('.', 1)
+        url = (f'https://marketplace.visualstudio.com/_apis/public/gallery/publishers/{publisher}'
+               f'/vsextensions/{short}/{version}/vspackage')
+        local = cache / f'{name}-{version}.vsix'
+        if not local.exists():
+            # The marketplace may gzip the response; curl --compressed decodes it.
+            subprocess.run(['curl', '-fsS', '-L', '--compressed', '--max-filesize', str(64 * 1024 * 1024),
+                            '-o', local, url], check=True, timeout=300)
+        with zipfile.ZipFile(local) as package:
+            files = {n[len('extension/'):]: package.read(n) for n in package.namelist()
+                     if n.startswith('extension/') and not n.endswith('/')}
+            vsixmanifest = package.read('extension.vsixmanifest')
+        key = f'{name}@{version}'
+        actual = {'url': url, 'sha256': digest(local), 'bytes': local.stat().st_size,
+                  'content_files': len(files), 'content_sha256': vsix_content_digest(files)}
+        if key not in pins['extensions']:
+            pins['extensions'][key] = {**actual, 'frozen_utc': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())}
+            pins_path.write_text(json.dumps(pins, indent=2) + '\n')
+        pinned = pins['extensions'][key]
+        require(all(pinned[k] == actual[k] for k in actual), f'pinned extension changed: {key}')
+        subprocess.run(['code', '--user-data-dir', user_data, '--extensions-dir', staging,
+                        '--install-extension', local], check=True, timeout=120,
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        installed = staging / f'{name}-{version}'
+        have = {str(p.relative_to(installed)): p.read_bytes() for p in installed.rglob('*')
+                if p.is_file() or p.is_symlink()}
+        require(have.pop('.vsixmanifest', None) == vsixmanifest, f'{key}: .vsixmanifest is not the package copy')
+        package_json = json.loads(have.pop('package.json'))
+        metadata = package_json.pop('__metadata', {})
+        require(set(metadata) <= {'installedTimestamp', 'size', 'targetPlatform'},
+                (f'{key}: unexpected install metadata', sorted(metadata)))
+        require(package_json == json.loads(files['package.json']), f'{key}: package.json differs beyond __metadata')
+        expected = {k: v for k, v in files.items() if k != 'package.json'}
+        require(have == expected, (f'{key}: installed tree differs from the VSIX',
+                                   sorted(set(have) ^ set(expected)),
+                                   sorted(k for k in expected if k in have and have[k] != expected[k])))
+        records[name] = {'version': version, 'source': str(installed), 'vsix': pinned,
+                         'installed_tree_matches_vsix': True, 'install_metadata_keys': sorted(metadata)}
+    shutil.rmtree(user_data, ignore_errors=True)
+    return records
 
 
 def pinned_archive(identity, slug, pins_path, cache):
@@ -113,8 +173,18 @@ class Editor:
             'task.allowAutomaticTasks': 'on',
             'telemetry.telemetryLevel': 'off', 'update.mode': 'none',
             'extensions.autoUpdate': False, 'extensions.autoCheckUpdates': False,
-            'workbench.startupEditor': 'none'}
+            'workbench.startupEditor': 'none',
+            # An empty profile otherwise opens Copilot sign-in dialogs over the window.
+            'chat.disableAIFeatures': True}
         (self.dir / 'u/User/settings.json').write_text(json.dumps(self.settings, indent=2))
+        # The Nix guest runs the server through VS Code's custom-glibc route, so the workbench
+        # asks "connect to an OS version that is unsupported?". Cancel or Esc there reopens the
+        # window without the remote. Pre-record "Allow" (what the dialog's "do not show again"
+        # checkbox stores in application storage) so no result depends on a click.
+        (self.dir / 'u/User/globalStorage').mkdir(parents=True)
+        with sqlite3.connect(self.dir / 'u/User/globalStorage/state.vscdb') as db:
+            db.execute('CREATE TABLE ItemTable (key TEXT UNIQUE ON CONFLICT REPLACE, value BLOB)')
+            db.execute('INSERT INTO ItemTable VALUES (?, ?)', (UNSUPPORTED_GLIBC_CHOICE, 'true'))
         self.log = (out / f'{tag}-code.log').open('wb')
         self.process = subprocess.Popen(['code', '--user-data-dir', self.dir / 'u', '--extensions-dir', self.dir / 'e',
             '--new-window', '--wait', '--remote', f'ssh-remote+{ALIAS}', folder],
@@ -173,12 +243,18 @@ def main():
     report = {'schema': 1, **helper_identity(args.helper), 'status': 'failed', 'fixture': args.fixture,
         'qualification': 'separately labelled TRUSTED Remote-SSH row; not an untrusted-project path, '
                          'not fleet eligibility; diagnostic-only',
-        'trusted_settings': ['security.workspace.trust.enabled=false', 'task.allowAutomaticTasks=on'],
+        'trusted_settings': ['security.workspace.trust.enabled=false', 'task.allowAutomaticTasks=on',
+                             f'{UNSUPPORTED_GLIBC_CHOICE}=true (pre-recorded Allow)'],
+        'editor_settings': ['chat.disableAIFeatures=true'],
         'host': list(os.uname()), 'vscode': identity, 'kernel_artifact': artifact(args.kernel),
         'helper_artifact': artifact(args.helper), 'guest': guest, 'toolchain': artifact(args.toolchain),
         'seed': artifact(args.seed), 'probe_sha256': digest(__file__), 'sessions': []}
     vm = editor = None
+    extension_root = Path(tempfile.mkdtemp(prefix='dc-rs-ext-', dir='/private/tmp'))
     try:
+        vsix_cache = ROOT / 'artifacts/vscode-vsix'
+        vsix_cache.mkdir(parents=True, exist_ok=True)
+        identity['extensions'] = pinned_extensions(args.pins, vsix_cache, extension_root / 'e')
         name = f"vscode-cli-{identity['commit']}.tar.gz"
         archive, pin = pinned_archive(identity, f'cli-{platform}-arm64', args.pins, cache)
         server_archive, server_pin = pinned_archive(identity, server_slug, args.pins, cache)
@@ -288,6 +364,7 @@ for f in $(find {INSTALL} -path '*data/logs*' -name '*.log' 2>/dev/null | sort |
             shutil.rmtree(vm.path, ignore_errors=True)
             shutil.rmtree(vm.controller_dir, ignore_errors=True)
             report['boots'] = vm.boots
+        shutil.rmtree(extension_root, ignore_errors=True)
         (args.out / 'report.json').write_text(json.dumps(report, indent=2) + '\n')
     print(json.dumps({k: report.get(k) for k in ('status', 'error', 'fixture')}, indent=2))
     for s in report['sessions']:

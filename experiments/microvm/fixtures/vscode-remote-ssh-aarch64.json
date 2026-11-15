@@ -19,5 +19,31 @@
       "bytes": 237655784,
       "frozen_utc": "2026-11-14T10:03:35Z"
     }
+  },
+  "extensions": {
+    "ms-vscode-remote.remote-ssh@0.128.0": {
+      "url": "https://marketplace.visualstudio.com/_apis/public/gallery/publishers/ms-vscode-remote/vsextensions/remote-ssh/0.128.0/vspackage",
+      "sha256": "458bfdea562840a3a4d9cb246cfe9a212c67a0c9317a8fdd0d22aeaedc82bf2c",
+      "bytes": 744363,
+      "content_files": 66,
+      "content_sha256": "ab21f4c05941d3f892963d11b9c6a7739f2a2b6be7222e7f262700e19bbc0b50",
+      "frozen_utc": "2026-11-15T10:00:29Z"
+    },
+    "ms-vscode-remote.remote-ssh-edit@0.87.0": {
+      "url": "https://marketplace.visualstudio.com/_apis/public/gallery/publishers/ms-vscode-remote/vsextensions/remote-ssh-edit/0.87.0/vspackage",
+      "sha256": "c9e5fa440265d3b77e4ae63219014b64d714cd5280b263c5c932849fecb71ae3",
+      "bytes": 38489,
+      "content_files": 41,
+      "content_sha256": "0783020f53cae9d8770dbded7822819717257fd89173a9292e8596269310c565",
+      "frozen_utc": "2026-11-15T10:00:32Z"
+    },
+    "ms-vscode.remote-explorer@0.5.0": {
+      "url": "https://marketplace.visualstudio.com/_apis/public/gallery/publishers/ms-vscode/vsextensions/remote-explorer/0.5.0/vspackage",
+      "sha256": "04db277ada5d771bf763d323644454e633aad48da0e81345175ac3ec08299abf",
+      "bytes": 47693,
+      "content_files": 42,
+      "content_sha256": "ab8b1467ba31ce62460fad43a13d2e65e5f3b510e2c95604c0d4c2af59ced3d9",
+      "frozen_utc": "2026-11-15T10:00:33Z"
+    }
   }
 }
