@@ -55,11 +55,59 @@ macOS refuses that key, since its sandboxes share the host's loopback, so
 server's ports would make the key unnecessary; none exists in agy 1.4.1 or
 1.5.6. It replaced Gemini CLI in this matrix on 2026-11-14.
 
-**Whose endpoint can be moved** matters for brokering a credential at the
-proxy (`add-agent-workload`): the sandbox would hold a placeholder, and the
-proxy would put in the real key. Measured so far for Antigravity only:
-`GOOGLE_GEMINI_BASE_URL` moves it, and it then sends plain HTTP with the key
-in `X-Goog-Api-Key`. The other ten are not yet measured.
+## Whose endpoint can be moved
+
+This matters for brokering a credential at the proxy (`add-agent-workload`):
+the sandbox would hold a placeholder, and the proxy would put in the real
+key. That needs the agent to send its API traffic somewhere devcroft
+chooses, in plain HTTP, so the proxy can see the header it must rewrite.
+
+**All eleven can be moved.** Measured 2026-11-15 (Antigravity 2026-11-14),
+same versions as the matrix, each agent outside any sandbox with a dummy key.
+Its proxy variables pointed at a closed port, so a request the setting did
+not move failed instead of leaving. The endpoint was a local listener that
+logged each request and answered `401`.
+
+| Agent | Moved by | First request it sent | Key travels in |
+|---|---|---|---|
+| Claude Code | `ANTHROPIC_BASE_URL` | `POST /v1/messages?beta=true` | `x-api-key` |
+| Codex | config `openai_base_url` (`-c openai_base_url=…`); **not** `OPENAI_BASE_URL` | `GET /v1/responses` (WebSocket upgrade), then `POST /v1/responses` | `Authorization: Bearer` |
+| Antigravity | `GOOGLE_GEMINI_BASE_URL` | `POST /v1beta/models/…:streamGenerateContent` | `X-Goog-Api-Key` |
+| OpenCode | `OPENAI_BASE_URL` (for its OpenAI provider) | `POST /v1/responses` | `Authorization: Bearer` |
+| Copilot CLI | `COPILOT_API_URL` | `POST /mcp/readonly`, `GET /models` | `Authorization: Bearer` |
+| Aider | `OPENAI_API_BASE` | `POST /v1/chat/completions` | `Authorization: Bearer` |
+| Goose | `OPENAI_HOST` | `GET /v1/models`, `POST /v1/chat/completions` | `Authorization: Bearer` |
+| Amp | `AMP_URL` | `POST /api/internal?getUserInfo` | `Authorization: Bearer` |
+| Cursor | `CURSOR_API_ENDPOINT` or `--endpoint` | `POST /auth/exchange_user_api_key` | `Authorization: Bearer` |
+| Qwen Code | `OPENAI_BASE_URL` | `POST /v1/chat/completions` | `Authorization: Bearer` |
+| Crush | `ANTHROPIC_API_ENDPOINT`; **not** `ANTHROPIC_BASE_URL` | `POST /v1/messages` | `X-Api-Key` |
+
+What the table does not show, and a broker has to handle:
+
+- **Cursor exchanges its key.** The first call trades the key for a session
+  token, and later calls carry that token. A broker that swaps the key only
+  at the exchange leaves a working credential inside the sandbox, so for
+  Cursor brokering protects the long-lived key, not access itself. Cursor
+  also ignores `NO_PROXY`. With a proxy set, it sent even a loopback
+  endpoint as a `CONNECT` tunnel, so the proxy sees a tunnel and not the
+  header.
+- **Codex tries a WebSocket first** and falls back to `POST` when that
+  fails. A broker either handles the upgrade or relies on the fallback,
+  which costs a few retries per session.
+- **Amp's endpoint is its own service**, not a model API. Moving it works,
+  but the upstream a broker forwards to is `ampcode.com`, and the key is an
+  Amp account key.
+- **Copilot sends its MCP calls to the same host**, with the same token. A
+  broker for its model traffic covers those too.
+- Two agents read a variable other than the one their SDK's convention
+  suggests (Codex, Crush). The obvious variable was silently ignored and the
+  request went to the vendor. Anyone configuring a broker should check the
+  listener, not the agent's exit status.
+
+Not measured: whether each agent sends *all* its traffic to the moved
+endpoint. The proxy refused some other hosts along the way, such as
+telemetry and update checks, as in the matrix above. Those still go out
+through the allowlist, and none carries the model key.
 
 ## What devcroft had to fix
 
