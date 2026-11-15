@@ -319,6 +319,106 @@ the layer needs.
   `/workspace` rewrite does not touch it: its `PATH` entries are store
   paths, independent of where any clone lives.
 
+### 6. Brokering: the agent speaks plain HTTP to the proxy, which adds the key and TLS
+
+The credentials spec requires that a brokered credential never be in the
+sandbox: the sandbox holds a placeholder, and the proxy substitutes the real
+value on requests to the declared upstream. Building that needs the proxy to
+*see* the header, and a `CONNECT` tunnel to `:443` carries TLS it cannot
+read, by design (TLS interception is an explicit non-goal). So the agent
+must send its API traffic in clear, and only as far as the proxy.
+
+**Measured 2026-11-15, all eleven agents in `docs/agents.md`**, same
+versions, each with a dummy key, outside any sandbox. Its proxy variables
+pointed at a logging listener, and its endpoint was `http://broker.invalid`,
+a name that resolves nowhere, so an agent bypassing the proxy failed at DNS
+instead of leaving.
+
+- **Every agent's endpoint can be moved** (`docs/agents.md`, "Whose
+  endpoint can be moved", names the setting per agent; Codex's and
+  Crush's are not the variable their SDK's convention suggests).
+- **Nine send an absolute-URI request** to the proxy:
+  `POST http://broker.invalid/v1/messages` with the key header in clear.
+  These are Claude Code, Codex (after its WebSocket attempt), Antigravity,
+  OpenCode, Copilot, Aider, Goose, Amp and Crush.
+- **Two open `CONNECT broker.invalid:80`** even for an `http://` endpoint
+  (Qwen Code, Cursor). Codex does the same for its WebSocket. Inside the
+  tunnel each sent **plain HTTP/1.1**, key header included: there is no TLS
+  on a tunnel to an `http://` endpoint, so the proxy can read it once it
+  accepts the tunnel.
+- Every agent's other traffic (telemetry, update checks, model catalogues)
+  still went to `:443` as ordinary `CONNECT`s to other hosts, and none
+  carried the key.
+
+**Decision.** For a host with a brokered credential, the proxy accepts both
+forms (absolute-URI, and `CONNECT <host>:80`, read as HTTP/1.1). It
+substitutes the placeholder in the declared header and sends the request on
+to `https://<host>` over TLS of its own. The endpoint the agent is given is
+the **real upstream host with an `http://` scheme** (for example
+`ANTHROPIC_BASE_URL=http://api.anthropic.com`). That has three consequences:
+
+- the allowlist decides on the same name it does today, so brokering grants
+  nothing new;
+- an agent that bypassed the proxy would hold only a placeholder, and in a
+  `"deny"` sandbox it has no route anyway;
+- no new listener is needed.
+
+**Why this is not TLS interception.** The agent never negotiates TLS with
+anyone, so nothing is decrypted, re-signed or trusted. The clear leg is
+sandbox → proxy, which on Linux crosses the unix-socket bridge whose 0700
+directory is already the token's boundary (`add-egress-proxy`). On macOS it
+is the host's loopback. That is a real difference, and a placeholder is
+what keeps a loopback observer from learning anything.
+
+**Shape of the request.** A brokered credential names:
+
+- the upstream host;
+- the header that carries it;
+- the variable the sandbox gets;
+- optionally the placeholder, since a client may check a key's shape
+  before sending it (Copilot rejects a classic `ghp_` token locally; spec
+  scenario "A placeholder must survive client-side validation").
+
+The proxy replaces the placeholder *inside* the header's value, so
+`Bearer <placeholder>` works without knowing the scheme. A request to the
+host whose header lacks the placeholder is forwarded unchanged, never given
+the key.
+
+**One request per connection.** A brokered connection carries one request
+and is closed after the response (`Connection: close`). An HTTP/1.1
+keep-alive connection would otherwise carry later requests the proxy never
+parsed, and only the first would be rewritten. Every agent measured reopens
+cleanly. Responses, streamed (SSE) or not, are copied back untouched.
+
+**What brokering does not protect.**
+
+- **Cursor** trades the key for a session token on its first call. That
+  token is returned into the sandbox, so brokering keeps the long-lived key
+  out but not access. `docs/agents.md` states it.
+- **Codex** gets the key on its WebSocket upgrade request, which is the
+  same HTTP/1.1 request head, so it is covered. Rewriting the WebSocket
+  frames after the upgrade is not needed, since they carry no credential.
+  This is not yet measured against a broker that accepts the upgrade.
+- A **subscription credential** (a file) cannot be brokered this way,
+  since its refresh flow writes the file. The spec's "cannot be brokered"
+  scenario refuses it rather than downgrading.
+
+**Open: whose proxy does it (owner's decision, task 4b.0).**
+
+- **devcroft's own proxy**: it already parses both request forms, and
+  `rustls` 0.23 is already linked (through `nono` → `sigstore`), so the TLS
+  leg adds no crate. The work is HTTP/1.1 request-head rewriting and one
+  TLS client, against the same tests the proxy has.
+- **`nono-proxy`** (E6): its reverse-proxy mode does credential injection,
+  at 69 more crates at `=0.77.0` (measured earlier; 26 unconditional:
+  AWS/SPIFFE/tonic). Not measured: whether it reads a `CONNECT …:80`
+  tunnel as HTTP, which Qwen and Cursor require.
+
+  The recommendation is devcroft's own proxy, for the same reason the
+  token fix went there: the gap is narrow, the dependency is not, and the
+  two `CONNECT :80` agents are a case devcroft can test and `nono-proxy`
+  may not cover.
+
 ## Risks / Trade-offs
 
 - **A user layer is per-machine** → Mitigation: it must be locked, is

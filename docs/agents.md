@@ -104,6 +104,15 @@ What the table does not show, and a broker has to handle:
   request went to the vendor. Anyone configuring a broker should check the
   listener, not the agent's exit status.
 
+**And every one will speak plain HTTP to the proxy**, which is what a broker
+needs to read the header. With the endpoint set to an `http://` name and its
+proxy variables pointing at a logging listener, nine of the agents sent an
+absolute-URI request (`POST http://<host>/v1/…`, key header in clear). Qwen
+Code and Cursor opened `CONNECT <host>:80` instead, and inside the tunnel
+sent plain HTTP/1.1, key header included. Codex sends its WebSocket upgrade
+the same way. The design that follows from this is in `add-agent-workload`,
+design.md Decision 6.
+
 Not measured: whether each agent sends *all* its traffic to the moved
 endpoint. The proxy refused some other hosts along the way, such as
 telemetry and update checks, as in the matrix above. Those still go out

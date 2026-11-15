@@ -214,6 +214,67 @@ first so the fan-out fix is not gated on the tooling design.
 - [ ] 4.7 File credentials appear in `policy --render` with a credential
       origin, distinguishable from an ordinary manifest grant
 
+## 4b. Brokered credentials (design.md Decision 6)
+
+The measurement this group rests on is done. All eleven agents can be
+pointed at an `http://` endpoint and send the key header in clear to the
+proxy: nine as an absolute-URI request, and two (Qwen, Cursor) inside a
+`CONNECT :80` tunnel (`docs/agents.md`, design.md Decision 6).
+
+- [ ] 4b.0 **Owner's decision**: build substitution into devcroft's own
+      proxy (recommended; no new crate, `rustls` already linked), or adopt
+      `nono-proxy`. If `nono-proxy`, first measure that it reads a
+      `CONNECT host:80` tunnel as HTTP, or Qwen and Cursor are out
+- [ ] 4b.1 User configuration: a brokered credential names the host, the
+      header, the sandbox variable, and an optional placeholder. Checked at
+      layer `config`. The host must also be on the project's allowlist,
+      since brokering grants no egress of its own. The real value is read
+      from the user's shell at `up`, as for `[credentials] env`
+- [ ] 4b.2 The sandbox gets the placeholder in the variable, never the
+      value. Extend 4.2's walk (state dir, `.devcroft/`, logs, `meta.json`)
+      to the brokered value, and add the keeper's and a session's
+      `/proc/<pid>/environ`
+- [ ] 4b.3 Proxy: for a brokered host, accept an absolute-URI request and
+      a `CONNECT <host>:80`, read one HTTP/1.1 request head, and substitute
+      the placeholder inside the declared header's value. A request whose
+      header lacks the placeholder is forwarded unchanged. Send it with
+      `Connection: close` over TLS to `<host>:443`, verifying against the
+      same trust store the sandbox is given, and copy the response back as
+      it comes (SSE included)
+- [ ] 4b.4 The real value lives only in the proxy's process. It is passed
+      at spawn, not written to the proxy's state, and never logged. The
+      proxy's log names the host and that a substitution happened
+- [ ] 4b.5 Refuse rather than downgrade:
+      - a brokered request naming a file credential;
+      - a host with no allowlist entry;
+      - `network.default = "allow"`, where traffic need not pass the proxy.
+
+      Each refusal is at layer `config`, naming the key
+- [ ] 4b.6 `up` discloses each brokered credential as brokered (host and
+      variable, never the value), distinct from the env-delivered
+      disclosure. `policy --render` shows the host with origin
+      `credential:broker`
+- [ ] 4b.7 Tests against a local TLS upstream (a test CA in the trust
+      store):
+      - the upstream receives the real value, in both request forms;
+      - the sandbox's environment and every file under the state dir hold
+        only the placeholder;
+      - a second request on a kept-alive connection is not forwarded
+        unrewritten;
+      - a request to a different allowed host never gets the value.
+
+      Teeth-check: with substitution disabled, the upstream receives the
+      placeholder
+- [ ] 4b.8 End to end with one agent per request form, inside a real
+      sandbox: Claude Code (absolute-URI) and Qwen Code (`CONNECT :80`),
+      with a dummy key, against the local TLS upstream above. A real key
+      is the owner's, and is not needed to show the substitution
+- [ ] 4b.9 `docs/agents.md`: per agent, the brokered configuration (which
+      setting gets `http://<host>`). Cursor's exchanged session token is
+      stated as what brokering leaves inside. `docs/threat-model.md`:
+      brokering moves the key out of custody, and the clear leg is
+      sandbox → proxy (the unix bridge on Linux, loopback on macOS)
+
 ## 5. CLI and doctor
 
 - [x] 5.1 `doctor`: report tooling-layer resolvability, distinguishing
