@@ -350,7 +350,9 @@ instead of leaving.
   still went to `:443` as ordinary `CONNECT`s to other hosts, and none
   carried the key.
 
-**Decision.** For a host with a brokered credential, the proxy accepts both
+**Decision (the shape for devcroft's own proxy; `nono-proxy` uses a
+loopback prefix instead, see the investigation below).** For a host with a
+brokered credential, the proxy accepts both
 forms (absolute-URI, and `CONNECT <host>:80`, read as HTTP/1.1). It
 substitutes the placeholder in the declared header and sends the request on
 to `https://<host>` over TLS of its own. The endpoint the agent is given is
@@ -403,21 +405,116 @@ cleanly. Responses, streamed (SSE) or not, are copied back untouched.
   since its refresh flow writes the file. The spec's "cannot be brokered"
   scenario refuses it rather than downgrading.
 
-**Open: whose proxy does it (owner's decision, task 4b.0).**
+**Whose proxy does it: `nono-proxy`, investigated 2026-11-15.** The owner
+asked for a serious look before deciding (task 4b.0). `nono-proxy` 0.82.0
+(the current release; devcroft is on nono 0.77) was built into a harness
+and run against the same agents.
 
-- **devcroft's own proxy**: it already parses both request forms, and
-  `rustls` 0.23 is already linked (through `nono` → `sigstore`), so the TLS
-  leg adds no crate. The work is HTTP/1.1 request-head rewriting and one
-  TLS client, against the same tests the proxy has.
-- **`nono-proxy`** (E6): its reverse-proxy mode does credential injection,
-  at 69 more crates at `=0.77.0` (measured earlier; 26 unconditional:
-  AWS/SPIFFE/tonic). Not measured: whether it reads a `CONNECT …:80`
-  tunnel as HTTP, which Qwen and Cursor require.
+*What it does, measured.*
 
-  The recommendation is devcroft's own proxy, for the same reason the
-  token fix went there: the gap is narrow, the dependency is not, and the
-  two `CONNECT :80` agents are a case devcroft can test and `nono-proxy`
-  may not cover.
+- **Injection works, on its own request form, not the one above.** A route
+  is a path prefix on the proxy's own port:
+  `ANTHROPIC_BASE_URL=http://127.0.0.1:<port>/anthropic`. The agent holds a
+  placeholder (the proxy's session token, optionally shaped by
+  `phantom_format`, e.g. `ghp_{}`), and the proxy swaps it for the real
+  value. A wrong or missing placeholder got `401` from the proxy and never
+  reached the upstream. Two requests on one kept-alive connection were both
+  rewritten.
+- **Real agents:** Claude Code, Codex, Qwen Code, OpenCode and Antigravity
+  each delivered the real value to the upstream, in `x-api-key`,
+  `Authorization: Bearer` and `x-goog-api-key`. Codex's WebSocket upgrade
+  got a clean `501` and it fell back to `POST`, which worked.
+- **Cursor does not work.** It ignores `NO_PROXY`, so it sends
+  `CONNECT 127.0.0.1:<port>` to the proxy, and `nono-proxy` refuses a
+  tunnel to itself (`403`). Brokering for Cursor was already weak, since
+  the session token it exchanges stays in the sandbox.
+- **It refuses the form this decision first chose.** An absolute-URI
+  request, or a `CONNECT`, addressed to a route's upstream host gets
+  `403`, by design: a route's host is reachable only through its prefix.
+  So adopting it means the loopback-prefix form, and "no new listener"
+  still holds, since the prefix lives on the proxy's own port.
+- **Credential sources** are more than devcroft has: `env://`, `file://`,
+  the OS keyring, `op://`, and an OAuth2 client-credentials exchange.
+- **The name is decided before DNS**, as in devcroft's proxy, so a refused
+  name is not leaked to the resolver.
+
+*What has to be set, because its defaults are not devcroft's.*
+
+- **`strict_connect_auth = true`.** By default an unauthenticated `CONNECT`
+  to an allowed host succeeds (measured: `200`). That is the open-relay
+  defect devcroft fixed in `add-egress-proxy` 4a. With the flag it is
+  `407`. The bridge must then present `Basic nono:<token>` or `Bearer`,
+  since its current `Basic <token>:` form is refused (measured). That is
+  a one-line change.
+- **A route forwards whether or not its host is on the allowlist.**
+  devcroft has to require the allowlist entry itself (task 4b.1).
+- **TLS interception stays off** (`intercept_ca_dir = None`), by decision.
+  That also keeps off `oauth_capture`, WebSocket tunnelling and endpoint
+  rules on `CONNECT` hosts, all of which need it.
+
+*What it costs.*
+
+| | crates (normal deps, host target) |
+|---|---|
+| devcroft today (nono 0.77) | 335 |
+| nono 0.82, nothing else | 280 |
+| nono 0.82 + a TLS client of devcroft's own (`rustls`) | 283 |
+| nono 0.82 + `nono-proxy` 0.82 | 375 |
+
+- `nono-proxy` requires the matching nono, so adopting it includes the
+  0.77 → 0.82 upgrade. devcroft **compiles unchanged** against 0.82. The
+  boundary tests were not run on it, and `Cargo.toml` says an upgrade is
+  scheduled work with the full suite.
+- nono 0.82 dropped its HTTP client, so `rustls` is no longer in the tree
+  for free. The earlier claim here that the own-proxy route "adds no
+  crate" is true only on 0.77. After the upgrade it is 3.
+- The 95 crates `nono-proxy` adds include AWS (15), SPIFFE with
+  `tonic`/`prost`, `rcgen` and `x509-parser`. None of them is behind a
+  feature. devcroft would link them and use none.
+
+*How mature it is.*
+
+- First published 2026-02-23, 93 releases, roughly one every two weeks.
+- About 48,000 lines and 892 tests in 0.82.0, up from 33,000 lines and 575
+  tests in 0.77.0 two months earlier.
+- `clippy::unwrap_used` is denied, and there are 4 `unsafe` sites.
+- Between 0.77 and 0.82 the surface devcroft would use (`ProxyConfig`,
+  `RouteConfig`, `start`, `ProxyHandle`) changed by addition only: 27
+  items added, none removed or renamed.
+
+It is well tested and widely featured, and it is still growing fast.
+
+*What it would change in devcroft.* Its `CONNECT` filtering overlaps
+devcroft's own proxy entirely (same `nono::HostFilter`). Running both is
+two proxies per sandbox, so adoption means **replacing**
+`src/proxy/server.rs` (1,105 lines), not adding beside it. That changes
+observable behaviour: an allowlist refusal becomes `403` where devcroft
+answers `502` naming the host, which `tests/loopback_any_port.rs`,
+`tests/egress_proxy_e2e.rs` and `docs/agents.md` assert. The spawn, the
+unix-socket bridge, the namespace relay and the provisioning proxy stay
+devcroft's.
+
+*Recommendation, revised.* **Adopt `nono-proxy`, as a replacement, in
+three steps that can each be stopped:**
+
+1. upgrade nono to 0.82 with the full suite;
+2. swap the proxy server behind the existing spawn and bridge, with
+   `strict_connect_auth`, keeping every egress test (their expected status
+   changes, their meaning does not);
+3. add brokered routes (4b.1 onward).
+
+The earlier recommendation, devcroft's own proxy, rested on two things the
+measurement removed: `rustls` being free, and `nono-proxy` being unable to
+serve the agents. It serves ten of eleven, and what it brings (credential
+sources, a tested phantom scheme, upgrade handling, rate limits) is work
+devcroft would otherwise write and maintain alone. The price is 95 crates,
+most of them unused, and a second crate whose releases devcroft must track
+in lockstep with nono.
+
+Not measured: a streamed (SSE) response through a route, macOS, the suite
+on nono 0.82, and the six agents not re-run through it (Copilot, Aider,
+Goose, Amp, Crush were measured only against a plain loopback listener,
+which is the same request form).
 
 ## Risks / Trade-offs
 

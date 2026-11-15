@@ -221,10 +221,18 @@ pointed at an `http://` endpoint and send the key header in clear to the
 proxy: nine as an absolute-URI request, and two (Qwen, Cursor) inside a
 `CONNECT :80` tunnel (`docs/agents.md`, design.md Decision 6).
 
-- [ ] 4b.0 **Owner's decision**: build substitution into devcroft's own
-      proxy (recommended; no new crate, `rustls` already linked), or adopt
-      `nono-proxy`. If `nono-proxy`, first measure that it reads a
-      `CONNECT host:80` tunnel as HTTP, or Qwen and Cursor are out
+- [ ] 4b.0 **Owner's decision**, with the investigation in design.md
+      Decision 6 in hand: adopt `nono-proxy` as a replacement for
+      devcroft's proxy server (recommended after measurement; serves ten of
+      eleven agents, Cursor excepted), or build substitution into devcroft's
+      own proxy. If adopted, three steps come before 4b.1:
+      (a) nono 0.77 → 0.82 with the full suite in a delegated cgroup;
+      (b) swap the server behind the existing spawn and bridge, with
+      `strict_connect_auth = true`, the bridge sending `Basic nono:<token>`,
+      and TLS interception off;
+      (c) update the refusal status the egress tests and `docs/agents.md`
+      assert (`502` → `403`). 4b.3 then becomes route configuration rather
+      than request rewriting
 - [ ] 4b.1 User configuration: a brokered credential names the host, the
       header, the sandbox variable, and an optional placeholder. Checked at
       layer `config`. The host must also be on the project's allowlist,
