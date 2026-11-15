@@ -4,7 +4,7 @@ This is the experimental implementation of `evaluate-microvm-runtimes`.
 `libkrun/` and `hvi/` have their own Cargo workspaces and lockfiles. The main devcroft build and
 published crate do not depend on it. No production VM dispatch exists yet.
 
-The [native assessment](results/macos-arm64-evaluation-assessment-v9.json) records
+The [native assessment](results/macos-arm64-evaluation-assessment-v10.json) records
 the full 180-case macOS ARM64 comparison, clean reconstruction, final SSH fault
 recovery and real CLI/TLS regressions against the five backend criteria. Both
 adapters work on this host. Production adoption remains no-go under the current
@@ -1138,3 +1138,67 @@ frames, concurrency, aggregate memory and read deadlines remain separate gaps.
 This row does not qualify the broader egress/shared-cache checks, full project
 policy, other platforms or production VM adoption. Earlier performance, workload,
 stop and Remote-SSH results keep their own keeper hashes in assessment v9.
+
+### Layered IPv4 egress and copied-cache checks (2026-11-15)
+
+`build_boundary_guest.py` reuses the exact v9 keeper binary and checks its source
+receipt, then builds an ordinary Alpine workload guest and a separate opt-in
+diagnostic guest. A static C probe runs as a real keeper child. Each adapter's
+runner makes a byte-verified private copy of the existing Alpine toolchain
+image; privileged write attempts never target the original measured image.
+
+Both native macOS ARM64 adapters pass 65 final checks across six total boots:
+three 20-check child samples per adapter (both VMs, then one after cold restart),
+two host profile checks, one ordinary-guest refusal and two privileged raw-device
+observations. Live same-VM/sibling canaries echo after every phase, the sibling's
+native helper identity remains unchanged, and the already uploaded probe
+persists without rebuilding. Source and copied cache hashes stay unchanged.
+Helpers/endpoints, private runtime/controller directories and verified successful
+cache copies are removed; raw logs and input receipts remain.
+
+The reported enforcement layers are deliberately distinct:
+
+- TCP connect to a live unlisted loopback port, an unlisted external port and an
+  unlisted bind return `EACCES`. Allowed loopback HTTP identifies the correct VM;
+  allowed TCP bind and private file operations work.
+- On an allowed TCP port, a fixed TEST-NET IPv4 destination has no route. An
+  external UDP send also returns `ENETUNREACH`. The interface inventory contains
+  only `lo`; NIC/TSI remain absent.
+- UDP delivery on an unlisted loopback port **works**. This is not UDP filtering
+  by Landlock. IPv6 socket creation returns `EAFNOSUPPORT` because the pinned
+  kernel has IPv6 compiled out; IPv6 is not qualified.
+- Guest cache append/truncate/create/unlink/rename/hardlink and write-through-
+  workspace-symlink attempts return `EROFS` in these samples. Raw cache/private/
+  bootstrap device reads through keeper children return `EACCES`. The host
+  helper profile also refuses protected cache/checkout reads, writes and a live
+  controller Unix socket with functioning controls.
+
+The test-only PID 1 fixture makes a fixed raw-cache attempt before mounting data
+disks or starting keeper; the ordinary guest refuses `TEST CACHE WRITE`. A
+private unmounted state-disk sector supplies a write/read/restore positive
+control, disjoint from the boot counter and test SSH bootstrap. Although
+`BLKROSET` returns zero, `BLKROGET` stays one and the cache write returns `EPERM`.
+The reported layer is therefore **guest block read-only**, not a demonstrated
+VMM-backend bypass. An earlier mounted-device calibration and the unsuccessful
+strict bypass precondition are retained separately, never counted as final
+qualification. Likewise, the older startup `ro=1` check alone does not show that
+the guest read-only flag was cleared; host descriptor/profile evidence is a
+separate proof.
+
+All 84 Python tests pass. Both C fixtures and the child probe build with
+`-Wall -Wextra -Werror`; root formatting and OpenSpec checks pass. No Rust keeper
+source or VMM binary changed in this follow-up. Run:
+
+```sh
+rtk proxy python3 experiments/microvm/build_boundary_guest.py --out <new-fixture-directory>
+rtk proxy python3 experiments/microvm/boundary_probe.py --adapter libkrun \
+  --fixtures <fixture-directory> --out <new-run>
+```
+
+Evidence: `results/{libkrun,hvi}-macos-arm64-egress-cache.json` and
+`results/macos-arm64-egress-cache-validation.json`, with both failed calibrations
+retained. This fixed Alpine sample does not qualify arbitrary malicious virtqueue
+writes, a UDP/IPv6 firewall, guest-root attestation, Nix/fleet cache namespaces,
+host parser fuzzing, hostile preparation or other platform rows. Performance,
+storage and earlier workload/editor/stop results keep their original artifacts
+in assessment v10; production adoption remains no-go.

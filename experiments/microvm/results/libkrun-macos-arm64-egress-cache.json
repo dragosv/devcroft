@@ -1,0 +1,779 @@
+{
+  "schema": 1,
+  "status": "passed",
+  "platform": "macos-arm64-native",
+  "adapter": "libkrun",
+  "helper_provenance": {
+    "macos_reset_exit_patch_sha256": "a0cd8f2867697e766c5ea323893d6dd0d6cfc2287227f6cef9f580457305bb1e",
+    "macos_stop_semantics": "psci-system-off=0,system-reset=1",
+    "patch_sha256": "7a25379a3e1291ecbace0cad78e804b70f3f4515cebbf8c35f0843d107d4c2cc",
+    "revision": "6151710f4ea627cf0e5dbce78e4192fb4d64c2e9"
+  },
+  "qualification": "layer-aware IPv4/no-route and copied immutable-cache sample; no general egress firewall or production cache qualification",
+  "raw_evidence": "/Users/dragos/Development/devcroft-codex/experiments/microvm/runs/20261115-libkrun-egress-cache-layered",
+  "helper": {
+    "path": "/Users/dragos/Development/devcroft-codex/experiments/microvm/libkrun/target/debug/devcroft-krun-spike",
+    "sha256": "8c6221e30c806dd25f57775ede539b55918ebcddeb24346c4ad425b1c5d8456e"
+  },
+  "probe": {
+    "path": "/Users/dragos/Development/devcroft-codex/experiments/microvm/artifacts/cache-boundary-20261115-premount/boundary-probe",
+    "sha256": "c6dd1e31c83e393e056fdfce750dd1e48a90a796f82759a1495911dd1a279390"
+  },
+  "kernel": {
+    "path": "/Users/dragos/Development/devcroft-codex/experiments/microvm/artifacts/kernel-landlock/Image",
+    "sha256": "2b8b6d4664f1521a0d9bcc22252c4cc2e0bc98a5bbcf2500cc1e45ef1e1275fb"
+  },
+  "kernel_config": {
+    "path": "/Users/dragos/Development/devcroft-codex/experiments/microvm/artifacts/kernel-landlock/config",
+    "sha256": "96f3f210e2fb4131aad075baeba5ac239eaa1f4f1ac73712954149c92bf754be"
+  },
+  "shared_source_cache": {
+    "path": "/Users/dragos/Development/devcroft-codex/experiments/microvm/artifacts/workload/toolchain.img",
+    "sha256": "9d3c6a36a43e238c2b88df3f0a9a418a1af1edbbba70bf16ba466e91814bc45b"
+  },
+  "cache_copy": {
+    "recorded_path": "/Users/dragos/Development/devcroft-codex/experiments/microvm/runs/20261115-libkrun-egress-cache-layered/disposable-cache.img",
+    "before_sha256": "9d3c6a36a43e238c2b88df3f0a9a418a1af1edbbba70bf16ba466e91814bc45b",
+    "after_sha256": "9d3c6a36a43e238c2b88df3f0a9a418a1af1edbbba70bf16ba466e91814bc45b"
+  },
+  "guests": [
+    {
+      "schema": 1,
+      "arch": "aarch64",
+      "fixture": "stage-b-xxhash-redis-ext4",
+      "zig_version": "0.17.0",
+      "source_sha256": "22bd310aacaf1464f7ebe2bf10ad95ab9977a125d4d9aed3eb443201af9359c7",
+      "shutdown_receipt_schema": 1,
+      "cache_boundary_probe_schema": 1,
+      "nono": "0.77.0",
+      "keeper_sha256": "cd56f38623d239eb1c8eb97550307042cae0991c96ee7c012dbd26ac825477ca",
+      "busybox_sha256": "198f6f675a49ac734082e054b823d3e2e947180ca2f632852ae1c09e950fd676",
+      "workload": true,
+      "initramfs": {
+        "path": "/Users/dragos/Development/devcroft-codex/experiments/microvm/artifacts/cache-boundary-20261115-premount/challenge/initramfs.cpio",
+        "sha256": "9a2c69a9a2724c0d5b85147a05ab34551127c42e57f0a111597ab8aec0e0eb86"
+      },
+      "runtime": {
+        "path": "/Users/dragos/Development/devcroft-codex/experiments/microvm/artifacts/cache-boundary-20261115-premount/challenge/runtime.img",
+        "sha256": "768f5b593e9f9f6888ea6930f6b6dc3adb65fd204b3c48361e0864dd6ae93f0c"
+      },
+      "reused_keeper_receipt": {
+        "path": "/Users/dragos/Development/devcroft-codex/experiments/microvm/artifacts/stage-b-protocol-final/guest.json",
+        "sha256": "b0ea6a018d68f5919f73ca5d38b09764671731cde4a8e141cf254504b6c2a0b0"
+      },
+      "keeper_sources": {
+        "src/keeper/connection.rs": "6a9a1eb582a45148e28f6be0f5611237e3207362297fa90ad20ecd906aa424f8",
+        "src/keeper/environment.rs": "dcf433c26bba99dbe3a28164e35cd38854c30a64521a21691dc92f15ddc29fc6",
+        "src/keeper/mod.rs": "2d93e061be8231d0e0f95b018405b7dac70973800f3a72eed951960d753573e9",
+        "src/keeper/protocol.rs": "7563740c8cd0dedba1e98c353bb6eef5412d9a1c1916cfc31d84f9f1a0ccc770",
+        "src/keeper/pty.rs": "be8ea1fda83d3932eebe6d54b509e2f96bae5df9aa313a00296e4fa41e580dca",
+        "src/keeper/registry.rs": "99d96e3c267247ecc2f2220f8c0667216998d2cdabd8aabf5284d21c38aa93ce",
+        "src/keeper/session.rs": "1d1a1fce6ff8daac07dc6a8cc95a5ef60362730ae7d22326658920d8a8cf195c",
+        "experiments/microvm/guest-keeper/src/bootstrap.rs": "9ad93deea140929f7b13c50411a8be1c46170ff3a118b75f9d32320a59b3e606",
+        "experiments/microvm/guest-keeper/src/linux.rs": "a01213ed8615d9d4e0355abc9df578c6727b6ef849ba27db77586239f206607c",
+        "experiments/microvm/guest-keeper/src/main.rs": "d435d924645fdfc46ed0ce63a2923e0bf30b788ce298aeda09f0721a22137fce",
+        "experiments/microvm/guest-keeper/src/ssh_server.rs": "9e0095948d3f0634fab7e7598fe207aa2c88b447d12c661d05a2b76fda57882e",
+        "experiments/microvm/guest-keeper/Cargo.toml": "4ed55386f94ce6cbe1ee39b9c7b1b65d89a86988006f37c191d7ad023b619e7f",
+        "experiments/microvm/guest-keeper/Cargo.lock": "95ff159c50f5e72178fbf8943550de52a68cf80e8f1a92516ea9cdf7f4dc25a1",
+        "experiments/microvm/guest-keeper/zig-linker.sh": "28d89d7554ca99e4d1366d18d365253687076a7f9069d0488d9a011036626fd5",
+        "experiments/microvm/guest-keeper/zig-ar.sh": "8d9a92610ac547533bcce655621c435015305c043e273ea6a038ce999177935c"
+      }
+    },
+    {
+      "schema": 1,
+      "arch": "aarch64",
+      "fixture": "stage-b-xxhash-redis-ext4",
+      "zig_version": "0.17.0",
+      "source_sha256": "22bd310aacaf1464f7ebe2bf10ad95ab9977a125d4d9aed3eb443201af9359c7",
+      "shutdown_receipt_schema": 1,
+      "nono": "0.77.0",
+      "keeper_sha256": "cd56f38623d239eb1c8eb97550307042cae0991c96ee7c012dbd26ac825477ca",
+      "busybox_sha256": "198f6f675a49ac734082e054b823d3e2e947180ca2f632852ae1c09e950fd676",
+      "workload": true,
+      "initramfs": {
+        "path": "/Users/dragos/Development/devcroft-codex/experiments/microvm/artifacts/cache-boundary-20261115-premount/ordinary/initramfs.cpio",
+        "sha256": "67b945d35aa3ac08609ae76b94b809f0a72749b46cbff7c619ee392b87a1f304"
+      },
+      "runtime": {
+        "path": "/Users/dragos/Development/devcroft-codex/experiments/microvm/artifacts/cache-boundary-20261115-premount/ordinary/runtime.img",
+        "sha256": "768f5b593e9f9f6888ea6930f6b6dc3adb65fd204b3c48361e0864dd6ae93f0c"
+      },
+      "reused_keeper_receipt": {
+        "path": "/Users/dragos/Development/devcroft-codex/experiments/microvm/artifacts/stage-b-protocol-final/guest.json",
+        "sha256": "b0ea6a018d68f5919f73ca5d38b09764671731cde4a8e141cf254504b6c2a0b0"
+      },
+      "keeper_sources": {
+        "src/keeper/connection.rs": "6a9a1eb582a45148e28f6be0f5611237e3207362297fa90ad20ecd906aa424f8",
+        "src/keeper/environment.rs": "dcf433c26bba99dbe3a28164e35cd38854c30a64521a21691dc92f15ddc29fc6",
+        "src/keeper/mod.rs": "2d93e061be8231d0e0f95b018405b7dac70973800f3a72eed951960d753573e9",
+        "src/keeper/protocol.rs": "7563740c8cd0dedba1e98c353bb6eef5412d9a1c1916cfc31d84f9f1a0ccc770",
+        "src/keeper/pty.rs": "be8ea1fda83d3932eebe6d54b509e2f96bae5df9aa313a00296e4fa41e580dca",
+        "src/keeper/registry.rs": "99d96e3c267247ecc2f2220f8c0667216998d2cdabd8aabf5284d21c38aa93ce",
+        "src/keeper/session.rs": "1d1a1fce6ff8daac07dc6a8cc95a5ef60362730ae7d22326658920d8a8cf195c",
+        "experiments/microvm/guest-keeper/src/bootstrap.rs": "9ad93deea140929f7b13c50411a8be1c46170ff3a118b75f9d32320a59b3e606",
+        "experiments/microvm/guest-keeper/src/linux.rs": "a01213ed8615d9d4e0355abc9df578c6727b6ef849ba27db77586239f206607c",
+        "experiments/microvm/guest-keeper/src/main.rs": "d435d924645fdfc46ed0ce63a2923e0bf30b788ce298aeda09f0721a22137fce",
+        "experiments/microvm/guest-keeper/src/ssh_server.rs": "9e0095948d3f0634fab7e7598fe207aa2c88b447d12c661d05a2b76fda57882e",
+        "experiments/microvm/guest-keeper/Cargo.toml": "4ed55386f94ce6cbe1ee39b9c7b1b65d89a86988006f37c191d7ad023b619e7f",
+        "experiments/microvm/guest-keeper/Cargo.lock": "95ff159c50f5e72178fbf8943550de52a68cf80e8f1a92516ea9cdf7f4dc25a1",
+        "experiments/microvm/guest-keeper/zig-linker.sh": "28d89d7554ca99e4d1366d18d365253687076a7f9069d0488d9a011036626fd5",
+        "experiments/microvm/guest-keeper/zig-ar.sh": "8d9a92610ac547533bcce655621c435015305c043e273ea6a038ce999177935c"
+      }
+    }
+  ],
+  "fixture_build": {
+    "path": "/Users/dragos/Development/devcroft-codex/experiments/microvm/artifacts/cache-boundary-20261115-premount/build.json",
+    "sha256": "60cef28d79592551fd282cd96ddd235f0cfdfe793a792a13840f377f885c6590"
+  },
+  "checks": [
+    {
+      "phase": "host-profile",
+      "name": "host-shared-cache",
+      "status": "passed",
+      "evidence": {
+        "outside_denied": true,
+        "outside_unix_connect_denied": true,
+        "outside_write_denied": true,
+        "passed": true,
+        "readonly_input_works": true,
+        "runtime_write_denied": true,
+        "tcp_denied": true,
+        "thread_works": true,
+        "unix_works": true,
+        "writable_state_works": true
+      }
+    },
+    {
+      "phase": "host-profile",
+      "name": "host-checkout",
+      "status": "passed",
+      "evidence": {
+        "outside_denied": true,
+        "outside_unix_connect_denied": true,
+        "outside_write_denied": true,
+        "passed": true,
+        "readonly_input_works": true,
+        "runtime_write_denied": true,
+        "tcp_denied": true,
+        "thread_works": true,
+        "unix_works": true,
+        "writable_state_works": true
+      }
+    },
+    {
+      "phase": "ordinary-control",
+      "name": "privileged-hook-refused",
+      "status": "passed"
+    },
+    {
+      "phase": "a-first",
+      "name": "tcp_allowed_http_identity",
+      "rc": 0,
+      "errno": 0,
+      "status": "passed",
+      "enforcement_layer": "positive-control"
+    },
+    {
+      "phase": "a-first",
+      "name": "tcp_live_unlisted_port",
+      "rc": -1,
+      "errno": 13,
+      "status": "passed",
+      "enforcement_layer": "guest-landlock"
+    },
+    {
+      "phase": "a-first",
+      "name": "tcp_external_unlisted_port",
+      "rc": -1,
+      "errno": 13,
+      "status": "passed",
+      "enforcement_layer": "guest-landlock"
+    },
+    {
+      "phase": "a-first",
+      "name": "tcp_external_allowed_port",
+      "rc": -1,
+      "errno": 101,
+      "status": "passed",
+      "enforcement_layer": "guest-no-route"
+    },
+    {
+      "phase": "a-first",
+      "name": "tcp_allowed_bind",
+      "rc": 0,
+      "errno": 0,
+      "status": "passed",
+      "enforcement_layer": "positive-control"
+    },
+    {
+      "phase": "a-first",
+      "name": "tcp_unlisted_bind",
+      "rc": -1,
+      "errno": 13,
+      "status": "passed",
+      "enforcement_layer": "guest-landlock"
+    },
+    {
+      "phase": "a-first",
+      "name": "udp_unlisted_loopback_delivery",
+      "rc": 0,
+      "errno": 0,
+      "status": "passed",
+      "enforcement_layer": "positive-control"
+    },
+    {
+      "phase": "a-first",
+      "name": "udp_external_send",
+      "rc": -1,
+      "errno": 101,
+      "status": "passed",
+      "enforcement_layer": "guest-no-route"
+    },
+    {
+      "phase": "a-first",
+      "name": "cache_existing_file_read",
+      "rc": 0,
+      "errno": 0,
+      "status": "passed",
+      "enforcement_layer": "positive-control"
+    },
+    {
+      "phase": "a-first",
+      "name": "private_file_operations",
+      "rc": 0,
+      "errno": 0,
+      "status": "passed",
+      "enforcement_layer": "positive-control"
+    },
+    {
+      "phase": "a-first",
+      "name": "cache_append",
+      "rc": -1,
+      "errno": 30,
+      "status": "passed",
+      "enforcement_layer": "guest-readonly-mount"
+    },
+    {
+      "phase": "a-first",
+      "name": "cache_truncate",
+      "rc": -1,
+      "errno": 30,
+      "status": "passed",
+      "enforcement_layer": "guest-readonly-mount"
+    },
+    {
+      "phase": "a-first",
+      "name": "cache_create",
+      "rc": -1,
+      "errno": 30,
+      "status": "passed",
+      "enforcement_layer": "guest-readonly-mount"
+    },
+    {
+      "phase": "a-first",
+      "name": "cache_unlink",
+      "rc": -1,
+      "errno": 30,
+      "status": "passed",
+      "enforcement_layer": "guest-readonly-mount"
+    },
+    {
+      "phase": "a-first",
+      "name": "cache_rename",
+      "rc": -1,
+      "errno": 30,
+      "status": "passed",
+      "enforcement_layer": "guest-readonly-mount"
+    },
+    {
+      "phase": "a-first",
+      "name": "cache_hardlink",
+      "rc": -1,
+      "errno": 30,
+      "status": "passed",
+      "enforcement_layer": "guest-readonly-mount"
+    },
+    {
+      "phase": "a-first",
+      "name": "cache_write_via_workspace_symlink",
+      "rc": -1,
+      "errno": 30,
+      "status": "passed",
+      "enforcement_layer": "guest-readonly-mount"
+    },
+    {
+      "phase": "a-first",
+      "name": "raw_cache_device_read",
+      "rc": -1,
+      "errno": 13,
+      "status": "passed",
+      "enforcement_layer": "guest-landlock"
+    },
+    {
+      "phase": "a-first",
+      "name": "raw_private_device_read",
+      "rc": -1,
+      "errno": 13,
+      "status": "passed",
+      "enforcement_layer": "guest-landlock"
+    },
+    {
+      "phase": "a-first",
+      "name": "raw_bootstrap_device_read",
+      "rc": -1,
+      "errno": 13,
+      "status": "passed",
+      "enforcement_layer": "guest-landlock"
+    },
+    {
+      "phase": "sibling-first",
+      "name": "tcp_allowed_http_identity",
+      "rc": 0,
+      "errno": 0,
+      "status": "passed",
+      "enforcement_layer": "positive-control"
+    },
+    {
+      "phase": "sibling-first",
+      "name": "tcp_live_unlisted_port",
+      "rc": -1,
+      "errno": 13,
+      "status": "passed",
+      "enforcement_layer": "guest-landlock"
+    },
+    {
+      "phase": "sibling-first",
+      "name": "tcp_external_unlisted_port",
+      "rc": -1,
+      "errno": 13,
+      "status": "passed",
+      "enforcement_layer": "guest-landlock"
+    },
+    {
+      "phase": "sibling-first",
+      "name": "tcp_external_allowed_port",
+      "rc": -1,
+      "errno": 101,
+      "status": "passed",
+      "enforcement_layer": "guest-no-route"
+    },
+    {
+      "phase": "sibling-first",
+      "name": "tcp_allowed_bind",
+      "rc": 0,
+      "errno": 0,
+      "status": "passed",
+      "enforcement_layer": "positive-control"
+    },
+    {
+      "phase": "sibling-first",
+      "name": "tcp_unlisted_bind",
+      "rc": -1,
+      "errno": 13,
+      "status": "passed",
+      "enforcement_layer": "guest-landlock"
+    },
+    {
+      "phase": "sibling-first",
+      "name": "udp_unlisted_loopback_delivery",
+      "rc": 0,
+      "errno": 0,
+      "status": "passed",
+      "enforcement_layer": "positive-control"
+    },
+    {
+      "phase": "sibling-first",
+      "name": "udp_external_send",
+      "rc": -1,
+      "errno": 101,
+      "status": "passed",
+      "enforcement_layer": "guest-no-route"
+    },
+    {
+      "phase": "sibling-first",
+      "name": "cache_existing_file_read",
+      "rc": 0,
+      "errno": 0,
+      "status": "passed",
+      "enforcement_layer": "positive-control"
+    },
+    {
+      "phase": "sibling-first",
+      "name": "private_file_operations",
+      "rc": 0,
+      "errno": 0,
+      "status": "passed",
+      "enforcement_layer": "positive-control"
+    },
+    {
+      "phase": "sibling-first",
+      "name": "cache_append",
+      "rc": -1,
+      "errno": 30,
+      "status": "passed",
+      "enforcement_layer": "guest-readonly-mount"
+    },
+    {
+      "phase": "sibling-first",
+      "name": "cache_truncate",
+      "rc": -1,
+      "errno": 30,
+      "status": "passed",
+      "enforcement_layer": "guest-readonly-mount"
+    },
+    {
+      "phase": "sibling-first",
+      "name": "cache_create",
+      "rc": -1,
+      "errno": 30,
+      "status": "passed",
+      "enforcement_layer": "guest-readonly-mount"
+    },
+    {
+      "phase": "sibling-first",
+      "name": "cache_unlink",
+      "rc": -1,
+      "errno": 30,
+      "status": "passed",
+      "enforcement_layer": "guest-readonly-mount"
+    },
+    {
+      "phase": "sibling-first",
+      "name": "cache_rename",
+      "rc": -1,
+      "errno": 30,
+      "status": "passed",
+      "enforcement_layer": "guest-readonly-mount"
+    },
+    {
+      "phase": "sibling-first",
+      "name": "cache_hardlink",
+      "rc": -1,
+      "errno": 30,
+      "status": "passed",
+      "enforcement_layer": "guest-readonly-mount"
+    },
+    {
+      "phase": "sibling-first",
+      "name": "cache_write_via_workspace_symlink",
+      "rc": -1,
+      "errno": 30,
+      "status": "passed",
+      "enforcement_layer": "guest-readonly-mount"
+    },
+    {
+      "phase": "sibling-first",
+      "name": "raw_cache_device_read",
+      "rc": -1,
+      "errno": 13,
+      "status": "passed",
+      "enforcement_layer": "guest-landlock"
+    },
+    {
+      "phase": "sibling-first",
+      "name": "raw_private_device_read",
+      "rc": -1,
+      "errno": 13,
+      "status": "passed",
+      "enforcement_layer": "guest-landlock"
+    },
+    {
+      "phase": "sibling-first",
+      "name": "raw_bootstrap_device_read",
+      "rc": -1,
+      "errno": 13,
+      "status": "passed",
+      "enforcement_layer": "guest-landlock"
+    },
+    {
+      "phase": "backend-first",
+      "name": "privileged-raw-cache-refusal",
+      "boot": 1,
+      "status": "passed",
+      "enforcement_layer": "guest-block-readonly",
+      "direct_vmm_backend_bypass_qualified": false,
+      "evidence": {
+        "schema": 1,
+        "phase": "before-mount-and-keeper",
+        "clear_ro_rc": 0,
+        "clear_ro_errno": 0,
+        "inspect_ro_rc": 0,
+        "guest_ro_after_clear": 1,
+        "cache_open_write_rc": 0,
+        "cache_open_write_errno": 0,
+        "cache_write_rc": -1,
+        "cache_write_errno": 1,
+        "cache_sector_unchanged": true,
+        "private_write_read_restore": true
+      }
+    },
+    {
+      "phase": "a-after-restart",
+      "name": "tcp_allowed_http_identity",
+      "rc": 0,
+      "errno": 0,
+      "status": "passed",
+      "enforcement_layer": "positive-control"
+    },
+    {
+      "phase": "a-after-restart",
+      "name": "tcp_live_unlisted_port",
+      "rc": -1,
+      "errno": 13,
+      "status": "passed",
+      "enforcement_layer": "guest-landlock"
+    },
+    {
+      "phase": "a-after-restart",
+      "name": "tcp_external_unlisted_port",
+      "rc": -1,
+      "errno": 13,
+      "status": "passed",
+      "enforcement_layer": "guest-landlock"
+    },
+    {
+      "phase": "a-after-restart",
+      "name": "tcp_external_allowed_port",
+      "rc": -1,
+      "errno": 101,
+      "status": "passed",
+      "enforcement_layer": "guest-no-route"
+    },
+    {
+      "phase": "a-after-restart",
+      "name": "tcp_allowed_bind",
+      "rc": 0,
+      "errno": 0,
+      "status": "passed",
+      "enforcement_layer": "positive-control"
+    },
+    {
+      "phase": "a-after-restart",
+      "name": "tcp_unlisted_bind",
+      "rc": -1,
+      "errno": 13,
+      "status": "passed",
+      "enforcement_layer": "guest-landlock"
+    },
+    {
+      "phase": "a-after-restart",
+      "name": "udp_unlisted_loopback_delivery",
+      "rc": 0,
+      "errno": 0,
+      "status": "passed",
+      "enforcement_layer": "positive-control"
+    },
+    {
+      "phase": "a-after-restart",
+      "name": "udp_external_send",
+      "rc": -1,
+      "errno": 101,
+      "status": "passed",
+      "enforcement_layer": "guest-no-route"
+    },
+    {
+      "phase": "a-after-restart",
+      "name": "cache_existing_file_read",
+      "rc": 0,
+      "errno": 0,
+      "status": "passed",
+      "enforcement_layer": "positive-control"
+    },
+    {
+      "phase": "a-after-restart",
+      "name": "private_file_operations",
+      "rc": 0,
+      "errno": 0,
+      "status": "passed",
+      "enforcement_layer": "positive-control"
+    },
+    {
+      "phase": "a-after-restart",
+      "name": "cache_append",
+      "rc": -1,
+      "errno": 30,
+      "status": "passed",
+      "enforcement_layer": "guest-readonly-mount"
+    },
+    {
+      "phase": "a-after-restart",
+      "name": "cache_truncate",
+      "rc": -1,
+      "errno": 30,
+      "status": "passed",
+      "enforcement_layer": "guest-readonly-mount"
+    },
+    {
+      "phase": "a-after-restart",
+      "name": "cache_create",
+      "rc": -1,
+      "errno": 30,
+      "status": "passed",
+      "enforcement_layer": "guest-readonly-mount"
+    },
+    {
+      "phase": "a-after-restart",
+      "name": "cache_unlink",
+      "rc": -1,
+      "errno": 30,
+      "status": "passed",
+      "enforcement_layer": "guest-readonly-mount"
+    },
+    {
+      "phase": "a-after-restart",
+      "name": "cache_rename",
+      "rc": -1,
+      "errno": 30,
+      "status": "passed",
+      "enforcement_layer": "guest-readonly-mount"
+    },
+    {
+      "phase": "a-after-restart",
+      "name": "cache_hardlink",
+      "rc": -1,
+      "errno": 30,
+      "status": "passed",
+      "enforcement_layer": "guest-readonly-mount"
+    },
+    {
+      "phase": "a-after-restart",
+      "name": "cache_write_via_workspace_symlink",
+      "rc": -1,
+      "errno": 30,
+      "status": "passed",
+      "enforcement_layer": "guest-readonly-mount"
+    },
+    {
+      "phase": "a-after-restart",
+      "name": "raw_cache_device_read",
+      "rc": -1,
+      "errno": 13,
+      "status": "passed",
+      "enforcement_layer": "guest-landlock"
+    },
+    {
+      "phase": "a-after-restart",
+      "name": "raw_private_device_read",
+      "rc": -1,
+      "errno": 13,
+      "status": "passed",
+      "enforcement_layer": "guest-landlock"
+    },
+    {
+      "phase": "a-after-restart",
+      "name": "raw_bootstrap_device_read",
+      "rc": -1,
+      "errno": 13,
+      "status": "passed",
+      "enforcement_layer": "guest-landlock"
+    },
+    {
+      "phase": "backend-after-restart",
+      "name": "privileged-raw-cache-refusal",
+      "boot": 2,
+      "status": "passed",
+      "enforcement_layer": "guest-block-readonly",
+      "direct_vmm_backend_bypass_qualified": false,
+      "evidence": {
+        "schema": 1,
+        "phase": "before-mount-and-keeper",
+        "clear_ro_rc": 0,
+        "clear_ro_errno": 0,
+        "inspect_ro_rc": 0,
+        "guest_ro_after_clear": 1,
+        "cache_open_write_rc": 0,
+        "cache_open_write_errno": 0,
+        "cache_write_rc": -1,
+        "cache_write_errno": 1,
+        "cache_sector_unchanged": true,
+        "private_write_read_restore": true
+      }
+    }
+  ],
+  "instances": [
+    {
+      "label": "a",
+      "boots": [
+        {
+          "boot": 1,
+          "greeting": "READY 1 state=1 ro=1 landlock=6 policy=1",
+          "ready_seconds": 2.2812364579876885,
+          "exit_code": 0,
+          "forced_cleanup": false,
+          "log_overflow": false,
+          "ssh_console_captured": true,
+          "guest_console_stream": "stderr"
+        },
+        {
+          "boot": 2,
+          "greeting": "READY 1 state=2 ro=1 landlock=6 policy=1",
+          "ready_seconds": 2.2074029590003192,
+          "exit_code": 0,
+          "forced_cleanup": false,
+          "log_overflow": false,
+          "ssh_console_captured": true,
+          "guest_console_stream": "stderr"
+        }
+      ]
+    },
+    {
+      "label": "sibling",
+      "boots": [
+        {
+          "boot": 1,
+          "greeting": "READY 1 state=1 ro=1 landlock=6 policy=1",
+          "ready_seconds": 2.187129291938618,
+          "exit_code": 0,
+          "forced_cleanup": false,
+          "log_overflow": false,
+          "ssh_console_captured": true,
+          "guest_console_stream": "stderr"
+        }
+      ]
+    }
+  ],
+  "observations": [
+    {
+      "phase": "a-first",
+      "udp_unlisted_loopback": "delivered; not filtered by Landlock TCP rules",
+      "ipv4_interfaces": [
+        "lo"
+      ],
+      "ipv6": "not-run: compiled out of pinned kernel",
+      "ipv6_socket_errno": 97,
+      "http_instance_id": "13c31270622798843c75e72d7b4f3b82"
+    },
+    {
+      "phase": "sibling-first",
+      "udp_unlisted_loopback": "delivered; not filtered by Landlock TCP rules",
+      "ipv4_interfaces": [
+        "lo"
+      ],
+      "ipv6": "not-run: compiled out of pinned kernel",
+      "ipv6_socket_errno": 97,
+      "http_instance_id": "46007a1cc155aba06e56f6d04d10828a"
+    },
+    {
+      "phase": "a-after-restart",
+      "udp_unlisted_loopback": "delivered; not filtered by Landlock TCP rules",
+      "ipv4_interfaces": [
+        "lo"
+      ],
+      "ipv6": "not-run: compiled out of pinned kernel",
+      "ipv6_socket_errno": 97,
+      "http_instance_id": "13c31270622798843c75e72d7b4f3b82"
+    }
+  ],
+  "cleanup": {
+    "helpers_reaped": true,
+    "endpoints_removed": true,
+    "private_resources_removed": true,
+    "verified_cache_copy_removed": true
+  },
+  "discarded_private_resources": [
+    "/private/tmp/ds-ylq7oche",
+    "/private/tmp/dc-c-li5ld23i",
+    "/private/tmp/ds-m8_10g5a",
+    "/private/tmp/dc-c-7c1_bwjl"
+  ]
+}
