@@ -364,6 +364,41 @@ builder versions are retained; builder tools are not yet a fully hash-pinned
 closure, so this does not establish fleet eligibility or bit-identical images.
 `--freeze-inputs` explicitly repins runtime APKs.
 
+**Pinned builder closure (2026-11-15).** The tools that execute during the
+build are now pinned too. `npm ci` and the native module builds no longer use
+packages installed on the Lima system. They run in a chroot that holds exactly
+143 SHA-256 pinned APKs
+([editor-builder-packages-aarch64.json](fixtures/editor-builder-packages-aarch64.json):
+node 24.22.3, npm 11.11.0, gcc 15.2.0, Python 3.12.16, make, headers, BusyBox).
+The chroot is entered with `env -i`, and the receipt fails unless the
+installed set equals the pin set. The Lima system keeps only orchestration
+tools.
+
+Two failures came first, and both are retained:
+
+- **Unrebuildable runtime closure.** One of the 47 runtime APKs pinned on
+  2026-11-09, `glib-2.86.3-r0`, had already disappeared from `dl-cdn`. Alpine
+  branch mirrors keep only the newest revision, so a hash pin to a mirror URL is
+  not durable, and that closure could not be rebuilt. It was repinned (9 of 47
+  entries changed). Every APK a build uses is now kept in
+  `artifacts/apk-store/` and staged from there, and is still hash-checked.
+- **Image that would not boot.** The first image built with the pinned builder
+  was exported while its filesystem was still mounted through a recursive bind
+  into the chroot. The read-only guest mount refused it (`recovery required on
+  readonly filesystem`) on both adapters. Binds are now separate, private and
+  explicitly unmounted, and `e2fsck -fn` gates the image.
+
+With image `3681782a…`, the Alpine/npm editor row passes on both native
+adapters (`results/{libkrun,hvi}-macos-arm64-editor-pinned-builder.json`).
+Still unpinned: the Lima VM image and kernel, the apk-tools that install
+runtime APKs into the image, e2fsprogs, and the base workload image's own
+builder.
+
+```sh
+rtk proxy python3 experiments/microvm/build_editor.py --out experiments/microvm/artifacts/editor-pinned
+rtk proxy python3 experiments/microvm/editor_smoke.py --editor experiments/microvm/artifacts/editor-pinned/editor.img [--helper <hvi helper>]
+```
+
 The editor harness uses 2 vCPUs and 1 GiB for one VM, a read-only editor image
 and a private ext4 workspace. Guest nono permits TCP bind/connect on 9090 only
 when that editor fixture exists; the host reaches it through SSH over vsock.
