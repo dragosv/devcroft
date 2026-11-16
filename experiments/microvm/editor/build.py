@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
 """Linux-only Alpine/npm editor preparation on a private copy of the base image.
 
-Runs as root inside the pinned orchestration root that bootstrap.sh builds, with WORK bound
-at /work. The one exception is --freeze-tools, which runs on the Lima system itself and only
-resolves pins (bootstrap packages and the orchestration closure); it builds nothing.
+Runs as root inside the pinned orchestration root that orchestration/bootstrap.sh builds,
+with WORK bound at /work.
 """
 import argparse
 import hashlib
@@ -18,15 +17,9 @@ import tempfile
 import urllib.request
 
 WORK = Path("/work")  # bootstrap.sh binds the Lima-side work directory here
-HOST_WORK = Path("/home/dragos.guest/devcroft-editor")  # the same directory, for --freeze-tools
 BUILDER = Path("/builder")  # outside WORK, which is bound into it
 INNER = Path("/work")  # WORK as seen inside BUILDER
 ALPINE = "https://dl-cdn.alpinelinux.org/alpine/v3.23/"
-# The orchestration closure: everything that prepares the image (this interpreter, apk,
-# mount, e2fsprogs, chroot, unshare, tar). bootstrap.sh installs it with a pinned apk.static.
-BOOTSTRAP_PACKAGES = ["apk-tools-static", "alpine-keys"]
-TOOLS_PACKAGES = ["busybox", "python3", "apk-tools", "alpine-keys", "ca-certificates", "coreutils", "tar", "mount",
-                  "umount", "util-linux-misc", "e2fsprogs", "e2fsprogs-extra"]
 # Everything the npm/native build executes comes from this pinned closure, installed
 # into BUILDER and entered with chroot; none of the orchestration tools reach the build.
 BUILDER_PACKAGES = ["busybox", "bash", "ca-certificates", "nodejs", "nodejs-dev", "npm", "g++", "make", "python3",
@@ -46,11 +39,11 @@ def owner():
     return f"{os.environ['BUILD_UID']}:{os.environ['BUILD_GID']}"
 
 
-def resolve_closure(names, dest, label, work=WORK):
+def resolve_closure(names, dest, label):
     """Resolve an APK closure into dest; return the url/file/sha256 manifest."""
     # apk fetch --url omits archives already present in its output dir.
     # Resolve into a fresh directory so a repeated freeze cannot erase pins.
-    with tempfile.TemporaryDirectory(prefix="resolve-", dir=work) as fresh:
+    with tempfile.TemporaryDirectory(prefix="resolve-", dir=WORK) as fresh:
         urls = subprocess.check_output(["apk", "fetch", "--recursive", "--url", "--output", fresh, *names],
                                        text=True).splitlines()
         packages = []
@@ -161,30 +154,13 @@ def extract_editor(prefix, pin):
     return patches
 
 
-def freeze_tools():
-    """On the Lima system: resolve the bootstrap packages and orchestration closure. Resolution only."""
-    out = HOST_WORK / "tools-apks"
-    out.mkdir(parents=True, exist_ok=True)
-    bootstrap = [resolve_closure([name], out, name, HOST_WORK)[0] for name in BOOTSTRAP_PACKAGES]
-    if [x["file"].rsplit("-", 2)[0] for x in bootstrap] != BOOTSTRAP_PACKAGES:
-        raise RuntimeError(("bootstrap packages pulled dependencies", bootstrap))
-    tools = resolve_closure(TOOLS_PACKAGES, out, "orchestration", HOST_WORK)
-    (HOST_WORK / "tools-packages.json").write_text(json.dumps(
-        {"schema": 1, "bootstrap": bootstrap, "requested": TOOLS_PACKAGES, "packages": tools}, indent=2) + "\n")
-
-
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--freeze-inputs", action="store_true", help="re-resolve and repin the runtime APK closure")
     parser.add_argument("--freeze-builder", action="store_true", help="re-resolve and repin the builder APK closure")
-    parser.add_argument("--freeze-tools", action="store_true", help="on the Lima system: repin the orchestration closure")
     args = parser.parse_args()
-    if args.freeze_tools:
-        return freeze_tools()
     os.chdir(WORK)
     tools_manifest = json.loads((WORK / "tools-packages.json").read_text())
-    if tools_manifest["requested"] != TOOLS_PACKAGES:
-        raise RuntimeError("orchestration request changed without --freeze-tools")
     tools_installed = (WORK / "tools.actual").read_text().split()
     if (WORK / "tools.installed").read_text().split() != tools_installed:
         raise RuntimeError("orchestration root differs from its pinned closure")
@@ -282,7 +258,7 @@ def main():
         "exported_runtime_node_version": runtime_node,
         "native_build_flags": {k: env[k] for k in ("CFLAGS", "CXXFLAGS", "LDFLAGS", "MAKEFLAGS", "npm_config_nodedir")},
         "installed_packages": installed,
-        "orchestration_closure": {"bootstrap": tools_manifest["bootstrap"], "requested": TOOLS_PACKAGES,
+        "orchestration_closure": {"bootstrap": tools_manifest["bootstrap"], "requested": tools_manifest["requested"],
                                   "apks": tools_manifest["packages"], "installed": tools_installed,
                                   "installed_equals_pinned": True,
                                   "installed_with": "apk.static from the pinned apk-tools-static",

@@ -401,13 +401,13 @@ rtk proxy python3 experiments/microvm/editor_smoke.py --editor experiments/micro
 
 **Pinned orchestration (2026-11-16).** The tools that *prepare* the image are
 now pinned as well, so nothing is `apk add`ed to the Lima VM any more.
-[editor/bootstrap.sh](editor/bootstrap.sh) runs on the VM and executes only
+[orchestration/bootstrap.sh](orchestration/bootstrap.sh) runs on the VM and executes only
 busybox (by absolute path), sudo and the kernel. It first checks those against
 a pinned host contract (kernel 6.18.7-0-virt, busybox-1.37.0-r30, musl,
 sudo, linux-virt). It then installs a 52-APK orchestration root with an
 `apk.static` taken from a pinned `apk-tools-static`, using keys from a pinned
 `alpine-keys`
-([editor-tools-packages-aarch64.json](fixtures/editor-tools-packages-aarch64.json)).
+([orchestration-packages-aarch64.json](fixtures/orchestration-packages-aarch64.json)).
 That root holds python3, apk-tools, mount, e2fsprogs, coreutils, util-linux
 and tar, and `build.py` runs inside it. The VM's base image is the
 digest-pinned one in Lima's own config, and `build_editor.py` refuses to run
@@ -434,16 +434,55 @@ bit-identical. With `9e09a70e…`, the editor row passes on both native
 adapters (`results/{libkrun,hvi}-macos-arm64-editor-pinned-orchestration.json`,
 receipt `fixtures/editor-aarch64-pinned-orchestration-build.json`).
 
+```sh
+rtk proxy python3 experiments/microvm/build_editor.py --out experiments/microvm/artifacts/editor-orchestration
+```
+
+**Base workload images reconstructed from the same root (2026-11-16).**
+`build_workload.py` now uses the shared orchestration too
+([orchestration/](orchestration/): `bootstrap.sh`, the macOS-side staging,
+and `freeze.py` for repinning). No compiler runs in that build, only apk
+`--no-scripts`, tar, `mkfs.ext4 -d` and python3, so pinning the
+orchestration pins the whole builder. The rebuilt images were not
+substituted for the published ones. Instead, `--compare-with` loop-mounts
+each new image and its published predecessor read-only, and compares every
+entry: type, mode, owner, content digest and link target, with times
+excluded.
+
+- `toolchain.img`: 3,694 of 3,695 entries match the published `9d3c6a36…`.
+  That image is the base of every workload row and the editor's
+  `base.img`.
+- The Remote-SSH variant: 4,247 of 4,248 entries match `dc3cce42…`.
+- `data.seed.img`: identical in both.
+
+The one remaining difference is `var/log/apk.log`. It records the install
+command's paths and the apk that ran: `apk-tools 3.0.3-r1` from the VM in
+the published images, and the pinned `3.0.9-r0` now. So the published images
+are reproducible from pinned inputs, up to times and that log, and the rows
+built on them need no rerun. Receipts:
+`fixtures/workload{,-remote-ssh}-aarch64-orchestration-build.json`. The
+editor build now runs on the same shared module. Its image from that run
+(`e42cb13d…`) passed the editor row again on both adapters (raw runs
+`runs/20261116-{libkrun,hvi}-editor-shared-orchestration`, not published).
+
+Before it matched, the comparison found two real differences, both caused
+by the build now running as root, and both are fixed:
+
+- **Owners.** The fixture tree and the merged `/usr/bin` links belonged
+  to root instead of the Lima user (2,183 and 386 entries). One
+  `chown -R` now runs after the tree is complete.
+- **Modes.** GNU tar running as root kept the archive's 0664 modes, where
+  the published build had applied the 022 umask (99 entries). It now
+  extracts with `--no-same-permissions --no-same-owner`.
+
 Still unpinned:
 
 - limactl and Virtualization.framework, which copy files and run the VM;
-- npm registry content beyond the shrinkwrap integrity hashes;
-- the base workload image's own builder. `base.img` is hash-checked as an
-  input, but `build_workload.py` still `apk add`s to the VM, and every
-  workload and Remote-SSH row depends on that image.
+- npm registry content beyond the shrinkwrap integrity hashes.
 
 ```sh
-rtk proxy python3 experiments/microvm/build_editor.py --out experiments/microvm/artifacts/editor-orchestration
+rtk proxy python3 experiments/microvm/build_workload.py --out experiments/microvm/artifacts/workload-orchestration \
+  --compare-with experiments/microvm/artifacts/workload
 ```
 
 The editor harness uses 2 vCPUs and 1 GiB for one VM, a read-only editor image
