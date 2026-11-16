@@ -4,7 +4,7 @@ This is the experimental implementation of `evaluate-microvm-runtimes`.
 `libkrun/` and `hvi/` have their own Cargo workspaces and lockfiles. The main devcroft build and
 published crate do not depend on it. No production VM dispatch exists yet.
 
-The [native assessment](results/macos-arm64-evaluation-assessment-v10.json) records
+The [native assessment](results/macos-arm64-evaluation-assessment-v11.json) records
 the full 180-case macOS ARM64 comparison, clean reconstruction, final SSH fault
 recovery and real CLI/TLS regressions against the five backend criteria. Both
 adapters work on this host. Production adoption remains no-go under the current
