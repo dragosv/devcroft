@@ -289,7 +289,8 @@ pub fn capabilities() -> &'static [Capability] {
                     live non-proxy listener on 127.0.0.1 all fail with \
                     EPERM, while the same probes succeed on the host; \
                     CONNECT through the proxy returns 200 for an allowed \
-                    domain and 502 for one the manifest did not allow. \
+                    domain and 502 for one the manifest did not allow \
+                    (403 since the proxy became nono-proxy). \
                     The loopback row is the one that proves the rule is \
                     scoped rather than permissive. The library's own \
                     ProxyOnly doc comment was right and policy::degraded \

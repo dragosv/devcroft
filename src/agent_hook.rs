@@ -57,7 +57,10 @@ const NETWORK: [&str; 11] = [
     "egress denied",
     "connect tunnel failed",
     "could not resolve host",
-    "502 bad gateway",
+    // The proxy's allowlist refusal (`nono-proxy`): `403 Forbidden: host
+    // <h>:<p> is not in the allowlist`. A server's own 403 matches too, and
+    // is dropped below unless the policy denies the host it names.
+    "403 forbidden",
     "connection refused",
     "network is unreachable",
     "name or service not known",
@@ -544,7 +547,7 @@ mod tests {
         let p = policy(DENY);
         let refused = bash(
             "curl -sf https://example.com/x",
-            "Exit code 56\ncurl: (56) CONNECT tunnel failed, response 502",
+            "Exit code 56\ncurl: (56) CONNECT tunnel failed, response 403",
         );
         let out = claude_code(&sb(&p), &refused).unwrap();
         let ctx = out["hookSpecificOutput"]["additionalContext"]

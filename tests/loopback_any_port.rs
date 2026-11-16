@@ -178,7 +178,7 @@ fn the_key_lets_a_program_use_a_port_the_kernel_chooses_and_nothing_beyond() {
         // Spec: "A destination not on the allowlist". Through the proxy the
         // sandbox is handed, credentials and all, so the refusal is the
         // allowlist's and not a missing token's: devcroft's proxy answers an
-        // allowlist refusal with `502` naming the host, and a token problem
+        // allowlist refusal with `403` naming the host, and a token problem
         // with `407` (`proxy::server`), so the two cannot be confused.
         let out = python(
             bin,
@@ -199,8 +199,8 @@ fn the_key_lets_a_program_use_a_port_the_kernel_chooses_and_nothing_beyond() {
              print('RESPONSE', data.decode(errors='replace'))\n",
         );
         assert!(
-            out.contains("RESPONSE HTTP/1.1 502") && out.contains("not-allowed.invalid"),
-            "row {}: a domain off the allowlist must be refused by the proxy (502, naming the \
+            out.contains("RESPONSE HTTP/1.1 403") && out.contains("not-allowed.invalid"),
+            "row {}: a domain off the allowlist must be refused by the proxy (403, naming the \
              host), got: {out}",
             fx.name()
         );

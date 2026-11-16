@@ -241,7 +241,7 @@ proxy: nine as an absolute-URI request, and two (Qwen, Cursor) inside a
         marked superseded. devcroft's own rules are kept until a macOS run.
         The keychain mach-lookup denials are now unconditional. Not run on
         macOS.
-- [ ] 4b.0b Swap `proxy::server`'s HTTP handling for `nono-proxy`, behind
+- [x] 4b.0b Swap `proxy::server`'s HTTP handling for `nono-proxy`, behind
       the existing spawn and bridges:
       - `strict_connect_auth = true`;
       - the token passed as `session_token`, so it stays devcroft's;
@@ -254,9 +254,27 @@ proxy: nine as an absolute-URI request, and two (Qwen, Cursor) inside a
       reports the port it got over a pipe before `up` compiles the policy.
       The unix socket is still bound before exec. The allow/refuse log
       lines come from its audit sink. Fleet's label prefix is kept
-- [ ] 4b.0c Refusal status `502` → `403`, wherever a test or document
+      **Done (2026-11-16).** `proxy::server::start` configures and runs
+      `nono-proxy`; `__egress_proxy` reports the port over a pipe once both
+      listeners serve (`proxy::spawn_at`). An auth failure is logged as
+      `requested=<h>:<p>`, never `host=`, so `lifecycle::attribution`
+      cannot read it as an allowlist refusal. A plain-HTTP allow is the
+      L7 audit event and carries no port. Suite 751/1, zero skips; the one
+      failure is `tooling_layer`'s devenv build, on a host store path
+      registered valid but missing from disk (`amp-linux-arm64.gz`),
+      before any proxy runs. Teeth-check: with `strict_connect_auth =
+      false`, `an_unauthenticated_caller_is_refused_even_for_an_allowed_host`
+      fails. Shipped dependencies 285 → 380, `THIRD-PARTY-LICENSES.md`
+      regenerated. The test build now needs `-j 2` on this devcontainer:
+      at full parallelism the linker is OOM-killed
+- [x] 4b.0c Refusal status `502` → `403`, wherever a test or document
       asserts it. The host is still named
       (`403 Forbidden: host <h>:<p> is not in the allowlist`, measured)
+      **Done (2026-11-16).** Tests (`egress_proxy_e2e`,
+      `loopback_any_port`, `agent_hook`) assert `403`. Where a document
+      records a `502` that was *measured* (the macOS table in
+      `docs/known-gaps.md`, `policy::degraded`, `backend_capabilities`),
+      the measurement stays and is footnoted rather than rewritten
 - [ ] 4b.1 User configuration: a brokered credential names the host, the
       header, the sandbox variable, and an optional placeholder. Checked at
       layer `config`. The host must also be on the project's allowlist,

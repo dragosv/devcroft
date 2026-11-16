@@ -354,11 +354,10 @@ What separates 0.6 from 1.0 is evidence, not features:
   and no prebuilt-binary supply chain. Worth doing when "no third-party
   binary in the manifest" is worth more than what it gives up, which is not
   yet.
-- **`nono-proxy` adoption** (`add-egress-proxy` 4b). Proposed, not taken.
-  The gap that motivated it — an unauthenticated loopback proxy — was
-  closed directly. What remains is a trade for credential brokering,
-  approval hooks and audit integrity against 116 crates, judged on its own
-  merits whenever one of those is actually being built.
+- **`nono-proxy` adoption** (`add-egress-proxy` 4b). **Taken** (2026-11-16,
+  `add-agent-workload` 4b.0b), when credential brokering was actually being
+  built, as this entry said it should be. The gap that first motivated
+  it, an unauthenticated loopback proxy, had already been closed directly.
 - **Seccomp** (`add-syscall-filtering`, unwritten). See D9 above: it may be
   unnecessary for egress. Broad syscall-surface reduction is a different
   argument, against kernel exploits rather than misbehaving agents, and

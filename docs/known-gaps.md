@@ -933,7 +933,11 @@ aarch64-darwin, in a live sandbox with `network.default = "deny"` and
 | raw `connect()` to `1.1.1.1:443`, `8.8.8.8:443` | `EPERM` | connected |
 | raw `connect()` to `127.0.0.1:54321`, a live listener that is **not** the proxy | `EPERM` | connected |
 | `CONNECT example.com:443` through the proxy | `200 Connection Established` | — |
-| `CONNECT cloudflare.com:443` through the proxy | `502 Bad Gateway` | — |
+| `CONNECT cloudflare.com:443` through the proxy | `502 Bad Gateway`¹ | — |
+
+¹ devcroft's own proxy answered `502` then. Since `add-agent-workload` 4b.0
+the proxy is `nono-proxy`, which answers `403 Forbidden` naming the host;
+the refusal is the same decision, and the row is not re-measured on macOS.
 
 Both halves hold: the kernel refuses egress that does not go through the
 proxy, and the proxy refuses hosts the manifest did not allow.

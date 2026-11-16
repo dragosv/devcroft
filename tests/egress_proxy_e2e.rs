@@ -133,14 +133,18 @@ fn network_allow_actually_filters_by_host_through_a_real_curl() {
 
         let denied_status = curl_status(denied_port, "127.0.0.4");
         assert_eq!(
-            denied_status, "502",
+            denied_status, "403",
             "127.0.0.4 is not on network.allow and must be refused by the proxy, not merely \
-         unreachable — a 502 (not a connection error/timeout) proves the proxy itself decided"
+         unreachable — a 403 (not a connection error/timeout) proves the proxy itself decided"
         );
 
         let log = std::fs::read_to_string(&paths.proxy_log).unwrap_or_default();
+        // By host, not port: a plain-HTTP allow is `nono-proxy`'s L7 audit
+        // event, which has no port (`proxy::server::record`). A `CONNECT`
+        // allow does carry one.
         assert!(
-            log.contains("allow") && log.contains(&allowed_port.to_string()),
+            log.lines()
+                .any(|l| l.starts_with("allow host=127.0.0.3") && l.contains("status=200")),
             "proxy log must record the allow decision, log was: {log}"
         );
         assert!(

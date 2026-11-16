@@ -119,6 +119,9 @@ impl HostCapabilities {
             // | `CONNECT example.com:443` through the proxy | `200` | — |
             // | `CONNECT cloudflare.com:443` through the proxy | `502` | — |
             //
+            // (`502` was devcroft's own proxy; `nono-proxy` answers `403`
+            // for the same refusal since `add-agent-workload` 4b.0.)
+            //
             // So both halves hold: the kernel refuses egress that does
             // not go through the proxy, and the proxy refuses hosts the
             // manifest did not allow. The second row is what makes it a

@@ -68,11 +68,22 @@ libc = "0.2.189"
 # `fleet_init`) run rather than skip. They assert what is refused, not that
 # the types still line up.
 nono = "=0.82.0"
+# The egress proxy's HTTP handling (`add-agent-workload` 4b.0, adopted
+# 2026-11-15 after design.md Decision 6's investigation). Exact, and always
+# the same version as `nono`: it depends on the matching `nono`, and two
+# copies of nono in one binary would be two sets of capability types.
+# `default-features = false` drops its OS-keyring feature, which devcroft
+# does not use. It brings ~95 crates nothing here calls (the AWS SDK,
+# SPIFFE/tonic, rcgen): not feature-gated upstream, accepted by the owner.
+nono-proxy = { version = "=0.82.0", default-features = false }
 rand = "0.10.2"
 russh = "0.62.5"
 russh-sftp = "2.4.0"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
+# `nono_proxy::ProxyConfig::session_token` is a `Zeroizing<String>`; already
+# in the tree through nono, named here only to construct it.
+zeroize = "1"
 serde_norway = "0.9.42"
 tokio = { version = "1.53.1", features = ["rt-multi-thread", "net", "sync", "time", "macros", "io-util", "process"] }
 toml = "1.1.4"

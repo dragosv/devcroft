@@ -226,7 +226,8 @@ and the sigstore crates it links rather than the Rust-conventional dual
 `MIT OR Apache-2.0` — a dual license would let a user take MIT and no
 patent grant while changing none of their real obligations, since nono,
 russh and every `sigstore-*` are Apache-2.0-only and linked regardless.
-264 of the 339 shipped dependencies list Apache-2.0, whose §4(a) requires
+299 of the 380 shipped dependencies list Apache-2.0 (380 since
+`nono-proxy`, 2026-11-16), whose §4(a) requires
 recipients get a copy of the License.
 The generator's non-obvious part: `nono`, `russh` and every `sigstore-*`
 declare Apache-2.0 but vendor no license file, so it substitutes the
@@ -346,12 +347,24 @@ nono gate its trust module behind a Cargo feature; it is deliberately
 left for the owner to send, since filing an issue on a third-party repo
 is an external action an agent should not take unprompted.
 
-**`add-egress-proxy`'s design.md E6 proposes adopting a second crate from
-the same project, `nono-proxy` 0.74.0**, and the same objection applies
-again with a measured number: **116 additional crates**, the same order as
-the trust tail above — **not yet taken**, and not urgent, for a reason
-worth recording precisely because it changes the calculus stated when this
-was first written. Reading that crate's config surfaced a real defect in
+**`nono-proxy` 0.82 is now the egress proxy's HTTP side** (owner's
+decision 2026-11-15, `add-agent-workload` 4b.0b, implemented 2026-11-16),
+taken for credential brokering (that change's design.md Decision 6), at
+~95 crates nothing here calls. devcroft keeps the spawn, the unix-socket
+bridge, the namespace relay and the log format. Three things changed in
+what is observable: an allowlist refusal is `403` naming the host (was
+`502`); the TCP port is bound by the child and reported over a pipe
+before `up` compiles the policy (`proxy::spawn_at`), while the unix socket
+is still bound before exec; and an auth failure is logged as
+`requested=<h>:<p>`, never `host=`, because `lifecycle::attribution` reads
+`host=` on a `refuse` line as an allowlist decision. `strict_connect_auth`
+and `strict_filter` are set because `nono-proxy`'s defaults are the
+opposite: without the first, an unauthenticated `CONNECT` to an allowed
+host is tunnelled (measured), which is the open relay below.
+
+Before that, `add-egress-proxy`'s design.md E6 had proposed it at 0.74.0
+and left it **not taken**, for a reason
+worth recording because it changed the calculus the first time. Reading that crate's config surfaced a real defect in
 devcroft's own proxy — no authentication on a loopback listener, which
 makes it an open relay lending its sandbox's allowlist to any local
 process — and the defect was **fixed directly in devcroft's own proxy**
@@ -361,13 +374,11 @@ travels as proxy-URL userinfo inside an isolated sandbox** (2026-10-18):
 five of eleven coding agents could not use it (`docs/agents.md`), so the
 proxy's unix-socket bridge presents it for them
 (`proxy::server::bridge_unix_to_proxy`), and the socket's 0700 directory is
-that path's boundary, as for SSH. The TCP listener's check is unchanged. Adopting
-`nono-proxy` remains open as a *separate* decision for what else it
-brings — credential brokering, approval hooks, audit integrity — and
-should be judged on that trade alone, not as the fix for a gap that no
-longer exists.
+that path's boundary, as for SSH. The TCP listener's check is unchanged.
+The adoption was then judged on what else it brings, as recorded here it
+should be, not as the fix for that gap.
 
-Three of that crate's capabilities, if it is ever adopted, are **off by
+Three of that crate's capabilities are **off by
 decision, not by omission** — TLS interception (an explicit non-goal),
 SPIFFE, and AWS routing. Enabling any of them is a change to what devcroft
 claims, not a configuration tweak.

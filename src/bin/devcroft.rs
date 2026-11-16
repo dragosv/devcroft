@@ -86,7 +86,7 @@ fn main() {
             let fd: RawFd = args
                 .get(2)
                 .and_then(|s| s.parse().ok())
-                .expect("__egress_proxy requires a listener fd argument");
+                .expect("__egress_proxy requires a port-report fd argument");
             let unix_fd: RawFd = args
                 .get(3)
                 .and_then(|s| s.parse().ok())
@@ -5208,7 +5208,7 @@ fn keeper_main(fd: RawFd, ssh_fd: RawFd) -> ! {
 /// cannot: it needs genuine outbound reach to every allowlisted host,
 /// which a `NetworkMode::ProxyOnly` self-restriction would itself deny.
 /// Never returns under normal operation.
-fn egress_proxy_main(fd: RawFd, unix_fd: RawFd) -> ! {
+fn egress_proxy_main(port_fd: RawFd, unix_fd: RawFd) -> ! {
     // A fleet agent's proxy exits with its agent; `up`'s has no lifeline.
     #[cfg(target_os = "linux")]
     devcroft::fleet::lifeline::watch();
@@ -5219,10 +5219,6 @@ fn egress_proxy_main(fd: RawFd, unix_fd: RawFd) -> ! {
             eprintln!("devcroft __egress_proxy: DEVCROFT_EGRESS_ALLOW missing or invalid");
             std::process::exit(1);
         });
-    // SAFETY: `crate::proxy::spawn` bound this listener before exec,
-    // cleared its FD_CLOEXEC, and passed the fd number as argv — ours
-    // alone to take ownership of, same contract as `keeper_main`'s.
-    let listener = unsafe { std::net::TcpListener::from_raw_fd(fd) };
     let log_path = std::env::var("DEVCROFT_EGRESS_LOG")
         .map(std::path::PathBuf::from)
         .unwrap_or_else(|_| {
@@ -5233,29 +5229,40 @@ fn egress_proxy_main(fd: RawFd, unix_fd: RawFd) -> ! {
         eprintln!("devcroft __egress_proxy: DEVCROFT_EGRESS_TOKEN missing");
         std::process::exit(1);
     });
-    // The unix listener runs on its own thread, bridging into the TCP
-    // one — a network-isolated sandbox has no route to host loopback, so
-    // this is its only path to the proxy. Started before `run` because
-    // `run` owns this thread for the process's lifetime.
-    // SAFETY: `crate::proxy::spawn` bound this listener before exec and
-    // cleared its FD_CLOEXEC, same contract as the TCP listener above.
-    let unix_listener = unsafe { std::os::unix::net::UnixListener::from_raw_fd(unix_fd) };
-    let tcp_port = match listener.local_addr() {
-        Ok(addr) => addr.port(),
+    // Set by the fleet supervisor for an agent's proxy; absent for `up`'s.
+    let label = std::env::var("DEVCROFT_EGRESS_LABEL").ok();
+
+    let proxy = match devcroft::proxy::server::start(allow, log_path, token.clone(), label) {
+        Ok(p) => p,
         Err(e) => {
-            eprintln!("devcroft __egress_proxy: reading own port: {e}");
+            eprintln!("devcroft __egress_proxy: {e}");
             std::process::exit(1);
         }
     };
-    let bridge_token = token.clone();
+
+    // The unix listener a network-isolated sandbox reaches the proxy
+    // through, bridged into `nono-proxy`'s TCP port with the token added.
+    // SAFETY: `crate::proxy::spawn_at` bound this listener before exec and
+    // cleared its FD_CLOEXEC; ours alone to take ownership of.
+    let unix_listener = unsafe { std::os::unix::net::UnixListener::from_raw_fd(unix_fd) };
+    let tcp_port = proxy.port;
     std::thread::spawn(move || {
-        devcroft::proxy::server::bridge_unix_to_proxy(unix_listener, tcp_port, bridge_token);
+        devcroft::proxy::server::bridge_unix_to_proxy(unix_listener, tcp_port, token);
     });
 
-    // Set by the fleet supervisor for an agent's proxy; absent for `up`'s.
-    let label = std::env::var("DEVCROFT_EGRESS_LABEL").ok();
-    devcroft::proxy::server::run_labelled(listener, allow, log_path, token, label);
-    std::process::exit(0);
+    // Last: the port goes to `spawn_at` only once both listeners serve, so
+    // `up` never hands a sandbox a port nothing answers on.
+    // SAFETY: `spawn_at` passed the pipe's write end with FD_CLOEXEC
+    // cleared, and this process is its only holder now.
+    let mut report = unsafe { std::fs::File::from_raw_fd(port_fd) };
+    if std::io::Write::write_all(&mut report, format!("{tcp_port}\n").as_bytes()).is_err() {
+        eprintln!("devcroft __egress_proxy: could not report the port");
+        std::process::exit(1);
+    }
+    drop(report);
+    loop {
+        std::thread::park();
+    }
 }
 
 /// Deserializes the `CapabilityPlan` `up` handed down via

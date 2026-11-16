@@ -92,21 +92,16 @@ pub fn spawn_at(
     allow: &[String],
     configure: impl FnOnce(&mut Command) -> io::Result<()>,
 ) -> io::Result<(libc::pid_t, u16, String)> {
-    let listener = std::net::TcpListener::bind(("127.0.0.1", 0))?;
-    let port = listener.local_addr()?.port();
     let token = generate_token();
 
     // The unix listener a network-isolated sandbox reaches the proxy
     // through — see `StatePaths::proxy_socket`. Bound here, host-side and
     // before exec, for the same listener-before-restriction reason the
     // control and SSH sockets are: the proxy process never gets to widen
-    // anything for itself. Mode 0600 alongside the 0700 state dir, the
-    // same belt-and-suspenders the control socket has, and it matters
-    // more here than usual: reaching this socket *is* egress through this
-    // sandbox's allowlist, and Landlock does not mediate unix-socket
-    // connect at all (`tests/unix_socket_not_mediated.rs`), so filesystem
-    // permissions are the only thing standing between another local user
-    // and this sandbox's network reach.
+    // anything for itself. Mode 0600 alongside the 0700 state dir: reaching
+    // this socket *is* egress through this sandbox's allowlist, so
+    // filesystem permissions are what stand between another local user and
+    // this sandbox's network reach.
     let _ = std::fs::remove_file(socket);
     let unix_listener = std::os::unix::net::UnixListener::bind(socket)?;
     std::fs::set_permissions(socket, std::fs::Permissions::from_mode(0o600))?;
@@ -114,27 +109,30 @@ pub fn spawn_at(
     std::fs::File::create(log_path)?;
     let log = std::fs::OpenOptions::new().append(true).open(log_path)?;
 
+    // **The TCP port is the child's to bind, and it reports it here.**
+    // `nono-proxy` binds its own listener and accepts an extra one only on
+    // that same port (`ProxyHandle::add_listener`), so a listener bound
+    // before exec cannot be handed to it. The proxy is never restricted, so
+    // nothing about listener-before-restriction is lost; what matters is
+    // that the port is known before `up` compiles it into the policy, and
+    // this call returns only once the child has written it.
+    let (port_r, port_w) = pipe()?;
+
     // Inheritable in the child alone, never made so here: a fleet
-    // supervisor has other threads forking, and a listener with CLOEXEC
-    // cleared leaks into their children for good (`lifecycle::pass_fds`).
+    // supervisor has other threads forking, and a fd with CLOEXEC cleared
+    // leaks into their children for good (`lifecycle::pass_fds`).
     let mut cmd = Command::new(exe);
-    crate::lifecycle::pass_fds(&mut cmd, &[listener.as_raw_fd(), unix_listener.as_raw_fd()]);
+    crate::lifecycle::pass_fds(&mut cmd, &[port_w.as_raw_fd(), unix_listener.as_raw_fd()]);
     cmd.arg("__egress_proxy")
-        .arg(listener.as_raw_fd().to_string())
+        .arg(port_w.as_raw_fd().to_string())
         .arg(unix_listener.as_raw_fd().to_string())
         .env(
             "DEVCROFT_EGRESS_ALLOW",
             serde_json::to_string(allow).expect("Vec<String> serialization is infallible"),
         )
         .env("DEVCROFT_EGRESS_TOKEN", &token)
-        // `server::run` opens this itself for structured allow/refuse
-        // records (one write per record, same discipline
-        // `keeper::connection::log_record` established) — a separate fd
-        // to the same path this process's own stdout/stderr already
-        // point at below, which is deliberate belt-and-suspenders: an
-        // unexpected panic or a dependency's own stray `eprintln!` still
-        // lands in the file even though it never goes through `run`'s
-        // structured logging.
+        // `server::start` opens this itself for the allow/refuse records;
+        // stdout/stderr point at it too, so a panic still lands in the file.
         .env("DEVCROFT_EGRESS_LOG", log_path)
         .stdin(Stdio::null())
         .stdout(log.try_clone()?)
@@ -152,16 +150,107 @@ pub fn spawn_at(
     }
 
     configure(&mut cmd)?;
-    let child = cmd.spawn()?;
-    // The child has its own copies now: `spawn` returns only once the exec
-    // has succeeded. Ours are closed here, not leaked. **They used to be
-    // `forget`-ed**, which was harmless in `up`, a one-shot process, and is
-    // not in a fleet supervisor: both listeners have CLOEXEC cleared, so
-    // every agent started afterwards would inherit this proxy's listeners,
-    // and a process in agent B could `accept()` agent A's egress.
-    drop(listener);
+    let mut child = cmd.spawn()?;
+    // Ours are closed here, not leaked: with CLOEXEC cleared in the child
+    // only, every process started afterwards would otherwise inherit them,
+    // and a process in agent B could `accept()` agent A's egress. Closing
+    // the write end also makes the read below see EOF if the child dies.
+    drop(port_w);
     drop(unix_listener);
-    Ok((child.id() as libc::pid_t, port, token))
+    match read_port(port_r) {
+        Ok(port) => Ok((child.id() as libc::pid_t, port, token)),
+        Err(e) => {
+            let _ = child.kill();
+            let _ = child.wait();
+            Err(io::Error::new(
+                e.kind(),
+                format!(
+                    "the egress proxy did not report its port ({e}); see {}",
+                    log_path.display()
+                ),
+            ))
+        }
+    }
+}
+
+/// How long `spawn_at` waits for the child to report its port. Starting
+/// `nono-proxy` takes milliseconds; this only bounds a child that hangs.
+const PORT_REPORT_TIMEOUT_MS: i32 = 10_000;
+
+fn pipe() -> io::Result<(std::os::fd::OwnedFd, std::os::fd::OwnedFd)> {
+    use std::os::fd::FromRawFd;
+    let mut fds = [0; 2];
+    // `pipe` + `FD_CLOEXEC` rather than `pipe2`, which macOS lacks. The
+    // window between the two is narrow and its worst case is bounded: a
+    // fleet supervisor thread forking in it would carry the write end into
+    // its child, which can only hold it open, turning "the proxy died
+    // before reporting" from an immediate EOF into `read_port`'s timeout.
+    // It cannot read the port or write a false one it was never told of.
+    // SAFETY: `fds` is a valid two-element array for pipe to fill.
+    if unsafe { libc::pipe(fds.as_mut_ptr()) } < 0 {
+        return Err(io::Error::last_os_error());
+    }
+    // SAFETY: pipe succeeded, so both are fresh fds owned by nobody else.
+    let (r, w) = unsafe {
+        (
+            std::os::fd::OwnedFd::from_raw_fd(fds[0]),
+            std::os::fd::OwnedFd::from_raw_fd(fds[1]),
+        )
+    };
+    for fd in [&r, &w] {
+        // SAFETY: a valid fd we own.
+        if unsafe { libc::fcntl(fd.as_raw_fd(), libc::F_SETFD, libc::FD_CLOEXEC) } < 0 {
+            return Err(io::Error::last_os_error());
+        }
+    }
+    Ok((r, w))
+}
+
+/// Reads `<port>\n` from the child, bounded by [`PORT_REPORT_TIMEOUT_MS`].
+fn read_port(fd: std::os::fd::OwnedFd) -> io::Result<u16> {
+    use std::io::Read;
+    let mut file = std::fs::File::from(fd);
+    let mut buf = Vec::new();
+    let deadline =
+        std::time::Instant::now() + std::time::Duration::from_millis(PORT_REPORT_TIMEOUT_MS as u64);
+    loop {
+        let left = deadline.saturating_duration_since(std::time::Instant::now());
+        let mut pfd = libc::pollfd {
+            fd: file.as_raw_fd(),
+            events: libc::POLLIN,
+            revents: 0,
+        };
+        // SAFETY: one valid pollfd.
+        let n = unsafe { libc::poll(&mut pfd, 1, left.as_millis() as i32) };
+        if n < 0 {
+            let e = io::Error::last_os_error();
+            if e.kind() == io::ErrorKind::Interrupted {
+                continue;
+            }
+            return Err(e);
+        }
+        if n == 0 {
+            return Err(io::Error::new(io::ErrorKind::TimedOut, "timed out"));
+        }
+        let mut chunk = [0u8; 16];
+        let got = file.read(&mut chunk)?;
+        if got == 0 {
+            return Err(io::Error::new(
+                io::ErrorKind::UnexpectedEof,
+                "it exited first",
+            ));
+        }
+        buf.extend_from_slice(&chunk[..got]);
+        if let Some(end) = buf.iter().position(|b| *b == b'\n') {
+            return std::str::from_utf8(&buf[..end])
+                .ok()
+                .and_then(|s| s.parse().ok())
+                .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "not a port"));
+        }
+        if buf.len() > 8 {
+            return Err(io::Error::new(io::ErrorKind::InvalidData, "not a port"));
+        }
+    }
 }
 
 /// The proxy variables a sandbox's environment gets: every standard HTTP
@@ -177,7 +266,9 @@ pub fn client_env(port: u16, token: &str) -> Vec<(String, String)> {
     let endpoint = if token.is_empty() {
         format!("http://127.0.0.1:{port}")
     } else {
-        format!("http://{token}@127.0.0.1:{port}")
+        // `nono:` is the user `nono-proxy` checks a Basic credential for;
+        // `<token>@` alone is refused (measured).
+        format!("http://nono:{token}@127.0.0.1:{port}")
     };
     let mut vars: Vec<(String, String)> =
         ["HTTP_PROXY", "http_proxy", "HTTPS_PROXY", "https_proxy"]

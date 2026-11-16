@@ -607,9 +607,11 @@ mod tests {
         let found = denials(
             "npm ERR! 403 Forbidden\n",
             Some(
-                "allow peer=127.0.0.1:1 host=ok.example port=443\n\
-                 refuse peer=127.0.0.1:2 host=registry.npmjs.org port=443 reason=not in allowlist\n\
-                 refuse peer=127.0.0.1:3 reason=unauthenticated\n",
+                // `proxy::server::record`'s shape since `nono-proxy`: an
+                // auth failure names what was asked for, never as `host=`.
+                "allow host=ok.example port=443\n\
+                 refuse host=registry.npmjs.org port=443 reason=not in allowlist\n\
+                 refuse requested=ok.example:443 reason=unauthenticated\n",
             ),
             &policy(),
             &roots(),
