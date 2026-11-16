@@ -399,6 +399,53 @@ rtk proxy python3 experiments/microvm/build_editor.py --out experiments/microvm/
 rtk proxy python3 experiments/microvm/editor_smoke.py --editor experiments/microvm/artifacts/editor-pinned/editor.img [--helper <hvi helper>]
 ```
 
+**Pinned orchestration (2026-11-16).** The tools that *prepare* the image are
+now pinned as well, so nothing is `apk add`ed to the Lima VM any more.
+[editor/bootstrap.sh](editor/bootstrap.sh) runs on the VM and executes only
+busybox (by absolute path), sudo and the kernel. It first checks those against
+a pinned host contract (kernel 6.18.7-0-virt, busybox-1.37.0-r30, musl,
+sudo, linux-virt). It then installs a 52-APK orchestration root with an
+`apk.static` taken from a pinned `apk-tools-static`, using keys from a pinned
+`alpine-keys`
+([editor-tools-packages-aarch64.json](fixtures/editor-tools-packages-aarch64.json)).
+That root holds python3, apk-tools, mount, e2fsprogs, coreutils, util-linux
+and tar, and `build.py` runs inside it. The VM's base image is the
+digest-pinned one in Lima's own config, and `build_editor.py` refuses to run
+if it differs. `--freeze-tools` repins the closure and records the contract.
+Resolving pins is the only step that still uses the VM's own apk and python3.
+
+Two failures came first, and both are retained:
+
+- **The contract named busybox, but PATH chose coreutils.** Earlier builds
+  had `apk add`ed coreutils to the VM, so `sha256sum -s` resolved to
+  coreutils and was rejected. Every bootstrap tool is now named as
+  `/bin/busybox <applet>`.
+- **apk could not run package scripts in a chroot.** apk 3 runs package
+  scripts in a user namespace, and the kernel refuses that to any chrooted
+  process (`unshare: Invalid argument`, on every post-install). The
+  orchestration root is now entered with `pivot_root` in a private mount
+  namespace, whose mounts go away with the process.
+
+As a negative control, a contract with one altered sudo version stops
+bootstrap with exit 1 before the orchestration root is touched. Two builds
+from identical pins produced different images: `0002dd7d…` from the freeze
+run and `9e09a70e…` from the fully enforced run. The output is not
+bit-identical. With `9e09a70e…`, the editor row passes on both native
+adapters (`results/{libkrun,hvi}-macos-arm64-editor-pinned-orchestration.json`,
+receipt `fixtures/editor-aarch64-pinned-orchestration-build.json`).
+
+Still unpinned:
+
+- limactl and Virtualization.framework, which copy files and run the VM;
+- npm registry content beyond the shrinkwrap integrity hashes;
+- the base workload image's own builder. `base.img` is hash-checked as an
+  input, but `build_workload.py` still `apk add`s to the VM, and every
+  workload and Remote-SSH row depends on that image.
+
+```sh
+rtk proxy python3 experiments/microvm/build_editor.py --out experiments/microvm/artifacts/editor-orchestration
+```
+
 The editor harness uses 2 vCPUs and 1 GiB for one VM, a read-only editor image
 and a private ext4 workspace. Guest nono permits TCP bind/connect on 9090 only
 when that editor fixture exists; the host reaches it through SSH over vsock.
