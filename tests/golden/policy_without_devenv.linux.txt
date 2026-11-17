@@ -114,5 +114,6 @@ CompiledPolicy {
     allocations: [],
     network_proxy_port: None,
     unix_socket_bind: [],
+    credentials_broker: [],
     signal_mode: "isolated",
 }

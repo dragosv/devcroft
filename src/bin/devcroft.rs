@@ -2628,15 +2628,25 @@ fn select_tools_layer(
 /// "Disclosure on a repeat up"). Read from `Meta`, so it names what the
 /// sandbox has, not what the configuration asks for now.
 fn print_credential_disclosure(manifest: &devcroft::config::Manifest) {
-    let recorded = devcroft::lifecycle::StatePaths::new(&manifest.sandbox.name)
+    let meta = devcroft::lifecycle::StatePaths::new(&manifest.sandbox.name)
         .ok()
-        .and_then(|paths| devcroft::lifecycle::read_meta(&paths.meta).ok().flatten())
-        .map(|meta| meta.credentials)
-        .unwrap_or_default();
-    for name in recorded {
+        .and_then(|paths| devcroft::lifecycle::read_meta(&paths.meta).ok().flatten());
+    let (delivered, brokered) = meta.map(|m| (m.credentials, m.brokers)).unwrap_or_default();
+    for name in delivered {
         println!(
             "devcroft: credential: {name}, an environment variable from your shell \
              ([credentials] env); every process in this sandbox can read it"
+        );
+    }
+    // Distinct from delivery, and saying what it costs: `nono-proxy` serves
+    // a route's host only through the route, so a plain `CONNECT` to it from
+    // inside is refused from now on.
+    for b in brokered {
+        println!(
+            "devcroft: credential: {}, brokered for {} ([credentials.broker]); the sandbox \
+             holds a placeholder and the proxy adds the real value, so {} is reachable only \
+             through ${}",
+            b.env, b.host, b.host, b.endpoint_env
         );
     }
 }
@@ -2752,6 +2762,7 @@ fn cli_up(args: &[String]) -> i32 {
             skip_hooks,
             tools: tools.as_ref(),
             credentials: &user_config.credentials,
+            brokers: &user_config.brokers,
         },
     ) {
         Ok(outcome) => {
@@ -4006,7 +4017,7 @@ fn compile_with_provider_grants(
     // an `up` actually ran one. `meta.proxy_port` is `None` for a
     // sandbox that never wanted filtering, so this is a no-op there.
     let compiled = match meta.proxy_port {
-        Some(port) => compiled.with_proxy_port(port),
+        Some(port) => compiled.with_proxy_port(port).with_brokers(&meta.brokers),
         None => compiled,
     };
     // Service ports from the provider's declarations, recorded by `up` for
@@ -5209,6 +5220,38 @@ fn keeper_main(fd: RawFd, ssh_fd: RawFd) -> ! {
 /// which a `NetworkMode::ProxyOnly` self-restriction would itself deny.
 /// Never returns under normal operation.
 fn egress_proxy_main(port_fd: RawFd, unix_fd: RawFd) -> ! {
+    // Brokered credentials, from stdin (`proxy::spawn_at` writes them and
+    // closes it). **First, before any thread exists**: each value is put
+    // in this process's environment for `nono-proxy`'s `env://` source,
+    // and `set_var` is only sound while nothing else can read the
+    // environment. A variable set at runtime is not in the block the
+    // kernel shows as `/proc/<pid>/environ`, which holds what exec gave.
+    let routes = {
+        let mut text = zeroize::Zeroizing::new(String::new());
+        if let Err(e) = std::io::Read::read_to_string(&mut std::io::stdin(), &mut text) {
+            eprintln!("devcroft __egress_proxy: reading routes: {e}");
+            std::process::exit(1);
+        }
+        let brokers: Vec<devcroft::proxy::BrokerRoute> = if text.trim().is_empty() {
+            Vec::new()
+        } else {
+            serde_json::from_str(&text).unwrap_or_else(|e| {
+                eprintln!("devcroft __egress_proxy: routes are not valid: {e}");
+                std::process::exit(1);
+            })
+        };
+        let mut routes = Vec::new();
+        for (i, b) in brokers.into_iter().enumerate() {
+            let var = format!("DEVCROFT_BROKERED_{i}");
+            let value = zeroize::Zeroizing::new(b.value.clone());
+            // SAFETY: single-threaded here; no thread has been started yet.
+            unsafe { std::env::set_var(&var, value.as_str()) };
+            routes.push((devcroft::proxy::server::broker_route(&b, &var), var));
+            drop(zeroize::Zeroizing::new(b.value));
+        }
+        routes
+    };
+
     // A fleet agent's proxy exits with its agent; `up`'s has no lifeline.
     #[cfg(target_os = "linux")]
     devcroft::fleet::lifeline::watch();
@@ -5232,13 +5275,38 @@ fn egress_proxy_main(port_fd: RawFd, unix_fd: RawFd) -> ! {
     // Set by the fleet supervisor for an agent's proxy; absent for `up`'s.
     let label = std::env::var("DEVCROFT_EGRESS_LABEL").ok();
 
-    let proxy = match devcroft::proxy::server::start(allow, log_path, token.clone(), label) {
+    let (route_configs, credential_vars): (Vec<_>, Vec<_>) = routes.into_iter().unzip();
+    let expected_routes = route_configs.len();
+    let proxy = match devcroft::proxy::server::start(
+        allow,
+        log_path,
+        token.clone(),
+        label,
+        route_configs,
+    ) {
         Ok(p) => p,
         Err(e) => {
             eprintln!("devcroft __egress_proxy: {e}");
             std::process::exit(1);
         }
     };
+    // `nono-proxy` loaded every credential during `start`; a route whose
+    // credential did not load would serve its placeholder to nothing, so
+    // that is a failed start, not a degraded one.
+    if proxy.loaded_routes() != expected_routes {
+        eprintln!(
+            "devcroft __egress_proxy: {} of {expected_routes} brokered credentials loaded",
+            proxy.loaded_routes()
+        );
+        std::process::exit(1);
+    }
+    // Loaded: the environment copy is no longer needed. Other threads exist
+    // now, but none of them reads the environment, so removal is sound.
+    for var in credential_vars {
+        // SAFETY: nothing in this process reads the environment after
+        // `start`; `nono-proxy` holds its own copy of each value.
+        unsafe { std::env::remove_var(var) };
+    }
 
     // The unix listener a network-isolated sandbox reaches the proxy
     // through, bridged into `nono-proxy`'s TCP port with the token added.

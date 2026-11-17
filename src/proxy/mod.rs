@@ -71,14 +71,63 @@ pub fn spawn(
     exe: &Path,
     paths: &StatePaths,
     allow: &[String],
+    brokers: &[BrokerRoute],
 ) -> io::Result<(libc::pid_t, u16, String)> {
     spawn_at(
         exe,
         &paths.proxy_socket,
         &paths.proxy_log,
         allow,
+        brokers,
         |_| Ok(()),
     )
+}
+
+/// One brokered credential as the proxy process is handed it
+/// (`add-agent-workload` 4b): a `nono-proxy` route on the proxy's own port,
+/// under `/<prefix>`, injecting `value` into `header` on the way to
+/// `https://<host>`.
+///
+/// **`value` travels on the child's stdin and nowhere else** — never argv,
+/// never its environment block, so neither `ps` nor `/proc/<pid>/environ`
+/// shows it. Not `Debug`, so it cannot reach a log by accident.
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
+pub struct BrokerRoute {
+    pub prefix: String,
+    pub host: String,
+    pub header: String,
+    /// The sandbox's variable for the placeholder (`nono-proxy`'s `env_var`).
+    pub env: String,
+    /// `nono-proxy`'s `phantom_format`.
+    pub placeholder: Option<String>,
+    /// A CA bundle to trust for the upstream, beyond the system roots: the
+    /// one the sandbox's own environment names.
+    pub tls_ca: Option<String>,
+    pub value: String,
+}
+
+/// The route prefix for the `index`th brokered credential.
+pub fn broker_prefix(index: usize) -> String {
+    format!("broker{index}")
+}
+
+/// The endpoint a sandbox is given for a brokered credential: the same
+/// shape `nono-proxy`'s own `credential_env_vars` produces.
+pub fn broker_endpoint(port: u16, prefix: &str) -> String {
+    format!("http://127.0.0.1:{port}/{prefix}")
+}
+
+/// The placeholder a sandbox holds: the session token, wrapped in the
+/// route's template if it has one, rendered by the same
+/// `PhantomTemplate` `nono-proxy` validates it against. `None` for a
+/// template that does not parse, which config parsing already refused.
+pub fn broker_phantom(token: &str, placeholder: Option<&str>) -> Option<String> {
+    match placeholder {
+        None => Some(token.to_string()),
+        Some(fmt) => nono_proxy::token::PhantomTemplate::parse_route(fmt)
+            .ok()
+            .map(|t| t.render(token)),
+    }
 }
 
 /// [`spawn`], with the unix socket and log at explicit paths and a hook
@@ -90,6 +139,7 @@ pub fn spawn_at(
     socket: &Path,
     log_path: &Path,
     allow: &[String],
+    brokers: &[BrokerRoute],
     configure: impl FnOnce(&mut Command) -> io::Result<()>,
 ) -> io::Result<(libc::pid_t, u16, String)> {
     let token = generate_token();
@@ -134,9 +184,16 @@ pub fn spawn_at(
         // `server::start` opens this itself for the allow/refuse records;
         // stdout/stderr point at it too, so a panic still lands in the file.
         .env("DEVCROFT_EGRESS_LOG", log_path)
-        .stdin(Stdio::null())
+        // Brokered values arrive on stdin (below), and only there.
+        .stdin(Stdio::piped())
         .stdout(log.try_clone()?)
         .stderr(log);
+    // `up`'s own environment holds each brokered value under its own name,
+    // since that is where it was read from; the proxy inherits the rest of
+    // the shell but not those, so its environment block never holds one.
+    for b in brokers {
+        cmd.env_remove(&b.env);
+    }
     // SAFETY: setsid() only touches this (freshly forked, single-
     // threaded) child's own session/process-group state — the same call,
     // same safety argument, as `up.rs::spawn_keeper`'s.
@@ -151,6 +208,22 @@ pub fn spawn_at(
 
     configure(&mut cmd)?;
     let mut child = cmd.spawn()?;
+    // Written whole, then closed, before the port is read: the child reads
+    // stdin to EOF before it starts serving. A pipe holds far more than a
+    // handful of routes, so this cannot block on the child.
+    let routes = serde_json::to_string(brokers).expect("routes serialize infallibly");
+    if let Some(mut stdin) = child.stdin.take() {
+        use std::io::Write;
+        if let Err(e) = stdin.write_all(routes.as_bytes()) {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(io::Error::new(
+                e.kind(),
+                format!("handing the egress proxy its routes: {e}"),
+            ));
+        }
+    }
+    drop(zeroize::Zeroizing::new(routes));
     // Ours are closed here, not leaked: with CLOEXEC cleared in the child
     // only, every process started afterwards would otherwise inherit them,
     // and a process in agent B could `accept()` agent A's egress. Closing

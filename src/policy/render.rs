@@ -97,6 +97,12 @@ pub fn render(compiled: &CompiledPolicy) -> String {
         }
         None => writeln!(out, "network.proxy: not requested").unwrap(),
     }
+    // Only when there are any, so a sandbox without brokers renders as it
+    // did before brokering existed. Each host is reachable only through its
+    // endpoint: `nono-proxy` refuses a plain `CONNECT` to a route's host.
+    if !compiled.credentials_broker.is_empty() {
+        render_section(&mut out, "credentials.broker", &compiled.credentials_broker);
+    }
     // Rendered unconditionally, on both platforms, because the policy
     // invariant is that nothing reaches the backend that `--render` cannot
     // show — and the Linux/macOS split here is about which platform *acts*
@@ -430,6 +436,41 @@ mod tests {
             !render(&compile(&m)).contains("network.loopback"),
             "a manifest without the key renders as before"
         );
+    }
+
+    /// `add-agent-workload` 4b.6: a brokered host renders with origin
+    /// `credential:broker`, naming its header and variables, and the section
+    /// is absent without brokers. The provisioning policy brokers nothing.
+    #[test]
+    fn render_shows_brokered_hosts_with_their_origin_only_when_any() {
+        let (m, _) = parse(
+            "[sandbox]\nname = \"b\"\n[network]\ndefault = \"deny\"\n\
+             allow = [\"api.anthropic.com\"]\n",
+        )
+        .unwrap();
+        assert!(!render(&compile(&m)).contains("credentials.broker"));
+        let broker = crate::config::BrokerDecl {
+            host: "api.anthropic.com".into(),
+            header: "x-api-key".into(),
+            env: "ANTHROPIC_API_KEY".into(),
+            endpoint_env: "ANTHROPIC_BASE_URL".into(),
+            placeholder: None,
+        };
+        let compiled = compile(&m).with_brokers(std::slice::from_ref(&broker));
+        let out = render(&compiled);
+        let line = out
+            .lines()
+            .skip_while(|l| *l != "credentials.broker:")
+            .nth(1)
+            .unwrap_or_else(|| panic!("{out}"));
+        assert!(line.contains("api.anthropic.com"), "{line}");
+        assert!(line.contains("x-api-key"), "{line}");
+        assert!(line.contains("$ANTHROPIC_BASE_URL"), "{line}");
+        assert!(line.trim_end().ends_with("credential:broker"), "{line}");
+        let back: crate::policy::CompiledPolicy =
+            serde_json::from_str(&serde_json::to_string(&compiled).unwrap()).unwrap();
+        assert_eq!(render(&back), out, "the artifact renders the same");
+        assert!(compiled.for_provisioning(&[]).credentials_broker.is_empty());
     }
 
     #[test]

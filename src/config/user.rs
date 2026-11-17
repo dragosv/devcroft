@@ -10,10 +10,12 @@
 //!
 //! Validated as strictly as `devcroft.toml`, and for the same reason: a key
 //! that parses and does nothing is the failure this project refuses to ship.
-//! That is also why only the environment-variable shape of a credential is
-//! accepted: the single-file shape waits on a measurement (`add-agent-workload`
-//! task 4.0), and until something delivers it, `credentials.file` is an
-//! unknown key, not a silent one.
+//! That is also why a credential has exactly two accepted shapes: delivered as
+//! an environment variable (`credentials.env`), or brokered through the egress
+//! proxy (`[[credentials.broker]]`), where the sandbox holds a placeholder. The
+//! single-file shape waits on a measurement (`add-agent-workload` task 4.0),
+//! and until something delivers it, `credentials.file` is an unknown key, not
+//! a silent one.
 
 use std::path::{Path, PathBuf};
 
@@ -36,6 +38,32 @@ pub struct UserConfig {
     /// `[env] forward`: the key an agent needs is the operator's, so the
     /// project's committed file need not name it.
     pub credentials: Vec<String>,
+    /// `[[credentials.broker]]`: credentials the egress proxy injects, so
+    /// the sandbox holds a placeholder and never the value
+    /// (`add-agent-workload` design.md Decision 6).
+    pub brokers: Vec<BrokerDecl>,
+}
+
+/// One brokered credential. The real value is read from the user's shell
+/// at `up`, under `env`, and handed to the proxy alone; the sandbox gets a
+/// placeholder under the same name, and the proxy's endpoint for `host`
+/// under `endpoint_env`. Holds no value, so `Meta` records it as it is.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct BrokerDecl {
+    /// The upstream, reached as `https://<host>`. A bare name: no scheme,
+    /// port, path or wildcard.
+    pub host: String,
+    /// The request header that carries the key, e.g. `x-api-key`.
+    pub header: String,
+    /// The variable the placeholder is delivered in, and the one the real
+    /// value is read from in the invoking shell.
+    pub env: String,
+    /// The variable the sandbox gets `http://127.0.0.1:<port>/<prefix>` in.
+    pub endpoint_env: String,
+    /// A `nono-proxy` `phantom_format` (`ghp_{}`), for a client that checks
+    /// a key's shape before sending it. Absent, the placeholder is the bare
+    /// session token.
+    pub placeholder: Option<String>,
 }
 
 /// `[tools]`: the directory holding the user's tooling environment, and,
@@ -60,6 +88,16 @@ struct RawUserConfig {
 #[serde(default)]
 struct RawCredentials {
     env: Vec<String>,
+    broker: Vec<RawBroker>,
+}
+
+#[derive(Deserialize)]
+struct RawBroker {
+    host: String,
+    header: String,
+    env: String,
+    endpoint_env: String,
+    placeholder: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -68,7 +106,24 @@ struct RawTools {
     path: String,
 }
 
-const SECTIONS: &[(&str, &[&str])] = &[("tools", &["provider", "path"]), ("credentials", &["env"])];
+const SECTIONS: &[(&str, &[&str])] = &[
+    ("tools", &["provider", "path"]),
+    ("credentials", &["env", "broker"]),
+];
+
+/// The keys of one `[[credentials.broker]]` entry.
+const BROKER_FIELDS: &[&str] = &["host", "header", "env", "endpoint_env", "placeholder"];
+
+/// Variables devcroft or the proxy sets itself in every sandbox with egress,
+/// which a broker would otherwise silently overwrite or be overwritten by.
+const RESERVED_VARS: &[&str] = &[
+    "HTTP_PROXY",
+    "HTTPS_PROXY",
+    "NO_PROXY",
+    "ALL_PROXY",
+    "HOME",
+    "PATH",
+];
 
 /// Where the user configuration lives on this host, or `None` when neither
 /// `XDG_CONFIG_HOME` nor `HOME` says. A relative `XDG_CONFIG_HOME` is ignored,
@@ -138,7 +193,133 @@ pub fn parse_user_config(text: &str, home: &Path) -> Result<UserConfig, ConfigEr
             credentials.push(name);
         }
     }
-    Ok(UserConfig { tools, credentials })
+    let brokers = parse_brokers(raw.credentials.broker, &credentials)?;
+    Ok(UserConfig {
+        tools,
+        credentials,
+        brokers,
+    })
+}
+
+/// Shape checks for `[[credentials.broker]]`. What needs the project (the
+/// allowlist) or the shell (the value) is checked at `up`.
+fn parse_brokers(
+    raw: Vec<RawBroker>,
+    env_credentials: &[String],
+) -> Result<Vec<BrokerDecl>, ConfigError> {
+    let err = |i: usize, key: &str, msg: String| {
+        ConfigError::Parse(format!("credentials.broker[{i}].{key}: {msg}"))
+    };
+    let mut out: Vec<BrokerDecl> = Vec::new();
+    for (i, b) in raw.into_iter().enumerate() {
+        if !is_bare_host(&b.host) {
+            return Err(err(
+                i,
+                "host",
+                format!(
+                    "{:?} must be a bare host name such as `api.anthropic.com`: no scheme, \
+                     port, path or wildcard, since the proxy reaches it as `https://<host>`",
+                    b.host
+                ),
+            ));
+        }
+        if b.header.is_empty() || !b.header.bytes().all(is_header_name_byte) {
+            return Err(err(
+                i,
+                "header",
+                format!("{:?} is not an HTTP header name", b.header),
+            ));
+        }
+        for (key, name) in [("env", &b.env), ("endpoint_env", &b.endpoint_env)] {
+            if !super::is_env_var_name(name) {
+                return Err(err(
+                    i,
+                    key,
+                    format!(
+                        "{name:?} is not an environment variable name (letters, digits and \
+                         `_`, not starting with a digit)"
+                    ),
+                ));
+            }
+            let upper = name.to_ascii_uppercase();
+            if RESERVED_VARS.contains(&upper.as_str()) || upper.starts_with("DEVCROFT_") {
+                return Err(err(
+                    i,
+                    key,
+                    format!("`{name}` is set by devcroft itself in every sandbox"),
+                ));
+            }
+        }
+        if b.env == b.endpoint_env {
+            return Err(err(
+                i,
+                "endpoint_env",
+                format!(
+                    "`{}` is also this entry's `env`; the placeholder and the endpoint need a variable each",
+                    b.env
+                ),
+            ));
+        }
+        // Brokered and delivered at once would put the value in the sandbox
+        // after all, which is the one thing brokering exists to prevent.
+        if env_credentials.contains(&b.env) {
+            return Err(err(
+                i,
+                "env",
+                format!(
+                    "`{}` is also in `credentials.env`, which delivers the real value into the \
+                     sandbox; a credential is brokered or delivered, not both",
+                    b.env
+                ),
+            ));
+        }
+        for prev in &out {
+            for name in [&b.env, &b.endpoint_env] {
+                if *name == prev.env || *name == prev.endpoint_env {
+                    return Err(err(
+                        i,
+                        if *name == b.env {
+                            "env"
+                        } else {
+                            "endpoint_env"
+                        },
+                        format!("`{name}` is already used by an earlier broker entry"),
+                    ));
+                }
+            }
+        }
+        if let Some(fmt) = &b.placeholder {
+            nono_proxy::token::PhantomTemplate::parse_route(fmt)
+                .map_err(|e| err(i, "placeholder", e))?;
+        }
+        out.push(BrokerDecl {
+            host: b.host.to_ascii_lowercase(),
+            header: b.header,
+            env: b.env,
+            endpoint_env: b.endpoint_env,
+            placeholder: b.placeholder,
+        });
+    }
+    Ok(out)
+}
+
+/// A DNS name, lowercase or not: labels of letters, digits and `-`, at
+/// least two of them. Rejects schemes, ports, paths and `*`.
+fn is_bare_host(host: &str) -> bool {
+    let labels: Vec<&str> = host.split('.').collect();
+    labels.len() >= 2
+        && labels.iter().all(|l| {
+            !l.is_empty()
+                && l.len() <= 63
+                && !l.starts_with('-')
+                && !l.ends_with('-')
+                && l.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')
+        })
+}
+
+/// RFC 9110 `token` bytes.
+fn is_header_name_byte(b: u8) -> bool {
+    b.is_ascii_alphanumeric() || b"!#$%&'*+-.^_`|~".contains(&b)
 }
 
 fn check_unknown_keys(table: &toml::Table) -> Result<(), ConfigError> {
@@ -157,6 +338,18 @@ fn check_unknown_keys(table: &toml::Table) -> Result<(), ConfigError> {
                         path: format!("{key}.{sub_key}"),
                         suggestion: closest(sub_key, fields),
                     });
+                }
+            }
+            if let Some(entries) = sub.get("broker").and_then(|v| v.as_array()) {
+                for (i, entry) in entries.iter().enumerate() {
+                    for field in entry.as_table().into_iter().flat_map(|t| t.keys()) {
+                        if !BROKER_FIELDS.contains(&field.as_str()) {
+                            return Err(ConfigError::UnknownKey {
+                                path: format!("{key}.broker[{i}].{field}"),
+                                suggestion: closest(field, BROKER_FIELDS),
+                            });
+                        }
+                    }
                 }
             }
         }
@@ -264,6 +457,82 @@ mod tests {
         let err = parse("[credentials]\nfile = \"~/.claude/.credentials.json\"\n").unwrap_err();
         assert!(
             matches!(&err, ConfigError::UnknownKey { path, .. } if path == "credentials.file"),
+            "{err:?}"
+        );
+    }
+
+    const BROKER: &str = "[[credentials.broker]]\nhost = \"api.anthropic.com\"\n\
+        header = \"x-api-key\"\nenv = \"ANTHROPIC_API_KEY\"\n\
+        endpoint_env = \"ANTHROPIC_BASE_URL\"\n";
+
+    #[test]
+    fn a_broker_parses() {
+        let c = parse(&format!("{BROKER}placeholder = \"sk-ant-{{}}\"\n")).unwrap();
+        assert_eq!(
+            c.brokers,
+            vec![BrokerDecl {
+                host: "api.anthropic.com".into(),
+                header: "x-api-key".into(),
+                env: "ANTHROPIC_API_KEY".into(),
+                endpoint_env: "ANTHROPIC_BASE_URL".into(),
+                placeholder: Some("sk-ant-{}".into()),
+            }]
+        );
+        assert_eq!(parse(BROKER).unwrap().brokers[0].placeholder, None);
+    }
+
+    /// Each refusal names the entry and the key, as `devcroft.toml`'s do.
+    #[test]
+    fn a_broker_is_checked_key_by_key() {
+        let bad = |from: &str, to: &str, key: &str| {
+            let text = BROKER.replace(from, to);
+            let err = parse(&text).unwrap_err().to_string();
+            assert!(
+                err.contains(&format!("credentials.broker[0].{key}")),
+                "{from} -> {to}: {err}"
+            );
+        };
+        bad(
+            "\"api.anthropic.com\"",
+            "\"https://api.anthropic.com\"",
+            "host",
+        );
+        bad("\"api.anthropic.com\"", "\"api.anthropic.com:443\"", "host");
+        bad("\"api.anthropic.com\"", "\"*.anthropic.com\"", "host");
+        bad("\"api.anthropic.com\"", "\"localhost\"", "host");
+        bad("\"x-api-key\"", "\"x api key\"", "header");
+        bad("\"ANTHROPIC_API_KEY\"", "\"1KEY\"", "env");
+        bad("\"ANTHROPIC_BASE_URL\"", "\"HTTPS_PROXY\"", "endpoint_env");
+        bad(
+            "\"ANTHROPIC_BASE_URL\"",
+            "\"ANTHROPIC_API_KEY\"",
+            "endpoint_env",
+        );
+        let err = parse(&format!("{BROKER}placeholder = \"Bearer {{}}\"\n"))
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("credentials.broker[0].placeholder"), "{err}");
+    }
+
+    /// Brokered and delivered at once would put the value in the sandbox.
+    #[test]
+    fn a_broker_cannot_share_a_variable_with_env_delivery_or_another_broker() {
+        let err = parse(&format!(
+            "[credentials]\nenv = [\"ANTHROPIC_API_KEY\"]\n{BROKER}"
+        ))
+        .unwrap_err()
+        .to_string();
+        assert!(err.contains("credentials.broker[0].env"), "{err}");
+        let err = parse(&format!("{BROKER}{BROKER}")).unwrap_err().to_string();
+        assert!(err.contains("credentials.broker[1].env"), "{err}");
+    }
+
+    #[test]
+    fn an_unknown_broker_key_is_named_with_its_entry() {
+        let err = parse(&format!("{BROKER}hedaer = \"x\"\n")).unwrap_err();
+        assert!(
+            matches!(&err, ConfigError::UnknownKey { path, suggestion }
+                if path == "credentials.broker[0].hedaer" && suggestion.as_deref() == Some("header")),
             "{err:?}"
         );
     }

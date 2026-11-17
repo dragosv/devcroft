@@ -228,6 +228,10 @@ pub enum Origin {
     /// provider that resolved it (`crate::tooling`, `add-agent-workload`).
     /// Never from a manifest: the layer is the user's, not the project's.
     Tools(&'static str),
+    /// A host the egress proxy injects a brokered credential for
+    /// (`[[credentials.broker]]`, `add-agent-workload` 4b.6). From the
+    /// user's configuration, never the manifest, and never the value.
+    CredentialBroker,
 }
 
 /// Serialized as its displayed form (`manifest:filesystem.allow`,
@@ -257,6 +261,7 @@ impl<'de> serde::Deserialize<'de> for Origin {
             "trust-store" => Ok(Origin::TrustStore),
             "pid-namespace" => Ok(Origin::PidNamespace),
             "identity" => Ok(Origin::Identity),
+            "credential:broker" => Ok(Origin::CredentialBroker),
             t => match (
                 t.strip_prefix("manifest:"),
                 t.strip_prefix("provider:"),
@@ -287,6 +292,7 @@ impl std::fmt::Display for Origin {
             Origin::PidNamespace => write!(f, "pid-namespace"),
             Origin::Identity => write!(f, "identity"),
             Origin::Tools(provider) => write!(f, "tools:{provider}"),
+            Origin::CredentialBroker => write!(f, "credential:broker"),
         }
     }
 }
@@ -385,6 +391,17 @@ pub struct CompiledPolicy {
     /// `policy --render` must not differ from what the backend gets) but
     /// consumed only where it means something.
     pub unix_socket_bind: Vec<AnnotatedValue>,
+    /// The hosts the egress proxy injects a brokered credential for, each
+    /// rendered with its header and variables, origin `credential:broker`
+    /// (`add-agent-workload` 4b.6). Folded in by [`Self::with_brokers`] at
+    /// `up`, since they come from the user's configuration, not the
+    /// manifest. Nothing in the backend profile corresponds: brokering is
+    /// the proxy's, and the host's egress is still `network.allow`'s.
+    ///
+    /// Skipped when empty, so a policy without brokers serializes exactly
+    /// as it did before brokering existed.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub credentials_broker: Vec<AnnotatedValue>,
     /// The backend setting `extends: "default"` used to supply implicitly
     /// under the exec-based process tier — see `SIGNAL_MODE`. Still
     /// meaningful under `use-nono-library`: `CapabilitySet::set_signal_mode`
@@ -511,6 +528,7 @@ pub fn compile(manifest: &Manifest) -> CompiledPolicy {
         // Empty from the manifest alone: every entry is folded in by `up`
         // once it knows where the socket will live.
         unix_socket_bind: Vec::new(),
+        credentials_broker: Vec::new(),
         signal_mode: SIGNAL_MODE,
     }
 }
@@ -613,6 +631,9 @@ impl CompiledPolicy {
             network_loopback_any: false,
             allocations: Vec::new(),
             network_proxy_port: None,
+            // The provisioning proxy brokers nothing (`proxy::spawn_at`
+            // gets no routes for it).
+            credentials_broker: Vec::new(),
             ..self.clone()
         }
     }
@@ -738,6 +759,22 @@ impl CompiledPolicy {
     /// `network_proxy_port`'s doc for why this isn't part of [`compile`].
     pub fn with_proxy_port(mut self, port: u16) -> Self {
         self.network_proxy_port = Some(port);
+        self
+    }
+
+    /// Fold in the brokered credentials `up` routed through the proxy
+    /// (`[[credentials.broker]]`): host, header and variables, never the
+    /// value. See [`CompiledPolicy::credentials_broker`].
+    pub fn with_brokers(mut self, brokers: &[crate::config::BrokerDecl]) -> Self {
+        self.credentials_broker.extend(brokers.iter().map(|b| {
+            AnnotatedValue::new(
+                format!(
+                    "{} ({}; ${} via ${})",
+                    b.host, b.header, b.env, b.endpoint_env
+                ),
+                Origin::CredentialBroker,
+            )
+        }));
         self
     }
 

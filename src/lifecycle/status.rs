@@ -411,6 +411,7 @@ mod tests {
                     policy_digest: None,
                     tools: None,
                     credentials: Vec::new(),
+                    brokers: Vec::new(),
                 },
             )
             .unwrap();
