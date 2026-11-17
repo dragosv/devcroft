@@ -238,11 +238,18 @@ fn splice_unix(client: std::os::unix::net::UnixStream, upstream: TcpStream) {
 pub struct Running {
     /// The port `nono-proxy` bound, which is the port the sandbox is granted.
     pub port: u16,
+    /// How many brokered routes had their credential loaded.
+    loaded: usize,
     handle: nono_proxy::ProxyHandle,
     _runtime: tokio::runtime::Runtime,
 }
 
 impl Running {
+    /// How many brokered routes had their credential loaded by `start`.
+    pub fn loaded_routes(&self) -> usize {
+        self.loaded
+    }
+
     /// Stops accepting and shuts the proxy down.
     pub fn shutdown(&self) {
         self.handle.shutdown();
@@ -263,8 +270,13 @@ impl Running {
 ///   caller.
 /// - **No TLS interception** (`intercept_ca_dir: None`), and so no OAuth
 ///   capture and no `CONNECT` endpoint rules, which need it.
-pub fn config(allow: Vec<String>, token: String) -> nono_proxy::ProxyConfig {
+pub fn config(
+    allow: Vec<String>,
+    token: String,
+    routes: Vec<nono_proxy::config::RouteConfig>,
+) -> nono_proxy::ProxyConfig {
     nono_proxy::ProxyConfig {
+        routes,
         bind_addr: std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST),
         bind_port: 0,
         allowed_hosts: allow,
@@ -294,6 +306,7 @@ pub fn start(
     log_path: PathBuf,
     token: String,
     label: Option<String>,
+    routes: Vec<nono_proxy::config::RouteConfig>,
 ) -> io::Result<Running> {
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(2)
@@ -307,9 +320,22 @@ pub fn start(
         file: Mutex::new(file),
         label,
     });
+    let cfg = config(allow, token, routes);
     let handle = runtime
-        .block_on(nono_proxy::start(config(allow, token)))
+        .block_on(nono_proxy::start(cfg.clone()))
         .map_err(|e| io::Error::other(format!("nono-proxy: {e}")))?;
+    // `credential_env_vars` emits a route's placeholder only when its
+    // credential loaded (`nono-proxy` 0.82), which is the public way to ask.
+    let placeholders = handle.credential_env_vars(&cfg);
+    let loaded = cfg
+        .routes
+        .iter()
+        .filter(|r| {
+            r.env_var
+                .as_ref()
+                .is_some_and(|v| placeholders.iter().any(|(k, _)| k == v))
+        })
+        .count();
     let sink_log = Arc::clone(&log);
     handle.attach_audit_sink(Arc::new(move |event: &NetworkAuditEvent| {
         log_line(&sink_log, &record(event));
@@ -317,9 +343,35 @@ pub fn start(
     }));
     Ok(Running {
         port: handle.port,
+        loaded,
         handle,
         _runtime: runtime,
     })
+}
+
+/// The `nono-proxy` route for one brokered credential, reading its value
+/// from `credential_var` in this process's own environment
+/// (`nono-proxy`'s `env://` source). The caller sets that variable from
+/// stdin before any thread starts, so the environment block the kernel
+/// shows for this process never holds it.
+///
+/// The header's value is `nono-proxy`'s default: `Bearer <value>` for
+/// `Authorization`, the bare value for any other header, which covers every
+/// agent in `docs/agents.md`.
+pub fn broker_route(
+    route: &crate::proxy::BrokerRoute,
+    credential_var: &str,
+) -> nono_proxy::config::RouteConfig {
+    nono_proxy::config::RouteConfig {
+        prefix: route.prefix.clone(),
+        upstream: format!("https://{}", route.host),
+        credential_key: Some(format!("env://{credential_var}")),
+        inject_header: route.header.clone(),
+        env_var: Some(route.env.clone()),
+        phantom_format: route.placeholder.clone(),
+        tls_ca: route.tls_ca.clone(),
+        ..Default::default()
+    }
 }
 
 /// One log line for an audit event, in the shape the proxy log has always
@@ -502,7 +554,7 @@ mod tests {
     /// `strict_filter`).
     #[test]
     fn the_config_enforces_auth_and_a_strict_allowlist_with_no_interception() {
-        let c = config(vec!["example.com".into()], "t".into());
+        let c = config(vec!["example.com".into()], "t".into(), Vec::new());
         assert!(c.require_auth && c.strict_connect_auth && c.strict_filter);
         assert!(c.intercept_ca_dir.is_none());
         assert!(c.routes.is_empty() && c.oauth_capture.is_empty());
@@ -528,6 +580,7 @@ mod tests {
             log_path.clone(),
             "test-token-e2e".into(),
             None,
+            Vec::new(),
         )
         .unwrap();
 
@@ -597,6 +650,7 @@ mod tests {
             log_path.clone(),
             "right-token".into(),
             None,
+            Vec::new(),
         )
         .unwrap();
         for request in [
@@ -630,6 +684,180 @@ mod tests {
         let _ = std::fs::remove_file(&log_path);
     }
 
+    /// A TLS upstream on loopback, trusting a fresh test CA: returns its
+    /// port, the CA's PEM path, and a channel carrying each request head it
+    /// received. Answers every request `200 ok`.
+    fn tls_upstream(tag: &str) -> (u16, std::path::PathBuf, std::sync::mpsc::Receiver<String>) {
+        let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
+        let ca_key = rcgen::KeyPair::generate().unwrap();
+        let mut ca_params = rcgen::CertificateParams::new(Vec::<String>::new()).unwrap();
+        ca_params.is_ca = rcgen::IsCa::Ca(rcgen::BasicConstraints::Unconstrained);
+        let ca = ca_params.self_signed(&ca_key).unwrap();
+        let ca_issuer = rcgen::Issuer::new(ca_params, ca_key);
+        let leaf_key = rcgen::KeyPair::generate().unwrap();
+        let leaf = rcgen::CertificateParams::new(vec!["localhost".to_string()])
+            .unwrap()
+            .signed_by(&leaf_key, &ca_issuer)
+            .unwrap();
+        let ca_path = std::env::temp_dir().join(format!(
+            "devcroft-broker-ca-{tag}-{}.pem",
+            std::process::id()
+        ));
+        std::fs::write(&ca_path, ca.pem()).unwrap();
+
+        let config = std::sync::Arc::new(
+            rustls::ServerConfig::builder()
+                .with_no_client_auth()
+                .with_single_cert(
+                    vec![leaf.der().clone()],
+                    rustls::pki_types::PrivateKeyDer::try_from(leaf_key.serialize_der()).unwrap(),
+                )
+                .unwrap(),
+        );
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let (tx, rx) = std::sync::mpsc::channel();
+        thread::spawn(move || {
+            for stream in listener.incoming() {
+                let Ok(stream) = stream else { return };
+                let Ok(conn) = rustls::ServerConnection::new(config.clone()) else {
+                    return;
+                };
+                let mut tls = rustls::StreamOwned::new(conn, stream);
+                let mut head = Vec::new();
+                let mut byte = [0u8; 1];
+                while !head.ends_with(b"\r\n\r\n") {
+                    match tls.read(&mut byte) {
+                        Ok(1) => head.push(byte[0]),
+                        _ => break,
+                    }
+                }
+                let _ = tx.send(String::from_utf8_lossy(&head).into_owned());
+                let _ = tls.write_all(
+                    b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok",
+                );
+                tls.conn.send_close_notify();
+                let _ = tls.flush();
+            }
+        });
+        (port, ca_path, rx)
+    }
+
+    /// A proxy with one brokered route to a [`tls_upstream`], the value
+    /// read from `var` as `egress_proxy_main` arranges it.
+    fn brokered_proxy(
+        tag: &str,
+        upstream_port: u16,
+        ca: &std::path::Path,
+        placeholder: Option<&str>,
+    ) -> (Running, String, PathBuf) {
+        let var = format!("DEVCROFT_TEST_BROKERED_{}", tag.to_ascii_uppercase());
+        // SAFETY: a name no other test reads or writes.
+        unsafe { std::env::set_var(&var, "the-real-secret") };
+        let mut route = broker_route(
+            &crate::proxy::BrokerRoute {
+                prefix: "broker0".into(),
+                host: "localhost".into(),
+                header: "x-api-key".into(),
+                env: "ANTHROPIC_API_KEY".into(),
+                placeholder: placeholder.map(str::to_owned),
+                tls_ca: Some(ca.display().to_string()),
+                value: String::new(),
+            },
+            &var,
+        );
+        // `broker_route` reaches `https://<host>` on 443; the test upstream
+        // is on a port of its own.
+        route.upstream = format!("https://localhost:{upstream_port}");
+        let token = format!("token-{tag}");
+        let log_path = temp_log(&format!("broker-{tag}"));
+        let proxy = start(
+            vec!["localhost".into()],
+            log_path.clone(),
+            token.clone(),
+            None,
+            vec![route],
+        )
+        .unwrap();
+        (proxy, token, log_path)
+    }
+
+    fn post(port: u16, key: &str) -> String {
+        exchange(
+            port,
+            &format!(
+                "POST /broker0/v1/messages HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\n\
+                 x-api-key: {key}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+            ),
+        )
+    }
+
+    /// The substitution itself (4b.3): the sandbox's placeholder goes in,
+    /// the upstream receives the real value, and the placeholder never
+    /// reaches it. The value never appears in the proxy's log.
+    #[test]
+    fn a_brokered_request_reaches_the_upstream_with_the_real_value() {
+        let (upstream, ca, heads) = tls_upstream("sub");
+        let (proxy, token, log_path) = brokered_proxy("sub", upstream, &ca, None);
+        assert_eq!(proxy.loaded_routes(), 1);
+
+        let phantom = crate::proxy::broker_phantom(&token, None).unwrap();
+        let response = post(proxy.port, &phantom);
+        assert!(response.starts_with("HTTP/1.1 200"), "{response}");
+        let head = heads
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .expect("the upstream received nothing");
+        let lower = head.to_ascii_lowercase();
+        assert!(lower.contains("x-api-key: the-real-secret"), "{head}");
+        assert!(
+            !head.contains(&token),
+            "the placeholder reached the upstream: {head}"
+        );
+        assert!(head.starts_with("POST /v1/messages "), "{head}");
+
+        std::thread::sleep(std::time::Duration::from_millis(200));
+        let log = std::fs::read_to_string(&log_path).unwrap_or_default();
+        assert!(!log.contains("the-real-secret"), "{log}");
+        proxy.shutdown();
+        let _ = std::fs::remove_file(&log_path);
+        let _ = std::fs::remove_file(&ca);
+    }
+
+    /// A shaped placeholder (`ghp_{}`-style) is what the route accepts, and
+    /// the bare token no longer is; neither wrong form reaches the upstream.
+    #[test]
+    fn a_wrong_or_missing_placeholder_never_reaches_the_upstream() {
+        let (upstream, ca, heads) = tls_upstream("wrong");
+        let (proxy, token, log_path) = brokered_proxy("wrong", upstream, &ca, Some("sk-ant-{}"));
+
+        for key in ["not-the-placeholder", token.as_str()] {
+            let response = post(proxy.port, key);
+            assert!(!response.starts_with("HTTP/1.1 200"), "{key}: {response}");
+        }
+        assert!(
+            heads
+                .recv_timeout(std::time::Duration::from_millis(500))
+                .is_err(),
+            "a request without the placeholder reached the upstream"
+        );
+
+        let shaped = crate::proxy::broker_phantom(&token, Some("sk-ant-{}")).unwrap();
+        assert!(shaped.starts_with("sk-ant-"), "{shaped}");
+        let response = post(proxy.port, &shaped);
+        assert!(response.starts_with("HTTP/1.1 200"), "{response}");
+        let head = heads
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .unwrap();
+        assert!(
+            head.to_ascii_lowercase()
+                .contains("x-api-key: the-real-secret"),
+            "{head}"
+        );
+        proxy.shutdown();
+        let _ = std::fs::remove_file(&log_path);
+        let _ = std::fs::remove_file(&ca);
+    }
+
     /// A fleet agent's proxy labels every line with whose egress it is.
     #[test]
     fn a_labelled_proxy_prefixes_every_line() {
@@ -639,6 +867,7 @@ mod tests {
             log_path.clone(),
             "t".into(),
             Some("agent-7".into()),
+            Vec::new(),
         )
         .unwrap();
         let _ = exchange(

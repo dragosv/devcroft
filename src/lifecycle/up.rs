@@ -59,6 +59,10 @@ pub struct UpOptions<'a> {
     /// sandbox whose agent fails to authenticate later (`lifecycle` spec:
     /// "Tooling and credentials resolve before restriction").
     pub credentials: &'a [String],
+    /// Credentials the egress proxy injects (`[[credentials.broker]]`):
+    /// the sandbox gets a placeholder and an endpoint, the proxy the value,
+    /// read from this shell (`add-agent-workload` 4b).
+    pub brokers: &'a [crate::config::BrokerDecl],
 }
 
 #[derive(Debug)]
@@ -404,6 +408,7 @@ fn up_locked(
             )));
         }
     }
+    check_brokers(manifest, opts.brokers)?;
 
     // The user's tooling layer, host-side in the same trusted phase and
     // before any state exists, so a layer that cannot be used fails `up` the
@@ -461,17 +466,9 @@ fn up_locked(
     // recorded token would be indistinguishable from one predating
     // authentication entirely, so the pair is one `Option`, not two, all
     // the way to where each half is consumed.
-    let proxy = if policy::compile(manifest).wants_egress_proxy() {
-        Some(ensure_egress_proxy(paths, &manifest.network.allow)?)
-    } else {
-        // A manifest that no longer wants filtering (`network.allow` was
-        // emptied, or `network.default` changed to `"allow"`) leaves a
-        // proxy from a previous `up` running with nothing left to filter
-        // for — same "no orphan" reasoning `clear_runtime_state` already
-        // applies to the keeper's own pidfile.
-        stop_orphaned_egress_proxy(paths)?;
-        None
-    };
+    //
+    // Spawned below, after the trust store: a brokered route verifies its
+    // upstream against the bundle the sandbox's environment names.
 
     // devcroft's own shell dependency, resolved host-side out of the
     // closure that was just materialized — see `crate::shell`. Resolved
@@ -516,6 +513,31 @@ fn up_locked(
     }
     trust_store.rewrite(&mut resolution.env);
 
+    let proxy = if policy::compile(manifest).wants_egress_proxy() {
+        // The bundle as the host sees it: `rewrite` points the variable at
+        // a canonical host path, and the proxy runs on the host.
+        let tls_ca = resolution
+            .env
+            .get("SSL_CERT_FILE")
+            .filter(|p| Path::new(p).is_file())
+            .cloned();
+        Some(ensure_egress_proxy(
+            paths,
+            &manifest.network.allow,
+            opts.brokers,
+            tls_ca,
+        )?)
+    } else {
+        // A manifest that no longer wants filtering (`network.allow` was
+        // emptied, or `network.default` changed to `"allow"`) leaves a
+        // proxy from a previous `up` running with nothing left to filter
+        // for — same "no orphan" reasoning `clear_runtime_state` already
+        // applies to the keeper's own pidfile. (A broker cannot reach
+        // here: `check_brokers` refused it without an allowlist.)
+        stop_orphaned_egress_proxy(paths)?;
+        None
+    };
+
     let post_create_pending = previous_meta
         .as_ref()
         .is_some_and(|m| m.post_create_pending);
@@ -555,6 +577,7 @@ fn up_locked(
             policy_digest: None,
             tools: tools.as_ref().map(|(_, record)| record.clone()),
             credentials: opts.credentials.to_vec(),
+            brokers: opts.brokers.to_vec(),
         },
     )?;
 
@@ -636,7 +659,12 @@ fn warn_network_isolation_degraded(compiled: &crate::policy::CompiledPolicy, has
 /// eligible for reuse — it predates a token entirely, so there is
 /// nothing correct to authenticate against, and it is replaced rather
 /// than trusted.
-fn ensure_egress_proxy(paths: &StatePaths, allow: &[String]) -> Result<(u16, String), UpError> {
+fn ensure_egress_proxy(
+    paths: &StatePaths,
+    allow: &[String],
+    brokers: &[crate::config::BrokerDecl],
+    tls_ca: Option<String>,
+) -> Result<(u16, String), UpError> {
     // `is_same_process`, not `is_process_alive`: a resurrected unrelated
     // process at a reused pid would otherwise pass as "our proxy is
     // still running", skip spawning a real one, and leave egress
@@ -647,14 +675,83 @@ fn ensure_egress_proxy(paths: &StatePaths, allow: &[String]) -> Result<(u16, Str
         && state::is_same_process(pid, start_time)
         && let Some(meta) = state::read_meta(&paths.meta)?
         && let (Some(port), Some(token)) = (meta.proxy_port, meta.proxy_token)
+        // A live proxy serves the routes it was started with, so it is
+        // reused only for the same brokers; otherwise it is replaced.
+        && meta.brokers == brokers
     {
         return Ok((port, token));
     }
+    stop_orphaned_egress_proxy(paths).map_err(UpError::State)?;
+    // Values are read here, from this shell (checked present by
+    // `check_brokers`), and go to the proxy's stdin and nowhere else.
+    let routes: Vec<crate::proxy::BrokerRoute> = brokers
+        .iter()
+        .enumerate()
+        .map(|(i, b)| crate::proxy::BrokerRoute {
+            prefix: crate::proxy::broker_prefix(i),
+            host: b.host.clone(),
+            header: b.header.clone(),
+            env: b.env.clone(),
+            placeholder: b.placeholder.clone(),
+            tls_ca: tls_ca.clone(),
+            value: std::env::var(&b.env).unwrap_or_default(),
+        })
+        .collect();
     let exe = keeper_exe()?;
-    let (pid, port, token) = crate::proxy::spawn(&exe, paths, allow)
-        .map_err(|e| UpError::Keeper(format!("starting egress proxy: {e}")))?;
+    let spawned = crate::proxy::spawn(&exe, paths, allow, &routes);
+    drop(routes);
+    let (pid, port, token) =
+        spawned.map_err(|e| UpError::Keeper(format!("starting egress proxy: {e}")))?;
     state::write_pidfile(&paths.proxy_pidfile, pid)?;
     Ok((port, token))
+}
+
+/// The checks on `[[credentials.broker]]` that need the project or the
+/// shell, at layer `config`, before any state exists (4b.1, 4b.5). Each
+/// refuses rather than downgrading to delivering the value.
+fn check_brokers(
+    manifest: &Manifest,
+    brokers: &[crate::config::BrokerDecl],
+) -> Result<(), UpError> {
+    if brokers.is_empty() {
+        return Ok(());
+    }
+    let compiled = policy::compile(manifest);
+    for b in brokers {
+        let key = format!("credentials.broker (`{}`)", b.env);
+        if !compiled.network_block {
+            return Err(UpError::Config(format!(
+                "{key}: this project's `network.default` is \"allow\", so its traffic need \
+                 not pass the proxy that injects the credential; a brokered credential needs \
+                 `network.default = \"deny\"` with `{}` in `network.allow`",
+                b.host
+            )));
+        }
+        if !policy::why_host(&compiled, &b.host).allowed {
+            return Err(UpError::Config(format!(
+                "{key}: `{}` is not in this project's `network.allow`; brokering grants no \
+                 egress of its own, so add the host there",
+                b.host
+            )));
+        }
+        for name in [&b.env, &b.endpoint_env] {
+            if manifest.env.vars.contains_key(name) {
+                return Err(UpError::Config(format!(
+                    "{key}: `{name}` is also set by this project's `[env.vars]`; one is your \
+                     broker's and the other a committed value — remove it from whichever you \
+                     did not mean"
+                )));
+            }
+        }
+        if std::env::var_os(&b.env).is_none() {
+            return Err(UpError::Config(format!(
+                "{key}: `{}` is not set in this shell, and the proxy reads the real value from \
+                 it; set it, or remove the entry from your user configuration",
+                b.env
+            )));
+        }
+    }
+    Ok(())
 }
 
 fn stop_orphaned_egress_proxy(paths: &StatePaths) -> io::Result<()> {
@@ -726,7 +823,7 @@ fn up_process(
     // module-level comment for why the proxy has to exist independently
     // of anything computed here.
     let compiled = match proxy {
-        Some((port, _)) => compiled.with_proxy_port(port),
+        Some((port, _)) => compiled.with_proxy_port(port).with_brokers(opts.brokers),
         None => compiled,
     };
     // The service supervisor binds its own control socket *inside* the
@@ -1220,8 +1317,28 @@ fn up_process(
         // through its unix socket, where the bridge presents the token
         // (`proxy::server::bridge_unix_to_proxy`): five of eleven coding
         // agents measured could not use userinfo, so they get a plain URL.
+        let session_token = token.as_str();
         let token = if isolate_network { "" } else { token.as_str() };
         env.extend(crate::proxy::client_env(*port, token));
+        // Brokered credentials (`add-agent-workload` 4b): the placeholder
+        // under the variable the real value was read from, and the
+        // proxy's route for its host. Last, so neither the provider, the
+        // manifest nor a delivered credential can put the value back.
+        for (i, b) in opts.brokers.iter().enumerate() {
+            let prefix = crate::proxy::broker_prefix(i);
+            env.insert(
+                b.endpoint_env.clone(),
+                crate::proxy::broker_endpoint(*port, &prefix),
+            );
+            let phantom = crate::proxy::broker_phantom(session_token, b.placeholder.as_deref())
+                .ok_or_else(|| {
+                    UpError::Config(format!(
+                        "credentials.broker: `{}`'s placeholder does not render",
+                        b.env
+                    ))
+                })?;
+            env.insert(b.env.clone(), phantom);
+        }
     }
 
     // The relay is only needed when the sandbox is *both* isolated (no
@@ -2050,6 +2167,9 @@ fn run_provisioning(
             &socket,
             &paths.root.join("provision-egress.log"),
             allow,
+            // Never brokered: provisioning is not a session, and a hook
+            // that needs a credential is the project's own concern.
+            &[],
             |_| Ok(()),
         )
         .map_err(|e| UpError::Keeper(format!("starting the provisioning proxy: {e}")))?;

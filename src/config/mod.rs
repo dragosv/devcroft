@@ -6,7 +6,8 @@ mod validate;
 pub use discovery::{MANIFEST_FILE_NAME, discover};
 pub use slug::{is_valid_name, slugify};
 pub use user::{
-    ToolsDecl, USER_CONFIG_FILE, UserConfig, load_user_config, parse_user_config, user_config_path,
+    BrokerDecl, ToolsDecl, USER_CONFIG_FILE, UserConfig, load_user_config, parse_user_config,
+    user_config_path,
 };
 
 use serde::Deserialize;

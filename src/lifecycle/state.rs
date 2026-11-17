@@ -496,6 +496,12 @@ pub struct Meta {
     /// because the sandbox was already up.
     #[serde(default)]
     pub credentials: Vec<String>,
+    /// The brokered credentials this `up` routed through the proxy
+    /// (`[[credentials.broker]]`), as declared, never their values. What
+    /// `up` discloses again on every run, and what decides whether a live
+    /// proxy can be reused: its routes are the ones it was started with.
+    #[serde(default)]
+    pub brokers: Vec<crate::config::BrokerDecl>,
 }
 
 /// One `up`'s tooling layer, as [`Meta::tools`] records it.
@@ -1006,6 +1012,7 @@ mod tests {
             policy_digest: None,
             tools: None,
             credentials: Vec::new(),
+            brokers: Vec::new(),
         };
         write_meta(&paths.meta, &meta).unwrap();
         assert_eq!(read_meta(&paths.meta).unwrap(), Some(meta));
@@ -1039,6 +1046,7 @@ mod tests {
             policy_digest: None,
             tools: None,
             credentials: Vec::new(),
+            brokers: Vec::new(),
         };
         write_meta(&paths.meta, &meta).unwrap();
         assert!(!paths.meta.with_extension("json.tmp").exists());

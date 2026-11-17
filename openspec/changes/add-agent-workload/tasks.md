@@ -275,55 +275,114 @@ proxy: nine as an absolute-URI request, and two (Qwen, Cursor) inside a
       records a `502` that was *measured* (the macOS table in
       `docs/known-gaps.md`, `policy::degraded`, `backend_capabilities`),
       the measurement stays and is footnoted rather than rewritten
-- [ ] 4b.1 User configuration: a brokered credential names the host, the
-      header, the sandbox variable, and an optional placeholder. Checked at
-      layer `config`. The host must also be on the project's allowlist,
-      since brokering grants no egress of its own. The real value is read
-      from the user's shell at `up`, as for `[credentials] env`
-- [ ] 4b.2 The sandbox gets the placeholder in the variable, never the
-      value. Extend 4.2's walk (state dir, `.devcroft/`, logs, `meta.json`)
-      to the brokered value, and add the keeper's and a session's
-      `/proc/<pid>/environ`
-- [ ] 4b.3 Proxy: for a brokered host, accept an absolute-URI request and
-      a `CONNECT <host>:80`, read one HTTP/1.1 request head, and substitute
-      the placeholder inside the declared header's value. A request whose
-      header lacks the placeholder is forwarded unchanged. Send it with
-      `Connection: close` over TLS to `<host>:443`, verifying against the
-      same trust store the sandbox is given, and copy the response back as
-      it comes (SSE included)
-- [ ] 4b.4 The real value lives only in the proxy's process. It is passed
-      at spawn, not written to the proxy's state, and never logged. The
-      proxy's log names the host and that a substitution happened
-- [ ] 4b.5 Refuse rather than downgrade:
+**4b.1–4b.9 follow `nono-proxy`'s route form, not the own-proxy form**
+(reconciled 2026-11-16, design.md Decision 6's investigation). A route is a
+path prefix on the proxy's own port, so the sandbox's endpoint is
+`http://127.0.0.1:<port>/<prefix>`, not `http://<real host>`, and
+`nono-proxy` refuses an absolute-URI or `CONNECT` request to a route's host
+by design. The placeholder is the session token, optionally wrapped by
+`phantom_format`, not a free string. Since the port is chosen at `up`, the
+user names the variable that carries the endpoint as well.
+
+- [x] 4b.1 User configuration, `[[credentials.broker]]` in the user's
+      `config.toml`: `host` (the upstream, reached as `https://<host>`),
+      `header` (the one carrying the key), `env` (the variable the sandbox
+      gets the placeholder in, and the one the real value is read from in
+      the user's shell at `up`), `endpoint_env` (the variable the sandbox
+      gets `http://127.0.0.1:<port>/<prefix>` in), and an optional
+      `placeholder`, a `phantom_format` template such as `ghp_{}`. Shape is
+      checked at parse; at `up`, still at layer `config`: the host must be
+      on the project's allowlist, since brokering grants no egress of its
+      own, and the value must be set in the shell
+      **Done (2026-11-16).** `config::user::parse_brokers` and
+      `lifecycle::up::check_brokers`. A `host` is a bare DNS name of two
+      labels or more; `env` and `endpoint_env` may not be a proxy variable,
+      `HOME`, `PATH` or `DEVCROFT_*`, nor shared with another entry or with
+      `credentials.env`. A placeholder is checked by `nono-proxy`'s own
+      `PhantomTemplate::parse_route`
+- [x] 4b.2 The sandbox gets the placeholder in `env` and the endpoint in
+      `endpoint_env`, never the value. Extend 4.2's walk (state dir,
+      `.devcroft/`, logs, `meta.json`) to the brokered value, and add the
+      keeper's and a session's `/proc/<pid>/environ`
+      **Done (2026-11-16)** in `tests/broker_up.rs`, inside an isolated
+      sandbox: the session holds the token and the endpoint and not the
+      value, and neither the state dir, the project, the keeper's environ
+      nor the proxy's holds it. Teeth-check: with `spawn_at` no longer
+      removing the variable, the proxy-environ assertion fails
+- [x] 4b.3 Proxy: one `nono-proxy` route per brokered credential, upstream
+      `https://<host>`, injecting into the declared header with
+      `nono-proxy`'s default format (`Bearer {}` for `Authorization`, the
+      bare value otherwise). The upstream is verified against the trust
+      store the sandbox's environment names (`tls_ca`), when there is one.
+      Responses, SSE included, are `nono-proxy`'s to copy back
+      **Done (2026-11-16).** `proxy::server::broker_route`; `tls_ca` is the
+      environment's `SSL_CERT_FILE` after `trust_store::rewrite`, which is
+      why `up` now starts the proxy after the trust store is resolved.
+      `a_brokered_request_reaches_the_upstream_with_the_real_value` runs it
+      against a TLS upstream with a test CA; with the credential removed
+      the route does not load and the test fails
+- [x] 4b.4 The real value lives only in the proxy's process. `up` writes it
+      to the proxy's stdin, never its argv or environment block; the proxy
+      sets it in its own environment before starting any thread, for
+      `nono-proxy`'s `env://` source, so `/proc/<pid>/environ` never holds
+      it. Not written to the proxy's state, never logged. The placeholder is
+      rendered by `nono-proxy`'s own `PhantomTemplate`, and the endpoint in
+      its own `credential_env_vars` shape, so a proxy reused across a stale
+      recovery yields the same values; it is reused only when `Meta`
+      records the same brokers
+      **Done (2026-11-16).** The proxy also has the variable removed from
+      the environment it inherits from `up`, since `up` read it there, and
+      exits if `nono-proxy` loaded fewer credentials than it was given
+- [x] 4b.5 Refuse rather than downgrade:
       - a brokered request naming a file credential;
       - a host with no allowlist entry;
-      - `network.default = "allow"`, where traffic need not pass the proxy.
+      - `network.default = "allow"`, where traffic need not pass the proxy;
+      - a variable the manifest's `[env.vars]` or the user's
+        `[credentials] env` also sets.
 
       Each refusal is at layer `config`, naming the key
-- [ ] 4b.6 `up` discloses each brokered credential as brokered (host and
+      **Done (2026-11-16).** A file credential cannot be named at all: an
+      entry has no such key, and `credentials.file` is still unknown.
+      `a_broker_is_refused_rather_than_downgraded` covers the rest, and
+      that a refusal leaves no state
+- [x] 4b.6 `up` discloses each brokered credential as brokered (host and
       variable, never the value), distinct from the env-delivered
-      disclosure. `policy --render` shows the host with origin
-      `credential:broker`
-- [ ] 4b.7 Tests against a local TLS upstream (a test CA in the trust
+      disclosure, and says that the host is now reachable only through its
+      endpoint (`nono-proxy` refuses a plain `CONNECT` to a route's host).
+      `policy --render` shows the host with origin `credential:broker`
+      **Done (2026-11-17).** The disclosure is from `Meta`, on every `up`.
+      `CompiledPolicy::credentials_broker`, folded in by `with_brokers`
+      alongside the proxy port, both in `up` (so the policy artifact
+      carries it) and in `--render`'s reconstruction from `Meta`; rendered
+      as `credentials.broker:` only when there is one, each entry naming
+      host, header, `env` and `endpoint_env`. Nothing in the backend
+      profile corresponds: the host's egress is still `network.allow`'s.
+      The provisioning policy carries none. Asserted in
+      `render_shows_brokered_hosts_with_their_origin_only_when_any` and,
+      against a live sandbox, in `tests/broker_up.rs`. Teeth-check: without
+      the fold-in in `up`, the e2e assertion fails
+- [ ] 4b.7 Tests against a local TLS upstream (a test CA as the trust
       store):
-      - the upstream receives the real value, in both request forms;
+      - the upstream receives the real value;
       - the sandbox's environment and every file under the state dir hold
         only the placeholder;
-      - a second request on a kept-alive connection is not forwarded
-        unrewritten;
+      - a request with a wrong or missing placeholder never reaches the
+        upstream;
       - a request to a different allowed host never gets the value.
 
-      Teeth-check: with substitution disabled, the upstream receives the
-      placeholder
-- [ ] 4b.8 End to end with one agent per request form, inside a real
-      sandbox: Claude Code (absolute-URI) and Qwen Code (`CONNECT :80`),
-      with a dummy key, against the local TLS upstream above. A real key
-      is the owner's, and is not needed to show the substitution
-- [ ] 4b.9 `docs/agents.md`: per agent, the brokered configuration (which
-      setting gets `http://<host>`). Cursor's exchanged session token is
-      stated as what brokering leaves inside. `docs/threat-model.md`:
-      brokering moves the key out of custody, and the clear leg is
-      sandbox → proxy (the unix bridge on Linux, loopback on macOS)
+      Teeth-check: with the route removed, the upstream never sees the
+      value
+- [ ] 4b.8 End to end with Claude Code inside a real sandbox, with a dummy
+      key, against the local TLS upstream above, isolated and not. A real
+      key is the owner's, and is not needed to show the substitution.
+      Cursor is out: it sends a loopback endpoint as a `CONNECT`, which
+      `nono-proxy` refuses (measured)
+- [ ] 4b.9 `docs/agents.md`: per agent, the brokered configuration (its
+      `endpoint_env`; Codex's endpoint is a config flag, so it reads the
+      variable through `-c openai_base_url=$…`). Cursor is stated as not
+      brokerable. `docs/threat-model.md`: brokering moves the key out of
+      custody, and the clear leg is sandbox → proxy (the unix bridge on
+      Linux, loopback on macOS)
 
 ## 5. CLI and doctor
 

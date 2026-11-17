@@ -652,6 +652,7 @@ fn a_helper_whose_last_writer_is_gone_exits() {
         &socket,
         &dir.join("egress.log"),
         &["127.0.0.3".to_owned()],
+        &[],
         |cmd| {
             devcroft::fleet::lifeline::attach(cmd, &line.read);
             Ok(())

@@ -383,6 +383,7 @@ impl Supervisor {
                 &proxy_socket,
                 &dir.join("egress.log"),
                 &launch.egress_allow,
+                &[],
                 |cmd| {
                     // Every record names the agent, so the log attributes
                     // requests on its own, wherever it is read.
@@ -672,6 +673,7 @@ impl Supervisor {
                 &socket,
                 &dir.join("provision-egress.log"),
                 &launch.provisioning_allow,
+                &[],
                 |cmd| {
                     cmd.env("DEVCROFT_EGRESS_LABEL", format!("{id} provisioning"));
                     Ok(())

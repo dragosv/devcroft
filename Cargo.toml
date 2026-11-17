@@ -94,6 +94,10 @@ sha2 = "0.11.0"
 object = { version = "0.37.3", default-features = false, features = ["read", "std", "elf", "macho"] }
 
 [dev-dependencies]
+# A local TLS upstream for the brokered-credential tests (`proxy::server`).
+# Both are already in the tree through `nono-proxy`, so neither adds a crate.
+rcgen = "0.14"
+rustls = "0.23"
 brush-shell = "0.4.0"
 uu_echo = "0.6.0"
 uu_pwd = "0.6.0"
