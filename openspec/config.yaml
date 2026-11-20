@@ -132,12 +132,13 @@ context: |
   - From the devcontainer feature triage:
     - Resource limits (cpu/mem) via cgroup v2 scope units on Linux — a real
       class gap vs containers, stated honestly in the README until then
-    - Secret brokering via a credential proxy (nono phantom tokens), so a
-      key-shaped credential never enters the sandbox at all. This is the
-      strong answer, not the only one: `[env] forward` is the shipped
-      simple answer, and "never via mounted files or plain env vars" — as
-      this line used to read — is a rule neither half of which survived
-      examination. See `docs/decisions.md` §3, "Secrets".
+    - Secret brokering via a credential proxy (nono phantom tokens) is
+      built (`add-agent-workload` 4b): a header-borne key never enters the
+      sandbox. It is the strong answer, not the only one: `[env] forward`
+      is the simple answer, and file credentials cannot be brokered, so
+      "never via mounted files or plain env vars", as this line used to
+      read, is a rule that did not survive examination. See
+      `docs/decisions.md` §3, "Secrets".
     - `init` templates; optional keeper idle auto-stop
     - Docs note: `remote.SSH.defaultExtensions` covers VS Code extension
       auto-install for all devcroft hosts

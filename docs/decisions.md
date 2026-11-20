@@ -863,7 +863,7 @@ advantage, not an unimplemented feature.
 No virtualization layer sits between the session and the device. `/dev`
 access is native, subject to filesystem policy.
 
-### Secrets → `[env] forward` now, brokering later
+### Secrets → `[env] forward`, or brokered at the proxy
 
 The position originally recorded in `openspec/config.yaml` — "secret
 injection delegated to the backend's credential proxy, never via mounted
@@ -892,13 +892,40 @@ produced the bad rule:
   it makes no claim beyond that. `[env.vars]` is its committed-value
   sibling and must never hold a secret, which is why a name appearing in
   both is refused rather than resolved by precedence.
-- **Brokering is the strong answer, and is still unbuilt.** A credential
-  proxy that hands out phantom tokens is strictly better where the
-  credential is key-shaped, because the sandbox never holds the real one.
-  That remains the target; it is not a reason to pretend the simple answer
-  does not exist in the meantime.
+- **Brokering is the strong answer where the credential is one header**
+  (`[[credentials.broker]]`, `add-agent-workload` 4b, built 2026-11-16).
+  The real value goes to the egress proxy alone. The sandbox holds a
+  placeholder, the proxy's session token, which the proxy swaps for the
+  value on the way to `https://<host>`. `docs/agents.md` has the per-agent
+  configuration. It is declared in the user's configuration rather than the
+  manifest, since a key belongs to the user and not to the project.
 
-**The residual risk is the same under both, and is not solved by either:**
+**Revisited, not defended: what made the original rule unachievable.**
+Brokering is what that rule wanted, and it still cannot be the only route,
+because of two properties of the credentials themselves:
+
+- **A subscription or OAuth login has no env-var form, and its refresh
+  writes back to the file.** A proxy can hold a static value. It cannot hold
+  a credential whose owner rewrites it in place on every refresh. So "never
+  via mounted files" fails for exactly the users with a login rather than a
+  key, and file delivery stays a separate, disclosed route
+  (`add-agent-workload` task group 4).
+- **Some clients exchange the key, or cannot reach a route.** Cursor trades
+  its key for a session token that comes back into the sandbox, and it sends
+  even a loopback endpoint as a `CONNECT`, which the proxy refuses (measured).
+  For such a client the value has to be in the sandbox or not used.
+
+So brokering narrows the rule's domain rather than restoring it: **a
+header-borne key should be brokered, and anything else is delivered and
+disclosed.** If a provider ever offers a static, file-free token for its
+subscription login, the first property stops holding and this should be
+revisited again.
+
+Brokering moves the key out of custody, and that is all it moves. Code in
+the sandbox can still *use* the key through the endpoint, for as long as
+the sandbox is up (`docs/threat-model.md`, "Brokered credentials").
+
+**The residual risk of a delivered credential is not solved by narrowness:**
 any process in the sandbox can read a credential the sandbox was given,
 including the project code an agent is editing. Narrowness and disclosure
 are the mitigations. Isolation from the code under edit is not available

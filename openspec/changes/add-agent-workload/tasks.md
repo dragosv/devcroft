@@ -661,11 +661,21 @@ user names the variable that carries the endpoint as well.
 
 ## 7. Docs
 
-- [ ] 7.1 `docs/decisions.md`: amend the "secret injection ... never via
+- [x] 7.1 `docs/decisions.md`: amend the "secret injection ... never via
       mounted files or plain env vars" position, naming the property that
       made it unachievable (subscription auth has no env-var form), per
       that file's own convention that a rejection whose premise stops
       holding is revisited rather than defended
+      **Done (2026-11-20).** §3, "Secrets → `[env] forward`, or brokered at
+      the proxy". The refutation of both halves was already there (written
+      with `own-sandbox-environment`); what was stale was brokering as
+      unbuilt. It now records that brokering narrows the rule's domain
+      rather than restoring it, and names the two properties that keep a
+      second route: a subscription login has no env-var form and rewrites
+      its file on refresh, and some clients exchange the key or cannot
+      reach a route (Cursor). It also states the condition for revisiting
+      it again. `openspec/config.yaml`'s context line says brokering is
+      built
 - [x] 7.2 `docs/decisions.md`: record why a host-binary tooling shortcut
       is rejected, naming the criteria it fails, so it is not proposed
       again as "just for agents"
