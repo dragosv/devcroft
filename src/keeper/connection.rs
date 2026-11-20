@@ -48,44 +48,45 @@ pub fn handle_with_grace(
     };
     drop(stream);
 
-    let spawn_req = match protocol::read_frame(&mut read_half) {
-        Ok(Frame::Spawn(req)) => req,
-        Ok(Frame::Query) => {
-            let sessions = registry
-                .snapshot()
-                .into_iter()
-                .map(|(id, info)| SessionSummary {
-                    id,
-                    command: info.command,
-                    started_unix: info
-                        .started
-                        .duration_since(UNIX_EPOCH)
-                        .map(|d| d.as_secs())
-                        .unwrap_or(0),
-                })
-                .collect();
-            let mut w = write_half;
-            let _ = protocol::write_frame(
-                &mut w,
-                &Frame::QueryResult(QueryResult {
-                    uptime_secs: started.elapsed().as_secs(),
-                    sessions,
-                }),
-            );
-            return;
-        }
-        Ok(_) => {
-            let mut w = write_half;
-            let _ = protocol::write_frame(
-                &mut w,
-                &Frame::SpawnErr {
-                    message: "expected Spawn or Query as the first frame".to_string(),
-                },
-            );
-            return;
-        }
-        Err(_) => return, // connection closed before a session ever started
-    };
+    let spawn_req =
+        match protocol::read_frame_timed(&mut read_half, true, protocol::FRAME_READ_DEADLINE) {
+            Ok(Frame::Spawn(req)) => req,
+            Ok(Frame::Query) => {
+                let sessions = registry
+                    .snapshot()
+                    .into_iter()
+                    .map(|(id, info)| SessionSummary {
+                        id,
+                        command: info.command,
+                        started_unix: info
+                            .started
+                            .duration_since(UNIX_EPOCH)
+                            .map(|d| d.as_secs())
+                            .unwrap_or(0),
+                    })
+                    .collect();
+                let mut w = write_half;
+                let _ = protocol::write_frame(
+                    &mut w,
+                    &Frame::QueryResult(QueryResult {
+                        uptime_secs: started.elapsed().as_secs(),
+                        sessions,
+                    }),
+                );
+                return;
+            }
+            Ok(_) => {
+                let mut w = write_half;
+                let _ = protocol::write_frame(
+                    &mut w,
+                    &Frame::SpawnErr {
+                        message: "expected Spawn or Query as the first frame".to_string(),
+                    },
+                );
+                return;
+            }
+            Err(_) => return, // connection closed before a session ever started
+        };
 
     let mut spawned = match backend.spawn(&spawn_req) {
         Ok(s) => s,
@@ -174,7 +175,7 @@ pub fn handle_with_grace(
     let pgid = spawned.pgid;
 
     loop {
-        match protocol::read_frame(&mut read_half) {
+        match protocol::read_frame_timed(&mut read_half, false, protocol::FRAME_READ_DEADLINE) {
             Ok(Frame::Stdin(bytes)) => {
                 if let Some(w) = stdin.as_mut()
                     && w.write_all(&bytes).is_err()
@@ -592,5 +593,72 @@ mod tests {
             server.join().unwrap();
         }
         assert_eq!(registry.len(), 0);
+    }
+
+    #[test]
+    fn mid_session_incomplete_frame_times_out_and_reaps_only_stalled_session() {
+        let (mut client, server) = UnixStream::pair().unwrap();
+        let registry = Arc::new(Registry::new());
+        let conn_thread = {
+            let registry = Arc::clone(&registry);
+            thread::spawn(move || {
+                handle_with_grace(
+                    server,
+                    registry,
+                    Instant::now(),
+                    Arc::new(LocalSessionBackend),
+                    Duration::from_millis(50),
+                )
+            })
+        };
+
+        protocol::write_frame(&mut client, &Frame::Spawn(spawn_request("cat", &[], None))).unwrap();
+        let session_id = expect_spawn_ok(&mut client);
+
+        // A valid Stdin header (tag 4, then a big-endian length) claiming 32
+        // bytes, followed by only 4 of them, held open. A wrong tag would be
+        // refused at once and never reach the deadline this test is about.
+        let mut partial = vec![4u8];
+        partial.extend_from_slice(&32u32.to_be_bytes());
+        partial.extend_from_slice(b"part");
+        client.write_all(&partial).unwrap();
+
+        let start = Instant::now();
+        let (output, status) = read_until_exit(&mut client);
+        assert!(output.is_empty());
+        assert_eq!(status.signal, Some(libc::SIGTERM));
+        assert!(
+            start.elapsed() >= protocol::FRAME_READ_DEADLINE - Duration::from_millis(100),
+            "session ended before the frame deadline, so something other than it ended it: {:?}",
+            start.elapsed()
+        );
+        assert!(
+            start.elapsed() < Duration::from_secs(3),
+            "mid-session incomplete frame timeout took too long: {:?}",
+            start.elapsed()
+        );
+        conn_thread.join().unwrap();
+        assert!(!registry.contains(session_id));
+    }
+
+    #[test]
+    fn connection_slot_caps_active_connections_and_recovers_after_drop() {
+        use crate::keeper::{ConnectionSlot, MAX_ACTIVE_CONNECTIONS};
+        use std::sync::atomic::AtomicUsize;
+
+        let active = Arc::new(AtomicUsize::new(0));
+        let mut slots = Vec::new();
+        for _ in 0..MAX_ACTIVE_CONNECTIONS {
+            slots.push(ConnectionSlot::try_acquire(&active).expect("slot below cap"));
+        }
+        assert!(
+            ConnectionSlot::try_acquire(&active).is_none(),
+            "connection above MAX_ACTIVE_CONNECTIONS must be refused"
+        );
+        slots.pop();
+        assert!(
+            ConnectionSlot::try_acquire(&active).is_some(),
+            "dropping a slot must restore admission immediately"
+        );
     }
 }

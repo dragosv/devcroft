@@ -4,6 +4,7 @@ import argparse
 import fcntl
 import hashlib
 import json
+import re
 import os
 from pathlib import Path
 import signal
@@ -15,7 +16,7 @@ from cold_prepare import require_no_active_collector
 from fault_probe import control_reply, validate_pid1_fixture_pair
 from smoke import ROOT, artifact, connect, helper_identity, line
 from ssh_smoke import require, SOCKETS
-from stop_receipt import StopReceipt, owned_identity
+from stop_receipt import StopReceipt, ext4_superblock_clean, owned_identity
 from workload_smoke import WorkloadInstance
 
 
@@ -38,7 +39,11 @@ def main():
                         help='remove only this run\'s private disks/controller directories after owned cleanup')
     parser.add_argument('--post-ack-only', action='store_true',
                         help='baseline diagnostic only: omit the six earlier stop cases')
+    parser.add_argument('--quiescence-only', action='store_true',
+                        help='baseline diagnostic only: run only the live-service/stubborn-writer unmount stop case')
     args = parser.parse_args()
+    require(not (args.post_ack_only and args.quiescence_only),
+            '--post-ack-only and --quiescence-only are mutually exclusive')
     guest, control = [json.loads(p.read_text()) for p in (args.guest, args.control_guest)]
     validate_pid1_fixture_pair(guest, control)
     require(type(guest.get('pid1_exit_probe_schema')) is int and guest['pid1_exit_probe_schema'] == 2,
@@ -178,6 +183,9 @@ def main():
             code = child.wait(timeout=15)
             outcome = value.classify(a.owned_identity, code)
             a.stop()
+            sb = ext4_superblock_clean(a.path / 'data.img')
+            require(not sb['cleanly_unmounted'] and sb['incompat_recover'],
+                    ('panic unexpectedly left ext4 superblock marked clean', sb))
             console = bytes(a.stdout + a.stderr)
             require(b'Kernel panic - not syncing: Attempted to kill init!' in console
                     and b'exitcode=0x00005600' in console, 'actual init-death panic missing')
@@ -189,14 +197,31 @@ def main():
             recover()
             return {**value.record(), 'helper_exit_code': code, 'classification': outcome,
                     'kernel_panic_observed': True, 'validated_stop_request_reached_pre_ack_panic': with_intent,
+                    'host_ext4_superblock_after_stop': sb,
                     'existing_build_and_32_keys_recovered': True, **witness}
 
-        if not args.post_ack_only:
+        if not args.post_ack_only and not args.quiescence_only:
             case('panic-without-stop-intent', lambda: panic('no-intent', False))
             case('panic-during-valid-shutdown-before-ack', lambda: panic('pending-intent', True))
 
-        def orderly(name):
-            a.execute(name + '-redis-stop', 'redis-cli SHUTDOWN')
+        def orderly(name, live_quiescence=False, recover_after=False):
+            stubborn_pid = None
+            if live_quiescence:
+                holder = a.execute(name + '-live-holders', '''set -eu
+test "$(redis-cli --raw PING)" = PONG
+sh -c 'trap "" TERM; exec 3>/workspace/unmount-canary; printf "holder-pid=%s\\n" "$$" >&3; exec sleep 60' </dev/null >/dev/null 2>&1 &
+holder=$!
+for _ in 1 2 3 4 5 6 7 8 9 10; do
+  if [ -s /workspace/unmount-canary ] && [ -d "/proc/$holder" ]; then break; fi
+  sleep 0.05
+done
+test -s /workspace/unmount-canary && test -d "/proc/$holder"
+printf '%s\\n' "$holder"
+''').stdout.decode().strip()
+                require(holder.isdigit() and int(holder) > 1, ('invalid stubborn writer PID', holder))
+                stubborn_pid = int(holder)
+            else:
+                a.execute(name + '-redis-stop', 'redis-cli SHUTDOWN')
             value, packet = intent(a, name)
             child = a.process
             sock, greeting = connect(a.path / 'control.sock', child, time.monotonic() + 5, a.overflow)
@@ -207,22 +232,40 @@ def main():
             require(value.accept_ack(a.owned_identity, ack), 'sync acknowledgement did not match intent')
             persist(args.out / f'{name}-ack.json', {**value.record(), 'wire_ack': ack.decode()})
             code = child.wait(timeout=15)
-            outcome = value.classify(a.owned_identity, code)
             a.stop()
-            require(outcome == 'orderly', 'correlated shutdown was not orderly')
-            require(f'guest: shutdown synced state={value.generation}'.encode() in a.stdout + a.stderr,
-                    'post-sync guest marker missing')
-            return {**value.record(), 'helper_exit_code': code, 'classification': outcome,
-                    'wire_ack': ack.decode(), 'post_sync_marker_observed': True, **sibling_ok()}, ack
+            sb = ext4_superblock_clean(a.path / 'data.img')
+            console = bytes(a.stdout + a.stderr)
+            post_sync_marker = f'guest: shutdown synced state={value.generation}'.encode() in console
+            # A whole line; the libkrun console tty turns LF into CRLF.
+            quiesced_marker = re.search(rb'^guest: shutdown quiesced=1 umount=1\r?$', console, re.M) is not None
+            outcome = value.classify(a.owned_identity, code,
+                                     workspace_unmounted=sb['cleanly_unmounted'] and quiesced_marker)
+            witness = sibling_ok()
+            if recover_after:
+                recover()
+            evidence = {**value.record(), 'helper_exit_code': code, 'classification': outcome,
+                        'prior_v8_predicate_classification': 'orderly' if code == 0 and poweroff_qualified else 'crash',
+                        'wire_ack': ack.decode(), 'post_sync_marker_observed': post_sync_marker,
+                        'quiesced_and_unmounted_marker_observed': quiesced_marker,
+                        'live_redis_and_stubborn_writer_held_workspace': live_quiescence,
+                        'stubborn_writer_pid': stubborn_pid,
+                        'host_ext4_superblock_after_stop': sb,
+                        'existing_build_and_32_keys_recovered': recover_after,
+                        **witness}
+            if live_quiescence:
+                report['quiescence_observation'] = evidence
+            require(post_sync_marker, 'post-sync guest marker missing')
+            require(outcome == 'orderly' and sb['cleanly_unmounted'] and quiesced_marker,
+                    f'correlated shutdown did not cleanly quiesce and unmount workspace: {outcome}, superblock={sb}, marker={quiesced_marker}')
+            return evidence, ack
 
         first_ack = []
 
         def first_orderly():
-            evidence, ack = orderly('first-orderly')
+            evidence, ack = orderly('first-orderly', live_quiescence=False, recover_after=True)
             first_ack.append(ack)
-            recover()
-            return {**evidence, 'existing_build_and_32_keys_recovered': True}
-        if not args.post_ack_only:
+            return evidence
+        if not args.post_ack_only and not args.quiescence_only:
             case('correlated-sync-and-clean-exit', first_orderly)
 
         def stale_controls():
@@ -242,7 +285,7 @@ def main():
                     'wrong_generation_and_malformed_packets_refused': len(requests),
                     'unrelated_pong_rejected': True, 'current_helper_remains_live': True,
                     'diagnostic_scope': 'fresh intent prepared; valid shutdown packet deliberately withheld', **sibling_ok()}
-        if not args.post_ack_only:
+        if not args.post_ack_only and not args.quiescence_only:
             case('stale-ack-generation-and-malformed-controls', stale_controls)
 
         def forced_stop():
@@ -253,15 +296,20 @@ def main():
             code = child.wait(timeout=10)
             outcome = value.classify(a.owned_identity, code, forced=True)
             a.stop()
+            sb = ext4_superblock_clean(a.path / 'data.img')
+            require(not sb['cleanly_unmounted'] and sb['incompat_recover'],
+                    ('forced stop unexpectedly left ext4 superblock marked clean', sb))
             require(code == -signal.SIGTERM and outcome == 'forced-stop', 'forced stop classification failed')
             witness = sibling_ok()
             recover()
             return {**value.record(), 'helper_exit_code': code, 'classification': outcome,
+                    'host_ext4_superblock_after_stop': sb,
                     'existing_build_and_32_keys_recovered': True, **witness}
-        if not args.post_ack_only:
+        if not args.post_ack_only and not args.quiescence_only:
             case('persisted-intent-and-host-forced-stop', forced_stop)
-            case('new-boot-correlated-sync-and-clean-exit', lambda: orderly('final-orderly')[0])
-            recover()
+        if not args.post_ack_only:
+            case('new-boot-correlated-sync-and-clean-exit',
+                 lambda: orderly('final-orderly', live_quiescence=True, recover_after=True)[0])
 
         def post_ack_panic():
             value, packet = intent(a, 'post-ack-panic')
@@ -279,6 +327,7 @@ def main():
             code = child.wait(timeout=15)
             outcome = value.classify(a.owned_identity, code)
             a.stop()
+            sb = ext4_superblock_clean(a.path / 'data.img')
             console = bytes(a.stdout + a.stderr)
             require(b'guest: test-only PID1 exit=86 after shutdown ack' in console
                     and b'Kernel panic - not syncing: Attempted to kill init!' in console
@@ -289,6 +338,7 @@ def main():
                         'classification': outcome, 'kernel_panic_observed': True,
                         'prior_v6_predicate_classification': 'orderly' if code == 0 else 'crash',
                         'post_ack_delivery_window_ms': 250,
+                        'host_ext4_superblock_after_stop': sb,
                         'existing_build_and_32_keys_recovered': True, **witness}
             # Retain the complete witness even when the old helper falsely
             # classifies the panic as orderly. Never turn that baseline green.
@@ -296,7 +346,8 @@ def main():
             require(outcome == 'crash', f'post-ack panic was misclassified: {outcome}, helper exit {code}')
             return evidence
 
-        case('panic-after-correlated-sync-ack', post_ack_panic)
+        if not args.quiescence_only:
+            case('panic-after-correlated-sync-ack', post_ack_panic)
         require(artifact(helper) == expected_helper, 'helper binary changed during the run')
         sibling.clean_shutdown()
         report['status'] = 'passed'

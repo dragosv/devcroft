@@ -1,7 +1,10 @@
 """A zero helper status, stale acknowledgement or reused PID must not pass as orderly."""
+from pathlib import Path
+import struct
+import tempfile
 import unittest
 
-from stop_receipt import HelperIdentity, StopReceipt
+from stop_receipt import HelperIdentity, StopReceipt, ext4_superblock_clean
 
 
 class StopReceiptValidation(unittest.TestCase):
@@ -95,6 +98,44 @@ class StopReceiptValidation(unittest.TestCase):
         for value in (1, 'true', None):
             with self.assertRaises(ValueError):
                 self.receipt(qualified=value)
+
+    def test_dirty_ext4_superblock_downgrades_orderly_to_unverified_stop(self):
+        receipt = self.receipt(qualified=True)
+        receipt.request(receipt.identity)
+        self.assertTrue(receipt.accept_ack(receipt.identity, self.ack(receipt)))
+        self.assertEqual(
+            receipt.classify(receipt.identity, 0, workspace_unmounted=False),
+            'unverified-stop',
+        )
+        self.assertEqual(
+            receipt.classify(receipt.identity, 0, workspace_unmounted=True),
+            'orderly',
+        )
+        for bad in (1, 'true', 0):
+            with self.assertRaises(ValueError):
+                receipt.classify(receipt.identity, 0, workspace_unmounted=bad)
+
+    def test_ext4_superblock_clean_distinguishes_valid_and_recover_flags(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            image = Path(tmp) / 'disk.img'
+            buf = bytearray(2048)
+            struct.pack_into('<HH', buf, 1024 + 0x38, 0xEF53, 1)
+            struct.pack_into('<I', buf, 1024 + 0x60, 0x0242)
+            image.write_bytes(buf)
+            clean = ext4_superblock_clean(image)
+            self.assertTrue(clean['cleanly_unmounted'])
+            self.assertFalse(clean['incompat_recover'])
+
+            struct.pack_into('<I', buf, 1024 + 0x60, 0x0242 | 0x0004)
+            image.write_bytes(buf)
+            dirty = ext4_superblock_clean(image)
+            self.assertFalse(dirty['cleanly_unmounted'])
+            self.assertTrue(dirty['incompat_recover'])
+
+            struct.pack_into('<HH', buf, 1024 + 0x38, 0x0000, 1)
+            image.write_bytes(buf)
+            with self.assertRaisesRegex(ValueError, 'magic'):
+                ext4_superblock_clean(image)
 
 
 if __name__ == '__main__':

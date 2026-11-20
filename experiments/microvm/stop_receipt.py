@@ -4,9 +4,39 @@ import json
 from pathlib import Path
 import re
 import secrets
+import struct
 import subprocess
 
 TOKEN = re.compile(r'[0-9a-f]{64}')
+EXT4_SUPER_MAGIC = 0xEF53
+EXT4_VALID_FS = 0x0001
+EXT4_FEATURE_INCOMPAT_RECOVER = 0x0004
+
+
+def ext4_superblock_clean(path):
+    """Inspect a stopped private ext4 image on the host.
+
+    Linux sets EXT4_FEATURE_INCOMPAT_RECOVER (0x0004) while an ext4 filesystem
+    has an active journal mounted read-write, and clears it only when umount
+    flushes the journal and marks s_state = EXT4_VALID_FS (0x0001).
+    """
+    with Path(path).open('rb') as disk:
+        disk.seek(1024)
+        sb = disk.read(128)
+    if len(sb) < 128:
+        raise ValueError('short ext4 superblock read')
+    magic, state = struct.unpack_from('<HH', sb, 0x38)
+    incompat, = struct.unpack_from('<I', sb, 0x60)
+    if magic != EXT4_SUPER_MAGIC:
+        raise ValueError(f'unexpected ext4 magic: 0x{magic:04x}')
+    recover = bool(incompat & EXT4_FEATURE_INCOMPAT_RECOVER)
+    return {
+        'magic': f'0x{magic:04x}',
+        's_state': state,
+        's_feature_incompat': incompat,
+        'incompat_recover': recover,
+        'cleanly_unmounted': state == EXT4_VALID_FS and not recover,
+    }
 
 
 @dataclass(frozen=True)
@@ -69,15 +99,19 @@ class StopReceipt:
         self.acknowledged = True
         return True
 
-    def classify(self, identity, exit_code, forced=False):
+    def classify(self, identity, exit_code, forced=False, *, workspace_unmounted=None):
         if identity != self.identity:
             return 'identity-mismatch'
         if type(exit_code) is not int:
             raise ValueError('a reaped child exit code is required')
+        if workspace_unmounted is not None and type(workspace_unmounted) is not bool:
+            raise ValueError('explicit boolean workspace unmount state required')
         if forced:
             return 'forced-stop'
         if self.intent and self.acknowledged and exit_code == 0:
-            return 'orderly' if self.poweroff_exit_qualified else 'unverified-stop'
+            if self.poweroff_exit_qualified and workspace_unmounted is not False:
+                return 'orderly'
+            return 'unverified-stop'
         return 'crash'
 
     def record(self):

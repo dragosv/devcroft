@@ -5,9 +5,30 @@ use std::net::Shutdown;
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 const SOCKET: &str = "/run/keeper/control.sock";
 const SSH_SOCKET: &str = "/run/keeper/ssh.sock";
+const MAX_TRANSPORT_RELAYS: usize = 24;
+
+struct RelaySlot(Arc<AtomicUsize>);
+
+impl RelaySlot {
+    fn try_acquire(active: &Arc<AtomicUsize>) -> Option<Self> {
+        active
+            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |current| {
+                (current < MAX_TRANSPORT_RELAYS).then_some(current + 1)
+            })
+            .ok()
+            .map(|_| Self(Arc::clone(active)))
+    }
+}
+
+impl Drop for RelaySlot {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::AcqRel);
+    }
+}
 
 fn vsock_listener(port: u32) -> io::Result<OwnedFd> {
     // SAFETY: checked socket result is uniquely owned; sockaddr is initialized.
@@ -46,17 +67,23 @@ fn relay(mut incoming: UnixStream, path: &str) -> io::Result<()> {
         result
     });
     let downstream = io::copy(&mut outgoing, &mut incoming);
+    let _ = outgoing.shutdown(Shutdown::Both);
+    // Write before Read, never Both at once: libkrun repeats the guest's
+    // shutdown flags on its host Unix socket, and on macOS a combined shutdown
+    // fails with ENOTCONN once the host client has half-closed, so the client
+    // never sees EOF until the proxy reaper runs (measured, 5 s).
     let _ = incoming.shutdown(Shutdown::Write);
     // Wake a reader if the keeper closed after sending Exit without host EOF.
     let _ = incoming.shutdown(Shutdown::Read);
-    upstream
+    let _ = upstream
         .join()
-        .map_err(|_| io::Error::other("relay panicked"))??;
+        .map_err(|_| io::Error::other("relay panicked"))?;
     downstream?;
     Ok(())
 }
 
 fn serve_transport(transport: OwnedFd, path: &'static str) -> io::Result<()> {
+    let active = Arc::new(AtomicUsize::new(0));
     loop {
         // SAFETY: accept4 returns a new owned fd. Only stream byte I/O is used.
         let fd = unsafe {
@@ -75,7 +102,12 @@ fn serve_transport(transport: OwnedFd, path: &'static str) -> io::Result<()> {
             return Err(error);
         }
         let stream = unsafe { UnixStream::from_raw_fd(fd) };
+        let Some(slot) = RelaySlot::try_acquire(&active) else {
+            drop(stream);
+            continue;
+        };
         std::thread::spawn(move || {
+            let _slot = slot;
             if let Err(e) = relay(stream, path) {
                 eprintln!("guest relay: {e}");
             }

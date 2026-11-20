@@ -4,7 +4,7 @@ This is the experimental implementation of `evaluate-microvm-runtimes`.
 `libkrun/` and `hvi/` have their own Cargo workspaces and lockfiles. The main devcroft build and
 published crate do not depend on it. No production VM dispatch exists yet.
 
-The [native assessment](results/macos-arm64-evaluation-assessment-v11.json) records
+The [native assessment](results/macos-arm64-evaluation-assessment-v12.json) records
 the full 180-case macOS ARM64 comparison, clean reconstruction, final SSH fault
 recovery and real CLI/TLS regressions against the five backend criteria. Both
 adapters work on this host. Production adoption remains no-go under the current
@@ -1366,3 +1366,98 @@ writes, a UDP/IPv6 firewall, guest-root attestation, Nix/fleet cache namespaces,
 host parser fuzzing, hostile preparation or other platform rows. Performance,
 storage and earlier workload/editor/stop results keep their original artifacts
 in assessment v10; production adoption remains no-go.
+
+### Keeper admission, frame deadlines and stop quiescence (2026-11-20)
+
+The v9 keeper accepted any number of connections and waited indefinitely for a
+frame to complete. On the v9 minimal guest, both native adapters fail all 12
+new cases: oversized control headers, an idle connection, truncated headers and
+bodies held open, a byte-by-byte Spawn, incomplete frames inside a session, 20
+stalled connections, and two PID 1 control stalls. Nothing closes within the
+probe's window. The v8 stop receipt has a separate gap. With Redis running and a
+writer that ignores TERM holding the workspace, it classifies the stop as
+`orderly`. On the host, though, the workspace superblock is still mounted and
+has a journal to recover (`incompat_recover`). Both counterexamples are retained
+on both adapters.
+
+Changes in the shared `src/keeper/`:
+
+- **Deadline.** A new connection gets 1 s to complete its first `Spawn`/`Query`.
+  Inside a session, a frame must complete within 1 s of its first byte. Idle
+  sessions are not timed out.
+- **Per-tag caps.** Stdin/stdout/stderr and `QueryResult` keep 16 MiB. `Spawn`
+  gets 4 MiB, above `ARG_MAX` on macOS and Linux, so no command the kernel would
+  accept is refused. Other control frames are capped at 64 KiB. Buffers grow
+  only as bytes arrive.
+- **Admission.** At most 16 simultaneous connections. The 17th receives
+  `SpawnErr` immediately, at accept.
+
+The guest caps its relays at 24. PID 1 bounds each control connection to 1 s
+and 512 commands. Before acknowledging a stop, PID 1 sends TERM, then KILL, to
+every child, then unmounts the workspace and toolchain. If an unmount fails, it
+answers `ERR shutdown-busy` and does not acknowledge.
+
+Both native macOS ARM64 adapters pass:
+
+- the protocol probe, 38 cases including the 12 new ones, with continuous
+  canaries and one cold restart (three boots per adapter);
+- all seven stop cases (eight boots per adapter).
+
+On the trickle Spawn, the host sees the close about 0.11 s after the keeper's
+deadline. Of the 20 stalled connections, 13 are evicted at the deadline and 7
+are refused at admission. A fresh `Spawn` then works while the client still
+holds all 20 descriptors open. The final stop leaves the workspace superblock
+clean, and the build plus 32 acknowledged Redis keys are recovered afterwards.
+
+Three harness defects and one real regression came up along the way. They are
+recorded as excluded runs in the validation:
+
+- **Send-based refusal checks.** On macOS, a send to a Unix socket whose peer
+  shut its read side blocks instead of returning EPIPE (measured). The probe now
+  observes refusals by reading.
+- **Recovery `Spawn`.** It passed `/bin/sh` as the script.
+- **Console line ending.** The quiescence marker was matched with LF, but the
+  console tty writes CRLF.
+- **Relay shutdown (real regression).** libkrun repeats the guest's shutdown
+  flags on its host socket. On macOS, `shutdown(RDWR)` fails with ENOTCONN once
+  the client has half-closed, so two half-close cases saw no EOF until the 5 s
+  proxy reaper ran (measured). The relay again shuts down Write, then Read.
+
+The first libkrun baseline used the faulty harness. It was rerun on the same v9
+guest and fails the same 12 cases. The hvi baselines are new.
+
+The first version of the Rust test for the in-session deadline wrote the header with
+its bytes in the wrong order. It passed through the invalid-tag path and never
+reached the deadline it was named for. It now uses a valid stdin header and
+checks that the session ends no earlier than the deadline. Tests:
+
+- main crate: 30 keeper tests;
+- `guest-keeper`: 45 tests, one ignored;
+- 86 Python tests;
+- Clippy and formatting checks.
+
+Run:
+
+```sh
+rtk proxy python3 experiments/microvm/build_keeper_guest.py --out experiments/microvm/artifacts/stage-b-protocol-admission
+rtk proxy python3 experiments/microvm/build_keeper_guest.py --nix --out experiments/microvm/artifacts/stage-b-nix-quiescence-control
+rtk proxy python3 experiments/microvm/build_keeper_guest.py --nix --pid1-exit-probe --out experiments/microvm/artifacts/stage-b-nix-quiescence-exit
+rtk proxy python3 experiments/microvm/protocol_probe.py --adapter libkrun \
+  --guest experiments/microvm/artifacts/stage-b-protocol-admission/guest.json --out <new-run>
+rtk proxy python3 experiments/microvm/stop_probe.py --adapter libkrun \
+  --guest experiments/microvm/artifacts/stage-b-nix-quiescence-exit/guest.json \
+  --control-guest experiments/microvm/artifacts/stage-b-nix-quiescence-control/guest.json \
+  --out <new-run> --discard-private
+```
+
+Evidence:
+
+- `results/{libkrun,hvi}-macos-arm64-keeper-admission{,-before}.json`;
+- `results/{libkrun,hvi}-macos-arm64-stop-quiescence{,-before}.json`;
+- `results/macos-arm64-keeper-admission-quiescence-validation.json`.
+
+This is a fixed sample, not a denial-of-service qualification. Any peer that can
+reach the socket can still occupy all 16 slots for up to 1 s at a time.
+Companion services, a process in uninterruptible sleep and host power loss are
+not covered. Earlier measurements keep their original keeper/guest hashes.
+Production adoption remains no-go.

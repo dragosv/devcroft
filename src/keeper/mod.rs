@@ -37,14 +37,40 @@ pub use session::{EnvOverlay, LocalSessionBackend, SessionBackend, set_activatio
 use std::io;
 use std::os::unix::net::UnixListener;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::thread;
-use std::time::Instant;
+use std::time::{Duration, Instant};
+
+/// Upper bound on simultaneous accepted connections handled by [`Keeper`].
+/// Connections beyond this cap receive a deterministic [`Frame::SpawnErr`]
+/// and close immediately on the accept loop without spawning a thread.
+pub const MAX_ACTIVE_CONNECTIONS: usize = 16;
+
+pub(crate) struct ConnectionSlot(Arc<AtomicUsize>);
+
+impl ConnectionSlot {
+    pub(crate) fn try_acquire(active: &Arc<AtomicUsize>) -> Option<Self> {
+        active
+            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |current| {
+                (current < MAX_ACTIVE_CONNECTIONS).then_some(current + 1)
+            })
+            .ok()
+            .map(|_| Self(Arc::clone(active)))
+    }
+}
+
+impl Drop for ConnectionSlot {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::AcqRel);
+    }
+}
 
 pub struct Keeper {
     listener: UnixListener,
     registry: Arc<Registry>,
     started: Instant,
     backend: Arc<dyn SessionBackend>,
+    active: Arc<AtomicUsize>,
 }
 
 impl Keeper {
@@ -58,6 +84,7 @@ impl Keeper {
             registry: Arc::new(Registry::new()),
             started: Instant::now(),
             backend,
+            active: Arc::new(AtomicUsize::new(0)),
         }
     }
 
@@ -73,11 +100,24 @@ impl Keeper {
     /// returns if `accept` itself fails.
     pub fn serve(&self) -> io::Result<()> {
         loop {
-            let (stream, _) = self.listener.accept()?;
+            let (mut stream, _) = self.listener.accept()?;
+            let Some(slot) = ConnectionSlot::try_acquire(&self.active) else {
+                let _ = stream.set_write_timeout(Some(Duration::from_millis(200)));
+                let _ = protocol::write_frame(
+                    &mut stream,
+                    &Frame::SpawnErr {
+                        message: "keeper connection limit exceeded".to_string(),
+                    },
+                );
+                continue;
+            };
             let registry = Arc::clone(&self.registry);
             let started = self.started;
             let backend = Arc::clone(&self.backend);
-            thread::spawn(move || connection::handle(stream, registry, started, backend));
+            thread::spawn(move || {
+                let _slot = slot;
+                connection::handle(stream, registry, started, backend);
+            });
         }
     }
 }
