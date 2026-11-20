@@ -1,0 +1,336 @@
+diff --git a/src/devices/src/virtio/vsock/unix_proxy/mod.rs b/src/devices/src/virtio/vsock/unix_proxy/mod.rs
+index f441223..910b69b 100644
+--- a/src/devices/src/virtio/vsock/unix_proxy/mod.rs
++++ b/src/devices/src/virtio/vsock/unix_proxy/mod.rs
+@@ -1,4 +1,4 @@
+-use std::collections::HashMap;
++use std::collections::{HashMap, VecDeque};
+ use std::num::Wrapping;
+ use std::path::{Path, PathBuf};
+ use std::sync::{Arc, Mutex};
+@@ -46,6 +46,11 @@ pub struct UnixProxy {
+     pub(crate) last_tx_cnt_sent: Wrapping<u32>,
+     pub(crate) push_cnt: Wrapping<u32>,
+     pub(crate) rx_cnt: Wrapping<u32>,
++    // Guest data the host socket could not take yet. The guest only sends
++    // within the credit we advertise, and tx_cnt (our fwd_cnt) advances only
++    // as bytes reach the socket, so this never exceeds CONN_TX_BUF_SIZE.
++    pub(crate) tx_pending: VecDeque<u8>,
++    pub(crate) deferred_shutdown: u32,
+ }
+ 
+ impl UnixProxy {
+@@ -81,6 +86,8 @@ impl UnixProxy {
+             last_tx_cnt_sent: Wrapping(0),
+             push_cnt: Wrapping(0),
+             rx_cnt: Wrapping(0),
++            tx_pending: VecDeque::new(),
++            deferred_shutdown: 0,
+         })
+     }
+ 
+@@ -116,6 +123,8 @@ impl UnixProxy {
+             peer_fwd_cnt: Wrapping(0),
+             push_cnt: Wrapping(0),
+             path: Default::default(),
++            tx_pending: VecDeque::new(),
++            deferred_shutdown: 0,
+         }
+     }
+ 
+@@ -285,6 +294,9 @@ impl Proxy for UnixProxy {
+         }
+ 
+         self.peer_shutdown |= shutdown;
++        if sys::defer_shutdown(self, shutdown) {
++            return ProxyUpdate::default();
++        }
+         sys::do_shutdown(self, pkt);
+ 
+         if self.peer_shutdown != SHUTDOWN_MASK {
+diff --git a/src/devices/src/virtio/vsock/unix_proxy/unix.rs b/src/devices/src/virtio/vsock/unix_proxy/unix.rs
+index 7fa661a..79637ea 100644
+--- a/src/devices/src/virtio/vsock/unix_proxy/unix.rs
++++ b/src/devices/src/virtio/vsock/unix_proxy/unix.rs
+@@ -12,6 +12,8 @@ use nix::sys::socket::{
+ 
+ #[cfg(target_os = "macos")]
+ use super::super::super::linux_errno::linux_errno_raw;
++use super::super::defs;
++use super::super::defs::uapi;
+ use super::super::muxer::{MuxerRx, push_packet};
+ use super::super::packet::{TsiConnectReq, VsockPacket};
+ use super::super::proxy::{
+@@ -61,13 +63,16 @@ pub(crate) fn create_socket(id: u64) -> Result<PlatformHandle, ProxyError> {
+     Ok(fd)
+ }
+ 
++// The connected socket stays non-blocking: see sendmsg. macOS ignores
++// MSG_DONTWAIT on a blocking AF_UNIX send (measured), so the flag alone is not
++// enough there.
+ pub(crate) fn switch_to_connected(proxy: &mut super::UnixProxy) {
+     proxy.status = ProxyStatus::Connected;
+     match fcntl(&proxy.fd, FcntlArg::F_GETFL) {
+         Ok(flags) => match OFlag::from_bits(flags) {
+             Some(flags) => {
+-                if let Err(e) = fcntl(&proxy.fd, FcntlArg::F_SETFL(flags & !OFlag::O_NONBLOCK)) {
+-                    warn!("error switching to blocking: id={}, err={}", proxy.id, e);
++                if let Err(e) = fcntl(&proxy.fd, FcntlArg::F_SETFL(flags | OFlag::O_NONBLOCK)) {
++                    warn!("error switching to non-blocking: id={}, err={}", proxy.id, e);
+                 }
+             }
+             None => error!("invalid fd flags id={}", proxy.id),
+@@ -204,57 +209,137 @@ pub(crate) fn confirm_connect(
+     None
+ }
+ 
++#[cfg(target_os = "macos")]
++const SEND_FLAGS: MsgFlags = MsgFlags::MSG_DONTWAIT;
++
++#[cfg(target_os = "linux")]
++const SEND_FLAGS: MsgFlags = MsgFlags::MSG_DONTWAIT.union(MsgFlags::MSG_NOSIGNAL);
++
++// The host side of a guest stream is written without blocking: a blocking send
++// here stalls the muxer, and with it every other connection of the VM, for as
++// long as one host client does not read.
+ pub(crate) fn sendmsg(proxy: &mut super::UnixProxy, pkt: &VsockPacket) -> ProxyUpdate {
+     let mut update = ProxyUpdate::default();
+ 
+-    let ret = if let Some(buf) = pkt.buf() {
+-        #[cfg(target_os = "macos")]
+-        let flags = MsgFlags::empty();
+-
+-        #[cfg(target_os = "linux")]
+-        let flags = MsgFlags::MSG_NOSIGNAL;
++    let Some(buf) = pkt.buf() else {
++        return update;
++    };
+ 
+-        match send(proxy.fd.as_raw_fd(), buf, flags) {
+-            Ok(sent) => {
+-                if sent != buf.len() {
+-                    error!("couldn't set everything: buf={}, sent={}", buf.len(), sent);
+-                }
+-                proxy.tx_cnt += Wrapping(sent as u32);
+-                sent as i32
+-            }
+-            Err(err) => {
+-                #[cfg(target_os = "macos")]
+-                let errno = -linux_errno_raw(err as i32);
++    if proxy.tx_pending.len() + buf.len() > defs::CONN_TX_BUF_SIZE {
++        warn!("guest exceeded its credit: id={}", proxy.id);
++        proxy.push_reset();
++        proxy.tx_pending.clear();
++        proxy.status = ProxyStatus::Closed;
++        update.polling = Some((proxy.id, proxy.fd.as_raw_fd(), EventSet::empty()));
++        update.signal_queue = true;
++        update.remove_proxy = ProxyRemoval::Deferred;
++        return update;
++    }
+ 
+-                #[cfg(target_os = "linux")]
+-                let errno = -(err as i32);
+-                errno
++    let had_pending = !proxy.tx_pending.is_empty();
++    let sent = if had_pending {
++        0
++    } else {
++        match send(proxy.fd.as_raw_fd(), buf, SEND_FLAGS) {
++            Ok(sent) => sent,
++            Err(Errno::EAGAIN) | Err(Errno::EINTR) => 0,
++            Err(e) => {
++                debug!("sendmsg: dropping data for a failed host socket: {e}");
++                return update;
+             }
+         }
+-    } else {
+-        -libc::EINVAL
+     };
++    proxy.tx_cnt += Wrapping(sent as u32);
++    proxy.tx_pending.extend(&buf[sent..]);
+ 
+-    if ret > 0 && (proxy.tx_cnt - proxy.last_tx_cnt_sent).0 >= proxy.peer_buf_alloc / 2 {
+-        debug!(
+-            "sending credit update: id={}, tx_cnt={}, last_tx_cnt={}",
+-            proxy.id, proxy.tx_cnt, proxy.last_tx_cnt_sent
+-        );
+-        proxy.last_tx_cnt_sent = proxy.tx_cnt;
++    push_credit_update(proxy, &mut update);
++    if !had_pending && !proxy.tx_pending.is_empty() {
++        update.polling = Some((proxy.id, proxy.fd.as_raw_fd(), interest(proxy)));
++    }
+ 
+-        let rx = MuxerRx::CreditUpdate {
+-            local_port: pkt.dst_port(),
+-            peer_port: pkt.src_port(),
+-            fwd_cnt: proxy.tx_cnt.0,
+-        };
++    debug!("sendmsg sent={sent} pending={}", proxy.tx_pending.len());
+ 
+-        push_packet(proxy.cid, rx, &proxy.rxq, &proxy.queue, &proxy.mem);
+-        update.signal_queue = true;
++    update
++}
++
++fn push_credit_update(proxy: &mut super::UnixProxy, update: &mut ProxyUpdate) {
++    if (proxy.tx_cnt - proxy.last_tx_cnt_sent).0 < proxy.peer_buf_alloc / 2 {
++        return;
+     }
++    debug!(
++        "sending credit update: id={}, tx_cnt={}, last_tx_cnt={}",
++        proxy.id, proxy.tx_cnt, proxy.last_tx_cnt_sent
++    );
++    proxy.last_tx_cnt_sent = proxy.tx_cnt;
+ 
+-    debug!("sendmsg ret={ret}");
++    let rx = MuxerRx::CreditUpdate {
++        local_port: proxy.local_port,
++        peer_port: proxy.peer_port,
++        fwd_cnt: proxy.tx_cnt.0,
++    };
+ 
+-    update
++    push_packet(proxy.cid, rx, &proxy.rxq, &proxy.queue, &proxy.mem);
++    update.signal_queue = true;
++}
++
++fn interest(proxy: &super::UnixProxy) -> EventSet {
++    let mut evset = EventSet::empty();
++    if proxy.status == ProxyStatus::Connected && !proxy.host_eof {
++        evset |= EventSet::IN;
++    }
++    if !proxy.tx_pending.is_empty() {
++        evset |= EventSet::OUT;
++    }
++    evset
++}
++
++fn flush_pending(proxy: &mut super::UnixProxy, update: &mut ProxyUpdate) {
++    while !proxy.tx_pending.is_empty() {
++        let (front, _) = proxy.tx_pending.as_slices();
++        match send(proxy.fd.as_raw_fd(), front, SEND_FLAGS) {
++            Ok(sent) => {
++                proxy.tx_pending.drain(..sent);
++                proxy.tx_cnt += Wrapping(sent as u32);
++            }
++            Err(Errno::EAGAIN) => break,
++            Err(Errno::EINTR) => {}
++            Err(e) => {
++                debug!("flush_pending: dropping data for a failed host socket: {e}");
++                proxy.tx_pending.clear();
++            }
++        }
++    }
++    push_credit_update(proxy, update);
++
++    if !proxy.tx_pending.is_empty() || proxy.deferred_shutdown == 0 {
++        return;
++    }
++    // Applied separately, Write before Read: on macOS a combined shutdown
++    // fails with ENOTCONN once the host client has half-closed.
++    let deferred = std::mem::take(&mut proxy.deferred_shutdown);
++    if deferred & uapi::VSOCK_FLAGS_SHUTDOWN_SEND != 0 {
++        let _ = shutdown(proxy.fd.as_raw_fd(), Shutdown::Write);
++    }
++    if deferred & uapi::VSOCK_FLAGS_SHUTDOWN_RCV != 0 {
++        let _ = shutdown(proxy.fd.as_raw_fd(), Shutdown::Read);
++    }
++    if proxy.peer_shutdown == uapi::VSOCK_FLAGS_SHUTDOWN_RCV | uapi::VSOCK_FLAGS_SHUTDOWN_SEND {
++        proxy.push_reset();
++        *update = ProxyUpdate {
++            signal_queue: true,
++            ..release(proxy)
++        };
++        proxy.status = ProxyStatus::Closed;
++    }
++}
++
++// Guest shutdown and close follow the data the guest sent before them.
++pub(crate) fn defer_shutdown(proxy: &mut super::UnixProxy, flags: u32) -> bool {
++    if proxy.tx_pending.is_empty() {
++        return false;
++    }
++    proxy.deferred_shutdown |= flags;
++    true
+ }
+ 
+ pub(crate) fn update_peer_credit(proxy: &mut super::UnixProxy, pkt: &VsockPacket) -> ProxyUpdate {
+@@ -274,7 +359,7 @@ pub(crate) fn update_peer_credit(proxy: &mut super::UnixProxy, pkt: &VsockPacket
+     proxy.status = ProxyStatus::Connected;
+ 
+     ProxyUpdate {
+-        polling: Some((proxy.id, proxy.fd.as_raw_fd(), EventSet::IN)),
++        polling: Some((proxy.id, proxy.fd.as_raw_fd(), interest(proxy))),
+         ..Default::default()
+     }
+ }
+@@ -377,14 +462,31 @@ pub(crate) fn process_event(proxy: &mut super::UnixProxy, evset: EventSet) -> Pr
+         return update;
+     }
+ 
++    // Flush first: the receive path below may return early (host EOF), and
++    // pending guest data must still reach the host socket.
++    if evset.contains(EventSet::OUT)
++        && matches!(
++            proxy.status,
++            ProxyStatus::Connected | ProxyStatus::WaitingCreditUpdate
++        )
++    {
++        debug!("process_event: OUT, pending={}", proxy.tx_pending.len());
++        flush_pending(proxy, &mut update);
++        if proxy.status == ProxyStatus::Closed {
++            update.polling = Some((proxy.id, proxy.fd.as_raw_fd(), EventSet::empty()));
++            return update;
++        }
++        update.polling = Some((proxy.id, proxy.fd.as_raw_fd(), interest(proxy)));
++    }
++
+     if evset.intersects(EventSet::IN | EventSet::HANG_UP) {
+         debug!("process_event: IN");
+         if proxy.status == ProxyStatus::Connected {
+             let (signal_queue, wait_credit) = proxy.recv_pkt();
+-            update.signal_queue = signal_queue;
++            update.signal_queue |= signal_queue;
+ 
+             if proxy.host_eof {
+-                update.polling = Some((proxy.id, proxy.fd.as_raw_fd(), EventSet::empty()));
++                update.polling = Some((proxy.id, proxy.fd.as_raw_fd(), interest(proxy)));
+                 return update;
+             }
+ 
+@@ -411,7 +513,7 @@ pub(crate) fn process_event(proxy: &mut super::UnixProxy, evset: EventSet) -> Pr
+                 return update;
+             } else if proxy.status == ProxyStatus::WaitingCreditUpdate {
+                 debug!("process_event: WaitingCreditUpdate");
+-                update.polling = Some((proxy.id, proxy.fd.as_raw_fd(), EventSet::empty()));
++                update.polling = Some((proxy.id, proxy.fd.as_raw_fd(), interest(proxy)));
+             }
+         } else {
+             debug!("EventSet::IN while not connected: {:?}", proxy.status);
+@@ -425,7 +527,10 @@ pub(crate) fn process_event(proxy: &mut super::UnixProxy, evset: EventSet) -> Pr
+             push_connect_rsp(proxy, 0);
+             update.signal_queue = true;
+             update.polling = Some((proxy.id, proxy.fd.as_raw_fd(), EventSet::IN));
+-        } else {
++        } else if !matches!(
++            proxy.status,
++            ProxyStatus::Connected | ProxyStatus::WaitingCreditUpdate
++        ) {
+             error!("EventSet::OUT while not connecting");
+         }
+     }
+diff --git a/src/devices/src/virtio/vsock/unix_proxy/windows.rs b/src/devices/src/virtio/vsock/unix_proxy/windows.rs
+index 039394f..302b38a 100644
+--- a/src/devices/src/virtio/vsock/unix_proxy/windows.rs
++++ b/src/devices/src/virtio/vsock/unix_proxy/windows.rs
+@@ -264,6 +264,10 @@ pub(crate) fn process_op_response(proxy: &mut super::UnixProxy, pkt: &VsockPacke
+     }
+ }
+ 
++pub(crate) fn defer_shutdown(_proxy: &mut super::UnixProxy, _flags: u32) -> bool {
++    false
++}
++
+ pub(crate) fn do_shutdown(proxy: &mut super::UnixProxy, pkt: &VsockPacket) {
+     let recv_off = pkt.flags() & super::uapi::VSOCK_FLAGS_SHUTDOWN_RCV != 0;
+     let send_off = pkt.flags() & super::uapi::VSOCK_FLAGS_SHUTDOWN_SEND != 0;

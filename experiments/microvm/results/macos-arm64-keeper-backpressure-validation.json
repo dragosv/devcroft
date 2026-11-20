@@ -1,0 +1,230 @@
+{
+  "schema": 1,
+  "status": "passed",
+  "platform": "macos-arm64-native",
+  "qualification": "one fixed 64 MiB unread-output sample per row through the real keeper and each native transport; not throughput, aggregate-memory or denial-of-service qualification",
+  "keeper_change": "the session output channel is bounded at 32 frames of at most 8 KiB (256 KiB); a client that holds its connection open without reading now stalls the child through its pipe/pty instead of growing the keeper",
+  "vmm_finding": {
+    "adapter": "libkrun",
+    "defect": "the unix proxy wrote guest stream data to its host socket with a blocking send on the vsock queue thread and returned credit as soon as bytes entered the kernel buffer, so one host client that stopped reading stalled every vsock connection of that VM: other keeper sessions, SSH and the editor",
+    "measured": "a new connection to the same VM got SpawnOk only when the unread client resumed reading (3.0 s, the probe's hold); the sibling VM was unaffected (1 ms)",
+    "macos_fact": "MSG_DONTWAIT does not make send non-blocking on a blocking AF_UNIX socket on macOS (measured: send blocked until SIGALRM); O_NONBLOCK returns EAGAIN after 8 KiB",
+    "patch": {
+      "path": "experiments/microvm/patches/libkrun-vsock-host-backpressure.patch",
+      "sha256": "67a1e6ea2193dc17a37cdb5965f86b810337c435131440c653aa02576bcced7f",
+      "change": "connected unix proxies stay O_NONBLOCK; data the host socket cannot take is queued per connection and flushed on writability; credit (fwd_cnt) advances only as bytes reach the socket, so the queue is bounded by the advertised 8 MiB and a guest that exceeds its credit is reset; guest shutdown/close is deferred until the queue drains",
+      "status": "local experimental correction; not upstream merged",
+      "first_version_excluded": "the first version relied on MSG_DONTWAIT and still blocked on macOS"
+    }
+  },
+  "rows": [
+    {
+      "adapter": "hvi",
+      "configuration": "new keeper",
+      "status": "passed",
+      "cases": 39,
+      "passed": 39,
+      "boots": 3,
+      "cold_restart_new_helper_identity": true,
+      "vmm_backpressure_patch": false,
+      "backpressure": {
+        "child_stalled_while_client_unread": true,
+        "same_vm_new_connection_served_while_unread": true,
+        "sibling_vm_canary_echo_seconds_during_hold": 0.001,
+        "unread_hold_seconds": 2.0,
+        "child_output_bytes": 67108864,
+        "received_bytes": 67108864,
+        "drained_exact_and_finished_after_reading": true,
+        "seconds_from_spawn_to_exit": 3.075,
+        "same_vm_new_connection_spawn_ok_seconds": 0.001,
+        "marker_answer": "stalled"
+      },
+      "cleanup": {
+        "helpers_reaped": true,
+        "endpoints_removed": true,
+        "private_resources_removed": true
+      },
+      "evidence": {
+        "path": "experiments/microvm/results/hvi-macos-arm64-keeper-backpressure.json",
+        "sha256": "9fab69f168872b72a16f9eb0f056b35ddbcfd7dead24935e252223f1d8c60263"
+      }
+    },
+    {
+      "adapter": "libkrun",
+      "configuration": "new keeper, VMM without the backpressure patch",
+      "status": "failed-as-observed",
+      "cases": 39,
+      "passed": 38,
+      "boots": 3,
+      "cold_restart_new_helper_identity": true,
+      "vmm_backpressure_patch": false,
+      "backpressure": {
+        "child_stalled_while_client_unread": "not-observable",
+        "same_vm_new_connection_served_while_unread": false,
+        "sibling_vm_canary_echo_seconds_during_hold": 0.001,
+        "unread_hold_seconds": 2.0,
+        "child_output_bytes": 67108864,
+        "received_bytes": 67108864,
+        "drained_exact_and_finished_after_reading": true,
+        "seconds_from_spawn_to_exit": 5.612,
+        "same_vm_new_connection_spawn_ok_seconds": 3.018,
+        "marker_answer": "stalled"
+      },
+      "cleanup": {
+        "helpers_reaped": true,
+        "endpoints_removed": true,
+        "private_resources_removed": true
+      },
+      "evidence": {
+        "path": "experiments/microvm/results/libkrun-macos-arm64-keeper-backpressure-unpatched-vmm.json",
+        "sha256": "a4fd797a0cbbcd1dc949eb0c0f79504db99ca5c47e5f699afb59879c9242ee36"
+      }
+    },
+    {
+      "adapter": "libkrun",
+      "configuration": "new keeper, VMM with the backpressure patch",
+      "status": "passed",
+      "cases": 39,
+      "passed": 39,
+      "boots": 3,
+      "cold_restart_new_helper_identity": true,
+      "vmm_backpressure_patch": true,
+      "backpressure": {
+        "child_stalled_while_client_unread": true,
+        "same_vm_new_connection_served_while_unread": true,
+        "sibling_vm_canary_echo_seconds_during_hold": 0.001,
+        "unread_hold_seconds": 2.0,
+        "child_output_bytes": 67108864,
+        "received_bytes": 67108864,
+        "drained_exact_and_finished_after_reading": true,
+        "seconds_from_spawn_to_exit": 2.594,
+        "same_vm_new_connection_spawn_ok_seconds": 0.001,
+        "marker_answer": "stalled"
+      },
+      "cleanup": {
+        "helpers_reaped": true,
+        "endpoints_removed": true,
+        "private_resources_removed": true
+      },
+      "evidence": {
+        "path": "experiments/microvm/results/libkrun-macos-arm64-keeper-backpressure.json",
+        "sha256": "a72fe95a602b7c4e76a7f37b2972d31f73e23d7eb34d202ed50a4bd2bcd0f6bc"
+      }
+    }
+  ],
+  "baselines": [
+    {
+      "adapter": "hvi",
+      "guest": "stage-b-protocol-admission (unbounded keeper channel)",
+      "vmm_backpressure_patch": false,
+      "status": "failed-as-observed",
+      "backpressure": {
+        "child_stalled_while_client_unread": false,
+        "same_vm_new_connection_served_while_unread": true,
+        "sibling_vm_canary_echo_seconds_during_hold": 0.001,
+        "unread_hold_seconds": 2.0,
+        "child_output_bytes": 67108864,
+        "received_bytes": 67108864,
+        "drained_exact_and_finished_after_reading": true,
+        "seconds_from_spawn_to_exit": 2.358,
+        "same_vm_new_connection_spawn_ok_seconds": 0.006,
+        "marker_answer": "finished"
+      },
+      "evidence": {
+        "path": "experiments/microvm/results/hvi-macos-arm64-keeper-backpressure-before.json",
+        "sha256": "47c67e52beb27d891939890c4e9d3abcd3f39cb7644d0f693eedd4824c330992"
+      },
+      "interpretation": "the child wrote all 64 MiB while the client read none: the keeper held them in memory"
+    },
+    {
+      "adapter": "libkrun",
+      "guest": "stage-b-protocol-admission (unbounded keeper channel)",
+      "vmm_backpressure_patch": false,
+      "status": "failed-as-observed",
+      "backpressure": {
+        "child_stalled_while_client_unread": "not-observable",
+        "same_vm_new_connection_served_while_unread": false,
+        "sibling_vm_canary_echo_seconds_during_hold": 0.001,
+        "unread_hold_seconds": 2.0,
+        "child_output_bytes": 67108864,
+        "received_bytes": 67108864,
+        "drained_exact_and_finished_after_reading": true,
+        "seconds_from_spawn_to_exit": 5.282,
+        "same_vm_new_connection_spawn_ok_seconds": 3.009,
+        "marker_answer": "finished"
+      },
+      "evidence": {
+        "path": "experiments/microvm/results/libkrun-macos-arm64-keeper-backpressure-before.json",
+        "sha256": "49f5520cf34c7b99495f6055d4a526296dc12f1f9d061aefee194a58683b4f0d"
+      }
+    }
+  ],
+  "regression_with_patched_vmm": [
+    {
+      "kind": "stop probe",
+      "status": "passed",
+      "evidence": {
+        "path": "experiments/microvm/results/libkrun-macos-arm64-stop-vsock-backpressure-patch.json",
+        "sha256": "7075fc8913f4076c70f7ac2c20b65f1977d21c9cd7eb89d84fc04e5532f85c69"
+      },
+      "cases": 7,
+      "quiescence": "orderly",
+      "host_superblock_clean": true
+    },
+    {
+      "kind": "OpenSSH/SFTP/forwarding smoke",
+      "status": "passed",
+      "evidence": {
+        "path": "experiments/microvm/results/libkrun-macos-arm64-ssh-vsock-backpressure-patch.json",
+        "sha256": "3a36ecc2c0b14d333f5a51cea985139775115792f950fbc1aa53b78533e91c48"
+      }
+    }
+  ],
+  "unit_test": "src/keeper/connection.rs a_client_that_stops_reading_stalls_the_child_instead_of_growing_the_keeper (fails on the unbounded channel, passes bounded)",
+  "excluded_runs": [
+    {
+      "run": "experiments/microvm/runs/20261120-libkrun-backpressure-diagnostic{,-2,-3}",
+      "reason": "harness: the guest policy grants no /dev/zero and its busybox has no yes/truncate/dd; the case now writes with shell builtins. A first run with a stderr-intolerant drain was deleted before this record"
+    },
+    {
+      "run": "experiments/microvm/runs/20261120-libkrun-backpressure-diagnostic-{4,5,prefinal}, 20261120-hvi-backpressure-diagnostic{,-prefinal}",
+      "reason": "case development: isolating keeper buffering from transport head-of-line blocking; superseded by the final harness"
+    },
+    {
+      "run": "experiments/microvm/runs/20261120-libkrun-backpressure-patched-diagnostic",
+      "reason": "first VMM patch relied on MSG_DONTWAIT, which macOS ignores on a blocking AF_UNIX socket; still blocked, replaced by keeping the socket O_NONBLOCK"
+    },
+    {
+      "run": "experiments/microvm/runs/20261120-libkrun-backpressure-debuglog{,-2}",
+      "reason": "temporary debug-logging helper build used to locate the blocking send; not a measured row"
+    },
+    {
+      "run": "experiments/microvm/runs/20261120-libkrun-backpressure-patched-diagnostic-2",
+      "reason": "single-case check of the final patch; superseded by the full protocol run"
+    }
+  ],
+  "shared_source_sha256": {
+    "src/keeper/connection.rs": "fb1af33bd1682f3b9d8f2b719a3ba2036be0be529d4f970a94c8ab8436e15bed",
+    "src/keeper/protocol.rs": "4da304555ee61684e517a40791fce915821afef15521d2e17b6b0647b893e77c",
+    "src/keeper/mod.rs": "c732c95f1ddcfafd063d693a4e31e0c34f350996e387bc5313582d55ad7f9dfa"
+  },
+  "experiment_source_sha256": {
+    "protocol_probe.py": "518c7dbc16eec8f7775601bc87c5c38d969be6b9b4eee33a0bf1c7a5b85949af",
+    "build_helper.py": "4a232abdbb5db9b1206e4d92def1e0d849b6c58d055e6e3c9a7afa0537b8aa68",
+    "libkrun/build.rs": "2c3d90e5241a00a1be28ad272c42251b6091417637146b6b8671655449a2d1da",
+    "libkrun/src/main.rs": "d6e7687d9db0add1752046f44edd7fc79c01cf9d71cc26faf9f47c03ca21f0ff",
+    "fixtures/upstream.json": "b43b327fc7c6fe55851c7a3bbf144a4719508bc11086a518692e2e5fb6393ca1",
+    "patches/libkrun-vsock-host-backpressure.patch": "67a1e6ea2193dc17a37cdb5965f86b810337c435131440c653aa02576bcced7f"
+  },
+  "guest_receipt": {
+    "path": "experiments/microvm/artifacts/stage-b-protocol-backpressure/guest.json",
+    "sha256": "3eee694b65a624159312f6b076adb875f756a9e6015cfd787d337b12d3a07624"
+  },
+  "remaining_limits": [
+    "One 64 MiB sample with a 2 s hold per row; no throughput comparison of the patched libkrun transport.",
+    "The libkrun host queue is bounded per connection by the advertised 8 MiB credit, not per VM: a guest with many unread connections can hold up to 8 MiB each (24 relays: 192 MiB).",
+    "Linux libkrun rows not run; the patch keeps MSG_DONTWAIT and O_NONBLOCK there too.",
+    "Earlier libkrun density, preparation, workload, Remote-SSH and agent rows used the helper without this patch and are not transferred; only the protocol, stop and SSH smoke rows were rerun with it.",
+    "The devcroft exec client still queues stdin and signals in an unbounded channel; it grows only the user's own process, with input the user chose."
+  ]
+}
