@@ -405,12 +405,21 @@ user names the variable that carries the endpoint as well.
       Teeth-checks: with the lever misnamed, the non-isolated run's mode
       assertion fails; with a different value in `ANTHROPIC_API_KEY`, the
       real-key assertion fails
-- [ ] 4b.9 `docs/agents.md`: per agent, the brokered configuration (its
+- [x] 4b.9 `docs/agents.md`: per agent, the brokered configuration (its
       `endpoint_env`; Codex's endpoint is a config flag, so it reads the
       variable through `-c openai_base_url=$…`). Cursor is stated as not
       brokerable. `docs/threat-model.md`: brokering moves the key out of
       custody, and the clear leg is sandbox → proxy (the unix bridge on
       Linux, loopback on macOS)
+      **Done (2026-11-20).** `docs/agents.md`, "Brokering the key": the
+      configuration, the refusals, and one row per agent saying how far it
+      was tested through a route (Claude Code end to end in devcroft; Codex,
+      Antigravity, OpenCode and Qwen Code through `nono-proxy` alone; the
+      rest only in the request form). Copilot's upstream is left unsettled
+      rather than guessed, since it uses two hosts. `docs/threat-model.md`,
+      "Brokered credentials: capability": custody removed, capability kept
+      for the sandbox's lifetime, the clear leg, and what is not covered.
+      The README no longer says there is no broker
 
 ## 5. CLI and doctor
 
