@@ -111,10 +111,10 @@ Convergent evidence: this is the same pattern Docker describes for its
 sandboxes. Two independent designs arriving at sentinel-plus-proxy is a signal
 the pattern is table stakes for agent sandboxing, not a differentiator.
 
-### What ships today is custody
+### Delivered credentials: custody
 
-The principle above is the target. **What ships hands the sandbox the real
-value.** There are two routes in, and they have the same exposure:
+Two routes hand the sandbox **the real value**, and they have the same
+exposure:
 
 - `[env] forward` in the project's `devcroft.toml`, which names a variable the
   project needs;
@@ -147,8 +147,59 @@ What devcroft does about it is narrowness and disclosure, not isolation:
 
 What you can do: give the sandbox a key scoped to what the agent does — a
 project-scoped or rate-limited key, never an organisation admin key — and
-allow the agent's API host alone. Brokering, the principle above, is the
-fix for key-shaped credentials and is not built for either route yet.
+allow the agent's API host alone. For a key that travels in one header,
+broker it instead (below).
+
+### Brokered credentials: capability
+
+`[[credentials.broker]]` in the user's configuration is the principle above,
+built for key-shaped credentials. [agents.md](agents.md#brokering-the-key)
+has each agent's configuration. The real value is read from the user's shell
+at `up` and written to the proxy's stdin. It is never in the proxy's argv or
+environment block, never in a file devcroft writes, and never logged. The
+sandbox holds a placeholder, which is the session's proxy token, optionally
+shaped, together with an endpoint on the proxy. The proxy puts the value into
+the declared header on the way out, over TLS of its own to `https://<host>`,
+verified against the trust store the environment names.
+
+What that moves:
+
+- **Code in the sandbox can no longer read the key.** A test, a build script
+  or a dependency's `postinstall` that dumps the environment gets the
+  placeholder, which is worthless outside this sandbox's proxy session.
+- **It can still use the key, through the endpoint, while the sandbox is
+  up.** Brokering removes custody, not capability. Anything in the sandbox
+  can send requests to the host as the user, for as long as the sandbox
+  runs. The bound is the host, which is the API the key was for, rather
+  than every place the key could be copied to.
+- **The host is reachable only through its route.** A direct `CONNECT` to it
+  is refused, so a client that ignored the endpoint is refused rather than
+  given the key.
+- **A request elsewhere never gets the value.** The placeholder sent to
+  another allowed host arrives as the placeholder (tested, absolute-URI and
+  inside a `CONNECT` tunnel).
+
+**The unencrypted hop is sandbox → proxy.** The agent speaks plain HTTP to
+the endpoint, so the placeholder and the request body cross that hop
+unencrypted. Nothing is intercepted: the agent negotiates TLS with no one,
+and the proxy's own TLS to the upstream is ordinary client TLS. On Linux,
+with the sandbox's own network namespace, the hop is the relay and the
+proxy's unix socket. The socket's 0700 directory is the boundary, as it is
+for SSH. On macOS, and on a Linux host without network namespaces, it is the
+host's loopback, readable by anything on the host that can capture loopback
+traffic. That exposes the placeholder and the conversation, never the key.
+
+What brokering does not cover:
+
+- **A key the client exchanges.** Cursor trades its key for a session token
+  that comes back into the sandbox. It also cannot reach a loopback
+  endpoint through the proxy at all, so it is not brokerable.
+- **A file credential.** Subscription logins write their refresh back to the
+  file, so they cannot be held outside. A broker entry has no way to name
+  one.
+- **`network.default = "allow"`**, where traffic need not pass the proxy.
+  `up` refuses the combination rather than fall back to handing over the
+  value.
 
 ## What a sandbox does not solve
 

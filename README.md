@@ -425,8 +425,10 @@ the project's own, with nothing else of it applied and its hooks never run; the
 project's files never mention it. `up` and `status` say it is there, and
 `policy --render` shows its one read-only rule. ([docs/agents.md](docs/agents.md)
 has eleven agents measured inside, declared in the project instead.) Its host
-logins do not follow it in, and there is no credential broker yet: a secret you
-`forward` is visible to every process in the sandbox. Before
+logins do not follow it in. A secret you `forward` is visible to every process
+in the sandbox; a key you broker (`[[credentials.broker]]`, in
+[docs/agents.md](docs/agents.md#brokering-the-key)) is not, since the proxy
+adds it on the way out. Before
 unattended work: commit, or use a disposable worktree — project writes are real
 and there is no undo; read `devcroft policy --render`; keep grants narrow; and
 treat every allowed network destination as an outbound data channel.
@@ -482,7 +484,8 @@ with per-agent and fleet-wide CPU, memory and PID budgets (host-derived
 defaults) and tasks whose outcomes devcroft observes.
 
 **Not claims today:** containment of hostile code or kernel exploits; undo of
-project changes; a credential broker that keeps secrets out of the sandbox;
+project changes; keeping a file credential (a subscription login) out of the
+sandbox, since only header-borne keys can be brokered;
 running a project with no environment file; Linux-equivalent port isolation on
 macOS.
 

@@ -118,6 +118,86 @@ endpoint. The proxy refused some other hosts along the way, such as
 telemetry and update checks, as in the matrix above. Those still go out
 through the allowlist, and none carries the model key.
 
+## Brokering the key
+
+A brokered key never enters the sandbox. You declare it in your own
+configuration (`~/.config/devcroft/config.toml`), not the project's. At `up`
+devcroft reads the real value from your shell and hands it to the egress
+proxy alone. The sandbox gets two variables: a placeholder under the key's own
+name, and the proxy's endpoint for that host under the agent's endpoint
+variable. The proxy swaps the placeholder for the real value in the declared
+header and sends the request on to `https://<host>`.
+
+```toml
+[[credentials.broker]]
+host = "api.anthropic.com"        # must also be in the project's network.allow
+header = "x-api-key"
+env = "ANTHROPIC_API_KEY"         # real value read here at up; placeholder inside
+endpoint_env = "ANTHROPIC_BASE_URL"
+placeholder = "sk-ant-api03-{}"   # optional: a shape for clients that check one
+```
+
+The endpoint is `http://127.0.0.1:<port>/broker<n>`, a path on the proxy's
+own port. That has a consequence worth knowing before it surprises you:
+**the host is then reachable only through that endpoint.** The proxy refuses
+a direct `CONNECT` to it, so anything that ignores the endpoint variable is
+refused rather than sent the key. `up` says so on every run, and
+`policy --render` lists each brokered host with origin `credential:broker`.
+
+`up` refuses, at layer `config`, rather than fall back to handing over the
+value. It refuses a host missing from `network.allow`, a value missing from
+your shell, `network.default = "allow"` (where traffic need not pass the
+proxy), and a variable that the manifest or `[credentials] env` also sets.
+
+| Agent | `host` | `header` | `env` | `endpoint_env` | Through a route |
+|---|---|---|---|---|---|
+| Claude Code | `api.anthropic.com` | `x-api-key` | `ANTHROPIC_API_KEY` | `ANTHROPIC_BASE_URL` | **in devcroft, end to end**, isolated and not |
+| Codex | `api.openai.com` | `Authorization` | `CODEX_API_KEY` | any name, read by a flag (below) | `nono-proxy` alone |
+| Antigravity | `generativelanguage.googleapis.com` | `x-goog-api-key` | `GEMINI_API_KEY` | `GOOGLE_GEMINI_BASE_URL` | `nono-proxy` alone |
+| OpenCode | the provider's host | `Authorization` | `OPENAI_API_KEY` | `OPENAI_BASE_URL` | `nono-proxy` alone |
+| Qwen Code | `dashscope.aliyuncs.com` | `Authorization` | `OPENAI_API_KEY` | `OPENAI_BASE_URL` | `nono-proxy` alone |
+| Copilot CLI | not settled (below) | `Authorization` | `COPILOT_GITHUB_TOKEN` | `COPILOT_API_URL` | no |
+| Aider | `api.openai.com` | `Authorization` | `OPENAI_API_KEY` | `OPENAI_API_BASE` | no |
+| Goose | `api.openai.com` | `Authorization` | `OPENAI_API_KEY` | `OPENAI_HOST` | no |
+| Amp | `ampcode.com` | `Authorization` | `AMP_API_KEY` | `AMP_URL` | no |
+| Crush | `api.anthropic.com` | `x-api-key` | `ANTHROPIC_API_KEY` | `ANTHROPIC_API_ENDPOINT` | no |
+| Cursor | **not brokerable** | | | | refused (below) |
+
+"Through a route" says how far each row has been tested:
+
+- **In devcroft, end to end**: Claude Code ran inside a real sandbox with a
+  dummy key, against a local TLS server standing in for the API
+  (`tests/broker_claude.rs`). The server got the real key, and the
+  sandbox's environment and the proxy log never held it.
+- **`nono-proxy` alone**: the same proxy library, in a harness outside
+  devcroft (2026-11-15). The real value reached the upstream.
+- **No**: the agent was measured sending the same request form to a plain
+  listener ([above](#whose-endpoint-can-be-moved)), never through a route.
+
+For `Authorization`, the proxy injects `Bearer <value>`, and every other
+header gets the bare value.
+
+Per agent:
+
+- **Codex** takes its endpoint from config, not a variable, so pick any free
+  name for `endpoint_env` and pass it as a flag:
+  `codex -c openai_base_url="$CODEX_BASE_URL" exec …`. Its WebSocket attempt
+  is refused and it falls back to `POST`, which a route serves.
+- **Copilot** rejects a classic `ghp_` token locally, so give it
+  `placeholder = "github_pat_{}"`. Which upstream `COPILOT_API_URL` replaces
+  is not settled. Copilot reaches both `api.github.com` and
+  `api.githubcopilot.com`, and a route forwards to one host.
+- **Cursor cannot be brokered.** It ignores `NO_PROXY`, so it sends even a
+  loopback endpoint as `CONNECT 127.0.0.1:<port>`, and the proxy refuses a
+  tunnel to itself (measured). It would be weak even if it worked: Cursor
+  trades the key for a session token on its first call, and that token
+  comes back into the sandbox. Use `[credentials] env` for it, and read the
+  threat model's "custody" section first.
+- **The endpoint is a root.** Whatever path the agent appends is sent to
+  `https://<host>` unchanged. Some OpenAI-convention clients expect their base
+  URL to end in `/v1`. Whether each of those adds it itself is measured only
+  where the table says so.
+
 ## What devcroft had to fix
 
 The first run had two of eleven working. Three things in devcroft, not in the
