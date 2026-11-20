@@ -1540,7 +1540,8 @@ Limits:
 - The Linux rows have not run.
 - Earlier libkrun density, preparation, workload, Remote-SSH and agent rows used
   the unpatched helper.
-- The `devcroft exec` client still queues stdin in an unbounded channel. Only
-  the user's own process grows, with input the user chose.
+- At the time of these runs, the `devcroft exec` client queued stdin in an
+  unbounded channel. It has since been bounded, together with the keeper's
+  child-stdin writes; see `docs/implementation-log.md` (2026-11-20).
 
 Production adoption remains no-go.

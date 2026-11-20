@@ -1417,3 +1417,40 @@ with the fix removed
 leaking state dirs, the egress proxy's recovery test (`down` but never
 `rm`) and `symlink_escape_cli` (a refused `up` still writes `meta.json`),
 now remove their sandbox on every exit.
+
+**Session streams had one bound in each direction missing (2026-11-20).**
+The microVM evaluation's unread-output probe found that the keeper queued
+a session's output without limit. A client that kept its connection open
+without reading grew the keeper by everything the child wrote, and that is
+the process tier's keeper too. The channel is now 32 frames (256 KiB).
+
+The opposite direction had two defects:
+
+- **The client queued stdin without limit.** `yes | devcroft exec sleep
+  100` took 5.8 GB into the client in 2 s (measured, `tests/exec_stdin_backpressure.rs`
+  on the previous code).
+- **The keeper wrote stdin to the child inline.** Once a child that does
+  not read had a full pipe, the session loop stopped reading the
+  connection. Ctrl-C sat unread behind the stdin, and a client that gave up
+  left the child running and holding one of the keeper's 16 connection
+  slots.
+
+The fixes:
+
+- The client's queue is now bounded at 64 frames, and signals and resizes
+  never block on it. A signal that cannot be queued is undeliverable in
+  order, so it ends the session the way TERM already did: after the grace
+  period, the client closes the connection.
+- The keeper writes stdin from its own thread through a 16-frame queue. A
+  full queue stops reading the connection, which is the backpressure, but
+  the keeper still polls it for hang-up.
+
+Two macOS facts shaped the fix, both measured:
+
+- `poll` reports `POLLHUP` on a unix socket with unread data only when
+  `POLLIN` is requested; with `events = 0` it reports nothing.
+- `send(…, MSG_DONTWAIT)` blocks on a blocking `AF_UNIX` socket. That one
+  also broke the first version of the libkrun vsock patch.
+
+An ordered stream cannot do better than this. A signal behind unconsumed
+stdin is delivered only once the child reads, or the session ends.

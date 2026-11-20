@@ -22,6 +22,13 @@ use super::session::SessionBackend;
 /// 256 KiB however long its client stops reading.
 const OUTPUT_QUEUE_FRAMES: usize = 32;
 
+/// Stdin frames queued for a child that is not reading. Clients send stdin in
+/// 8 KiB reads, so this is about 128 KiB beyond the pipe in practice.
+const STDIN_QUEUE_FRAMES: usize = 16;
+
+/// How often a full stdin queue rechecks for a departed client.
+const STDIN_QUEUE_POLL_MS: libc::c_int = 50;
+
 pub const DEFAULT_GRACE_PERIOD: Duration = Duration::from_secs(2);
 
 /// Handles one connection with [`DEFAULT_GRACE_PERIOD`]. See
@@ -179,17 +186,19 @@ pub fn handle_with_grace(
     };
     drop(tx);
 
-    let mut stdin = spawned.stdin.take();
+    // The child's stdin is written by its own thread, so a child that does
+    // not read it cannot stop this loop from serving signals and resizes.
+    let mut stdin = spawned.stdin.take().map(spawn_stdin_writer);
     let resize_handle = spawned.resize_handle.take();
     let pgid = spawned.pgid;
 
     loop {
         match protocol::read_frame_timed(&mut read_half, false, protocol::FRAME_READ_DEADLINE) {
             Ok(Frame::Stdin(bytes)) => {
-                if let Some(w) = stdin.as_mut()
-                    && w.write_all(&bytes).is_err()
+                if let Some(queue) = stdin.as_ref()
+                    && !queue_stdin(queue, bytes, &read_half, &registry, session_id)
                 {
-                    stdin = None;
+                    break;
                 }
             }
             Ok(Frame::StdinClosed) => stdin = None,
@@ -229,6 +238,61 @@ pub fn handle_with_grace(
 
     let _ = wait_handle.join();
     let _ = writer_handle.join();
+}
+
+/// Writes queued stdin to the child in order. After a write fails (the child
+/// closed its stdin or exited) it keeps draining, so the queue never blocks
+/// the connection on a child that is gone. Dropping the sender closes the
+/// child's stdin once everything queued before it has been written.
+fn spawn_stdin_writer(mut stdin: Box<dyn Write + Send>) -> mpsc::SyncSender<Vec<u8>> {
+    let (tx, rx) = mpsc::sync_channel::<Vec<u8>>(STDIN_QUEUE_FRAMES);
+    thread::spawn(move || {
+        let mut open = true;
+        for bytes in rx {
+            if open && stdin.write_all(&bytes).is_err() {
+                open = false;
+            }
+        }
+    });
+    tx
+}
+
+/// Queues one stdin frame. While the queue is full the connection is not read
+/// further, which is the backpressure, but it is still watched: a client that
+/// leaves, or a session that ends, stops the wait. Returns `false` when the
+/// client is gone.
+fn queue_stdin(
+    queue: &mpsc::SyncSender<Vec<u8>>,
+    mut bytes: Vec<u8>,
+    connection: &UnixStream,
+    registry: &Registry,
+    session_id: u64,
+) -> bool {
+    use std::os::fd::AsRawFd;
+    loop {
+        match queue.try_send(bytes) {
+            Ok(()) | Err(mpsc::TrySendError::Disconnected(_)) => return true,
+            Err(mpsc::TrySendError::Full(back)) => bytes = back,
+        }
+        if !registry.contains(session_id) {
+            return true;
+        }
+        // POLLHUP is reported without reading, so the unread frames ahead of
+        // the client's EOF stay where they are. macOS reports it only when
+        // POLLIN is requested (measured), and POLLIN is usually already
+        // ready here, so a ready poll still waits before the next attempt.
+        let mut poll = libc::pollfd {
+            fd: connection.as_raw_fd(),
+            events: libc::POLLIN,
+            revents: 0,
+        };
+        if unsafe { libc::poll(&mut poll, 1, STDIN_QUEUE_POLL_MS) } > 0 {
+            if poll.revents & (libc::POLLHUP | libc::POLLERR | libc::POLLNVAL) != 0 {
+                return false;
+            }
+            thread::sleep(Duration::from_millis(STDIN_QUEUE_POLL_MS as u64));
+        }
+    }
 }
 
 fn pump<R: Read>(mut reader: R, tx: mpsc::SyncSender<Frame>, wrap: fn(Vec<u8>) -> Frame) {
@@ -579,6 +643,109 @@ mod tests {
             "grace-period escalation took too long: {:?}",
             start.elapsed()
         );
+        assert!(!registry.contains(session_id));
+    }
+
+    /// Stdin the child never reads must not stop the keeper from serving the
+    /// session's control frames: a signal sent after it still arrives.
+    #[test]
+    fn a_signal_arrives_while_the_child_leaves_its_stdin_unread() {
+        let (mut client, server) = UnixStream::pair().unwrap();
+        let conn_thread = thread::spawn(move || {
+            handle(
+                server,
+                Arc::new(Registry::new()),
+                Instant::now(),
+                Arc::new(LocalSessionBackend),
+            )
+        });
+        protocol::write_frame(
+            &mut client,
+            &Frame::Spawn(spawn_request("sleep", &["30"], None)),
+        )
+        .unwrap();
+        expect_spawn_ok(&mut client);
+        // Far beyond a pipe buffer: the keeper cannot finish writing it.
+        protocol::write_frame(&mut client, &Frame::Stdin(vec![b'x'; 1024 * 1024])).unwrap();
+        protocol::write_frame(&mut client, &Frame::Signal(SessionSignal::Term)).unwrap();
+
+        client
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .unwrap();
+        let start = Instant::now();
+        let (_, status) = read_until_exit(&mut client);
+        assert_eq!(status.signal, Some(libc::SIGTERM));
+        assert!(
+            start.elapsed() < Duration::from_secs(3),
+            "{:?}",
+            start.elapsed()
+        );
+        drop(client);
+        conn_thread.join().unwrap();
+    }
+
+    /// A client that leaves while the child's stdin is backed up must still
+    /// end the session; the keeper cannot wait to read its way to EOF.
+    #[test]
+    fn a_client_that_leaves_with_stdin_backed_up_ends_the_session() {
+        let (mut client, server) = UnixStream::pair().unwrap();
+        let registry = Arc::new(Registry::new());
+        let conn_thread = {
+            let registry = Arc::clone(&registry);
+            thread::spawn(move || {
+                handle_with_grace(
+                    server,
+                    registry,
+                    Instant::now(),
+                    Arc::new(LocalSessionBackend),
+                    Duration::from_millis(150),
+                )
+            })
+        };
+        protocol::write_frame(
+            &mut client,
+            &Frame::Spawn(spawn_request("sleep", &["100"], None)),
+        )
+        .unwrap();
+        let session_id = expect_spawn_ok(&mut client);
+        let (done_tx, done) = mpsc::channel();
+        let waiter = thread::spawn(move || {
+            conn_thread.join().unwrap();
+            let _ = done_tx.send(());
+        });
+
+        // Keep sending until the keeper stops taking stdin, then leave.
+        client.set_nonblocking(true).unwrap();
+        let frame = {
+            let mut bytes = vec![4u8];
+            bytes.extend_from_slice(&(64 * 1024u32).to_be_bytes());
+            bytes.extend(std::iter::repeat_n(b'x', 64 * 1024));
+            bytes
+        };
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let mut written = 0usize;
+        let mut idle_since = Instant::now();
+        while Instant::now() < deadline {
+            match client.write(&frame[written % frame.len()..]) {
+                Ok(n) => {
+                    written += n;
+                    idle_since = Instant::now();
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                    if idle_since.elapsed() > Duration::from_millis(300) {
+                        break;
+                    }
+                    thread::sleep(Duration::from_millis(10));
+                }
+                Err(e) => panic!("{e}"),
+            }
+        }
+        assert!(written > 0);
+        drop(client);
+
+        done.recv_timeout(Duration::from_secs(3))
+            .expect("the session outlived its client by more than 3 s");
+        waiter.join().unwrap();
         assert!(!registry.contains(session_id));
     }
 
