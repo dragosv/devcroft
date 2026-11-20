@@ -362,9 +362,17 @@ pub fn broker_route(
     route: &crate::proxy::BrokerRoute,
     credential_var: &str,
 ) -> nono_proxy::config::RouteConfig {
+    let upstream = format!("https://{}", route.host);
+    // **Test builds only.** An end-to-end test needs a route to reach a TLS
+    // upstream on loopback, which `https://<host>` on 443 cannot be without
+    // root (`add-agent-workload` 4b.8, owner's decision 2026-11-19). Never
+    // compiled into a published build: a variable that redirects a brokered
+    // credential to any URL is exfiltration by environment.
+    #[cfg(feature = "test-support")]
+    let upstream = std::env::var("DEVCROFT_TEST_BROKER_UPSTREAM").unwrap_or(upstream);
     nono_proxy::config::RouteConfig {
         prefix: route.prefix.clone(),
-        upstream: format!("https://{}", route.host),
+        upstream,
         credential_key: Some(format!("env://{credential_var}")),
         inject_header: route.header.clone(),
         env_var: Some(route.env.clone()),
@@ -750,6 +758,7 @@ mod tests {
         upstream_port: u16,
         ca: &std::path::Path,
         placeholder: Option<&str>,
+        also_allow: &[&str],
     ) -> (Running, String, PathBuf) {
         let var = format!("DEVCROFT_TEST_BROKERED_{}", tag.to_ascii_uppercase());
         // SAFETY: a name no other test reads or writes.
@@ -771,14 +780,11 @@ mod tests {
         route.upstream = format!("https://localhost:{upstream_port}");
         let token = format!("token-{tag}");
         let log_path = temp_log(&format!("broker-{tag}"));
-        let proxy = start(
-            vec!["localhost".into()],
-            log_path.clone(),
-            token.clone(),
-            None,
-            vec![route],
-        )
-        .unwrap();
+        let allow = std::iter::once("localhost")
+            .chain(also_allow.iter().copied())
+            .map(str::to_owned)
+            .collect();
+        let proxy = start(allow, log_path.clone(), token.clone(), None, vec![route]).unwrap();
         (proxy, token, log_path)
     }
 
@@ -798,7 +804,7 @@ mod tests {
     #[test]
     fn a_brokered_request_reaches_the_upstream_with_the_real_value() {
         let (upstream, ca, heads) = tls_upstream("sub");
-        let (proxy, token, log_path) = brokered_proxy("sub", upstream, &ca, None);
+        let (proxy, token, log_path) = brokered_proxy("sub", upstream, &ca, None, &[]);
         assert_eq!(proxy.loaded_routes(), 1);
 
         let phantom = crate::proxy::broker_phantom(&token, None).unwrap();
@@ -828,7 +834,8 @@ mod tests {
     #[test]
     fn a_wrong_or_missing_placeholder_never_reaches_the_upstream() {
         let (upstream, ca, heads) = tls_upstream("wrong");
-        let (proxy, token, log_path) = brokered_proxy("wrong", upstream, &ca, Some("sk-ant-{}"));
+        let (proxy, token, log_path) =
+            brokered_proxy("wrong", upstream, &ca, Some("sk-ant-{}"), &[]);
 
         for key in ["not-the-placeholder", token.as_str()] {
             let response = post(proxy.port, key);
@@ -853,6 +860,108 @@ mod tests {
                 .contains("x-api-key: the-real-secret"),
             "{head}"
         );
+        proxy.shutdown();
+        let _ = std::fs::remove_file(&log_path);
+        let _ = std::fs::remove_file(&ca);
+    }
+
+    /// A plain upstream on loopback: sends each request head it reads, and
+    /// answers `200 ok`. Reached through the proxy as another allowed host.
+    fn plain_upstream() -> (u16, std::sync::mpsc::Receiver<String>) {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let (tx, rx) = std::sync::mpsc::channel();
+        thread::spawn(move || {
+            for stream in listener.incoming() {
+                let Ok(mut s) = stream else { return };
+                let mut head = Vec::new();
+                let mut byte = [0u8; 1];
+                while !head.ends_with(b"\r\n\r\n") {
+                    match s.read(&mut byte) {
+                        Ok(1) => head.push(byte[0]),
+                        _ => break,
+                    }
+                }
+                let _ = tx.send(String::from_utf8_lossy(&head).into_owned());
+                let _ = s.write_all(
+                    b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok",
+                );
+            }
+        });
+        (port, rx)
+    }
+
+    /// 4b.7: the value is the route's alone. The placeholder sent to another
+    /// allowed host, as an absolute-URI request or inside a `CONNECT`
+    /// tunnel, arrives as the placeholder; and the route's own host is not
+    /// reachable around the route, which is what `up` discloses.
+    #[test]
+    fn a_request_to_another_allowed_host_never_gets_the_value() {
+        let (upstream, ca, heads) = tls_upstream("other");
+        let (other, other_heads) = plain_upstream();
+        let (proxy, token, log_path) = brokered_proxy("other", upstream, &ca, None, &["127.0.0.1"]);
+        assert_eq!(proxy.loaded_routes(), 1);
+        let phantom = crate::proxy::broker_phantom(&token, None).unwrap();
+        let auth = basic_auth_header(&token);
+        let recv = |rx: &std::sync::mpsc::Receiver<String>| {
+            rx.recv_timeout(std::time::Duration::from_secs(5))
+                .expect("the other host received nothing")
+        };
+
+        let response = exchange(
+            proxy.port,
+            &format!(
+                "GET http://127.0.0.1:{other}/v1/messages HTTP/1.1\r\nHost: 127.0.0.1:{other}\r\n\
+                 {auth}\r\nx-api-key: {phantom}\r\nConnection: close\r\n\r\n"
+            ),
+        );
+        assert!(response.starts_with("HTTP/1.1 200"), "{response}");
+        let head = recv(&other_heads);
+        assert!(!head.contains("the-real-secret"), "absolute-URI: {head}");
+        assert!(head.contains(&phantom), "forwarded unchanged: {head}");
+
+        let mut tunnel = TcpStream::connect(("127.0.0.1", proxy.port)).unwrap();
+        tunnel
+            .set_read_timeout(Some(std::time::Duration::from_secs(10)))
+            .unwrap();
+        tunnel
+            .write_all(format!("CONNECT 127.0.0.1:{other} HTTP/1.1\r\n{auth}\r\n\r\n").as_bytes())
+            .unwrap();
+        let mut buf = [0u8; 4096];
+        let n = tunnel.read(&mut buf).unwrap();
+        assert!(
+            buf[..n].starts_with(b"HTTP/1.1 200"),
+            "{:?}",
+            String::from_utf8_lossy(&buf[..n])
+        );
+        tunnel
+            .write_all(
+                format!(
+                    "GET /v1/messages HTTP/1.1\r\nHost: 127.0.0.1\r\nx-api-key: {phantom}\r\n\r\n"
+                )
+                .as_bytes(),
+            )
+            .unwrap();
+        let head = recv(&other_heads);
+        assert!(!head.contains("the-real-secret"), "CONNECT: {head}");
+        assert!(head.contains(&phantom), "{head}");
+
+        // Around the route, to its own host: refused, and nothing arrives.
+        let refused = exchange(
+            proxy.port,
+            &format!("CONNECT localhost:{upstream} HTTP/1.1\r\n{auth}\r\n\r\n"),
+        );
+        assert!(!refused.starts_with("HTTP/1.1 200"), "{refused}");
+        assert!(
+            heads
+                .recv_timeout(std::time::Duration::from_millis(500))
+                .is_err(),
+            "the route's host was reached around the route"
+        );
+
+        std::thread::sleep(std::time::Duration::from_millis(200));
+        let log = std::fs::read_to_string(&log_path).unwrap_or_default();
+        assert!(!log.contains("the-real-secret"), "{log}");
         proxy.shutdown();
         let _ = std::fs::remove_file(&log_path);
         let _ = std::fs::remove_file(&ca);

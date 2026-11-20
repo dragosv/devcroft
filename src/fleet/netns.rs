@@ -214,6 +214,16 @@ pub fn first_route_out(ipv4_route: &str, ipv6_route: &str) -> Option<String> {
 /// `__netns_probe`; that subcommand performs the irreversible namespace
 /// entry in a process nobody minds losing.
 pub fn probe(exe: &std::path::Path) -> io::Result<bool> {
+    // **Test builds only.** Answers as a host without network namespaces
+    // would, so an end-to-end test can run the non-isolated path (egress over
+    // loopback to the proxy, as on macOS) on a host that has them
+    // (`add-agent-workload` 4b.8). It only ever *removes* isolation, and up
+    // warns exactly as it does on such a host; still never compiled into a
+    // published build.
+    #[cfg(feature = "test-support")]
+    if std::env::var_os("DEVCROFT_TEST_NO_NETNS").is_some() {
+        return Ok(false);
+    }
     let out = std::process::Command::new(exe)
         .arg("__netns_probe")
         .output()?;
