@@ -20,6 +20,11 @@
         "path": "patches/libkrun-macos-reset-exit.patch",
         "sha256": "a0cd8f2867697e766c5ea323893d6dd0d6cfc2287227f6cef9f580457305bb1e",
         "status": "local experimental macOS ARM64 PSCI reset/poweroff distinction; not upstream merged; native qualification recorded separately"
+      },
+      {
+        "path": "patches/libkrun-vsock-host-backpressure.patch",
+        "sha256": "b6a78f7e8c0f95437953cbc8f1c3d333a8e953114bdd0519b8b7bc9f64856a69",
+        "status": "local experimental correction: non-blocking host writes bounded by advertised credit, so one unread host client no longer stalls the VM's other vsock connections; not upstream merged"
       }
     ],
     "verified_api": [

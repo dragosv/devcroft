@@ -52,7 +52,8 @@ fn entry() -> Result<(), String> {
     }
     if args.len() == 2 && args[1] == "provenance" {
         let provenance = serde_json::json!({"revision":REVISION,
-            "patch_sha256":env!("DEVCROFT_KRUN_PATCH_SHA256")});
+            "patch_sha256":env!("DEVCROFT_KRUN_PATCH_SHA256"),
+            "vsock_backpressure_patch_sha256":env!("DEVCROFT_KRUN_BACKPRESSURE_PATCH_SHA256")});
         #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
         let provenance = {
             let mut p = provenance;

@@ -17,6 +17,11 @@ use super::protocol::{self, ExitStatus, Frame, QueryResult, SessionSummary};
 use super::registry::Registry;
 use super::session::SessionBackend;
 
+/// Outbound frames a session may queue ahead of its client. Each output frame
+/// is at most one 8 KiB pump read, so this bounds a session's queued output at
+/// 256 KiB however long its client stops reading.
+const OUTPUT_QUEUE_FRAMES: usize = 32;
+
 pub const DEFAULT_GRACE_PERIOD: Duration = Duration::from_secs(2);
 
 /// Handles one connection with [`DEFAULT_GRACE_PERIOD`]. See
@@ -115,7 +120,11 @@ pub fn handle_with_grace(
     // lifetime; two fd duplicates racing to write would not corrupt a
     // stream socket, but funneling through one owner keeps write ordering
     // trivially obvious rather than relying on happens-before timing.
-    let (tx, rx) = mpsc::channel::<Frame>();
+    //
+    // The channel is bounded so a client that stops reading stalls the child
+    // through its pipe/pty rather than growing this process: once the socket
+    // and these frames are full, the pumps block, and so does the child's write.
+    let (tx, rx) = mpsc::sync_channel::<Frame>(OUTPUT_QUEUE_FRAMES);
     let writer_handle = {
         let mut w = write_half;
         thread::spawn(move || {
@@ -222,7 +231,7 @@ pub fn handle_with_grace(
     let _ = writer_handle.join();
 }
 
-fn pump<R: Read>(mut reader: R, tx: mpsc::Sender<Frame>, wrap: fn(Vec<u8>) -> Frame) {
+fn pump<R: Read>(mut reader: R, tx: mpsc::SyncSender<Frame>, wrap: fn(Vec<u8>) -> Frame) {
     let mut buf = [0u8; 8192];
     loop {
         match reader.read(&mut buf) {
@@ -369,6 +378,54 @@ mod tests {
         drop(client);
         conn_thread.join().unwrap();
         assert!(!registry.contains(session_id));
+    }
+
+    /// A client that holds its connection open but stops reading (a
+    /// suspended `devcroft exec`, or any peer on the socket) must stall the
+    /// child, not make the keeper buffer the child's output in memory.
+    #[test]
+    fn a_client_that_stops_reading_stalls_the_child_instead_of_growing_the_keeper() {
+        const OUTPUT: usize = 64 * 1024 * 1024;
+        let marker = std::env::temp_dir().join(format!(
+            "devcroft-backpressure-{}-{:?}",
+            std::process::id(),
+            thread::current().id()
+        ));
+        let _ = std::fs::remove_file(&marker);
+        let (mut client, server) = UnixStream::pair().unwrap();
+        let registry = Arc::new(Registry::new());
+        let conn_thread = {
+            let registry = Arc::clone(&registry);
+            thread::spawn(move || {
+                handle(
+                    server,
+                    registry,
+                    Instant::now(),
+                    Arc::new(LocalSessionBackend),
+                )
+            })
+        };
+        let script = format!("head -c {OUTPUT} /dev/zero; : > '{}'", marker.display());
+        let req = spawn_request("sh", &["-c", &script], None);
+        protocol::write_frame(&mut client, &Frame::Spawn(req)).unwrap();
+        expect_spawn_ok(&mut client);
+
+        // Socket, pipe and channel buffers together are far below 64 MiB, so
+        // the child can only finish here if the keeper buffers without bound.
+        thread::sleep(Duration::from_secs(2));
+        assert!(
+            !marker.exists(),
+            "the child wrote {OUTPUT} bytes while the client read none: the keeper buffered them"
+        );
+
+        // Reading again releases the child; nothing was dropped or reordered.
+        let (out, status) = read_until_exit(&mut client);
+        assert_eq!(out.len(), OUTPUT);
+        assert_eq!(status.code, Some(0));
+        assert!(marker.exists());
+        let _ = std::fs::remove_file(&marker);
+        drop(client);
+        conn_thread.join().unwrap();
     }
 
     #[test]

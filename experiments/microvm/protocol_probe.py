@@ -303,6 +303,79 @@ def control_trickle_and_hold_refusal(vm):
     }
 
 
+def unread_output_backpressure(path, sibling_canary, size=64 * 1024 * 1024, hold=2.0):
+    """A client that stops reading must stall its own child only.
+
+    Two properties, observed separately: the keeper must not buffer the
+    child's output (the child stalls), and the transport must keep serving
+    the VM's other connections meanwhile (no head-of-line blocking).
+    """
+    import threading
+    marker = '/tmp/backpressure-done'
+    out, err, status = wire.execute(path, f'rm -f {marker}')
+    require(status == {'code': 0, 'signal': None}, ('marker reset failed', out, err, status))
+    # Shell builtins only: the guest policy grants no /dev/zero and its
+    # busybox has no yes/truncate/dd. 64 KiB string, written size/64 KiB times.
+    require(size % 65536 == 0, 'size must be a multiple of 64 KiB')
+    script = ('s=x; i=0; while [ $i -lt 16 ]; do s=$s$s; i=$((i+1)); done; '
+              f'n=0; while [ $n -lt {size // 65536} ]; do printf %s "$s"; n=$((n+1)); done; : > {marker}')
+    sock, _ = wire.spawn(path, '/bin/sh', ['-c', script])
+    with sock:
+        started = time.monotonic()
+        time.sleep(hold)
+        check = {}
+
+        def probe():
+            t = time.monotonic()
+            try:
+                c = wire.connect(path)
+                c.settimeout(30)
+                with c:
+                    wire.send(c, 1, {'cmd': '/bin/sh', 'args': ['-c', f'test -e {marker} && echo finished || echo stalled'],
+                                     'cwd': '/workspace', 'env': {}, 'pty': None})
+                    tag, payload = wire.receive(c)
+                    check['spawn_ok_seconds'] = round(time.monotonic() - t, 3)
+                    require(tag == 2, ('marker check spawn failed', tag, payload))
+                    wire.send(c, 5)
+                    o, e, st = wire.finish(c)
+                    check.update(answer=o.strip().decode(), status=st, seconds=round(time.monotonic() - t, 3))
+            except Exception as error:
+                check['error'] = f'{type(error).__name__}: {error}'
+
+        thread = threading.Thread(target=probe, daemon=True)
+        thread.start()
+        sibling_started = time.monotonic()
+        sibling_canary.echo(b'sibling-during-unread-hold\n')
+        sibling_seconds = round(time.monotonic() - sibling_started, 3)
+        thread.join(3.0)
+        same_vm_served_while_unread = not thread.is_alive() and 'answer' in check
+        answer_while_unread = check.get('answer') if same_vm_served_while_unread else None
+        received, frames, stderr = 0, 0, bytearray()
+        while True:
+            tag, value = wire.receive(sock)
+            if tag == 10:
+                break
+            require(tag in (6, 7), ('unexpected frame while draining', tag))
+            if tag == 7:
+                stderr.extend(value[:4096 - len(stderr)])
+                continue
+            received += len(value)
+            frames += 1
+        drain_seconds = time.monotonic() - started
+        thread.join(30)
+    out, _, _ = wire.execute(path, f'test -e {marker} && echo finished || echo missing')
+    exact = (received == size and not stderr and value == {'code': 0, 'signal': None}
+             and out.strip() == b'finished')
+    stalled = answer_while_unread == 'stalled'
+    return {'refused': stalled and exact and same_vm_served_while_unread,
+            'child_stalled_while_client_unread': stalled if same_vm_served_while_unread else 'not-observable',
+            'same_vm_new_connection_served_while_unread': same_vm_served_while_unread,
+            'same_vm_check': check, 'sibling_vm_canary_echo_seconds_during_hold': sibling_seconds,
+            'unread_hold_seconds': hold, 'child_output_bytes': size, 'received_bytes': received,
+            'stdout_frames': frames, 'stderr': stderr.decode(errors='replace'), 'exit': value,
+            'drained_exact_and_finished_after_reading': exact,
+            'seconds_from_spawn_to_exit': round(drain_seconds, 3)}
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--adapter', choices=['libkrun', 'hvi'], required=True)
@@ -311,9 +384,12 @@ def main():
     parser.add_argument('--baseline-only', action='store_true', help='retain failures; omit cold restart')
     parser.add_argument('--admission-only', action='store_true',
                         help='baseline diagnostic only: run only the 12 deadline/allocation/admission/control-stall cases')
+    parser.add_argument('--backpressure-only', action='store_true',
+                        help='baseline only: run only the unread-output backpressure case; omit cold restart')
     args = parser.parse_args()
-    require(not (args.baseline_only and args.admission_only),
-            '--baseline-only and --admission-only are mutually exclusive')
+    require(sum((args.baseline_only, args.admission_only, args.backpressure_only)) <= 1,
+            '--baseline-only, --admission-only and --backpressure-only are mutually exclusive')
+    only = args.admission_only or args.backpressure_only
     require_no_active_collector(ROOT / 'runs')
     lease = (ROOT / 'artifacts/nested-runner.lock').open('a')
     fcntl.flock(lease, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -403,7 +479,7 @@ def main():
             ('server-spawn-ok-before-spawn', frame(2, {'session_id': sibling_id}), False),
             ('forged-cross-session-signal', frame(9, {'session_id': sibling_id, 'signal': 'Term'}), False),
         ]
-        if not args.admission_only:
+        if not only:
             for name, packet, half_close in checks:
                 case(name, lambda packet=packet, half_close=half_close: initial_refusal(path, packet, half_close))
             for name, packet in [
@@ -414,24 +490,27 @@ def main():
             ]:
                 case(name, lambda packet=packet: session_refusal(path, packet))
 
-        for name, packet in [
+        if not args.admission_only:
+            case('unread-output-backpressure', lambda: unread_output_backpressure(path, canaries[1]))
+        for name, packet in ([] if args.backpressure_only else [
             ('spawn-oversized-control-header', frame(1, length=4 * 1024 * 1024 + 1)),
             ('resize-oversized-control-header', frame(8, length=64 * 1024 + 1)),
             ('signal-oversized-control-header', frame(9, length=64 * 1024 + 1)),
             ('idle-connection-without-frame', b''),
             ('truncated-header-without-eof', b'\x01\x00'),
             ('truncated-body-without-eof', frame(1, b'{', length=64)),
-        ]:
+        ]):
             case(name, lambda packet=packet: initial_refusal(path, packet, False))
-        case('trickle-spawn-slowloris', lambda: trickle_initial_refusal(path))
-        for name, packet in [
-            ('mid-session-truncated-header-without-eof', b'\x04\x00'),
-            ('mid-session-incomplete-large-stdin-without-eof', frame(4, b'partial', length=16 * 1024 * 1024)),
-        ]:
-            case(name, lambda packet=packet: session_refusal(path, packet))
-        case('stalled-connection-flood-and-admission-recovery', lambda: stalled_flood_admission(path))
-        case('pid1-control-partial-line-without-eof', lambda: control_partial_line_refusal(a))
-        case('pid1-control-trickle-and-post-reply-hold', lambda: control_trickle_and_hold_refusal(a))
+        if not args.backpressure_only:
+            case('trickle-spawn-slowloris', lambda: trickle_initial_refusal(path))
+            for name, packet in [
+                ('mid-session-truncated-header-without-eof', b'\x04\x00'),
+                ('mid-session-incomplete-large-stdin-without-eof', frame(4, b'partial', length=16 * 1024 * 1024)),
+            ]:
+                case(name, lambda packet=packet: session_refusal(path, packet))
+            case('stalled-connection-flood-and-admission-recovery', lambda: stalled_flood_admission(path))
+            case('pid1-control-partial-line-without-eof', lambda: control_partial_line_refusal(a))
+            case('pid1-control-trickle-and-post-reply-hold', lambda: control_trickle_and_hold_refusal(a))
 
         signal_sock, _ = wire.spawn(path, '/bin/sleep', ['30'])
         with signal_sock:
@@ -443,7 +522,7 @@ def main():
         require(identity(sibling, 'sibling-after-inputs') == identities[1], 'sibling helper changed')
         require(identity(a, 'a-after-inputs') == identities[0], 'helper changed during malformed inputs')
 
-        if not args.baseline_only and not args.admission_only:
+        if not args.baseline_only and not only:
             canaries[0].close()
             a.shutdown()
             require(artifact(helper) == expected_helper, 'helper changed before cold restart')

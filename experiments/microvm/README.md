@@ -4,7 +4,7 @@ This is the experimental implementation of `evaluate-microvm-runtimes`.
 `libkrun/` and `hvi/` have their own Cargo workspaces and lockfiles. The main devcroft build and
 published crate do not depend on it. No production VM dispatch exists yet.
 
-The [native assessment](results/macos-arm64-evaluation-assessment-v13.json) records
+The [native assessment](results/macos-arm64-evaluation-assessment-v14.json) records
 the full 180-case macOS ARM64 comparison, clean reconstruction, final SSH fault
 recovery and real CLI/TLS regressions against the five backend criteria. Both
 adapters work on this host. Production adoption remains no-go under the current
@@ -628,6 +628,9 @@ exhausted host input and retains the guest-to-host response direction. It is
 tested with data pending across the credit window, EOF response, reconnect and
 guest shutdown. This is a devcroft experiment patch, not an upstream-merged fix;
 its hash and source revision are part of every new report.
+A second local [patch](patches/libkrun-vsock-host-backpressure.patch) keeps
+host writes from blocking the vsock queue thread; see
+[session output backpressure](#session-output-backpressure-and-a-libkrun-vsock-stall-2026-11-20).
 
 Pins, enabled features, verified APIs and patch inventory live in
 [upstream.json](fixtures/upstream.json). Code inspection confirms that macOS
@@ -1460,4 +1463,84 @@ This is a fixed sample, not a denial-of-service qualification. Any peer that can
 reach the socket can still occupy all 16 slots for up to 1 s at a time.
 Companion services, a process in uninterruptible sleep and host power loss are
 not covered. Earlier measurements keep their original keeper/guest hashes.
+Production adoption remains no-go.
+
+### Session output backpressure and a libkrun vsock stall (2026-11-20)
+
+The keeper sent each session's output through an unbounded channel. A client
+that kept its connection open but stopped reading (a suspended `devcroft exec`,
+or any peer on the socket) did not slow the child down: the keeper read
+everything and held it in memory. The channel is now bounded at 32 frames of at
+most 8 KiB, so the child blocks on its pipe or pty once 256 KiB are queued. This
+is shared keeper code, so the process tier gets the same fix. A unit test in
+`src/keeper/connection.rs` fails on the old channel and passes on the new one.
+
+The native case, `unread-output-backpressure`, starts a session that writes
+64 MiB, reads nothing for 2 s, and meanwhile:
+
+- asks the same VM, over a new connection, whether the child has finished;
+- echoes through the sibling VM's canary;
+- then drains everything and checks every byte arrived.
+
+The guest's policy grants no `/dev/zero` and its busybox has no
+`yes`/`truncate`/`dd`, so the case writes with shell builtins.
+
+On the old guest the child finishes while nobody reads, on both adapters. With
+the bounded channel, hvi passes all 39 protocol cases. libkrun still failed this
+one, and the failure was in the VMM rather than the keeper. **One unread host
+client stalled every vsock connection of that VM:** other keeper sessions, SSH
+and the editor. A new connection to the same VM got `SpawnOk` only when the
+unread client resumed reading, 3.0 s later. The sibling VM was unaffected.
+
+The cause is in libkrun's unix proxy. It writes guest data to its host socket
+with a blocking `send` on the vsock queue thread, and it returns credit to the
+guest as soon as the bytes reach the kernel buffer, not when the client reads
+them. Once the buffer is full, that thread blocks for the whole device. Adding
+`MSG_DONTWAIT` was not enough: on macOS it does not make `send` non-blocking on
+a blocking `AF_UNIX` socket (measured), so the first version of the patch still
+blocked.
+
+The local patch makes four changes:
+
+- connected proxies stay `O_NONBLOCK`;
+- data the host socket cannot take is queued per connection and flushed when the
+  socket becomes writable;
+- credit advances only as bytes reach the socket, so the queue is bounded by the
+  advertised 8 MiB, and a guest that exceeds its credit is reset;
+- a guest shutdown or close waits until its queue drains.
+
+`build_helper.py` now checks the series by applying it in order to a throwaway
+index, because this patch touches files the half-close patch also touches. A
+draft upstream report, not filed, is in `docs/libkrun-vsock-backpressure-issue.md`.
+
+With the patch, libkrun passes all 39 protocol cases with one cold restart. The
+new connection is served in 1 ms while the client is not reading. All seven stop
+cases and the OpenSSH/SFTP/forwarding smoke pass too.
+
+```sh
+rtk proxy python3 experiments/microvm/build_helper.py
+rtk proxy python3 experiments/microvm/build_keeper_guest.py --out experiments/microvm/artifacts/stage-b-protocol-backpressure
+rtk proxy python3 experiments/microvm/protocol_probe.py --adapter libkrun \
+  --guest experiments/microvm/artifacts/stage-b-protocol-backpressure/guest.json --out <new-run>
+rtk proxy python3 experiments/microvm/protocol_probe.py --adapter hvi --backpressure-only \
+  --guest experiments/microvm/artifacts/stage-b-protocol-admission/guest.json --out <new-run>
+```
+
+Evidence:
+
+- `results/{libkrun,hvi}-macos-arm64-keeper-backpressure{,-before}.json`;
+- `results/libkrun-macos-arm64-keeper-backpressure-unpatched-vmm.json`;
+- `results/libkrun-macos-arm64-{stop,ssh}-vsock-backpressure-patch.json`;
+- `results/macos-arm64-keeper-backpressure-validation.json`.
+
+Limits:
+
+- One 64 MiB sample per row, with no throughput comparison.
+- libkrun's queue is bounded per connection, not per VM: up to 8 MiB each.
+- The Linux rows have not run.
+- Earlier libkrun density, preparation, workload, Remote-SSH and agent rows used
+  the unpatched helper.
+- The `devcroft exec` client still queues stdin in an unbounded channel. Only
+  the user's own process grows, with input the user chose.
+
 Production adoption remains no-go.

@@ -7,23 +7,40 @@ cache. --from may seed it from an existing checkout containing the exact pin.
 import argparse
 import hashlib
 import json
+import os
 from pathlib import Path
 import platform
 import subprocess
+import tempfile
 
 ROOT = Path(__file__).resolve().parent
 SOURCE = ROOT / "artifacts/libkrun-source"
 PATCH = ROOT / "patches/libkrun-vsock-host-half-close.patch"
 RESET_PATCH = ROOT / "patches/libkrun-macos-reset-exit.patch"
-PATCHES = (PATCH, RESET_PATCH)
+BACKPRESSURE_PATCH = ROOT / "patches/libkrun-vsock-host-backpressure.patch"
+PATCHES = (PATCH, RESET_PATCH, BACKPRESSURE_PATCH)
 REVISION = "6151710f4ea627cf0e5dbce78e4192fb4d64c2e9"
 URL = "https://github.com/containers/libkrun"
 STAMP = ".devcroft-patches.json"
 
 
-def git(*args, capture=False):
+def git(*args, capture=False, env=None):
     command = ["git", "-C", str(SOURCE), *args]
-    return subprocess.check_output(command) if capture else subprocess.run(command, check=True)
+    if capture:
+        return subprocess.check_output(command, env=env)
+    return subprocess.run(command, check=True, env=env)
+
+
+def expected_diff():
+    # Patches may touch the same file, so their concatenation is not a diff of
+    # the result. Apply them in order to a throwaway index built from HEAD.
+    with tempfile.TemporaryDirectory() as tmp:
+        env = {**os.environ, "GIT_INDEX_FILE": str(Path(tmp) / "index")}
+        git("read-tree", "HEAD", env=env)
+        for patch in PATCHES:
+            git("apply", "--cached", str(patch), env=env)
+        return git("diff", "--cached", "HEAD", "--binary", "--no-ext-diff", "--no-color",
+                   "--src-prefix=a/", "--dst-prefix=b/", capture=True, env=env)
 
 
 def digest(path):
@@ -44,11 +61,11 @@ def verify_source():
         raise ValueError("unexpected staged changes in source artifact")
     actual = git("diff", "HEAD", "--binary", "--no-ext-diff", "--no-color",
                  "--src-prefix=a/", "--dst-prefix=b/", capture=True)
-    # Object-id abbreviations depend on local Git settings. All patch content,
-    # modes, paths and hunks must match the reviewed file byte-for-byte.
+    # Object-id abbreviations depend on local Git settings. All content,
+    # modes, paths and hunks must match the reviewed series byte-for-byte.
     normalize = lambda data: b"\n".join(line for line in data.splitlines()
                                        if not line.startswith(b"index "))
-    if normalize(actual) != normalize(b"".join(p.read_bytes() for p in PATCHES)):
+    if normalize(actual) != normalize(expected_diff()):
         raise ValueError("effective upstream diff does not match the reviewed patch series")
     for file, expected in stamp["files"].items():
         if digest(SOURCE / file) != expected:
