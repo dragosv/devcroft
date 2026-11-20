@@ -361,7 +361,7 @@ user names the variable that carries the endpoint as well.
       `render_shows_brokered_hosts_with_their_origin_only_when_any` and,
       against a live sandbox, in `tests/broker_up.rs`. Teeth-check: without
       the fold-in in `up`, the e2e assertion fails
-- [ ] 4b.7 Tests against a local TLS upstream (a test CA as the trust
+- [x] 4b.7 Tests against a local TLS upstream (a test CA as the trust
       store):
       - the upstream receives the real value;
       - the sandbox's environment and every file under the state dir hold
@@ -372,11 +372,39 @@ user names the variable that carries the endpoint as well.
 
       Teeth-check: with the route removed, the upstream never sees the
       value
-- [ ] 4b.8 End to end with Claude Code inside a real sandbox, with a dummy
+      **Done (2026-11-19).** In `proxy::server`'s tests, against
+      `tls_upstream` (an `rcgen` CA, given to the route as `tls_ca`):
+      `a_brokered_request_reaches_the_upstream_with_the_real_value`,
+      `a_wrong_or_missing_placeholder_never_reaches_the_upstream` (a wrong
+      key, and the bare token where a `sk-ant-{}` shape is declared), and
+      `a_request_to_another_allowed_host_never_gets_the_value`: the
+      placeholder sent to a second allowed host, absolute-URI and inside a
+      `CONNECT` tunnel, arrives unchanged, and a `CONNECT` to the route's
+      own host is refused with nothing reaching it. The environment and
+      state-dir walk is `tests/broker_up.rs` (4b.2), in a real sandbox.
+      Teeth-checks: without the route the first test fails (4b.3); with the
+      real value sent to the other host, its assertion fails
+- [x] 4b.8 End to end with Claude Code inside a real sandbox, with a dummy
       key, against the local TLS upstream above, isolated and not. A real
       key is the owner's, and is not needed to show the substitution.
       Cursor is out: it sends a loopback endpoint as a `CONNECT`, which
       `nono-proxy` refuses (measured)
+      **Done (2026-11-20).** `tests/broker_claude.rs`: Claude Code 2.1.293
+      from the store, `claude -p` against a TLS upstream that answers enough
+      of the Messages API (streamed and not), under a shaped placeholder
+      (`sk-ant-api03-{}`). Asserted: the reply comes back, every request the
+      upstream sees carries the real key and never the token, and neither
+      the session's environment nor the proxy log holds the value. Both
+      paths run in one test, sequentially since every variable `up` reads is
+      process-wide: isolated (relay and unix bridge), then not, through
+      `DEVCROFT_TEST_NO_NETNS`, which makes `fleet::netns::probe` answer as a
+      host without namespaces. Like `DEVCROFT_TEST_BROKER_UPSTREAM` it exists
+      in `test-support` builds only, and it can only remove isolation. Which
+      path ran is checked from inside the session, not assumed: only the
+      loopback path's `HTTPS_PROXY` carries the token as userinfo.
+      Teeth-checks: with the lever misnamed, the non-isolated run's mode
+      assertion fails; with a different value in `ANTHROPIC_API_KEY`, the
+      real-key assertion fails
 - [ ] 4b.9 `docs/agents.md`: per agent, the brokered configuration (its
       `endpoint_env`; Codex's endpoint is a config flag, so it reads the
       variable through `-c openai_base_url=$…`). Cursor is stated as not
