@@ -7,6 +7,7 @@ import json
 import os
 from pathlib import Path
 import shutil
+import select
 import socket
 import struct
 import time
@@ -14,7 +15,8 @@ import traceback
 
 import keeper_probe as wire
 from cold_prepare import require_no_active_collector
-from smoke import ROOT, artifact, helper_identity
+from fault_probe import control_reply
+from smoke import ROOT, artifact, connect, helper_identity, line
 from ssh_smoke import Instance, SOCKETS, require
 from stop_receipt import owned_identity
 
@@ -102,13 +104,216 @@ def session_refusal(path, packet):
     return result
 
 
+def send_unless_peer_closed(sock, data):
+    """Send unless the peer has already answered or closed; return why not.
+
+    On macOS a send to a Unix socket whose peer shut down its read side blocks
+    instead of failing with EPIPE (measured), so a refused connection must be
+    observed by reading, never by a send error.
+    """
+    if select.select([sock], [], [], 0)[0]:
+        return 'peer-readable-before-send'
+    sock.settimeout(0.3)
+    try:
+        sock.sendall(data)
+    except socket.timeout:
+        return 'send-blocked-peer-read-side-shut'
+    except (BrokenPipeError, ConnectionResetError) as error:
+        return type(error).__name__
+    return None
+
+
+def trickle_initial_refusal(path):
+    header = frame(1, b'', length=64)
+    chunks = [b'{', b'"', b'c', b'"', b':']
+    began = time.monotonic()
+    result = {'header_hex': header.hex(), 'dribble_bytes': len(chunks),
+              'dribble_interval_seconds': 0.22, 'read_timeout_seconds': 1.2}
+    with wire.connect(path) as sock:
+        sock.settimeout(1.2)
+        sent = 0
+        try:
+            sock.sendall(header)
+            for byte in chunks:
+                time.sleep(0.22)
+                if send_unless_peer_closed(sock, byte) is not None:
+                    break
+                sent += 1
+            # The keeper's deadline is 1 s from the first byte. How quickly the host
+            # client then sees the close is the transport's behaviour, recorded apart.
+            sock.settimeout(8)
+            if not sock.recv(1, socket.MSG_PEEK):
+                result.update(refused=True, response='eof')
+            else:
+                tag, payload = wire.receive(sock)
+                result.update(refused=tag == 3, response_tag=tag, response_payload=payload)
+        except (BrokenPipeError, ConnectionResetError) as error:
+            result.update(refused=True, response=type(error).__name__)
+        except socket.timeout:
+            result.update(refused=False, response='no-close-within-8s-after-dribble')
+        result['dribble_bytes_sent_before_outcome'] = sent
+    result['seconds'] = time.monotonic() - began
+    result['host_close_seconds_after_keeper_deadline'] = result['seconds'] - 1.0
+    return result
+
+
+def connect_paced(path, timeout=1.0):
+    """libkrun's host Unix acceptor uses Backlog::new(5) and accepts one socket per poll tick."""
+    deadline = time.monotonic() + timeout
+    while True:
+        sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        sock.settimeout(8)
+        try:
+            sock.connect(str(path))
+            time.sleep(0.01)
+            return sock
+        except ConnectionRefusedError:
+            sock.close()
+            if time.monotonic() >= deadline:
+                raise
+            time.sleep(0.01)
+
+
+def stalled_flood_admission(path, count=20):
+    began = time.monotonic()
+    stalled = []
+    outcomes = {}
+    try:
+        for index in range(count):
+            sock = connect_paced(path)
+            stalled.append((index, sock))
+            send_unless_peer_closed(sock, b'\x01\x00')
+            sock.settimeout(0.05)
+        deadline = time.monotonic() + 8.0
+        while len(outcomes) < count and time.monotonic() < deadline:
+            for index, sock in stalled:
+                if index in outcomes:
+                    continue
+                try:
+                    peek = sock.recv(1, socket.MSG_PEEK)
+                    if not peek:
+                        outcomes[index] = 'eof'
+                    else:
+                        sock.settimeout(0.2)
+                        tag, payload = wire.receive(sock)
+                        if tag == 3 and payload.get('message') == 'keeper connection limit exceeded':
+                            outcomes[index] = 'admission-limit-spawn-err'
+                        else:
+                            outcomes[index] = f'unexpected-tag-{tag}'
+                except ConnectionResetError:
+                    outcomes[index] = 'reset'
+                except socket.timeout:
+                    continue
+            if len(outcomes) < count:
+                time.sleep(0.05)
+        immediate_refusals = sum(1 for v in outcomes.values() if v == 'admission-limit-spawn-err')
+        deadline_evictions = sum(1 for v in outcomes.values() if v in ('eof', 'reset'))
+        evicted_all = len(outcomes) == count and (immediate_refusals + deadline_evictions) == count
+        recovered_query = None
+        recovered_exec = None
+        recovered_exec_observed = None
+        if evicted_all:
+            # All 20 attacker client descriptors remain open here: prove that
+            # server-side eviction freed the admission slots for fresh work.
+            recovered_query = len(wire.query(path)['sessions'])
+            out, err, status = wire.execute(path, 'printf admission-recovered')
+            recovered_exec = (out == b'admission-recovered' and not err
+                              and status == {'code': 0, 'signal': None})
+            recovered_exec_observed = {'stdout': out.decode(errors='replace'),
+                                       'stderr': err.decode(errors='replace'), 'status': status}
+        return {
+            'opened_stalled_connections': count,
+            'outcomes': {str(k): v for k, v in sorted(outcomes.items())},
+            'outcome_seconds': time.monotonic() - began,
+            'evicted_or_refused_by_server_while_client_held_open': len(outcomes),
+            'immediate_admission_refusals': immediate_refusals,
+            'deadline_eof_evictions': deadline_evictions,
+            'recovered_query_active_sessions_while_stalled_fds_open': recovered_query,
+            'recovered_spawn_while_stalled_fds_open': recovered_exec,
+            'recovered_spawn_observed': recovered_exec_observed,
+            'refused': bool(evicted_all and recovered_exec),
+            'seconds': time.monotonic() - began,
+        }
+    finally:
+        for _, sock in stalled:
+            sock.close()
+
+
+def control_partial_line_refusal(vm):
+    began = time.monotonic()
+    sock, greeting = connect(vm.path / 'control.sock', vm.process, time.monotonic() + 5, vm.overflow)
+    reply = None
+    followup = None
+    with sock:
+        sock.sendall(b'PING incomplete-without-newline')
+        try:
+            reply = line(sock, deadline=time.monotonic() + 2.0)
+        except TimeoutError:
+            reply = None
+    if reply == b'ERR timeout\n':
+        followup = control_reply(vm, b'PING after-partial-timeout')
+    return {
+        'greeting': greeting.decode().strip(),
+        'reply': reply.decode(errors='replace') if reply else 'timeout-awaiting-newline',
+        'followup_pong': followup == b'PONG after-partial-timeout\n',
+        'refused': reply == b'ERR timeout\n' and followup == b'PONG after-partial-timeout\n',
+        'seconds': time.monotonic() - began,
+    }
+
+
+def control_trickle_and_hold_refusal(vm):
+    began = time.monotonic()
+    sock, _ = connect(vm.path / 'control.sock', vm.process, time.monotonic() + 5, vm.overflow)
+    trickle_reply = None
+    with sock:
+        try:
+            for byte in (b'P', b'I', b'N', b'G', b' '):
+                time.sleep(0.22)
+                sock.sendall(byte)
+        except (BrokenPipeError, ConnectionResetError):
+            pass
+        try:
+            trickle_reply = line(sock, deadline=time.monotonic() + 1.2)
+        except (TimeoutError, BrokenPipeError, ConnectionResetError):
+            trickle_reply = None
+    holder, _ = connect(vm.path / 'control.sock', vm.process, time.monotonic() + 5, vm.overflow)
+    second = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    second_pong = None
+    try:
+        holder.sendall(b'PING hold-first\n')
+        first_pong = line(holder, deadline=time.monotonic() + 2.0)
+        require(first_pong == b'PONG hold-first\n', ('unexpected first control reply', first_pong))
+        try:
+            second.settimeout(1.8)
+            second.connect(str(vm.path / 'control.sock'))
+            greeting = line(second, deadline=time.monotonic() + 1.8)
+            if greeting.startswith(b'READY 1 '):
+                second.sendall(b'PING hold-second\n')
+                second_pong = line(second, deadline=time.monotonic() + 1.8)
+        except (OSError, ValueError):
+            second_pong = None
+    finally:
+        second.close()
+        holder.close()
+    return {
+        'trickle_reply': trickle_reply.decode(errors='replace') if trickle_reply else 'timeout-or-reset',
+        'second_client_pong_while_first_held_open': second_pong == b'PONG hold-second\n',
+        'refused': trickle_reply == b'ERR timeout\n' and second_pong == b'PONG hold-second\n',
+        'seconds': time.monotonic() - began,
+    }
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--adapter', choices=['libkrun', 'hvi'], required=True)
     parser.add_argument('--guest', type=Path, required=True)
     parser.add_argument('--out', type=Path, required=True)
     parser.add_argument('--baseline-only', action='store_true', help='retain failures; omit cold restart')
+    parser.add_argument('--admission-only', action='store_true',
+                        help='baseline diagnostic only: run only the 12 deadline/allocation/admission/control-stall cases')
     args = parser.parse_args()
+    require(not (args.baseline_only and args.admission_only),
+            '--baseline-only and --admission-only are mutually exclusive')
     require_no_active_collector(ROOT / 'runs')
     lease = (ROOT / 'artifacts/nested-runner.lock').open('a')
     fcntl.flock(lease, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -130,10 +335,12 @@ def main():
         target = args.out / 'sources' / name
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_bytes((ROOT / name).read_bytes())
-    for name in ('protocol.rs', 'connection.rs'):
+    for name in ('protocol.rs', 'connection.rs', 'mod.rs'):
         target = args.out / 'sources/shared-keeper' / name
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_bytes((ROOT.parent.parent / 'src/keeper' / name).read_bytes())
+    target = args.out / 'sources/guest-keeper-linux.rs'
+    target.write_bytes((ROOT / 'guest-keeper/src/linux.rs').read_bytes())
     instances, canaries, identities = [], [], []
 
     def save():
@@ -196,15 +403,35 @@ def main():
             ('server-spawn-ok-before-spawn', frame(2, {'session_id': sibling_id}), False),
             ('forged-cross-session-signal', frame(9, {'session_id': sibling_id, 'signal': 'Term'}), False),
         ]
-        for name, packet, half_close in checks:
-            case(name, lambda packet=packet, half_close=half_close: initial_refusal(path, packet, half_close))
+        if not args.admission_only:
+            for name, packet, half_close in checks:
+                case(name, lambda packet=packet, half_close=half_close: initial_refusal(path, packet, half_close))
+            for name, packet in [
+                ('second-spawn-on-live-session', frame(1, request())),
+                ('server-response-on-live-session', frame(2, {'session_id': sibling_id})),
+                ('query-on-live-session', frame(11)),
+                ('nonempty-stdin-close-on-live-session', frame(5, b'forged')),
+            ]:
+                case(name, lambda packet=packet: session_refusal(path, packet))
+
         for name, packet in [
-            ('second-spawn-on-live-session', frame(1, request())),
-            ('server-response-on-live-session', frame(2, {'session_id': sibling_id})),
-            ('query-on-live-session', frame(11)),
-            ('nonempty-stdin-close-on-live-session', frame(5, b'forged')),
+            ('spawn-oversized-control-header', frame(1, length=4 * 1024 * 1024 + 1)),
+            ('resize-oversized-control-header', frame(8, length=64 * 1024 + 1)),
+            ('signal-oversized-control-header', frame(9, length=64 * 1024 + 1)),
+            ('idle-connection-without-frame', b''),
+            ('truncated-header-without-eof', b'\x01\x00'),
+            ('truncated-body-without-eof', frame(1, b'{', length=64)),
+        ]:
+            case(name, lambda packet=packet: initial_refusal(path, packet, False))
+        case('trickle-spawn-slowloris', lambda: trickle_initial_refusal(path))
+        for name, packet in [
+            ('mid-session-truncated-header-without-eof', b'\x04\x00'),
+            ('mid-session-incomplete-large-stdin-without-eof', frame(4, b'partial', length=16 * 1024 * 1024)),
         ]:
             case(name, lambda packet=packet: session_refusal(path, packet))
+        case('stalled-connection-flood-and-admission-recovery', lambda: stalled_flood_admission(path))
+        case('pid1-control-partial-line-without-eof', lambda: control_partial_line_refusal(a))
+        case('pid1-control-trickle-and-post-reply-hold', lambda: control_trickle_and_hold_refusal(a))
 
         signal_sock, _ = wire.spawn(path, '/bin/sleep', ['30'])
         with signal_sock:
@@ -216,7 +443,7 @@ def main():
         require(identity(sibling, 'sibling-after-inputs') == identities[1], 'sibling helper changed')
         require(identity(a, 'a-after-inputs') == identities[0], 'helper changed during malformed inputs')
 
-        if not args.baseline_only:
+        if not args.baseline_only and not args.admission_only:
             canaries[0].close()
             a.shutdown()
             require(artifact(helper) == expected_helper, 'helper changed before cold restart')
@@ -225,7 +452,9 @@ def main():
             require(report['cold_restart_new_helper_identity'], 'cold restart reused the old helper identity')
             canaries[0] = Canary(a)
             for name, packet in [('after-restart-forged-instance', checks[3][1]),
-                                 ('after-restart-query-payload', checks[2][1])]:
+                                 ('after-restart-query-payload', checks[2][1]),
+                                 ('after-restart-spawn-oversized-control-header', frame(1, length=4 * 1024 * 1024 + 1)),
+                                 ('after-restart-truncated-header-without-eof', b'\x01\x00')]:
                 case(name, lambda packet=packet: initial_refusal(path, packet))
             require(identity(sibling, 'sibling-after-restart') == identities[1], 'sibling restarted')
         require(artifact(helper) == expected_helper, 'helper changed during run')

@@ -16,10 +16,30 @@
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::io::{self, Read, Write};
+use std::os::unix::net::UnixStream;
+use std::time::{Duration, Instant};
 
 /// Frames larger than this are rejected rather than trusted to allocate —
 /// defends the keeper against a runaway or malicious peer.
-const MAX_FRAME_LEN: u32 = 16 * 1024 * 1024;
+pub const MAX_FRAME_LEN: u32 = 16 * 1024 * 1024;
+
+/// Small structured JSON control frames (`Resize`, `Signal`, `SpawnOk`,
+/// `SpawnErr`, `Exit`) are bounded well below the raw stream cap.
+pub const MAX_CONTROL_FRAME_LEN: u32 = 64 * 1024;
+
+/// `Spawn` carries the command's arguments and environment, so it is bounded
+/// above the platforms' `ARG_MAX` (1 MiB on macOS, 2 MiB on Linux) rather than
+/// at [`MAX_CONTROL_FRAME_LEN`]: an `exec` the kernel would accept must not be
+/// refused by the keeper. `QueryResult` repeats every live session's command
+/// line and so keeps the stream cap.
+pub const MAX_SPAWN_FRAME_LEN: u32 = 4 * 1024 * 1024;
+
+/// Largest upfront buffer reservation before payload bytes arrive from the peer.
+pub const MAX_PAYLOAD_PREALLOC: usize = 64 * 1024;
+
+/// Monotonic deadline for completing the initial `Spawn`/`Query` frame on a new
+/// connection, or for completing any subsequent frame once its tag byte arrives.
+pub const FRAME_READ_DEADLINE: Duration = Duration::from_secs(1);
 
 const TAG_SPAWN: u8 = 1;
 const TAG_SPAWN_OK: u8 = 2;
@@ -150,34 +170,35 @@ struct SpawnErrPayload {
     message: String,
 }
 
-pub fn read_frame<R: Read>(r: &mut R) -> io::Result<Frame> {
-    let mut tag_buf = [0u8; 1];
-    r.read_exact(&mut tag_buf)?;
-    let mut len_buf = [0u8; 4];
-    r.read_exact(&mut len_buf)?;
-    let len = u32::from_be_bytes(len_buf);
-    if len > MAX_FRAME_LEN {
+fn validate_header(tag: u8, len: u32) -> io::Result<()> {
+    if !matches!(tag, TAG_SPAWN..=TAG_QUERY_RESULT) {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
-            format!("frame of {len} bytes exceeds max {MAX_FRAME_LEN}"),
+            format!("unknown frame tag {tag}"),
         ));
     }
-    if !matches!(tag_buf[0], TAG_SPAWN..=TAG_QUERY_RESULT) {
+    if matches!(tag, TAG_QUERY | TAG_STDIN_CLOSED) && len != 0 {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
-            format!("unknown frame tag {}", tag_buf[0]),
+            format!("frame tag {tag} requires an empty payload"),
         ));
     }
-    if matches!(tag_buf[0], TAG_QUERY | TAG_STDIN_CLOSED) && len != 0 {
+    let max_len = match tag {
+        TAG_STDIN | TAG_STDOUT | TAG_STDERR | TAG_QUERY_RESULT => MAX_FRAME_LEN,
+        TAG_SPAWN => MAX_SPAWN_FRAME_LEN,
+        _ => MAX_CONTROL_FRAME_LEN,
+    };
+    if len > max_len {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
-            format!("frame tag {} requires an empty payload", tag_buf[0]),
+            format!("frame of {len} bytes exceeds max {max_len}"),
         ));
     }
-    let mut payload = vec![0u8; len as usize];
-    r.read_exact(&mut payload)?;
+    Ok(())
+}
 
-    match tag_buf[0] {
+fn decode_payload(tag: u8, payload: Vec<u8>) -> io::Result<Frame> {
+    match tag {
         TAG_SPAWN => Ok(Frame::Spawn(from_json(&payload)?)),
         TAG_SPAWN_OK => Ok(Frame::SpawnOk {
             session_id: from_json::<SpawnOkPayload>(&payload)?.session_id,
@@ -199,6 +220,134 @@ pub fn read_frame<R: Read>(r: &mut R) -> io::Result<Frame> {
             format!("unknown frame tag {other}"),
         )),
     }
+}
+
+pub fn read_frame<R: Read>(r: &mut R) -> io::Result<Frame> {
+    let mut tag_buf = [0u8; 1];
+    r.read_exact(&mut tag_buf)?;
+    let mut len_buf = [0u8; 4];
+    r.read_exact(&mut len_buf)?;
+    let len = u32::from_be_bytes(len_buf);
+    validate_header(tag_buf[0], len)?;
+    let total = len as usize;
+    let mut payload = Vec::with_capacity(total.min(MAX_PAYLOAD_PREALLOC));
+    let mut chunk = [0u8; 8192];
+    while payload.len() < total {
+        let want = (total - payload.len()).min(chunk.len());
+        match r.read(&mut chunk[..want]) {
+            Ok(0) => {
+                return Err(io::Error::new(
+                    io::ErrorKind::UnexpectedEof,
+                    "failed to fill whole buffer",
+                ));
+            }
+            Ok(n) => payload.extend_from_slice(&chunk[..n]),
+            Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
+            Err(e) => return Err(e),
+        }
+    }
+    decode_payload(tag_buf[0], payload)
+}
+
+fn read_exact_until(
+    stream: &mut UnixStream,
+    mut buf: &mut [u8],
+    deadline: Instant,
+) -> io::Result<()> {
+    while !buf.is_empty() {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            return Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                "frame read deadline exceeded",
+            ));
+        }
+        stream.set_read_timeout(Some(remaining))?;
+        match stream.read(buf) {
+            Ok(0) => {
+                return Err(io::Error::new(
+                    io::ErrorKind::UnexpectedEof,
+                    "failed to fill whole buffer",
+                ));
+            }
+            Ok(n) => buf = &mut buf[n..],
+            Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
+            Err(e) => return Err(e),
+        }
+    }
+    Ok(())
+}
+
+/// Reads one frame from a [`UnixStream`] with a monotonic completion deadline.
+///
+/// When `initial` is `true`, the deadline applies from the start of the call so an
+/// idle or dribbling peer that never completes its initial `Spawn`/`Query` frame
+/// is evicted. When `initial` is `false`, the stream may stay idle between frames,
+/// and the monotonic deadline starts as soon as the first header byte arrives.
+pub fn read_frame_timed(
+    stream: &mut UnixStream,
+    initial: bool,
+    window: Duration,
+) -> io::Result<Frame> {
+    struct ResetTimeout<'a>(&'a UnixStream);
+    impl Drop for ResetTimeout<'_> {
+        fn drop(&mut self) {
+            let _ = self.0.set_read_timeout(None);
+        }
+    }
+    let mut tag_buf = [0u8; 1];
+    let deadline = if initial {
+        let deadline = Instant::now() + window;
+        read_exact_until(stream, &mut tag_buf, deadline)?;
+        deadline
+    } else {
+        stream.set_read_timeout(None)?;
+        loop {
+            match stream.read(&mut tag_buf) {
+                Ok(0) => {
+                    return Err(io::Error::new(
+                        io::ErrorKind::UnexpectedEof,
+                        "connection closed before frame tag",
+                    ));
+                }
+                Ok(1) => break Instant::now() + window,
+                Ok(_) => unreachable!(),
+                Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
+                Err(e) => return Err(e),
+            }
+        }
+    };
+    let mut len_buf = [0u8; 4];
+    read_exact_until(stream, &mut len_buf, deadline)?;
+    let len = u32::from_be_bytes(len_buf);
+    validate_header(tag_buf[0], len)?;
+    let total = len as usize;
+    let mut payload = Vec::with_capacity(total.min(MAX_PAYLOAD_PREALLOC));
+    let mut chunk = [0u8; 8192];
+    while payload.len() < total {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            return Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                "frame body deadline exceeded",
+            ));
+        }
+        stream.set_read_timeout(Some(remaining))?;
+        let want = (total - payload.len()).min(chunk.len());
+        match stream.read(&mut chunk[..want]) {
+            Ok(0) => {
+                return Err(io::Error::new(
+                    io::ErrorKind::UnexpectedEof,
+                    "failed to fill whole buffer",
+                ));
+            }
+            Ok(n) => payload.extend_from_slice(&chunk[..n]),
+            Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
+            Err(e) => return Err(e),
+        }
+    }
+    let _reset = ResetTimeout(stream);
+    decode_payload(tag_buf[0], payload)
 }
 
 pub fn write_frame<W: Write>(w: &mut W, frame: &Frame) -> io::Result<()> {
@@ -386,6 +535,10 @@ mod tests {
             (TAG_QUERY, MAX_FRAME_LEN),
             (TAG_STDIN_CLOSED, 1),
             (TAG_STDIN, MAX_FRAME_LEN + 1),
+            (TAG_SPAWN, MAX_SPAWN_FRAME_LEN + 1),
+            (TAG_QUERY_RESULT, MAX_FRAME_LEN + 1),
+            (TAG_RESIZE, MAX_CONTROL_FRAME_LEN + 1),
+            (TAG_SIGNAL, MAX_CONTROL_FRAME_LEN + 1),
         ] {
             let mut header = vec![tag];
             header.extend_from_slice(&length.to_be_bytes());
@@ -481,5 +634,69 @@ mod tests {
         let mut reader = Cursor::new(bytes);
         assert_eq!(read_frame(&mut reader).unwrap(), Frame::Stdin(payload));
         assert_eq!(read_frame(&mut reader).unwrap(), Frame::Query);
+    }
+
+    #[test]
+    fn spawn_with_arguments_beyond_the_small_control_cap_is_accepted() {
+        let script = "x".repeat(MAX_CONTROL_FRAME_LEN as usize + 1);
+        let req = SpawnRequest {
+            cmd: "sh".to_string(),
+            args: vec!["-c".to_string(), script],
+            cwd: "/".to_string(),
+            env: BTreeMap::new(),
+            pty: None,
+        };
+        let mut buf = Vec::new();
+        write_frame(&mut buf, &Frame::Spawn(req.clone())).unwrap();
+        assert_eq!(
+            read_frame(&mut Cursor::new(buf)).unwrap(),
+            Frame::Spawn(req)
+        );
+    }
+
+    #[test]
+    fn timed_read_evicts_idle_dribbling_and_mid_frame_stalls() {
+        let window = Duration::from_millis(120);
+        let (_writer, mut reader) = UnixStream::pair().unwrap();
+        let err = read_frame_timed(&mut reader, true, window).unwrap_err();
+        assert!(matches!(
+            err.kind(),
+            io::ErrorKind::TimedOut | io::ErrorKind::WouldBlock
+        ));
+
+        let (mut writer, mut reader) = UnixStream::pair().unwrap();
+        let dribbler = std::thread::spawn(move || {
+            let mut header = vec![TAG_SPAWN];
+            header.extend_from_slice(&32u32.to_be_bytes());
+            let _ = writer.write_all(&header);
+            for _ in 0..5 {
+                std::thread::sleep(Duration::from_millis(35));
+                if writer.write_all(b"{").is_err() {
+                    break;
+                }
+            }
+            writer
+        });
+        let started = Instant::now();
+        let err = read_frame_timed(&mut reader, true, window).unwrap_err();
+        assert!(matches!(
+            err.kind(),
+            io::ErrorKind::TimedOut | io::ErrorKind::WouldBlock
+        ));
+        assert!(started.elapsed() < Duration::from_millis(500));
+        drop(dribbler.join().unwrap());
+
+        let (mut writer, mut reader) = UnixStream::pair().unwrap();
+        let delayed = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(180));
+            let _ = writer.write_all(&[TAG_STDIN, 0]);
+            writer
+        });
+        let err = read_frame_timed(&mut reader, false, window).unwrap_err();
+        assert!(matches!(
+            err.kind(),
+            io::ErrorKind::TimedOut | io::ErrorKind::WouldBlock
+        ));
+        drop(delayed.join().unwrap());
     }
 }

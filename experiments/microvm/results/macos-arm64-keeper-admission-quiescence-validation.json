@@ -1,0 +1,307 @@
+{
+  "schema": 1,
+  "status": "passed",
+  "platform": "macos-arm64-native",
+  "qualification": "scoped keeper admission/deadline/allocation and PID 1 stop-quiescence validation through fixed native samples; not denial-of-service qualification, VMM host-parser fuzzing, hostile-guest attestation or production supervisor adoption",
+  "admission": {
+    "adapters": [
+      {
+        "adapter": "libkrun",
+        "status": "passed",
+        "cases": 38,
+        "new_cases": 12,
+        "boots": 3,
+        "cold_restart_new_helper_identity": true,
+        "refusal_observed_seconds": {
+          "spawn-oversized-control-header": 0.0,
+          "resize-oversized-control-header": 0.0,
+          "signal-oversized-control-header": 0.0,
+          "idle-connection-without-frame": 1.075,
+          "truncated-header-without-eof": 1.037,
+          "truncated-body-without-eof": 1.038,
+          "trickle-spawn-slowloris": 1.111,
+          "stalled-connection-flood-and-admission-recovery": 1.252,
+          "pid1-control-partial-line-without-eof": 1.001,
+          "pid1-control-trickle-and-post-reply-hold": 7.021
+        },
+        "stalled_flood": {
+          "opened_stalled_connections": 20,
+          "immediate_admission_refusals": 7,
+          "deadline_eof_evictions": 13,
+          "recovered_spawn_while_stalled_fds_open": true
+        },
+        "continuous_same_vm_and_sibling_canaries": true,
+        "cleanup": {
+          "helpers_reaped": true,
+          "endpoints_removed": true,
+          "private_resources_removed": true
+        },
+        "evidence": {
+          "path": "experiments/microvm/results/libkrun-macos-arm64-keeper-admission.json",
+          "sha256": "bec6ec06dc1445eb8effc537ee948409181488413a958e8e69d132a2829a717e"
+        }
+      },
+      {
+        "adapter": "hvi",
+        "status": "passed",
+        "cases": 38,
+        "new_cases": 12,
+        "boots": 3,
+        "cold_restart_new_helper_identity": true,
+        "refusal_observed_seconds": {
+          "spawn-oversized-control-header": 0.0,
+          "resize-oversized-control-header": 0.0,
+          "signal-oversized-control-header": 0.0,
+          "idle-connection-without-frame": 1.043,
+          "truncated-header-without-eof": 1.039,
+          "truncated-body-without-eof": 1.038,
+          "trickle-spawn-slowloris": 1.114,
+          "stalled-connection-flood-and-admission-recovery": 1.255,
+          "pid1-control-partial-line-without-eof": 1.01,
+          "pid1-control-trickle-and-post-reply-hold": 2.126
+        },
+        "stalled_flood": {
+          "opened_stalled_connections": 20,
+          "immediate_admission_refusals": 7,
+          "deadline_eof_evictions": 13,
+          "recovered_spawn_while_stalled_fds_open": true
+        },
+        "continuous_same_vm_and_sibling_canaries": true,
+        "cleanup": {
+          "helpers_reaped": true,
+          "endpoints_removed": true,
+          "private_resources_removed": true
+        },
+        "evidence": {
+          "path": "experiments/microvm/results/hvi-macos-arm64-keeper-admission.json",
+          "sha256": "4d2eff85e4d6dc732f6e37a8d5f2578ca88217d230d8e82da68374c849f69c24"
+        }
+      }
+    ],
+    "baselines": [
+      {
+        "adapter": "libkrun",
+        "status": "failed-as-observed",
+        "guest": "v9 stage-b-protocol-final",
+        "cases": 12,
+        "failed": 12,
+        "boots": 2,
+        "cleanup": {
+          "helpers_reaped": true,
+          "endpoints_removed": true,
+          "private_resources_removed": true
+        },
+        "evidence": {
+          "path": "experiments/microvm/results/libkrun-macos-arm64-keeper-admission-before.json",
+          "sha256": "75bb20ddf636cf776a6df2d1004a638a27f6076cdad287a07452e4e96e8bc342"
+        }
+      },
+      {
+        "adapter": "hvi",
+        "status": "failed-as-observed",
+        "guest": "v9 stage-b-protocol-final",
+        "cases": 12,
+        "failed": 12,
+        "boots": 2,
+        "cleanup": {
+          "helpers_reaped": true,
+          "endpoints_removed": true,
+          "private_resources_removed": true
+        },
+        "evidence": {
+          "path": "experiments/microvm/results/hvi-macos-arm64-keeper-admission-before.json",
+          "sha256": "849f755590afa026ceb37581f2959a255ac40fd57eaff3a98fb90a3f9a0adce6"
+        }
+      }
+    ]
+  },
+  "quiescence": {
+    "adapters": [
+      {
+        "adapter": "libkrun",
+        "status": "passed",
+        "cases": [
+          "panic-without-stop-intent",
+          "panic-during-valid-shutdown-before-ack",
+          "correlated-sync-and-clean-exit",
+          "stale-ack-generation-and-malformed-controls",
+          "persisted-intent-and-host-forced-stop",
+          "new-boot-correlated-sync-and-clean-exit",
+          "panic-after-correlated-sync-ack"
+        ],
+        "boots": 8,
+        "live_redis_and_stubborn_writer_held_workspace": true,
+        "classification": "orderly",
+        "quiesced_and_unmounted_marker": true,
+        "host_ext4_superblock_after_stop": {
+          "magic": "0xef53",
+          "s_state": 1,
+          "s_feature_incompat": 8898,
+          "incompat_recover": false,
+          "cleanly_unmounted": true
+        },
+        "existing_build_and_32_keys_recovered": true,
+        "cleanup": {
+          "helpers_reaped": true,
+          "endpoints_removed": true,
+          "private_resources_removed": true
+        },
+        "evidence": {
+          "path": "experiments/microvm/results/libkrun-macos-arm64-stop-quiescence.json",
+          "sha256": "d60fd54328969dd5a45ede62b03d7bf6af24e860be9183865573b14ffe46c372"
+        }
+      },
+      {
+        "adapter": "hvi",
+        "status": "passed",
+        "cases": [
+          "panic-without-stop-intent",
+          "panic-during-valid-shutdown-before-ack",
+          "correlated-sync-and-clean-exit",
+          "stale-ack-generation-and-malformed-controls",
+          "persisted-intent-and-host-forced-stop",
+          "new-boot-correlated-sync-and-clean-exit",
+          "panic-after-correlated-sync-ack"
+        ],
+        "boots": 8,
+        "live_redis_and_stubborn_writer_held_workspace": true,
+        "classification": "orderly",
+        "quiesced_and_unmounted_marker": true,
+        "host_ext4_superblock_after_stop": {
+          "magic": "0xef53",
+          "s_state": 1,
+          "s_feature_incompat": 8898,
+          "incompat_recover": false,
+          "cleanly_unmounted": true
+        },
+        "existing_build_and_32_keys_recovered": true,
+        "cleanup": {
+          "helpers_reaped": true,
+          "endpoints_removed": true,
+          "private_resources_removed": true
+        },
+        "evidence": {
+          "path": "experiments/microvm/results/hvi-macos-arm64-stop-quiescence.json",
+          "sha256": "ce5b6abd300bffff9144dec08e19b1f3b9f0df2dc637340837f946f61d46f7cc"
+        }
+      }
+    ],
+    "baselines": [
+      {
+        "adapter": "libkrun",
+        "status": "failed-as-observed",
+        "guest": "v8 stage-b-nix-postack-{exit,control}",
+        "v8_predicate_classification": "orderly",
+        "current_classification": "unverified-stop",
+        "host_ext4_superblock_after_stop": {
+          "magic": "0xef53",
+          "s_state": 1,
+          "s_feature_incompat": 8902,
+          "incompat_recover": true,
+          "cleanly_unmounted": false
+        },
+        "interpretation": "the v8 receipt called a stop orderly while the live workspace stayed mounted and its journal needed recovery on the next mount",
+        "existing_build_and_32_keys_recovered": true,
+        "cleanup": {
+          "helpers_reaped": true,
+          "endpoints_removed": true,
+          "private_resources_removed": true
+        },
+        "evidence": {
+          "path": "experiments/microvm/results/libkrun-macos-arm64-stop-quiescence-before.json",
+          "sha256": "e75a74141fc78598674397cf73c9ac99ebca1f54f845f4120f3c2256a429879a"
+        }
+      },
+      {
+        "adapter": "hvi",
+        "status": "failed-as-observed",
+        "guest": "v8 stage-b-nix-postack-{exit,control}",
+        "v8_predicate_classification": "orderly",
+        "current_classification": "unverified-stop",
+        "host_ext4_superblock_after_stop": {
+          "magic": "0xef53",
+          "s_state": 1,
+          "s_feature_incompat": 8902,
+          "incompat_recover": true,
+          "cleanly_unmounted": false
+        },
+        "interpretation": "the v8 receipt called a stop orderly while the live workspace stayed mounted and its journal needed recovery on the next mount",
+        "existing_build_and_32_keys_recovered": true,
+        "cleanup": {
+          "helpers_reaped": true,
+          "endpoints_removed": true,
+          "private_resources_removed": true
+        },
+        "evidence": {
+          "path": "experiments/microvm/results/hvi-macos-arm64-stop-quiescence-before.json",
+          "sha256": "fc5a2ff50e662c17a91826c98165184262218bacce7aa5a0df7bfadb1eb7d11d"
+        }
+      }
+    ]
+  },
+  "shared_keeper_changes": [
+    "1 s monotonic deadline for the first Spawn/Query frame and for completing any later frame once its tag arrives; idle established sessions are not timed out",
+    "per-tag caps: Stdin/Stdout/Stderr/QueryResult 16 MiB, Spawn 4 MiB (above macOS/Linux ARG_MAX), other control frames 64 KiB; payload buffers grow as bytes arrive from a 64 KiB reservation",
+    "at most 16 simultaneous keeper connections; the 17th gets SpawnErr 'keeper connection limit exceeded' at accept"
+  ],
+  "guest_changes": [
+    "guest relay: at most 24 simultaneous transport relays",
+    "PID 1 control socket: 1 s per-connection line deadline, 512-command bound, drained close after refusal",
+    "orderly stop: TERM then KILL every child, unmount workspace/toolchain (EBUSY retried), then sync and ack; a failed unmount answers ERR shutdown-busy instead of acknowledging"
+  ],
+  "excluded_runs": [
+    {
+      "run": "experiments/microvm/runs/20261116-libkrun-keeper-admission",
+      "reason": "harness: observed refusal through a send; on macOS a send to a Unix socket whose peer shut its read side blocks instead of failing (measured), and the recovery spawn passed '/bin/sh' as the script"
+    },
+    {
+      "run": "experiments/microvm/runs/20261119-libkrun-admission-diagnostic{,-2,-3}",
+      "reason": "admission-only diagnostics that isolated the two harness defects above; not counted"
+    },
+    {
+      "run": "experiments/microvm/runs/20261120-libkrun-keeper-admission",
+      "reason": "real regression, fixed: the guest relay's combined shutdown(Both) is repeated by libkrun on its host socket, which on macOS fails with ENOTCONN after the client half-closes (measured), so two half-close cases saw no EOF until the 5 s proxy reaper; the relay again shuts Write then Read"
+    },
+    {
+      "run": "experiments/microvm/runs/20261120-libkrun-stop-quiescence",
+      "reason": "harness: the quiescence marker was matched with LF while the console tty writes CRLF; the superblock was already clean"
+    },
+    {
+      "run": "experiments/microvm/runs/20261116-libkrun-keeper-admission-before",
+      "reason": "first baseline, recorded with the defective send-based harness; replaced by the rerun on the same v9 guest, which fails the same 12 cases"
+    }
+  ],
+  "shared_source_sha256": {
+    "src/keeper/protocol.rs": "4da304555ee61684e517a40791fce915821afef15521d2e17b6b0647b893e77c",
+    "src/keeper/connection.rs": "e3fb160fdfa9f49db78442f2dd68ecc970b49b8f4719a44d1b0990b5b9dc5c8d",
+    "src/keeper/mod.rs": "c732c95f1ddcfafd063d693a4e31e0c34f350996e387bc5313582d55ad7f9dfa"
+  },
+  "experiment_source_sha256": {
+    "protocol_probe.py": "45431c25bcd317608cc320d23b03ac8337c03f9b19abffc2f04332a2d3c82b84",
+    "stop_probe.py": "7cb562dc4528677b6014093e454385f7073d26042d910c1b8d92a30d718ab210",
+    "stop_receipt.py": "1ced4dc70ad1c9f42d5e4bffc4c5ca2bb33d42cede3572d2a24d916706d47b90",
+    "guest/init.c": "7636f053f5eb6429fd3a31543bbe8e9b93768fbfe9d6732841d726f219104bc4",
+    "guest-keeper/src/linux.rs": "49a60d287a497af846bd7ab03860603e57bb8c540dba7197243c1c6891dbde8f",
+    "build_keeper_guest.py": "fa10337c70b67f1d796ff455727e5f1219020dffb3d6934ee6e8f33a15d44e15"
+  },
+  "guest_receipts": {
+    "stage-b-protocol-admission": {
+      "path": "experiments/microvm/artifacts/stage-b-protocol-admission/guest.json",
+      "sha256": "7ee4c2100209c63115c0beb7cbab8111cb8073e793da3d58e71fa7a39e5a5834"
+    },
+    "stage-b-nix-quiescence-control": {
+      "path": "experiments/microvm/artifacts/stage-b-nix-quiescence-control/guest.json",
+      "sha256": "4e429923f2b56287cf69e2c2f75fe3528e8b58e1946781415eba715e9d51fd74"
+    },
+    "stage-b-nix-quiescence-exit": {
+      "path": "experiments/microvm/artifacts/stage-b-nix-quiescence-exit/guest.json",
+      "sha256": "17d8b2bcfaedff04952ae149b8104857e4114517ab2c0536f10c7f83564410e9"
+    }
+  },
+  "remaining_limits": [
+    "Fixed connection/deadline sample only: no aggregate memory bound under many sessions, no per-session output backpressure qualification, no adaptive or authenticated admission.",
+    "The connection cap applies per keeper; a peer able to reach the socket can still hold all 16 slots for up to the 1 s deadline at a time.",
+    "Quiescence covers this fixture's workspace/toolchain mounts and a TERM-ignoring writer; companion services, a process in uninterruptible sleep and host power loss are not qualified.",
+    "Earlier density, preparation, workload, CLI/TLS, Remote-SSH and stop-receipt measurements keep their original keeper/guest hashes and are not transferred to these guests."
+  ]
+}

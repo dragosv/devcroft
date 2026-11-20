@@ -10,6 +10,7 @@
 #include <linux/landlock.h>
 #include <linux/vm_sockets.h>
 #include <net/if.h>
+#include <poll.h>
 #include <signal.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -24,6 +25,7 @@
 #include <sys/statvfs.h>
 #include <sys/syscall.h>
 #include <sys/wait.h>
+#include <time.h>
 #include <unistd.h>
 
 static void fail(const char *what) {
@@ -31,6 +33,75 @@ static void fail(const char *what) {
     sync();
     reboot(RB_POWER_OFF);
     for (;;) pause();
+}
+
+static int64_t monotonic_ms(void) {
+    struct timespec ts = {0};
+    if (clock_gettime(CLOCK_MONOTONIC, &ts) < 0) fail("clock_gettime");
+    return (int64_t)ts.tv_sec * 1000 + (int64_t)(ts.tv_nsec / 1000000);
+}
+
+static void drain_and_finish(int fd) {
+    char drain[64];
+    (void)shutdown(fd, SHUT_WR);
+    while (recv(fd, drain, sizeof(drain), MSG_DONTWAIT) > 0) {}
+}
+
+static int terminate_all_children(void) {
+    signal(SIGCHLD, SIG_DFL);
+    (void)kill(-1, SIGTERM);
+    int64_t term_deadline = monotonic_ms() + 500;
+    for (;;) {
+        while (waitpid(-1, NULL, WNOHANG) > 0) {}
+        if (waitpid(-1, NULL, WNOHANG) < 0 && errno == ECHILD) return 1;
+        if (monotonic_ms() >= term_deadline) break;
+        usleep(10000);
+    }
+    (void)kill(-1, SIGKILL);
+    int64_t kill_deadline = monotonic_ms() + 1000;
+    for (;;) {
+        while (waitpid(-1, NULL, WNOHANG) > 0) {}
+        if (waitpid(-1, NULL, WNOHANG) < 0 && errno == ECHILD) return 1;
+        if (monotonic_ms() >= kill_deadline) break;
+        usleep(10000);
+    }
+    while (waitpid(-1, NULL, WNOHANG) > 0) {}
+    return waitpid(-1, NULL, WNOHANG) < 0 && errno == ECHILD;
+}
+
+#ifdef ENABLE_WORKLOAD
+static int unmount_verified(const char *target) {
+    for (unsigned int i = 0; i < 50; ++i) {
+        if (umount(target) == 0) return 1;
+        if (errno != EBUSY && errno != EAGAIN && errno != EINTR) break;
+        usleep(10000);
+    }
+    dprintf(2, "guest: umount %s failed: %s\n", target, strerror(errno));
+    return 0;
+}
+#endif
+
+static int quiesce_and_unmount(void) {
+    if (!terminate_all_children()) {
+        dprintf(2, "guest: shutdown child termination incomplete\n");
+        return 0;
+    }
+    sync();
+#ifdef ENABLE_AGENT_PROBE
+    (void)umount("/etc/hosts");
+#endif
+#ifdef ENABLE_WORKLOAD
+    if (!unmount_verified("/workspace")) return 0;
+#ifdef ENABLE_ADAPTABLE
+    if (!unmount_verified("/private-base")) return 0;
+#endif
+    if (!unmount_verified("/toolchain")) return 0;
+    sync();
+    dprintf(2, "guest: shutdown quiesced=1 umount=1\n");
+#else
+    dprintf(2, "guest: shutdown quiesced=1\n");
+#endif
+    return 1;
 }
 
 static void reap(int unused) {
@@ -449,20 +520,44 @@ int main(void) {
                  state, ro, landlock_abi, policy);
 #endif
         if (send_all(fd, greeting) < 0) { close(fd); continue; }
+        int64_t deadline_ms = monotonic_ms() + 1000;
+        unsigned int commands = 0;
         char line[1024];
         size_t used = 0;
         for (;;) {
+            if ((used & 63) == 0 && monotonic_ms() >= deadline_ms) {
+                if (used > 0) { send_all(fd, "ERR timeout\n"); drain_and_finish(fd); }
+                break;
+            }
             char c;
-            ssize_t n = recv(fd, &c, 1, 0);
+            ssize_t n = recv(fd, &c, 1, MSG_DONTWAIT);
             if (n < 0 && errno == EINTR) continue;
+            if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+                int64_t remaining_ms = deadline_ms - monotonic_ms();
+                if (remaining_ms <= 0) {
+                    if (used > 0) { send_all(fd, "ERR timeout\n"); drain_and_finish(fd); }
+                    break;
+                }
+                struct pollfd pfd = { .fd = fd, .events = POLLIN };
+                int prc = poll(&pfd, 1, (int)remaining_ms);
+                if (prc < 0 && errno == EINTR) continue;
+                if (prc <= 0) {
+                    if (used > 0) { send_all(fd, "ERR timeout\n"); drain_and_finish(fd); }
+                    break;
+                }
+                continue;
+            }
             if (n == 0) { send_all(fd, "EOF\n"); break; }
             if (n < 0) break;
             if (c != '\n') {
                 if (used + 1 >= sizeof(line) || c < 32 || c > 126) {
-                    send_all(fd, "ERR frame\n"); break;
+                    send_all(fd, "ERR frame\n"); drain_and_finish(fd); break;
                 }
                 line[used++] = c;
                 continue;
+            }
+            if (++commands > 512) {
+                send_all(fd, "ERR frame\n"); drain_and_finish(fd); break;
             }
             line[used] = 0;
 #ifdef ENABLE_ADAPTABLE
@@ -485,6 +580,7 @@ int main(void) {
                     send_all(fd, "ERR setup closed\n");
 #endif
                 } else { send_all(fd, "ERR setup recipe\n"); }
+                deadline_ms = monotonic_ms() + 1000;
             } else
 #endif
             if (!strncmp(line, "PING ", 5)) {
@@ -520,10 +616,29 @@ int main(void) {
                     dprintf(2, "guest: test-only PID1 exit=86 during shutdown\n");
                     _exit(86);
                 }
+                if (stop_exit_probe_armed == 2) {
+                    sync();
+                    dprintf(2, "guest: shutdown synced state=%u\n", state);
+                    if (legacy) send_all(fd, "BYE\n");
+                    else {
+                        char reply[96];
+                        snprintf(reply, sizeof(reply), "SYNCED %u %s\n", state, token);
+                        send_all(fd, reply);
+                    }
+                    close(fd);
+                    /* Test-only delivery window, not a durability guarantee.
+                     * The host must receive the actual correlated ACK before
+                     * accepting this as the post-ack panic counterexample. */
+                    usleep(250000);
+                    dprintf(2, "guest: test-only PID1 exit=86 after shutdown ack\n");
+                    _exit(86);
+                }
 #endif
-                /* Acknowledgement certifies only that this fixture completed
-                 * sync(), never companion service stop/unmount or host power-loss
-                 * durability. Send it after sync so a controller can correlate it. */
+                if (!quiesce_and_unmount()) {
+                    send_all(fd, "ERR shutdown-busy\n");
+                    used = 0;
+                    continue;
+                }
                 sync();
                 dprintf(2, "guest: shutdown synced state=%u\n", state);
                 if (legacy) send_all(fd, "BYE\n");
@@ -533,16 +648,6 @@ int main(void) {
                     send_all(fd, reply);
                 }
                 close(fd);
-#ifdef ENABLE_PID1_EXIT_PROBE
-                if (stop_exit_probe_armed == 2) {
-                    /* Test-only delivery window, not a durability guarantee.
-                     * The host must receive the actual correlated ACK before
-                     * accepting this as the post-ack panic counterexample. */
-                    usleep(250000);
-                    dprintf(2, "guest: test-only PID1 exit=86 after shutdown ack\n");
-                    _exit(86);
-                }
-#endif
                 reboot(RB_POWER_OFF);
                 fail("poweroff returned");
             } else {
