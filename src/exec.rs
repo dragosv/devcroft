@@ -105,6 +105,10 @@ pub fn exec(sandbox_name: &str, req: &ExecRequest) -> Result<i32, ExecError> {
 /// exist in the sandbox" the same way.
 const FALLBACK_SHELL: &str = "sh";
 
+/// Frames this client may queue ahead of the keeper. Stdin is read 8 KiB at a
+/// time, so this holds at most about 512 KiB of unconsumed input.
+const OUTGOING_QUEUE_FRAMES: usize = 64;
+
 /// The absolute shell `up` resolved out of this sandbox's own closure and
 /// recorded in `meta.json` (`crate::shell`).
 ///
@@ -210,7 +214,9 @@ fn stream_session(stream: UnixStream, pty: bool) -> Result<i32, ExecError> {
     let ended_by_signal = std::sync::Arc::new(std::sync::atomic::AtomicI32::new(0));
     let mut read_half = stream;
 
-    let (tx, rx) = mpsc::channel::<Frame>();
+    // Bounded, so stdin the session does not consume (`yes | devcroft exec
+    // sleep 100`) stalls the stdin read rather than growing this process.
+    let (tx, rx) = mpsc::sync_channel::<Frame>(OUTGOING_QUEUE_FRAMES);
     let writer_handle = {
         let mut w = write_half;
         thread::spawn(move || {
@@ -278,7 +284,7 @@ fn exit_code_from(status: ExitStatus) -> i32 {
     }
 }
 
-fn spawn_stdin_pump(tx: mpsc::Sender<Frame>) {
+fn spawn_stdin_pump(tx: mpsc::SyncSender<Frame>) {
     thread::spawn(move || {
         let mut buf = [0u8; 8192];
         loop {
@@ -331,7 +337,7 @@ fn block_forwarded_signals(pty: bool) -> libc::sigset_t {
 /// was still running five minutes later.
 fn spawn_signal_forwarder(
     set: libc::sigset_t,
-    tx: mpsc::Sender<Frame>,
+    tx: mpsc::SyncSender<Frame>,
     pty: bool,
     connection: UnixStream,
     ended_by_signal: std::sync::Arc<std::sync::atomic::AtomicI32>,
@@ -344,8 +350,11 @@ fn spawn_signal_forwarder(
                 return;
             }
             if pty && received == libc::SIGWINCH {
+                // A resize that does not fit is dropped: the next SIGWINCH
+                // carries the then-current size anyway.
                 if let Some(size) = terminal_size()
-                    && tx.send(Frame::Resize(size)).is_err()
+                    && let Err(mpsc::TrySendError::Disconnected(_)) =
+                        tx.try_send(Frame::Resize(size))
                 {
                     return;
                 }
@@ -357,10 +366,16 @@ fn spawn_signal_forwarder(
                 libc::SIGHUP => SessionSignal::Hup,
                 _ => continue,
             };
-            if tx.send(Frame::Signal(signal)).is_err() {
-                return;
-            }
-            if received == libc::SIGTERM || received == libc::SIGHUP {
+            // Never block here: queued stdin the session is not reading can
+            // fill the channel, and this thread must still be able to end
+            // the session. A signal that cannot be queued cannot be
+            // delivered in order, so it ends the session the way TERM does.
+            let undeliverable = match tx.try_send(Frame::Signal(signal)) {
+                Ok(()) => false,
+                Err(mpsc::TrySendError::Full(_)) => true,
+                Err(mpsc::TrySendError::Disconnected(_)) => return,
+            };
+            if undeliverable || received == libc::SIGTERM || received == libc::SIGHUP {
                 let connection = connection.try_clone();
                 let ended = ended_by_signal.clone();
                 thread::spawn(move || {
