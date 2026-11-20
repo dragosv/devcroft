@@ -1167,6 +1167,60 @@ that covers the kernel but not the shared directory is still worth more than
 one that covers neither, and the answer would be to stop sharing the
 directory — which is ArcBox's answer, and a different product.
 
+#### Owner decision on criterion four: the boundary is integrator-owned (2026-11-20)
+
+`evaluate-microvm-runtimes` measured libkrun against the five criteria from the
+gVisor removal entry above. Four are met or partly met. The fourth fails
+as written: "is called a security boundary by its own authors". libkrun's
+pinned `security-model.md` describes the VM boundary but hands host-device and
+resource confinement to the integrator. The design requires an unmet criterion
+to stay visible with the owner's decision on it. This is that decision.
+
+**Decided: for libkrun, criterion four is accepted as an integrator-owned
+boundary rather than an author-claimed one.** The reason is that devcroft's own
+mechanism confines libkrun on both sides:
+
+- **On the host, outside the VM:** the helper that becomes the VMM applies the
+  host sandbox to itself before the first vCPU runs. This is measured on macOS
+  ARM64, where the sandbox is Seatbelt.
+- **Inside the guest:** the keeper applies nono (Landlock) to itself before
+  serving, with negative controls checked after restriction. This is measured
+  on both macOS adapters.
+
+**What this changes and what it does not:**
+
+- **The criterion is not reworded for every candidate.** A future VMM still
+  needs an author-claimed boundary, or a decision of its own. hvi does not need
+  one, because its authors claim a hostile-guest boundary at the pinned
+  revision, although no external audit exists.
+- **No security claim is added.** After a VMM escape, code lands in a process
+  confined by the host sandbox, which is the same boundary the process tier
+  already has. The guarantee devcroft states for that boundary still holds:
+  accident protection, not a security boundary (`docs/threat-model.md`). A
+  microVM adds a layer in front of it. It does not raise what devcroft
+  promises.
+- **The production no-go stands.** The evaluation's other required evidence
+  has not been produced:
+  - confinement of hostile preparation code, and production admission,
+    resource and credential lifecycle;
+  - physical suspend/resume and the other untested fault points;
+  - stop semantics ported into the production controller;
+  - native Linux runners with per-platform release criteria.
+
+  Task 4.5 stays open, because it also needs acceptance of the thresholds and
+  release criteria. This entry stays "Rejected (for now)".
+- **The decision covers macOS ARM64 only.** On Linux the host-side layer would
+  be Landlock, which does not mediate AF_UNIX
+  (`tests/unix_socket_not_mediated.rs`). Landlock-before-vCPU ordering for
+  libkrun under KVM has not been measured, so the decision does not carry over
+  until that row exists.
+
+**Revisit if** the host-side layer cannot be applied before the vCPU on a
+platform, if libkrun's security model changes, or if `docs/threat-model.md`'s
+use case B (unreviewed code) becomes a goal. Under use case B, an
+integrator-owned boundary resting on an accident-protection sandbox is not
+enough.
+
 ### No resource limits (yet)
 
 Landlock and Seatbelt constrain access, not consumption. A session can
