@@ -689,9 +689,17 @@ user names the variable that carries the endpoint as well.
       custody" — both routes (`[env] forward`, `[credentials] env`), the
       user's reaching every project, and what egress does and does not
       bound. `docs/decisions.md` §3 already said the same in one paragraph.
-- [ ] 7.4 README: the fleet-of-agents claim can now be stated as
+- [x] 7.4 README: the fleet-of-agents claim can now be stated as
       supported — but only to the extent tasks 6.1/6.2 actually passed,
       and tier-qualified as always
+      **Done (2026-11-21)**, to the extent that passed: Status gains "Coding
+      agents inside a sandbox, Linux only so far". It covers 6.1 (eleven
+      agents from a user layer), API keys forwarded (the matrix) and
+      brokered (4b.8, Claude Code end to end), and says what is not
+      claimed: no real key, no macOS run, and no subscription login, since
+      6.2's file half and 4.0/4.3–4.7 are open. "Not claims today" names
+      the subscription login in the same terms. When 6.2 passes, that
+      sentence is the one to revise
 
 ## 8. Verification
 

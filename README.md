@@ -479,13 +479,23 @@ through a per-sandbox proxy; flox, devenv and devbox services with readiness;
 worktree identity; SSH command and pty sessions, `sftp`, `scp` and port
 forwarding; macOS Seatbelt, with its differences reported per capability.
 
+**Coding agents inside a sandbox, Linux only so far:** eleven agent CLIs
+(Claude Code, Codex, OpenCode, Copilot and seven more) run from a locked
+tooling layer that the project never names. Each reaches its vendor's API
+through the egress proxy with an API key, either forwarded or brokered.
+Claude Code ran end to end with a brokered key, against a stand-in API, and
+the sandbox never held the key. All of this used dummy keys, so no real
+conversation has been run inside. A subscription login (a credential file)
+does not reach a sandbox yet, and none of this has been run on macOS.
+[docs/agents.md](docs/agents.md) has the matrix.
+
 **Experimental, Linux only:** `devcroft fleet`, N agents each on its own clone,
 with per-agent and fleet-wide CPU, memory and PID budgets (host-derived
 defaults) and tasks whose outcomes devcroft observes.
 
 **Not claims today:** containment of hostile code or kernel exploits; undo of
-project changes; keeping a file credential (a subscription login) out of the
-sandbox, since only header-borne keys can be brokered;
+project changes; agents that authenticate with a subscription login (a
+credential file), which neither reaches a sandbox nor can be brokered;
 running a project with no environment file; Linux-equivalent port isolation on
 macOS.
 
