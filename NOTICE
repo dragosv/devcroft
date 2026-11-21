@@ -19,3 +19,8 @@ A compiled devcroft binary statically links its dependencies. Their
 licenses, including the Apache-2.0 texts required by section 4(a), are
 reproduced in THIRD-PARTY-LICENSES.md, generated from the dependency tree
 by scripts/gen-third-party-licenses.py.
+
+The SSH implementation is devcroft-russh, a modified copy of russh 0.62.5
+(https://github.com/warp-tech/russh, Apache-2.0). Its source is in
+vendor/russh; vendor/russh/NOTICE and vendor/russh/devcroft-changes.patch
+state what was changed.

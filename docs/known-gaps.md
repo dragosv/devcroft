@@ -1225,6 +1225,36 @@ Everything outside it is refused by name rather than approximated.
 - **No fleet, no services.** A fleet agent on a pixi project is refused, and
   pixi has no service concept.
 
+## SSH stdin a command never reads stalled its connection — fixed, with a russh fork
+
+**Before (measured, 2026-11-20).** The keeper's SSH server wrote stdin to the
+child inline, from its tokio handler. A command that did not read its stdin
+blocked the handler, so the rest of its connection stopped, which for an
+editor is the whole session. It also held one of the runtime's two workers,
+and with it the timers of every other connection; two such commands froze
+the server. Both effects were asserted against that code, and both failed
+after 5 s.
+
+**Now.** Each channel's stdin is written by its own thread. The SSH receive
+window for exec/shell channels is returned only once the child has consumed
+the input, so a client cannot send more than the child takes. One stalled
+channel leaves its connection, the other channels and the server
+responsive, and channel close still reaps the child. A client that ignores
+the window is refused beyond an 8 MiB backlog with exit status 255, never
+silently truncated.
+
+**The cost.** russh 0.62.5 cannot do this: it returns window credit on
+receipt, with one target window per session. devcroft therefore carries a
+fork, `vendor/russh`, published as `devcroft-russh`. The fork has to be
+rebased whenever russh is upgraded, and it has to be published before devcroft.
+The change came from `experiments/microvm`, where it was qualified first
+(native OpenSSH at 16 MiB both ways; nonreading-stdin multiplex runs ten
+times in a row). The upstream request is drafted at
+`docs/russh-consumed-input-windows-issue.md`.
+
+`devcroft exec` and `shell` do not use SSH. Their stream is bounded end to
+end, and a signal that cannot be queued ends the session.
+
 ## No cgroup resource limits
 
 A runaway build in one sandbox can affect the whole host — nothing today

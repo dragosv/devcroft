@@ -77,7 +77,13 @@ nono = "=0.82.0"
 # SPIFFE/tonic, rcgen): not feature-gated upstream, accepted by the owner.
 nono-proxy = { version = "=0.82.0", default-features = false }
 rand = "0.10.2"
-russh = "0.62.5"
+# devcroft's fork of russh 0.62.5 (vendor/russh, published separately as
+# devcroft-russh): exec/shell receive-window credit is returned only after the
+# child has consumed its stdin, so a command that does not read cannot stall
+# its connection. Kept until the equivalent lands upstream; vendor/russh/NOTICE
+# lists the change. Publishing devcroft needs devcroft-russh published first,
+# because `cargo package` rewrites this to the registry version.
+russh = { package = "devcroft-russh", version = "=0.62.5-devcroft.1", path = "vendor/russh" }
 russh-sftp = "2.4.0"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"

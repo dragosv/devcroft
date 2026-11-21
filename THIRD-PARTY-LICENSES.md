@@ -150,6 +150,7 @@ devcroft is distributed under Apache-2.0 (see `LICENSE-APACHE` and `NOTICE`). A 
 | `der_derive` | 0.7.3 | Apache-2.0 OR MIT | [a9040321c3712d8f](#license-text-a9040321c3712d8f) |
 | `der_derive` | 0.8.0 | Apache-2.0 OR MIT | [a9040321c3712d8f](#license-text-a9040321c3712d8f) |
 | `deranged` | 0.5.9 | MIT OR Apache-2.0 | [edd65bdd88957a20](#license-text-edd65bdd88957a20) |
+| `devcroft-russh` | 0.62.5-devcroft.1 | Apache-2.0 | [c6596eb7be8581c1](#license-text-c6596eb7be8581c1) |
 | `digest` | 0.10.7 | MIT OR Apache-2.0 | [a9040321c3712d8f](#license-text-a9040321c3712d8f) |
 | `digest` | 0.11.3 | MIT OR Apache-2.0 | [a9040321c3712d8f](#license-text-a9040321c3712d8f) |
 | `dispatch2` | 0.3.1 | Zlib OR Apache-2.0 OR MIT | [c6596eb7be8581c1](#license-text-c6596eb7be8581c1) |
@@ -382,7 +383,6 @@ devcroft is distributed under Apache-2.0 (see `LICENSE-APACHE` and `NOTICE`). A 
 | `rlimit` | 0.11.0 | MIT | [c7dc98fff98de123](#license-text-c7dc98fff98de123) |
 | `rpds` | 1.2.1 | MIT | [e326b5fef9084c43](#license-text-e326b5fef9084c43) |
 | `rsa` | 0.10.0-rc.18 | MIT OR Apache-2.0 | [769f80b5bcb42ed0](#license-text-769f80b5bcb42ed0) |
-| `russh` | 0.62.5 | Apache-2.0 | [c6596eb7be8581c1](#license-text-c6596eb7be8581c1) |
 | `russh-cryptovec` | 0.62.0 | Apache-2.0 | [c6596eb7be8581c1](#license-text-c6596eb7be8581c1) |
 | `russh-sftp` | 2.4.0 | Apache-2.0 | [c71d239df91726fc](#license-text-c71d239df91726fc) |
 | `russh-util` | 0.52.0 | Apache-2.0 | [c6596eb7be8581c1](#license-text-c6596eb7be8581c1) |
@@ -598,7 +598,6 @@ These declare Apache-2.0 but ship no license file in the published crate. Apache
 - `nono-proxy` 0.82.0 — Apache-2.0
 - `objc2-core-foundation` 0.3.2 — Zlib OR Apache-2.0 OR MIT
 - `objc2-core-services` 0.3.2 — Zlib OR Apache-2.0 OR MIT
-- `russh` 0.62.5 — Apache-2.0
 - `russh-cryptovec` 0.62.0 — Apache-2.0
 - `russh-util` 0.52.0 — Apache-2.0
 - `sigstore-bundle` 0.15.1 — Apache-2.0
