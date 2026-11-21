@@ -150,6 +150,17 @@ retired first, and every phase ends in something runnable.
       2026-08-31: crates.io returns "crate `devcroft` does not exist",
       npm returns 404). Publish is then `cargo publish`.
 
+      **Since 2026-11-20 publishing is two steps, in order.** devcroft
+      depends on `devcroft-russh` (`vendor/russh`), its fork of russh 0.62.5
+      that returns SSH window credit only after a child consumes its stdin.
+      `cargo package` rewrites that path dependency to the registry version,
+      so `cargo package`/`cargo publish` for devcroft fail ("no matching
+      package named `devcroft-russh`") until the fork is published: first
+      `cargo publish` in `vendor/russh` (it packages and verifies on its
+      own; the name was free on 2026-11-20), then devcroft. A `[patch]`
+      override was rejected because `cargo package` drops it and the
+      published binary would silently use unpatched russh.
+
       **The version is `0.0.1`, not `0.1.0`, and that is a decision rather
       than a placeholder.** `0.0.z` is the only range cargo treats as
       incompatible with itself, which is the only numbering consistent with

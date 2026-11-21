@@ -79,6 +79,7 @@ devcroft is distributed under Apache-2.0 (see `LICENSE-APACHE` and `NOTICE`). A 
 | `der` | 0.8.1 | Apache-2.0 OR MIT | [a9040321c3712d8f](#license-text-a9040321c3712d8f) |
 | `der_derive` | 0.7.3 | Apache-2.0 OR MIT | [a9040321c3712d8f](#license-text-a9040321c3712d8f) |
 | `der_derive` | 0.8.0 | Apache-2.0 OR MIT | [a9040321c3712d8f](#license-text-a9040321c3712d8f) |
+| `devcroft-russh` | 0.62.5-devcroft.1 | Apache-2.0 | [c6596eb7be8581c1](#license-text-c6596eb7be8581c1) |
 | `digest` | 0.10.7 | MIT OR Apache-2.0 | [a9040321c3712d8f](#license-text-a9040321c3712d8f) |
 | `digest` | 0.11.3 | MIT OR Apache-2.0 | [a9040321c3712d8f](#license-text-a9040321c3712d8f) |
 | `directories` | 6.0.0 | MIT OR Apache-2.0 | [d3174ad63e721d4c](#license-text-d3174ad63e721d4c) |
@@ -224,7 +225,6 @@ devcroft is distributed under Apache-2.0 (see `LICENSE-APACHE` and `NOTICE`). A 
 | `reqwest` | 0.13.4 | MIT OR Apache-2.0 | [751963a8b88c0e3a](#license-text-751963a8b88c0e3a) |
 | `rfc6979` | 0.6.0 | Apache-2.0 OR MIT | [78779d420019e6b4](#license-text-78779d420019e6b4) |
 | `rsa` | 0.10.0-rc.18 | MIT OR Apache-2.0 | [769f80b5bcb42ed0](#license-text-769f80b5bcb42ed0) |
-| `russh` | 0.62.5 | Apache-2.0 | [c6596eb7be8581c1](#license-text-c6596eb7be8581c1) |
 | `russh-cryptovec` | 0.62.0 | Apache-2.0 | [c6596eb7be8581c1](#license-text-c6596eb7be8581c1) |
 | `russh-sftp` | 2.4.0 | Apache-2.0 | [c71d239df91726fc](#license-text-c71d239df91726fc) |
 | `russh-util` | 0.52.0 | Apache-2.0 | [c6596eb7be8581c1](#license-text-c6596eb7be8581c1) |
@@ -353,7 +353,6 @@ These declare Apache-2.0 but ship no license file in the published crate. Apache
 - `cms` 0.2.3 — Apache-2.0 OR MIT
 - `delegate` 0.13.5 — MIT OR Apache-2.0
 - `nono` 0.77.0 — Apache-2.0
-- `russh` 0.62.5 — Apache-2.0
 - `russh-cryptovec` 0.62.0 — Apache-2.0
 - `russh-util` 0.52.0 — Apache-2.0
 - `sigstore-bundle` 0.11.0 — Apache-2.0
@@ -7497,7 +7496,7 @@ SOFTWARE.
 
 ### License text c6596eb7be8581c1
 
-Applies to: `cms`, `crc32fast`, `delegate`, `hex`, `nono`, `russh`, `russh-cryptovec`, `russh-util`, `serde_spanned`, `sigstore-bundle`, `sigstore-crypto`, `sigstore-merkle`, and 11 more
+Applies to: `cms`, `crc32fast`, `delegate`, `devcroft-russh`, `hex`, `nono`, `russh-cryptovec`, `russh-util`, `serde_spanned`, `sigstore-bundle`, `sigstore-crypto`, `sigstore-merkle`, and 11 more
 
 ```
                                  Apache License

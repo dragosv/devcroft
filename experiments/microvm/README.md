@@ -873,8 +873,11 @@ stdout window, and connection/channel loss interrupts that wait and releases
 output pumps. Control credits bypass the application-output backlog.
 
 This is an isolated fork in `guest-keeper/src/ssh_server.rs`, derived from the
-recorded production server, plus vendored russh 0.62.5. The root dependency and
-production SSH source are unchanged. `fixtures/ssh-consumption-windows.json`
+recorded production server, plus vendored russh 0.62.5. Production adopted both
+on 2026-11-20. The root crate now depends on `vendor/russh` (`devcroft-russh`),
+whose source is this fork plus "Modified by" lines. `src/ssh/server.rs` is this
+keeper fork without its experimental header. The copies here stay pinned for
+guest builds. `fixtures/ssh-consumption-windows.json`
 records the upstream crate checksum, 84 vendored input hashes and reconstructible
 patches. `freeze_ssh_sources.py` deliberately refreshes these pins; guest builds
 verify them before compilation. The extra input worker per active session and

@@ -108,10 +108,25 @@ before copying anything from it:
   no environment lever for either). `up` prints what the shim does.
 
 Remaining work (see `openspec/changes/add-mvp-core/tasks.md`): task 7.5,
-and only its last step — running `cargo publish` and reserving the npm
-name, both of which need the maintainer's own accounts. Everything
-checkable is checked: `cargo package` verifies, clippy and rustdoc are
-warning-free, and the name is free on both registries (2026-08-31).
+and only its last step — publishing and reserving the npm name, both of
+which need the maintainer's own accounts. Publishing is now **two crates in
+order**: `vendor/russh` (`devcroft-russh`) first, then devcroft. Until the
+fork is on crates.io, `cargo package` for devcroft fails with "no matching
+package named `devcroft-russh`". That is expected, not a regression. The
+fork packages and verifies on its own. Clippy and rustdoc are warning-free,
+and both names were free (devcroft 2026-08-31, devcroft-russh 2026-11-20).
+
+**`vendor/russh` is a maintained fork, kept until upstream has the change.**
+exec/shell channels return SSH receive-window credit only after the child
+has consumed its stdin, so a command that never reads cannot stall its
+connection. Without it, russh 0.62.5 grants credit on receipt. Its source is
+the experiment's fork (`experiments/microvm/russh`, which stays pinned for
+guest builds) plus a "Modified by" line in each changed file.
+`vendor/russh/devcroft-changes.patch` reproduces it from the upstream crate,
+and `vendor/russh/NOTICE` says what changed. Do not replace it with a
+`[patch.crates-io]` override: `cargo package` drops `[patch]`, so the
+published binary would silently use unpatched russh. The draft upstream
+request is `docs/russh-consumed-input-windows-issue.md`.
 
 **The first release is `0.0.1`, not `0.1.0`, deliberately.** `0.0.z` is
 the only range cargo treats as incompatible with itself, which is the only
@@ -194,8 +209,8 @@ Apache-2.0 §4(a) compliance. Measured: the committed file lists 335
 dependencies; regenerating it on macOS produces 287, quietly losing the
 Linux keyring/dbus tail (`aes`, `async-io`, `async-broadcast`, and 45
 others). Nothing errors, and the diff looks like a legitimate shrink.
-Adding `--target x86_64-unknown-linux-gnu` reproduces the committed set from
-a Mac if you have to.
+`python3 scripts/gen-third-party-licenses.py --target x86_64-unknown-linux-gnu`
+reproduces the committed set from a Mac if you have to.
 
 devcroft is **Apache-2.0** (`LICENSE-APACHE` + `NOTICE`), matching nono
 and the sigstore crates it links rather than the Rust-conventional dual

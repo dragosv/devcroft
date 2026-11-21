@@ -1337,3 +1337,16 @@ Two macOS facts shaped the fix, both measured:
 An ordered stream cannot do better than this. A signal behind unconsumed
 stdin is delivered only once the child reads, or the session ends.
 
+The SSH server had the same inline stdin write, with a worse reach: it ran
+in a tokio handler on a two-worker runtime. A blocked worker also stopped the
+runtime's timers, so the first test of the fix passed for the wrong reason.
+Its `tokio::time::timeout` froze along with the stall and reported a 26 ms
+reply that had in fact waited 5 s. The tests now measure wall-clock time.
+
+A queue in front of the child could not fix this alone. russh 0.62.5
+returns window credit on receipt, so past any bound the choice was between
+memory and stalling the connection. The fix is the consumed-input windows
+already qualified in `experiments/microvm`, now in production through
+`vendor/russh` (`devcroft-russh`). A `[patch.crates-io]` override was
+tried on paper and measured on a probe crate: `cargo package` drops it, so
+the published binary would have used unpatched russh without any error.

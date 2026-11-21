@@ -51,10 +51,16 @@ def sha(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8", "replace")).hexdigest()[:16]
 
 
-def shipped_packages() -> set[str]:
-    """`name vX.Y.Z` ids for normal (non-dev, non-build) dependencies."""
+def shipped_packages(target: str | None) -> set[str]:
+    """`name vX.Y.Z` ids for normal (non-dev, non-build) dependencies.
+
+    `cargo tree` resolves for the host target unless told otherwise, so a run
+    on macOS silently drops every Linux-only dependency. `--target` names the
+    target to resolve for instead.
+    """
+    target_args = ["--target", target] if target else []
     out = subprocess.run(
-        ["cargo", "tree", "-e", "normal", "--prefix", "none", "--format", "{p}"],
+        ["cargo", "tree", "-e", "normal", "--prefix", "none", "--format", "{p}", *target_args],
         capture_output=True,
         text=True,
         check=True,
@@ -73,6 +79,15 @@ def shipped_packages() -> set[str]:
 
 
 def main() -> int:
+    import argparse
+
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument(
+        "--target",
+        help="resolve dependencies for this target triple instead of the host "
+        "(on macOS: x86_64-unknown-linux-gnu, or Linux-only crates are dropped)",
+    )
+    args = parser.parse_args()
     root = Path(__file__).resolve().parent.parent
     meta = json.loads(
         subprocess.run(
@@ -84,7 +99,7 @@ def main() -> int:
         ).stdout
     )
 
-    shipped = shipped_packages()
+    shipped = shipped_packages(args.target)
     texts: dict[str, str] = {}          # hash -> license text
     entries: list[tuple[str, str, str, str | None]] = []  # name, ver, spdx, hash
     missing: list[tuple[str, str, str]] = []

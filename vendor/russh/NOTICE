@@ -1,0 +1,19 @@
+devcroft-russh is a modified copy of russh 0.62.5
+(https://github.com/warp-tech/russh), licensed under the Apache License,
+Version 2.0, with the original copyright notices retained in every file.
+
+Upstream crate SHA-256:
+da7c230e0ed9cbeb92fbad6c8848985d6df2a1464c0dc247a021abd666e9005e
+
+Modified by the devcroft authors. Every change is the single patch
+devcroft-changes.patch, applied to the files it names:
+
+- exec/shell channels can switch to a manual receive window, and the
+  server returns credit through Handle::consumed only after the
+  application has consumed the input;
+- window adjustments add only newly received credit;
+- sealed output queues behind a cancellation-safe partial-write cursor,
+  with a soft application backpressure threshold and a reserve for
+  control replies.
+
+This fork exists only until the equivalent lands upstream.

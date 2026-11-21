@@ -26,7 +26,10 @@ use std::future::Future;
 use std::io::{Read, Write};
 use std::path::PathBuf;
 use std::pin::Pin;
-use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
+#[cfg(test)]
+use std::sync::mpsc;
+use std::sync::{Arc, Condvar, Mutex};
 use std::task::{Context, Poll};
 use std::{io, thread};
 
@@ -88,9 +91,122 @@ struct PendingChannel {
 /// to its stdin, `window_change_request` to its pty, and to terminate it
 /// on `channel_close`.
 struct ActiveSession {
-    stdin: Option<Box<dyn Write + Send>>,
+    stdin: SessionStdin,
     resize_handle: Option<File>,
     _cleanup: SessionCleanup,
+}
+
+// The connection loop never waits on a child's pipe. Credits are returned
+// only after the writer consumes bytes; the SSH receive window bounds pending
+// input. Coalescing also bounds metadata for clients sending tiny packets.
+const STDIN_BACKLOG_BYTES: usize = 8 * 1024 * 1024;
+const STDIN_CHUNK_BYTES: usize = 32768;
+
+struct InputChunk {
+    bytes: Vec<u8>,
+    pending: Arc<AtomicUsize>,
+}
+
+impl Drop for InputChunk {
+    fn drop(&mut self) {
+        self.pending.fetch_sub(self.bytes.len(), Ordering::Relaxed);
+    }
+}
+
+struct StdinState {
+    queue: std::collections::VecDeque<InputChunk>,
+    closed: bool,
+}
+
+#[derive(Clone)]
+struct SessionStdin {
+    shared: Arc<(Mutex<StdinState>, Condvar)>,
+    pending: Arc<AtomicUsize>,
+}
+
+impl SessionStdin {
+    fn new(
+        writer: Option<Box<dyn Write + Send>>,
+        credit: Option<(ChannelId, server::Handle)>,
+    ) -> Self {
+        let input = Self {
+            shared: Arc::new((
+                Mutex::new(StdinState {
+                    queue: Default::default(),
+                    closed: writer.is_none(),
+                }),
+                Condvar::new(),
+            )),
+            pending: Arc::new(AtomicUsize::new(0)),
+        };
+        if let Some(mut writer) = writer {
+            let shared = input.shared.clone();
+            thread::spawn(move || {
+                let (state, ready) = &*shared;
+                loop {
+                    let chunk = {
+                        let mut state = state.lock().unwrap();
+                        while state.queue.is_empty() && !state.closed {
+                            state = ready.wait(state).unwrap();
+                        }
+                        state.queue.pop_front()
+                    };
+                    let Some(chunk) = chunk else { break };
+                    if writer.write_all(&chunk.bytes).is_err() {
+                        break;
+                    }
+                    if let Some((channel, handle)) = &credit
+                        && handle.consumed(*channel, chunk.bytes.len() as u32).is_err()
+                    {
+                        break;
+                    }
+                }
+                let mut state = state.lock().unwrap();
+                state.closed = true;
+                state.queue.clear();
+            });
+        }
+        input
+    }
+
+    fn send(&self, mut bytes: &[u8]) -> io::Result<()> {
+        let (state, ready) = &*self.shared;
+        let mut state = state.lock().unwrap();
+        if bytes.is_empty() || state.closed {
+            return Ok(());
+        }
+        self.pending
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |pending| {
+                pending
+                    .checked_add(bytes.len())
+                    .filter(|n| *n <= STDIN_BACKLOG_BYTES)
+            })
+            .map_err(|_| io::Error::from(io::ErrorKind::WouldBlock))?;
+        while !bytes.is_empty() {
+            if let Some(last) = state.queue.back_mut()
+                && last.bytes.len() < STDIN_CHUNK_BYTES
+            {
+                let count = bytes.len().min(STDIN_CHUNK_BYTES - last.bytes.len());
+                last.bytes.extend_from_slice(&bytes[..count]);
+                bytes = &bytes[count..];
+            } else {
+                let count = bytes.len().min(STDIN_CHUNK_BYTES);
+                state.queue.push_back(InputChunk {
+                    bytes: bytes[..count].to_vec(),
+                    pending: self.pending.clone(),
+                });
+                bytes = &bytes[count..];
+            }
+        }
+        ready.notify_one();
+        Ok(())
+    }
+
+    fn close(&self) {
+        let (state, ready) = &*self.shared;
+        state.lock().unwrap().closed = true;
+        ready.notify_one();
+    }
 }
 
 enum SessionEvent {
@@ -102,11 +218,15 @@ enum SessionEvent {
 /// belong to the worker that owns the child, never a delayed raw PID callback:
 /// it keeps the group leader unreaped until its last signal, preventing PID
 /// reuse from redirecting cleanup into an unrelated session.
-struct SessionCleanup(std::sync::mpsc::Sender<SessionEvent>);
+struct SessionCleanup(
+    std::sync::mpsc::Sender<SessionEvent>,
+    tokio::sync::watch::Sender<bool>,
+);
 
 impl Drop for SessionCleanup {
     fn drop(&mut self) {
         let _ = self.0.send(SessionEvent::Cancel);
+        let _ = self.1.send(true);
     }
 }
 
@@ -169,6 +289,11 @@ impl SshServer {
         args: Vec<String>,
         session: &mut Session,
     ) -> Result<(), russh::Error> {
+        if self.active.contains_key(&channel_id) || !self.channels.contains_key(&channel_id) {
+            session.channel_failure(channel_id)?;
+            return Ok(());
+        }
+        session.manual_receive_window(channel_id)?;
         let pending = self.pending.remove(&channel_id).unwrap_or_default();
         let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/"));
         let req = SpawnRequest {
@@ -189,9 +314,17 @@ impl SshServer {
         // Register cleanup even if sending the acknowledgement fails after the
         // child has already been spawned.
         let acknowledged = session.channel_success(channel_id);
-        let stdin = spawned.stdin.take();
+        // Only SFTP consumes the raw channel's receive queue. Leaving it here
+        // duplicates exec input into an unread queue that stalls after 100
+        // frames, even though Handler::data is consuming the same input.
+        let (_, output) = self
+            .channels
+            .remove(&channel_id)
+            .expect("validated session channel")
+            .split();
+        let stdin = SessionStdin::new(spawned.stdin.take(), Some((channel_id, session.handle())));
         let resize_handle = spawned.resize_handle.take();
-        let cleanup = relay_session_to_channel(channel_id, spawned, session.handle());
+        let cleanup = relay_session_to_channel(spawned, output, stdin.clone());
 
         self.active.insert(
             channel_id,
@@ -211,15 +344,15 @@ impl SshServer {
 /// `keeper::connection`'s pump threads — this is the exact same "child
 /// process I/O is blocking" reality, just relayed to a different
 /// transport) and funneled through a `tokio` mpsc channel a spawned async
-/// task drains into `Handle::data`/`extended_data` calls. The exit-status
+/// task drains through the channel write half, respecting its remote window. The exit-status
 /// thread joins the stdout/stderr threads *before* sending `Exit`, so —
 /// same guarantee `connection.rs` gives the control socket — the client
 /// never sees the exit status race ahead of buffered output still in
 /// flight.
 fn relay_session_to_channel(
-    channel_id: ChannelId,
     spawned: session::SpawnedSession,
-    handle: server::Handle,
+    output: russh::ChannelWriteHalf<Msg>,
+    stdin: SessionStdin,
 ) -> SessionCleanup {
     enum Event {
         Stdout(Vec<u8>),
@@ -229,6 +362,7 @@ fn relay_session_to_channel(
 
     let (tx, mut rx) = tokio::sync::mpsc::channel::<Event>(64);
     let (cleanup_tx, cleanup_rx) = std::sync::mpsc::channel();
+    let (stop_tx, mut stop_rx) = tokio::sync::watch::channel(false);
 
     let stdout_handle = {
         let tx = tx.clone();
@@ -289,6 +423,9 @@ fn relay_session_to_channel(
                     }
                 }
             };
+            // Also retire an idle input writer if the client keeps a finished
+            // channel alive without sending EOF.
+            stdin.close();
             let _ = stdout_handle.join();
             if let Some(h) = stderr_handle {
                 let _ = h.join();
@@ -301,17 +438,21 @@ fn relay_session_to_channel(
 
     let relay_cleanup = cleanup_tx.clone();
     tokio::spawn(async move {
+        // Channel/connection loss also interrupts a remote-window wait. Dropping
+        // rx releases pump threads even when the peer never reads stdout.
+        tokio::select! {
+        () = async {
         while let Some(event) = rx.recv().await {
             match event {
                 Event::Stdout(bytes) => {
-                    if handle.data(channel_id, bytes).await.is_err() {
+                    if output.data_bytes(bytes).await.is_err() {
                         let _ = relay_cleanup.send(SessionEvent::Cancel);
                         break;
                     }
                 }
                 // Extended data type 1 is stderr (RFC4254 5.2).
                 Event::Stderr(bytes) => {
-                    if handle.extended_data(channel_id, 1, bytes).await.is_err() {
+                    if output.extended_data_bytes(1, bytes).await.is_err() {
                         let _ = relay_cleanup.send(SessionEvent::Cancel);
                         break;
                     }
@@ -321,14 +462,17 @@ fn relay_session_to_channel(
                         .code
                         .unwrap_or_else(|| status.signal.map(|s| 128 + s).unwrap_or(1))
                         as u32;
-                    let _ = handle.exit_status_request(channel_id, code).await;
+                    let _ = output.exit_status(code).await;
                 }
             }
         }
-        let _ = handle.eof(channel_id).await;
-        let _ = handle.close(channel_id).await;
+        let _ = output.eof().await;
+        let _ = output.close().await;
+        } => {},
+        _ = stop_rx.changed() => {},
+        }
     });
-    SessionCleanup(cleanup_tx)
+    SessionCleanup(cleanup_tx, stop_tx)
 }
 
 /// A blocking read loop shared by the stdout/stderr pump threads above.
@@ -646,13 +790,21 @@ impl Handler for SshServer {
         &mut self,
         channel: ChannelId,
         data: &[u8],
-        _session: &mut Session,
+        session: &mut Session,
     ) -> Result<(), Self::Error> {
-        if let Some(active) = self.active.get_mut(&channel)
-            && let Some(stdin) = active.stdin.as_mut()
-            && stdin.write_all(data).is_err()
+        if let Some(active) = self.active.get(&channel)
+            && active.stdin.send(data).is_err()
         {
-            active.stdin = None;
+            // Fail this overloaded channel explicitly; never block the
+            // connection or silently truncate a successful command's stdin.
+            self.active.remove(&channel);
+            session.extended_data(
+                channel,
+                1,
+                b"devcroft: SSH stdin backlog exceeded\n".as_slice(),
+            )?;
+            session.exit_status_request(channel, 255)?;
+            session.close(channel)?;
         }
         Ok(())
     }
@@ -663,7 +815,7 @@ impl Handler for SshServer {
         _session: &mut Session,
     ) -> Result<(), Self::Error> {
         if let Some(active) = self.active.get_mut(&channel) {
-            active.stdin = None;
+            active.stdin.close();
         }
         Ok(())
     }
@@ -927,6 +1079,292 @@ mod tests {
         authenticated_connection(client_key, authorized_key).await.1
     }
 
+    #[test]
+    fn stdin_backlog_is_bounded_and_eof_drains_accepted_input() {
+        struct HeldWriter {
+            release: Option<mpsc::Receiver<()>>,
+            entered: mpsc::Sender<()>,
+            finished: mpsc::Sender<Vec<u8>>,
+            bytes: Vec<u8>,
+        }
+        impl Write for HeldWriter {
+            fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+                if let Some(release) = self.release.take() {
+                    self.entered.send(()).unwrap();
+                    release
+                        .recv_timeout(std::time::Duration::from_secs(5))
+                        .unwrap();
+                }
+                self.bytes.extend_from_slice(bytes);
+                Ok(bytes.len())
+            }
+            fn flush(&mut self) -> io::Result<()> {
+                Ok(())
+            }
+        }
+        impl Drop for HeldWriter {
+            fn drop(&mut self) {
+                let _ = self.finished.send(std::mem::take(&mut self.bytes));
+            }
+        }
+        for byte_limit in [false, true] {
+            let (release, released) = mpsc::channel();
+            let (entered, writing) = mpsc::channel();
+            let (finished, done) = mpsc::channel();
+            let input = SessionStdin::new(
+                Some(Box::new(HeldWriter {
+                    release: Some(released),
+                    entered,
+                    finished,
+                    bytes: Vec::new(),
+                })),
+                None,
+            );
+            let first = vec![7; if byte_limit { STDIN_BACKLOG_BYTES } else { 1 }];
+            input.send(&first).unwrap();
+            writing
+                .recv_timeout(std::time::Duration::from_secs(2))
+                .unwrap();
+            if !byte_limit {
+                for _ in 0..4096 {
+                    input.send(&[7]).unwrap();
+                }
+            }
+            assert_eq!(
+                input
+                    .send(&vec![9; if byte_limit { 1 } else { STDIN_BACKLOG_BYTES }])
+                    .unwrap_err()
+                    .kind(),
+                io::ErrorKind::WouldBlock
+            );
+            // A second owner models the child-wait worker: EOF must close the
+            // actual sender despite that owner, and drain the accepted bytes.
+            let owner = input.clone();
+            input.close();
+            input.send(&[10]).unwrap();
+            release.send(()).unwrap();
+            let bytes = done
+                .recv_timeout(std::time::Duration::from_secs(2))
+                .unwrap();
+            let expected = if byte_limit {
+                STDIN_BACKLOG_BYTES
+            } else {
+                4097
+            };
+            assert_eq!(bytes, vec![7; expected]);
+            assert_eq!(owner.pending.load(Ordering::Relaxed), 0);
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn nonreading_stdin_does_not_block_other_channels() {
+        let key = PrivateKey::random(&mut rand::rng(), Algorithm::Ed25519).unwrap();
+        let (client, authorized) =
+            authenticated_connection(key.clone(), key.public_key().clone()).await;
+        assert!(authorized);
+        let mut channel = client.channel_open_session().await.unwrap();
+        channel
+            .exec(true, "trap '' TERM; printf '%s\\n' \"$$\"; exec sleep 30")
+            .await
+            .unwrap();
+        let pid = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            let mut output = Vec::new();
+            loop {
+                if let russh::ChannelMsg::Data { data } = channel.wait().await.unwrap() {
+                    output.extend_from_slice(&data);
+                    if output.contains(&b'\n') {
+                        break String::from_utf8(output)
+                            .unwrap()
+                            .trim()
+                            .parse::<libc::pid_t>()
+                            .unwrap();
+                    }
+                }
+            }
+        })
+        .await
+        .unwrap();
+        assert!(pid > 1);
+        assert_eq!(unsafe { libc::kill(pid, 0) }, 0);
+        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            let (_, writer) = channel.split();
+            let send = writer.data_bytes(vec![1; 12 * 1024 * 1024]);
+            let other = async {
+                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                let mut next = client.channel_open_session().await.unwrap();
+                next.exec(true, "printf responsive").await.unwrap();
+                let mut output = Vec::new();
+                loop {
+                    match next.wait().await.unwrap() {
+                        russh::ChannelMsg::Data { data } => output.extend_from_slice(&data),
+                        russh::ChannelMsg::ExitStatus { exit_status } => {
+                            assert_eq!(exit_status, 0);
+                            break;
+                        }
+                        _ => {}
+                    }
+                }
+                assert_eq!(output, b"responsive");
+                writer.close().await.unwrap();
+            };
+            tokio::select! {
+                result = send => panic!("nonreading sink accepted twelve MiB: {result:?}"),
+                () = other => {},
+            }
+        })
+        .await
+        .unwrap();
+        let gone = tokio::time::timeout(std::time::Duration::from_secs(7), async {
+            while unsafe { libc::kill(pid, 0) } != -1
+                || io::Error::last_os_error().raw_os_error() != Some(libc::ESRCH)
+            {
+                tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+            }
+        })
+        .await;
+        if gone.is_err() {
+            unsafe {
+                libc::kill(-pid, libc::SIGKILL);
+            }
+        }
+        assert!(
+            gone.is_ok(),
+            "blocked child's process group survived channel close"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn exhausted_stdout_window_does_not_block_another_channel_or_cleanup() {
+        struct FreezeWindow;
+        impl client::Handler for FreezeWindow {
+            type Error = russh::Error;
+            async fn check_server_key(&mut self, _: &PublicKey) -> Result<bool, Self::Error> {
+                Ok(true)
+            }
+            fn adjust_window(&mut self, _: ChannelId, _: u32) -> u32 {
+                1
+            }
+        }
+        let key = PrivateKey::random(&mut rand::rng(), Algorithm::Ed25519).unwrap();
+        let (client_stream, server_stream) = tokio::net::UnixStream::pair().unwrap();
+        let config = Arc::new(Config {
+            keys: vec![PrivateKey::random(&mut rand::rng(), Algorithm::Ed25519).unwrap()],
+            ..Default::default()
+        });
+        let handler = SshServer::new(
+            key.public_key().clone(),
+            Arc::new(session::LocalSessionBackend),
+        );
+        tokio::spawn(async move {
+            let _ = server::run_stream(config, server_stream, handler)
+                .await
+                .unwrap()
+                .await;
+        });
+        let mut client = client::connect_stream(
+            Arc::new(client::Config {
+                window_size: 65536,
+                ..Default::default()
+            }),
+            client_stream,
+            FreezeWindow,
+        )
+        .await
+        .unwrap();
+        assert!(
+            client
+                .authenticate_publickey("devcroft", PrivateKeyWithHashAlg::new(Arc::new(key), None))
+                .await
+                .unwrap()
+                .success()
+        );
+        let mut channel = client.channel_open_session().await.unwrap();
+        channel
+            .exec(
+                true,
+                "trap '' TERM; printf '%s\\n' \"$$\"; exec head -c 8388608 /dev/zero",
+            )
+            .await
+            .unwrap();
+        let mut first = Vec::new();
+        let pid = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            loop {
+                if let russh::ChannelMsg::Data { data } = channel.wait().await.unwrap() {
+                    first.extend_from_slice(&data);
+                    if let Some(end) = first.iter().position(|b| *b == b'\n') {
+                        break std::str::from_utf8(&first[..end])
+                            .unwrap()
+                            .parse::<libc::pid_t>()
+                            .unwrap();
+                    }
+                }
+            }
+        })
+        .await
+        .unwrap();
+        assert!(pid > 1);
+        let received = Arc::new(AtomicUsize::new(first.len()));
+        let observed = received.clone();
+        let (mut reader, writer) = channel.split();
+        let drain = tokio::spawn(async move {
+            while let Some(message) = reader.wait().await {
+                match message {
+                    russh::ChannelMsg::Data { data } => {
+                        received.fetch_add(data.len(), Ordering::Relaxed);
+                    }
+                    russh::ChannelMsg::Close => break,
+                    _ => {}
+                }
+            }
+        });
+        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            while observed.load(Ordering::Relaxed) < 65536 {
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            assert!(
+                observed.load(Ordering::Relaxed) < 1024 * 1024,
+                "negative window control did not stop output"
+            );
+            assert_eq!(unsafe { libc::kill(pid, 0) }, 0);
+            let mut other = client.channel_open_session().await.unwrap();
+            other.exec(true, "printf independent").await.unwrap();
+            let mut output = Vec::new();
+            loop {
+                match other.wait().await.unwrap() {
+                    russh::ChannelMsg::Data { data } => output.extend_from_slice(&data),
+                    russh::ChannelMsg::ExitStatus { exit_status } => {
+                        assert_eq!(exit_status, 0);
+                        break;
+                    }
+                    _ => {}
+                }
+            }
+            assert_eq!(output, b"independent");
+            writer.close().await.unwrap();
+        })
+        .await
+        .unwrap();
+        let gone = tokio::time::timeout(std::time::Duration::from_secs(7), async {
+            while unsafe { libc::kill(pid, 0) } != -1
+                || io::Error::last_os_error().raw_os_error() != Some(libc::ESRCH)
+            {
+                tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+            }
+        })
+        .await;
+        if gone.is_err() {
+            unsafe {
+                libc::kill(-pid, libc::SIGKILL);
+            }
+        }
+        assert!(gone.is_ok(), "window-blocked child survived channel close");
+        tokio::time::timeout(std::time::Duration::from_secs(5), drain)
+            .await
+            .unwrap()
+            .unwrap();
+    }
+
     #[tokio::test]
     async fn normal_keeper_rejects_remote_forwarding() {
         let key = PrivateKey::random(&mut rand::rng(), Algorithm::Ed25519).unwrap();
@@ -1023,7 +1461,9 @@ mod tests {
                     let mut output = Vec::new();
                     loop {
                         match next.wait().await.unwrap() {
-                            russh::ChannelMsg::Data { data } => output.extend_from_slice(&data),
+                            russh::ChannelMsg::Data { data } => {
+                                output.extend_from_slice(&data);
+                            }
                             russh::ChannelMsg::ExitStatus { exit_status } => {
                                 assert_eq!(exit_status, 0);
                                 break;
@@ -1036,6 +1476,59 @@ mod tests {
                 .await
                 .unwrap();
             }
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn binary_duplex_bursts_and_window_bounded_streams_do_not_block_the_connection() {
+        let key = PrivateKey::random(&mut rand::rng(), Algorithm::Ed25519).unwrap();
+        let (client, authorized) =
+            authenticated_connection(key.clone(), key.public_key().clone()).await;
+        assert!(authorized);
+        // Both directions must progress without application-level echo credits.
+        // The large case crosses the SSH window and socket capacity repeatedly.
+        for size in [131072, 16 * 1024 * 1024] {
+            tokio::time::timeout(std::time::Duration::from_secs(20), async {
+                let mut channel = client.channel_open_session().await.unwrap();
+                channel.exec(true, "cat; exit 29").await.unwrap();
+                loop {
+                    match channel.wait().await.unwrap() {
+                        russh::ChannelMsg::Success => break,
+                        russh::ChannelMsg::Failure => panic!("exec request refused"),
+                        _ => {}
+                    }
+                }
+                let input = (0..size)
+                    .map(|index| (index % 251) as u8)
+                    .collect::<Vec<_>>();
+                let (mut reader, writer) = channel.split();
+                let send = async {
+                    writer.data_bytes(input.clone()).await.unwrap();
+                    writer.eof().await.unwrap();
+                };
+                let receive = async {
+                    let mut output = Vec::new();
+                    let mut status = None;
+                    while let Some(message) = reader.wait().await {
+                        match message {
+                            russh::ChannelMsg::Data { data } => {
+                                output.extend_from_slice(&data);
+                            }
+                            russh::ChannelMsg::ExitStatus { exit_status } => {
+                                assert_eq!(output, input, "exit status preceded buffered output");
+                                status = Some(exit_status);
+                            }
+                            russh::ChannelMsg::Close => break,
+                            _ => {}
+                        }
+                    }
+                    assert_eq!(output, input);
+                    assert_eq!(status, Some(29));
+                };
+                tokio::join!(send, receive);
+            })
+            .await
+            .expect("full-duplex transfer timed out");
         }
     }
 
@@ -1084,6 +1577,243 @@ mod tests {
         })
         .await
         .unwrap();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    #[ignore = "native OpenSSH/Python regression; run explicitly where both tools are installed"]
+    async fn openssh_streams_sixteen_mib_bidirectionally() {
+        use std::os::unix::fs::PermissionsExt;
+        use std::process::Stdio;
+        use tokio::io::AsyncWriteExt;
+
+        let path = std::env::temp_dir().join(format!(
+            "dc-duplex-{}-{}",
+            std::process::id(),
+            rand::random::<u32>()
+        ));
+        std::fs::create_dir(&path).unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let client_key = PrivateKey::random(&mut rand::rng(), Algorithm::Ed25519).unwrap();
+        let host_key = PrivateKey::random(&mut rand::rng(), Algorithm::Ed25519).unwrap();
+        let key_path = path.join("client");
+        std::fs::write(
+            &key_path,
+            client_key
+                .to_openssh(russh::keys::ssh_key::LineEnding::LF)
+                .unwrap()
+                .as_bytes(),
+        )
+        .unwrap();
+        std::fs::set_permissions(&key_path, std::fs::Permissions::from_mode(0o600)).unwrap();
+        let known_hosts = path.join("known_hosts");
+        std::fs::write(
+            &known_hosts,
+            format!(
+                "duplex-guest {}\n",
+                host_key.public_key().to_openssh().unwrap()
+            ),
+        )
+        .unwrap();
+        let socket = path.join("ssh.sock");
+        let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let proxy = manifest
+            .ancestors()
+            .map(|p| p.join("experiments/microvm/ssh_transport.py"))
+            .find(|p| p.is_file())
+            .expect("experimental SSH proxy fixture missing");
+        let listener = tokio::net::UnixListener::bind(&socket).unwrap();
+        let server = tokio::spawn(serve(
+            listener,
+            host_key,
+            client_key.public_key().clone(),
+            Arc::new(session::LocalSessionBackend),
+            None,
+        ));
+        let result = tokio::time::timeout(std::time::Duration::from_secs(20), async {
+            let mut child = tokio::process::Command::new("ssh")
+                .args([
+                    "-F",
+                    "/dev/null",
+                    "-o",
+                    "BatchMode=yes",
+                    "-o",
+                    "IdentitiesOnly=yes",
+                    "-o",
+                    "IdentityAgent=none",
+                    "-o",
+                    "ForwardAgent=no",
+                    "-o",
+                    "StrictHostKeyChecking=yes",
+                    "-o",
+                    "GlobalKnownHostsFile=/dev/null",
+                    "-o",
+                    "HostKeyAlias=duplex-guest",
+                    "-o",
+                    "ConnectTimeout=5",
+                    "-o",
+                    "ConnectionAttempts=1",
+                ])
+                .arg("-o")
+                .arg(format!("UserKnownHostsFile={}", known_hosts.display()))
+                .arg("-o")
+                .arg(format!(
+                    "ProxyCommand=python3 {} {}",
+                    proxy.display(),
+                    socket.display()
+                ))
+                .arg("-i")
+                .arg(&key_path)
+                .args(["devcroft@guest", "cat; exit 29"])
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .kill_on_drop(true)
+                .spawn()
+                .unwrap();
+            let input = (0..16 * 1024 * 1024)
+                .map(|index| (index % 251) as u8)
+                .collect::<Vec<_>>();
+            let mut stdin = child.stdin.take().unwrap();
+            let send = async {
+                stdin.write_all(&input).await.unwrap();
+                stdin.shutdown().await.unwrap();
+                drop(stdin);
+            };
+            let (_, received) = tokio::join!(send, child.wait_with_output());
+            let received = received.unwrap();
+            assert_eq!(
+                received.status.code(),
+                Some(29),
+                "{}",
+                String::from_utf8_lossy(&received.stderr)
+            );
+            assert_eq!(received.stdout, input);
+        })
+        .await;
+        server.abort();
+        let _ = server.await;
+        std::fs::remove_dir_all(path).unwrap();
+        result.expect("native OpenSSH full-duplex transfer timed out");
+    }
+
+    /// A command that never reads its stdin must not stop the rest of the
+    /// connection: editors and `ssh -O` multiplex many channels over one.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn unread_stdin_on_one_channel_leaves_other_channels_usable() {
+        let key = PrivateKey::random(&mut rand::rng(), Algorithm::Ed25519).unwrap();
+        let (client, authorized) =
+            authenticated_connection(key.clone(), key.public_key().clone()).await;
+        assert!(authorized);
+        let mut stalled = client.channel_open_session().await.unwrap();
+        stalled.exec(true, "exec sleep 5").await.unwrap();
+        loop {
+            match stalled.wait().await.unwrap() {
+                russh::ChannelMsg::Success => break,
+                russh::ChannelMsg::Failure => panic!("exec request refused"),
+                _ => {}
+            }
+        }
+        // Wall-clock, not tokio time: a handler that blocks its worker also
+        // stops the runtime's timers, so a tokio timeout would freeze with it
+        // and report success once the stall ends (measured).
+        let started = std::time::Instant::now();
+        // Far beyond a pipe buffer, and within the default channel window,
+        // so the client sends it all without waiting for the server.
+        let writer = stalled.make_writer();
+        let feeder = tokio::spawn(async move {
+            use tokio::io::AsyncWriteExt;
+            let mut writer = writer;
+            let _ = writer.write_all(&vec![b'x'; 1024 * 1024]).await;
+        });
+        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+
+        let served = tokio::time::timeout(std::time::Duration::from_secs(3), async {
+            let mut next = client.channel_open_session().await.unwrap();
+            next.exec(true, "printf still-served").await.unwrap();
+            let mut output = Vec::new();
+            loop {
+                match next.wait().await.unwrap() {
+                    russh::ChannelMsg::Data { data } => output.extend_from_slice(&data),
+                    russh::ChannelMsg::ExitStatus { exit_status } => {
+                        assert_eq!(exit_status, 0);
+                        break;
+                    }
+                    _ => {}
+                }
+            }
+            output
+        })
+        .await;
+        feeder.abort();
+        assert_eq!(
+            served.expect("a second channel waited behind unread stdin"),
+            b"still-served"
+        );
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(3),
+            "a second channel waited {:?} behind unread stdin",
+            started.elapsed()
+        );
+    }
+
+    /// Unread stdin on several connections at once must not hold the server's
+    /// runtime: it has two workers, and a worker blocked on a child's pipe
+    /// also stops every connection's timers (the inline write did, measured).
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn unread_stdin_on_several_connections_leaves_the_server_usable() {
+        let key = PrivateKey::random(&mut rand::rng(), Algorithm::Ed25519).unwrap();
+        let mut stalled_clients = Vec::new();
+        let mut feeders = Vec::new();
+        let started = std::time::Instant::now();
+        // One per worker: with the inline write this froze the runtime.
+        for _ in 0..2 {
+            let (client, authorized) =
+                authenticated_connection(key.clone(), key.public_key().clone()).await;
+            assert!(authorized);
+            let mut stalled = client.channel_open_session().await.unwrap();
+            stalled.exec(true, "exec sleep 5").await.unwrap();
+            loop {
+                match stalled.wait().await.unwrap() {
+                    russh::ChannelMsg::Success => break,
+                    russh::ChannelMsg::Failure => panic!("exec request refused"),
+                    _ => {}
+                }
+            }
+            let writer = stalled.make_writer();
+            feeders.push(tokio::spawn(async move {
+                use tokio::io::AsyncWriteExt;
+                let mut writer = writer;
+                let _ = writer.write_all(&vec![b'x'; 8 * 1024 * 1024]).await;
+            }));
+            stalled_clients.push((client, stalled));
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+
+        let (client, authorized) =
+            authenticated_connection(key.clone(), key.public_key().clone()).await;
+        assert!(authorized);
+        let mut next = client.channel_open_session().await.unwrap();
+        next.exec(true, "printf other-connection").await.unwrap();
+        let mut output = Vec::new();
+        loop {
+            match next.wait().await.unwrap() {
+                russh::ChannelMsg::Data { data } => output.extend_from_slice(&data),
+                russh::ChannelMsg::ExitStatus { exit_status } => {
+                    assert_eq!(exit_status, 0);
+                    break;
+                }
+                _ => {}
+            }
+        }
+        assert_eq!(output, b"other-connection");
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(3),
+            "another connection waited {:?} behind unread stdin",
+            started.elapsed()
+        );
+        for feeder in feeders {
+            feeder.abort();
+        }
     }
 
     #[tokio::test]
