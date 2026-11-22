@@ -703,8 +703,12 @@ user names the variable that carries the endpoint as well.
 
 ## 8. Verification
 
-- [ ] 8.1 `cargo build`, `cargo clippy`, `cargo fmt` clean
-- [ ] 8.2 `openspec validate --all` passes with this change included
+- [x] 8.1 `cargo build`, `cargo clippy`, `cargo fmt` clean
+      **Done (2026-11-22)**: build, `fmt --check`, `clippy --all-targets`
+      with and without `test-support`, and `cargo doc --no-deps` with
+      zero rustdoc warnings
+- [x] 8.2 `openspec validate --all` passes with this change included
+      **Done (2026-11-22)**: 20 passed, 0 failed
 - [ ] 8.3 **macOS**: verify the tooling layer, both credential shapes,
       and the project-root check on a real macOS host, or report plainly
       that they are unverified there. Desktop agent fan-out is mac-heavy;
