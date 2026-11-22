@@ -1,0 +1,57 @@
+## 0. Preconditions and measurement
+
+- [ ] 0.1 `add-runtime-provenance` is implemented; its provider-row test is the witness every task below updates explicitly.
+- [ ] 0.2 Commit the spike evidence this change cites (`spikes/brush-uutils-native/` from the owner's Linux host), selectively, or record in `design.md` that it is unavailable.
+- [ ] 0.3 Measure the baseline: stripped size of `devcroft` built from this revision, and the shipped-dependency inventory as `scripts/gen-third-party-licenses.py` counts it (four targets).
+
+## 1. Runtime core
+
+- [ ] 1.1 `src/runtime/`: the inventory (names, upstream crate, version), the generation constant, and the published `docs/base-runtime.md` (extends the page from `add-runtime-provenance`).
+- [ ] 1.2 Promote the 39 coreutils `uu_*` crates and `uucore` to `[dependencies]` at one pinned generation; keep the packaging allowlist and add no `[[bin]]`.
+- [ ] 1.3 `argv[0]` dispatch as the first statement of `main` in `src/bin/devcroft.rs`, through the upstream wrapper of the pinned version; unknown basenames fall through. `tests/cli_help_and_version.rs` still passes unchanged.
+- [ ] 1.4 Tests: dispatch per applet; `devcroft ls` is an unknown command; `ls | head` dies by `SIGPIPE` without a panic; `cat` on a missing file exits 1 with a translated message (not a translation key); `--help` text is real text.
+
+## 2. Generation and config
+
+- [ ] 2.1 `[runtime] generation` in `src/config/mod.rs`, `deny_unknown_fields`; validation errors at layer `config`, exit 2.
+- [ ] 2.2 `up` refuses a mismatch naming both generations; prints the pin line when absent; records the generation in `Meta`.
+- [ ] 2.3 `status` shows the sandbox's generation and the installed binary's; a mismatch with a live keeper says `up --recreate`.
+- [ ] 2.4 Tests for each of the three cases.
+
+## 3. PATH and the common layer
+
+- [ ] 3.1 Materialise the runtime directory at `up` (links to the `EXE_LINK` binary, beside it under `<project>/.devcroft/<name>/`), idempotent like `link_keeper_exe`; read grant with origin `runtime:gen-N`.
+- [ ] 3.2 Generalise `path_ending_in_shell_dir` into the shared `PATH` builder: provider `PATH`, shell dir, runtime dir; drop the canonical host tail. Use it from `up` and `fleet::project::prepare`.
+- [ ] 3.3 The common runtime layer after provider resolution; move the shell fallback out of `mise.rs` and `pixi.rs` into it; host shell only as one file grant, recorded `host:` and warned.
+- [ ] 3.4 `native` declaration on the provider seam with a reason string; swift declares it; `up`, `status`, `policy --render` show it; provenance `native:swift`.
+- [ ] 3.5 Refuse a manifest grant of an individual host developer tool made to obtain a base name in a non-native sandbox, naming native mode.
+- [ ] 3.6 Update the provenance test's expectations: closure providers' utilities by name now `closure:` or `runtime:gen-N`, never `absent`; mise/pixi utilities `runtime:gen-N`, shell still `host:`.
+
+## 4. The namespace (rule B) and the Linux view
+
+- [ ] 4.1 Compute the target of each base name once at `up` (provider `PATH` within grants → shell dir → runtime) and write the namespace directory (`<project>/.devcroft/<name>/ns/`), idempotently; share the function with `fleet::project::prepare`.
+- [ ] 4.2 View construction: tmpfs `/bin` and `/usr/bin` populated from the namespace directory, one bind of `devcroft` for runtime targets; `Identity`'s `/bin/sh` and `/usr/bin/env` become namespace entries.
+- [ ] 4.3 Fleet agent and provisioning views get the same entries (today their `identity` is `None`).
+- [ ] 4.4 Refuse at `up` where the view cannot be constructed; no partial namespace.
+- [ ] 4.5 Consistency test on every provider row: for each base name, `/bin/<name>`, `/usr/bin/<name>` and `<name>` execute the same file, or all fail. Nix and devbox rows: GNU from the closure. Flox minimal row: runtime.
+- [ ] 4.6 Tests: `#!/usr/bin/env python3` in a flox sandbox without coreutils runs through the runtime's `env`; in a nix sandbox through the closure's; `/usr/bin/python3` fails; `/bin/awk` fails in flox without awk; the same from a fleet agent; `policy --render` lists each entry with target and provenance.
+
+## 5. Inventory growth
+
+- [ ] 5.1 Build the option corpus: commands and flags used by the eleven agent samples' typical tool calls and by the hooks of the qualified providers' samples.
+- [ ] 5.2 Qualify `findutils`, `uu_grep`, `sed` (and decide on `diffutils`) against it; check each exposes an entry usable through the multicall wrapper; record results in `design.md`.
+- [ ] 5.3 Owner decision per family; admitted families bump the generation.
+- [ ] 5.4 Re-measure each `devenv-<agent>-sample` without its manual userland declarations; drop the ones the runtime covers, keep the rest with a reason.
+
+## 6. Cost, attribution, documentation
+
+- [ ] 6.1 Measure the integrated binary (standard and `release-small`), build time, and the shipped-dependency delta with the generator's own definition; record in `design.md`.
+- [ ] 6.2 Regenerate `THIRD-PARTY-LICENSES.md`; make an MIT entry without a vendored text fail the generator.
+- [ ] 6.3 `docs/known-gaps.md`: uutils ≠ GNU where the provider supplies nothing; awk and tar not in the runtime; the Linux `/usr/bin/env` gap closed.
+- [ ] 6.4 `docs/decisions.md`: extend "devcroft's shell is devcroft's dependency" to the runtime, with the project-pin rule and the native exception.
+- [ ] 6.5 `CLAUDE.md`: the `runtime:gen-N` and `native:<provider>` origins in the policy invariant list.
+
+## 7. Verification
+
+- [ ] 7.1 `cargo build`, `fmt`, `clippy`, `doc --no-deps` (zero rustdoc warnings), `test`, with the skip inventory recorded.
+- [ ] 7.2 `openspec validate add-own-userland --type change`.
