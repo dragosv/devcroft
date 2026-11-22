@@ -92,4 +92,5 @@ CompiledPolicy {
     unix_socket_bind: [],
     credentials_broker: [],
     signal_mode: "isolated",
+    base_runtime: None,
 }

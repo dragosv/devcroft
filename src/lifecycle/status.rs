@@ -61,6 +61,9 @@ pub struct SandboxStatus {
     /// last said — `Err` with why when there is a report devcroft will not
     /// show. Reported beside the keeper's health, never folded into it.
     pub attention: Attention,
+    /// Where shell and userland resolve, as the last `up` recorded it
+    /// (`add-runtime-provenance`). `None` when no `up` recorded one.
+    pub base_runtime: Option<crate::runtime::provenance::Record>,
 }
 
 /// What a sandbox's agent said needs a human, from `devcroft agent
@@ -178,6 +181,7 @@ pub fn status_with_provider(
         meta.as_ref().map(|meta| meta.project_root.as_str()),
         &manifest.sandbox.name,
     );
+    let base_runtime = meta.as_ref().and_then(|meta| meta.base_runtime.clone());
     let isolation = meta.map(|meta| meta.resolved_backend);
 
     let degraded = policy::detect_degraded(&policy::compile(manifest));
@@ -191,6 +195,7 @@ pub fn status_with_provider(
         services,
         allocations,
         attention,
+        base_runtime,
     })
 }
 
@@ -414,6 +419,7 @@ mod tests {
                     tools: None,
                     credentials: Vec::new(),
                     brokers: Vec::new(),
+                    base_runtime: None,
                 },
             )
             .unwrap();

@@ -585,6 +585,8 @@ fn up_locked(
             tools: tools.as_ref().map(|(_, record)| record.clone()),
             credentials: opts.credentials.to_vec(),
             brokers: opts.brokers.to_vec(),
+            // Computed by `up_process` once the view is decided.
+            base_runtime: None,
         },
     )?;
 
@@ -1070,6 +1072,30 @@ fn up_process(
     // this all along; `up` did not, and a grant of the socket's directory let
     // a hook query the daemon (measured 2026-11-05).
     refuse_package_manager_authority(&mount_grants)?;
+
+    // Where shell and userland resolve (`add-runtime-provenance`), from the
+    // same grants, view entries and `PATH` the sandbox gets — computed, not
+    // probed. Recorded in `Meta` and in the policy artifact, and warned
+    // about once when anything resolves to the host.
+    let base_runtime = base_runtime_record(
+        &resolution.env,
+        &resolution.unset,
+        shell,
+        &mount_grants,
+        provider.static_name(),
+        identity.as_ref(),
+        // A view exists exactly where mount isolation is supported; Linux
+        // without it is refused just below.
+        mount_supported,
+    );
+    if let Some(warning) = base_runtime.host_warning() {
+        eprintln!("devcroft: warning: {warning}");
+    }
+    if let Some(mut meta) = state::read_meta(&paths.meta)? {
+        meta.base_runtime = Some(base_runtime.clone());
+        state::write_meta(&paths.meta, &meta)?;
+    }
+    let compiled = compiled.with_base_runtime(Some(base_runtime));
 
     // Mount isolation fails closed on Linux (design.md M4: "does not
     // fall back to the host's namespace") but degrades like network
@@ -1719,6 +1745,76 @@ fn pipe() -> io::Result<(std::os::fd::OwnedFd, std::os::fd::OwnedFd)> {
 /// `KEEPER_INTERNAL`); the hooks are `DEVCROFT_HOOK_<NAME>`.
 pub(crate) fn is_keeper_internal(name: &str) -> bool {
     KEEPER_INTERNAL.contains(&name) || name.starts_with("DEVCROFT_HOOK_")
+}
+
+/// The base-runtime provenance record for a sandbox (`crate::runtime`),
+/// shared by `up` and fleet so the two compute it from the same inputs.
+pub(crate) fn base_runtime_record(
+    env: &std::collections::BTreeMap<String, String>,
+    unset: &[String],
+    shell: &crate::shell::ResolvedShell,
+    grants: &[crate::policy::ResolvedGrant],
+    provider: &str,
+    identity: Option<&crate::fleet::mount::Identity>,
+    has_view: bool,
+) -> crate::runtime::provenance::Record {
+    use crate::runtime::provenance::{Inputs, ViewEntries, compute};
+    let path = path_ending_in_shell_dir(env, unset, &shell.path).unwrap_or_else(|| {
+        env.get("PATH")
+            .filter(|_| !unset.iter().any(|k| k == "PATH"))
+            .cloned()
+            .unwrap_or_default()
+    });
+    // A grant that exists only because the view writes `/bin/sh` or
+    // `/usr/bin/env` names the *host's* file once canonicalized
+    // (`/usr/bin/dash`), which the view never shows: it would make the host
+    // file look reachable (measured, a flox sandbox recorded `sh` as host
+    // dash while running the closure's bash).
+    let written_by_view: Vec<PathBuf> = identity
+        .filter(|_| has_view)
+        .map(|id| {
+            id.write
+                .iter()
+                .filter(|w| {
+                    *w == Path::new(crate::fleet::mount::Identity::SH)
+                        || *w == Path::new(crate::fleet::mount::Identity::ENV)
+                })
+                .filter_map(|w| w.canonicalize().ok())
+                .collect()
+        })
+        .unwrap_or_default();
+    let roots: Vec<PathBuf> = grants
+        .iter()
+        .map(|g| g.path.clone())
+        .filter(|p| !written_by_view.contains(p))
+        .collect();
+    let artifact_root = crate::provider::artifacts::artifacts_root().ok();
+    // The view writes `/bin/sh` and `/usr/bin/env` only for the paths no
+    // grant already covers (`Identity::write`).
+    let view = has_view.then(|| match identity {
+        Some(id) => {
+            let writes = |p: &str| id.write.iter().any(|w| w == Path::new(p));
+            ViewEntries {
+                sh: writes(crate::fleet::mount::Identity::SH).then_some(id.shell.as_path()),
+                env: if writes(crate::fleet::mount::Identity::ENV) {
+                    id.env.as_deref()
+                } else {
+                    None
+                },
+            }
+        }
+        None => ViewEntries {
+            sh: None,
+            env: None,
+        },
+    });
+    compute(&Inputs {
+        path: &path,
+        grants: &roots,
+        artifact_root: artifact_root.as_deref(),
+        provider,
+        view,
+    })
 }
 
 /// The environment's `PATH` with the resolved shell's directory appended,
@@ -2439,9 +2535,9 @@ fn host_name() -> String {
 
 /// The sandbox's user for its view: the host user's name and ids, the
 /// sandbox's own home and devcroft's resolved shell, and an `env` from the
-/// closure where the environment's `PATH` has one inside a provider grant
-/// (the guard `shell::resolve` uses: a provider's `PATH` ends in the
-/// host's directories). `write` leaves out any path a grant already
+/// closure where the environment's `PATH` has one that canonicalizes inside
+/// a provider grant (`shell::resolve_env_bin`, the guard `shell::resolve`
+/// uses: a provider's `PATH` ends in the host's directories). `write` leaves out any path a grant already
 /// covers, so a manifest granting the host's `/etc/passwd` gets that file.
 fn sandbox_identity(
     compiled: &policy::CompiledPolicy,
@@ -2454,16 +2550,7 @@ fn sandbox_identity(
     // SAFETY: plain getters.
     let (uid, gid) = unsafe { (libc::getuid(), libc::getgid()) };
     let user = host_user_name(uid).unwrap_or_else(|| "devcroft".to_owned());
-    let env_bin = env.get("PATH").and_then(|path| {
-        path.split(':')
-            .map(|dir| Path::new(dir).join("env"))
-            .find(|candidate| {
-                candidate.is_file()
-                    && provider_grants
-                        .iter()
-                        .any(|g| candidate.starts_with(Path::new(g)))
-            })
-    });
+    let env_bin = crate::shell::resolve_env_bin(env, provider_grants);
     let mut identity = Identity {
         user,
         uid,

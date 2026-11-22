@@ -3052,6 +3052,31 @@ fn print_status(s: &devcroft::lifecycle::SandboxStatus, provider: &str) {
         Some(backend) => println!("isolation: hardened ({backend})"),
         None => println!("isolation: unknown (no successful `up` yet)"),
     }
+    // `add-runtime-provenance`: counts per kind, and every host entry by
+    // name, since those are what break reproducibility at this level.
+    match &s.base_runtime {
+        Some(record) => {
+            let counts = record
+                .counts()
+                .iter()
+                .map(|(k, n)| format!("{k} {n}"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            println!("base runtime: {counts} (`policy --render` lists each)");
+            for e in record.host_entries() {
+                let what = if e.lookup == devcroft::runtime::provenance::BY_NAME {
+                    format!("{} (by name)", e.name)
+                } else {
+                    e.lookup.clone()
+                };
+                println!(
+                    "  host: {what} → {}",
+                    e.provenance.path().unwrap_or_default()
+                );
+            }
+        }
+        None => println!("base runtime: not recorded (run `devcroft up` to record it)"),
+    }
     // A healthy keeper with a dead database must not read as simply
     // healthy (the `services` spec's "failure is visible, never silent"),
     // so failures are named per service rather than summarized.
@@ -4082,6 +4107,8 @@ fn compile_with_provider_grants(
         Some(identity) => compiled.with_identity(&identity.write),
         None => compiled,
     };
+    // Reporting, as `up` recorded it (`add-runtime-provenance`).
+    let compiled = compiled.with_base_runtime(meta.base_runtime.clone());
     // Same live-only caveat as the provider grants just above: `compile`
     // alone has no way to know the proxy's port, since knowing it means
     // an `up` actually ran one. `meta.proxy_port` is `None` for a

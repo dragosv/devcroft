@@ -474,6 +474,49 @@ Found while making the test suite run on macOS for the first time
 (`add-macos-unix-socket-scoping`); the Linux half of the same test is unchanged
 and still asserts the full compile-link-run path.
 
+## Shell and utilities by absolute path fail on macOS
+
+Inside a macOS sandbox, nothing can run a shell or a basic utility by
+absolute path. `#!/bin/sh` and `#!/usr/bin/env` scripts, `system()`,
+`popen()`, and a direct `/bin/ls` all fail with `EPERM`: the host's `/bin` and
+`/usr/bin` are refused (correctly — that is "Host binaries execute on macOS …
+— fixed" above), and macOS has no per-sandbox view to put anything else at
+those paths. Programs that shell out through `popen` fail in ways that do not
+name the cause: `initdb` reports that `postgres` is missing because its
+`popen("postgres -V")` never ran (measured 2026-11-22, devbox sandbox).
+
+What still works: running the same programs by name, from the environment's
+`PATH`. `devcroft policy --render` lists, for every base name, what resolves
+by name and by absolute path ([base-runtime.md](base-runtime.md)).
+
+Addressed by `openspec/changes/add-macos-exec-redirect` (absolute paths
+resolve as their names do, through an exec redirect inside sandbox processes)
+together with `add-own-userland`.
+
+## `#!/usr/bin/env` fails on Linux where the closure has no `env`
+
+On Linux the view writes `/usr/bin/env` only when the environment's `PATH`
+has an `env` inside a provider grant (`fleet::mount::Identity`,
+`shell::resolve_env_bin`). An environment that installs no coreutils
+supplies none, so every `#!/usr/bin/env <interpreter>` script in that
+sandbox fails with `ENOENT`, while the same interpreter runs fine by name.
+
+Measured 2026-11-22, Linux aarch64, flox 1.14.0: in `flox-services-sample`
+(python3 and process-compose only), `#!/usr/bin/env python3` fails at spawn,
+`python3` by name runs, and a `#!/bin/sh` script runs. `policy --render` shows
+`/usr/bin/env` as absent for such a sandbox.
+
+**Fixed on the way: flox sandboxes with coreutils lacked it too.** The guard
+compared uncanonicalized paths, and flox's `PATH` starts with
+`.flox/run/<env>/bin`, a symlink into the store, so no flox sandbox got
+`/usr/bin/env` even when its closure had one. It now canonicalizes, as the
+shell's guard always did; `tests/base_runtime_provenance.rs` asserts that a
+store-backed row with `env` by name has `/usr/bin/env`, and fails on the
+flox row with the old check.
+
+Addressed by `openspec/changes/add-own-userland` (`/usr/bin/env` is always
+present, from the environment or from devcroft's runtime).
+
 ## Interactive pty sessions are refused on macOS — fixed
 
 **`devcroft shell` did not work on macOS, and neither did an SSH session that

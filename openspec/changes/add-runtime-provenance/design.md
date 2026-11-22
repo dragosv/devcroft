@@ -31,11 +31,57 @@ Current state, as read from the code and measured on macOS 15.8.3 arm64
 
 | Provider | `/bin/sh` | `/usr/bin/env` | Other base names by absolute path | By `PATH` |
 |---|---|---|---|---|
-| nix, flox, devbox, devenv (Linux) | view → resolved closure shell (`Identity`) | view → closure `env` only if the closure has one | absent (not in the view) | closure, or absent |
+| nix, flox, devbox, devenv (Linux) | view → resolved closure shell (`Identity`) | view → closure `env` where the `PATH` has one inside a provider grant (flox: only since the fix below) | absent (not in the view) | closure, or absent |
 | nix, flox, devbox, devenv (macOS) | `EPERM` (measured) | `EPERM` (measured, via shebang) | `EPERM` | closure, or absent |
 | mise | environment shell, else host `/bin/sh` (file grant on Linux; `/bin` + `/var/select` on macOS) | host `/usr/bin/env` (granted) | on macOS the whole host `/bin` is reachable | tools, then the shell dir |
 | pixi | prefix `sh`/`bash`, else host as for mise | not granted | as mise | prefix `bin`, then the shell dir |
 | swift | host (declared, `provider:swift`) | host | host `/usr/bin` (declared) | toolchain, then canonical host `PATH` |
+
+Measured on Linux 2026-11-22 (aarch64, OrbStack kernel 7.2.12; nix 2.31.5,
+flox 1.14.0, devbox 0.18.0, devenv 2.2.2), every base name in both lookup
+forms executed inside real sandboxes and compared with the record by file
+identity (`-ef`) from inside the view: the provider rows of
+`tests/base_runtime_provenance.rs`, plus `flox-services-sample` (flox without
+coreutils or bash) and `devenv-sample` (devenv has no row), checked by hand
+with the same probe. 0 mismatches on all five; no `host:` entry on any.
+
+| Sandbox | Absent by name | Resolving by absolute path |
+|---|---|---|
+| nix row (bash, coreutils, python3, curl) | `hostname` | `/bin/sh`, `/usr/bin/env` |
+| devbox row (same packages) | `hostname` | `/bin/sh`, `/usr/bin/env` |
+| flox row (same packages) | `hostname grep sed awk find xargs diff tar gzip` | `/bin/sh` only (`/usr/bin/env` too after the fix below) |
+| flox, `flox-services-sample` (python3, process-compose) | every name but `sh` | `/bin/sh` only |
+| devenv, `devenv-sample` (ripgrep, jq) | `hostname` | `/bin/sh`, `/usr/bin/env` |
+
+Three facts the macOS measurement could not show:
+
+- **`/usr/bin/env` is absent in every flox sandbox, coreutils or not.**
+  `sandbox_identity` (`lifecycle/up.rs`) takes an `env` only from a `PATH`
+  entry that literally `starts_with` a provider grant, without
+  canonicalizing; flox's `PATH` begins with `.flox/run/<env>/bin`, a symlink
+  into `/nix/store`, so it never matches. `shell::resolve` canonicalizes
+  both sides and so finds flox's shell. **Fixed in this change by owner's
+  decision (2026-11-22)**, despite the no-resolution-changes non-goal: it
+  is a bug against `Identity`'s own stated rule, not a policy change, and
+  it adds no grant (the store is already granted). `shell::resolve_env_bin`
+  now applies the shell's canonical guard; the flox row resolves
+  `/usr/bin/env` and the provenance test fails with the old check.
+- **On a merged-`/usr` host `sh` by name reaches the view's `/bin/sh`
+  through `/usr/bin`.** The view recreates `/bin -> usr/bin` and writes the
+  identity shell through it, so a `PATH` ending in the host's `/usr/bin`
+  finds `/usr/bin/sh` = the closure shell. The first computation looked the
+  same path up on the host, found `/usr/bin/dash`, and, because the identity
+  rule's grant canonicalizes to that same host file, recorded
+  `host:/usr/bin/dash` for flox-services-sample while the sandbox ran the
+  closure's bash 5.3.9. The test then agreed, because it too canonicalized
+  on the host. Both now resolve through the view (`ViewEntries::written_at`;
+  `-ef` inside the sandbox).
+- **The `#!/usr/bin/env` gap is measured, not inferred**: in
+  flox-services-sample, `#!/usr/bin/env python3` fails `ENOENT` at spawn,
+  `python3` by name runs, and a `#!/bin/sh` script runs.
+
+mise and pixi were not measured on Linux (neither is installed on the
+measuring host).
 
 ## Goals / Non-Goals
 
@@ -48,7 +94,9 @@ Current state, as read from the code and measured on macOS 15.8.3 arm64
 - The two unpublished gaps published.
 
 **Non-Goals:**
-- Changing any resolution. No grant is added or removed.
+- Changing any resolution. No grant is added or removed. One exception,
+  a bug fix rather than a design change: flox's missing `/usr/bin/env`
+  (Context).
 - Refusing on host provenance. That becomes possible only once a runtime exists
   to fall back to (`add-own-userland`).
 - A `native:` provenance. Swift's declared exception is introduced with the

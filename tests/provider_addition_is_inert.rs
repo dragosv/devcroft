@@ -34,6 +34,11 @@
 //! `profile.json` does not: the field is skipped when false, which
 //! `policy::capability_set::tests::loopback_key_leaves_an_unset_profile_byte_identical`
 //! asserts.
+//!
+//! **And once more, a shape change again** (`add-runtime-provenance`): the
+//! compiled policy gained `base_runtime`, a reporting record `up` folds in
+//! and `compile` leaves `None`. One line in each golden; no rule moved, and
+//! `profile.json` omits the field when absent.
 
 use devcroft::policy::compile;
 

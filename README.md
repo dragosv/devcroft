@@ -518,7 +518,11 @@ defaults) and tasks whose outcomes devcroft observes.
 project changes; agents that authenticate with a subscription login (a
 credential file), which neither reaches a sandbox nor can be brokered;
 running a project with no environment file; Linux-equivalent port isolation on
-macOS.
+macOS; a shell and utilities by absolute path on macOS (`#!/bin/sh`,
+`system()` fail there), and `#!/usr/bin/env` on Linux where the environment
+has no `env` —
+`devcroft policy --render` shows where each resolves
+([docs/base-runtime.md](docs/base-runtime.md)).
 
 | Platform | Mechanism | Minimum version | Worth knowing |
 |----------|-----------|-----------------|---------------|
@@ -536,6 +540,7 @@ Linux devcontainer and on a macOS 15 host; where the two platforms differ,
 |---|---|
 | [docs/comparison.md](docs/comparison.md) | Dev Containers, `nono-cli`, flox alone, and today's coding-agent products |
 | [docs/known-gaps.md](docs/known-gaps.md) | Every published gap, in full |
+| [docs/base-runtime.md](docs/base-runtime.md) | Where a sandbox's shell and utilities resolve, and how to see it |
 | [docs/threat-model.md](docs/threat-model.md) | Which use case the isolation backs, and which it doesn't |
 | [docs/roadmap.md](docs/roadmap.md) | What 0.2 through 1.0 each have to be true for, and why in that order |
 | [docs/decisions.md](docs/decisions.md) | Every "why doesn't devcroft support X", answered falsifiably |

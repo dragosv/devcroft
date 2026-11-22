@@ -65,8 +65,7 @@ pub fn prepare(
             format!(
                 "{} fleet runtime has not been qualified; use a native single sandbox",
                 provider.static_name()
-            )
-            .into(),
+            ),
         )));
     }
     refuse_what_fleet_cannot_carry(manifest)?;
@@ -168,8 +167,26 @@ pub fn prepare(
     }
     let services: Vec<String> = declared.iter().map(|s| s.name.clone()).collect();
     let plan = compiled.to_capability_plan();
-    let policy = compiled;
     refuse_package_manager_authority(&plan, workspace)?;
+    // Where shell and userland resolve for this agent
+    // (`add-runtime-provenance` 1.4), with `up`'s function, from the
+    // agent's own grants. Its view writes no identity entries today, so
+    // `/bin/sh` and `/usr/bin/env` resolve only through a grant.
+    let base_runtime = plan.resolved_grants(workspace).ok().map(|grants| {
+        crate::lifecycle::up::base_runtime_record(
+            &resolution.env,
+            &resolution.unset,
+            &shell,
+            &grants,
+            provider.static_name(),
+            None,
+            view,
+        )
+    });
+    if let Some(warning) = base_runtime.as_ref().and_then(|r| r.host_warning()) {
+        eprintln!("devcroft fleet: warning: {warning}");
+    }
+    let policy = compiled.with_base_runtime(base_runtime);
 
     // `up`'s order, which is load-bearing: the provider's activation script
     // prepares the environment that `post_create` usually depends on. Every

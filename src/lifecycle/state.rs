@@ -504,6 +504,12 @@ pub struct Meta {
     /// proxy can be reused: its routes are the ones it was started with.
     #[serde(default)]
     pub brokers: Vec<crate::config::BrokerDecl>,
+    /// Where each base name (shell and userland) resolves in this sandbox,
+    /// by name and by absolute path (`add-runtime-provenance`). `None` for a
+    /// sandbox brought up before the record existed, which `status` reports
+    /// as "not recorded" rather than computing it from another source.
+    #[serde(default)]
+    pub base_runtime: Option<crate::runtime::provenance::Record>,
 }
 
 /// One `up`'s tooling layer, as [`Meta::tools`] records it.
@@ -1038,6 +1044,7 @@ mod tests {
             tools: None,
             credentials: Vec::new(),
             brokers: Vec::new(),
+            base_runtime: None,
         };
         write_meta(&paths.meta, &meta).unwrap();
         assert_eq!(read_meta(&paths.meta).unwrap(), Some(meta));
@@ -1073,6 +1080,7 @@ mod tests {
             tools: None,
             credentials: Vec::new(),
             brokers: Vec::new(),
+            base_runtime: None,
         };
         write_meta(&paths.meta, &meta).unwrap();
         assert!(!paths.meta.with_extension("json.tmp").exists());

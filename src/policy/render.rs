@@ -125,7 +125,39 @@ pub fn render(compiled: &CompiledPolicy) -> String {
     .unwrap();
     writeln!(out).unwrap();
     render_filesystem_view_note(&mut out);
+    // Only once an `up` recorded it: the manifest alone cannot say where a
+    // name resolves, and inventing an answer is what this command forbids.
+    if let Some(record) = &compiled.base_runtime {
+        render_base_runtime(&mut out, record);
+    }
     out
+}
+
+/// `add-runtime-provenance`: one line per base name and lookup form, then
+/// the totals. Reporting only; it adds no access.
+fn render_base_runtime(out: &mut String, record: &crate::runtime::provenance::Record) {
+    writeln!(out).unwrap();
+    writeln!(
+        out,
+        "base.runtime (revision {}; where shell and userland resolve):",
+        record.revision
+    )
+    .unwrap();
+    for e in &record.entries {
+        let lookup = if e.lookup == crate::runtime::provenance::BY_NAME {
+            format!("{} (by name)", e.name)
+        } else {
+            e.lookup.clone()
+        };
+        writeln!(out, "  {lookup:<24} {}", e.provenance).unwrap();
+    }
+    let counts = record
+        .counts()
+        .iter()
+        .map(|(k, n)| format!("{k} {n}"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    writeln!(out, "  totals: {counts}").unwrap();
 }
 
 /// `add-mount-isolation` spec: "`policy --render` SHALL show what a

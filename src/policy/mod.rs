@@ -411,6 +411,14 @@ pub struct CompiledPolicy {
     /// deserialized from input that does not itself live forever.
     #[serde(skip_deserializing, default = "signal_mode")]
     pub signal_mode: &'static str,
+    /// Where shell and userland resolve in this sandbox
+    /// (`add-runtime-provenance`), folded in by [`Self::with_base_runtime`]
+    /// at `up` once the view is decided. Reporting, not a rule: nothing in
+    /// the backend profile corresponds, and [`Self::to_capability_plan`]
+    /// ignores it. Skipped when absent, so a policy without one serializes
+    /// exactly as before.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub base_runtime: Option<crate::runtime::provenance::Record>,
 }
 
 /// Compile `manifest` plus baseline denials into a [`CompiledPolicy`].
@@ -530,6 +538,7 @@ pub fn compile(manifest: &Manifest) -> CompiledPolicy {
         unix_socket_bind: Vec::new(),
         credentials_broker: Vec::new(),
         signal_mode: SIGNAL_MODE,
+        base_runtime: None,
     }
 }
 
@@ -595,6 +604,12 @@ impl CompiledPolicy {
                 .iter()
                 .map(|g| AnnotatedValue::new(g.clone(), Origin::Tools(provider))),
         );
+        self
+    }
+
+    /// The base-runtime provenance record `up` computed, for rendering.
+    pub fn with_base_runtime(mut self, record: Option<crate::runtime::provenance::Record>) -> Self {
+        self.base_runtime = record;
         self
     }
 
