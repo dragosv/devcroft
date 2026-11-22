@@ -1,0 +1,198 @@
+{
+  "pixi": "pixi 0.84.2",
+  "pixi_sha256": "68995ac4a33d821f0080c1af4fb6fec4efd6dc3022c490d9dd904a2a7065610c",
+  "platform": "linux-aarch64",
+  "measured_at": "2026-11-22",
+  "isolation": [
+    "HOME",
+    "PATH",
+    "PIXI_CACHE_DIR",
+    "PIXI_COLOR",
+    "PIXI_HOME",
+    "PIXI_NO_CONFIG",
+    "PIXI_NO_PROGRESS",
+    "RATTLER_CACHE_DIR",
+    "TMPDIR"
+  ],
+  "cases": [
+    {
+      "case": "conda-only",
+      "phases": {
+        "lock": {
+          "exit": 0,
+          "markers": {},
+          "stderr_tail": [
+            "Updated lock file",
+            "Environment: default                           ",
+            "  + (conda) sentinel-tool  1.0 0_sentinel      ",
+            "                                               ",
+            "Environment: dev                               ",
+            "  + (conda) sentinel-tool  1.0 0_sentinel"
+          ]
+        },
+        "install": {
+          "exit": 0,
+          "markers": {},
+          "stderr_tail": [
+            "\tpixi config set --local run-post-link-scripts insecure",
+            "",
+            "More info:",
+            "\thttps://pixi.sh/latest/reference/pixi_configuration/#run-post-link-scripts",
+            "",
+            "The dev environment has been installed."
+          ],
+          "inputs_unchanged": true
+        },
+        "shell-hook-text": {
+          "exit": 0,
+          "markers": {},
+          "inputs_unchanged": true,
+          "text": "export PATH=\"<tmp>/conda-only/.pixi/envs/dev/bin:/usr/bin:/bin:/usr/sbin:/sbin\"\nexport CONDA_SHLVL=1\nexport CONDA_PREFIX=<tmp>/conda-only/.pixi/envs/dev\nexport PIXI_EXE=/home/vscode/pixi-qual/bin/pixi\nexport PIXI_WORKSPACE_NAME=sentinel\nexport PIXI_IN_SHELL=1\nexport PIXI_PROJECT_ROOT=<tmp>/conda-only\nexport PIXI_PROJECT_NAME=sentinel\nexport PIXI_WORKSPACE_VERSION=NO_VERSION_SPECIFIED\nexport PIXI_WORKSPACE_MANIFEST=<tmp>/conda-only/pixi.toml\nexport PIXI_PROJECT_VERSION=NO_VERSION_SPECIFIED\nexport PIXI_PROJECT_MANIFEST=<tmp>/conda-only/pixi.toml\nexport PIXI_WORKSPACE_ROOT=<tmp>/conda-only\nexport CONDA_DEFAULT_ENV=sentinel:dev\nexport PIXI_ENVIRONMENT_NAME=dev\nexport PIXI_ENVIRONMENT_PLATFORMS=linux-aarch64\nexport PIXI_PROMPT='(sentinel:dev) '\n. <tmp>/conda-only/.pixi/envs/dev/etc/conda/activate.d/sentinel.sh\n. <tmp>/conda-only/activate-ftarget.sh\n. <tmp>/conda-only/activate-wtarget.sh\nexport PROJECT_ENV=from-activation-env\n\n# shellcheck shell=bash\npixi() {\n    local first_arg=\"${1-}\"\n\n    \"${PIXI_EXE-}\" \"$@\" || return $?\n\n    case \"${first_arg-}\" in\n    add | a | remove | rm | install | i)\n        eval \"$(\"$PIXI_EXE\" shell-hook --change-ps1 false)\"\n        hash -r\n        ;;\n    esac || :\n\n    return 0\n}\n\nexport PS1=\"(sentinel:dev) ${PS1:-}\"\n"
+        },
+        "shell-hook-json-control": {
+          "exit": 0,
+          "markers": {
+            "order": [
+              "pkg-activate",
+              "feature-target",
+              "workspace-target"
+            ],
+            "pkg-activate": [
+              "pkg"
+            ],
+            "project-feature-target": [
+              "<tmp>/conda-only|<tmp>/conda-only"
+            ],
+            "project-workspace-target": [
+              "<tmp>/conda-only|<tmp>/conda-only"
+            ]
+          }
+        }
+      },
+      "prefix_files": [
+        {
+          "file": "sentinel-tool",
+          "st_nlink": 1,
+          "cache_copies": 1,
+          "same_inode_as_cache": false
+        }
+      ]
+    },
+    {
+      "case": "conda-insecure-post-link",
+      "phases": {
+        "lock": {
+          "exit": 0,
+          "markers": {},
+          "stderr_tail": [
+            "Updated lock file",
+            "Environment: default                           ",
+            "  + (conda) sentinel-tool  1.0 0_sentinel      ",
+            "                                               ",
+            "Environment: dev                               ",
+            "  + (conda) sentinel-tool  1.0 0_sentinel"
+          ]
+        },
+        "install": {
+          "exit": 0,
+          "markers": {
+            "order": [
+              "pkg-activate"
+            ],
+            "pkg-activate": [
+              "pkg"
+            ],
+            "post-link": [
+              "post-link "
+            ]
+          },
+          "stderr_tail": [
+            "The dev environment has been installed."
+          ],
+          "inputs_unchanged": true
+        }
+      }
+    },
+    {
+      "case": "pypi-wheel",
+      "phases": {
+        "lock": {
+          "exit": 0,
+          "markers": {},
+          "stderr_tail": [
+            "Updated lock file",
+            "Environment: default                         ",
+            "  + (conda) python    3.12.0 0_sentinel      ",
+            "  + (pypi) six        1.16.0"
+          ]
+        },
+        "install": {
+          "exit": 1,
+          "markers": {
+            "python-exec": [
+              "python-exec -I -B -c import sys; sys.path = [__import__(\"os\").fsdecode(b\"<tmp>/pypi-state/cache/uv-cache/.tmpANLQvc\")] + sys.path; from python.get_interpreter_info import main; main()"
+            ]
+          },
+          "stderr_tail": [
+            "Error:   \u00d7 failed to update PyPI packages for environment 'default'",
+            "  \u2570\u2500\u25b6 Querying Python at `<tmp>/pypi/.pixi/envs/",
+            "      default/bin/python3.12` failed with exit status exit status: 1"
+          ],
+          "inputs_unchanged": true
+        }
+      },
+      "six_installed": false,
+      "lock_pypi_entry": [
+        "      - pypi: https://files.pythonhosted.org/packages/d9/5a/e7c31adbe875f2abbb91bd84cf2dc52d792b5a01506781dbcf25c91daf11/six-1.16.0-py2.py3-none-any.whl",
+        "- pypi: https://files.pythonhosted.org/packages/d9/5a/e7c31adbe875f2abbb91bd84cf2dc52d792b5a01506781dbcf25c91daf11/six-1.16.0-py2.py3-none-any.whl",
+        "  name: six"
+      ]
+    }
+  ],
+  "staged_rewrite": {
+    "install_exit": 0,
+    "install_markers": {},
+    "without_scripts_staged": {
+      "exit": 0,
+      "stderr_tail": [
+        "WARN Could not find activation scripts: <tmp>/store/ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff/activate-ftarget.sh, <tmp>/store/ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff/activate-wtarget.sh"
+      ],
+      "markers": {},
+      "project_scripts_in_text": []
+    },
+    "hook_exit": 0,
+    "hook_markers": {},
+    "project_scripts_in_text": [
+      "activate-ftarget.sh",
+      "activate-wtarget.sh"
+    ],
+    "residue_outside_prefix": [],
+    "hook_text_rewritten": "export PATH=\"<tmp>/store/ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff/.pixi/envs/dev/bin:/usr/bin:/bin:/usr/sbin:/sbin\"\nexport CONDA_SHLVL=1\nexport CONDA_PREFIX=<tmp>/store/ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff/.pixi/envs/dev\nexport PIXI_WORKSPACE_MANIFEST=<tmp>/project/pixi.toml\nexport PIXI_PROJECT_ROOT=<tmp>/project\nexport PIXI_PROJECT_NAME=sentinel\nexport PIXI_IN_SHELL=1\nexport PIXI_WORKSPACE_ROOT=<tmp>/project\nexport PIXI_WORKSPACE_VERSION=NO_VERSION_SPECIFIED\nexport PIXI_EXE=/home/vscode/pixi-qual/bin/pixi\nexport PIXI_PROJECT_MANIFEST=<tmp>/project/pixi.toml\nexport PIXI_PROJECT_VERSION=NO_VERSION_SPECIFIED\nexport PIXI_WORKSPACE_NAME=sentinel\nexport CONDA_DEFAULT_ENV=sentinel:dev\nexport PIXI_ENVIRONMENT_NAME=dev\nexport PIXI_ENVIRONMENT_PLATFORMS=linux-aarch64\nexport PIXI_PROMPT='(sentinel:dev) '\n. <tmp>/store/ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff/.pixi/envs/dev/etc/conda/activate.d/sentinel.sh\n. <tmp>/project/activate-ftarget.sh\n. <tmp>/project/activate-wtarget.sh\nexport PROJECT_ENV=from-activation-env\n\n# shellcheck shell=bash\npixi() {\n    local first_arg=\"${1-}\"\n\n    \"${PIXI_EXE-}\" \"$@\" || return $?\n\n    case \"${first_arg-}\" in\n    add | a | remove | rm | install | i)\n        eval \"$(\"$PIXI_EXE\" shell-hook --change-ps1 false)\"\n        hash -r\n        ;;\n    esac || :\n\n    return 0\n}\n\nexport PS1=\"(sentinel:dev) ${PS1:-}\"\n",
+    "confined_run": {
+      "exit": 0,
+      "markers": {
+        "order": [
+          "pkg-activate",
+          "feature-target",
+          "workspace-target"
+        ],
+        "pkg-activate": [
+          "pkg"
+        ],
+        "project-feature-target": [
+          "<tmp>/project|<tmp>/project"
+        ],
+        "project-workspace-target": [
+          "<tmp>/project|<tmp>/project"
+        ]
+      },
+      "PIXI_PROJECT_ROOT": "<tmp>/project",
+      "PIXI_PROJECT_MANIFEST": "<tmp>/project/pixi.toml",
+      "CONDA_PREFIX": "<tmp>/store/ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff/.pixi/envs/dev",
+      "PROJECT_ENV": "from-activation-env",
+      "SENTINEL_PKG_ACTIVATED": "1",
+      "PIXI_EXE_unset": true,
+      "staging_in_env": []
+    }
+  }
+}

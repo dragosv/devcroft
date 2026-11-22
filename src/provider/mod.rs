@@ -9,12 +9,14 @@
 //! fingerprinting are keyed off the provider name, so adding a third
 //! provider touches this file once rather than every call site.
 
+pub(crate) mod artifacts;
 pub(crate) mod capture;
 mod devbox;
 mod devenv;
 pub(crate) mod flox;
 pub(crate) mod mise;
 mod nix;
+mod pixi;
 pub mod swift;
 mod validate;
 
@@ -23,6 +25,7 @@ pub use devenv::DevenvProvider;
 pub use flox::FloxProvider;
 pub use mise::diagnose as diagnose_mise;
 pub use nix::NixProvider;
+pub use pixi::diagnose as diagnose_pixi;
 pub use swift::SwiftProvider;
 pub use validate::{normalize_provider_name, validate_provider};
 
@@ -567,6 +570,7 @@ pub enum ProviderKind {
     Devenv,
     Swift,
     Mise,
+    Pixi,
 }
 
 impl ProviderKind {
@@ -586,6 +590,7 @@ impl ProviderKind {
             "devenv" => Ok(ProviderKind::Devenv),
             "swift" => Ok(ProviderKind::Swift),
             "mise" => Ok(ProviderKind::Mise),
+            "pixi" => Ok(ProviderKind::Pixi),
             other => Err(ProviderError::Unknown {
                 name: other.to_string(),
             }),
@@ -606,6 +611,7 @@ impl ProviderKind {
             ProviderKind::Devenv => "devenv",
             ProviderKind::Swift => "swift",
             ProviderKind::Mise => "mise",
+            ProviderKind::Pixi => "pixi",
         }
     }
 
@@ -619,6 +625,13 @@ impl ProviderKind {
         const DAEMON: Option<&str> =
             Some("the Nix daemon, to realise packages; the store stays read-only to every sandbox");
         match self {
+            ProviderKind::Pixi => ResolutionReach {
+                runs: "`pixi install --locked` and `pixi shell-hook` (text) on a byte copy of the \
+                       manifest and lock, under an environment devcroft builds",
+                evaluates: "the lock, as data; Conda packages only, from public channels; \
+                            activation runs in confined provisioning",
+                authority: None,
+            },
             ProviderKind::Mise => ResolutionReach {
                 runs: "`mise install --locked`, `mise env --json` on a derived tools-only definition",
                 evaluates: "locked HTTP tool archives only; project env runs in confined provisioning",
@@ -671,7 +684,7 @@ impl ProviderKind {
             | ProviderKind::Nix
             | ProviderKind::Devbox
             | ProviderKind::Devenv => Tier::Closure,
-            ProviderKind::Swift | ProviderKind::Mise => Tier::Artifact,
+            ProviderKind::Swift | ProviderKind::Mise | ProviderKind::Pixi => Tier::Artifact,
         }
     }
 }
@@ -685,6 +698,7 @@ impl Provider for ProviderKind {
             ProviderKind::Devenv => DevenvProvider.resolve(project_root),
             ProviderKind::Swift => SwiftProvider.resolve(project_root),
             ProviderKind::Mise => mise::resolve(project_root, false),
+            ProviderKind::Pixi => pixi::resolve(project_root),
         }
     }
 }
@@ -822,6 +836,7 @@ pub fn manifest_fingerprint(provider: &str, project_root: &Path) -> Result<Strin
         ProviderKind::Devenv => devenv::devenv_fingerprint(project_root),
         ProviderKind::Swift => swift::package_fingerprint(project_root),
         ProviderKind::Mise => mise::fingerprint(project_root),
+        ProviderKind::Pixi => pixi::fingerprint(project_root),
     }
 }
 

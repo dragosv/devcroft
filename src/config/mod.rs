@@ -89,6 +89,20 @@ pub struct Env {
     /// is advice. A project that wants the scan to be a gate says so here,
     /// in the committed file, rather than having an inference decide.
     pub require_native_apple_evidence: bool,
+    /// `pixi` only: which workspace file and named environment to use
+    /// (`add-pixi-provider` P1). Absent means the sole eligible root file
+    /// and pixi's `default` environment, never an ambient selection.
+    pub pixi: Option<PixiSelection>,
+}
+
+/// `[env.pixi]`. Both keys are optional; unknown keys are config errors.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct PixiSelection {
+    /// Relative path to `pixi.toml` or a `pyproject.toml` with `[tool.pixi]`.
+    pub manifest: Option<String>,
+    /// An exact named environment.
+    pub environment: Option<String>,
 }
 
 impl Default for Env {
@@ -98,6 +112,7 @@ impl Default for Env {
             vars: BTreeMap::new(),
             forward: Vec::new(),
             require_native_apple_evidence: false,
+            pixi: None,
         }
     }
 }
@@ -284,6 +299,12 @@ pub enum ConfigError {
     UselessDeny {
         path: String,
     },
+    /// A value outside what its key accepts, with the reason.
+    InvalidValue {
+        key: &'static str,
+        value: String,
+        reason: &'static str,
+    },
     InvalidProvider(crate::provider::ProviderError),
     /// `[sandbox].isolation` names the tier `remove-gvisor-backend`
     /// removed. Its own variant rather than a generic invalid-value
@@ -348,6 +369,9 @@ impl fmt::Display for ConfigError {
             ),
             ConfigError::InvalidPath { field, value } => {
                 write!(f, "invalid path in `filesystem.{field}`: `{value}`")
+            }
+            ConfigError::InvalidValue { key, value, reason } => {
+                write!(f, "invalid `{key}` = `{value}`: {reason}")
             }
             ConfigError::UselessDeny { path } => write!(
                 f,
@@ -936,6 +960,52 @@ mod tests {
             }) => assert_eq!(name, "host"),
             other => panic!("expected InvalidProvider(OutOfScope), got {other:?}"),
         }
+    }
+
+    /// `add-pixi-provider` P1: `[env.pixi]` is a closed table that only
+    /// `provider = "pixi"` acts on, with a relative manifest path and a
+    /// plain environment name.
+    #[test]
+    fn env_pixi_selection_is_validated() {
+        let base = "[sandbox]\nname = \"p\"\n[env]\nprovider = \"pixi\"\n";
+        let (m, _) = parse(&format!(
+            "{base}[env.pixi]\nmanifest = \"sub/pixi.toml\"\nenvironment = \"dev\"\n"
+        ))
+        .unwrap();
+        let pixi = m.env.pixi.unwrap();
+        assert_eq!(pixi.manifest.as_deref(), Some("sub/pixi.toml"));
+        assert_eq!(pixi.environment.as_deref(), Some("dev"));
+        assert!(parse(base).unwrap().0.env.pixi.is_none());
+        for (extra, needle) in [
+            ("[env.pixi]\nenviroment = \"dev\"\n", "env.pixi.enviroment"),
+            (
+                "[env.pixi]\nmanifest = \"../pixi.toml\"\n",
+                "env.pixi.manifest",
+            ),
+            (
+                "[env.pixi]\nmanifest = \"/abs/pixi.toml\"\n",
+                "env.pixi.manifest",
+            ),
+            (
+                "[env.pixi]\nenvironment = \"a b\"\n",
+                "env.pixi.environment",
+            ),
+        ] {
+            let err = parse(&format!("{base}{extra}")).unwrap_err().to_string();
+            assert!(err.contains(needle), "{extra}: {err}");
+        }
+        let err =
+            parse("[sandbox]\nname = \"p\"\n[env]\nprovider = \"flox\"\n[env.pixi]\n").unwrap_err();
+        assert!(
+            matches!(
+                err,
+                ConfigError::KeyRequiresProvider {
+                    key: "env.pixi",
+                    ..
+                }
+            ),
+            "{err}"
+        );
     }
 
     #[test]

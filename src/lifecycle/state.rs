@@ -309,7 +309,7 @@ pub fn recorded_allocations() -> io::Result<Vec<Allocation>> {
     Ok(out)
 }
 
-pub(crate) fn recorded_mise_objects() -> io::Result<std::collections::BTreeSet<String>> {
+pub(crate) fn recorded_artifact_objects() -> io::Result<std::collections::BTreeSet<String>> {
     let mut out = std::collections::BTreeSet::new();
     let root = data_dir()?;
     if !root.exists() {
@@ -321,10 +321,9 @@ pub(crate) fn recorded_mise_objects() -> io::Result<std::collections::BTreeSet<S
             continue;
         }
         let path = entry.path().join("meta.json");
-        if let Some(meta) = read_meta(&path)?
-            && let Some(id) = meta.mise_object_id
-        {
-            out.insert(id);
+        if let Some(meta) = read_meta(&path)? {
+            out.extend(meta.mise_object_id);
+            out.extend(meta.pixi_object_id);
         }
     }
     Ok(out)
@@ -353,6 +352,9 @@ pub struct Meta {
     /// Retains an immutable mise object while this sandbox is restartable.
     #[serde(default)]
     pub mise_object_id: Option<String>,
+    /// Retains an immutable pixi object, the same way.
+    #[serde(default)]
+    pub pixi_object_id: Option<String>,
     pub project_root: String,
     pub env_fingerprint: String,
     #[serde(default)]
@@ -1015,6 +1017,7 @@ mod tests {
 
         let meta = Meta {
             mise_object_id: None,
+            pixi_object_id: None,
             project_root: "/proj".to_string(),
             env_fingerprint: "abc123".to_string(),
             read_only_grants: vec!["/nix/store".to_string()],
@@ -1049,6 +1052,7 @@ mod tests {
         let paths = tempdir("meta-atomic");
         let meta = Meta {
             mise_object_id: None,
+            pixi_object_id: None,
             project_root: "/proj".to_string(),
             env_fingerprint: "abc123".to_string(),
             read_only_grants: Vec::new(),

@@ -1,7 +1,9 @@
 ## Context
 
-Status: planning, revised 2026-11-17. Pixi is not installed on the machine
-this was written on; **nothing below about pixi's behavior is measured.**
+Status: planning, revised 2026-11-17; Group 0 measured 2026-11-22 with pixi
+0.84.2 on osx-arm64 and linux-aarch64 (see "Group 0 measurement" below).
+Statements in the 2026-11-17 sections that it contradicts are superseded by
+it.
 `Tier::Artifact` already ships for Swift. Pixi is refused today through
 `NOT_YET_SUPPORTED` in `src/provider/validate.rs`.
 
@@ -35,6 +37,213 @@ emits `source` lines; that installing PyPI wheels queries the environment's
 own interpreter by running it; that `pixi init --format pyproject` adds the
 project as an editable path dependency; that `detached-environments` links
 `.pixi/envs` in the project to the detached location.
+
+### Group 0 measurement, 2026-11-22 — pixi 0.84.2
+
+**Candidate pin: pixi 0.84.2**, the latest release (published 2026-11-10).
+Both binaries are byte-identical to the official GitHub release assets:
+
+- `pixi-aarch64-apple-darwin`:
+  `86b4e47c6fbbf3da8aa47a2ad8ea2e1ec3f505ecf6d7d4c4fdaa203071690148`;
+- `pixi-aarch64-unknown-linux-musl`:
+  `68995ac4a33d821f0080c1af4fb6fec4efd6dc3022c490d9dd904a2a7065610c`.
+
+Source tarball for tag `v0.84.2`:
+`1e880853c6962de313b4d79200c07bb2c99acea996c43cb7892b953f736a578b`. It links
+`rattler_networking` 0.34.6 and `rattler_lock` 0.34.12; their crates.io
+SHA-256 are `3585a045…` and `abe7fdc6…`.
+
+To reproduce:
+
+- `python3 -I scripts/qualify-pixi.py <pixi> --output r.json` uses local
+  sentinel packages served on loopback.
+- `python3 -I scripts/qualify-pixi-runtime.py <pixi> --root <dir outside
+  /tmp> --helper target/debug/examples/mise_qualification --output r.json`
+  uses real conda-forge packages under the real policy compiler.
+
+Results are in `evidence/`.
+
+**0.1 — CLI and inertness. Measured on osx-arm64 and linux-aarch64, with
+identical results on both.**
+
+- **CLI surface.** `install --locked --environment` exists, as do `shell-hook
+  --shell --as-is --no-completions --environment --manifest-path` and
+  `--change-ps1 false`.
+- **The text hook is inert.** Against a package carrying `activate.d`, a
+  post-link script and an executable, and a project with workspace, feature
+  and target activation scripts that all write markers: `lock`,
+  `install --locked` and `shell-hook --shell bash --as-is` leave every marker
+  untouched, install nothing and leave `pixi.toml` and `pixi.lock`
+  byte-identical.
+- **Control.** `shell-hook --json` runs the package and project scripts,
+  which proves the sentinels work and confirms the JSON form is never usable.
+- **The project config is honoured.** `run-post-link-scripts = "insecure"`
+  in the project's `.pixi/config.toml` makes `install` run the post-link
+  script *and* the package's `activate.d`. That project config is honoured
+  under `PIXI_NO_CONFIG`.
+- **Isolation switch.** `--no-config` / `PIXI_NO_CONFIG=true` skips system
+  (`/etc/rattler`, `/etc/pixi`) and user (`$XDG_CONFIG_HOME` on macOS,
+  `dirs::config_dir()`, `$PIXI_HOME`) configuration. The project's
+  `.pixi/config.toml` is always merged (source: `pixi_config::Config::load_with`).
+  Booleans must be spelled `true`, not `1`.
+- **Ambient variables pixi reads.** These include `PIXI_FROZEN`,
+  `PIXI_LOCKED`, `PIXI_OVERRIDE_PLATFORM`, `PIXI_ENVIRONMENT_NAME`, the
+  `PIXI_CACHE_*` family, `RATTLER_CACHE_DIR`, `RATTLER_AUTH_FILE` and `NETRC`.
+  `env_clear` removes all of them. Inside the store, devcroft sets `HOME`,
+  `TMPDIR`, `PIXI_HOME`, `PIXI_CACHE_DIR` and `RATTLER_CACHE_DIR`.
+
+**Finding that changes P2: the macOS keychain is not isolated by `HOME`.**
+The 0.84.2 macOS binary links `apple-native-keyring-store`
+(`SecItemCopyMatching`), and `rattler_networking`'s
+`AuthenticationStorage::from_env_and_defaults` always adds the keyring
+backend when that feature is compiled in. Keychain lookup does not follow
+`$HOME`, so a credential the user stored with `pixi auth login` would be sent
+to its host by host-side pixi. Under an isolated `HOME`, `.netrc` and the
+rattler file store are empty. The keychain is not. Source-derived only: no
+keychain entry was created to test it. **Resolution proposed for 0.6:**
+devcroft reads every package URL in the lock before any subprocess and
+admits only the qualified public hosts:
+
+- `conda.anaconda.org`;
+- `repo.prefix.dev`;
+- `files.pythonhosted.org`, if PyPI is ever admitted.
+
+Any other host is refused, with a message saying authenticated channels are
+not supported. That makes the spec's "no credential is read from the caller"
+true by construction, whatever backend pixi carries.
+
+**0.3 — what locked installation executes. Measured on both targets.**
+
+- **Conda-only:** nothing. No post-link script, no `activate.d`, no package
+  executable.
+- **With a PyPI wheel:** `install` runs the environment's own `python` (uv's
+  `get_interpreter_info`) before installing anything. `pixi lock` did not run
+  it.
+
+**PyPI-bearing environments therefore execute downloaded code on the host
+and are refused. The first slice is Conda-only (stop criterion 0.6).**
+
+Prefix files are not hardlinks to the cache on either target: `st_nlink` is
+1 and the inode differs. On macOS that is consistent with an APFS clone or a
+copy. On Linux, with the cache and prefix on one filesystem, it is a copy.
+
+**0.4 — activation rewrite. Measured on both targets.**
+
+- **Missing scripts are dropped, not refused.** Pixi emits the hook when
+  activation scripts are missing: it warns `Could not find activation
+  scripts` and **leaves them out of the text**. So the staging directory
+  must hold byte copies of the scripts, which P2 had left conditional on this
+  measurement.
+- **Rewrite residue.** With the scripts staged, the P4 rewrite leaves no
+  staging path outside the prefix.
+- **Rewritten paths.** `PIXI_PROJECT_ROOT`, `PIXI_PROJECT_MANIFEST`,
+  `PIXI_WORKSPACE_*` and the script paths name the real project.
+  `CONDA_PREFIX` and `PATH` stay on the prefix.
+- **Execution.** Run in bash from the project root, the scripts see the
+  project as `$PWD` and as `PIXI_PROJECT_ROOT`.
+- **Order, and why pixi must compose it.** A target-level activation
+  **replaces** the non-target one, at both workspace and feature level. With
+  all four declared, pixi ran package `activate.d`, then feature-target, then
+  workspace-target. Reimplementing the composition would have got this
+  wrong.
+- **Host leftovers in the hook.** The `PATH` export ends with the PATH pixi
+  was given (`/usr/bin:/bin:/usr/sbin:/sbin`), so capture must keep only
+  prefix entries. `PIXI_EXE` names the host binary. A `pixi()` shell function
+  and, without `--change-ps1 false`, a `PS1` export are emitted.
+- **`.pixi/config.toml` keys.** These are classified from the source's
+  `Config` struct, with no run needed:
+  - Admitted: keys that touch neither the bytes installed, nor what
+    executes, nor network authority. They are `concurrency`,
+    `pinning-strategy`, `change-ps1`, `default-channels` and `exclude-newer`.
+  - Refused by dotted name: every other key.
+    - `run-post-link-scripts`, `tls-no-verify`, `tls-root-certs`,
+      `authentication-override-file`, `detached-environments` and
+      `proxy-config`.
+    - `mirrors`, `s3-options`, `pypi-config`, `index-config` and
+      `repodata-config`.
+    - `allow-symbolic-links`, `allow-hard-links` and `allow-ref-links`.
+    - `virtual-package-detectors`, `tool-platform`, `cache`, `build`,
+      `experimental`, `shell` and `offline`.
+
+**0.2 — lock. Measured with pixi 0.84.2 against conda-forge for
+`linux-64`, `linux-aarch64`, `osx-arm64` and `osx-64`.**
+
+- **Format.** It writes `version: 7`.
+- **Per-platform requirements.** Each platform records its virtual-package
+  requirements, for example `__glibc=2.28` on Linux and `__osx=13.0` on
+  macOS. devcroft checks these against the host.
+- **Binary Conda packages.** Each is `- conda: <https URL ending .conda or
+  .tar.bz2>` with `sha256` and `md5`.
+- **Locked wheels.** Each is `- pypi: <https URL ending .whl>` with `version`
+  and `sha256`.
+
+Source-derived from `rattler_lock` 0.34.12, since generating them would run a
+build backend:
+
+- In v7 a `pypi:` entry is a *distribution* when it has a version, hash or
+  index, and a *source* otherwise. A source entry is a path or a VCS or URL
+  source tree, and is refused.
+- An sdist is a distribution whose URL is not `.whl`, and is refused by
+  extension.
+- `editable` no longer appears in v7 package entries. It is a manifest
+  property, and the source entry carries the refusal.
+- A pixi-build package is `- conda_source:`, and is refused. A `conda:` whose
+  location is a path is refused.
+- Lock versions other than 7 are refused by number.
+
+`pixi init --format pyproject` writes `init = { path = ".", editable = true }`
+under `[tool.pixi.pypi-dependencies]`, with `hatchling` as the build backend.
+That confirms the default layout's refusal.
+
+**0.5 — runtime under policy.** osx-arm64 is measured, with
+`runtime-osx-arm64-0.84.2.json`: a Conda-only environment of python 3.12,
+numpy and go, 27 packages, installed in 48.8 s.
+
+- **Workload.** `import numpy` runs from the prefix. A Go build with
+  `CGO_ENABLED=0` builds and runs.
+- **Host tools.** `cc`, `gcc`, `ld` and `git` neither resolve nor run.
+- **Prefix.** A write into the prefix is refused.
+- **Grants.** Beyond the prefix, the host grants are `/bin`, `/var/select`,
+  `/usr/lib` and the frameworks headers name. `AppKit` and its companions
+  come from `tk`, a dependency of Python.
+- **No C build on macOS.** conda-forge's clang needs the host SDK, the gap
+  already published as "A C toolchain from a closure cannot link on macOS".
+
+linux-aarch64 is measured too, with `runtime-linux-aarch64-0.84.2.json`.
+The host is the OrbStack devcontainer: kernel
+`7.2.12-orbstack-00394-gbecdd6130068`, Debian glibc 2.36. The environment is
+the same, plus `c-compiler`: 42 packages, installed in 27.4 s.
+
+- **Workload.** numpy runs. The Go build and **a C build with conda-forge's
+  `gcc`** (own sysroot, no activation script, no `$CC`) both build and run.
+- **Host tools.** `cc` and `gcc` resolve only inside the environment.
+  `/usr/bin/cc`, `gcc`, `ld` and `git` do not run.
+- **Prefix.** A write into the prefix is refused.
+- **Host grants**, all as **files**:
+  - the shells, `/usr/bin/dash` and `/usr/bin/bash`;
+  - the glibc family: `ld-linux-aarch64.so.1`, `libc`, `libm`, `libdl`,
+    `libpthread` and `libutil`;
+  - `libtinfo` for bash.
+
+  No host program directory is granted.
+
+**Precondition scope, measured.** Scanning every shared object in a Python
+environment finds libraries that no session-run entry point loads:
+
+- `libtk8.6.so` needs `libX11`, and is reached only through `dlopen` from
+  tkinter;
+- a cross sysroot's `makedb` needs `libselinux`; it is a target file, never
+  run on the host.
+
+The header walk therefore starts from `bin/` and follows `DT_NEEDED` and
+`LC_LOAD_DYLIB` transitively. Even so, `bin/wish8.6` (tk's shell, pulled in
+by every conda-forge Python) needs `libX11` on Linux and AppKit plus a dozen
+frameworks on macOS. **Open for the owner at 0.6:** P5's "fail naming the
+tool and library" would refuse every Python environment over a binary nobody
+runs. The proposal is that the inventory stays fixed (loader and libc family;
+macOS `/usr/lib` and the frameworks a qualified profile names), and that an
+executable needing more is **not granted it** and is named in one `up`
+warning, rather than refused.
 
 The `new/` material supplies constraints, not evidence: recipe, content and
 instance identity are distinct; a Darwin prefix is never a Linux guest
@@ -156,6 +365,14 @@ re-proposed without measuring: from memory it links the project's
 `.pixi/envs` to one detached location, which writes into the checkout and
 gives two sandboxes one target.
 
+**Decided by the owner, 2026-11-22, after Group 0:**
+
+- The first slice is **Conda-only**. Every `pypi:` lock entry is refused.
+- Lock package URLs are restricted to `conda.anaconda.org` and
+  `repo.prefix.dev`, which closes the keychain finding by construction.
+- The staging workspace always carries byte copies of the activation
+  scripts, since 0.4 showed pixi drops missing ones from the text.
+
 ### P3. Immutable objects, with the sandbox's own state as the reference
 
 **Location.** `~/.local/share/devcroft-artifacts/pixi/<object-id>/`, with the
@@ -260,7 +477,23 @@ No directory grant covers `/bin/sh` or `/usr/bin/env` under this design, so
 the draft's change to `sandbox_identity` is dropped. Its equality-only check
 is a pre-existing observation, noted in task 5.3 to be filed separately.
 
-**Host runtime.** Conda bundles most of a toolchain but binaries still use
+**Host runtime, as decided after Group 0.** The header walk starts at the
+prefix's `bin/` and follows needed libraries inside the prefix. What it needs
+from outside is matched against the profile's fixed inventory:
+
+- **Linux:** the loader and the glibc family (`libc`, `libm`, `libdl`,
+  `libpthread`, `libutil`, `librt`), plus what the granted shells need.
+- **macOS:** nothing beyond the shell. The baseline already grants
+  `/usr/lib` and `/System/Library`, which cover what conda-forge binaries
+  link, as `policy --render` shows (origin `baseline`). Measured while
+  building `samples/pixi-go-sample`. The Group 0 probe had granted them
+  again, redundantly.
+
+An executable needing anything else is **not granted it** and is named, with
+the library, in one `up` warning (owner, 2026-11-22). Refusing instead would
+have refused every conda-forge Python environment over tk's `wish`.
+
+**Host runtime, original wording.** Conda bundles most of a toolchain but binaries still use
 the host's loader and libc. Each qualified profile carries a fixed inventory
 rendered as `provider:pixi`. Requirements are checked by reading executables'
 headers, never by running them; the reader is the one `add-mise-provider`
@@ -323,6 +556,33 @@ packages that would be refused and the store's size, and installs nothing.
 `init` reads TOML only. A minimum pixi version is enforced; a version newer
 than the last qualified draws one warning. Existing error layers and exit
 codes are kept.
+
+### Implementation notes, 2026-11-22: where the code departs from P1–P7
+
+- **The selection is read from `devcroft.toml`, not threaded.** P7 changed
+  `Provider::resolve`, `manifest_fingerprint` and `is_stale` to carry
+  `[env.pixi]`. Instead, `provider::pixi` parses the project's own
+  `devcroft.toml`, the file the selection lives in. The fingerprint includes
+  the selected manifest and environment, so a selection changed after `up`
+  shows as `env: stale`. No other provider's signature changed. `Meta`
+  records the object id; `policy --render` shows the prefix path, which names
+  the environment.
+- **One POSIX shell, not a separate Bash.** `__provision` runs the activation
+  under the resolved session shell. The text hook is `export`, `.` and a
+  POSIX function, and conda's `activate.d/*.sh` scripts are written to be
+  sourced by POSIX shells. So P5's Bash grant is not needed: the shell is
+  the prefix's `sh`/`bash` if any, else the host's `sh`.
+- **The store is shared with mise.** `provider::artifacts` holds the root,
+  lease, sweep, content digest and header reader for both providers. The
+  write-grant overlap check covers `~/.local/share/devcroft-artifacts` as a
+  whole.
+- **Libraries are matched inside the prefix by name.** A library reached
+  through an rpath may sit anywhere in the prefix: perl's `libperl.dylib`
+  lives under `lib/perl5/.../CORE`. Looking only in `lib/` produced false
+  warnings.
+- **The host inventory is not a separate check.** The header walk from `bin/`
+  grants what the inventory carries and warns about the rest (owner decision
+  above). It runs on every `up`, after installation.
 
 ## Risks / Trade-offs
 

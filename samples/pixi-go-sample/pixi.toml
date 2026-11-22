@@ -1,0 +1,34 @@
+[workspace]
+name = "pixi-go-sample"
+channels = ["conda-forge"]
+platforms = ["osx-arm64", "linux-aarch64"]
+
+# Everything a session uses comes from here: devcroft grants no host
+# userland, so `make`, `git`, `curl`, `jq` and even `grep` are declared.
+[dependencies]
+go = "*"
+golangci-lint = "*"
+make = "*"
+git = "*"
+curl = "*"
+jq = "*"
+coreutils = "*"
+grep = "*"
+sed = "*"
+
+[activation]
+scripts = ["scripts/activate.sh"]
+
+[activation.env]
+# Pure Go everywhere: macOS has no usable C toolchain inside the sandbox.
+CGO_ENABLED = "0"
+# The runtime has no network, so module downloads are switched off rather
+# than left to time out. The project uses the standard library only.
+GOPROXY = "off"
+GOFLAGS = "-buildvcs=false"
+
+# Not runnable inside the sandbox (the host's pixi is not granted); the
+# Makefile carries the same targets and is what `devcroft exec` runs.
+[tasks]
+check = "make check"
+smoke = "make smoke"

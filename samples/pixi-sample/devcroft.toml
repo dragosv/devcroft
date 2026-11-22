@@ -1,0 +1,11 @@
+[sandbox]
+name = "pixisample"
+
+[env]
+provider = "pixi"
+
+[filesystem]
+allow = ["."]
+
+[network]
+default = "deny"

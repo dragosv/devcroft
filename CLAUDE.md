@@ -341,7 +341,12 @@ implemented for one measured profile: `http:` tools only, native ARM64,
 with the host shell granted as a file and never `/usr/bin`. The core
 backends are refused because `mise install` runs what it downloaded,
 host-side. `docs/decisions.md` §1, "Built: mise", has the evidence, and
-`samples/mise-sample` is the runnable form.
+`samples/mise-sample` is the runnable form. `add-pixi-provider` followed,
+Conda-only. PyPI is refused because installing it runs the environment's
+interpreter host-side, and lock URLs are restricted to public conda hosts
+because the macOS pixi binary reads the keychain. Both providers share
+`provider::artifacts` (store, lease, sweep, header reader); see "Built: pixi"
+and `samples/pixi-sample`.
 
 `use-nono-library` depended on `own-policy-baseline` and is now
 implemented: the process tier links nono as a library and self-restricts
@@ -643,7 +648,7 @@ mechanism exists — the decision should be **revisited, not defended**.
 - There is no non-reproducible mode. `host` and `none` providers are out of
   scope by design; the answer for a project without an environment is
   `flox init`, not a degraded fallback. Rejection messages must distinguish
-  "not yet supported" (pixi, hermit) from "out of
+  "not yet supported" (hermit) from "out of
   scope by design" (`host`, `none`) and from "fails the qualification
   test" (version managers). Nix flakes, devbox and devenv are
   implemented, not pending — devbox is the third closure-tier

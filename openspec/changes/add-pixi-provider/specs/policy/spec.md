@@ -6,13 +6,21 @@ with origin `provider:pixi`. It SHALL preserve baseline denials and SHALL NOT
 grant `/usr/bin`, any other host program directory beyond the shell's own on
 macOS, the user's Pixi home or cache, or any write access. Host-runtime
 requirements SHALL be established by reading executables, never by running
-them. A system requirement in the lock SHALL NOT by itself grant a device,
-driver or system service.
+them, starting from the environment's `bin/` entries and following their
+needed libraries. Each qualified profile carries a fixed host inventory. An
+executable needing a host library outside that inventory SHALL NOT cause it
+to be granted; it SHALL be named, with the library, in one `up` warning, and
+`up` SHALL proceed. A system requirement in the lock SHALL NOT by itself grant
+a device, driver or system service.
 
 #### Scenario: Native dependency with host runtime
 - **WHEN** a qualified environment needs the host's loader and libc
 - **THEN** those files appear in `policy --render` with origin `provider:pixi` and the workload runs
 - **AND** devcroft's own credentials and data directory remain inaccessible
+
+#### Scenario: An executable needs a library outside the inventory
+- **WHEN** an environment's `bin/` holds an executable that needs a host library the profile does not carry, such as tk's `wish` needing `libX11`
+- **THEN** `up` succeeds, `policy --render` shows no grant for that library, and one warning names the executable and the library
 
 #### Scenario: Host toolchain is not reachable
 - **WHEN** a session in a Pixi sandbox on Linux looks up `cc` or `gcc` and the environment provides none

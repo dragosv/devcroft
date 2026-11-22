@@ -120,7 +120,7 @@ pub fn package_manager_authority(grants: &[ResolvedGrant]) -> Option<PackageMana
 /// A writable alias of a shared provider store cannot be canceled by adding a
 /// read grant. Use the same resolved paths the enforcement plan consumes.
 pub fn artifact_store_write_overlap(grants: &[ResolvedGrant]) -> Option<(PathBuf, PathBuf)> {
-    let store = crate::provider::mise::store_root().ok()?;
+    let store = crate::provider::artifacts::artifacts_root().ok()?;
     write_overlap(grants, store)
 }
 

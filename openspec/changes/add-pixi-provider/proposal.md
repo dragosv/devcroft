@@ -23,12 +23,17 @@ environment's interpreter on the host is now measured before PyPI is admitted.
 - Add optional `[env.pixi]` with `manifest` and `environment`; use the
   workspace's `default` environment when none is selected, never the caller's
   shell.
-- Require an up-to-date, unchanged `pixi.lock`. Materialize binary Conda
-  packages. Admit locked PyPI wheels **only if** Group 0 shows that installing
-  them executes nothing downloaded on the host; otherwise refuse environments
-  that carry PyPI dependencies, by name, until materialization can be
-  confined. Refuse source distributions, editable, path and VCS dependencies
-  and build backends in every case.
+- Require an up-to-date, unchanged `pixi.lock` in format version 7.
+  Materialize binary Conda packages only. **The first slice is Conda-only**
+  (owner, 2026-11-22). Group 0 measured that installing PyPI wheels runs the
+  environment's own interpreter on the host, so every `pypi:` lock entry is
+  refused by name until materialization can be confined. Source packages
+  (`conda_source`), path locations, sdists, editable, path and VCS
+  dependencies and build backends are refused in every case.
+- Admit lock package URLs on the qualified public hosts only:
+  `conda.anaconda.org` and `repo.prefix.dev`. Any other host is refused
+  before any subprocess. The macOS pixi binary consults the user's keychain,
+  which an isolated `HOME` does not hide.
 - Run host-side pixi under an environment built from an allowlist, with an
   isolated `HOME`, against a staging workspace holding byte copies of the
   manifest and lock.

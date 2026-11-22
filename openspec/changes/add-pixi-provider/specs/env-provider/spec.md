@@ -32,7 +32,11 @@ allowlist, an isolated home, and no user or system configuration. The
 project's own Pixi configuration, which pixi always merges, SHALL be parsed
 and any key outside the admitted set refused by dotted name. An environment
 shape for which locked installation executes downloaded code on the host, as
-measured for the qualified version, SHALL be refused by name. `policy
+measured for the qualified version, SHALL be refused by name; for the
+qualified version that is every environment with a PyPI dependency. Every
+package URL in the selected environment's lock SHALL be on a qualified public
+host (`conda.anaconda.org`, `repo.prefix.dev`), checked before any pixi
+subprocess, so that no stored credential of the caller can be used. `policy
 --render` SHALL state what resolution runs host-side.
 
 #### Scenario: User configuration does not change the result
@@ -44,13 +48,14 @@ measured for the qualified version, SHALL be refused by name. `policy
 - **THEN** `up` fails at layer `provider`, exit code 3, naming the key, before installation
 
 #### Scenario: Installation would run the environment's interpreter
-- **WHEN** qualification finds that installing an environment's PyPI dependencies executes its interpreter on the host
-- **THEN** environments with PyPI dependencies are refused by name
+- **WHEN** the selected environment's lock contains a `pypi:` package
+- **THEN** `up` fails at layer `provider`, exit code 3, naming the package and that installing it runs the environment's interpreter on the host
 - **AND** Conda-only environments remain supported
 
-#### Scenario: Channel needs credentials
-- **WHEN** a locked package can only be downloaded with a credential
-- **THEN** `up` fails stating that authenticated channels are not supported, and no credential is read from the caller
+#### Scenario: Channel outside the qualified hosts
+- **WHEN** a locked package URL names a host other than `conda.anaconda.org` or `repo.prefix.dev`
+- **THEN** `up` fails before any pixi subprocess, naming the host and stating that authenticated and private channels are not supported
+- **AND** no stored credential of the caller, including one in the macOS keychain, is consulted
 
 ### Requirement: Pixi activation is captured inertly and executed confined
 The system SHALL obtain activation as non-executed text after installation

@@ -103,6 +103,15 @@ context: |
     as a file on Linux, and `/usr/bin` is never granted. `[daemons]` is
     `add-mise-daemons`. It re-qualified by measurement under the owner's
     request, which is the bar below working rather than being waived.
+  - **A third artifact-tier provider exists: `pixi` (add-pixi-provider),
+    Conda-only.** pixi.lock format 7, binary conda packages from
+    `conda.anaconda.org` and `repo.prefix.dev` only, on native ARM64. PyPI is
+    refused, because installing it runs the environment's interpreter on the
+    host (measured, pixi 0.84.2). The text shell-hook is measured inert. Its
+    staging paths are rewritten to the project, and it runs confined.
+    Objects share the artifact store with mise (`provider::artifacts`).
+    Executables needing host libraries beyond the libc family are warned
+    about, not granted.
   - No other artifact-tier provider is scheduled, and that is a recorded
     decision rather than a scheduling accident: devcroft's product
     guarantee is the closure tier, the `Provider` seam stays generic,
@@ -121,9 +130,6 @@ context: |
     tightened by `fix-provisioning-hooks` and this list predated it;
     devenv was the provider that had to re-qualify against the corrected
     wording, and did:
-    - pixi (artifact tier; content-addressed package cache shareable
-      read-only, env lives under the project root; conda-heavy dependency
-      bundling makes it the closest artifact provider to closure behavior)
     - hermit (artifact tier; repo-committed checksums, shared cache; small
       niche that matches devcroft's profile exactly)
   - Rejected providers and the six-criterion qualification test they fail:

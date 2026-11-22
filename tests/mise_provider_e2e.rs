@@ -253,5 +253,5 @@ fn a_write_grant_over_the_artifact_store_is_refused_at_config() {
     let o = devcroft(&p.0, &["up"]);
     assert_eq!(o.status.code(), Some(2), "{}", text(&o));
     assert!(text(&o).contains("config:"), "{}", text(&o));
-    assert!(text(&o).contains("devcroft-artifacts/mise"), "{}", text(&o));
+    assert!(text(&o).contains("devcroft-artifacts"), "{}", text(&o));
 }

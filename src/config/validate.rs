@@ -13,6 +13,7 @@ const SECTIONS: &[(&str, &[&str])] = &[
             "vars",
             "forward",
             "require_native_apple_evidence",
+            "pixi",
         ],
     ),
     ("filesystem", &["allow", "read", "deny"]),
@@ -38,7 +39,20 @@ pub fn check_unknown_keys(table: &toml::Table) -> Result<(), ConfigError> {
 
         // `env.vars` holds arbitrary user-chosen keys; only the section's
         // own two field names (`provider`, `vars`) are schema-checked.
+        // `env.pixi` is a closed table, checked here so a typo gets the
+        // same suggestion every other unknown key does.
         if key == "env" {
+            if let Some(pixi) = value.get("pixi").and_then(|v| v.as_table()) {
+                const PIXI_FIELDS: &[&str] = &["manifest", "environment"];
+                for field in pixi.keys() {
+                    if !PIXI_FIELDS.contains(&field.as_str()) {
+                        return Err(ConfigError::UnknownKey {
+                            path: format!("env.pixi.{field}"),
+                            suggestion: closest(field, PIXI_FIELDS),
+                        });
+                    }
+                }
+            }
             continue;
         }
 
@@ -147,6 +161,39 @@ pub fn check_env(env: &Env) -> Result<(), ConfigError> {
             provider: "swift",
             actual: env.provider.clone(),
         });
+    }
+    if env.pixi.is_some() && env.provider != "pixi" {
+        return Err(ConfigError::KeyRequiresProvider {
+            key: "env.pixi",
+            provider: "pixi",
+            actual: env.provider.clone(),
+        });
+    }
+    if let Some(selection) = &env.pixi {
+        if let Some(manifest) = &selection.manifest
+            && (manifest.is_empty()
+                || manifest.starts_with('/')
+                || manifest.contains('\0')
+                || has_traversal(manifest))
+        {
+            return Err(ConfigError::InvalidValue {
+                key: "env.pixi.manifest",
+                value: manifest.clone(),
+                reason: "must be a relative path inside the project",
+            });
+        }
+        if let Some(environment) = &selection.environment
+            && (environment.is_empty()
+                || !environment
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_'))
+        {
+            return Err(ConfigError::InvalidValue {
+                key: "env.pixi.environment",
+                value: environment.clone(),
+                reason: "must be a pixi environment name (letters, digits, `-`, `_`)",
+            });
+        }
     }
     Ok(())
 }

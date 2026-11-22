@@ -1,0 +1,5 @@
+[
+  {"id": "c-003", "name": "Pour-over kettle", "price": 39.5, "tags": ["coffee", "kitchen"]},
+  {"id": "c-001", "name": "Hand grinder", "price": 74.0, "tags": ["coffee"]},
+  {"id": "t-002", "name": "Cast-iron teapot", "price": 52.0, "tags": ["tea", "kitchen"]}
+]

@@ -1,0 +1,15 @@
+[workspace]
+name = "pixi-sample"
+channels = ["conda-forge"]
+platforms = ["osx-arm64", "linux-aarch64"]
+
+[dependencies]
+python = "3.12.*"
+numpy = "*"
+
+[activation]
+scripts = ["scripts/activate.sh"]
+env = { SAMPLE_GREETING = "hello from [activation].env" }
+
+[tasks]
+check = "python check.py"

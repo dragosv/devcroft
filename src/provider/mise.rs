@@ -1,9 +1,8 @@
 //! Locked, tools-only mise materialization. Original project code is parsed as
 //! data; its environment script is handed to confined provisioning.
-use super::{ProviderError, Resolution, ServiceSupport, capture};
+use super::{ProviderError, Resolution, ServiceSupport, artifacts, capture};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
-use std::os::fd::AsRawFd;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -595,117 +594,14 @@ pub(crate) fn fingerprint(root: &Path) -> Result<String, ProviderError> {
     Ok(capture::fingerprint(&parts))
 }
 
+pub(crate) const PROVIDER: &str = "mise";
+
 pub(crate) fn store_root() -> Result<PathBuf, ProviderError> {
-    let home = std::env::var_os("HOME").ok_or_else(|| fail("HOME is not set"))?;
-    let path = PathBuf::from(home).join(".local/share/devcroft-artifacts/mise");
-    let mut ancestor = path.as_path();
-    let mut missing = vec![];
-    while !ancestor.exists() {
-        missing.push(
-            ancestor
-                .file_name()
-                .ok_or_else(|| fail("invalid artifact root"))?
-                .to_owned(),
-        );
-        ancestor = ancestor
-            .parent()
-            .ok_or_else(|| fail("invalid artifact root"))?;
-    }
-    let mut real = ancestor.canonicalize().map_err(|e| fail(e.to_string()))?;
-    for part in missing.into_iter().rev() {
-        real.push(part);
-    }
-    Ok(real)
+    artifacts::root(PROVIDER)
 }
 
-pub(crate) struct StoreLock(std::fs::File);
-impl Drop for StoreLock {
-    fn drop(&mut self) {
-        unsafe {
-            libc::flock(self.0.as_raw_fd(), libc::LOCK_UN);
-        }
-    }
-}
-fn lock(path: &Path, exclusive: bool) -> Result<StoreLock, ProviderError> {
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| fail(e.to_string()))?;
-    }
-    let file = std::fs::OpenOptions::new()
-        .create(true)
-        .truncate(false)
-        .read(true)
-        .write(true)
-        .open(path)
-        .map_err(|e| fail(e.to_string()))?;
-    if unsafe {
-        libc::flock(
-            file.as_raw_fd(),
-            if exclusive {
-                libc::LOCK_EX
-            } else {
-                libc::LOCK_SH
-            },
-        )
-    } != 0
-    {
-        return Err(fail(std::io::Error::last_os_error().to_string()));
-    }
-    Ok(StoreLock(file))
-}
-pub(crate) fn lease() -> Result<StoreLock, ProviderError> {
-    lock(&store_root()?.join(".store.lock"), false)
-}
-
-pub(crate) fn object_id(grants: &[String]) -> Option<String> {
-    let store = store_root().ok()?;
-    grants.iter().find_map(|grant| {
-        let part = Path::new(grant)
-            .strip_prefix(&store)
-            .ok()?
-            .components()
-            .next()?
-            .as_os_str()
-            .to_str()?;
-        (part.len() == 64 && part.bytes().all(|b| b.is_ascii_hexdigit())).then(|| part.to_owned())
-    })
-}
-
-pub(crate) fn sweep() -> Result<(), ProviderError> {
-    let store = store_root()?;
-    if !store.exists() {
-        return Ok(());
-    }
-    let _lock = lock(&store.join(".store.lock"), true)?;
-    let references = crate::lifecycle::recorded_mise_objects()
-        .map_err(|e| fail(format!("reading object references: {e}")))?;
-    sweep_unreferenced(&store, &references)
-}
-
-fn is_object_id(name: &str) -> bool {
-    name.len() == 64 && name.bytes().all(|b| b.is_ascii_hexdigit())
-}
-
-/// Remove every object, published or not, that no recorded `Meta` names, and
-/// its per-object lock file. The caller holds the store lock exclusively, so
-/// no `up` sits between acquiring an object and recording it.
-fn sweep_unreferenced(
-    store: &Path,
-    references: &std::collections::BTreeSet<String>,
-) -> Result<(), ProviderError> {
-    for entry in std::fs::read_dir(store).map_err(|e| fail(e.to_string()))? {
-        let entry = entry.map_err(|e| fail(e.to_string()))?;
-        let name = entry.file_name().to_string_lossy().into_owned();
-        if is_object_id(&name) && !references.contains(&name) {
-            std::fs::remove_dir_all(entry.path()).map_err(|e| fail(e.to_string()))?;
-        } else if name
-            .strip_prefix('.')
-            .and_then(|n| n.strip_suffix(".lock"))
-            .is_some_and(|id| is_object_id(id) && !references.contains(id))
-        {
-            std::fs::remove_file(entry.path()).map_err(|e| fail(e.to_string()))?;
-        }
-    }
-    Ok(())
+pub(crate) fn lease() -> Result<artifacts::StoreLock, ProviderError> {
+    artifacts::lease(PROVIDER)
 }
 
 fn isolated_env(object: &Path) -> Result<BTreeMap<String, String>, ProviderError> {
@@ -785,82 +681,11 @@ fn run(
 }
 
 fn version(text: &str) -> Result<(u32, u32, u32), ProviderError> {
-    let text = text
-        .split_whitespace()
-        .next()
-        .unwrap_or("")
-        .trim_start_matches('v');
-    let parts: Vec<_> = text
-        .split('.')
-        .map(str::parse::<u32>)
-        .collect::<Result<_, _>>()
-        .map_err(|_| fail("mise version is not a numeric release"))?;
-    match parts.as_slice() {
-        [a, b, c] => Ok((*a, *b, *c)),
-        _ => Err(fail("mise version is not a numeric release")),
-    }
+    artifacts::release(PROVIDER, text)
 }
 
-/// Digest installed bytes without executing them. Refuse escaping symlinks and
-/// cycles so neither a receipt nor a grant legitimizes a host-path injection.
 fn installed_digest(root: &Path) -> Result<String, ProviderError> {
-    fn visit(path: &Path, root: &Path, digest: &mut Sha256) -> Result<(), ProviderError> {
-        let metadata = std::fs::symlink_metadata(path).map_err(|e| fail(e.to_string()))?;
-        let name = path
-            .strip_prefix(root)
-            .unwrap_or(path)
-            .as_os_str()
-            .as_encoded_bytes();
-        digest.update((name.len() as u64).to_be_bytes());
-        digest.update(name);
-        digest.update(metadata.permissions().mode().to_be_bytes());
-        if metadata.file_type().is_symlink() {
-            digest.update(b"symlink");
-            let target = path
-                .canonicalize()
-                .map_err(|e| fail(format!("{}: {e}", path.display())))?;
-            if !target.starts_with(root) {
-                return Err(fail(format!(
-                    "installed symlink {} escapes its object",
-                    path.display()
-                )));
-            }
-            digest.update(
-                std::fs::read_link(path)
-                    .map_err(|e| fail(e.to_string()))?
-                    .as_os_str()
-                    .as_encoded_bytes(),
-            );
-        } else if metadata.is_dir() {
-            digest.update(b"directory");
-            let mut children = std::fs::read_dir(path)
-                .map_err(|e| fail(e.to_string()))?
-                .map(|e| e.map(|v| v.path()))
-                .collect::<Result<Vec<_>, _>>()
-                .map_err(|e| fail(e.to_string()))?;
-            children.sort();
-            for child in children {
-                visit(&child, root, digest)?;
-            }
-        } else if metadata.is_file() {
-            digest.update(b"file");
-            digest.update(metadata.len().to_be_bytes());
-            digest.update(read(path)?);
-        } else {
-            return Err(fail(format!(
-                "unsupported installed special file {}",
-                path.display()
-            )));
-        }
-        Ok(())
-    }
-    let mut digest = Sha256::new();
-    visit(root, root, &mut digest)?;
-    Ok(digest
-        .finalize()
-        .iter()
-        .map(|b| format!("{b:02x}"))
-        .collect())
+    artifacts::installed_digest(PROVIDER, root)
 }
 
 pub(crate) fn resolve(root: &Path, skip_hooks: bool) -> Result<Resolution, ProviderError> {
@@ -926,7 +751,7 @@ pub(crate) fn resolve(root: &Path, skip_hooks: bool) -> Result<Resolution, Provi
     let id: String = hash.finalize().iter().map(|b| format!("{b:02x}")).collect();
     let store = store_root()?;
     let object = store.join(&id);
-    let _lock = lock(&store.join(format!(".{id}.lock")), true)?;
+    let _lock = artifacts::lock(&store.join(format!(".{id}.lock")), true)?;
     let receipt = object.join("complete.sha256");
     if !receipt.exists() && object.exists() {
         std::fs::remove_dir_all(&object).map_err(|e| fail(e.to_string()))?;
@@ -1035,71 +860,8 @@ pub(crate) fn resolve(root: &Path, skip_hooks: bool) -> Result<Resolution, Provi
     })
 }
 
-/// Read native binary headers only; never run an installed interpreter to ask
-/// it which libraries it would load. Unknown formats/targets fail closed.
 fn dependencies(path: &Path) -> Result<Vec<String>, ProviderError> {
-    use object::read::elf::{Dyn, ProgramHeader};
-    let data = read(path)?;
-    let error = |e: object::Error| fail(format!("{}: {e}", path.display()));
-    let mut out = vec![];
-    if data.starts_with(b"\x7fELF") {
-        let elf = object::read::elf::ElfFile64::<object::Endianness>::parse(data.as_slice())
-            .map_err(error)?;
-        let endian = elf.endian();
-        let table = elf.elf_section_table();
-        let dynamic = table.dynamic(endian, data.as_slice()).map_err(error)?;
-        for header in elf.elf_program_headers() {
-            if let Some(interpreter) = header.interpreter(endian, data.as_slice()).map_err(error)? {
-                out.push(String::from_utf8(interpreter.to_vec()).map_err(|e| fail(e.to_string()))?);
-            }
-            if header.p_type(endian) == object::elf::PT_DYNAMIC && dynamic.is_none() {
-                return Err(fail(format!(
-                    "{}: dynamic ELF without section metadata is unqualified",
-                    path.display()
-                )));
-            }
-        }
-        if let Some((entries, index)) = dynamic {
-            let strings = table
-                .strings(endian, data.as_slice(), index)
-                .map_err(error)?;
-            for entry in entries {
-                if entry.tag32(endian) == Some(object::elf::DT_NEEDED) {
-                    out.push(
-                        String::from_utf8(entry.string(endian, strings).map_err(error)?.to_vec())
-                            .map_err(|e| fail(e.to_string()))?,
-                    );
-                }
-            }
-        }
-    } else if data.starts_with(b"\xcf\xfa\xed\xfe") {
-        let macho = object::read::macho::MachOFile64::<object::Endianness>::parse(data.as_slice())
-            .map_err(error)?;
-        let mut commands = macho.macho_load_commands().map_err(error)?;
-        while let Some(command) = commands.next().map_err(error)? {
-            if let Some(dylib) = command.dylib().map_err(error)? {
-                out.push(
-                    String::from_utf8(
-                        command
-                            .string(macho.endian(), dylib.dylib.name)
-                            .map_err(error)?
-                            .to_vec(),
-                    )
-                    .map_err(|e| fail(e.to_string()))?,
-                );
-            }
-        }
-    } else if data.starts_with(b"#!") {
-        // Scripts do not have dynamic-library headers. The Node/Go profile
-        // admits /usr/bin/env and the supplied shell; other interpreters need
-        // an explicitly installed runtime on the captured PATH.
-    } else if data.starts_with(b"\xca\xfe\xba\xbe") || data.starts_with(b"\xfe\xed\xfa") {
-        return Err(fail(format!(
-            "{}: binary format is not qualified",
-            path.display()
-        )));
-    }
-    Ok(out)
+    artifacts::header_dependencies(PROVIDER, path)
 }
 
 fn runtime_grants(installs: &Path, shell: &Path) -> Result<Vec<String>, ProviderError> {
@@ -1373,25 +1135,6 @@ mod tests {
             );
         }
     }
-    #[test]
-    fn digest_frames_files_and_refuses_escaping_symlinks() {
-        let f = fixture("");
-        let dir = f.0.join("installs");
-        std::fs::create_dir(&dir).unwrap();
-        std::fs::write(dir.join("a"), "bc").unwrap();
-        let before = installed_digest(&dir).unwrap();
-        std::fs::remove_file(dir.join("a")).unwrap();
-        std::fs::write(dir.join("ab"), "c").unwrap();
-        assert_ne!(before, installed_digest(&dir).unwrap());
-        std::os::unix::fs::symlink("/bin/sh", dir.join("escaped")).unwrap();
-        assert!(
-            installed_digest(&dir)
-                .err()
-                .unwrap()
-                .to_string()
-                .contains("escapes")
-        );
-    }
     /// Task 2.2: the subprocess environment is an allowlist. Nothing ambient
     /// crosses except the four proxy/CA names, so a caller's `MISE_ENV`,
     /// `MISE_LOCKED_REQUIRE_CHECKSUM=0`, a token, or the real `HOME` (and the
@@ -1520,63 +1263,6 @@ mod tests {
         assert!(error.contains("has no mise.lock"), "{error}");
         assert!(error.contains("run `mise lock`"), "{error}");
         assert!(!p.exists(), "the refusal created a lock");
-    }
-    /// Task 2.5: the sweep keeps what a `Meta` names and removes the rest,
-    /// published or not, with the lock files of what it removed.
-    #[test]
-    fn the_sweep_keeps_referenced_objects_only() {
-        let f = fixture("");
-        let store = f.0.join("store");
-        let kept = "a".repeat(64);
-        let gone = "b".repeat(64);
-        let half = "c".repeat(64);
-        for id in [&kept, &gone, &half] {
-            std::fs::create_dir_all(store.join(id).join("data/installs")).unwrap();
-            std::fs::write(store.join(format!(".{id}.lock")), "").unwrap();
-        }
-        std::fs::write(store.join(&kept).join("complete.sha256"), "x").unwrap();
-        std::fs::write(store.join(&gone).join("complete.sha256"), "x").unwrap();
-        std::fs::create_dir(store.join(".version")).unwrap();
-        std::fs::write(store.join(".store.lock"), "").unwrap();
-        let refs = std::collections::BTreeSet::from([kept.clone()]);
-        sweep_unreferenced(&store, &refs).unwrap();
-        assert!(store.join(&kept).is_dir());
-        assert!(store.join(format!(".{kept}.lock")).exists());
-        for id in [&gone, &half] {
-            assert!(!store.join(id).exists());
-            assert!(!store.join(format!(".{id}.lock")).exists());
-        }
-        assert!(store.join(".version").is_dir());
-        assert!(store.join(".store.lock").exists());
-        sweep_unreferenced(&store, &Default::default()).unwrap();
-        assert!(!store.join(&kept).exists());
-    }
-    /// Task 6.2, concurrent `up` and sweep: the sweep's exclusive store lock
-    /// waits for every `up` lease, so an object acquired but not yet recorded
-    /// in `Meta` cannot be removed under it. Two leases do not exclude each
-    /// other, so concurrent `up`s never serialize on the store.
-    #[test]
-    fn a_sweep_waits_for_every_up_lease() {
-        let f = fixture("");
-        let path = f.0.join(".store.lock");
-        let first = lock(&path, false).unwrap();
-        let second = lock(&path, false).unwrap();
-        let (tx, rx) = std::sync::mpsc::channel();
-        let sweeper = {
-            let path = path.clone();
-            std::thread::spawn(move || {
-                let _exclusive = lock(&path, true).unwrap();
-                tx.send(()).unwrap();
-            })
-        };
-        let wait = std::time::Duration::from_millis(200);
-        assert!(rx.recv_timeout(wait).is_err(), "sweep ran under two leases");
-        drop(first);
-        assert!(rx.recv_timeout(wait).is_err(), "sweep ran under one lease");
-        drop(second);
-        rx.recv_timeout(std::time::Duration::from_secs(5))
-            .expect("sweep never ran after the leases ended");
-        sweeper.join().unwrap();
     }
     #[test]
     fn lock_checks_happen_without_a_mise_process() {

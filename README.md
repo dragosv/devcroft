@@ -106,7 +106,7 @@ stays denied until you name it:
 name = "my-project"
 
 [env]
-provider = "flox"          # or "nix", "devbox", "devenv", "mise" — "swift" on macOS
+provider = "flox"          # or "nix", "devbox", "devenv", "mise", "pixi" — "swift" on macOS
 forward = ["GH_TOKEN"]     # the sandbox does not inherit your shell
 
 [env.vars]
@@ -381,6 +381,27 @@ does not resolve inside. `mise run` is not available in the sandbox, and
 `[daemons]` is refused until `add-mise-daemons`. See
 [samples/mise-sample](samples/mise-sample/).
 
+**pixi** is the seventh, also **artifact** tier: a `pixi.toml`, or a
+`pyproject.toml` with `[tool.pixi]`, with a `pixi.lock` (format 7). The
+profile is Conda-only:
+
+- **Packages:** binary packages from `conda.anaconda.org` or
+  `repo.prefix.dev`, on native ARM64 only (glibc on Linux).
+- **Refused:** PyPI dependencies, because installing them runs the
+  environment's Python on the host; source packages; and any other channel
+  host.
+- **Installation:** pixi installs from a byte copy of the manifest and lock,
+  in an isolated environment, into a read-only object under
+  `~/.local/share/devcroft-artifacts/pixi/`, shared and reclaimed like
+  mise's.
+- **Activation:** pixi emits it as text, devcroft points it at the project,
+  and it runs inside the sandbox.
+- **Host grants:** the host gets the shell and the libc family, never
+  `/usr/bin`.
+
+`pixi run` is not available in the sandbox. See
+[samples/pixi-sample](samples/pixi-sample/).
+
 Long-lived **services** — databases, dev servers — are declared in the
 provider's own manifest and supervised by the sandbox's keeper, so parallel
 sandboxes get their own instances. Supported for flox, devenv and devbox (whose
@@ -391,12 +412,12 @@ that declares a readiness probe is reported ready only once it passes, and a
 dependent waits for that. A provider field devcroft cannot carry is refused by
 name, never dropped.
 
-**pixi and hermit are a different answer, and not "they failed the
-test".** Both pass devcroft's six-criterion provider test on paper. What stops
-them is structural: those tools link against whichever libc a host has, which
-makes them artifact tier — the weaker guarantee swift and mise ship with — and
-each is gated on demonstrated demand and its own measured qualification rather
-than shipped on spec. [docs/decisions.md](docs/decisions.md) has the test and an
+**hermit is a different answer, and not "it failed the test".** It passes
+devcroft's six-criterion provider test on paper. What stops it is structural:
+it links against whichever libc a host has, which makes it artifact tier — the
+weaker guarantee swift, mise and pixi ship with — and it is gated on
+demonstrated demand and its own measured qualification rather than shipped on
+spec. [docs/decisions.md](docs/decisions.md) has the test and an
 entry per answer.
 
 ## Using it with an agent today

@@ -155,10 +155,11 @@ Two consequences, stated so they can be checked later:
   "The third provider is free" was true because it was the third *nix*
   provider.
 
-  **That bar has since been met once, for mise** (`add-mise-provider`,
-  2026-11): the owner asked for it, and it re-qualified by measurement
-  rather than on paper. It did so for a narrow profile, not for mise as a
-  whole. See "Built: mise" below.
+  **That bar has since been met twice, for mise and for pixi**
+  (`add-mise-provider`, `add-pixi-provider`, 2026-11). The owner asked for
+  both, and each re-qualified by measurement rather than on paper. Each did
+  so for a narrow profile, not for the tool as a whole. See "Built: mise"
+  and "Built: pixi" below.
 
 **Revisit if** either input changes: real demand for an artifact
 provider materializes (at which point the rendered-grants distinction
@@ -388,6 +389,48 @@ only, so they are refused rather than extrapolated.
 or becomes switchable off, or if materialization can run confined: that is
 the recorded way to admit the core backends. Also revisit when another
 target gets a real runtime row.
+
+### Built: pixi (seventh provider, artifact tier, Conda-only)
+
+**Property that fails:** criterion 3 for closure purposes, as for mise.
+Packages link against the host's loader and libc, so the guarantee is the
+artifact tier, and every host file is a rendered `provider:pixi` grant.
+
+**What Group 0 measured** (`add-pixi-provider`, pixi 0.84.2, osx-arm64 and
+linux-aarch64, `openspec/changes/add-pixi-provider/evidence/`):
+
+- **Inert host-side steps, with Conda alone.** `pixi lock`,
+  `pixi install --locked` and the *text* form of `shell-hook` ran no package
+  `activate.d`, no post-link script and no project activation script. The
+  JSON form ran them all, so it is never used.
+- **PyPI is refused.** Installing a PyPI wheel ran the environment's own
+  `python` on the host (uv's interpreter query) before installing anything,
+  so PyPI dependencies are refused (owner, 2026-11-22). The way to lift that
+  is confined materialization, a change of its own.
+- **The keychain is not hidden by `HOME`.** The macOS binary links the Apple
+  keychain store, and rattler consults it whatever `$HOME` says. So lock URLs
+  are restricted to `conda.anaconda.org` and `repo.prefix.dev` (owner,
+  2026-11-22), which makes "no caller credential is used" true by
+  construction rather than by environment.
+- **Pixi composes activation in an order nobody would guess.** A
+  target-level activation *replaces* the plain one. So devcroft keeps the
+  scripts in the staged manifest and rewrites one path prefix rather than
+  reimplementing the composition. Pixi drops a missing script from the text,
+  so the staging copy carries a placeholder for each script that exists.
+- **Completeness was tested, not claimed.** numpy runs, and a Go build and a
+  C build with conda-forge's `gcc` (Linux; macOS needs the host SDK) pass
+  with the host's `cc`, `gcc`, `ld` and `git` refused. Only the shell and the
+  glibc family are granted from the host.
+- **tk's needs are warned about, not granted.** Every conda-forge Python
+  brings tk, whose `wish` needs `libX11` on Linux. It is named in one warning
+  and not granted (owner, 2026-11-22), rather than refusing every Python
+  environment. On macOS the frameworks it needs are already in the baseline
+  (`/System/Library`), so there is nothing to warn about.
+
+**Revisit if** PyPI installation can run confined, or uv can be told an
+interpreter's tags without running it. Also revisit when another target gets
+a real runtime row, or when a channel with credentials is needed: that is a
+credential-handling design, not a configuration flag.
 
 ### Rejected: `host` / `none` passthrough
 

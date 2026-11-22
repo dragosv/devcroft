@@ -213,15 +213,21 @@ pub fn up_with_provider(
     // Held for the whole of `up` — see `acquire_lifecycle_lock`'s doc for
     // the concurrent-`up` race this closes.
     let lock = state::acquire_lifecycle_lock(&paths.lifecycle_lock)?;
-    let artifact_lease = if provider.static_name() == "mise" {
-        Some(crate::provider::mise::lease().map_err(UpError::Provider)?)
-    } else {
-        None
-    };
+    // An artifact-store provider's object is referenced only by the `Meta`
+    // this `up` writes; the shared lease keeps a concurrent sweep off it
+    // until then (`add-mise-provider` M4, `add-pixi-provider` P3).
+    let store_provider = crate::provider::artifacts::STORE_PROVIDERS
+        .iter()
+        .find(|p| **p == provider.static_name())
+        .copied();
+    let artifact_lease = store_provider
+        .map(crate::provider::artifacts::lease)
+        .transpose()
+        .map_err(UpError::Provider)?;
     let outcome = up_locked(manifest, project_root, opts, provider, &paths);
     drop(artifact_lease);
-    if provider.static_name() == "mise" {
-        crate::provider::mise::sweep().map_err(UpError::Provider)?;
+    if let Some(name) = store_provider {
+        crate::provider::artifacts::sweep(name).map_err(UpError::Provider)?;
     }
     // An `up` that failed before creating the sandbox's directory (a
     // provider resolution failure leaves it uncreated on purpose) has no
@@ -544,7 +550,8 @@ fn up_locked(
     state::write_meta(
         &paths.meta,
         &state::Meta {
-            mise_object_id: crate::provider::mise::object_id(&provider_grants),
+            mise_object_id: crate::provider::artifacts::object_id("mise", &provider_grants),
+            pixi_object_id: crate::provider::artifacts::object_id("pixi", &provider_grants),
             project_root: project_root.to_string_lossy().into_owned(),
             env_fingerprint,
             read_only_grants: provider_grants.clone(),

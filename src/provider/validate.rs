@@ -29,19 +29,13 @@ const VERSION_MANAGERS: &[&str] = &[
 /// test in `docs/decisions.md` §1, and a reader auditing which projects
 /// took that trade should be able to grep for a single string.
 const SUPPORTED: &[&str] = &[
-    "flox", "nix", "flake", "flakes", "devbox", "devenv", "swift", "mise",
+    "flox", "nix", "flake", "flakes", "devbox", "devenv", "swift", "mise", "pixi",
 ];
 
-const NOT_YET_SUPPORTED: &[(&str, &str)] = &[
-    (
-        "pixi",
-        "pixi is a qualified provider (artifact tier) but not yet scheduled",
-    ),
-    (
-        "hermit",
-        "hermit is a qualified provider (artifact tier) but not yet scheduled",
-    ),
-];
+const NOT_YET_SUPPORTED: &[(&str, &str)] = &[(
+    "hermit",
+    "hermit is a qualified provider (artifact tier) but not yet scheduled",
+)];
 
 /// Validate an `env.provider` value. `Ok(())` for `"flox"`, `"nix"` (and
 /// its `"flake"`/`"flakes"` aliases), `"devbox"` and `"devenv"`.

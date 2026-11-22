@@ -99,7 +99,9 @@ pub fn rm(sandbox_name: &str) -> Result<(), TerminateError> {
         // artifacts keep it alive.
         let _ = std::fs::remove_dir(shared);
     }
-    crate::provider::mise::sweep().map_err(|e| io::Error::other(e.to_string()))?;
+    for provider in crate::provider::artifacts::STORE_PROVIDERS {
+        crate::provider::artifacts::sweep(provider).map_err(|e| io::Error::other(e.to_string()))?;
+    }
     Ok(())
 }
 

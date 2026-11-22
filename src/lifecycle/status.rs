@@ -393,6 +393,7 @@ mod tests {
                 &paths.meta,
                 &state::Meta {
                     mise_object_id: None,
+                    pixi_object_id: None,
                     project_root: format!("/proj/{name}"),
                     env_fingerprint: "fp".to_string(),
                     read_only_grants: Vec::new(),

@@ -718,6 +718,12 @@ fn cli_init(args: &[String]) -> i32 {
     let has_devenv = cwd.join("devenv.nix").is_file();
     let has_flake = cwd.join("flake.nix").is_file();
     let has_mise = cwd.join("mise.toml").is_file() || cwd.join(".mise.toml").is_file();
+    // Read as TOML only: a pyproject without `[tool.pixi]` is not pixi.
+    let has_pixi = cwd.join("pixi.toml").is_file()
+        || std::fs::read_to_string(cwd.join("pyproject.toml"))
+            .ok()
+            .and_then(|t| t.parse::<toml::Table>().ok())
+            .is_some_and(|t| t.get("tool").and_then(|t| t.get("pixi")).is_some());
     // Only a SwiftPM package that a closure provider *cannot* serve, so
     // `init` never writes a manifest `up` would then refuse
     // (`provider::swift`'s gate). The scan executes nothing, which is the
@@ -735,6 +741,8 @@ fn cli_init(args: &[String]) -> i32 {
         "nix"
     } else if has_mise {
         "mise"
+    } else if has_pixi {
+        "pixi"
     } else if swift_needs_apple {
         "swift"
     } else {
@@ -845,6 +853,10 @@ fn cli_init(args: &[String]) -> i32 {
     } else if has_mise {
         println!(
             "devcroft: found a mise definition; artifact tier, qualified HTTP archives only. Run `mise lock` and `devcroft doctor` before `devcroft up`. Tasks require mise run outside the sandbox."
+        );
+    } else if has_pixi {
+        println!(
+            "devcroft: found a pixi workspace; artifact tier, Conda packages from public channels only (PyPI dependencies are refused). Run `pixi lock` and `devcroft doctor` before `devcroft up`. Tasks are not runnable by name inside the sandbox."
         );
     } else if has_swift_package && !swift_needs_apple {
         // A portable Swift package: a closure provider serves it, and
@@ -1934,6 +1946,27 @@ fn doctor_mise_provider() -> bool {
     }
 }
 
+fn doctor_pixi_provider() -> bool {
+    let root = std::env::current_dir()
+        .ok()
+        .and_then(|cwd| devcroft::config::discover(&cwd).ok())
+        .and_then(|p| p.parent().map(std::path::Path::to_path_buf));
+    let Some(root) = root else {
+        println!("[FAIL] provider: cannot locate this pixi project's devcroft.toml");
+        return false;
+    };
+    match devcroft::provider::diagnose_pixi(&root) {
+        Ok(message) => {
+            println!("[PASS] provider: pixi {message}");
+            true
+        }
+        Err(error) => {
+            println!("[FAIL] provider: {error}");
+            false
+        }
+    }
+}
+
 fn doctor_provider() -> bool {
     match discovered_provider() {
         Some(provider) => match provider.as_str() {
@@ -1942,6 +1975,7 @@ fn doctor_provider() -> bool {
             "devenv" => doctor_devenv_provider(true),
             "swift" => doctor_swift_provider(true),
             "mise" => doctor_mise_provider(),
+            "pixi" => doctor_pixi_provider(),
             // `config::parse` normalizes and rejects anything else, so
             // this is flox or a provider that could not exist.
             _ => doctor_flox_provider(true),
@@ -2996,6 +3030,7 @@ fn print_status(s: &devcroft::lifecycle::SandboxStatus, provider: &str) {
             let what = match provider {
                 "nix" => "flake",
                 "mise" => "mise.toml/.mise.toml or a consumed input",
+                "pixi" => "pixi manifest, lock, config or an activation script",
                 "devbox" => "devbox.json/devbox.lock",
                 "devenv" => "devenv definition",
                 "swift" => "Swift package",

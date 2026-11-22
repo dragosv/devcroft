@@ -18,8 +18,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     if argv.is_empty() {
         return Err("argv must not be empty".into());
     }
+    // Optional, so the mise runtime script's requests keep their meaning; the
+    // pixi qualification passes "pixi" and gets `provider:pixi` origins.
+    let provider: &'static str = match request["provider"].as_str() {
+        None | Some("mise") => "mise",
+        Some("pixi") => "pixi",
+        Some(other) => return Err(format!("unknown provider {other}").into()),
+    };
     let (manifest, _) = devcroft::config::parse("[sandbox]\nname = 'miseprobe'\n")?;
-    let compiled = devcroft::policy::compile(&manifest).with_provider_grants("mise", &grants);
+    let compiled = devcroft::policy::compile(&manifest).with_provider_grants(provider, &grants);
     let plan = compiled.to_capability_plan();
     let caps = plan.to_capability_set(&root)?;
     // Do not grant the executable directory or a compiler just because it is

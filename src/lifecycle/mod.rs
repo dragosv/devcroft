@@ -23,7 +23,7 @@ mod terminate;
 pub(crate) mod up;
 
 pub use hooks::HookError;
-pub(crate) use state::recorded_mise_objects;
+pub(crate) use state::recorded_artifact_objects;
 pub use state::{
     Allocation, Health, Meta, StatePaths, ToolsRecord, client_key_paths, fleet_state_dir, health,
     policy_digest, read_meta,

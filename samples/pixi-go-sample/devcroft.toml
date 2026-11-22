@@ -1,0 +1,14 @@
+[sandbox]
+name = "pixigo"
+
+[env]
+provider = "pixi"
+
+[filesystem]
+allow = ["."]
+
+[network]
+default = "deny"
+# The port `make smoke` serves the catalog on; a sandbox may only listen on
+# ports its manifest declares.
+ports = [18080]

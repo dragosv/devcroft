@@ -1084,6 +1084,34 @@ Everything outside it is refused by name rather than approximated.
   provisioning. A rate-limited or authenticated download fails, and no
   token is forwarded.
 
+## pixi: Conda-only, and what that leaves out
+
+`env.provider = "pixi"` works for one qualified profile:
+
+- **Lock:** a `pixi.lock` in format 7.
+- **Packages:** binary conda packages from `conda.anaconda.org` or
+  `repo.prefix.dev`.
+- **Hosts:** native ARM64 only, macOS or glibc Linux.
+
+- **No PyPI.** Installing a PyPI package runs the environment's interpreter
+  on the host (measured), so every `pypi:` lock entry is refused. That
+  includes the default `pixi init --format pyproject` layout, which installs
+  the project itself as an editable package.
+- **No private or authenticated channels.** Any other package host is
+  refused, because the macOS pixi binary would otherwise present a credential
+  from the user's keychain.
+- **No `pixi run`.** The host's pixi is not granted, and tasks are not
+  carried. Run the command directly.
+- **A dlopen'd library may be missing on Linux.** The host inventory is the
+  shell plus the glibc family. Anything an environment needs beyond it is
+  named in one `up` warning and not granted; tkinter's `libX11` is the common
+  case. On macOS the baseline already grants `/usr/lib` and `/System/Library`,
+  which covers what conda-forge binaries link.
+- **No C link on macOS.** conda-forge's clang needs the host SDK, the gap
+  above. Linux builds with the environment's own `gcc` and sysroot.
+- **No fleet, no services.** A fleet agent on a pixi project is refused, and
+  pixi has no service concept.
+
 ## No cgroup resource limits
 
 A runaway build in one sandbox can affect the whole host — nothing today

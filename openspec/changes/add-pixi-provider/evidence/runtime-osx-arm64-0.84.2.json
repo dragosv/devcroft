@@ -1,0 +1,87 @@
+{
+  "pixi": "pixi 0.84.2",
+  "pixi_sha256": "86b4e47c6fbbf3da8aa47a2ad8ea2e1ec3f505ecf6d7d4c4fdaa203071690148",
+  "platform": "osx-arm64",
+  "measured_at": "2026-11-22",
+  "lock_version": "version: 7",
+  "lock_packages": 27,
+  "install_seconds": 35.3,
+  "inputs_unchanged": true,
+  "hook_residue_outside_prefix": [],
+  "libraries_from_outside_prefix_bin_closure": {
+    "/System/Library/Frameworks/AppKit.framework/Versions/C/AppKit": 1,
+    "/System/Library/Frameworks/ApplicationServices.framework/Versions/A/ApplicationServices": 1,
+    "/System/Library/Frameworks/Carbon.framework/Versions/A/Carbon": 1,
+    "/System/Library/Frameworks/CoreFoundation.framework/Versions/A/CoreFoundation": 3,
+    "/System/Library/Frameworks/CoreGraphics.framework/Versions/A/CoreGraphics": 1,
+    "/System/Library/Frameworks/CoreServices.framework/Versions/A/CoreServices": 1,
+    "/System/Library/Frameworks/CoreText.framework/Versions/A/CoreText": 1,
+    "/System/Library/Frameworks/Foundation.framework/Versions/C/Foundation": 1,
+    "/System/Library/Frameworks/IOKit.framework/Versions/A/IOKit": 1,
+    "/System/Library/Frameworks/QuartzCore.framework/Versions/A/QuartzCore": 1,
+    "/System/Library/Frameworks/Security.framework/Versions/A/Security": 1,
+    "/System/Library/Frameworks/UniformTypeIdentifiers.framework/Versions/A/UniformTypeIdentifiers": 1,
+    "/usr/lib/libSystem.B.dylib": 24,
+    "/usr/lib/libobjc.A.dylib": 1,
+    "/usr/lib/libresolv.9.dylib": 2
+  },
+  "libraries_from_outside_prefix_all_files": {
+    "/System/Library/Frameworks/AppKit.framework/Versions/C/AppKit": 1,
+    "/System/Library/Frameworks/ApplicationServices.framework/Versions/A/ApplicationServices": 1,
+    "/System/Library/Frameworks/Carbon.framework/Versions/A/Carbon": 1,
+    "/System/Library/Frameworks/CoreFoundation.framework/Versions/A/CoreFoundation": 4,
+    "/System/Library/Frameworks/CoreGraphics.framework/Versions/A/CoreGraphics": 1,
+    "/System/Library/Frameworks/CoreServices.framework/Versions/A/CoreServices": 1,
+    "/System/Library/Frameworks/CoreText.framework/Versions/A/CoreText": 1,
+    "/System/Library/Frameworks/Foundation.framework/Versions/C/Foundation": 1,
+    "/System/Library/Frameworks/IOKit.framework/Versions/A/IOKit": 1,
+    "/System/Library/Frameworks/QuartzCore.framework/Versions/A/QuartzCore": 1,
+    "/System/Library/Frameworks/Security.framework/Versions/A/Security": 1,
+    "/System/Library/Frameworks/SystemConfiguration.framework/Versions/A/SystemConfiguration": 1,
+    "/System/Library/Frameworks/UniformTypeIdentifiers.framework/Versions/A/UniformTypeIdentifiers": 1,
+    "/usr/lib/libSystem.B.dylib": 197,
+    "/usr/lib/libc++abi.dylib": 5,
+    "/usr/lib/libobjc.A.dylib": 1,
+    "/usr/lib/libresolv.9.dylib": 10
+  },
+  "shell": {
+    "grants": [
+      "/bin",
+      "/var/select"
+    ],
+    "note": "macOS /bin/sh is a selector reading /var/select"
+  },
+  "host_grants": [
+    "/System/Library/Frameworks/AppKit.framework",
+    "/System/Library/Frameworks/ApplicationServices.framework",
+    "/System/Library/Frameworks/Carbon.framework",
+    "/System/Library/Frameworks/CoreFoundation.framework",
+    "/System/Library/Frameworks/CoreGraphics.framework",
+    "/System/Library/Frameworks/CoreServices.framework",
+    "/System/Library/Frameworks/CoreText.framework",
+    "/System/Library/Frameworks/Foundation.framework",
+    "/System/Library/Frameworks/IOKit.framework",
+    "/System/Library/Frameworks/QuartzCore.framework",
+    "/System/Library/Frameworks/Security.framework",
+    "/System/Library/Frameworks/UniformTypeIdentifiers.framework",
+    "/bin",
+    "/usr/lib",
+    "/var/select"
+  ],
+  "helper_exit": 0,
+  "stdout": [
+    "numpy-ok 45 True",
+    "go-build-ok",
+    "c-build-not-attempted-on-macos",
+    "prefix-write-denied",
+    "policy-probe-done"
+  ],
+  "stderr_tail": [],
+  "passed": {
+    "numpy": true,
+    "go_build": true,
+    "c_build": null,
+    "host_tools_absent": true,
+    "prefix_read_only": true
+  }
+}
