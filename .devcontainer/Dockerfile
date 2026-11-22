@@ -169,6 +169,47 @@ RUN set -eu; \
     && ln -s /nix/var/nix/profiles/devenv/bin/devenv /usr/local/bin/devenv \
     && devenv version
 
+# pixi provider (add-pixi-provider). Without it `pixi_provider_e2e` skips
+# itself in this container ("pixi >= 0.84.2 is not on PATH"), and a green
+# `cargo test` here says nothing about the provider — the gap devenv's
+# block above was added to close.
+#
+# Official GitHub release tarball, architecture-detected, verified against
+# the `.sha256` published beside it — same posture as devbox's install, so
+# the pin and the verification both live in this file. PIXI_VERSION is the
+# release Group 0 qualified (`QUALIFIED_VERSION` in src/provider/pixi.rs);
+# a newer pixi only warns, but the evidence in
+# openspec/changes/add-pixi-provider/evidence/ was taken against this one.
+# musl is the only Linux build pixi publishes, and it is the binary that
+# was measured: checked on the host 2026-11-22, the aarch64 tarball passes
+# its `.sha256` and extracts to exactly the SHA-256 design.md records for
+# `pixi-aarch64-unknown-linux-musl` (68995ac4…).
+#
+# The runtime is qualified on ARM64 only. On an amd64 host pixi installs
+# and the e2e test still skips, naming that reason — by design, not a
+# broken install.
+#
+# UNVERIFIED beyond this build step, the same posture as the installs
+# above: the download and checksum were exercised against the real release
+# assets, but no container rebuild has run this block.
+ARG PIXI_VERSION=0.84.2
+RUN set -eu; \
+    cd /tmp; \
+    case "$(dpkg --print-architecture)" in \
+        amd64) PIXI_ARCH=x86_64 ;; \
+        arm64) PIXI_ARCH=aarch64 ;; \
+        *) echo "unsupported architecture: $(dpkg --print-architecture)" >&2; exit 1 ;; \
+    esac; \
+    TARBALL="pixi-${PIXI_ARCH}-unknown-linux-musl.tar.gz"; \
+    BASE="https://github.com/prefix-dev/pixi/releases/download/v${PIXI_VERSION}"; \
+    curl -fsSLO "${BASE}/${TARBALL}"; \
+    curl -fsSL "${BASE}/${TARBALL}.sha256" | grep " ${TARBALL}\$" | sha256sum -c -; \
+    tar xzf "${TARBALL}" pixi \
+    && mv pixi /usr/local/bin/pixi \
+    && chmod +x /usr/local/bin/pixi \
+    && rm -f "/tmp/${TARBALL}" \
+    && pixi --version
+
 # Drop root. Not only lint hygiene: devcroft runs as an unprivileged user, so
 # a confinement spike executed as root would be measuring a process that does
 # not resemble the one being designed for. The official rust image already
