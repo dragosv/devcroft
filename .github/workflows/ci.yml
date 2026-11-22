@@ -191,13 +191,13 @@ jobs:
   #   covers devenv through its own binaries (`devenv_provider_e2e`,
   #   `devenv_capture_contract`, the devenv half of `services_e2e`).
   #   Adding the row belongs to the fixture change, not to CI.
-  # - pixi runs on `ubuntu-24.04-arm`, because its runtime is qualified on
-  #   native ARM64 only and its e2e tests skip anywhere else. It needs no
-  #   Nix (artifact tier), so that leg installs none and takes the
-  #   nix-free `test` row — which means it also runs the whole neutral
-  #   suite on ARM64 Linux, a platform no other leg covers. With no row of
-  #   its own, `DEVCROFT_TEST_PROVIDER` cannot fail it when the provider
-  #   did not run, so the step after `cargo test` does.
+  # - pixi and mise run on `ubuntu-24.04-arm`, because both runtimes are
+  #   qualified on native ARM64 only and their e2e tests skip anywhere
+  #   else. Neither needs Nix (artifact tier), so those legs install none
+  #   and take the nix-free `test` row — which means they also run the
+  #   whole neutral suite on ARM64 Linux, a platform no other leg covers.
+  #   With no row of their own, `DEVCROFT_TEST_PROVIDER` cannot fail them
+  #   when the provider did not run, so the step after `cargo test` does.
   #
   # The devenv leg, as of run 34823971268: the provider itself works on
   # the runner — `devenv_provider_e2e` passes 15/15 (closure compile,
@@ -211,9 +211,9 @@ jobs:
   # that binary's log is the next thing to read.
   #
   # Pinned versions match what the project was measured against: flox,
-  # devbox and pixi the same as `.devcontainer/Dockerfile` (pixi at its
-  # provider's `QUALIFIED_VERSION`), devenv the version the provider was
-  # written against (`add-devenv-provider`).
+  # devbox, pixi and mise the same as `.devcontainer/Dockerfile` (pixi and
+  # mise at their providers' `QUALIFIED_VERSION`), devenv the version the
+  # provider was written against (`add-devenv-provider`).
   #
   # flox, nix and devbox are blocking: green on run 34829168323, after
   # seven dispatched runs that each found something real (user
@@ -221,9 +221,9 @@ jobs:
   # the kernel cannot open, a golden recorded on the wrong platform —
   # docs/implementation-log.md has the list). devenv stays
   # continue-on-error for the one failure above, which is nix's, until
-  # someone reads that log. pixi is continue-on-error for a plainer
-  # reason: it has not run on CI yet. Promote it once it has a green run,
-  # the way flox, nix and devbox were.
+  # someone reads that log. pixi and mise are continue-on-error for a
+  # plainer reason: neither has run on CI yet. Promote each once it has a
+  # green run, the way flox, nix and devbox were.
   e2e:
     name: e2e (${{ matrix.provider }})
     strategy:
@@ -237,9 +237,10 @@ jobs:
           - { provider: devbox, runner: ubuntu-latest, row: devbox }
           - { provider: devenv, runner: ubuntu-latest, row: nix }
           - { provider: pixi, runner: ubuntu-24.04-arm, row: test, cargo_flags: --features test-support }
+          - { provider: mise, runner: ubuntu-24.04-arm, row: test, cargo_flags: --features test-support }
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 45
-    continue-on-error: ${{ contains(fromJSON('["devenv", "pixi"]'), matrix.provider) }}
+    continue-on-error: ${{ contains(fromJSON('["devenv", "pixi", "mise"]'), matrix.provider) }}
     env:
       DEVBOX_NO_TELEMETRY: "1"
     steps:
@@ -337,9 +338,9 @@ jobs:
           nix profile install --accept-flake-config "github:cachix/devenv/${DEVENV_VERSION}"
           devenv version
 
-      # --- pixi: the same pinned, checksummed release install as
-      # `.devcontainer/Dockerfile`; musl, the only Linux build pixi
-      # publishes.
+      # --- pixi / mise: the same pinned, checksummed release installs as
+      # `.devcontainer/Dockerfile`. mise is the glibc build, the one whose
+      # binary matches add-mise-provider's evidence; pixi publishes only musl.
       - name: install pixi
         if: matrix.provider == 'pixi'
         env:
@@ -360,6 +361,27 @@ jobs:
           sudo mv pixi /usr/local/bin/pixi
           sudo chmod +x /usr/local/bin/pixi
           pixi --version
+
+      - name: install mise
+        if: matrix.provider == 'mise'
+        env:
+          MISE_VERSION: "2026.11.9"
+        run: |
+          set -eu
+          cd /tmp
+          case "$(dpkg --print-architecture)" in
+            amd64) MISE_ARCH=x64 ;;
+            arm64) MISE_ARCH=arm64 ;;
+            *) echo "unsupported architecture: $(dpkg --print-architecture)" >&2; exit 1 ;;
+          esac
+          TARBALL="mise-v${MISE_VERSION}-linux-${MISE_ARCH}.tar.gz"
+          BASE="https://github.com/jdx/mise/releases/download/v${MISE_VERSION}"
+          curl -fsSLO "${BASE}/${TARBALL}"
+          curl -fsSL "${BASE}/SHASUMS256.txt" | grep " \./${TARBALL}\$" | sha256sum -c -
+          tar xzf "${TARBALL}" mise/bin/mise
+          sudo mv mise/bin/mise /usr/local/bin/mise
+          sudo chmod +x /usr/local/bin/mise
+          mise --version
 
       # Full suite, every leg; the provider that is installed is the one
       # whose tests run. `DEVCROFT_TEST_PROVIDER` is the fixture's row
