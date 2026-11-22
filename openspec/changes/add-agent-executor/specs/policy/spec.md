@@ -3,13 +3,15 @@
 ### Requirement: Separate agent and project policies
 A mode 2 sandbox SHALL compile two profiles, both shown by `policy --render`
 with origins. The agent profile SHALL hold the workspace, the agent's object
-and state, and the agent's hosts. The project profile SHALL hold today's
-rules and none of the agent's hosts. The agent's credential route (proxy
-token, placeholder, socket) SHALL exist only in the agent tree.
+and home, and the agent's hosts. The project profile SHALL hold today's
+rules and none of the agent's hosts. Each tree SHALL have its own egress
+proxy, allowlist, token, socket and log. The agent's credential route (broker
+endpoint and placeholder, proxy token, proxy socket) SHALL exist only in the
+agent tree.
 
 #### Scenario: Project cannot use the agent's route
-- **WHEN** a project build script looks for the agent's token in its environment, files and logs, and tries the agent's proxy socket
-- **THEN** it finds no token and the socket is not reachable
+- **WHEN** a project build script looks for the agent's token and placeholder in its environment, files and logs, and tries the agent's proxy socket
+- **THEN** it finds neither and the socket is not reachable
 
 #### Scenario: Agent cannot use the project's allowlist directly
 - **WHEN** the agent process connects to a host only the project's allowlist permits
