@@ -32,6 +32,18 @@ fn devbox_available() -> bool {
         && devcroft::provider::host_can_build_nix_closures()
 }
 
+/// A fresh project root, short and canonical, for the reason
+/// `tests/common/mod.rs`'s `fixture_root` gives: the supervisor's socket at
+/// `<root>/.devcroft/<name>/services.sock` overflows 103 bytes under macOS's
+/// `$TMPDIR`, and `up` refuses — which is what both services tests here did
+/// on a Mac until they moved off `std::env::temp_dir()`.
+fn short_root(tag: &str) -> PathBuf {
+    let root = PathBuf::from(format!("/tmp/dcdb-{tag}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).unwrap();
+    root.canonicalize().unwrap()
+}
+
 struct Sandbox {
     name: String,
     project_root: PathBuf,
@@ -57,10 +69,7 @@ impl Sandbox {
             std::env::set_var("DEVCROFT_KEEPER_EXE", devcroft_bin());
         }
 
-        let project_root =
-            std::env::temp_dir().join(format!("devcroft-devbox-e2e-{tag}-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&project_root);
-        std::fs::create_dir_all(&project_root).unwrap();
+        let project_root = short_root(tag);
 
         let packages_json = packages
             .iter()
@@ -166,12 +175,7 @@ fn up_fails_at_provider_layer_when_devbox_json_is_missing() {
     unsafe {
         std::env::set_var("DEVCROFT_KEEPER_EXE", devcroft_bin());
     }
-    let project_root = std::env::temp_dir().join(format!(
-        "devcroft-devbox-e2e-nodevboxjson-{}",
-        std::process::id()
-    ));
-    let _ = std::fs::remove_dir_all(&project_root);
-    std::fs::create_dir_all(&project_root).unwrap();
+    let project_root = short_root("nodevboxjson");
     let name = format!("e2edevboxnoenv{}", std::process::id());
     std::fs::write(
         project_root.join("devcroft.toml"),
@@ -380,6 +384,17 @@ fn a_real_build_succeeds_from_the_devbox_closure_with_the_host_toolchain_denied(
 /// `localhost`).
 #[test]
 fn a_postgres_service_comes_up_ready_and_answers_from_inside() {
+    // Linux only, as add-devbox-services 2.3 records. Measured on macOS
+    // (2026-11-22): `initdb` runs `postgres -V` through `popen`, i.e.
+    // `/bin/sh`, which Seatbelt refuses there since there is no view to
+    // write one into, so `initdb` reports `postgres` missing. Past that
+    // sits the `shmget` EPERM (`docs/nono-sysv-ipc-issue.md`).
+    if cfg!(target_os = "macos") {
+        eprintln!(
+            "skipping: postgres cannot initialise under Seatbelt (`/bin/sh` refused, then SysV `shmget`)"
+        );
+        return;
+    }
     let Some(sandbox) = Sandbox::new("pg", &["postgresql@latest", "process-compose@latest"], true)
     else {
         return;

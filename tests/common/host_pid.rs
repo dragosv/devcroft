@@ -21,8 +21,14 @@ fn ns_of(pid: &str) -> Option<std::path::PathBuf> {
 pub fn host_pid(pidfile: &Path, ns_pid: i32) -> Option<i32> {
     let keeper = std::fs::read_to_string(pidfile).ok()?;
     let keeper = keeper.split_whitespace().next()?;
+    // No `/proc/self/ns/pid` at all (macOS): the host has no PID namespaces,
+    // so every sandbox shares its numbering. Without this, every caller got
+    // `None` on a Mac and read it as "no such process".
+    let Some(host_ns) = ns_of("self") else {
+        return Some(ns_pid);
+    };
     let sandbox_ns = ns_of(keeper)?;
-    if Some(&sandbox_ns) == ns_of("self").as_ref() {
+    if sandbox_ns == host_ns {
         return Some(ns_pid);
     }
     std::fs::read_dir("/proc").ok()?.flatten().find_map(|e| {

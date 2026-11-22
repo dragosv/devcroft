@@ -47,7 +47,10 @@ fn why_inside_a_real_session_answers_as_the_host_does() {
     }
     let sample = Path::new(env!("CARGO_MANIFEST_DIR")).join("samples/nix-flake-sample");
     let name = format!("fidelitylive{}", std::process::id());
-    let project = std::env::temp_dir().join(&name);
+    // Canonical, or the in-session `cd` below is refused on macOS: `$TMPDIR`
+    // is under `/var`, a symlink to `/private/var`, and the sandbox is
+    // granted the canonical spelling only (docs/known-gaps.md).
+    let project = std::env::temp_dir().canonicalize().unwrap().join(&name);
     let _ = std::fs::remove_dir_all(&project);
     std::fs::create_dir_all(&project).unwrap();
     for file in ["flake.nix", "flake.lock", "Cargo.toml", "Cargo.lock"] {

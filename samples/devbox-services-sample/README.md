@@ -144,8 +144,12 @@ host's file instead.
 
 ## On macOS
 
-The service does not come up there yet. postgres needs System V shared
-memory (`shmget`), which Seatbelt refuses. Linux is unaffected, because
+The service does not come up there yet. The first wall is `initdb`
+itself: it runs `postgres -V` through `popen`, which means `/bin/sh`, and
+macOS has no view for devcroft to write one into, so Seatbelt refuses the
+host's and `initdb` reports `postgres` missing (measured 2026-11-22).
+Behind that, postgres needs System V shared memory (`shmget`), which
+Seatbelt refuses. Linux is unaffected, because
 Landlock does not mediate SysV IPC. The upstream ask is
 `docs/nono-sysv-ipc-issue.md`. devenv's postgres hits the same wall on
 macOS, from the same cause.

@@ -19,8 +19,46 @@ mod common;
 
 use common::for_each_row;
 use devcroft::lifecycle::{StatePaths, UpOptions, UpOutcome, down};
-use std::io::Write;
-use std::process::{Command, Stdio};
+use std::io::{Read, Write};
+use std::process::{Child, Command, Output, Stdio};
+use std::time::{Duration, Instant};
+
+/// `wait_with_output`, bounded: a session that never ends is killed after
+/// `limit` and reported as a failure here rather than hanging the suite.
+/// In-process rather than through coreutils' `timeout`, which macOS does not
+/// ship (the suite used to fail there with `NotFound` on spawn).
+fn wait_bounded(mut child: Child, limit: Duration) -> Output {
+    let (mut out, mut err) = (child.stdout.take(), child.stderr.take());
+    let readers = [
+        std::thread::spawn(move || drain(out.as_mut())),
+        std::thread::spawn(move || drain(err.as_mut())),
+    ];
+    let deadline = Instant::now() + limit;
+    let status = loop {
+        if let Some(status) = child.try_wait().unwrap() {
+            break status;
+        }
+        if Instant::now() >= deadline {
+            let _ = child.kill();
+            panic!("session still running after {limit:?}");
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    };
+    let [stdout, stderr] = readers.map(|r| r.join().unwrap());
+    Output {
+        status,
+        stdout,
+        stderr,
+    }
+}
+
+fn drain(pipe: Option<&mut impl Read>) -> Vec<u8> {
+    let mut buf = Vec::new();
+    if let Some(pipe) = pipe {
+        let _ = pipe.read_to_end(&mut buf);
+    }
+    buf
+}
 
 #[test]
 fn shell_runs_commands_ends_with_its_input_and_falls_back_when_shell_is_missing() {
@@ -144,11 +182,11 @@ fn sessions(
 
     // The end of the input ends the session. With a pty for piped input it
     // never did: `devcroft shell </dev/null`, or a script without `exit`,
-    // hung until SIGKILL. Bounded by `timeout` so a regression fails here
-    // rather than hanging the suite.
+    // hung until SIGKILL. Bounded so a regression fails here rather than
+    // hanging the suite.
     let bounded = |stdin: Stdio, input: &[u8]| {
-        let mut child = Command::new("timeout")
-            .args(["-k", "2", "20", devcroft_bin, "shell"])
+        let mut child = Command::new(devcroft_bin)
+            .arg("shell")
             .arg(sandbox_name)
             .env("SHELL", &requested)
             .current_dir(project_root)
@@ -160,7 +198,7 @@ fn sessions(
         if let Some(mut s) = child.stdin.take() {
             s.write_all(input).unwrap();
         }
-        child.wait_with_output().unwrap()
+        wait_bounded(child, Duration::from_secs(20))
     };
     let null = bounded(Stdio::null(), b"");
     assert_eq!(null.status.code(), Some(0), "shell </dev/null: {null:?}");
@@ -170,9 +208,15 @@ fn sessions(
 
     // With a terminal, a pty: `script` gives the client one, and the shell
     // inside sees a tty.
-    if Command::new("script").arg("--version").output().is_ok() {
-        let mut child = Command::new("timeout")
-            .args(["-k", "2", "30", "script", "-qec"])
+    // util-linux's `script` specifically: BSD's (macOS) also spawns, but
+    // exits 1 on `--version` and takes none of `-qec`.
+    if Command::new("script")
+        .arg("--version")
+        .output()
+        .is_ok_and(|o| o.status.success())
+    {
+        let mut child = Command::new("script")
+            .arg("-qec")
             .arg(format!("{devcroft_bin} shell {sandbox_name}"))
             .arg("/dev/null")
             .env("SHELL", &requested)
@@ -188,7 +232,7 @@ fn sessions(
             // A builtin: this environment holds bash and nothing else.
             .write_all(b"[ -t 0 ] && echo stdin-is-a-$((6*7))-tty\nexit\n")
             .unwrap();
-        let out = child.wait_with_output().unwrap();
+        let out = wait_bounded(child, Duration::from_secs(30));
         assert!(
             // Computed, so the echoed input cannot satisfy it.
             String::from_utf8_lossy(&out.stdout).contains("stdin-is-a-42-tty"),
