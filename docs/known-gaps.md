@@ -1052,6 +1052,38 @@ bundle outside the view (now granted, origin `trust-store`), and no `sh` on
 `PATH` and a `SHELL` naming a host path (devcroft's resolved shell now ends
 `PATH` and is `SHELL`).
 
+## mise: one narrow profile, and what it leaves out
+
+`env.provider = "mise"` works for one qualified profile:
+
+- **Tools:** literal HTTPS `http:` tools only.
+- **Lock:** a `mise.lock` carrying a URL and SHA-256 for the platform.
+- **Hosts:** native ARM64 only, macOS or glibc Linux.
+
+Everything outside it is refused by name rather than approximated.
+
+- **Most of mise's backends are refused.** `node = "24"` and the other
+  core backends execute the downloaded binary on the host during
+  installation (measured). GitHub, aqua, conda and the plugin backends are
+  unqualified. A project has to spell each tool as `http:<name>` with its
+  URL.
+- **x64 and musl hosts are refused.** Their locks were measured, but their
+  runtimes were not.
+- **No host userland.** A sandbox has what `[tools]` declares plus a shell.
+  On Linux there is no `grep` or `sed` unless a tool provides one. macOS
+  grants `/bin` for the shell, as swift does.
+- **`mise run` is unavailable inside.** The host mise binary and its task
+  runner are not granted, so `[tasks]` is carried nowhere. Run the command
+  directly. `doctor` says so.
+- **`[env]` is a subset.** It accepts literals, `false`, `_.path`, dotenv
+  `_.file`, `_.source` and `{{config_root}}`. Other templates, plugin
+  directives and non-dotenv files are refused.
+- **No services yet.** `[daemons]` is refused until `add-mise-daemons`.
+- **No fleet.** A fleet agent on a mise project is refused.
+- **Installation needs the host network at `up`**, like every provider's
+  provisioning. A rate-limited or authenticated download fails, and no
+  token is forwarded.
+
 ## No cgroup resource limits
 
 A runaway build in one sandbox can affect the whole host — nothing today

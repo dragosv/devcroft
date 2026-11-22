@@ -336,6 +336,12 @@ provider is host-linked by definition, so it can no longer inherit
 library access from the baseline; it must declare those grants itself,
 rendered with a `provider:<name>` origin. mise still passes the six
 criteria — see `docs/decisions.md` §1, which now carries the constraint.
+`add-mise-provider` was later re-proposed on exactly that basis and is
+implemented for one measured profile: `http:` tools only, native ARM64,
+with the host shell granted as a file and never `/usr/bin`. The core
+backends are refused because `mise install` runs what it downloaded,
+host-side. `docs/decisions.md` §1, "Built: mise", has the evidence, and
+`samples/mise-sample` is the runnable form.
 
 `use-nono-library` depended on `own-policy-baseline` and is now
 implemented: the process tier links nono as a library and self-restricts
@@ -637,7 +643,7 @@ mechanism exists — the decision should be **revisited, not defended**.
 - There is no non-reproducible mode. `host` and `none` providers are out of
   scope by design; the answer for a project without an environment is
   `flox init`, not a degraded fallback. Rejection messages must distinguish
-  "not yet supported" (mise, pixi, hermit) from "out of
+  "not yet supported" (pixi, hermit) from "out of
   scope by design" (`host`, `none`) and from "fails the qualification
   test" (version managers). Nix flakes, devbox and devenv are
   implemented, not pending — devbox is the third closure-tier

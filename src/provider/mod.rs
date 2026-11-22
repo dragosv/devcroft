@@ -13,6 +13,7 @@ pub(crate) mod capture;
 mod devbox;
 mod devenv;
 pub(crate) mod flox;
+pub(crate) mod mise;
 mod nix;
 pub mod swift;
 mod validate;
@@ -20,6 +21,7 @@ mod validate;
 pub use devbox::DevboxProvider;
 pub use devenv::DevenvProvider;
 pub use flox::FloxProvider;
+pub use mise::diagnose as diagnose_mise;
 pub use nix::NixProvider;
 pub use swift::SwiftProvider;
 pub use validate::{normalize_provider_name, validate_provider};
@@ -564,6 +566,7 @@ pub enum ProviderKind {
     Devbox,
     Devenv,
     Swift,
+    Mise,
 }
 
 impl ProviderKind {
@@ -582,6 +585,7 @@ impl ProviderKind {
             "devbox" => Ok(ProviderKind::Devbox),
             "devenv" => Ok(ProviderKind::Devenv),
             "swift" => Ok(ProviderKind::Swift),
+            "mise" => Ok(ProviderKind::Mise),
             other => Err(ProviderError::Unknown {
                 name: other.to_string(),
             }),
@@ -601,6 +605,7 @@ impl ProviderKind {
             ProviderKind::Devbox => "devbox",
             ProviderKind::Devenv => "devenv",
             ProviderKind::Swift => "swift",
+            ProviderKind::Mise => "mise",
         }
     }
 
@@ -614,6 +619,11 @@ impl ProviderKind {
         const DAEMON: Option<&str> =
             Some("the Nix daemon, to realise packages; the store stays read-only to every sandbox");
         match self {
+            ProviderKind::Mise => ResolutionReach {
+                runs: "`mise install --locked`, `mise env --json` on a derived tools-only definition",
+                evaluates: "locked HTTP tool archives only; project env runs in confined provisioning",
+                authority: None,
+            },
             ProviderKind::Flox => ResolutionReach {
                 runs: "`flox activate` on a copy of the environment with `[hook]` removed \
                        (.devcroft/flox-env-*)",
@@ -661,7 +671,7 @@ impl ProviderKind {
             | ProviderKind::Nix
             | ProviderKind::Devbox
             | ProviderKind::Devenv => Tier::Closure,
-            ProviderKind::Swift => Tier::Artifact,
+            ProviderKind::Swift | ProviderKind::Mise => Tier::Artifact,
         }
     }
 }
@@ -674,6 +684,7 @@ impl Provider for ProviderKind {
             ProviderKind::Devbox => DevboxProvider.resolve(project_root),
             ProviderKind::Devenv => DevenvProvider.resolve(project_root),
             ProviderKind::Swift => SwiftProvider.resolve(project_root),
+            ProviderKind::Mise => mise::resolve(project_root, false),
         }
     }
 }
@@ -707,6 +718,16 @@ pub trait ProviderEntry {
     /// Capture the activation env diff and the store paths to grant.
     fn resolve(&self, project_root: &Path) -> Result<Resolution, ProviderError>;
 
+    /// Lifecycle context for providers whose unsupported project services can
+    /// be skipped explicitly. Test providers retain the original seam by default.
+    fn resolve_for_up(
+        &self,
+        project_root: &Path,
+        _skip_hooks: bool,
+    ) -> Result<Resolution, ProviderError> {
+        self.resolve(project_root)
+    }
+
     /// Content fingerprint of the environment definition, for staleness.
     fn fingerprint(&self, project_root: &Path) -> Result<String, ProviderError>;
 
@@ -724,6 +745,17 @@ pub trait ProviderEntry {
 }
 
 impl ProviderEntry for ProviderKind {
+    fn resolve_for_up(
+        &self,
+        project_root: &Path,
+        skip_hooks: bool,
+    ) -> Result<Resolution, ProviderError> {
+        if *self == ProviderKind::Mise {
+            mise::resolve(project_root, skip_hooks)
+        } else {
+            Provider::resolve(self, project_root)
+        }
+    }
     fn resolve(&self, project_root: &Path) -> Result<Resolution, ProviderError> {
         Provider::resolve(self, project_root)
     }
@@ -789,6 +821,7 @@ pub fn manifest_fingerprint(provider: &str, project_root: &Path) -> Result<Strin
         ProviderKind::Devbox => devbox::devbox_fingerprint(project_root),
         ProviderKind::Devenv => devenv::devenv_fingerprint(project_root),
         ProviderKind::Swift => swift::package_fingerprint(project_root),
+        ProviderKind::Mise => mise::fingerprint(project_root),
     }
 }
 

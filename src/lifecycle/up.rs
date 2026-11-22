@@ -209,7 +209,16 @@ pub fn up_with_provider(
     // Held for the whole of `up` — see `acquire_lifecycle_lock`'s doc for
     // the concurrent-`up` race this closes.
     let lock = state::acquire_lifecycle_lock(&paths.lifecycle_lock)?;
+    let artifact_lease = if provider.static_name() == "mise" {
+        Some(crate::provider::mise::lease().map_err(UpError::Provider)?)
+    } else {
+        None
+    };
     let outcome = up_locked(manifest, project_root, opts, provider, &paths);
+    drop(artifact_lease);
+    if provider.static_name() == "mise" {
+        crate::provider::mise::sweep().map_err(UpError::Provider)?;
+    }
     // An `up` that failed before creating the sandbox's directory (a
     // provider resolution failure leaves it uncreated on purpose) has no
     // state for the lock to guard, and would otherwise leave
@@ -228,6 +237,17 @@ fn up_locked(
     provider: &dyn crate::provider::ProviderEntry,
     paths: &StatePaths,
 ) -> Result<UpOutcome, UpError> {
+    let initial_grants = policy::compile(manifest)
+        .to_capability_plan()
+        .resolved_grants(project_root)
+        .map_err(|e| UpError::Config(e.to_string()))?;
+    if let Some((grant, store)) = policy::artifact_store_write_overlap(&initial_grants) {
+        return Err(UpError::Config(format!(
+            "filesystem write grant {} overlaps shared provider store {}; remove the write grant",
+            grant.display(),
+            store.display()
+        )));
+    }
     // **A state directory belongs to the project root it was created for.**
     //
     // `meta.json` has always recorded `project_root`; nothing ever compared
@@ -332,7 +352,9 @@ fn up_locked(
     // confined to. This step is identical for both tiers — the two-phase
     // execution model (CLAUDE.md) is backend-generic, not just
     // process-tier.
-    let mut resolution = provider.resolve(project_root).map_err(UpError::Provider)?;
+    let mut resolution = provider
+        .resolve_for_up(project_root, opts.skip_hooks)
+        .map_err(UpError::Provider)?;
 
     // `network.services` names services the environment must declare, and
     // is checked here, before any state exists, so a typo fails as a typo
@@ -500,6 +522,7 @@ fn up_locked(
     state::write_meta(
         &paths.meta,
         &state::Meta {
+            mise_object_id: crate::provider::mise::object_id(&provider_grants),
             project_root: project_root.to_string_lossy().into_owned(),
             env_fingerprint,
             read_only_grants: provider_grants.clone(),
@@ -1944,6 +1967,11 @@ fn spawn_keeper(
         project_root: project_root_owned,
         identity: identity.cloned(),
     };
+    #[cfg(not(target_os = "linux"))]
+    if own_procfs {
+        return Err(io::Error::other("a private procfs requires Linux"));
+    }
+    #[cfg(target_os = "linux")]
     if own_procfs {
         // The two listeners move to the helper's inherited range, so the
         // keeper is told where they landed rather than where they were.
@@ -2104,24 +2132,32 @@ fn run_provisioning(
         identity: identity.cloned(),
     };
     let status = if own_procfs {
-        // It lands first in the helper's inherited range.
-        cmd.env(
-            ACTIVATION_FD_ENV,
-            crate::fleet::init::FIRST_INHERITED_FD.to_string(),
-        );
-        log_for(paths).and_then(|log| {
-            spawn_through_init(
-                exe,
-                &cmd,
-                vec!["__provision".to_owned()],
-                &plan,
-                &confinement,
-                relay.as_ref().map(|(port, _)| *port),
-                log,
-                vec![exports_w],
-            )
-            .and_then(crate::fleet::init::Agent::wait)
-        })
+        #[cfg(target_os = "linux")]
+        {
+            // It lands first in the helper's inherited range.
+            cmd.env(
+                ACTIVATION_FD_ENV,
+                crate::fleet::init::FIRST_INHERITED_FD.to_string(),
+            );
+            log_for(paths).and_then(|log| {
+                spawn_through_init(
+                    exe,
+                    &cmd,
+                    vec!["__provision".to_owned()],
+                    &plan,
+                    &confinement,
+                    relay.as_ref().map(|(port, _)| *port),
+                    log,
+                    vec![exports_w],
+                )
+                .and_then(crate::fleet::init::Agent::wait)
+            })
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            drop(exports_w);
+            Err(io::Error::other("a private procfs requires Linux"))
+        }
     } else {
         cmd.env(ACTIVATION_FD_ENV, exports_w.as_raw_fd().to_string());
         pass_fds(&mut cmd, &[exports_w.as_raw_fd()]);
@@ -2195,6 +2231,7 @@ fn run_provisioning(
 /// the keeper cannot simply unshare the namespace itself; D2 why this is
 /// fleet's helper rather than a second one.
 #[allow(clippy::too_many_arguments)]
+#[cfg(target_os = "linux")]
 fn spawn_through_init(
     exe: &Path,
     cmd: &Command,
@@ -2248,6 +2285,7 @@ fn spawn_through_init(
 }
 
 /// The log `up`'s sandboxed processes write to, appended.
+#[cfg(target_os = "linux")]
 fn log_for(paths: &StatePaths) -> io::Result<std::fs::File> {
     std::fs::OpenOptions::new()
         .create(true)
@@ -2255,6 +2293,7 @@ fn log_for(paths: &StatePaths) -> io::Result<std::fs::File> {
         .open(&paths.log)
 }
 
+#[cfg(target_os = "linux")]
 fn dup_fd(fd: RawFd) -> io::Result<std::os::fd::OwnedFd> {
     // SAFETY: borrowing an fd this process holds open for the call.
     unsafe { std::os::fd::BorrowedFd::borrow_raw(fd) }.try_clone_to_owned()

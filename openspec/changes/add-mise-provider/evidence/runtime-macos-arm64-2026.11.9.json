@@ -1,0 +1,70 @@
+{
+  "mise_version": "2026.11.9 macos-arm64 (2026-11-16)",
+  "target": "macos-arm64",
+  "native_target": "macos-arm64",
+  "mise_binary_sha256": "f3bb0e8cbe0217a0b52444ecc0042364563ddd1de0490313bb7e702ecab41a14",
+  "lock_unchanged": true,
+  "manifest_name": ".mise.toml",
+  "upstream_sha256": {
+    "node": "194e2f3dd3ec8c2adcaa713ed40f44c5ca38467880e160974ceac1659be60121",
+    "go": "fd9cfb5dd6c75a347cfc641a253f0db1cebaca16b0dd37965351c6184ba595e4"
+  },
+  "lock": {
+    "lockfile_version": 4,
+    "tools": {
+      "http:go": [
+        {
+          "version": "1.24.0",
+          "backend": "http:go",
+          "specifiers": [
+            "1.24.0"
+          ],
+          "platforms.macos-arm64": {
+            "checksum": "sha256:fd9cfb5dd6c75a347cfc641a253f0db1cebaca16b0dd37965351c6184ba595e4",
+            "url": "https://dl.google.com/go/go1.24.0.darwin-arm64.tar.gz"
+          }
+        }
+      ],
+      "http:node": [
+        {
+          "version": "24.0.0",
+          "backend": "http:node",
+          "specifiers": [
+            "24.0.0"
+          ],
+          "platforms.macos-arm64": {
+            "checksum": "sha256:194e2f3dd3ec8c2adcaa713ed40f44c5ca38467880e160974ceac1659be60121",
+            "url": "https://nodejs.org/dist/v24.0.0/node-v24.0.0-darwin-arm64.tar.gz"
+          }
+        }
+      ]
+    }
+  },
+  "installation_stderr": "mise by @jdx \u2013 installing 2 tools\nmise \u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2591\u2591\u2591 0/2 \u00b7 3.0s\n  http:node@24.0.0  extracting  3.0s\n  http:go@1.24.0    extracting  3.0s\nmise \u2713 http:node@24.0.0  3.3s  node-v24.0.0-darwin-arm64.tar.gz\nmise \u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2591\u2591 1/2 \u00b7 6.0s\n  http:go@1.24.0    extracting  6.0s\nmise \u2713 http:go@1.24.0    7.0s  go1.24.0.darwin-arm64.tar.gz\nmise \u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588 2/2 \u00b7 installed 2 tools in 7.1s\n",
+  "policy_probe": {
+    "exit_code": 0,
+    "stdout": "node-runtime-ok\nmise-build-ok\npolicy-probe-ok\n",
+    "stderr": "<qualification-root>/project/probe.sh: line 3: /usr/bin/cc: Operation not permitted\n<qualification-root>/project/probe.sh: line 5: /usr/bin/gcc: Operation not permitted\n<qualification-root>/project/probe.sh: line 7: /usr/bin/ld: Operation not permitted\n<qualification-root>/project/probe.sh: line 9: /usr/bin/git: Operation not permitted\n<qualification-root>/project/probe.sh: line 13: <qualification-root>/environment/data/installs/http-node/24.0.0/bin/node: Operation not permitted\n",
+    "request": {
+      "grants": [
+        "<qualification-root>/environment/data/installs",
+        "/bin",
+        "/var/select"
+      ],
+      "env": {
+        "PATH": "<qualification-root>/environment/data/installs/http-node/24.0.0/bin:<qualification-root>/environment/data/installs/http-go/1.24.0/bin",
+        "HOME": "<qualification-root>/project/home",
+        "GOCACHE": "<qualification-root>/project/.cache/go",
+        "GOTMPDIR": "<qualification-root>/project/.tmp",
+        "GOENV": "off",
+        "GOTOOLCHAIN": "local",
+        "CGO_ENABLED": "0",
+        "GOROOT": "<qualification-root>/environment/data/installs/http-go/1.24.0"
+      },
+      "argv": [
+        "/bin/sh",
+        "<qualification-root>/project/probe.sh"
+      ]
+    }
+  }
+}

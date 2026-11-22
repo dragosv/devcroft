@@ -29,14 +29,10 @@ const VERSION_MANAGERS: &[&str] = &[
 /// test in `docs/decisions.md` §1, and a reader auditing which projects
 /// took that trade should be able to grep for a single string.
 const SUPPORTED: &[&str] = &[
-    "flox", "nix", "flake", "flakes", "devbox", "devenv", "swift",
+    "flox", "nix", "flake", "flakes", "devbox", "devenv", "swift", "mise",
 ];
 
 const NOT_YET_SUPPORTED: &[(&str, &str)] = &[
-    (
-        "mise",
-        "mise is a qualified provider (artifact tier) but not yet scheduled",
-    ),
     (
         "pixi",
         "pixi is a qualified provider (artifact tier) but not yet scheduled",
@@ -209,8 +205,8 @@ mod tests {
     /// unchanged — meeting them simply stopped implying host access. The
     /// message must not promise a schedule devcroft no longer has.
     #[test]
-    fn mise_reports_qualified_but_unscheduled_artifact_tier() {
-        match validate_provider("mise") {
+    fn hermit_reports_qualified_but_unscheduled_artifact_tier() {
+        match validate_provider("hermit") {
             Err(ProviderError::NotYetSupported { reason, .. }) => {
                 assert!(reason.contains("qualified"));
                 assert!(reason.contains("artifact tier"));

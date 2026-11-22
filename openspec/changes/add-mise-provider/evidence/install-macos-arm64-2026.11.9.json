@@ -1,0 +1,92 @@
+{
+  "mise_version": "2026.11.9 macos-arm64 (2026-11-16)",
+  "mise_binary_sha256": "f3bb0e8cbe0217a0b52444ecc0042364563ddd1de0490313bb7e702ecab41a14",
+  "method": "local synthetic archives with shell sentinel executables",
+  "scope": "native install only; not a runtime or cross-platform qualification",
+  "results": [
+    {
+      "tool": "node",
+      "backend": "core:node",
+      "target": "macos-arm64",
+      "exit_code": 0,
+      "executed": [
+        "<probe>/node/data/installs/node/24.0.0/bin/node -v",
+        "<probe>/node/data/installs/node/24.0.0/bin/npm -v"
+      ],
+      "lock_unchanged": true,
+      "config_unchanged": true,
+      "stdout": "",
+      "stderr": "mise by @jdx \u2013 installing 1 tool\nmise node@24.0.0 sentinel 1.0.0\nmise node@24.0.0 sentinel 1.0.0\nmise \u2713 node@24.0.0  626ms  node.tar.gz\nmise \u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588 1/1 \u00b7 installed 1 tool in 628ms\n"
+    },
+    {
+      "tool": "go",
+      "backend": "core:go",
+      "target": "macos-arm64",
+      "exit_code": 0,
+      "executed": [
+        "<probe>/go/data/installs/go/1.24.0/bin/go version"
+      ],
+      "lock_unchanged": true,
+      "config_unchanged": true,
+      "stdout": "",
+      "stderr": "mise by @jdx \u2013 installing 1 tool\nmise go@1.24.0 sentinel 1.0.0\nmise \u2713 go@1.24.0  206ms  go1.24.0.darwin-arm64.tar.gz\nmise \u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588 1/1 \u00b7 installed 1 tool in 207ms\n"
+    },
+    {
+      "tool": "python",
+      "backend": "core:python",
+      "target": "macos-arm64",
+      "exit_code": 0,
+      "executed": [
+        "<probe>/python/data/installs/python/3.13.0/bin/python --version"
+      ],
+      "lock_unchanged": true,
+      "config_unchanged": true,
+      "stdout": "",
+      "stderr": "mise by @jdx \u2013 installing 1 tool\nmise python@3.13.0 sentinel 1.0.0\nmise \u2713 python@3.13.0  220ms  python.tar.gz\nmise \u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588 1/1 \u00b7 installed 1 tool in 222ms\n"
+    },
+    {
+      "tool": "http-probe",
+      "backend": "http:sentinel",
+      "target": "macos-arm64",
+      "exit_code": 0,
+      "executed": [],
+      "lock_unchanged": true,
+      "config_unchanged": true,
+      "stdout": "",
+      "stderr": "mise by @jdx \u2013 installing 1 tool\nmise \u2713 http:sentinel@1.0.0  35ms  http-probe.tar.gz\nmise \u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588 1/1 \u00b7 installed 1 tool in 37ms\n"
+    },
+    {
+      "tool": "github-probe",
+      "backend": "github:sentinel/sentinel",
+      "target": "macos-arm64",
+      "exit_code": 0,
+      "executed": [],
+      "lock_unchanged": true,
+      "config_unchanged": true,
+      "stdout": "",
+      "stderr": "mise by @jdx \u2013 installing 1 tool\nmise \u2713 github:sentinel/sentinel@1.0.0  32ms  github-probe.tar.gz\nmise \u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588 1/1 \u00b7 installed 1 tool in 34ms\n"
+    },
+    {
+      "tool": "aqua-probe",
+      "backend": "aqua:junegunn/fzf",
+      "target": "macos-arm64",
+      "exit_code": 0,
+      "executed": [],
+      "lock_unchanged": true,
+      "config_unchanged": true,
+      "stdout": "",
+      "stderr": "mise by @jdx \u2013 installing 1 tool\nmise \u2713 aqua:junegunn/fzf@0.60.0  33ms  aqua-probe.tar.gz\nmise \u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588 1/1 \u00b7 installed 1 tool in 34ms\n"
+    },
+    {
+      "tool": "conda-probe",
+      "backend": "conda:sentinel",
+      "target": "macos-arm64",
+      "exit_code": 0,
+      "executed": [],
+      "lock_unchanged": true,
+      "config_unchanged": true,
+      "stdout": "",
+      "stderr": "mise by @jdx \u2013 installing 1 tool\nmise \u2713 conda:sentinel@1.0.0  35ms\nmise \u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588 1/1 \u00b7 installed 1 tool in 35ms\n"
+    }
+  ]
+}

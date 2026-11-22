@@ -87,6 +87,11 @@ zeroize = "1"
 serde_norway = "0.9.42"
 tokio = { version = "1.53.1", features = ["rt-multi-thread", "net", "sync", "time", "macros", "io-util", "process"] }
 toml = "1.1.4"
+# Preserve source spans when ordering mise's environment directives. Both
+# packages already exist in the lockfile; object becomes a runtime dependency.
+toml_edit = { version = "0.25.13", default-features = false, features = ["parse", "display"] }
+sha2 = "0.11.0"
+object = { version = "0.37.3", default-features = false, features = ["read", "std", "elf", "macho"] }
 
 [dev-dependencies]
 brush-shell = "0.4.0"

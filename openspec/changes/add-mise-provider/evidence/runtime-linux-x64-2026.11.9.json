@@ -1,0 +1,42 @@
+{
+  "mise_version": "2026.11.9 macos-arm64 (2026-11-16)",
+  "target": "linux-x64",
+  "native_target": "macos-arm64",
+  "method": "cross-target lock generation only; no installation or execution",
+  "manifest_name": ".mise.toml",
+  "lock": {
+    "lockfile_version": 4,
+    "tools": {
+      "http:go": [
+        {
+          "version": "1.24.0",
+          "backend": "http:go",
+          "specifiers": [
+            "1.24.0"
+          ],
+          "platforms.linux-x64": {
+            "checksum": "sha256:dea9ca38a0b852a74e81c26134671af7c0fbe65d81b0dc1c5bfe22cf7d4c8858",
+            "url": "https://dl.google.com/go/go1.24.0.linux-amd64.tar.gz"
+          }
+        }
+      ],
+      "http:node": [
+        {
+          "version": "24.0.0",
+          "backend": "http:node",
+          "specifiers": [
+            "24.0.0"
+          ],
+          "platforms.linux-x64": {
+            "checksum": "sha256:b760ed6de40c35a25eb011b3cf5943d35d7a76f0c8c331d5a801e10925826cb3",
+            "url": "https://nodejs.org/dist/v24.0.0/node-v24.0.0-linux-x64.tar.gz"
+          }
+        }
+      ]
+    }
+  },
+  "upstream_sha256": {
+    "node": "b760ed6de40c35a25eb011b3cf5943d35d7a76f0c8c331d5a801e10925826cb3",
+    "go": "dea9ca38a0b852a74e81c26134671af7c0fbe65d81b0dc1c5bfe22cf7d4c8858"
+  }
+}

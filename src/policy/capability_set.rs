@@ -117,6 +117,23 @@ pub fn package_manager_authority(grants: &[ResolvedGrant]) -> Option<PackageMana
     })
 }
 
+/// A writable alias of a shared provider store cannot be canceled by adding a
+/// read grant. Use the same resolved paths the enforcement plan consumes.
+pub fn artifact_store_write_overlap(grants: &[ResolvedGrant]) -> Option<(PathBuf, PathBuf)> {
+    let store = crate::provider::mise::store_root().ok()?;
+    write_overlap(grants, store)
+}
+
+fn write_overlap(grants: &[ResolvedGrant], store: PathBuf) -> Option<(PathBuf, PathBuf)> {
+    grants
+        .iter()
+        .find(|g| {
+            g.mode == AccessMode::ReadWrite
+                && (g.path.starts_with(&store) || store.starts_with(&g.path))
+        })
+        .map(|g| (g.path.clone(), store))
+}
+
 impl CompiledPolicy {
     /// Drop this compiled policy's origin annotations, keeping only what
     /// the keeper needs to actually restrict itself.
@@ -627,6 +644,41 @@ fn resolve(value: &str, project_root: &Path) -> (PathBuf, bool) {
 
 #[cfg(test)]
 mod tests {
+    /// `add-mise-provider` M4: a write grant above or inside the shared
+    /// artifact store is refused; a read grant and a disjoint write are not.
+    #[test]
+    fn a_write_grant_overlapping_the_artifact_store_is_found_in_both_directions() {
+        use super::{AccessMode, ResolvedGrant, write_overlap};
+        use std::path::PathBuf;
+        let store = PathBuf::from("/home/u/.local/share/devcroft-artifacts/mise");
+        let grant = |p: &str, mode| ResolvedGrant {
+            path: PathBuf::from(p),
+            mode,
+        };
+        for path in [
+            "/home/u",
+            "/home/u/.local/share/devcroft-artifacts",
+            "/home/u/.local/share/devcroft-artifacts/mise/abc/data",
+        ] {
+            let found = write_overlap(&[grant(path, AccessMode::ReadWrite)], store.clone());
+            assert_eq!(found, Some((PathBuf::from(path), store.clone())), "{path}");
+        }
+        assert_eq!(
+            write_overlap(
+                &[
+                    grant("/home/u", AccessMode::Read),
+                    grant("/home/u/project", AccessMode::ReadWrite),
+                    grant(
+                        "/home/u/.local/share/devcroft-artifacts-other",
+                        AccessMode::ReadWrite
+                    ),
+                ],
+                store,
+            ),
+            None
+        );
+    }
+
     /// `allow-loopback-ephemeral-ports` spec: "An existing manifest is
     /// unaffected". The serialized plan, which is what `profile.json`
     /// carries, has no trace of the key unless it is set.

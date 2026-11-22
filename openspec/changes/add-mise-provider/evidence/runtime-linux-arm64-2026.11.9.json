@@ -1,0 +1,70 @@
+{
+  "mise_version": "2026.11.9 linux-arm64 (2026-11-16)",
+  "target": "linux-arm64",
+  "native_target": "linux-arm64",
+  "mise_binary_sha256": "b8dd05af6447cee933928664982a8cb2fa646e6951cfc8539db23ce2554a7b04",
+  "lock_unchanged": true,
+  "manifest_name": ".mise.toml",
+  "upstream_sha256": {
+    "node": "4104136ddd3d2f167d799f1b21bac72ccf500d80c24be849195f831df6371b83",
+    "go": "c3fa6d16ffa261091a5617145553c71d21435ce547e44cc6dfb7470865527cc7"
+  },
+  "lock": {
+    "lockfile_version": 4,
+    "tools": {
+      "http:go": [
+        {
+          "version": "1.24.0",
+          "backend": "http:go",
+          "specifiers": [
+            "1.24.0"
+          ],
+          "platforms.linux-arm64": {
+            "checksum": "sha256:c3fa6d16ffa261091a5617145553c71d21435ce547e44cc6dfb7470865527cc7",
+            "url": "https://dl.google.com/go/go1.24.0.linux-arm64.tar.gz"
+          }
+        }
+      ],
+      "http:node": [
+        {
+          "version": "24.0.0",
+          "backend": "http:node",
+          "specifiers": [
+            "24.0.0"
+          ],
+          "platforms.linux-arm64": {
+            "checksum": "sha256:4104136ddd3d2f167d799f1b21bac72ccf500d80c24be849195f831df6371b83",
+            "url": "https://nodejs.org/dist/v24.0.0/node-v24.0.0-linux-arm64.tar.gz"
+          }
+        }
+      ]
+    }
+  },
+  "installation_stderr": "mise by @jdx \u2013 installing 2 tools\nmise \u2713 http:node@24.0.0  1.5s  node-v24.0.0-linux-arm64.tar.gz\nmise \u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2591\u2591 1/2 \u00b7 3.0s\n  http:go@1.24.0    extracting  3.0s\nmise \u2713 http:go@1.24.0    3.9s  go1.24.0.linux-arm64.tar.gz\nmise \u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588 2/2 \u00b7 installed 2 tools in 3.9s\n",
+  "policy_probe": {
+    "exit_code": 0,
+    "stdout": "node-runtime-ok\nmise-build-ok\npolicy-probe-ok\n",
+    "stderr": "<qualification-root>/project/probe.sh: 3: /usr/bin/cc: Permission denied\n<qualification-root>/project/probe.sh: 5: /usr/bin/gcc: Permission denied\n<qualification-root>/project/probe.sh: 7: /usr/bin/ld: Permission denied\n<qualification-root>/project/probe.sh: 9: /usr/bin/git: Permission denied\n<qualification-root>/project/probe.sh: 13: cannot create <qualification-root>/environment/data/installs/http-node/24.0.0/bin/node: Permission denied\n",
+    "request": {
+      "grants": [
+        "<qualification-root>/environment/data/installs",
+        "/usr/bin/dash",
+        "/etc/ssl/openssl.cnf"
+      ],
+      "env": {
+        "PATH": "<qualification-root>/environment/data/installs/http-node/24.0.0/bin:<qualification-root>/environment/data/installs/http-go/1.24.0/bin",
+        "HOME": "<qualification-root>/project/home",
+        "GOCACHE": "<qualification-root>/project/.cache/go",
+        "GOTMPDIR": "<qualification-root>/project/.tmp",
+        "GOENV": "off",
+        "GOTOOLCHAIN": "local",
+        "CGO_ENABLED": "0",
+        "GOROOT": "<qualification-root>/environment/data/installs/http-go/1.24.0"
+      },
+      "argv": [
+        "/usr/bin/dash",
+        "<qualification-root>/project/probe.sh"
+      ]
+    }
+  }
+}

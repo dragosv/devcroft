@@ -285,6 +285,7 @@ impl Identity {
         paths.into_iter().map(std::path::PathBuf::from).collect()
     }
 
+    #[cfg(target_os = "linux")]
     fn passwd(&self) -> String {
         format!(
             "{}:x:{}:{}::{}:{}\nnobody:x:65534:65534::/:{}\n",
@@ -299,6 +300,7 @@ impl Identity {
 
     /// Loopback only: an `up` sandbox with a network namespace has its own,
     /// and one without shares the host's, where these are the same names.
+    #[cfg(target_os = "linux")]
     fn hosts(&self) -> String {
         let names = if self.hostname.is_empty() || self.hostname == "localhost" {
             "localhost".to_owned()
@@ -308,6 +310,7 @@ impl Identity {
         format!("127.0.0.1 {names}\n::1 {names}\n")
     }
 
+    #[cfg(target_os = "linux")]
     fn group(&self) -> String {
         format!("{}:x:{}:\nnogroup:x:65534:\n", self.user, self.gid)
     }

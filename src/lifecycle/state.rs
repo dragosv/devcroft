@@ -309,6 +309,27 @@ pub fn recorded_allocations() -> io::Result<Vec<Allocation>> {
     Ok(out)
 }
 
+pub(crate) fn recorded_mise_objects() -> io::Result<std::collections::BTreeSet<String>> {
+    let mut out = std::collections::BTreeSet::new();
+    let root = data_dir()?;
+    if !root.exists() {
+        return Ok(out);
+    }
+    for entry in std::fs::read_dir(root)? {
+        let entry = entry?;
+        if !entry.file_type()?.is_dir() {
+            continue;
+        }
+        let path = entry.path().join("meta.json");
+        if let Some(meta) = read_meta(&path)?
+            && let Some(id) = meta.mise_object_id
+        {
+            out.insert(id);
+        }
+    }
+    Ok(out)
+}
+
 pub(super) fn data_dir() -> io::Result<PathBuf> {
     let home = std::env::var("HOME")
         .map_err(|_| io::Error::new(io::ErrorKind::NotFound, "HOME is not set"))?;
@@ -329,6 +350,9 @@ pub(super) fn data_dir() -> io::Result<PathBuf> {
 /// no grants until the next `up` records them.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Meta {
+    /// Retains an immutable mise object while this sandbox is restartable.
+    #[serde(default)]
+    pub mise_object_id: Option<String>,
     pub project_root: String,
     pub env_fingerprint: String,
     #[serde(default)]
@@ -962,6 +986,7 @@ mod tests {
         assert_eq!(read_meta(&paths.meta).unwrap(), None);
 
         let meta = Meta {
+            mise_object_id: None,
             project_root: "/proj".to_string(),
             env_fingerprint: "abc123".to_string(),
             read_only_grants: vec!["/nix/store".to_string()],
@@ -994,6 +1019,7 @@ mod tests {
         // silently.
         let paths = tempdir("meta-atomic");
         let meta = Meta {
+            mise_object_id: None,
             project_root: "/proj".to_string(),
             env_fingerprint: "abc123".to_string(),
             read_only_grants: Vec::new(),

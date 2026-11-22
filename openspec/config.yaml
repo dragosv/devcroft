@@ -91,6 +91,18 @@ context: |
     despite failing the test". The paragraph below is the reasoning that
     held before it, and is kept because it still governs every *other*
     artifact-tier candidate:
+  - **A second artifact-tier provider exists: `mise` (add-mise-provider),
+    for one qualified profile.** Literal HTTPS `http:` tools only, with a
+    `mise.lock` carrying a URL and SHA-256 for the platform, on native
+    ARM64 (macOS, glibc Linux). Core backends are refused, because
+    installing them runs the downloaded binary host-side (measured). mise
+    sees a derived tools-only definition under an allowlisted environment.
+    devcroft interprets `[env]` and runs it confined. Objects live under
+    `~/.local/share/devcroft-artifacts/mise/`, are shared by recipe,
+    referenced by `Meta` and reclaimed by `rm`. The host shell is granted
+    as a file on Linux, and `/usr/bin` is never granted. `[daemons]` is
+    `add-mise-daemons`. It re-qualified by measurement under the owner's
+    request, which is the bar below working rather than being waived.
   - No other artifact-tier provider is scheduled, and that is a recorded
     decision rather than a scheduling accident: devcroft's product
     guarantee is the closure tier, the `Provider` seam stays generic,
@@ -109,8 +121,6 @@ context: |
     tightened by `fix-provisioning-hooks` and this list predated it;
     devenv was the provider that had to re-qualify against the corrected
     wording, and did:
-    - mise (artifact tier; mandatory `mise.lock`, devcroft-owned
-      append-only data dir; must declare host library grants)
     - pixi (artifact tier; content-addressed package cache shareable
       read-only, env lives under the project root; conda-heavy dependency
       bundling makes it the closest artifact provider to closure behavior)

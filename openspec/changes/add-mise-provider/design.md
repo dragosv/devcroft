@@ -1,7 +1,19 @@
 ## Context
 
-Status: planning, revised 2026-11-17. No mise environment has been built
-through devcroft. The owner asked for OpenSpec, not code.
+Status: implemented 2026-11-22 for the qualified HTTP profile (planning
+revised 2026-11-17). `tests/mise_provider_e2e.rs` passed on macOS ARM64
+against the pinned mise 2026.11.9 (executable SHA-256 as recorded below):
+
+- cold locked restore with the inputs byte-identical;
+- an interrupted object removed and reinstalled;
+- two sandboxes sharing one object, the first `rm` keeping it and the
+  last removing it with its lock file;
+- the install read-only, and host `cc`/`gcc`/`ld`/`git` refused;
+- staleness on a newly consumed dotenv;
+- an overlapping write grant refused at `config`.
+
+The Linux ARM64 runtime rests on the group 0 evidence and was not re-run
+for this commit.
 
 `ProviderKind`, the `ProviderEntry` trait, `Resolution`, `Tier::Artifact` and
 confined `__provision` already exist. mise is currently refused through
@@ -52,7 +64,141 @@ project-level config locations mise loads; the variable that stops its
 parent-directory walk; the per-language default-package files it reads from
 `HOME`; which core backends execute the tool they just installed.
 
+### Qualification run, 2026-11-17 — partial group 0
+
+**Measured on macos-arm64, candidate mise 2026.11.9.** This pins a candidate
+for further qualification, not a minimum supported release. The user's installed
+2026.7.5 binary was not replaced. The candidate and its source were downloaded
+to `/private/tmp` from the official `jdx/mise` release/tag URLs.
+
+Recorded SHA-256 identities (not a signature/provenance attestation):
+
+- Executable: `f3bb0e8cbe0217a0b52444ecc0042364563ddd1de0490313bb7e702ecab41a14`.
+- Release archive `mise-v2026.11.9-macos-arm64.tar.gz`:
+  `e4509f159e0492e89065edcf52f2918e2751e3574620586058468ba0563aed59`.
+- Source archive for tag `v2026.11.9`:
+  `0dd2fd42fddc636fae0ce8cb1344e0beaee1cbbd8c568cf35d6e0654335b4b7c`.
+
+Reproduction: `python3 scripts/qualify-mise-install.py /absolute/path/to/mise
+--output result.json` from the repository root. The script constructs its
+subprocess environment from scratch, uses isolated temporary HOME/data/config/
+state/cache/system directories, and serves synthetic executable archives over
+loopback. No real language runtime is installed by the final probe. All seven
+installations exit 0. See
+[the recorded result](evidence/install-macos-arm64-2026.11.9.json).
+
+- `core:node` executes `node -v` and `npm -v` from the downloaded archive.
+- `core:go` executes `go version` from the downloaded archive.
+- `core:python` executes `python --version` from the downloaded archive.
+- `http:sentinel`, `github:sentinel/sentinel`, `aqua:junegunn/fzf` and
+  `conda:sentinel` install without executing marker-writing payloads in these
+  fixtures. The Conda package also contains a post-link sentinel; it is not run.
+  These fixtures do not qualify every backend option or registry definition.
+- The manifest and lock remain byte-identical in all seven cases. These are
+  supplied synthetic locks, not proof of normal lock generation on four targets.
+
+Node's GPG check/npm shim and Python's attestation verification are disabled
+**only in the synthetic fixture**, as the archive is not an authentic upstream
+release. This is not a proposed production verification policy. Go uses a local
+download mirror matching the supplied lock; a preliminary probe showed that
+core:go constructs its download URL from the mirror even in locked mode, rather
+than treating an arbitrary supplied URL as its download location. That preliminary
+attempt failed checksum validation and is not counted as a successful sentinel
+probe. Python's fixture includes the minimum sysconfig metadata required to
+reach the version check; a failed extraction is never counted as safe installation.
+
+**Source-derived at the same tag:** `src/plugins/core/node.rs` calls `test_node`
+and `test_npm` unconditionally after extraction; `src/plugins/core/go.rs` calls
+`verify` → `test_go`; `src/plugins/core/python.rs` calls `test_python`. No guard
+disabling these version checks was found in those install functions. Consequently
+the three core backends cannot currently enter the admitted set under M2.
+This does not rule out installing those runtimes through another backend.
+
+Directory controls confirmed in `crates/mise-util/src/env.rs`:
+`MISE_DATA_DIR`, `MISE_INSTALLS_DIR` (defaults to data/installs),
+`MISE_CONFIG_DIR`, `MISE_STATE_DIR`, `MISE_CACHE_DIR`, `MISE_TMP_DIR`,
+`MISE_SYSTEM_CONFIG_DIR` (legacy fallback `MISE_SYSTEM_DIR`),
+`MISE_SYSTEM_DATA_DIR`, `MISE_SYSTEM_INSTALLS_DIR`;
+`MISE_GLOBAL_CONFIG_FILE` (legacy fallback `MISE_CONFIG_FILE`) and
+`MISE_SYSTEM_CONFIG_FILE`. `MISE_TRUSTED_CONFIG_PATHS` is declared in
+`settings.toml`; `MISE_CEILING_PATHS` stops parent discovery before its named
+directory. M2 must set overrides explicitly or ensure their inherited values
+are absent. The probe uses the parent of the derived directory as the ceiling.
+Per-language default-package files and all possible HOME reads have not yet
+been exhaustively measured; task 0.1 remains open.
+
+**Execution capabilities checked:** Docker's configured socket
+`~/.orbstack/run/docker.sock` is absent; `docker info` cannot reach a daemon.
+`limactl list --json` reports no instances. No Linux execution results are
+claimed. A usable Linux environment, real-runtime restores, lock-generation coverage
+and the narrow-policy real builds remain required by 0.1–0.5. Group 1 is not
+started. Only the source-derived discovery inventory (0.3) is complete.
+
 ### Reading `new/`
+
+### Qualification completed for the initial HTTP profile, 2026-11-20
+
+The first admitted backend is **HTTP**, with binary archives, literal URLs,
+standard extraction and no executable installation options. Core Node/Go/Python
+are refused because of the measured host execution above. GitHub/aqua/conda have
+successful synthetic controls, but are not admitted without real per-option
+lock/runtime qualification. Task 0.2 is scoped to the admitted set accordingly;
+this does not claim their synthetic input locks were generated by `mise lock`.
+
+- [Linux sentinel results](evidence/install-linux-arm64-2026.11.9.json) reproduce
+  all seven macOS cases. [Linux file-access tracing](evidence/install-linux-arm64-traced-2026.11.9.json)
+  records unique paths beneath the isolated HOME during each install, including
+  `.netrc`, skill discovery, mise config discovery, and the core language default
+  package files. These are observed accesses under the specified environment,
+  not an exhaustive prediction for unsupported settings or every macOS syscall.
+- [macOS ARM64 runtime](evidence/runtime-macos-arm64-2026.11.9.json) and
+  [Linux ARM64 runtime](evidence/runtime-linux-arm64-2026.11.9.json) each restore
+  upstream Node 24.0.0 and Go 1.24.0 through HTTP, checking the generated lock
+  digests against Node's published SHASUMS and Go's download metadata.
+  `.mise.toml` pairs with `mise.lock`; the generated format is version 4.
+  `install --locked` and environment capture leave input bytes unchanged.
+- [Linux x64](evidence/runtime-linux-x64-2026.11.9.json) and
+  [macOS x64](evidence/runtime-macos-x64-2026.11.9.json) exercise lock generation
+  and upstream checksum comparison only. They are not qualified runtime rows.
+  HTTP entries carry version/backend/specifiers and per-platform URL/checksum;
+  no `.mise/locks` sidecar is created by these profiles.
+- `examples/mise_qualification.rs` invokes the actual policy compiler and
+  `nono::Sandbox::apply_auto`. Both native runs print `node-runtime-ok`,
+  `mise-build-ok`, `policy-probe-ok`; all four absolute host commands
+  (`cc`, `gcc`, `ld`, `git`) fail with a kernel denial and are absent from the
+  filtered PATH. A write to the installed Node binary is denied.
+- Linux grants the canonical shell **file** `/usr/bin/dash`; macOS grants `/bin`
+  and `/var/select`. Linux Node additionally needs `/etc/ssl/openssl.cnf`.
+  No host program directory is added on Linux and `/usr/bin` is never added.
+  HTTP extraction defaults to installations, not its optional shared-extraction
+  cache. The provider must refuse that option and discard ambient PATH tails.
+- Initial probes under `/tmp` correctly exposed the baseline's scratch write
+  grant and are **not** read-only-store evidence. Final probes put installations
+  outside `/tmp`, in a sibling of the writable test project, and pass. The
+  production artifact root also lies outside baseline scratch grants.
+- Linux ran in the existing OrbStack devcontainer, kernel
+  `7.2.12-orbstack-00394-gbecdd6130068`, glibc 2.36, aarch64. The helper linked
+  existing artifacts from checkout `663eee4cf35b1b0d4e291e07297bc3ef5c9df26a`.
+  Its `capability_set.rs` is byte-identical to this checkout; `policy/mod.rs`
+  differs only by additional credential-broker metadata, not grants/enforcement.
+  Helper SHA-256: `ef45e1fe8e1327bfd8c0c7c6718ded0ae4bf968ba8cde1aad6dca9e306cc320f`.
+  macOS builds the helper from this checkout.
+- Building the macOS helper exposed pre-existing unconditional references to
+  Linux init in `lifecycle/up.rs`. They are now gated on Linux, including an
+  explicit unsupported-platform error for a requested private procfs. Unused
+  Linux-only reexports/identity renderers are gated as well; Linux behavior is
+  unchanged. This is a prerequisite build repair, not mise provider behavior.
+
+**Header-reader decision (0.4):** use `object` 0.37.3 with minimal read/ELF/Mach-O
+features. It is already in Cargo.lock as a development dependency of brush-shell;
+making it a normal dependency adds **one normal crate**, no new lock packages,
+and uses the existing memchr. Avoid a new handwritten binary parser.
+
+The stop criterion passes for the two native ARM64 profiles: two real runtimes,
+one real compiler build and the narrow host-toolchain denial controls on each OS.
+Support is not extrapolated to x64 or musl from these runs. Group 1 can proceed.
+
+### Reading `new/` (continued)
 
 Carried here so the plan stays readable while `new/` is untracked:
 
@@ -101,12 +247,19 @@ root manifests are refused.
 
 Every other project-level location the pinned mise would load is refused **by
 path**, because the derived configuration (M2) hides it from mise and it would
-otherwise vanish without a word. The list is measured in 0.1 from the pinned
-version, not written from memory; candidates are `mise.local.toml`,
-`mise.<env>.toml`, `.config/mise.toml`, `.config/mise/config.toml`,
-`.config/mise/conf.d/*.toml`, `mise/config.toml`, `.mise/config.toml`,
-`.tool-versions`, and idiomatic version files (`.nvmrc`, `.python-version` and
-similar) where the project's settings enable them.
+otherwise vanish without a word. The exact source-derived order at the candidate
+pin is recorded in [discovery-2026.11.9.json](evidence/discovery-2026.11.9.json):
+14 shared patterns, 10 local-override patterns, environment-specific expansions,
+and the early `.miserc.local.toml` / `.miserc.toml` / `.config/miserc.toml` walk.
+Shared configuration is followed by environment configuration, local overrides,
+then environment-local overrides. The inventory includes all 35 registry tool
+entries declaring idiomatic version files. These are off by default and only
+become discovery inputs when enabled per tool. Ordinary `package.json`, `go.mod`
+or similar application files must not be refused merely because an upstream
+registry entry could read them under a different setting. Custom filenames and
+plugin discovery are excluded by refusing their project configuration and
+isolating ambient/global/system settings. The JSON records source hashes; this
+inventory is not a filesystem trace.
 
 Top-level tables of the selected manifest:
 

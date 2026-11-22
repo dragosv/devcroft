@@ -75,8 +75,8 @@ non-reproducible mode).
   that devcroft has no non-reproducible mode
 
 #### Scenario: Planned provider rejected in MVP
-- **WHEN** the manifest declares `provider = "mise"`
-- **THEN** validation fails with exit code 2 and a message that mise support
+- **WHEN** the manifest declares `provider = "hermit"`
+- **THEN** validation fails with exit code 2 and a message that hermit support
   is planned (artifact tier) but not yet implemented
 
 #### Scenario: Missing environment, not missing feature

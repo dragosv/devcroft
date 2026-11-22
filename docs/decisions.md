@@ -155,6 +155,11 @@ Two consequences, stated so they can be checked later:
   "The third provider is free" was true because it was the third *nix*
   provider.
 
+  **That bar has since been met once, for mise** (`add-mise-provider`,
+  2026-11): the owner asked for it, and it re-qualified by measurement
+  rather than on paper. It did so for a narrow profile, not for mise as a
+  whole. See "Built: mise" below.
+
 **Revisit if** either input changes: real demand for an artifact
 provider materializes (at which point the rendered-grants distinction
 above gets its practical test), or the nix monoculture cost bites —
@@ -340,6 +345,49 @@ six plugins surveyed when this was written did not, and the conclusion
 drawn from them — that the vocabulary was fully covered — was too
 confident. The refusal path is load-bearing today, not a guard against
 hypothetical future plugins.
+
+### Built: mise (sixth provider, artifact tier, one qualified profile)
+
+**Property that fails:** criterion 3 for closure purposes. Tools are prebuilt
+and link against the host's libc, so the guarantee is the artifact tier, and
+`up` and `status` say so. Every host file a tool needs is a rendered grant
+with origin `provider:mise`. None is inherited from the baseline.
+
+**What was admitted, and why so little.** Group 0 of `add-mise-provider`
+measured each candidate backend with a sentinel archive whose executables
+write a marker when run (`openspec/changes/add-mise-provider/evidence/`).
+The core Node, Go and Python backends run the binary they just downloaded,
+on the host, during `mise install`, and no setting turns that off. A locked
+checksum says the bytes are the ones the project chose, not that they are
+safe to execute outside the sandbox, so those backends are refused. The
+`http:` backend ran nothing it downloaded. It restored upstream Node and Go
+from a generated lock on macOS ARM64 and Linux ARM64 and left the inputs
+byte-identical, and a real build passed in the narrow sandbox. GitHub, aqua
+and conda passed the synthetic sentinel but have no real runtime
+qualification, so they stay unadmitted. x64 and musl produced lock evidence
+only, so they are refused rather than extrapolated.
+
+**What devcroft does instead of trusting mise with the project:**
+- mise is handed a derived, tools-only definition, under an environment
+  devcroft builds from an allowlist, with an empty `HOME`. Every other
+  project-level configuration location mise would load is refused by path.
+  `[hooks]`, `[plugins]`, aliases and any `[settings]` key outside a small
+  allowlist are refused by key.
+- `[env]` never reaches mise. devcroft renders the admitted directives into
+  an activation script that runs in confined provisioning, anchored at the
+  project root. Every other template or directive is refused.
+- Objects are immutable, shared by recipe and referenced by each sandbox's
+  `Meta`. `rm` reclaims the unreferenced ones under a store lock that every
+  `up` holds shared.
+- The shell is the host's shell *file*, plus its loader and libraries, on
+  Linux, and `/bin` with `/var/select` on macOS. `/usr/bin` is never granted,
+  so criterion 5 is tested rather than assumed: a host `cc`, `gcc`, `ld` or
+  `git` does not run inside (`tests/mise_provider_e2e.rs`).
+
+**Revisit if** a backend's install step stops executing what it downloaded,
+or becomes switchable off, or if materialization can run confined: that is
+the recorded way to admit the core backends. Also revisit when another
+target gets a real runtime row.
 
 ### Rejected: `host` / `none` passthrough
 

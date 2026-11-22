@@ -938,8 +938,9 @@ mod tests {
     }
 
     #[test]
-    fn mise_provider_is_rejected_as_not_yet_supported() {
-        let err = parse("[sandbox]\nname = \"myproj\"\n[env]\nprovider = \"mise\"\n").unwrap_err();
+    fn hermit_provider_is_rejected_as_not_yet_supported() {
+        let err =
+            parse("[sandbox]\nname = \"myproj\"\n[env]\nprovider = \"hermit\"\n").unwrap_err();
         assert!(matches!(
             err,
             ConfigError::InvalidProvider(crate::provider::ProviderError::NotYetSupported { .. })

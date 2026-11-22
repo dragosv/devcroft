@@ -23,6 +23,7 @@ mod terminate;
 pub(crate) mod up;
 
 pub use hooks::HookError;
+pub(crate) use state::recorded_mise_objects;
 pub use state::{
     Allocation, Health, Meta, StatePaths, ToolsRecord, client_key_paths, fleet_state_dir, health,
     policy_digest, read_meta,
@@ -38,4 +39,6 @@ pub use up::{
 // control/SSH sockets (`pass_fds`), and re-exporting through here is what
 // makes `up`'s private submodule path reachable from outside `lifecycle`
 // at all, since the `up` module segment itself is private.
-pub(crate) use up::{apply_manifest_env, keeper_answers, keeper_failure_reason, pass_fds};
+pub(crate) use up::pass_fds;
+#[cfg(target_os = "linux")]
+pub(crate) use up::{apply_manifest_env, keeper_answers, keeper_failure_reason};

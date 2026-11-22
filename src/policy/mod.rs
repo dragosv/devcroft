@@ -12,7 +12,7 @@ mod why;
 
 pub use capability_set::{
     CapabilityPlan, CapabilitySetError, PackageManagerAuthority, ResolvedGrant,
-    package_manager_authority,
+    artifact_store_write_overlap, package_manager_authority,
 };
 pub use degraded::{
     DegradedCapability, backend_support, backend_supported, detect as detect_degraded,

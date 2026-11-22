@@ -698,7 +698,10 @@ fn cli_init(args: &[String]) -> i32 {
     // authored deliberately. Any one of the four supersedes advice about
     // a toolchain pin it would otherwise just be a fallback for.
     //
-    // **`swift` ranks last among the five, and the ordering is the whole
+    // mise ranks after every closure provider for the same reason: it is
+    // artifact tier, and a project that has a closure environment keeps it.
+    //
+    // **`swift` ranks last among the six, and the ordering is the whole
     // of the care taken here.** It is the one provider devcroft ships
     // that fails the qualification test (`docs/decisions.md` §1), so a
     // project that has *any* closure environment keeps it: a Swift
@@ -714,6 +717,7 @@ fn cli_init(args: &[String]) -> i32 {
     let has_devbox = cwd.join("devbox.json").is_file();
     let has_devenv = cwd.join("devenv.nix").is_file();
     let has_flake = cwd.join("flake.nix").is_file();
+    let has_mise = cwd.join("mise.toml").is_file() || cwd.join(".mise.toml").is_file();
     // Only a SwiftPM package that a closure provider *cannot* serve, so
     // `init` never writes a manifest `up` would then refuse
     // (`provider::swift`'s gate). The scan executes nothing, which is the
@@ -729,6 +733,8 @@ fn cli_init(args: &[String]) -> i32 {
         "devenv"
     } else if has_flake {
         "nix"
+    } else if has_mise {
+        "mise"
     } else if swift_needs_apple {
         "swift"
     } else {
@@ -836,6 +842,10 @@ fn cli_init(args: &[String]) -> i32 {
             println!("devcroft: found flake.nix but no flake.lock.");
             println!("devcroft: run `nix flake lock` before `devcroft up`.");
         }
+    } else if has_mise {
+        println!(
+            "devcroft: found a mise definition; artifact tier, qualified HTTP archives only. Run `mise lock` and `devcroft doctor` before `devcroft up`. Tasks require mise run outside the sandbox."
+        );
     } else if has_swift_package && !swift_needs_apple {
         // A portable Swift package: a closure provider serves it, and
         // serves it better. `init` says so rather than writing a
@@ -1903,6 +1913,27 @@ fn doctor_backend_capabilities() {
 /// irrelevant. Without one, nothing is required — devcroft cannot know
 /// what a future manifest will ask for, so both are reported as
 /// information rather than as a verdict.
+fn doctor_mise_provider() -> bool {
+    let root = std::env::current_dir()
+        .ok()
+        .and_then(|cwd| devcroft::config::discover(&cwd).ok())
+        .and_then(|p| p.parent().map(std::path::Path::to_path_buf));
+    let Some(root) = root else {
+        println!("[FAIL] provider: cannot locate this mise project's devcroft.toml");
+        return false;
+    };
+    match devcroft::provider::diagnose_mise(&root) {
+        Ok(message) => {
+            println!("[PASS] provider: mise {message}");
+            true
+        }
+        Err(error) => {
+            println!("[FAIL] provider: {error}");
+            false
+        }
+    }
+}
+
 fn doctor_provider() -> bool {
     match discovered_provider() {
         Some(provider) => match provider.as_str() {
@@ -1910,6 +1941,7 @@ fn doctor_provider() -> bool {
             "devbox" => doctor_devbox_provider(true),
             "devenv" => doctor_devenv_provider(true),
             "swift" => doctor_swift_provider(true),
+            "mise" => doctor_mise_provider(),
             // `config::parse` normalizes and rejects anything else, so
             // this is flox or a provider that could not exist.
             _ => doctor_flox_provider(true),
@@ -2950,10 +2982,13 @@ fn print_status(s: &devcroft::lifecycle::SandboxStatus, provider: &str) {
     }
     match s.env_stale {
         Some(true) => {
-            let what = if provider == "nix" {
-                "flake"
-            } else {
-                "flox manifest"
+            let what = match provider {
+                "nix" => "flake",
+                "mise" => "mise.toml/.mise.toml or a consumed input",
+                "devbox" => "devbox.json/devbox.lock",
+                "devenv" => "devenv definition",
+                "swift" => "Swift package",
+                _ => "flox manifest",
             };
             println!(
                 "env: stale — the {what} changed since the last `up`; run `devcroft up --recreate`"

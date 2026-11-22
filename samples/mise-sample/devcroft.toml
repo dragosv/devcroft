@@ -1,0 +1,11 @@
+[sandbox]
+name = "misego"
+
+[env]
+provider = "mise"
+
+[filesystem]
+allow = ["."]
+
+[network]
+default = "deny"

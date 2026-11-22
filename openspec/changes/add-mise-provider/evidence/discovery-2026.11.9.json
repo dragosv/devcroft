@@ -1,0 +1,211 @@
+{
+  "version": "2026.11.9",
+  "method": "source-derived, not filesystem trace",
+  "source_archive_sha256": "0dd2fd42fddc636fae0ce8cb1344e0beaee1cbbd8c568cf35d6e0654335b4b7c",
+  "sources": {
+    "src/config/mod.rs": "a300f2e93a62ccee61028930840a601a6ef9ed768cd47646ad4fdca276f53017",
+    "src/config/miserc.rs": "f3d88ab2069ac6110722aeb0d1fe438c15264f72c624775a443de4c53c41a180",
+    "settings.toml": "e8851a0072f7757d0f3c978e18fadc87c383388efbc015e463dcc099d9cb4573"
+  },
+  "shared_lowest_precedence_first": [
+    ".tool-versions",
+    ".config/mise/conf.d/*.toml",
+    ".config/mise/conf.d/*/mise.toml",
+    ".config/mise/config.toml",
+    ".config/mise/mise.toml",
+    ".config/mise.toml",
+    ".mise/conf.d/*.toml",
+    ".mise/conf.d/*/mise.toml",
+    ".mise/config.toml",
+    "mise/conf.d/*.toml",
+    "mise/conf.d/*/mise.toml",
+    "mise/config.toml",
+    "mise.toml",
+    ".mise.toml"
+  ],
+  "local_overrides_lowest_precedence_first": [
+    ".config/mise/conf.d/*/mise.local.toml",
+    ".config/mise/config.local.toml",
+    ".config/mise/mise.local.toml",
+    ".config/mise.local.toml",
+    ".mise/conf.d/*/mise.local.toml",
+    ".mise/config.local.toml",
+    "mise/conf.d/*/mise.local.toml",
+    "mise/config.local.toml",
+    "mise.local.toml",
+    ".mise.local.toml"
+  ],
+  "environment_precedence": [
+    "shared",
+    "environment-specific shared",
+    "local",
+    "environment-specific local"
+  ],
+  "environment_patterns": [
+    ".config/mise/conf.d/*.{env}.toml (env_conf_d enabled)",
+    ".config/mise/conf.d/*/mise.{env}.toml",
+    ".config/mise/config.{env}.toml",
+    ".config/mise.{env}.toml",
+    "mise/conf.d/*.{env}.toml (env_conf_d enabled)",
+    "mise/conf.d/*/mise.{env}.toml",
+    "mise/config.{env}.toml",
+    "mise.{env}.toml",
+    ".mise/conf.d/*.{env}.toml (env_conf_d enabled)",
+    ".mise/conf.d/*/mise.{env}.toml",
+    ".mise/config.{env}.toml",
+    ".mise.{env}.toml"
+  ],
+  "environment_local_rule": "replace {env} with {env}.local in the environment patterns",
+  "early_discovery_highest_precedence_first": [
+    ".miserc.local.toml",
+    ".miserc.toml",
+    ".config/miserc.toml"
+  ],
+  "early_discovery_scope": "nearest directory first, parent walk; home and filesystem root exclude .config/miserc.toml; global/system miserc also supported",
+  "idiomatic_policy": "off unless enabled per tool with idiomatic_version_file_enable_tools; the planned adapter refuses that project setting, strips ambient settings and isolates global/system config",
+  "registry_idiomatic_files": {
+    "atmos": [
+      ".atmos-version"
+    ],
+    "bazel": [
+      ".bazelversion"
+    ],
+    "bun": [
+      ".bun-version",
+      "package.json"
+    ],
+    "chezmoi": [
+      ".chezmoiversion"
+    ],
+    "crystal": [
+      ".crystal-version"
+    ],
+    "dagger": [
+      "dagger.json"
+    ],
+    "deno": [
+      ".deno-version",
+      "package.json"
+    ],
+    "dotnet": [
+      "global.json"
+    ],
+    "earthly": [
+      "Earthfile"
+    ],
+    "elixir": [
+      ".exenv-version"
+    ],
+    "go": [
+      ".go-version",
+      "go.mod",
+      "go.work"
+    ],
+    "golangci-lint": [
+      ".golangci.yml",
+      ".golangci.yaml",
+      ".golangci.toml",
+      ".golangci.json"
+    ],
+    "goreleaser": [
+      ".config/goreleaser.yml",
+      ".config/goreleaser.yaml",
+      ".goreleaser.yml",
+      ".goreleaser.yaml",
+      "goreleaser.yml",
+      "goreleaser.yaml"
+    ],
+    "java": [
+      ".java-version",
+      ".sdkmanrc"
+    ],
+    "lefthook": [
+      "lefthook.yml",
+      "lefthook.yaml",
+      ".lefthook.yml",
+      ".lefthook.yaml",
+      "lefthook.toml",
+      ".lefthook.toml",
+      "lefthook.json",
+      ".lefthook.json",
+      "lefthook.jsonc",
+      ".lefthook.jsonc",
+      ".config/lefthook.yml",
+      ".config/lefthook.yaml",
+      ".config/lefthook.toml",
+      ".config/lefthook.json",
+      ".config/lefthook.jsonc"
+    ],
+    "nim": [
+      ".nim-version"
+    ],
+    "node": [
+      ".nvmrc",
+      ".node-version",
+      "package.json"
+    ],
+    "npm": [
+      "package.json"
+    ],
+    "opentofu": [
+      ".opentofu-version"
+    ],
+    "packer": [
+      ".packer-version"
+    ],
+    "perl": [
+      ".perl-version"
+    ],
+    "pixi": [
+      "pixi.toml",
+      "pyproject.toml"
+    ],
+    "pnpm": [
+      "package.json"
+    ],
+    "pre-commit": [
+      ".pre-commit-config.yaml"
+    ],
+    "python": [
+      ".python-version",
+      ".python-versions"
+    ],
+    "ruby": [
+      ".ruby-version",
+      "Gemfile"
+    ],
+    "ruff": [
+      "ruff.toml",
+      ".ruff.toml"
+    ],
+    "rust": [
+      "rust-toolchain.toml"
+    ],
+    "swift": [
+      ".swift-version"
+    ],
+    "task": [
+      "Taskfile.yml",
+      "Taskfile.yaml",
+      "taskfile.yml",
+      "taskfile.yaml"
+    ],
+    "terraform": [
+      ".terraform-version"
+    ],
+    "terragrunt": [
+      ".terragrunt-version"
+    ],
+    "terramate": [
+      ".terramate-version"
+    ],
+    "yarn": [
+      ".yvmrc",
+      "package.json"
+    ],
+    "zig": [
+      ".zig-version"
+    ]
+  },
+  "limits": "custom filename overrides and plugin-provided idiomatic filenames are possible upstream; the adapter refuses project miserc/settings/plugins requesting them. This is not an inventory of every HOME read."
+}

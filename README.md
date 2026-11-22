@@ -106,7 +106,7 @@ stays denied until you name it:
 name = "my-project"
 
 [env]
-provider = "flox"          # or "nix", "devbox", "devenv" — "swift" on macOS
+provider = "flox"          # or "nix", "devbox", "devenv", "mise" — "swift" on macOS
 forward = ["GH_TOKEN"]     # the sandbox does not inherit your shell
 
 [env.vars]
@@ -367,6 +367,20 @@ sandboxes cost eight builds, and what builds depends on that Mac's Xcode. A
 portable Swift package draws a warning naming nix or flox instead, which
 `[env] require_native_apple_evidence = true` turns into a refusal.
 
+**mise** is the sixth, and the second **artifact** tier: a `mise.toml` with a
+`mise.lock` that carries a URL and SHA-256 for this platform. The profile is
+deliberately narrow: literal HTTPS `http:` tools only, native ARM64 only (glibc
+on Linux). Core backends such as `go = "1.24"` are refused because installing
+them runs the downloaded binary on the host. mise installs host-side from a
+derived, tools-only copy of the definition, in an isolated environment, into a
+read-only object under `~/.local/share/devcroft-artifacts/mise/`. Sandboxes
+with the same recipe share that object, and the last `rm` reclaims it. devcroft
+interprets `[env]` itself and runs it inside the sandbox. The host gets the
+shell file, its loader and libraries, never `/usr/bin`: a host `cc` or `git`
+does not resolve inside. `mise run` is not available in the sandbox, and
+`[daemons]` is refused until `add-mise-daemons`. See
+[samples/mise-sample](samples/mise-sample/).
+
 Long-lived **services** — databases, dev servers — are declared in the
 provider's own manifest and supervised by the sandbox's keeper, so parallel
 sandboxes get their own instances. Supported for flox, devenv and devbox (whose
@@ -377,13 +391,13 @@ that declares a readiness probe is reported ready only once it passes, and a
 dependent waits for that. A provider field devcroft cannot carry is refused by
 name, never dropped.
 
-**mise, pixi and hermit are a different answer, and not "they failed the
-test".** mise passes devcroft's six-criterion provider test, and the shape an
-implementation would take is written down. What stops it is structural: those
-tools link against whichever libc a host has, which makes them artifact tier —
-the weaker guarantee swift ships with — and it is gated on demonstrated demand
-rather than shipped on spec. [docs/decisions.md](docs/decisions.md) has the test
-and an entry per answer.
+**pixi and hermit are a different answer, and not "they failed the
+test".** Both pass devcroft's six-criterion provider test on paper. What stops
+them is structural: those tools link against whichever libc a host has, which
+makes them artifact tier — the weaker guarantee swift and mise ship with — and
+each is gated on demonstrated demand and its own measured qualification rather
+than shipped on spec. [docs/decisions.md](docs/decisions.md) has the test and an
+entry per answer.
 
 ## Using it with an agent today
 

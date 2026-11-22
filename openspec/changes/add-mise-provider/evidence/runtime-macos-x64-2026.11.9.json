@@ -1,0 +1,42 @@
+{
+  "mise_version": "2026.11.9 macos-arm64 (2026-11-16)",
+  "target": "macos-x64",
+  "native_target": "macos-arm64",
+  "method": "cross-target lock generation only; no installation or execution",
+  "manifest_name": ".mise.toml",
+  "lock": {
+    "lockfile_version": 4,
+    "tools": {
+      "http:go": [
+        {
+          "version": "1.24.0",
+          "backend": "http:go",
+          "specifiers": [
+            "1.24.0"
+          ],
+          "platforms.macos-x64": {
+            "checksum": "sha256:7af054e5088b68c24b3d6e135e5ca8d91bbd5a05cb7f7f0187367b3e6e9e05ee",
+            "url": "https://dl.google.com/go/go1.24.0.darwin-amd64.tar.gz"
+          }
+        }
+      ],
+      "http:node": [
+        {
+          "version": "24.0.0",
+          "backend": "http:node",
+          "specifiers": [
+            "24.0.0"
+          ],
+          "platforms.macos-x64": {
+            "checksum": "sha256:f716b3ce14a7e37a6cbf97c9de10d444d7da07ef833cd8da81dd944d111e6a4a",
+            "url": "https://nodejs.org/dist/v24.0.0/node-v24.0.0-darwin-x64.tar.gz"
+          }
+        }
+      ]
+    }
+  },
+  "upstream_sha256": {
+    "node": "f716b3ce14a7e37a6cbf97c9de10d444d7da07ef833cd8da81dd944d111e6a4a",
+    "go": "7af054e5088b68c24b3d6e135e5ca8d91bbd5a05cb7f7f0187367b3e6e9e05ee"
+  }
+}

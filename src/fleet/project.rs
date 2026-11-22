@@ -60,6 +60,11 @@ pub fn prepare(
     limits: Limits,
     view: bool,
 ) -> Result<AgentLaunch, PrepareError> {
+    if provider.static_name() == "mise" {
+        return Err(PrepareError::Provider(ProviderError::ResolutionFailed(
+            "mise fleet runtime has not been qualified; use a native single sandbox".into(),
+        )));
+    }
     refuse_what_fleet_cannot_carry(manifest)?;
 
     let mut resolution = provider
