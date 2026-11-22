@@ -36,3 +36,8 @@
 # project root (`.cargo`, `.rustup`, `.go`, `.gocache`, `.gradle`), anchored
 # with a leading `/` so a rule cannot reach outside the sample that declares
 # it.
+
+# The owner's working notes (reviews, measurements, design drafts). Never
+# committed: what a change relies on from them is restated in that change's
+# own openspec/ artifacts, so the repository stands alone without them.
+/new/

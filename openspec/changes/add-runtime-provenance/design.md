@@ -1,8 +1,9 @@
 ## Context
 
 This is the first of four changes that carry out the direction recorded in
-`new/devcroft-runtime-absolute-paths-design-2026-11-22.md` (untracked at the
-time of writing; the facts this change depends on are restated here):
+the owner's design note of 2026-11-22 on devcroft's runtime at absolute paths
+(a working note, kept out of the repository; the facts this change depends on
+are restated here):
 
 > devcroft owns the absolute-path namespace for shell and userland and fills
 > it with what the sandbox resolves by name: the provider's environment first,
