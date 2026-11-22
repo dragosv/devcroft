@@ -210,6 +210,44 @@ RUN set -eu; \
     && rm -f "/tmp/${TARBALL}" \
     && pixi --version
 
+# mise provider (add-mise-provider). Same reason as pixi above:
+# `mise_provider_e2e` skips itself without it ("mise >= 2026.11.9 is not
+# on PATH"). That change's design.md also says its Linux ARM64 runtime
+# "rests on the group 0 evidence and was not re-run" — this container is
+# where it can be.
+#
+# The glibc build, not musl: checked on the host 2026-11-22,
+# `linux-arm64` extracts to exactly the binary SHA-256 recorded in
+# openspec/changes/add-mise-provider/evidence/ (b8dd05af…), while
+# `linux-arm64-musl` is a different binary. It needs glibc >= 2.18;
+# bookworm ships 2.36. Verified against the release's SHASUMS256.txt,
+# whose entries carry a leading `./`. MISE_VERSION is `QUALIFIED_VERSION`
+# in src/provider/mise.rs. Only the binary is kept — the tarball's man
+# page and fish integration are not something the provider uses.
+#
+# The runtime is qualified on ARM64 only; on amd64 the test skips, naming
+# that reason, as pixi's does.
+#
+# UNVERIFIED beyond this build step: download and checksum exercised
+# against the real release assets, no container rebuild.
+ARG MISE_VERSION=2026.11.9
+RUN set -eu; \
+    cd /tmp; \
+    case "$(dpkg --print-architecture)" in \
+        amd64) MISE_ARCH=x64 ;; \
+        arm64) MISE_ARCH=arm64 ;; \
+        *) echo "unsupported architecture: $(dpkg --print-architecture)" >&2; exit 1 ;; \
+    esac; \
+    TARBALL="mise-v${MISE_VERSION}-linux-${MISE_ARCH}.tar.gz"; \
+    BASE="https://github.com/jdx/mise/releases/download/v${MISE_VERSION}"; \
+    curl -fsSLO "${BASE}/${TARBALL}"; \
+    curl -fsSL "${BASE}/SHASUMS256.txt" | grep " \./${TARBALL}\$" | sha256sum -c -; \
+    tar xzf "${TARBALL}" mise/bin/mise \
+    && mv mise/bin/mise /usr/local/bin/mise \
+    && chmod +x /usr/local/bin/mise \
+    && rm -rf "/tmp/${TARBALL}" /tmp/mise \
+    && mise --version
+
 # Drop root. Not only lint hygiene: devcroft runs as an unprivileged user, so
 # a confinement spike executed as root would be measuring a process that does
 # not resemble the one being designed for. The official rust image already
