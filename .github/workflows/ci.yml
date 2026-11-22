@@ -191,6 +191,13 @@ jobs:
   #   covers devenv through its own binaries (`devenv_provider_e2e`,
   #   `devenv_capture_contract`, the devenv half of `services_e2e`).
   #   Adding the row belongs to the fixture change, not to CI.
+  # - pixi runs on `ubuntu-24.04-arm`, because its runtime is qualified on
+  #   native ARM64 only and its e2e tests skip anywhere else. It needs no
+  #   Nix (artifact tier), so that leg installs none and takes the
+  #   nix-free `test` row — which means it also runs the whole neutral
+  #   suite on ARM64 Linux, a platform no other leg covers. With no row of
+  #   its own, `DEVCROFT_TEST_PROVIDER` cannot fail it when the provider
+  #   did not run, so the step after `cargo test` does.
   #
   # The devenv leg, as of run 34823971268: the provider itself works on
   # the runner — `devenv_provider_e2e` passes 15/15 (closure compile,
@@ -203,9 +210,10 @@ jobs:
   # nix-daemon, macOS). Undiagnosed; the leg stays continue-on-error and
   # that binary's log is the next thing to read.
   #
-  # Pinned versions match what the project was measured against: flox and
-  # devbox the same as `.devcontainer/Dockerfile`, devenv the version the
-  # provider was written against (`add-devenv-provider`).
+  # Pinned versions match what the project was measured against: flox,
+  # devbox and pixi the same as `.devcontainer/Dockerfile` (pixi at its
+  # provider's `QUALIFIED_VERSION`), devenv the version the provider was
+  # written against (`add-devenv-provider`).
   #
   # flox, nix and devbox are blocking: green on run 34829168323, after
   # seven dispatched runs that each found something real (user
@@ -213,16 +221,25 @@ jobs:
   # the kernel cannot open, a golden recorded on the wrong platform —
   # docs/implementation-log.md has the list). devenv stays
   # continue-on-error for the one failure above, which is nix's, until
-  # someone reads that log.
+  # someone reads that log. pixi is continue-on-error for a plainer
+  # reason: it has not run on CI yet. Promote it once it has a green run,
+  # the way flox, nix and devbox were.
   e2e:
     name: e2e (${{ matrix.provider }})
     strategy:
       fail-fast: false
       matrix:
-        provider: [flox, nix, devbox, devenv]
-    runs-on: ubuntu-latest
+        # `row` is the fixture row (`DEVCROFT_TEST_PROVIDER`); `cargo_flags`
+        # carries `test-support`, which only the `test` row needs.
+        include:
+          - { provider: flox, runner: ubuntu-latest, row: flox }
+          - { provider: nix, runner: ubuntu-latest, row: nix }
+          - { provider: devbox, runner: ubuntu-latest, row: devbox }
+          - { provider: devenv, runner: ubuntu-latest, row: nix }
+          - { provider: pixi, runner: ubuntu-24.04-arm, row: test, cargo_flags: --features test-support }
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 45
-    continue-on-error: ${{ matrix.provider == 'devenv' }}
+    continue-on-error: ${{ contains(fromJSON('["devenv", "pixi"]'), matrix.provider) }}
     env:
       DEVBOX_NO_TELEMETRY: "1"
     steps:
@@ -230,9 +247,10 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
-          # Build artifacts are provider-independent; share one cache
-          # across the four legs and with the `test` job's ubuntu leg.
-          key: ubuntu-latest
+          # Build artifacts are provider-independent but not
+          # architecture-independent: one cache per runner, the x64 one
+          # shared with the `test` job's ubuntu leg.
+          key: ${{ matrix.runner }}
 
       # ubuntu-24.04 (what `ubuntu-latest` resolves to) ships AppArmor's
       # `apparmor_restrict_unprivileged_userns=1`, which refuses an
@@ -278,7 +296,7 @@ jobs:
       # take devenv's binary cache from its flake rather than build devenv
       # from source on the runner.
       - name: install nix (flakes on)
-        if: matrix.provider != 'flox'
+        if: contains(fromJSON('["nix", "devbox", "devenv"]'), matrix.provider)
         uses: cachix/install-nix-action@v31
         with:
           extra_nix_config: |
@@ -319,6 +337,30 @@ jobs:
           nix profile install --accept-flake-config "github:cachix/devenv/${DEVENV_VERSION}"
           devenv version
 
+      # --- pixi: the same pinned, checksummed release install as
+      # `.devcontainer/Dockerfile`; musl, the only Linux build pixi
+      # publishes.
+      - name: install pixi
+        if: matrix.provider == 'pixi'
+        env:
+          PIXI_VERSION: "0.84.2"
+        run: |
+          set -eu
+          cd /tmp
+          case "$(dpkg --print-architecture)" in
+            amd64) PIXI_ARCH=x86_64 ;;
+            arm64) PIXI_ARCH=aarch64 ;;
+            *) echo "unsupported architecture: $(dpkg --print-architecture)" >&2; exit 1 ;;
+          esac
+          TARBALL="pixi-${PIXI_ARCH}-unknown-linux-musl.tar.gz"
+          BASE="https://github.com/prefix-dev/pixi/releases/download/v${PIXI_VERSION}"
+          curl -fsSLO "${BASE}/${TARBALL}"
+          curl -fsSL "${BASE}/${TARBALL}.sha256" | grep " ${TARBALL}\$" | sha256sum -c -
+          tar xzf "${TARBALL}" pixi
+          sudo mv pixi /usr/local/bin/pixi
+          sudo chmod +x /usr/local/bin/pixi
+          pixi --version
+
       # Full suite, every leg; the provider that is installed is the one
       # whose tests run. `DEVCROFT_TEST_PROVIDER` is the fixture's row
       # selection — an explicitly selected row that turns out unavailable
@@ -339,11 +381,30 @@ jobs:
       - name: cargo test
         timeout-minutes: 40
         env:
-          DEVCROFT_TEST_PROVIDER: ${{ matrix.provider == 'devenv' && 'nix' || matrix.provider }}
+          DEVCROFT_TEST_PROVIDER: ${{ matrix.row }}
           FLOX_FLOXHUB_TOKEN: ${{ matrix.provider == 'flox' && secrets.FLOX_FLOXHUB_TOKEN || '' }}
         run: |
           set -o pipefail
-          cargo test --no-fail-fast -- --nocapture 2>&1 | tee /tmp/test-output.txt
+          cargo test --no-fail-fast ${{ matrix.cargo_flags }} -- --nocapture 2>&1 | tee /tmp/test-output.txt
+
+      # The guard the fixture gives every other leg, for a leg with no
+      # row: the leg fails if its provider's e2e binary never ran, or ran
+      # and skipped. Both skip messages that name the provider (wrong
+      # platform, binary missing or older than qualified) and the backend
+      # one are matched. The path is matched without cargo's "Running",
+      # which CARGO_TERM_COLOR wraps in escape codes.
+      - name: fail if this leg's provider did not run
+        if: matrix.row == 'test'
+        env:
+          PROVIDER: ${{ matrix.provider }}
+        run: |
+          set -eu
+          grep -qF "tests/${PROVIDER}_provider_e2e.rs (" /tmp/test-output.txt \
+            || { echo "tests/${PROVIDER}_provider_e2e.rs never ran on the ${PROVIDER} leg"; exit 1; }
+          if grep -E "skipping: (${PROVIDER} |the process-tier backend)" /tmp/test-output.txt; then
+            echo "the ${PROVIDER} e2e tests skipped on their own leg"
+            exit 1
+          fi
 
       - name: report what actually ran vs. self-skipped
         if: always()
