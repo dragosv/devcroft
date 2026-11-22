@@ -70,7 +70,9 @@ Measured 2026-11-22 on macOS arm64, by name, in real sandboxes:
 On Linux (measured 2026-11-22, aarch64) the same holds by name for nix,
 devbox and flox, and devenv supplies the full GNU userland as nix does, even
 for a project that declares only two unrelated packages. `hostname` is absent
-everywhere: coreutils does not ship it.
+everywhere: coreutils does not ship it. mise and pixi sandboxes resolve `sh`
+(and, for mise, `env`) to the host's, granted by the provider, and are the
+only ones whose `up` prints the host warning.
 
 By absolute path: on Linux, the view writes `/bin/sh` (the resolved shell)
 and `/usr/bin/env` (only where the environment's `PATH` has an `env` inside

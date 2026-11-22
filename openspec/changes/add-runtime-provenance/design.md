@@ -52,6 +52,8 @@ with the same probe. 0 mismatches on all five; no `host:` entry on any.
 | flox row (same packages) | `hostname grep sed awk find xargs diff tar gzip` | `/bin/sh` only (`/usr/bin/env` too after the fix below) |
 | flox, `flox-services-sample` (python3, process-compose) | every name but `sh` | `/bin/sh` only |
 | devenv, `devenv-sample` (ripgrep, jq) | `hostname` | `/bin/sh`, `/usr/bin/env` |
+| mise 2026.11.9, `mise-sample` (`http:go`) | every name but `sh`, `env` | `/bin/sh` → host dash, `/usr/bin/env` → host |
+| pixi 0.84.2, `pixi-sample` (conda python 3.12) | every name but `sh` | `/bin/sh` → host dash |
 
 Three facts the macOS measurement could not show:
 
@@ -80,8 +82,15 @@ Three facts the macOS measurement could not show:
   flox-services-sample, `#!/usr/bin/env python3` fails `ENOENT` at spawn,
   `python3` by name runs, and a `#!/bin/sh` script runs.
 
-mise and pixi were not measured on Linux (neither is installed on the
-measuring host).
+mise and pixi, measured the same way (142 entries, 0 mismatches each),
+confirm their rows of the table above on Linux: `sh` by name and `/bin/sh`
+are the host's dash (file grant, `provider:<name>`), mise's `env` by name and
+`/usr/bin/env` are the host's (granted), and pixi has no `env` at all, so
+`#!/usr/bin/env sh` and `#!/usr/bin/env python3` fail `ENOENT` while
+`python3` by name and `#!/bin/sh` run. Their record is the only one with
+`host:` entries on Linux (mise 4, pixi 2), and `up` warns once for each.
+The conda python environment ships no `sh`, so pixi's prefix branch of the
+table was not exercised.
 
 ## Goals / Non-Goals
 

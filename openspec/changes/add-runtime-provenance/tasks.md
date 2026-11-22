@@ -3,8 +3,8 @@
 Record each result in `design.md` under "Context", tagged measured, with OS,
 arch and provider version.
 
-- [ ] 0.1 On Linux, for each of nix, flox, devbox, devenv, mise and pixi (sample projects; a flox minimal manifest without coreutils included): execute every base name in both lookup forms inside the sandbox and record what ran. Confirm the table in `design.md` or correct it.
-  - Done for nix, flox (with and without coreutils), devbox and devenv (2026-11-22, aarch64). Found flox never got `/usr/bin/env`; fixed (`shell::resolve_env_bin`) by owner's decision, asserted by the provenance test. Open for mise and pixi, not installed on the measuring host.
+- [x] 0.1 On Linux, for each of nix, flox, devbox, devenv, mise and pixi (sample projects; a flox minimal manifest without coreutils included): execute every base name in both lookup forms inside the sandbox and record what ran. Confirm the table in `design.md` or correct it.
+  - Done for nix, flox (with and without coreutils), devbox and devenv (2026-11-22, aarch64). Found flox never got `/usr/bin/env`; fixed (`shell::resolve_env_bin`) by owner's decision, asserted by the provenance test. mise 2026.11.9 and pixi 0.84.2 measured the same day: 0 mismatches, host shell (and mise's host `env`) as the table says.
 - [ ] 0.2 Same on macOS arm64. Confirm `EPERM` for `/bin/sh`, `/usr/bin/env` and shebang scripts in closure-tier sandboxes, and the reachable host `/bin` in mise and pixi sandboxes.
 - [x] 0.3 Confirm on Linux that a flox sandbox without coreutils fails a `#!/usr/bin/env` script (the inferred gap), so `known-gaps.md` states a measured fact.
 
@@ -28,7 +28,7 @@ arch and provider version.
 - [x] 3.2 Unit tests for the computation: a grant covering a path by its parent, a `PATH` entry outside every grant, a missing view entry, a macOS refusal.
 - [ ] 3.3 A macOS test (capability-guarded) asserting `absent (refused by policy)` for `/bin/sh` in a closure-tier sandbox and that the shebang script indeed fails.
 - [ ] 3.4 Run the suite with `-- --nocapture 2>&1 | grep skipping` and record which rows actually ran on each platform.
-  - Linux aarch64 (2026-11-22): default row nix ran everywhere; `base_runtime_provenance` also ran with `=all` (nix, flox, devbox ok; swift skip, macOS-only). 748 passed, 65 skips: 51 cgroup delegation (`sudo cgroup-delegate`, fleet), 9 flox (no FloxHub login / row not selected), 3 pixi and 2 mise (not installed). macOS still to record.
+  - Linux aarch64 (2026-11-22): default row nix ran everywhere; `base_runtime_provenance` also ran with `=all` (nix, flox, devbox ok; swift skip, macOS-only). 748 passed, 65 skips: 51 cgroup delegation (`sudo cgroup-delegate`, fleet), 9 flox (no FloxHub login / row not selected), 3 pixi and 2 mise (not installed then; both now are). macOS still to record.
 
 ## 4. Documentation
 

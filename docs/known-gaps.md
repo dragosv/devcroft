@@ -504,7 +504,9 @@ sandbox fails with `ENOENT`, while the same interpreter runs fine by name.
 Measured 2026-11-22, Linux aarch64, flox 1.14.0: in `flox-services-sample`
 (python3 and process-compose only), `#!/usr/bin/env python3` fails at spawn,
 `python3` by name runs, and a `#!/bin/sh` script runs. `policy --render` shows
-`/usr/bin/env` as absent for such a sandbox.
+`/usr/bin/env` as absent for such a sandbox. The same holds for pixi, whose
+provider grants the host's shell but not its `env` (measured, `pixi-sample`:
+`#!/usr/bin/env python3` fails, `python3` by name runs).
 
 **Fixed on the way: flox sandboxes with coreutils lacked it too.** The guard
 compared uncanonicalized paths, and flox's `PATH` starts with
