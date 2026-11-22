@@ -33,6 +33,7 @@
 - [ ] 4.2 View construction: tmpfs `/bin` and `/usr/bin` populated from the namespace directory, one bind of `devcroft` for runtime targets; `Identity`'s `/bin/sh` and `/usr/bin/env` become namespace entries.
 - [ ] 4.3 Fleet agent and provisioning views get the same entries (today their `identity` is `None`).
 - [ ] 4.4 Refuse at `up` where the view cannot be constructed; no partial namespace.
+- [ ] 4.4a Runtime and namespace directories read-only from inside: read-only mounts in the Linux view, a write denial in the macOS profile that outranks the project grant; shown by `policy --render`; tests overwrite and remove from a session and fail. (`add-sandbox-identity` extends this to all of `.devcroft/<name>/` except `home/`.)
 - [ ] 4.5 Consistency test on every provider row: for each base name, `/bin/<name>`, `/usr/bin/<name>` and `<name>` execute the same file, or all fail. Nix and devbox rows: GNU from the closure. Flox minimal row: runtime.
 - [ ] 4.6 Tests: `#!/usr/bin/env python3` in a flox sandbox without coreutils runs through the runtime's `env`; in a nix sandbox through the closure's; `/usr/bin/python3` fails; `/bin/awk` fails in flox without awk; the same from a fleet agent; `policy --render` lists each entry with target and provenance.
 

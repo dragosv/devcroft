@@ -102,6 +102,22 @@ refuse rather than start without the namespace.
 - **WHEN** a fleet agent in a flox environment executes `/bin/ls`
 - **THEN** the same `ls` runs as for `ls` by name in that agent
 
+### Requirement: The runtime cannot be modified from inside the sandbox
+The runtime directory, the namespace directory and every other runtime
+artifact `up` writes under `<project>/.devcroft/<name>/` SHALL be read-only to
+every process inside the sandbox, even though the project root is writable:
+on Linux by mounting them read-only in the view, on macOS by a write denial in
+the compiled profile that takes precedence over the project grant. Each denial
+SHALL be shown by `policy --render`.
+
+#### Scenario: Overwriting a namespace entry fails
+- **WHEN** a session runs `ln -sf /tmp/x <project>/.devcroft/<name>/ns/ls`
+- **THEN** the write fails, and `/bin/ls` still runs its pinned target
+
+#### Scenario: Removing the runtime fails
+- **WHEN** a session runs `rm -rf <project>/.devcroft/<name>/runtime`
+- **THEN** the removal fails and the runtime is intact
+
 ### Requirement: One common runtime layer, one declared native exception
 The runtime namespace SHALL be completed by a single layer applied after
 provider resolution, for every provider. A provider SHALL NOT supply a host
