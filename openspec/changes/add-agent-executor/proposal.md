@@ -16,9 +16,12 @@ names them:
 - The agent and the project share one policy. The agent's vendor host is
   reachable from a project build script, and the project's registry access is
   reachable from the agent.
-- The agent's credential route (proxy token and placeholder) is in the same
-  session environment as the project's processes. The current code places
-  the proxy URL with its token in the environment every session inherits.
+- The agent's credential route is shared with the project's processes. There
+  is one egress proxy with one allowlist. Every session inherits the broker's
+  endpoint and placeholder, and, where the sandbox has no network namespace of
+  its own, the proxy URL with its session token. Under Linux isolation the
+  token is not in the environment, because the unix-socket bridge presents it,
+  but the bridge's socket is reachable from every process in the sandbox.
 - Nothing distinguishes "a command for the project" from "a process of the
   agent". A harness that runs tests by absolute path, or with an environment
   it built itself, escapes the project's context without anyone noticing.
@@ -45,12 +48,18 @@ trees with separate policies, and a `ProjectExecutor` reached over RPC.
 - **Per-harness routing.** For each qualified recipe and version, devcroft
   generates the harness configuration that disables its native exec tool and
   supplies an exec tool backed by the executor, through MCP or the harness's
-  own lever. Read, write and search stay local on the shared workspace.
+  own lever. MCP carries piped execution only; a PTY reaches the harness only
+  through a lever of its own, qualified separately. Read, write and search stay local on the shared workspace.
   Support is declared per recipe version × operation × `up`/fleet × platform.
   A harness whose native exec path cannot be turned off is not qualified for
   this mode, and keeps the `add-agent-packages` mode.
-- **Credential route only in the agent tree.** The proxy token, placeholder
-  and socket are absent from the executor's environment, filesystem and logs.
+- **Two egress proxies, credential route only in the agent tree.** Each tree
+  gets its own egress proxy, allowlist, token, socket and log, and on Linux its
+  own network namespace. The agent's broker, token, placeholder and socket are
+  absent from the executor's environment, view and logs.
+- **Separate homes.** The agent tree's `HOME` and the sandbox directory it
+  reports through are outside the shared workspace. The sandbox is identified
+  by an explicit variable, no longer inferred from `HOME`.
 - **Stated limit.** The executor runs any `argv` in the project's context, so
   the agent's effective authority is the union of both policies. What
   separates is the credential route and the runtime, not reachability. The
@@ -72,7 +81,9 @@ trees with separate policies, and a `ProjectExecutor` reached over RPC.
 
 ## Impact
 
-- `src/lifecycle/up.rs` (topology), a new `src/executor/`,
+- `src/lifecycle/up.rs` (topology, two egress proxies), `src/proxy`,
+  `src/bin/devcroft.rs` (`own_sandbox_dir`, and which tree each command
+  reaches), `src/lifecycle/terminate.rs` (teardown of both trees), a new `src/executor/`,
   `src/keeper/{protocol,session,connection}.rs` (`SpawnRequest` is reused
   for the executor's spawns but not exposed to the agent as-is: today it
   accepts `cwd` and `env` from the caller, which is a spawn authority, not a

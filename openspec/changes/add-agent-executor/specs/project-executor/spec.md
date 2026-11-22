@@ -24,28 +24,44 @@ root, mount, grant, network policy or environment snapshot from the caller.
 - **THEN** the spawn fails, because that path is not in the project's view, and nothing is substituted
 
 ### Requirement: The executor is bound to one pair
-The executor SHALL be reachable only through a socket created before
-restriction and inherited by its paired agent tree. It SHALL serve one
-workspace root, and a `cwd` outside that root SHALL be refused.
+The executor SHALL be reachable only through a pathname socket created before
+restriction and visible to its paired agent tree alone, accepting independent
+connections. It SHALL serve one workspace root, and a `cwd` outside that root
+SHALL be refused.
 
 #### Scenario: Escaping cwd
 - **WHEN** a request names `cwd = "../other"` or an absolute host path
 - **THEN** the request is refused and no process starts
 
+#### Scenario: MCP server deep in the agent's tree
+- **WHEN** an MCP server started by the harness, several generations below the agent, connects to the executor while another session is running
+- **THEN** both connections are served
+
+#### Scenario: Project tree cannot reach the executor
+- **WHEN** a project process tries to connect to the executor's socket
+- **THEN** the connection fails
+
 ### Requirement: Harness routing is qualified per recipe version
 A recipe SHALL be offered in mode 2 only for versions where devcroft disables
 the harness's native exec tool and supplies the executor-backed one, as
-measured. Other versions SHALL run in mode 1, and `status` SHALL say which
-mode is active.
+measured, through configuration that the editor's ACP session parameters
+cannot override. devcroft SHALL NOT parse or rewrite ACP to achieve it. Other
+versions SHALL run in mode 1, and `status` SHALL say which mode is active.
 
 #### Scenario: Native exec cannot be disabled
 - **WHEN** a recipe version's native exec tool cannot be turned off
 - **THEN** the agent runs in mode 1 and `status` names mode 1 and the reason
 
+#### Scenario: Editor re-enables the native tool
+- **WHEN** the editor's `session/new` asks for the native exec tool on a recipe version that devcroft cannot keep disabled
+- **THEN** that version is not qualified for mode 2
+
 ### Requirement: Signals, exit and stdio are faithful
 Executor sessions SHALL preserve exit codes and signals, deliver cancel to the
-process group, support PTY resize, keep stdout and stderr separate in piped
-mode, and leave no process behind after `down` or after the agent exits.
+process group, keep stdout and stderr separate in piped mode, and leave no
+process behind after `down` or after the agent exits. The RPC SHALL support a
+PTY with resize; a recipe SHALL claim PTY sessions only through a transport
+that carries one, never through MCP.
 
 #### Scenario: Cancel reaches the group
 - **WHEN** the agent cancels a running test whose runner started children
