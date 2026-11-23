@@ -62,6 +62,11 @@ class LaunchValidation(unittest.TestCase):
         patch = ROOT / 'patches/libkrun-vsock-host-backpressure.patch'
         self.assertEqual(info['vsock_backpressure_patch_sha256'], hashlib.sha256(patch.read_bytes()).hexdigest())
 
+    def test_provenance_identifies_the_hardening_patch(self):
+        info = json.loads(subprocess.check_output([str(HELPER), 'provenance'], timeout=5))
+        patch = ROOT / 'patches/libkrun-vsock-hardening.patch'
+        self.assertEqual(info['vsock_hardening_patch_sha256'], hashlib.sha256(patch.read_bytes()).hexdigest())
+
     def test_corrupted_input_is_refused(self):
         Path(self.cfg["kernel"]["path"]).write_bytes(b"different-content")
         result = self.check()

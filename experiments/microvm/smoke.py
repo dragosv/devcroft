@@ -226,6 +226,7 @@ def main():
     if not 1 <= args.timeout <= 120:
         p.error("timeout must be between 1 and 120 seconds")
     args.out.mkdir(parents=True, exist_ok=False)
+    args.out.chmod(0o700)
     guest = json.loads(args.guest.read_text())
     if args.keeper and guest["fixture"] != "stage-b-real-keeper":
         p.error("--keeper requires artifacts/stage-b/guest.json")
@@ -239,6 +240,7 @@ def main():
               "state": str(state), "instance_dir": str(instance), "vcpus": 1, "memory_mib": 256}
     path = args.out.resolve() / "launch.json"
     path.write_text(json.dumps(launch, indent=2) + "\n")
+    path.chmod(0o600)
     report = {"schema": 1, **helper_identity(args.helper), "host": list(os.uname()),
               "fixture": guest["fixture"], "qualification": "diagnostic-only",
               "instance_dir": str(instance), "boots": []}

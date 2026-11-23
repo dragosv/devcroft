@@ -6,10 +6,12 @@ fn main() {
     let patch = root.join("patches/libkrun-vsock-host-half-close.patch");
     let reset_patch = root.join("patches/libkrun-macos-reset-exit.patch");
     let backpressure_patch = root.join("patches/libkrun-vsock-host-backpressure.patch");
+    let hardening_patch = root.join("patches/libkrun-vsock-hardening.patch");
     let source = root.join("artifacts/libkrun-source");
     println!("cargo:rerun-if-changed={}", patch.display());
     println!("cargo:rerun-if-changed={}", reset_patch.display());
     println!("cargo:rerun-if-changed={}", backpressure_patch.display());
+    println!("cargo:rerun-if-changed={}", hardening_patch.display());
     println!(
         "cargo:rerun-if-changed={}",
         root.join("build_helper.py").display()
@@ -43,4 +45,6 @@ fn main() {
     println!("cargo:rustc-env=DEVCROFT_KRUN_RESET_PATCH_SHA256={reset_hash}");
     let backpressure_hash = format!("{:x}", Sha256::digest(fs::read(backpressure_patch).unwrap()));
     println!("cargo:rustc-env=DEVCROFT_KRUN_BACKPRESSURE_PATCH_SHA256={backpressure_hash}");
+    let hardening_hash = format!("{:x}", Sha256::digest(fs::read(hardening_patch).unwrap()));
+    println!("cargo:rustc-env=DEVCROFT_KRUN_HARDENING_PATCH_SHA256={hardening_hash}");
 }

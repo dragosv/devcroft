@@ -23,8 +23,13 @@
       },
       {
         "path": "patches/libkrun-vsock-host-backpressure.patch",
-        "sha256": "b6a78f7e8c0f95437953cbc8f1c3d333a8e953114bdd0519b8b7bc9f64856a69",
+        "sha256": "67a1e6ea2193dc17a37cdb5965f86b810337c435131440c653aa02576bcced7f",
         "status": "local experimental correction: non-blocking host writes bounded by advertised credit, so one unread host client no longer stalls the VM's other vsock connections; not upstream merged"
+      },
+      {
+        "path": "patches/libkrun-vsock-hardening.patch",
+        "sha256": "e737ff613f75acbee2df0fb00a771ddaa5cee5de49f6fd2d697b058a8eed664c",
+        "status": "local experimental correction: ignore data operations on a listening proxy, bound the TX copy to the declared length, and make accepted host sockets non-blocking; verified at device level only; not upstream merged"
       }
     ],
     "verified_api": [

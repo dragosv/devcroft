@@ -12,5 +12,6 @@ artifacts themselves: the build recipes refuse a drifted source tree.
 - hvi: append `hvi_vsock_fuzz.rs` to `src/devices/virtio/vsock.rs`.
 - `FUZZ_SEED` and `FUZZ_SECS` control the random runs.
 
-`libkrun-vsock-hardening.candidate.patch` applies on top of the recorded patch
-series. No build uses it. Results: `../results/macos-arm64-vsock-fuzz.json`.
+The fixes are now `../patches/libkrun-vsock-hardening.patch`, the last patch in
+the series. The recorded results in `../results/macos-arm64-vsock-fuzz.json`
+used its candidate form, under this directory in commit 848cf35.

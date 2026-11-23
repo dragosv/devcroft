@@ -1,0 +1,60 @@
+{
+  "schema": 1,
+  "date": "2026-11-23",
+  "platform": "macos-arm64-native",
+  "status": "passed-scoped",
+  "qualification": "ordinary VM regressions with the hardening patch adopted; these show nothing regressed, not that the defects are fixed",
+  "helper_sha256": "59d009804d6cbeb11de3cda4685836700e022761a13a4fbfff4f12f3cbf93125",
+  "patch_sha256": "e737ff613f75acbee2df0fb00a771ddaa5cee5de49f6fd2d697b058a8eed664c",
+  "libkrun_devices_library_tests": "108 passed",
+  "helper_unit_tests": "22 passed",
+  "rows": {
+    "stage-a": {
+      "status": "passed",
+      "raw": "runs/20261123-hardening-stage-a-2/report.json",
+      "sha256": "7f69c319878f75c59e26b0238ae76ac448c368874cf114794610e657c8920f95",
+      "guest": "stage-a-raw-disks",
+      "helper": "59d009804d6cbeb11de3cda4685836700e022761a13a4fbfff4f12f3cbf93125"
+    },
+    "keeper": {
+      "status": "passed",
+      "raw": "runs/20261123-hardening-keeper-2/report.json",
+      "sha256": "cefcc0fa1ff9063cbfaec300248b6695ccefa4aca39ca15ffc99c9ba65313f7d",
+      "guest": "stage-b-real-keeper",
+      "helper": "59d009804d6cbeb11de3cda4685836700e022761a13a4fbfff4f12f3cbf93125"
+    },
+    "ssh": {
+      "status": "passed",
+      "raw": "runs/20261123-hardening-ssh/report.json",
+      "sha256": "4596db388b26f06e5fadfab444f09f971b96f09816c2e9d5fe3b640e327e8c69",
+      "guest": "stage-b-real-keeper",
+      "helper": "59d009804d6cbeb11de3cda4685836700e022761a13a4fbfff4f12f3cbf93125"
+    },
+    "protocol": {
+      "status": "passed",
+      "raw": "runs/20261123-hardening-protocol/report.json",
+      "sha256": "8b6e38c32cfc383acbd86e1d842d034680abd357f8ee39b5fc782787fee1f08e",
+      "guest": "stage-b-real-keeper",
+      "helper": "59d009804d6cbeb11de3cda4685836700e022761a13a4fbfff4f12f3cbf93125"
+    },
+    "stop": {
+      "status": "passed",
+      "raw": "runs/20261123-hardening-stop/report.json",
+      "sha256": "fe3b6627673c4ca560e6dcdc35e26dc7da67b49a2ade65d9550dcb7ef15fd5d5",
+      "guest": "stage-b-nix-closure-ext4",
+      "helper": "59d009804d6cbeb11de3cda4685836700e022761a13a4fbfff4f12f3cbf93125"
+    }
+  },
+  "excluded": [
+    "first stage-a and keeper runs: refused before boot because smoke.py predated the private launch-record rule (18525b1); smoke.py fixed"
+  ],
+  "device_level_evidence": {
+    "path": "results/macos-arm64-vsock-fuzz.json",
+    "difference": "that candidate ignored a failed fcntl; the adopted patch drops the connection instead, and the device-level probes were not rerun on it"
+  },
+  "not_run": [
+    "guest-driven reproduction in a booted VM",
+    "Nix workload, editor, density, agent rows with this helper"
+  ],
+  "manifest_correction": "fixtures/upstream.json recorded a stale backpressure patch hash; all published rows already used 67a1e6ea"
+}

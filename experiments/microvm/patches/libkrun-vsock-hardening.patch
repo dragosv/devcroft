@@ -99,11 +99,15 @@
              next = desc.next_descriptor();
 --- a/src/devices/src/virtio/vsock/unix_proxy/unix.rs
 +++ b/src/devices/src/virtio/vsock/unix_proxy/unix.rs
-@@ -587,6 +587,7 @@
+@@ -587,6 +587,11 @@
              Ok(accept_fd) => {
                  // Safe because we've just obtained the FD from the `accept` call above.
                  let new_fd = unsafe { OwnedFd::from_raw_fd(accept_fd) };
-+                let _ = fcntl(&new_fd, FcntlArg::F_SETFL(OFlag::O_NONBLOCK));
++                // The guest can send before it answers; see sendmsg.
++                if let Err(e) = fcntl(&new_fd, FcntlArg::F_SETFL(OFlag::O_NONBLOCK)) {
++                    warn!("dropping connection, cannot set non-blocking: id={}, err={}", proxy.id, e);
++                    return update;
++                }
                  update.new_proxy = Some((
                      proxy.peer_port,
                      new_fd,
