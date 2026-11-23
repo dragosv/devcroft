@@ -503,38 +503,25 @@ Two further limits:
   `/usr/bin/python3` stay refused, and so does a base name that neither the
   environment nor the runtime supplies (`/usr/bin/awk` in a minimal flox
   sandbox).
-- The library is a file under `.devcroft/<name>/redirect/`, which the sandbox
-  can write. If it is removed, dyld aborts processes that try to load it, so
-  new sessions are expected to fail until the next `up`. The abort (exit 134) was measured
-  outside a sandbox. The keeper itself never loads the library.
+- The library is a file under `.devcroft/<name>/redirect/`. A sandbox cannot
+  write it (`filesystem.write_deny` in `policy --render`); removed from the
+  host, dyld aborts processes that try to load it (exit 134, measured outside
+  a sandbox), so new sessions are expected to fail until the next `up`. The
+  keeper itself never loads it.
 
-## `#!/usr/bin/env` fails on Linux where the closure has no `env`
+## `#!/usr/bin/env` on Linux where the closure has no `env` — fixed
 
-On Linux the view writes `/usr/bin/env` only when the environment's `PATH`
-has an `env` inside a provider grant (`fleet::mount::Identity`,
-`shell::resolve_env_bin`). An environment that installs no coreutils
-supplies none, so every `#!/usr/bin/env <interpreter>` script in that
-sandbox fails with `ENOENT`, while the same interpreter runs fine by name.
+An environment without coreutils used to have no `/usr/bin/env`, so every
+`#!/usr/bin/env <interpreter>` script failed with `ENOENT` (measured
+2026-11-22, flox). Every view, fleet agents' included, now holds each base
+name at `/bin` and `/usr/bin`, linked to what the name resolves to on `PATH`:
+the environment's file, or devcroft's runtime (`add-own-userland` 4.2;
+measured 2026-11-23 on Linux aarch64, `tests/runtime_namespace.rs`).
 
-Measured 2026-11-22, Linux aarch64, flox 1.14.0: in `flox-services-sample`
-(python3 and process-compose only), `#!/usr/bin/env python3` fails at spawn,
-`python3` by name runs, and a `#!/bin/sh` script runs. `policy --render` shows
-`/usr/bin/env` as absent for such a sandbox. The same holds for pixi, whose
-provider grants the host's shell but not its `env` (measured, `pixi-sample`:
-`#!/usr/bin/env python3` fails, `python3` by name runs).
-
-**Fixed on the way: flox sandboxes with coreutils lacked it too.** The guard
-compared uncanonicalized paths, and flox's `PATH` starts with
-`.flox/run/<env>/bin`, a symlink into the store, so no flox sandbox got
-`/usr/bin/env` even when its closure had one. It now canonicalizes, as the
-shell's guard always did; `tests/base_runtime_provenance.rs` asserts that a
-store-backed row with `env` by name has `/usr/bin/env`, and fails on the
-flox row with the old check.
-
-Addressed by `openspec/changes/add-own-userland` (`/usr/bin/env` is always
-present, from the environment or from devcroft's runtime). Not closed yet:
-the runtime's `env` is on `PATH` by name since generation 1, but the view
-does not put it at `/usr/bin/env` until that change's namespace lands.
+What is left: a manifest that grants a directory holding those places
+(`/usr`, `/usr/bin`) gets the host's directory there. devcroft adds no link
+inside it, absolute paths in it run the host's files, and `up` reports them
+`host:`.
 
 ## devcroft's runtime is uutils, not GNU, and has no `awk`, `tar`, `grep`, `sed` or `find`
 

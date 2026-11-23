@@ -4,8 +4,8 @@
 //!
 //! The inputs are the ones the backend and the view are built from: the
 //! sandbox's `PATH`, the canonical grants the compiled policy resolved to,
-//! and on Linux the identity entries the view writes (`/bin/sh`,
-//! `/usr/bin/env`). Nothing here decides what a sandbox may do; it records
+//! and on Linux the links the view holds at `/bin` and `/usr/bin`
+//! (`super::namespace`). Nothing here decides what a sandbox may do; it records
 //! what the decisions already made amount to for shell and userland.
 
 use std::fmt;
@@ -182,33 +182,21 @@ impl Record {
     }
 }
 
-/// The identity entries a Linux view writes, which win over the grants for
-/// the paths they cover (`fleet::mount::Identity`).
-#[derive(Debug, Clone, Copy)]
-pub struct ViewEntries<'a> {
-    /// What the view puts at `/bin/sh`, when it writes one.
-    pub sh: Option<&'a Path>,
-    /// What the view puts at `/usr/bin/env`, when it writes one.
-    pub env: Option<&'a Path>,
-}
-
-impl<'a> ViewEntries<'a> {
-    /// What the view wrote at `path`, if anything. Compared by where each
-    /// lands in the view, so `/usr/bin/sh` is the written `/bin/sh` on a
-    /// host whose `/bin` is a symlink to `usr/bin`.
-    fn written_at(self, path: &Path) -> Option<&'a Path> {
-        let at = view_location(path);
-        [("/bin/sh", self.sh), ("/usr/bin/env", self.env)]
-            .into_iter()
-            .find_map(|(p, target)| target.filter(|_| view_location(Path::new(p)) == at))
-    }
+/// What the view wrote at `path`, if anything. Compared by where each lands
+/// in the view, so `/usr/bin/sh` is the written `/bin/sh` on a host whose
+/// `/bin` is a symlink to `usr/bin`.
+fn written_at<'a>(view: &'a [(PathBuf, PathBuf)], path: &Path) -> Option<&'a Path> {
+    let at = view_location(path);
+    view.iter()
+        .find(|(p, _)| *p == at)
+        .map(|(_, target)| target.as_path())
 }
 
 /// Where an absolute path lands in a Linux view: its first component
 /// followed when the host has it as a symlink, since the view recreates
 /// exactly those (`fleet::mount::setup_merged_usr_compat`, and `in_view`
-/// for how identity files are placed through them).
-fn view_location(path: &Path) -> PathBuf {
+/// for how written files are placed through them).
+pub(super) fn view_location(path: &Path) -> PathBuf {
     let mut components = path.components();
     let (Some(std::path::Component::RootDir), Some(first)) = (components.next(), components.next())
     else {
@@ -223,6 +211,15 @@ fn view_location(path: &Path) -> PathBuf {
 }
 
 fn resolve_written(inputs: &Inputs<'_>, target: &Path) -> Provenance {
+    // Not canonicalized: a runtime link's name is which utility runs.
+    if let Some((dir, generation)) = inputs.runtime
+        && dir == dir_of(target)
+    {
+        return Provenance::Runtime {
+            generation,
+            path: target.to_string_lossy().into_owned(),
+        };
+    }
     match target.canonicalize() {
         Ok(c) => classify(inputs, &c),
         Err(_) => Provenance::Absent {
@@ -250,7 +247,9 @@ pub struct Inputs<'a> {
     pub native: Option<&'a str>,
     /// `Some` where the sandbox has a mount view (Linux); `None` where the
     /// host filesystem is visible and the policy decides (macOS).
-    pub view: Option<ViewEntries<'a>>,
+    /// The links it holds at `/bin` and `/usr/bin`, with their targets
+    /// (`super::namespace::view_entries`).
+    pub view: Option<&'a [(PathBuf, PathBuf)]>,
     /// The namespace an exec of an absolute base-name path is redirected
     /// into (`super::namespace`, macOS); `None` where none is in effect.
     pub namespace: Option<&'a [(String, PathBuf)]>,
@@ -324,7 +323,7 @@ fn by_name(inputs: &Inputs<'_>, name: &str) -> Provenance {
         // and a `PATH` of `/usr/bin` reaches the `/bin/sh` the view wrote
         // on a merged-`/usr` host (measured: a flox sandbox without bash
         // on its `PATH` runs the closure's bash as `sh`, from `/usr/bin`).
-        if let Some(target) = inputs.view.and_then(|v| v.written_at(&candidate)) {
+        if let Some(target) = inputs.view.and_then(|v| written_at(v, &candidate)) {
             return resolve_written(inputs, target);
         }
         if !is_executable_file(&candidate) {
@@ -361,15 +360,9 @@ fn absolute(inputs: &Inputs<'_>, name: &str, abs: &Path) -> Provenance {
         .namespace
         .and_then(|ns| ns.iter().find(|(n, _)| n == name))
     {
-        return match inputs.runtime {
-            Some((dir, generation)) if dir == dir_of(target) => Provenance::Runtime {
-                generation,
-                path: target.to_string_lossy().into_owned(),
-            },
-            _ => resolve_written(inputs, target),
-        };
+        return resolve_written(inputs, target);
     }
-    if let Some(target) = inputs.view.and_then(|v| v.written_at(abs)) {
+    if let Some(target) = inputs.view.and_then(|v| written_at(v, abs)) {
         return resolve_written(inputs, target);
     }
     if !is_executable_file(abs) {
@@ -556,10 +549,7 @@ mod tests {
             provider: "test",
             runtime: None,
             native: None,
-            view: Some(ViewEntries {
-                sh: None,
-                env: None,
-            }),
+            view: Some(&[]),
             namespace: None,
         });
         assert_eq!(
@@ -581,10 +571,7 @@ mod tests {
             provider: "test",
             runtime: None,
             native: None,
-            view: Some(ViewEntries {
-                sh: Some(&shell),
-                env: None,
-            }),
+            view: Some(&[(view_location(Path::new("/bin/sh")), shell.clone())]),
             namespace: None,
         });
         assert_eq!(
@@ -605,7 +592,7 @@ mod tests {
         // elsewhere the search reaches `/bin/sh` itself. Either way the
         // host's own `sh` must not be what is recorded, even though it is
         // the first executable on `PATH` and its canonical path may be
-        // granted by the identity rule (measured on a flox sandbox).
+        // granted (measured on a flox sandbox).
         let s = Scratch::new("viewpath");
         let shell = s.exe("closure/bin/bash");
         let host_sh = Path::new("/bin/sh").canonicalize().unwrap();
@@ -617,10 +604,7 @@ mod tests {
             provider: "test",
             runtime: None,
             native: None,
-            view: Some(ViewEntries {
-                sh: Some(&shell),
-                env: None,
-            }),
+            view: Some(&[(view_location(Path::new("/bin/sh")), shell.clone())]),
             namespace: None,
         });
         assert_eq!(

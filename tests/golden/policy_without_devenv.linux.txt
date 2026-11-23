@@ -94,6 +94,7 @@ CompiledPolicy {
             origin: Baseline,
         },
     ],
+    filesystem_write_deny: [],
     network_block: true,
     network_allow_domain: [
         AnnotatedValue {

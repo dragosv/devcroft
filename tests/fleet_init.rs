@@ -403,6 +403,7 @@ fn with_a_view_an_agent_sees_exactly_its_grants() {
         proxy_socket: None,
         workspace: None,
         identity: None,
+        runtime: Default::default(),
     });
     let (code, out) = run(&leaf, &s);
     assert_eq!(code, 0, "{out}");
@@ -557,6 +558,7 @@ fn the_keeper_runs_as_the_agents_command_and_serves_sessions() {
             proxy_socket: None,
             workspace: None,
             identity: None,
+            runtime: Default::default(),
         }),
         timeout_secs: None,
         host_network: false,
@@ -804,6 +806,7 @@ fn a_view_shows_the_workspace_at_slash_workspace_and_nowhere_else() {
         proxy_socket: None,
         workspace: Some(host.clone()),
         identity: None,
+        runtime: Default::default(),
     });
     let (code, out) = run(&leaf, &s);
     let lines: Vec<&str> = out.lines().collect();

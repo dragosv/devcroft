@@ -123,6 +123,7 @@ impl Fleet {
             timeout: None,
             repository: None,
             store_roots: Vec::new(),
+            runtime: Default::default(),
             provisioning_allow: Vec::new(),
             policy: None,
         }

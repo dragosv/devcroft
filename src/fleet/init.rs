@@ -178,6 +178,9 @@ pub struct View {
     /// The user written into the view (`mount::Identity`).
     #[serde(default)]
     pub identity: Option<super::mount::Identity>,
+    /// The base-name links and the read-only runtime directories.
+    #[serde(default)]
+    pub runtime: crate::runtime::namespace::RuntimeView,
 }
 
 /// A running agent: its init helper, seen from the supervisor.
@@ -608,6 +611,7 @@ fn setup(signals: &libc::sigset_t) -> io::Result<Started> {
                 super::mount::ProcMount::Fresh,
                 view.workspace.as_deref(),
                 view.identity.as_ref(),
+                &view.runtime,
             )
             .map_err(|e| step("construct the view", e))?;
         }

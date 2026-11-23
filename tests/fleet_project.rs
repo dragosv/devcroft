@@ -64,6 +64,16 @@ fn manifest(extra: &str) -> devcroft::config::Manifest {
     devcroft::config::parse(&text).unwrap().0
 }
 
+/// A real directory: `prepare` writes the agent's runtime into it.
+fn workspace(tag: &str) -> PathBuf {
+    static N: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+    let n = N.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR"))
+        .join(format!("fleet-project-{tag}{n}-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    dir
+}
+
 fn exe() -> &'static Path {
     Path::new(env!("CARGO_BIN_EXE_devcroft"))
 }
@@ -71,7 +81,7 @@ fn exe() -> &'static Path {
 #[test]
 fn an_agent_gets_ups_plan_shell_and_hooks_for_its_own_workspace() {
     let provider = HostUsr::new();
-    let workspace = Path::new("/tmp/some-agent-workspace");
+    let workspace = &*workspace("ws");
     let launch = prepare(
         &provider,
         &manifest(""),
@@ -116,7 +126,7 @@ fn egress_is_network_allow_through_a_proxy_and_never_unfiltered() {
     let launch = prepare(
         &HostUsr::new(),
         &manifest("[network]\nallow = [\"crates.io\"]\n"),
-        Path::new("/tmp/w"),
+        &workspace("w"),
         "a1",
         exe(),
         "key",
@@ -131,7 +141,7 @@ fn egress_is_network_allow_through_a_proxy_and_never_unfiltered() {
     let err = prepare(
         &HostUsr::new(),
         &manifest("[network]\ndefault = \"allow\"\n"),
-        Path::new("/tmp/w"),
+        &workspace("w"),
         "a1",
         exe(),
         "key",
@@ -146,7 +156,7 @@ fn egress_is_network_allow_through_a_proxy_and_never_unfiltered() {
     prepare(
         &HostUsr::new(),
         &manifest("[network]\nports = [5432]\n"),
-        Path::new("/tmp/w"),
+        &workspace("w"),
         "a1",
         exe(),
         "key",
@@ -211,7 +221,7 @@ fn a_port_for_a_service_that_does_not_exist_fails_naming_it() {
     let err = prepare(
         &provider,
         &manifest("[network.services.apl]\nport = 8710\n"),
-        Path::new("/tmp/w"),
+        &workspace("w"),
         "a1",
         exe(),
         "key",
@@ -235,12 +245,12 @@ fn a_port_for_a_service_that_does_not_exist_fails_naming_it() {
 fn an_agent_gets_the_manifests_vars_and_forwarded_variables_as_up_does() {
     let text = "[sandbox]\nname = \"fleet-project\"\n\n\
                 [env]\nprovider = \"nix\"\nforward = [\"HOME\"]\n\n\
-                [env.vars]\nPATH = \"/override/bin\"\nGREETING = \"hi\"\n";
+                [env.vars]\nPATH = \"/usr/override/bin\"\nGREETING = \"hi\"\n";
     let manifest = devcroft::config::parse(text).unwrap().0;
     let launch = prepare(
         &HostUsr::new(),
         &manifest,
-        Path::new("/tmp/w"),
+        &workspace("w"),
         "a1",
         exe(),
         "key",
@@ -250,8 +260,9 @@ fn an_agent_gets_the_manifests_vars_and_forwarded_variables_as_up_does() {
     .unwrap();
     let env = &launch.provider_env;
     assert_eq!(env.get("GREETING").map(String::as_str), Some("hi"));
-    // Over the provider's value, which is what makes the key useful.
-    assert_eq!(env.get("PATH").map(String::as_str), Some("/override/bin"));
+    // Over the provider's value, which is what makes the key useful; the
+    // shell's and the runtime's directories follow it.
+    assert!(env["PATH"].starts_with("/usr/override/bin:"), "{env:?}");
     assert_eq!(env.get("HOME"), std::env::var("HOME").ok().as_ref());
 
     // What fleet does not carry is refused by name, never dropped.
@@ -260,7 +271,7 @@ fn an_agent_gets_the_manifests_vars_and_forwarded_variables_as_up_does() {
     let err = prepare(
         &HostUsr::new(),
         &devcroft::config::parse(text).unwrap().0,
-        Path::new("/tmp/w"),
+        &workspace("w"),
         "a1",
         exe(),
         "key",
@@ -287,7 +298,7 @@ fn a_grant_reaching_the_daemon_or_writing_the_store_is_refused() {
         prepare(
             &HostUsr::new(),
             &manifest(extra),
-            Path::new("/tmp/w"),
+            &workspace("w"),
             "a1",
             exe(),
             "key",
@@ -349,7 +360,7 @@ fn an_agent_reads_its_own_proc_and_the_ca_bundle_its_environment_names() {
     let launch = prepare(
         &WithBundle(HostUsr::new(), spelled.to_owned()),
         &manifest(""),
-        Path::new("/tmp/w"),
+        &workspace("w"),
         "a1",
         exe(),
         "key",

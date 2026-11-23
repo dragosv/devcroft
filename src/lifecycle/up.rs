@@ -1083,8 +1083,6 @@ fn up_process(
     let identity = (cfg!(target_os = "linux") && mount_supported).then(|| {
         sandbox_identity(
             &compiled,
-            &resolution.env,
-            provider_grants,
             shell,
             &crate::services::artifact_dir(project_root, &manifest.sandbox.name).join("home"),
         )
@@ -1156,33 +1154,34 @@ fn up_process(
         crate::runtime::namespace::DIR,
         &namespace,
     )?;
-    let sandbox_env = {
-        let mut env = resolution.env.clone();
-        env.insert("PATH".to_owned(), sandbox_path_value.clone());
-        env
+    // What a Linux view holds for it.
+    let view_entries = {
+        let roots: Vec<PathBuf> = mount_grants.iter().map(|g| g.path.clone()).collect();
+        crate::runtime::namespace::view_entries(&namespace, &roots)
     };
-    let sandbox_unset: Vec<String> = resolution
-        .unset
-        .iter()
-        .filter(|k| *k != "PATH")
-        .cloned()
-        .collect();
+    let runtime_view = crate::runtime::namespace::RuntimeView::new(
+        &view_entries,
+        &runtime_dir,
+        &exe,
+        // Canonical, as the grants the view binds are.
+        plan.filesystem_write_deny
+            .iter()
+            .map(|p| Path::new(p).canonicalize())
+            .collect::<io::Result<_>>()?,
+    );
 
     // Where shell and userland resolve (`add-runtime-provenance`), from the
     // same grants, view entries and `PATH` the sandbox gets — computed, not
     // probed. Recorded in `Meta` and in the policy artifact, and warned
     // about once when anything resolves to the host.
     let base_runtime = base_runtime_record(
-        &sandbox_env,
-        &sandbox_unset,
-        shell,
+        &sandbox_path_value,
         &mount_grants,
         provider.static_name(),
-        identity.as_ref(),
         // A view exists exactly where mount isolation is supported; Linux
         // without it is refused just below.
-        mount_supported,
-        Some(&runtime_dir),
+        mount_supported.then_some(view_entries.as_slice()),
+        &runtime_dir,
         provider.native(),
         // Not where the shell is the host's: Apple's `/bin/sh` drops the
         // redirect, so what it starts by absolute path is the granted host
@@ -1588,6 +1587,7 @@ fn up_process(
                 &script,
                 own_procfs,
                 identity.as_ref(),
+                &runtime_view,
             )?)
         }
         None => None,
@@ -1634,6 +1634,7 @@ fn up_process(
         provisioned.as_ref(),
         own_procfs,
         identity.as_ref(),
+        &runtime_view,
     )
     .map_err(|e| UpError::Keeper(e.to_string()))?;
     // The keeper holds its own copies now (inherited across exec, or
@@ -1868,75 +1869,25 @@ pub(crate) fn is_keeper_internal(name: &str) -> bool {
 
 /// The base-runtime provenance record for a sandbox (`crate::runtime`),
 /// shared by `up` and fleet so the two compute it from the same inputs.
-#[allow(clippy::too_many_arguments)]
+/// `path` is the sandbox's own ([`sandbox_path`]); `view` is what a Linux
+/// view holds at `/bin` and `/usr/bin`, `None` where there is no view.
 pub(crate) fn base_runtime_record(
-    env: &std::collections::BTreeMap<String, String>,
-    unset: &[String],
-    shell: &crate::shell::ResolvedShell,
+    path: &str,
     grants: &[crate::policy::ResolvedGrant],
     provider: &str,
-    identity: Option<&crate::fleet::mount::Identity>,
-    has_view: bool,
-    runtime_dir: Option<&Path>,
+    view: Option<&[(PathBuf, PathBuf)]>,
+    runtime_dir: &Path,
     native: Option<&str>,
     namespace: Option<&[(String, PathBuf)]>,
 ) -> crate::runtime::provenance::Record {
-    use crate::runtime::provenance::{Inputs, ViewEntries, compute};
-    let path = path_ending_in_shell_dir(env, unset, &shell.path).unwrap_or_else(|| {
-        env.get("PATH")
-            .filter(|_| !unset.iter().any(|k| k == "PATH"))
-            .cloned()
-            .unwrap_or_default()
-    });
-    // A grant that exists only because the view writes `/bin/sh` or
-    // `/usr/bin/env` names the *host's* file once canonicalized
-    // (`/usr/bin/dash`), which the view never shows: it would make the host
-    // file look reachable (measured, a flox sandbox recorded `sh` as host
-    // dash while running the closure's bash).
-    let written_by_view: Vec<PathBuf> = identity
-        .filter(|_| has_view)
-        .map(|id| {
-            id.write
-                .iter()
-                .filter(|w| {
-                    *w == Path::new(crate::fleet::mount::Identity::SH)
-                        || *w == Path::new(crate::fleet::mount::Identity::ENV)
-                })
-                .filter_map(|w| w.canonicalize().ok())
-                .collect()
-        })
-        .unwrap_or_default();
-    let roots: Vec<PathBuf> = grants
-        .iter()
-        .map(|g| g.path.clone())
-        .filter(|p| !written_by_view.contains(p))
-        .collect();
+    let roots: Vec<PathBuf> = grants.iter().map(|g| g.path.clone()).collect();
     let artifact_root = crate::provider::artifacts::artifacts_root().ok();
-    // The view writes `/bin/sh` and `/usr/bin/env` only for the paths no
-    // grant already covers (`Identity::write`).
-    let view = has_view.then(|| match identity {
-        Some(id) => {
-            let writes = |p: &str| id.write.iter().any(|w| w == Path::new(p));
-            ViewEntries {
-                sh: writes(crate::fleet::mount::Identity::SH).then_some(id.shell.as_path()),
-                env: if writes(crate::fleet::mount::Identity::ENV) {
-                    id.env.as_deref()
-                } else {
-                    None
-                },
-            }
-        }
-        None => ViewEntries {
-            sh: None,
-            env: None,
-        },
-    });
-    compute(&Inputs {
-        path: &path,
+    crate::runtime::provenance::compute(&crate::runtime::provenance::Inputs {
+        path,
         grants: &roots,
         artifact_root: artifact_root.as_deref(),
         provider,
-        runtime: runtime_dir.map(|d| (d, crate::runtime::GENERATION)),
+        runtime: Some((runtime_dir, crate::runtime::GENERATION)),
         native,
         view,
         namespace,
@@ -2249,6 +2200,7 @@ fn spawn_keeper(
     provisioned: Option<&crate::keeper::EnvOverlay>,
     own_procfs: bool,
     identity: Option<&crate::fleet::mount::Identity>,
+    runtime_view: &crate::runtime::namespace::RuntimeView,
 ) -> io::Result<libc::pid_t> {
     // The pivot-root scratch directory (`StatePaths::mount_root`'s own
     // doc) must exist and be empty before `pre_exec` runs — created here,
@@ -2386,6 +2338,7 @@ fn spawn_keeper(
         proxy_socket_for_view,
         project_root: project_root_owned,
         identity: identity.cloned(),
+        runtime_view: runtime_view.clone(),
     };
     #[cfg(not(target_os = "linux"))]
     if own_procfs {
@@ -2460,6 +2413,7 @@ fn run_provisioning(
     script: &str,
     own_procfs: bool,
     identity: Option<&crate::fleet::mount::Identity>,
+    runtime_view: &crate::runtime::namespace::RuntimeView,
 ) -> Result<crate::keeper::EnvOverlay, UpError> {
     let socket = paths.root.join("provision-proxy.sock");
     let proxy = if allow.is_empty() {
@@ -2553,6 +2507,7 @@ fn run_provisioning(
         proxy_socket_for_view: relay.as_ref().map(|(_, sock)| sock.clone()),
         project_root: project_root.to_path_buf(),
         identity: identity.cloned(),
+        runtime_view: runtime_view.clone(),
     };
     let status = if own_procfs {
         #[cfg(target_os = "linux")]
@@ -2693,6 +2648,7 @@ fn spawn_through_init(
             proxy_socket: c.proxy_socket_for_view.clone(),
             workspace: None,
             identity: c.identity.clone(),
+            runtime: c.runtime_view.clone(),
         }),
         timeout_secs: None,
         host_network: !c.isolate_network,
@@ -2734,15 +2690,11 @@ fn host_name() -> String {
 }
 
 /// The sandbox's user for its view: the host user's name and ids, the
-/// sandbox's own home and devcroft's resolved shell, and an `env` from the
-/// closure where the environment's `PATH` has one that canonicalizes inside
-/// a provider grant (`shell::resolve_env_bin`, the guard `shell::resolve`
-/// uses: a provider's `PATH` ends in the host's directories). `write` leaves out any path a grant already
-/// covers, so a manifest granting the host's `/etc/passwd` gets that file.
+/// sandbox's own home and devcroft's resolved shell. `write` leaves out any
+/// path a grant already covers, so a manifest granting the host's
+/// `/etc/passwd` gets that file.
 fn sandbox_identity(
     compiled: &policy::CompiledPolicy,
-    env: &std::collections::BTreeMap<String, String>,
-    provider_grants: &[String],
     shell: &crate::shell::ResolvedShell,
     home: &Path,
 ) -> crate::fleet::mount::Identity {
@@ -2750,14 +2702,12 @@ fn sandbox_identity(
     // SAFETY: plain getters.
     let (uid, gid) = unsafe { (libc::getuid(), libc::getgid()) };
     let user = host_user_name(uid).unwrap_or_else(|| "devcroft".to_owned());
-    let env_bin = crate::shell::resolve_env_bin(env, provider_grants);
     let mut identity = Identity {
         user,
         uid,
         gid,
         home: home.to_path_buf(),
         shell: shell.path.clone(),
-        env: env_bin,
         // An `up` sandbox sees the host's name (no UTS namespace of its own).
         hostname: host_name(),
         write: Vec::new(),
@@ -2846,6 +2796,7 @@ struct Confinement {
     proxy_socket_for_view: Option<PathBuf>,
     project_root: PathBuf,
     identity: Option<crate::fleet::mount::Identity>,
+    runtime_view: crate::runtime::namespace::RuntimeView,
 }
 
 fn confine_on_exec(cmd: &mut Command, c: Confinement) {
@@ -2858,6 +2809,7 @@ fn confine_on_exec(cmd: &mut Command, c: Confinement) {
         proxy_socket_for_view,
         project_root: project_root_owned,
         identity,
+        runtime_view,
     } = c;
     unsafe {
         cmd.pre_exec(move || {
@@ -2905,6 +2857,7 @@ fn confine_on_exec(cmd: &mut Command, c: Confinement) {
                     crate::fleet::mount::ProcMount::HostBind,
                     None,
                     identity.as_ref(),
+                    &runtime_view,
                 )?;
                 crate::fleet::mount::return_to_host_identity()?;
                 std::env::set_current_dir(&project_root_owned)?;

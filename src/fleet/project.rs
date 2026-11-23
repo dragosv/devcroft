@@ -166,33 +166,68 @@ pub fn prepare(
         );
     }
     let services: Vec<String> = declared.iter().map(|s| s.name.clone()).collect();
+
+    // Before anything else is written for the agent.
+    refuse_package_manager_authority(&compiled.to_capability_plan(), workspace)?;
+
+    // devcroft's runtime and the namespace, as `up` builds them
+    // (`add-own-userland` 4.3), in the agent's own workspace under its ID.
+    let io =
+        |e: std::io::Error| PrepareError::Provider(ProviderError::ResolutionFailed(e.to_string()));
+    let artifact_dir = crate::services::artifact_dir(workspace, agent_id);
+    let runtime_dir = artifact_dir.join(crate::runtime::DIR);
+    crate::runtime::materialize(&artifact_dir, exe).map_err(io)?;
+    crate::runtime::owned_dir::OwnedDir::open(&artifact_dir, crate::runtime::namespace::DIR)
+        .map_err(io)?;
+    compiled = compiled.with_runtime_dirs(&artifact_dir, crate::runtime::GENERATION, false);
+    if !view {
+        // Read-only is a mount of the view's; without one, nothing to claim.
+        compiled.filesystem_write_deny.clear();
+    }
     let plan = compiled.to_capability_plan();
-    refuse_package_manager_authority(&plan, workspace)?;
+    let grants = plan
+        .resolved_grants(workspace)
+        .map_err(|e| PrepareError::Config(e.to_string()))?;
+    let roots: Vec<std::path::PathBuf> = grants.iter().map(|g| g.path.clone()).collect();
+    let path = crate::lifecycle::up::sandbox_path(
+        crate::lifecycle::up::project_path(&resolution.env, &resolution.unset, None, manifest)
+            .as_deref(),
+        shell.path.parent(),
+        Some(&runtime_dir),
+        &roots,
+    );
+    let namespace =
+        crate::runtime::namespace::compute(&path, &shell.path, Some(&runtime_dir), &roots);
+    crate::runtime::owned_dir::sync_links(
+        &artifact_dir,
+        crate::runtime::namespace::DIR,
+        &namespace,
+    )
+    .map_err(io)?;
+    let entries = crate::runtime::namespace::view_entries(&namespace, &roots);
+    let runtime = crate::runtime::namespace::RuntimeView::new(
+        &entries,
+        &runtime_dir,
+        exe,
+        plan.filesystem_write_deny.iter().map(Into::into).collect(),
+    );
     // Where shell and userland resolve for this agent
     // (`add-runtime-provenance` 1.4), with `up`'s function, from the
-    // agent's own grants. Its view writes no identity entries today, so
-    // `/bin/sh` and `/usr/bin/env` resolve only through a grant.
-    let base_runtime = plan.resolved_grants(workspace).ok().map(|grants| {
-        crate::lifecycle::up::base_runtime_record(
-            &resolution.env,
-            &resolution.unset,
-            &shell,
-            &grants,
-            provider.static_name(),
-            None,
-            view,
-            // Fleet agents get the runtime with the namespace
-            // (`add-own-userland` 4.3); until then, none.
-            None,
-            provider.native(),
-            // The redirect is macOS's and fleet is Linux's.
-            None,
-        )
-    });
-    if let Some(warning) = base_runtime.as_ref().and_then(|r| r.host_warning()) {
+    // agent's own grants.
+    let base_runtime = crate::lifecycle::up::base_runtime_record(
+        &path,
+        &grants,
+        provider.static_name(),
+        view.then_some(entries.as_slice()),
+        &runtime_dir,
+        provider.native(),
+        // The redirect is macOS's and fleet is Linux's.
+        None,
+    );
+    if let Some(warning) = base_runtime.host_warning() {
         eprintln!("devcroft fleet: warning: {warning}");
     }
-    let policy = compiled.with_base_runtime(base_runtime);
+    let policy = compiled.with_base_runtime(Some(base_runtime));
 
     // `up`'s order, which is load-bearing: the provider's activation script
     // prepares the environment that `post_create` usually depends on. Every
@@ -213,12 +248,16 @@ pub fn prepare(
     // provider's alone, as `up`'s does.
     let mut env = resolution.env;
     crate::lifecycle::apply_manifest_env(manifest, &mut env);
+    // Last, as in `up`: the `PATH` the record and the namespace came from.
+    env.insert("PATH".to_owned(), path);
+    let mut unset = resolution.unset;
+    unset.retain(|k| k != "PATH");
 
     Ok(AgentLaunch {
         workspace: workspace.to_path_buf(),
         plan,
         provider_env: env,
-        unset: resolution.unset,
+        unset,
         shell: shell.path,
         hooks,
         authorized_key_pem: authorized_key_pem.to_owned(),
@@ -240,6 +279,7 @@ pub fn prepare(
         store_roots,
         provisioning_allow: manifest.provisioning.network.allow.clone(),
         policy: Some(policy),
+        runtime,
     })
 }
 

@@ -121,27 +121,6 @@ fn granted_root(candidate: &Path, grants: &[String]) -> Option<PathBuf> {
     })
 }
 
-/// An `env` for the view's `/usr/bin/env`: the first on the resolved
-/// environment's `PATH` that canonicalizes inside a provider grant — the
-/// guard [`resolve`] applies to the shell, and for the same reason (a
-/// provider's `PATH` ends in the host's own directories). Returns the
-/// canonical path, which is what the view's symlink must name.
-///
-/// Canonicalizing is the whole fix this exists for: flox's `PATH` starts
-/// with `.flox/run/<env>/bin`, a symlink into the store, so a literal
-/// `starts_with("/nix/store")` never matched and no flox sandbox got
-/// `/usr/bin/env`, coreutils or not (measured 2026-11-22, Linux,
-/// `add-runtime-provenance`).
-pub fn resolve_env_bin(env: &BTreeMap<String, String>, grants: &[String]) -> Option<PathBuf> {
-    env.get("PATH")?
-        .split(':')
-        .filter(|d| !d.is_empty())
-        .map(|dir| Path::new(dir).join("env"))
-        .filter(|candidate| is_executable_file(candidate))
-        .filter_map(|candidate| candidate.canonicalize().ok())
-        .find(|real| granted_root(real, grants).is_some())
-}
-
 /// A `PATH` search for [`SHELL_NAME`] through the *resolved* environment,
 /// host-side at `up` — never the ambient `PATH` of whoever ran it.
 ///
@@ -357,43 +336,6 @@ mod tests {
         let resolved = resolved.expect("a shell inside a declared grant must resolve");
         assert!(resolved.path.starts_with(&dir));
         assert_eq!(resolved.grant, Some(dir.to_string_lossy().into_owned()));
-    }
-
-    /// flox's shape: the `PATH` entry is a symlink into the granted root,
-    /// so only a canonical comparison admits it.
-    #[test]
-    fn an_env_behind_a_symlinked_path_entry_inside_a_grant_is_found() {
-        use std::os::unix::fs::PermissionsExt;
-        let dir = std::env::temp_dir().join(format!("dcenvbin{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        let store_bin = dir.join("store/env-dev/bin");
-        std::fs::create_dir_all(&store_bin).unwrap();
-        let env_bin = store_bin.join("env");
-        std::fs::write(&env_bin, "#!/bin/sh\n").unwrap();
-        std::fs::set_permissions(&env_bin, std::fs::Permissions::from_mode(0o755)).unwrap();
-        let run = dir.join("project/.flox/run");
-        std::fs::create_dir_all(&run).unwrap();
-        std::os::unix::fs::symlink(dir.join("store/env-dev"), run.join("env-dev")).unwrap();
-        let dir = dir.canonicalize().unwrap();
-
-        let env = env_with_path(&format!(
-            "{}:/usr/bin:/bin",
-            dir.join("project/.flox/run/env-dev/bin").display()
-        ));
-        let found = resolve_env_bin(&env, &[dir.join("store").to_string_lossy().into_owned()]);
-        let _ = std::fs::remove_dir_all(&dir);
-        assert_eq!(found, Some(dir.join("store/env-dev/bin/env")));
-    }
-
-    /// The guard's other half: the host's `env`, reached through the
-    /// `PATH` tail every provider has, is never taken.
-    #[test]
-    fn a_host_env_is_refused_when_the_provider_grants_the_store() {
-        let found = resolve_env_bin(
-            &env_with_path("/usr/local/bin:/usr/bin:/bin"),
-            &["/nix/store".to_string()],
-        );
-        assert_eq!(found, None);
     }
 
     #[test]

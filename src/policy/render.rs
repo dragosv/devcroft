@@ -13,6 +13,14 @@ pub fn render(compiled: &CompiledPolicy) -> String {
     render_section(&mut out, "filesystem.allow", &compiled.filesystem_allow);
     render_section(&mut out, "filesystem.read", &compiled.filesystem_read);
     render_section(&mut out, "filesystem.deny", &compiled.filesystem_deny);
+    // Only once an `up` recorded one; each wins over `filesystem.allow`.
+    if !compiled.filesystem_write_deny.is_empty() {
+        render_section(
+            &mut out,
+            "filesystem.write_deny",
+            &compiled.filesystem_write_deny,
+        );
+    }
     writeln!(out).unwrap();
     writeln!(out, "network.block: {}", compiled.network_block).unwrap();
     render_section(

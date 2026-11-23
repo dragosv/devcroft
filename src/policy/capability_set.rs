@@ -51,6 +51,9 @@ pub struct CapabilityPlan {
     pub filesystem_allow: Vec<String>,
     pub filesystem_read: Vec<String>,
     pub filesystem_deny: Vec<String>,
+    /// See [`CompiledPolicy::filesystem_write_deny`].
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub filesystem_write_deny: Vec<String>,
     pub network_block: bool,
     pub network_ports: Vec<u16>,
     /// See [`CompiledPolicy::network_loopback_any`]. Skipped when false, so
@@ -151,6 +154,11 @@ impl CompiledPolicy {
                 .collect(),
             filesystem_deny: self
                 .filesystem_deny
+                .iter()
+                .map(|a| a.value.clone())
+                .collect(),
+            filesystem_write_deny: self
+                .filesystem_write_deny
                 .iter()
                 .map(|a| a.value.clone())
                 .collect(),
@@ -263,6 +271,7 @@ impl CapabilityPlan {
         {
             caps = scope_exec_to_read_grants(caps)?;
             caps = grant_pty_slaves(caps)?;
+            caps = deny_writes(caps, &self.filesystem_write_deny)?;
         }
         self.apply_network_and_signal(caps)
     }
@@ -461,6 +470,39 @@ fn scope_exec_to_read_grants(mut caps: CapabilitySet) -> Result<CapabilitySet, C
 #[cfg(target_os = "macos")]
 fn grant_pty_slaves(caps: CapabilitySet) -> Result<CapabilitySet, CapabilitySetError> {
     Ok(caps.platform_rule("(allow file-read* file-write* (regex #\"^/dev/ttys[0-9]+$\"))")?)
+}
+
+/// macOS only: `filesystem_write_deny`, after every grant, so it wins under
+/// Seatbelt's last-rule-wins evaluation. Only ever devcroft's own artifact
+/// directories (`<project>/.devcroft/<name>/<dir>`).
+#[cfg(target_os = "macos")]
+fn deny_writes(
+    mut caps: CapabilitySet,
+    paths: &[String],
+) -> Result<CapabilitySet, CapabilitySetError> {
+    for value in paths {
+        let path = Path::new(value);
+        let canonical = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+        let mut spellings = vec![path];
+        if canonical != path {
+            spellings.push(&canonical);
+        }
+        for p in spellings {
+            caps = caps.platform_rule(format!(
+                "(deny file-write* (subpath \"{}\"))",
+                seatbelt_escape(p)
+            ))?;
+            // Nor its parents moved aside, up to the project root:
+            // `.devcroft/<name>` and `.devcroft`.
+            for parent in p.ancestors().skip(1).take(2) {
+                caps = caps.platform_rule(format!(
+                    "(deny file-write-unlink (literal \"{}\"))",
+                    seatbelt_escape(parent)
+                ))?;
+            }
+        }
+    }
+    Ok(caps)
 }
 
 /// A path as a Seatbelt string literal body: `\` and `"` are the only

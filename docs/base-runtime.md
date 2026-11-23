@@ -10,10 +10,8 @@ The goal this serves: every shell or utility a sandbox can execute comes from
 a pinned source — the provider's lock, or (once it exists) a devcroft runtime
 the project pins — and never from the host, except named exceptions. This page
 documents what is recorded today. The runtime's utilities exist and are on
-every sandbox's `PATH` by name, and on macOS by absolute path too
-(`openspec/changes/add-macos-exec-redirect`); the absolute-path namespace on
-Linux and a runtime shell are planned (`add-own-userland`,
-`embed-brush-runtime`).
+every sandbox's `PATH` by name and reached by absolute path; a runtime shell
+is planned (`openspec/changes/embed-brush-runtime`).
 
 ## The base names (revision 1)
 
@@ -128,11 +126,15 @@ everywhere: coreutils does not ship it. mise and pixi sandboxes resolve `sh`
 (and, for mise, `env`) to the host's, granted by the provider, and are the
 only ones whose `up` prints the host warning.
 
-By absolute path: on Linux, the view writes `/bin/sh` (the resolved shell)
-and `/usr/bin/env` (only where the environment's `PATH` has an `env` inside
-a provider grant, see [known-gaps.md](known-gaps.md)); everything
-else is absent unless granted. On a merged-`/usr` host `/usr/bin/sh` is the
-same file as the view's `/bin/sh`. On macOS, outside native mode,
-an exec of a base name's absolute path is redirected to what the name resolves
-to by name; the programs that lose the redirect are listed in
-[known-gaps.md](known-gaps.md).
+By absolute path, a base name runs what it resolves to by name. On Linux the
+view, a fleet agent's included, holds a link for each at `/bin` and
+`/usr/bin`, and nothing else there but what a grant puts there. On macOS,
+outside native mode, an exec of such a path is redirected. The exceptions on
+both are in [known-gaps.md](known-gaps.md).
+
+A process inside cannot modify the directories this rests on
+(`.devcroft/<name>/runtime` and `ns`, and `redirect` on macOS): they are
+read-only mounts on Linux and a write denial on macOS, listed as
+`filesystem.write_deny` by `policy --render`. On Linux a process can still
+move their parent directory aside; that takes the runtime off its own `PATH`,
+and the absolute paths keep their targets.

@@ -27,11 +27,13 @@
 
 - [x] 3.1 Materialise the runtime directory at `up` (links to the `EXE_LINK` binary, beside it under `<project>/.devcroft/<name>/`), idempotent like `link_keeper_exe`; read grant with origin `runtime:gen-N`.
   - Links name the keeper binary directly, not `EXE_LINK`: that link sits in the artifact directory, which a view contains only when the manifest grants `.`.
-- [ ] 3.2 Generalise `path_ending_in_shell_dir` into the shared `PATH` builder: provider `PATH`, shell dir, runtime dir; drop the canonical host tail. Use it from `up` and `fleet::project::prepare`.
+- [x] 3.2 Generalise `path_ending_in_shell_dir` into the shared `PATH` builder: provider `PATH`, shell dir, runtime dir; drop the canonical host tail. Use it from `up` and `fleet::project::prepare`.
   - `up`: done (`sandbox_path`, `project_path`); one value feeds both the record and the keeper. "Host tail" is implemented as "entries outside every resolved grant", which keeps swift's declared `/usr/bin`. Fleet: with 4.3, when agents get a runtime directory.
-- [ ] 3.3 The common runtime layer after provider resolution; move the shell fallback out of `mise.rs` and `pixi.rs` into it; host shell only as one file grant, recorded `host:` and warned.
+  - Fleet: done (2026-11-23).
+- [x] 3.3 The common runtime layer after provider resolution; move the shell fallback out of `mise.rs` and `pixi.rs` into it; host shell only as one file grant, recorded `host:` and warned.
   - Implemented (`src/runtime/layer.rs`): `up` takes the shell through `resolve_shell`; mise and pixi no longer carry a fallback (pixi keeps linking its own `bash` as `sh`). The host shell is a link `.devcroft/<name>/host-shell/sh`, so `PATH` gains `sh` alone, never the host directory it sits in; its grants carry their own origin `host-shell` (recorded in `Meta.host_shell_grants`, reconstructed by `--render`). Linux: the shell file plus the glibc files its headers name; macOS: `/bin` + `/var/select` as before (D5).
   - Measured on macOS 2026-11-23: `mise_provider_e2e` and `pixi_provider_e2e` pass with no skips; mise's render shows `host-shell`, `sh (by name)` is `host:`, and `PATH` holds the link directory and no host directory. **Open:** the Linux run (the library walk is unmeasured), and `fleet::project::prepare`, which still refuses a shell-less environment — fleet refuses mise and pixi anyway, so it moves with 4.3.
+  - Linux: `mise_provider_e2e` and `pixi_provider_e2e` pass (2026-11-23, aarch64). Fleet keeps refusing a shell-less environment, as it refuses mise and pixi.
 - [x] 3.4 `native` declaration on the provider seam with a reason string; swift declares it; `up`, `status`, `policy --render` show it; provenance `native:swift`.
   - `ProviderKind::native` (`SWIFT_NATIVE_REASON`) and a defaulted `ProviderEntry::native` (forgetting it fails safe: `host:` and warned). `Provenance::Native`; the reason travels in the record for `--render`. Measured on macOS 2026-11-22 (`swift_provider_e2e`, no skips): all three surfaces state it, `/bin/sh` renders `native:swift:`, no per-name host warning; the nix control prints no native line.
 - [x] 3.5 Refuse a manifest grant of an individual host developer tool made to obtain a base name in a non-native sandbox, naming native mode.
@@ -41,14 +43,21 @@
 
 ## 4. The namespace (rule B) and the Linux view
 
-- [ ] 4.1 Compute the target of each base name once at `up` (provider `PATH` within grants → shell dir → runtime) and write the namespace directory (`<project>/.devcroft/<name>/ns/`), idempotently; share the function with `fleet::project::prepare`.
+- [x] 4.1 Compute the target of each base name once at `up` (provider `PATH` within grants → shell dir → runtime) and write the namespace directory (`<project>/.devcroft/<name>/ns/`), idempotently; share the function with `fleet::project::prepare`.
   - `up`: done (`runtime::namespace`; macOS). **Open:** fleet, which has no runtime directory until 4.3. Runtime, namespace and host-shell directories are now written through `runtime::owned_dir` (no component may be a link): the by-path writer followed a link planted by the sandbox and deleted the target's files (measured 2026-11-23). Other by-path writers under `.devcroft/<name>/` (`link_keeper_exe`, the policy artifact) were not audited.
-- [ ] 4.2 View construction: tmpfs `/bin` and `/usr/bin` populated from the namespace directory, one bind of `devcroft` for runtime targets; `Identity`'s `/bin/sh` and `/usr/bin/env` become namespace entries.
-- [ ] 4.3 Fleet agent and provisioning views get the same entries (today their `identity` is `None`).
-- [ ] 4.4 Refuse at `up` where the view cannot be constructed; no partial namespace.
-- [ ] 4.4a Runtime and namespace directories read-only from inside: read-only mounts in the Linux view, a write denial in the macOS profile that outranks the project grant; shown by `policy --render`; tests overwrite and remove from a session and fail. (`add-sandbox-identity` extends this to all of `.devcroft/<name>/` except `home/`.)
-- [ ] 4.5 Consistency test on every provider row: for each base name, `/bin/<name>`, `/usr/bin/<name>` and `<name>` execute the same file, or all fail. Nix and devbox rows: GNU from the closure. Flox minimal row: runtime.
-- [ ] 4.6 Tests: `#!/usr/bin/env python3` in a flox sandbox without coreutils runs through the runtime's `env`; in a nix sandbox through the closure's; `/usr/bin/python3` fails; `/bin/awk` fails in flox without awk; the same from a fleet agent; `policy --render` lists each entry with target and provenance.
+  - Fleet: done with 4.3.
+- [x] 4.2 View construction: tmpfs `/bin` and `/usr/bin` populated from the namespace directory, one bind of `devcroft` for runtime targets; `Identity`'s `/bin/sh` and `/usr/bin/env` become namespace entries.
+  - Links in the view's own `/bin` and `/usr/bin` rather than a tmpfs over them: a granted file there (the host shell's) must stay visible. A runtime entry links the `devcroft` binary its grant already binds, not the runtime directory's link, so moving `.devcroft/<name>` aside from inside changes no absolute path. A granted directory covering the place wins and is reported `host:` (spec amended). The `identity` rules for `/bin/sh` and `/usr/bin/env` are gone; `why` answers for a link from its target's rule.
+- [x] 4.3 Fleet agent and provisioning views get the same entries (today their `identity` is `None`).
+  - `fleet::project::prepare` builds the runtime, namespace and `PATH` with `up`'s functions; keeper and provisioning views both get them. A real devbox agent is asserted (`tests/fleet_commands.rs`). An agent still gets no `/etc/passwd` (`identity: None`).
+- [x] 4.4 Refuse at `up` where the view cannot be constructed; no partial namespace.
+  - `up` already refuses on Linux without mount namespaces; a link that cannot be made, or a directory that cannot be made read-only, fails `construct_view`.
+- [x] 4.4a Runtime and namespace directories read-only from inside: read-only mounts in the Linux view, a write denial in the macOS profile that outranks the project grant; shown by `policy --render`; tests overwrite and remove from a session and fail. (`add-sandbox-identity` extends this to all of `.devcroft/<name>/` except `home/`.)
+  - `filesystem_write_deny`, origin `runtime:gen-N` (`host-shell` for its link): runtime, ns, redirect. macOS also denies moving `.devcroft/<name>` and `.devcroft`. Not yet covered: the policy artifact and the `devcroft` link beside them (`add-sandbox-identity`).
+- [x] 4.5 Consistency test on every provider row: for each base name, `/bin/<name>`, `/usr/bin/<name>` and `<name>` execute the same file, or all fail. Nix and devbox rows: GNU from the closure. Flox minimal row: runtime.
+  - In `tests/base_runtime_provenance.rs`, for records with no `host:`/`native:` entry. Pass 2026-11-23: Linux nix, flox; macOS nix, flox, devbox. Linux devbox not run (its setup hit the GitHub API rate limit); devenv has no row.
+- [x] 4.6 Tests: `#!/usr/bin/env python3` in a flox sandbox without coreutils runs through the runtime's `env`; in a nix sandbox through the closure's; `/usr/bin/python3` fails; `/bin/awk` fails in flox without awk; the same from a fleet agent; `policy --render` lists each entry with target and provenance.
+  - `tests/runtime_namespace.rs` (both platforms); the agent half on a devbox environment, whose `env` is the closure's; flox without coreutils in an agent is not tested.
 
 ## 5. Inventory growth
 
@@ -62,8 +71,9 @@
 
 - [ ] 6.1 Measure the integrated binary (standard and `release-small`), build time, and the shipped-dependency delta with the generator's own definition; record in `design.md`.
 - [ ] 6.2 Regenerate `THIRD-PARTY-LICENSES.md`; make an MIT entry without a vendored text fail the generator.
-- [ ] 6.3 `docs/known-gaps.md`: uutils ≠ GNU where the provider supplies nothing; awk and tar not in the runtime; the Linux `/usr/bin/env` gap closed.
+- [x] 6.3 `docs/known-gaps.md`: uutils ≠ GNU where the provider supplies nothing; awk and tar not in the runtime; the Linux `/usr/bin/env` gap closed.
   - uutils ≠ GNU and the missing families/shell: written (2026-11-23). The `/usr/bin/env` entry says what is left; it is marked closed with 4.2.
+  - Closed 2026-11-23.
 - [x] 6.4 `docs/decisions.md`: extend "devcroft's shell is devcroft's dependency" to the runtime, with the project-pin rule and the native exception.
   - "Decided: shell and userland are devcroft's dependency, pinned by the project" (§1), and the mise entry names the common layer. `docs/base-runtime.md` also gained the `runtime:`/`native:` kinds, the host-shell layer and native mode.
 - [x] 6.5 `CLAUDE.md`: the `runtime:gen-N` and `native:<provider>` origins in the policy invariant list.

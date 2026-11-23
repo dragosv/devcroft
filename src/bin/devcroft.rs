@@ -1016,6 +1016,7 @@ fn bind_probe_main(args: &[String]) -> i32 {
         filesystem_allow: Vec::new(),
         filesystem_read: Vec::new(),
         filesystem_deny: Vec::new(),
+        filesystem_write_deny: Vec::new(),
         network_block: true,
         network_ports: vec![port],
         network_loopback_any: false,
@@ -1207,6 +1208,7 @@ fn uds_probe_main(args: &[String]) -> i32 {
             devcroft::fleet::mount::ProcMount::HostBind,
             None,
             None,
+            &Default::default(),
         ) {
             eprintln!("devcroft __uds_probe: constructing view: {e}");
             return 2;
@@ -1692,6 +1694,7 @@ fn mount_view_probe_main(args: &[String]) -> i32 {
         devcroft::fleet::mount::ProcMount::HostBind,
         None,
         None,
+        &Default::default(),
     ) {
         eprintln!("constructing view: {e}");
         return 1;

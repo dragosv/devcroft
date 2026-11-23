@@ -220,7 +220,7 @@ pub enum Origin {
     /// always; an `up` sandbox where the host allows (`add-up-pid-namespace`).
     PidNamespace,
     /// A file only the sandbox's view contains, naming its user:
-    /// `/etc/passwd`, `/etc/group`, `/etc/hosts`, `/bin/sh`, `/usr/bin/env`
+    /// `/etc/passwd`, `/etc/group`, `/etc/hosts`
     /// ([`CompiledPolicy::with_identity`], `fleet::mount::Identity`).
     /// Written by devcroft, never bound from the host.
     Identity,
@@ -349,6 +349,12 @@ pub struct CompiledPolicy {
     pub filesystem_allow: Vec<AnnotatedValue>,
     pub filesystem_read: Vec<AnnotatedValue>,
     pub filesystem_deny: Vec<AnnotatedValue>,
+    /// Directories no process inside may write, even where a grant around
+    /// them is read-write: devcroft's own runtime, inside the project root
+    /// (`add-own-userland` 4.4a). Absolute paths, only from `up` itself.
+    /// Read-only mounts on Linux, a write denial after every grant on macOS.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub filesystem_write_deny: Vec<AnnotatedValue>,
     pub network_block: bool,
     pub network_allow_domain: Vec<AnnotatedValue>,
     /// Loopback TCP ports the sandbox may bind and connect on. Governed
@@ -550,6 +556,7 @@ pub fn compile(manifest: &Manifest) -> CompiledPolicy {
         // Empty from the manifest alone: every entry is folded in by `up`
         // once it knows where the socket will live.
         unix_socket_bind: Vec::new(),
+        filesystem_write_deny: Vec::new(),
         credentials_broker: Vec::new(),
         signal_mode: SIGNAL_MODE,
         base_runtime: None,
@@ -611,8 +618,12 @@ impl CompiledPolicy {
     /// devcroft's runtime directory, read-only, with origin
     /// `runtime:gen-N` (`add-own-userland` 3.1). Its own grant, never
     /// borrowed from the project root's: a manifest that does not grant
-    /// `.` must still get the runtime.
+    /// `.` must still get the runtime. And not writable through it.
     pub fn with_runtime(mut self, dir: &std::path::Path, generation: u32) -> Self {
+        self.filesystem_write_deny.push(AnnotatedValue::new(
+            dir.to_string_lossy().into_owned(),
+            Origin::Runtime(generation),
+        ));
         self.filesystem_read.push(AnnotatedValue::new(
             dir.to_string_lossy().into_owned(),
             Origin::Runtime(generation),
@@ -648,7 +659,17 @@ impl CompiledPolicy {
     /// (`crate::runtime::layer`): its own origin, so a sandbox running the
     /// host's shell says so in `policy --render` rather than attributing
     /// the grant to the provider that lacked one.
+    ///
+    /// The link that names it is devcroft's, so it is not writable either.
     pub fn with_host_shell(mut self, grants: &[String]) -> Self {
+        self.filesystem_write_deny.extend(
+            grants
+                .iter()
+                .filter(|g| {
+                    std::path::Path::new(g).ends_with(crate::runtime::layer::HOST_SHELL_DIR)
+                })
+                .map(|g| AnnotatedValue::new(g.clone(), Origin::HostShell)),
+        );
         self.filesystem_read.extend(
             grants
                 .iter()

@@ -291,9 +291,9 @@ fn a_session_is_the_users_own_uid_not_root() {
 
 /// The view names its user (`fleet::mount::Identity`): an `/etc/passwd`
 /// with the user's own uid, the sandbox's home and devcroft's shell; an
-/// `/etc/hosts` resolving `localhost`; `/bin/sh` runnable. Each one is a
-/// rule with origin `identity` in the policy artifact. A path the manifest
-/// grants itself is the host's, not written: here `/etc/hosts`.
+/// `/etc/hosts` resolving `localhost`, each a rule with
+/// origin `identity` in the policy artifact. A path the manifest grants
+/// itself is the host's, not written: here `/etc/hosts`.
 #[test]
 fn the_view_names_its_user_and_a_granted_path_stays_the_hosts() {
     if !devcroft::policy::backend_supported() {
@@ -390,7 +390,8 @@ fn the_view_names_its_user_and_a_granted_path_stays_the_hosts() {
         .map(|g| g.value.as_str())
         .collect();
     assert!(identity.contains(&"/etc/passwd"), "{identity:?}");
-    assert!(identity.contains(&"/bin/sh"), "{identity:?}");
+    // The namespace's, through its target's grant, not an identity rule.
+    assert!(!identity.contains(&"/bin/sh"), "{identity:?}");
     assert!(
         !identity.contains(&"/etc/hosts"),
         "a path the manifest granted is not written: {identity:?}"

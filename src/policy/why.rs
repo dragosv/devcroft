@@ -44,6 +44,15 @@ pub fn why_path(compiled: &CompiledPolicy, path: &str, op: Op) -> Explanation {
             origin: Some(rule.origin.clone()),
         };
     }
+    if matches!(op, Op::Write | Op::ReadWrite)
+        && let Some(rule) = matching(&compiled.filesystem_write_deny, path)
+    {
+        return Explanation {
+            allowed: false,
+            detail: format!("denied by rule {} (read-only)", rule.origin),
+            origin: Some(rule.origin.clone()),
+        };
+    }
     let allow = if matches!(op, Op::Write | Op::ReadWrite) {
         matching(&compiled.filesystem_allow, path)
     } else {
@@ -56,12 +65,36 @@ pub fn why_path(compiled: &CompiledPolicy, path: &str, op: Op) -> Explanation {
             detail: format!("allowed by rule {}", rule.origin),
             origin: Some(rule.origin.clone()),
         },
-        None => Explanation {
+        None => namespace_entry(compiled, path, op).unwrap_or(Explanation {
             allowed: false,
             origin: None,
             detail: "denied: not granted by any rule".to_string(),
-        },
+        }),
     }
+}
+
+/// A Linux view puts the base names at `/bin` and `/usr/bin` as links, so
+/// `/bin/sh` is readable though no rule names it: its target's rule decides.
+fn namespace_entry(compiled: &CompiledPolicy, path: &str, op: Op) -> Option<Explanation> {
+    if !cfg!(target_os = "linux") || op != Op::Read {
+        return None;
+    }
+    let provenance = &compiled
+        .base_runtime
+        .as_ref()?
+        .entries
+        .iter()
+        .find(|e| e.lookup == path)?
+        .provenance;
+    let rule = matching(&compiled.filesystem_read, provenance.path()?)?;
+    Some(Explanation {
+        allowed: true,
+        detail: format!(
+            "allowed by rule {} (the view's link to {provenance})",
+            rule.origin
+        ),
+        origin: Some(rule.origin.clone()),
+    })
 }
 
 /// Explain whether outbound access to `host` would be allowed.
@@ -179,6 +212,7 @@ pub fn why_resolved(
         filesystem_allow: resolve(&compiled.filesystem_allow),
         filesystem_read: resolve(&compiled.filesystem_read),
         filesystem_deny: resolve(&compiled.filesystem_deny),
+        filesystem_write_deny: resolve(&compiled.filesystem_write_deny),
         ..compiled.clone()
     };
     why_path(&resolved, &lexical(path).to_string_lossy(), op)

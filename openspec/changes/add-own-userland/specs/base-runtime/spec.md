@@ -85,7 +85,9 @@ SHALL show each entry with its target and provenance.
 On Linux, every sandbox view, including fleet agent and provisioning views,
 SHALL expose the namespace directory's entries at `/bin/<name>` and
 `/usr/bin/<name>`, and SHALL NOT contain any other entry under `/bin` or
-`/usr/bin`. `/usr/bin/env` SHALL be present in every view, from the provider
+`/usr/bin` except what a grant puts there. Where a granted directory covers
+those places, the view SHALL show that directory unchanged and the base-runtime
+record SHALL report its files as `host:`. `/usr/bin/env` SHALL be present in every view, from the provider
 environment or from the runtime. Runtime entries SHALL carry origin
 `runtime:gen-N`. On a host where the view cannot be constructed, `up` SHALL
 refuse rather than start without the namespace.

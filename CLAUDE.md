@@ -526,9 +526,9 @@ rule carries an origin: `manifest:<key>`, `provider:<name>`, or `baseline`
 (plus `allocated` for a chosen port, `trust-store` for the CA bundle the
 provider's environment names, `pid-namespace` for a procfs the sandbox owns,
 `fleet:clone` for a fleet agent's clone root, `tools:<provider>` for the
-user's tooling layer, `identity` for the `/etc/passwd`, `/etc/group`,
-`/etc/hosts`, `/bin/sh` and `/usr/bin/env` devcroft writes into the view
-(`fleet::mount::Identity`), and `runtime:gen-N` for devcroft's own utility
+user's tooling layer, `identity` for the `/etc/passwd`, `/etc/group` and
+`/etc/hosts` devcroft writes into the view (`fleet::mount::Identity`; the
+view's `/bin` and `/usr/bin` links need no rule, their targets have one), and `runtime:gen-N` for devcroft's own utility
 directory (`add-own-userland`). None of these is written by a manifest).
 The base-runtime record beside the policy has its own provenance kinds,
 among them `runtime:gen-N` and `native:<provider>` — the latter only for

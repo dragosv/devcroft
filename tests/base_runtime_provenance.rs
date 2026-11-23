@@ -258,16 +258,15 @@ fn the_base_runtime_record_matches_what_runs_inside() {
             mismatches.join("\n")
         );
 
-        // Rule B on macOS (`add-own-userland` 4.5): `/bin/<name>` and
+        // Rule B (`add-own-userland` 4.5): `/bin/<name>` and
         // `<name>` are one file, or neither runs. Both halves were just
         // checked against the sandbox, so the record can be compared with
         // itself. Not where the host's files are granted (native mode, or a
-        // host shell), which the redirect does not cover.
-        if cfg!(target_os = "macos")
-            && !record
-                .entries
-                .iter()
-                .any(|e| matches!(e.provenance.kind(), "host" | "native"))
+        // host shell), which the namespace leaves alone.
+        if !record
+            .entries
+            .iter()
+            .any(|e| matches!(e.provenance.kind(), "host" | "native"))
         {
             let file = |p: &devcroft::runtime::provenance::Provenance| {
                 p.path().map(|p| {

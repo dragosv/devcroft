@@ -227,23 +227,18 @@ pub fn make_propagation_private() -> io::Result<()> {
 pub const WORKSPACE: &str = "/workspace";
 
 /// Who the sandbox's user is, written into its view: an `/etc/passwd` and
-/// `/etc/group` naming only that user, an `/etc/hosts` naming `localhost`
-/// and the sandbox's hostname on its loopback, and `/bin/sh` (and
-/// `/usr/bin/env`, where the closure has one) pointing at devcroft's own
-/// resolved shell.
+/// `/etc/group` naming only that user, and an `/etc/hosts` naming `localhost`
+/// and the sandbox's hostname on its loopback. `/bin/sh`, `/usr/bin/env` and
+/// the other base names are the namespace's (`crate::runtime::namespace`).
 ///
 /// **Why the view needs them at all.** It holds only what is granted, and
 /// none of these is: so `getpwuid` failed for every program that asks who
 /// it runs as (`initdb`, `psql`, `ssh`, git's committer identity, and
-/// process-compose itself, which logged `Failed get user`), and `system()`,
-/// `popen()` and every `#!/usr/bin/env` script failed for the absolute
-/// path glibc and the kernel use, and nothing resolved `localhost`, so
-/// postgres could not listen and `mysql_install_db` could not resolve the
-/// hostname. `initdb` and postgres hit all three (measured, a devbox
-/// postgres project). **Why synthesized rather than the host's.** The
+/// process-compose itself, which logged `Failed get user`), and nothing
+/// resolved `localhost`, so postgres could not listen and `mysql_install_db`
+/// could not resolve the hostname (measured, devbox projects). **Why synthesized rather than the host's.** The
 /// host's `passwd` names the real home, where tools would then look
-/// instead of the sandbox's, and the host's `/bin/sh` is a host binary,
-/// which `own-policy-baseline` keeps out. These files expose nothing of
+/// instead of the sandbox's. These files expose nothing of
 /// the host but the user's name and ids, which every process already has.
 ///
 /// Each path is a read rule with origin `identity`
@@ -259,12 +254,10 @@ pub struct Identity {
     pub gid: u32,
     pub home: std::path::PathBuf,
     pub shell: std::path::PathBuf,
-    /// An `env` from the closure, for `/usr/bin/env`.
-    pub env: Option<std::path::PathBuf>,
     /// The name the sandbox sees as its hostname, for `/etc/hosts`.
     #[serde(default)]
     pub hostname: String,
-    /// The paths of the four above that this view writes; the rest a grant
+    /// The paths of those above that this view writes; the rest a grant
     /// already supplies.
     pub write: Vec<std::path::PathBuf>,
 }
@@ -273,16 +266,12 @@ impl Identity {
     pub const PASSWD: &'static str = "/etc/passwd";
     pub const GROUP: &'static str = "/etc/group";
     pub const HOSTS: &'static str = "/etc/hosts";
-    pub const SH: &'static str = "/bin/sh";
-    pub const ENV: &'static str = "/usr/bin/env";
 
     /// Every path this identity can supply, before any is left out.
     pub fn candidates(&self) -> Vec<std::path::PathBuf> {
-        let mut paths = vec![Self::PASSWD, Self::GROUP, Self::HOSTS, Self::SH];
-        if self.env.is_some() {
-            paths.push(Self::ENV);
-        }
-        paths.into_iter().map(std::path::PathBuf::from).collect()
+        [Self::PASSWD, Self::GROUP, Self::HOSTS]
+            .map(std::path::PathBuf::from)
+            .to_vec()
     }
 
     #[cfg(target_os = "linux")]
@@ -377,6 +366,7 @@ pub fn construct_view(
     proc: ProcMount,
     workspace: Option<&std::path::Path>,
     identity: Option<&Identity>,
+    runtime: &crate::runtime::namespace::RuntimeView,
 ) -> io::Result<()> {
     let tmp_path = std::path::Path::new("/tmp");
     let synthesized =
@@ -501,6 +491,11 @@ pub fn construct_view(
     setup_dev(new_root).map_err(|e| ctx(e, "setting up /dev", new_root))?;
     setup_merged_usr_compat(new_root)
         .map_err(|e| ctx(e, "recreating merged-/usr symlinks", new_root))?;
+    write_namespace(new_root, &runtime.entries)?;
+    // After the workspace bind, which would otherwise cover them.
+    for path in &runtime.read_only {
+        pin_read_only(new_root, path)?;
+    }
     if let Some(identity) = identity {
         write_identity(new_root, identity)
             .map_err(|e| ctx(e, "writing the sandbox user's identity", new_root))?;
@@ -1000,9 +995,37 @@ fn setup_merged_usr_compat(new_root: &std::path::Path) -> io::Result<()> {
     Ok(())
 }
 
-/// [`Identity`]'s files in the view, before the pivot. After the
-/// merged-`/usr` symlinks, so `/bin/sh` lands where `/bin` points
-/// (`usr/bin` on a merged host).
+/// The namespace's links, before the pivot and after the merged-`/usr`
+/// symlinks, so each lands where its directory points. A file of the same
+/// name was granted by itself and stays.
+#[cfg(target_os = "linux")]
+fn write_namespace(
+    new_root: &std::path::Path,
+    entries: &[(std::path::PathBuf, std::path::PathBuf)],
+) -> io::Result<()> {
+    for (at, target) in entries {
+        let link = in_view(new_root, at)?;
+        if std::fs::symlink_metadata(&link).is_ok() {
+            continue;
+        }
+        if let Some(parent) = link.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::os::unix::fs::symlink(target, &link).map_err(|e| ctx(e, "linking", at))?;
+    }
+    Ok(())
+}
+
+/// Make `path`, already in the view through some grant, read-only there.
+#[cfg(target_os = "linux")]
+fn pin_read_only(new_root: &std::path::Path, path: &std::path::Path) -> io::Result<()> {
+    let target = new_root.join(path.strip_prefix("/").unwrap_or(path));
+    bind_mount(&target, &target, false)
+        .and_then(|()| remount_readonly(&target, false))
+        .map_err(|e| ctx(e, "making read-only", path))
+}
+
+/// [`Identity`]'s files in the view, before the pivot.
 #[cfg(target_os = "linux")]
 fn write_identity(new_root: &std::path::Path, identity: &Identity) -> io::Result<()> {
     for path in &identity.write {
@@ -1017,11 +1040,8 @@ fn write_identity(new_root: &std::path::Path, identity: &Identity) -> io::Result
             Some(Identity::PASSWD) => std::fs::write(&target, identity.passwd())?,
             Some(Identity::GROUP) => std::fs::write(&target, identity.group())?,
             Some(Identity::HOSTS) => std::fs::write(&target, identity.hosts())?,
-            Some(Identity::SH) => std::os::unix::fs::symlink(&identity.shell, &target)?,
-            Some(Identity::ENV) => match &identity.env {
-                Some(env) => std::os::unix::fs::symlink(env, &target)?,
-                None => continue,
-            },
+            // A record from before the namespace also listed these.
+            Some("/bin/sh" | "/usr/bin/env") => continue,
             _ => {
                 return Err(io::Error::other(format!(
                     "{} is not an identity path",
@@ -1207,6 +1227,7 @@ pub fn construct_view(
     _proc: ProcMount,
     _workspace: Option<&std::path::Path>,
     _identity: Option<&Identity>,
+    _runtime: &crate::runtime::namespace::RuntimeView,
 ) -> io::Result<()> {
     Err(io::Error::new(
         io::ErrorKind::Unsupported,

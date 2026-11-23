@@ -194,9 +194,12 @@ fn a_layer_adds_path_entries_and_one_grant_and_nothing_else() {
         env
     };
     assert_eq!(strip(with_env.clone()), strip(without_env.clone()));
-    // And PATH is the project's, followed by the layer's.
+    // And PATH is the project's, followed by the layer's, followed by
+    // devcroft's runtime, which is last in both.
+    let (project, runtime) = without_env["PATH"].rsplit_once(':').unwrap();
+    assert!(runtime.ends_with("/runtime"), "{runtime}");
     assert!(
-        with_env["PATH"].starts_with(&without_env["PATH"]),
+        with_env["PATH"].starts_with(project) && with_env["PATH"].ends_with(runtime),
         "the project's PATH must come first:\n  with: {}\n  without: {}",
         with_env["PATH"],
         without_env["PATH"]

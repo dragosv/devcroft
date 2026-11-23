@@ -89,6 +89,8 @@ pub struct AgentLaunch {
     /// the agent to read (`why` inside it), as `up` writes a sandbox's.
     /// `None` writes nothing.
     pub policy: Option<crate::policy::CompiledPolicy>,
+    /// What its view holds for the runtime, as host paths.
+    pub runtime: crate::runtime::namespace::RuntimeView,
 }
 
 impl AgentLaunch {
@@ -557,6 +559,9 @@ impl Supervisor {
                 // Not yet for agents (add-linux-agent-fleet task): `up`'s
                 // sandboxes get one, fleet's tests need sudo to verify it.
                 identity: None,
+                runtime: launch
+                    .runtime
+                    .map(|p| PathBuf::from(translate(p.to_string_lossy().into_owned()))),
             })
         } else {
             None
@@ -728,6 +733,9 @@ impl Supervisor {
                         .clone(),
                 ),
                 identity: None,
+                runtime: launch
+                    .runtime
+                    .map(|p| PathBuf::from(translate(p.to_string_lossy().into_owned()))),
             })
         } else {
             None

@@ -592,6 +592,25 @@ fn a_real_devbox_agent_builds_its_project_in_its_clone() {
         !out.contains("UNRELATED_STORE_PATH_VISIBLE"),
         "the agent sees store paths outside its closure: {out}"
     );
+    // The namespace, as in an `up` sandbox (`add-own-userland` 4.3): absolute
+    // paths run the closure's userland, nothing of the host's, and the
+    // agent's own runtime directory is not writable.
+    let (_, out) = session(
+        &socket,
+        &inside,
+        &format!(
+            "/bin/ls --version | head -1; ls --version | head -1; \
+             printf '#!/usr/bin/env sh\\necho env-ran\\n' > e.sh && chmod +x e.sh && ./e.sh; \
+             /usr/bin/python3 --version; echo python=$?; \
+             rm -f .devcroft/{id}/runtime/hostname 2>&1; echo rm=$?; \
+             echo x > .devcroft/{id}/ns/new; echo write=$?",
+            id = agent.id
+        ),
+    );
+    assert_eq!(out.matches("GNU coreutils").count(), 2, "{out}");
+    for want in ["env-ran", "python=127", "rm=1", "write=1"] {
+        assert!(out.contains(want), "{want}: {out}");
+    }
     commands::stop(
         &commands::FleetRef {
             state_dir: &state,
