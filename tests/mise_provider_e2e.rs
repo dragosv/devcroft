@@ -182,6 +182,14 @@ fn locked_restore_runtime_boundaries_sharing_and_reclamation() {
     }
     let render = text(&devcroft(&a.0, &["policy", "--render"]));
     assert!(render.contains("provider:mise"), "{render}");
+    // `env` by path is `env` by name, the runtime's, never the host's.
+    if cfg!(target_os = "linux") {
+        for env in ["env", "/usr/bin/env"] {
+            let o = sh(&a, &format!("{env} --version"));
+            assert!(text(&o).contains("uutils"), "{env}: {}", text(&o));
+        }
+        assert!(!render.contains("host:/usr/bin/env"), "{render}");
+    }
     for line in render.lines() {
         assert!(
             !line.trim_start().starts_with("/usr/bin ") && line.trim() != "/usr/bin",

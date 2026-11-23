@@ -51,6 +51,15 @@ builds on, restated so the change stands alone:
   pre-existing nondeterminism in which license file it picks, not a change in
   what ships.)
 
+- **Cost, measured** (task 6.1, 2026-11-23, `3cfbbba`, rustc 1.95.0): aarch64
+  Linux `cargo build --release` 45,681,368 bytes, **33,356,376 stripped**,
+  +7.8 MB (+31%) on the 0.3 baseline, which predates every change since
+  `37c605d` and not only this one; 189 s clean with 6 jobs. Size-optimised
+  (`opt-level = "z"`, fat LTO, one codegen unit, stripped): 16,947,600 bytes,
+  167 s; the crate defines no such profile and no baseline exists for it.
+  macOS arm64: 36,228,416, 29,683,168 stripped, 176 s. Shipped dependencies:
+  **511** (381 before, +130). Earlier build times were not recorded.
+
 ## Goals / Non-Goals
 
 **Goals:**

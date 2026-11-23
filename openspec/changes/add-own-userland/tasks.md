@@ -38,8 +38,9 @@
   - `ProviderKind::native` (`SWIFT_NATIVE_REASON`) and a defaulted `ProviderEntry::native` (forgetting it fails safe: `host:` and warned). `Provenance::Native`; the reason travels in the record for `--render`. Measured on macOS 2026-11-22 (`swift_provider_e2e`, no skips): all three surfaces state it, `/bin/sh` renders `native:swift:`, no per-name host warning; the nix control prints no native line.
 - [x] 3.5 Refuse a manifest grant of an individual host developer tool made to obtain a base name in a non-native sandbox, naming native mode.
   - `ConfigError::HostToolGrant`, layer `config`: a `filesystem.allow`/`read` entry that is a base name directly under `/bin`, `/usr/bin`, `/sbin`, `/usr/sbin`, `/usr/local/bin` or `/opt/homebrew/bin`, unless the provider is native. Lexical; no sample or test manifest granted one.
-- [ ] 3.6 Update the provenance test's expectations: closure providers' utilities by name now `closure:` or `runtime:gen-N`, never `absent`; mise/pixi utilities `runtime:gen-N`, shell still `host:`.
+- [x] 3.6 Update the provenance test's expectations: closure providers' utilities by name now `closure:` or `runtime:gen-N`, never `absent`; mise/pixi utilities `runtime:gen-N`, shell still `host:`.
   - Linux, measured 2026-11-22 (in-sandbox `-ef` probe, 0 mismatches each): nix/devbox rows `hostname` → runtime, everything else closure; flox row the same plus grep…gzip absent; flox-services-sample (no coreutils) 39 runtime (was 0); pixi 39 runtime, `sh` host; mise 38 runtime, `sh` and `env` host — its fallback puts the host's `/usr/bin` on `PATH` as the shell's directory (pre-existing, 3.3's job).
+  - Linux, re-measured 2026-11-23 (`policy --render`, all lookups): mise-sample and pixi-sample runtime 115/116, absent 24, host only the shell and, for mise, `/usr/bin/env`: its provider still granted the host's. Removed on Linux, so `sh` is the only host name; kept on macOS until `embed-brush-runtime`, where the host shell drops the redirect. flox-services-sample: closure 2, runtime 116, host 0.
 
 ## 4. The namespace (rule B) and the Linux view
 
@@ -55,7 +56,7 @@
 - [x] 4.4a Runtime and namespace directories read-only from inside: read-only mounts in the Linux view, a write denial in the macOS profile that outranks the project grant; shown by `policy --render`; tests overwrite and remove from a session and fail. (`add-sandbox-identity` extends this to all of `.devcroft/<name>/` except `home/`.)
   - `filesystem_write_deny`, origin `runtime:gen-N` (`host-shell` for its link): runtime, ns, redirect. macOS also denies moving `.devcroft/<name>` and `.devcroft`. Not yet covered: the policy artifact and the `devcroft` link beside them (`add-sandbox-identity`).
 - [x] 4.5 Consistency test on every provider row: for each base name, `/bin/<name>`, `/usr/bin/<name>` and `<name>` execute the same file, or all fail. Nix and devbox rows: GNU from the closure. Flox minimal row: runtime.
-  - In `tests/base_runtime_provenance.rs`, for records with no `host:`/`native:` entry. Pass 2026-11-23: Linux nix, flox; macOS nix, flox, devbox. Linux devbox not run (its setup hit the GitHub API rate limit); devenv has no row.
+  - In `tests/base_runtime_provenance.rs`; skips native mode, and on macOS sandboxes with `host:` entries. Pass 2026-11-23: Linux nix, flox, devbox, test; macOS nix, flox, devbox. devenv, mise and pixi have no row (mise's `env` is asserted in its own e2e).
 - [x] 4.6 Tests: `#!/usr/bin/env python3` in a flox sandbox without coreutils runs through the runtime's `env`; in a nix sandbox through the closure's; `/usr/bin/python3` fails; `/bin/awk` fails in flox without awk; the same from a fleet agent; `policy --render` lists each entry with target and provenance.
   - `tests/runtime_namespace.rs` (both platforms); the agent half on a devbox environment, whose `env` is the closure's; flox without coreutils in an agent is not tested.
 
@@ -69,8 +70,10 @@
 
 ## 6. Cost, attribution, documentation
 
-- [ ] 6.1 Measure the integrated binary (standard and `release-small`), build time, and the shipped-dependency delta with the generator's own definition; record in `design.md`.
-- [ ] 6.2 Regenerate `THIRD-PARTY-LICENSES.md`; make an MIT entry without a vendored text fail the generator.
+- [x] 6.1 Measure the integrated binary (standard and `release-small`), build time, and the shipped-dependency delta with the generator's own definition; record in `design.md`.
+  - In `design.md`. The owner accepted the size 2026-11-23.
+- [x] 6.2 Regenerate `THIRD-PARTY-LICENSES.md`; make an MIT entry without a vendored text fail the generator.
+  - 511 dependencies. Any crate without a text now fails the generator. Six MIT crates ship none: their upstream text is in `scripts/license-texts/`, keyed by exact version. `objc2`, `objc2-encode` and `block2` publish no MIT text and no copyright line upstream; the file reproduces their statement and the MIT permission notice (accepted by the owner 2026-11-23).
 - [x] 6.3 `docs/known-gaps.md`: uutils ≠ GNU where the provider supplies nothing; awk and tar not in the runtime; the Linux `/usr/bin/env` gap closed.
   - uutils ≠ GNU and the missing families/shell: written (2026-11-23). The `/usr/bin/env` entry says what is left; it is marked closed with 4.2.
   - Closed 2026-11-23.

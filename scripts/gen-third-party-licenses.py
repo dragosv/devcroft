@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Regenerate THIRD-PARTY-LICENSES.md from the current dependency tree.
 
-Why this exists rather than `cargo about`: devcroft links 189 Apache-2.0
+Why this exists rather than `cargo about`: devcroft links hundreds of Apache-2.0
 crates (nono, russh and the whole sigstore family among them), and
 Apache-2.0 section 4 requires retaining license texts and notices when the
 work is redistributed. A statically-linked `devcroft` binary redistributes
@@ -39,8 +39,22 @@ LICENSE_FILENAMES = [
     "LICENSE",
     "COPYING",
     "UNLICENSE",
+    "LICENSE-CC0",
     "NOTICE",
 ]
+
+# Crates that ship no license file, with the text their own repository
+# publishes at the revision the crate was packaged from (`.cargo_vcs_info.json`),
+# in scripts/license-texts/. Keyed by exact version, so an upgrade fails until
+# someone has looked again.
+SUPPLIED = {
+    ("base64-simd", "0.8.0"): "nugine-simd.txt",
+    ("vsimd", "0.8.0"): "nugine-simd.txt",
+    ("tonic-prost", "0.14.9"): "grpc-rust.txt",
+    ("objc2", "0.6.5"): "objc2.txt",
+    ("objc2-encode", "4.1.0"): "objc2.txt",
+    ("block2", "0.6.2"): "objc2.txt",
+}
 
 # Some texts are byte-identical across hundreds of crates (the Apache-2.0
 # boilerplate especially). Emitting each one would produce a multi-megabyte
@@ -115,14 +129,24 @@ def main() -> int:
         manifest_dir = Path(pkg["manifest_path"]).parent
 
         found_hash = None
+        # By listing, so the match ignores case on every host: opening the
+        # name found `LICENSE-Apache` on a Mac's filesystem and not on Linux.
+        present = {f.name.upper(): f for f in sorted(manifest_dir.iterdir())}
         for filename in LICENSE_FILENAMES:
-            candidate = manifest_dir / filename
-            if candidate.is_file():
+            candidate = present.get(filename.upper())
+            if candidate is not None and candidate.is_file():
                 text = candidate.read_text(encoding="utf-8", errors="replace")
                 h = sha(text)
                 texts.setdefault(h, text)
                 found_hash = h
                 break
+
+        if found_hash is None and (name, version) in SUPPLIED:
+            supplied = root / "scripts" / "license-texts" / SUPPLIED[(name, version)]
+            text = supplied.read_text(encoding="utf-8")
+            h = sha(text)
+            texts.setdefault(h, text)
+            found_hash = h
 
         if found_hash is None and "Apache-2.0" in spdx:
             # The crates that most need attribution turned out to be
@@ -143,12 +167,20 @@ def main() -> int:
             found_hash = h
             substituted.append((name, version, spdx))
         elif found_hash is None:
-            # Recorded explicitly rather than silently dropped, so the gap
-            # is visible to whoever reviews this. Non-Apache licenses are
-            # not substituted: MIT and BSD texts embed a copyright holder,
-            # so a canonical copy would attribute the wrong party.
+            # Non-Apache licenses are not substituted: MIT and BSD texts embed
+            # a copyright holder, so a canonical copy would attribute the
+            # wrong party. Fatal below.
             missing.append((name, version, spdx))
         entries.append((name, version, spdx, found_hash))
+
+    if missing:
+        print(
+            "no license text for:\n"
+            + "".join(f"  {n} {v} ({l})\n" for n, v, l in sorted(missing))
+            + "add each crate's own text to SUPPLIED and scripts/license-texts/",
+            file=sys.stderr,
+        )
+        return 1
 
     entries.sort(key=lambda e: (e[0].lower(), e[1]))
 
@@ -176,7 +208,7 @@ def main() -> int:
     lines.append("| Crate | Version | License (SPDX) | Text |")
     lines.append("|---|---|---|---|")
     for name, version, spdx, h in entries:
-        ref = f"[{h}](#license-text-{h})" if h else "*not vendored*"
+        ref = f"[{h}](#license-text-{h})"
         lines.append(f"| `{name}` | {version} | {spdx} | {ref} |")
     lines.append("")
 
@@ -192,19 +224,6 @@ def main() -> int:
         )
         lines.append("")
         for name, version, spdx in sorted(substituted, key=lambda m: m[0].lower()):
-            lines.append(f"- `{name}` {version} — {spdx}")
-        lines.append("")
-
-    if missing:
-        lines.append("## Dependencies without a vendored license text")
-        lines.append("")
-        lines.append(
-            "These declare an SPDX identifier but ship no license file in the "
-            "published crate. The SPDX identifier governs; the canonical text "
-            "for each is available at <https://spdx.org/licenses/>."
-        )
-        lines.append("")
-        for name, version, spdx in sorted(missing, key=lambda m: m[0].lower()):
             lines.append(f"- `{name}` {version} — {spdx}")
         lines.append("")
 
@@ -228,8 +247,7 @@ def main() -> int:
     out.write_text("\n".join(lines), encoding="utf-8")
     print(
         f"wrote {out.relative_to(root)}: {len(entries)} dependencies, "
-        f"{len(texts)} distinct texts, {len(substituted)} Apache-2.0 substituted, "
-        f"{len(missing)} without vendored text"
+        f"{len(texts)} distinct texts, {len(substituted)} Apache-2.0 substituted"
     )
     return 0
 

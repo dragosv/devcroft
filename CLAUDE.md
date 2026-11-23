@@ -209,7 +209,9 @@ a login instead of skipping.
 python3 scripts/gen-third-party-licenses.py   # rewrites THIRD-PARTY-LICENSES.md
 ```
 
-**It is the same file on every host, since 2026-11-07.** The generator
+**It is the same file on every host, since 2026-11-23** (checked on macOS
+and Linux; before that six crates' `LICENSE-Apache` matched only on a
+case-insensitive filesystem). The generator
 used to read `cargo tree -e normal`, which resolves for the *host* target
 alone, so the file depended on where it was generated. On a Mac it dropped
 the Linux keyring/dbus tail (287 instead of 335: `aes`, `async-io`,
@@ -226,14 +228,16 @@ and the sigstore crates it links rather than the Rust-conventional dual
 `MIT OR Apache-2.0` — a dual license would let a user take MIT and no
 patent grant while changing none of their real obligations, since nono,
 russh and every `sigstore-*` are Apache-2.0-only and linked regardless.
-299 of the 380 shipped dependencies list Apache-2.0 (380 since
-`nono-proxy`, 2026-11-16), whose §4(a) requires
+346 of the 511 shipped dependencies list Apache-2.0 (511 since the
+uutils runtime, 2026-11-23; 381 before it), whose §4(a) requires
 recipients get a copy of the License.
 The generator's non-obvious part: `nono`, `russh` and every `sigstore-*`
 declare Apache-2.0 but vendor no license file, so it substitutes the
 canonical text for those — exact, not approximate, because the Apache-2.0
 text has no per-holder copyright line (unlike MIT, which is why MIT is
-never substituted).
+never substituted). A crate with no text it can use **fails the generator**:
+take the text from the crate's own repository at the packaged revision into
+`scripts/license-texts/`, and name the exact version in `SUPPLIED`.
 
 **Packaging is an anchored `include` allowlist** in `Cargo.toml`. Without
 the leading `/` on each pattern the globs match at any depth and sweep in
