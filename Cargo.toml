@@ -45,7 +45,7 @@ categories = ["command-line-utilities", "development-tools"]
 # openspec/changes/ don't resolve from an unpacked crate. The crate ships
 # `README-crate.md` instead: install + quick-start only, same split
 # nono-cli uses between its GitHub README and its crate README.
-include = ["/src/**/*.rs", "!/src/bin/spike.rs", "/README-crate.md", "/LICENSE-APACHE", "/NOTICE", "/THIRD-PARTY-LICENSES.md"]
+include = ["/src/**/*.rs", "/src/runtime/redirect.c", "/build.rs", "!/src/bin/spike.rs", "/README-crate.md", "/LICENSE-APACHE", "/NOTICE", "/THIRD-PARTY-LICENSES.md"]
 
 [features]
 # Off by default, and that is the whole point: `tests/` compiles this crate
@@ -137,6 +137,10 @@ uu_hostname = "=0.13.0"
 uu_yes = "=0.13.0"
 uu_sleep = "=0.13.0"
 uu_nohup = "=0.13.0"
+
+[build-dependencies]
+# The macOS exec-redirect library (`build.rs`); already in the lock.
+cc = "1.4"
 
 [dev-dependencies]
 # A local TLS upstream for the brokered-credential tests (`proxy::server`).

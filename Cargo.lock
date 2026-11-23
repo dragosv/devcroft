@@ -1887,6 +1887,7 @@ version = "0.0.1"
 dependencies = [
  "base64 0.22.1",
  "brush-shell",
+ "cc",
  "libc",
  "nono",
  "nono-proxy",

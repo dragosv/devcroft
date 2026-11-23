@@ -15,6 +15,7 @@
 pub mod applets;
 pub mod layer;
 pub mod provenance;
+pub mod redirect;
 
 /// The runtime generation this binary embeds (`add-own-userland` D2).
 ///
