@@ -36,6 +36,47 @@ in-sandbox run failed for the commands run directly by the script's shell,
 because that shell had started before the variable was exported — the reason
 the keeper must set it before spawning.
 
+### Group 0, measured 2026-11-23 (macOS 15.8.3 24H241, arm64)
+
+`spikes/macos-exec-redirect/` reproduces everything below from the
+repository (`run.sh`); the 2026-11-22 table above was reproduced line for line
+first (task 0.1).
+
+| Case | Result |
+|---|---|
+| Go 1.26.1 `exec.Command("/bin/sh", "-c", …)` | redirected |
+| Go `exec.Command` of a `#!/bin/sh` script | redirected (shebang emulated) |
+| Go `exec.Command("/bin/echo")` (in the runtime) | redirected |
+| Go `exec.Command("/bin/ls")` (not in it) | `EPERM` |
+| Go `syscall.Exec("/bin/sh", …)` | redirected |
+| Node (`execSync`) | redirected |
+| Python `subprocess.run(…, shell=True)` | reached the runtime shell; the prototype's log line did not appear in-sandbox (it does outside), unexplained |
+| `make` from the closure | never touches `/bin/sh`: nixpkgs' make runs recipes with the store's bash |
+| `npm run` | never touches `/bin/sh`: the script shell is found by name, the closure's `sh` |
+| devbox postgres `initdb` from a `post_create` hook | ~26 `popen("/bin/sh")` calls redirected; `initdb` gets past the stage that used to report `postgres` missing and stops at `shmget` (the separate, documented Seatbelt gap) |
+| process-compose service (flox, `python3 -m http.server`) | starts; the variables are in the service's environment (read host-side with `ps -E`) |
+| a session started by a keeper whose environment has the variables | redirected with no `export` in the session (D3's shape) |
+
+Tools' signing (task 0.3): conda-forge's `go`, `golangci-lint`, `curl`,
+`make`, `jq` and `python3.12` (the pixi samples' tools) are ad-hoc signed
+without the hardened runtime, and conda python kept the library and passed it
+to its child. Node's official build (26.4.0) **has** the hardened runtime but
+also the `allow-dyld-environment-variables` and `disable-library-validation`
+entitlements, and kept the library. **Not measured:** the official
+`go1.24.0.darwin-arm64` build the mise profile installs (its download and
+injection were not run in this session).
+
+In these runs the variables were set through `[env.vars]`, so the keeper
+loaded the library itself as well. D3 sets them only in the environment the
+keeper builds for its children, which is the narrower shape.
+
+Not measured: `cargo build` with a `build.rs` that runs `sh` (task 0.5), and
+a service whose own program uses `popen` (0.4; a hook's `popen` is covered by
+`initdb` above).
+
+**Stop criterion (0.6): not hit.** Nothing a qualified provider ordinarily
+runs dropped the library.
+
 ## Goals / Non-Goals
 
 **Goals:**

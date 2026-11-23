@@ -2,12 +2,16 @@
 
 Record each result in `design.md`, tagged measured, with macOS version and arch.
 
-- [ ] 0.1 Commit the 2026-11-22 prototype (`interpose.c`, the two test programs, the in-sandbox scripts) under `spikes/macos-exec-redirect/`, so the evidence in `design.md` is reproducible from the repo.
-- [ ] 0.2 Go: a Go binary in a sandbox calling `exec.Command("/bin/sh", "-c", …)` and `os/exec` of a `#!/bin/sh` script — redirected or not.
+- [x] 0.1 Commit the 2026-11-22 prototype (`interpose.c`, the two test programs, the in-sandbox scripts) under `spikes/macos-exec-redirect/`, so the evidence in `design.md` is reproducible from the repo.
+- [x] 0.2 Go: a Go binary in a sandbox calling `exec.Command("/bin/sh", "-c", …)` and `os/exec` of a `#!/bin/sh` script — redirected or not.
+  - Redirected, `syscall.Exec` too; `/bin/ls` stays `EPERM` (`goprobe/`, design.md "Group 0").
 - [ ] 0.3 Artifact tools: the notarised tools used by the mise and pixi samples (and Node's official build) — does each keep `DYLD_INSERT_LIBRARIES`; does `/bin/sh` from each reach the runtime or `EPERM`.
+  - pixi's conda-forge tools: ad-hoc, no hardened runtime, keep it. Node 26.4.0: hardened but entitled, keeps it. **Open:** mise's official `go1.24.0.darwin-arm64`.
 - [ ] 0.4 process-compose (Go) starting a service whose command is a shell line; services that themselves `popen`.
+  - Shell-line service starts with the variables in its environment (flox). **Open:** a service whose own program `popen`s.
 - [ ] 0.5 Real workloads through `/bin/sh`: `npm run` with a script, `make` from a closure, `cargo build` with a `build.rs` that runs `sh`, `python -c 'import subprocess; subprocess.run("true", shell=True)'`.
-- [ ] 0.6 Stop criterion: if a qualified provider's ordinary workload cannot run because its tools drop the library, report to the owner before group 1.
+  - Python and Node redirected; `make` and `npm run` never reach `/bin/sh` (closure shell by name or store path); `initdb`'s `popen` redirected. **Open:** `cargo build` with a `build.rs`.
+- [x] 0.6 Stop criterion: if a qualified provider's ordinary workload cannot run because its tools drop the library, report to the owner before group 1.
 
 ## 1. The library
 
