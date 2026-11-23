@@ -620,6 +620,30 @@ impl CompiledPolicy {
         self
     }
 
+    /// Every directory of devcroft's runtime under `artifact_dir`: the
+    /// utilities, the namespace, and the exec redirect where one is used.
+    pub fn with_runtime_dirs(
+        self,
+        artifact_dir: &std::path::Path,
+        generation: u32,
+        redirect: bool,
+    ) -> Self {
+        let out = self
+            .with_runtime(&artifact_dir.join(crate::runtime::DIR), generation)
+            .with_runtime(
+                &artifact_dir.join(crate::runtime::namespace::DIR),
+                generation,
+            );
+        if redirect {
+            out.with_runtime(
+                &artifact_dir.join(crate::runtime::redirect::DIR),
+                generation,
+            )
+        } else {
+            out
+        }
+    }
+
     /// The host shell's grants, read-only, with origin `host-shell`
     /// (`crate::runtime::layer`): its own origin, so a sandbox running the
     /// host's shell says so in `policy --render` rather than attributing

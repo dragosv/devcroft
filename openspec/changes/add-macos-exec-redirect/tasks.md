@@ -11,7 +11,7 @@ Record each result in `design.md`, tagged measured, with macOS version and arch.
   - Shell-line service starts with the variables in its environment (flox). **Open:** a service whose own program `popen`s.
 - [ ] 0.5 Real workloads through `/bin/sh`: `npm run` with a script, `make` from a closure, `cargo build` with a `build.rs` that runs `sh`, `python -c 'import subprocess; subprocess.run("true", shell=True)'`.
   - Python and Node redirected; `make` and `npm run` never reach `/bin/sh` (closure shell by name or store path); `initdb`'s `popen` redirected. **Open:** `cargo build` with a `build.rs`.
-- [x] 0.6 Stop criterion: if a qualified provider's ordinary workload cannot run because its tools drop the library, report to the owner before group 1.
+- [ ] 0.6 Stop criterion: if a qualified provider's ordinary workload cannot run because its tools drop the library, report to the owner before group 1.
 
 ## 1. The library
 
@@ -24,11 +24,16 @@ Record each result in `design.md`, tagged measured, with macOS version and arch.
 
 ## 2. Integration
 
-- [ ] 2.1 Write the library at `up` beside the runtime links; read grant with origin `runtime:gen-N`; part of the generation identity.
-- [ ] 2.2 Set the variable in the shared environment construction for sessions, `exec`, SSH, hooks, confined activation and services, before spawn.
-- [ ] 2.3 The library resolves through the namespace directory built by `add-own-userland` (rule B): `/bin/sh` to the resolved shell, every other base name to the provider's executable or the runtime's, whichever the name resolves to.
-- [ ] 2.4 The runtime's `env` and shell restore the variable when invoked with a cleared environment.
-- [ ] 2.5 Native mode (swift) gets no redirect.
+- [x] 2.1 Write the library at `up` beside the runtime links; read grant with origin `runtime:gen-N`; part of the generation identity.
+  - `.devcroft/<name>/redirect/`, a directory of its own so the runtime directory stays exactly the inventory.
+- [x] 2.2 Set the variable in the shared environment construction for sessions, `exec`, SSH, hooks, confined activation and services, before spawn.
+  - On children only, not in `KeeperEnv` (design.md D3, corrected). Sessions and a `post_create` hook tested in a sandbox; services, SSH and activation share the spawn path and are not tested separately.
+- [x] 2.3 The library resolves through the namespace directory built by `add-own-userland` (rule B): `/bin/sh` to the resolved shell, every other base name to the provider's executable or the runtime's, whichever the name resolves to.
+  - Tested on the nix row: `/bin/ls` is the closure's GNU `ls`.
+- [x] 2.4 The runtime's `env` and shell restore the variable when invoked with a cleared environment.
+  - `env` only: the runtime has no shell. The library recognises devcroft's own binary by inode and restores the variables it saved at load.
+- [x] 2.5 Native mode (swift) gets no redirect.
+  - Not materialised, granted or set for a native provider. Covered by code, not by a test of its own.
 
 ## 3. Tests
 

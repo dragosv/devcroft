@@ -4128,13 +4128,15 @@ fn compile_with_provider_grants(
     // The runtime directory's grant, at the generation `up` started with
     // (`add-own-userland`, `Origin::Runtime`).
     let compiled = match meta.runtime_generation {
-        Some(generation) => compiled.with_runtime(
+        Some(generation) => compiled.with_runtime_dirs(
             &devcroft::services::artifact_dir(
                 std::path::Path::new(&meta.project_root),
                 &manifest.sandbox.name,
-            )
-            .join(devcroft::runtime::DIR),
+            ),
             generation,
+            devcroft::runtime::redirect::available()
+                && devcroft::provider::ProviderKind::from_name(&manifest.env.provider)
+                    .is_ok_and(|kind| kind.native().is_none()),
         ),
         None => compiled,
     };

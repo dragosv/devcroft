@@ -18,13 +18,66 @@
  */
 #include <errno.h>
 #include <fcntl.h>
+#include <mach-o/dyld.h>
 #include <limits.h>
 #include <spawn.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 #include <unistd.h>
 
 extern char **environ;
+
+/* Saved at load, as `NAME=value`, when this process is one of devcroft's own
+ * utilities (the same file as the runtime's `env`): `env -i` clears them
+ * before it execs, and the program it starts must keep the redirect. Any
+ * other program that clears its environment loses it, as published. */
+static char dc_saved[2][PATH_MAX + 32];
+static int dc_restore;
+
+static int dc_save(char *out, size_t size, const char *name) {
+    const char *v = getenv(name);
+    if (!v || strlen(name) + 1 + strlen(v) + 1 > size) return 0;
+    strcpy(out, name);
+    strcat(out, "=");
+    strcat(out, v);
+    return 1;
+}
+
+__attribute__((constructor)) static void dc_init(void) {
+    char exe[PATH_MAX], own[PATH_MAX];
+    uint32_t size = sizeof exe;
+    struct stat a, b;
+    const char *ns = getenv("DEVCROFT_NS");
+    static const char suffix[] = "/../runtime/env";
+    if (!ns || strlen(ns) + sizeof suffix > sizeof own) return;
+    strcpy(own, ns);
+    strcat(own, suffix);
+    if (_NSGetExecutablePath(exe, &size) != 0 || stat(exe, &a) != 0 || stat(own, &b) != 0) return;
+    if (a.st_dev != b.st_dev || a.st_ino != b.st_ino) return;
+    dc_restore = dc_save(dc_saved[0], sizeof dc_saved[0], "DYLD_INSERT_LIBRARIES") &&
+                 dc_save(dc_saved[1], sizeof dc_saved[1], "DEVCROFT_NS");
+}
+
+static int dc_envc(char *const envp[]) {
+    int n = 0;
+    while (envp && envp[n]) n++;
+    return n;
+}
+
+/* `envp`, or `out` (room for envc + 3) holding it with the saved variables. */
+static char *const *dc_env(char *const envp[], char **out) {
+    if (!dc_restore) return envp;
+    int n = 0;
+    for (int i = 0; envp && envp[i]; i++)
+        if (strncmp(envp[i], "DYLD_INSERT_LIBRARIES=", 22) != 0 &&
+            strncmp(envp[i], "DEVCROFT_NS=", 12) != 0)
+            out[n++] = envp[i];
+    out[n++] = dc_saved[0];
+    out[n++] = dc_saved[1];
+    out[n] = NULL;
+    return out;
+}
 
 /* The longest `#!` line read, as the kernel's own limit (BINPRM_BUF_SIZE on
  * Linux; XNU reads 512 bytes). */
@@ -46,7 +99,7 @@ static const char *dc_base_name(const char *path) {
  * namespace, not a base-name path, no entry, or an entry that is not
  * executable). */
 static const char *dc_map(const char *path, char *out, size_t size) {
-    const char *ns = getenv("DEVCROFT_NS");
+    const char *ns = dc_restore ? dc_saved[1] + sizeof "DEVCROFT_NS" : getenv("DEVCROFT_NS");
     const char *name = dc_base_name(path);
     if (!ns || !*ns || !name) return NULL;
     size_t need = strlen(ns) + 1 + strlen(name) + 1;
@@ -133,7 +186,8 @@ static const char *dc_resolve(const char *path, char *const argv[], char *mapped
 #define DC_BUFFERS                                                                          \
     char mapped[PATH_MAX], interp[DC_SHEBANG_MAX], arg[DC_SHEBANG_MAX];                     \
     int use_nv = 0;                                                                         \
-    char *nv[dc_argc(argv) + 4];
+    char *nv[dc_argc(argv) + 4];                                                            \
+    char *ev[dc_envc(envp) + 3];
 
 #define DC_RESOLVE(path)                                                                    \
     dc_resolve((path), argv, mapped, sizeof mapped, interp, sizeof interp, arg, sizeof arg, \
@@ -144,7 +198,7 @@ static int dc_posix_spawn(pid_t *pid, const char *path, const posix_spawn_file_a
                           char *const envp[]) {
     DC_BUFFERS
     const char *target = DC_RESOLVE(path);
-    return posix_spawn(pid, target, fa, attr, use_nv ? nv : argv, envp);
+    return posix_spawn(pid, target, fa, attr, use_nv ? nv : argv, dc_env(envp, ev));
 }
 
 /* posix_spawnp searches PATH only for a name without `/`; an absolute or
@@ -155,26 +209,28 @@ static int dc_posix_spawnp(pid_t *pid, const char *file, const posix_spawn_file_
     if (!file || !strchr(file, '/')) return posix_spawnp(pid, file, fa, attr, argv, envp);
     DC_BUFFERS
     const char *target = DC_RESOLVE(file);
-    return posix_spawn(pid, target, fa, attr, use_nv ? nv : argv, envp);
+    return posix_spawn(pid, target, fa, attr, use_nv ? nv : argv, dc_env(envp, ev));
 }
 
 static int dc_execve(const char *path, char *const argv[], char *const envp[]) {
     DC_BUFFERS
     const char *target = DC_RESOLVE(path);
-    return execve(target, use_nv ? nv : argv, envp);
+    return execve(target, use_nv ? nv : argv, dc_env(envp, ev));
 }
 
 static int dc_execv(const char *path, char *const argv[]) {
+    char *const *envp = environ;
     DC_BUFFERS
     const char *target = DC_RESOLVE(path);
-    return execve(target, use_nv ? nv : argv, environ);
+    return execve(target, use_nv ? nv : argv, dc_env(envp, ev));
 }
 
 static int dc_execvp(const char *file, char *const argv[]) {
     if (!file || !strchr(file, '/')) return execvp(file, argv);
+    char *const *envp = environ;
     DC_BUFFERS
     const char *target = DC_RESOLVE(file);
-    return execve(target, use_nv ? nv : argv, environ);
+    return execve(target, use_nv ? nv : argv, dc_env(envp, ev));
 }
 
 /* dyld applies these to every image but this one, so the calls above reach

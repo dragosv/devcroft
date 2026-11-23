@@ -84,6 +84,14 @@ fn apply_activation_env(cmd: &mut Command) {
         }
         cmd.envs(&overlay.set);
     }
+    // The exec redirect (`add-macos-exec-redirect` D3), on children only:
+    // this process must never load it (`runtime::redirect::KEEPER_LIB_VAR`).
+    let insert = crate::runtime::redirect::INSERT_VAR;
+    let own = match cmd.get_envs().find(|(k, _)| *k == insert) {
+        Some((_, value)) => value.map(std::ffi::OsStr::to_owned),
+        None => std::env::var_os(insert),
+    };
+    cmd.envs(crate::runtime::redirect::child_vars(own));
 }
 
 /// Local fork/exec — today's only backend, and the `process` tier's.

@@ -61,21 +61,23 @@ pub fn resolve_shell(
             host_grants: Vec::new(),
         });
     }
-    host_shell(Path::new("/bin/sh"), &artifact_dir.join(HOST_SHELL_DIR))
+    host_shell(Path::new("/bin/sh"), artifact_dir)
 }
 
-/// The host shell at `host` (`/bin/sh` outside tests), linked as `sh` in
-/// `dir`, with the grants it needs.
-fn host_shell(host: &Path, dir: &Path) -> Result<ShellChoice, String> {
+/// The host shell at `host` (`/bin/sh` outside tests), linked as `sh` under
+/// `artifact_dir`, with the grants it needs.
+fn host_shell(host: &Path, artifact_dir: &Path) -> Result<ShellChoice, String> {
     let real = host
         .canonicalize()
         .map_err(|e| format!("host POSIX shell {}: {e}", host.display()))?;
-    std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    let dir = artifact_dir.join(HOST_SHELL_DIR);
+    super::owned_dir::sync_links(
+        artifact_dir,
+        HOST_SHELL_DIR,
+        &[(crate::shell::SHELL_NAME.to_owned(), real.clone())],
+    )
+    .map_err(|e| e.to_string())?;
     let link = dir.join(crate::shell::SHELL_NAME);
-    if std::fs::read_link(&link).ok().as_deref() != Some(real.as_path()) {
-        let _ = std::fs::remove_file(&link);
-        std::os::unix::fs::symlink(&real, &link).map_err(|e| format!("{}: {e}", link.display()))?;
-    }
     let mut host_grants = vec![dir.to_string_lossy().into_owned()];
     host_grants.extend(platform_grants(&real)?);
     host_grants.sort();

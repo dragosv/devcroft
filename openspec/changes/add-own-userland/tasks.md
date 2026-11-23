@@ -42,6 +42,7 @@
 ## 4. The namespace (rule B) and the Linux view
 
 - [ ] 4.1 Compute the target of each base name once at `up` (provider `PATH` within grants → shell dir → runtime) and write the namespace directory (`<project>/.devcroft/<name>/ns/`), idempotently; share the function with `fleet::project::prepare`.
+  - `up`: done (`runtime::namespace`; macOS). **Open:** fleet, which has no runtime directory until 4.3. Runtime, namespace and host-shell directories are now written through `runtime::owned_dir` (no component may be a link): the by-path writer followed a link planted by the sandbox and deleted the target's files (measured 2026-11-23). Other by-path writers under `.devcroft/<name>/` (`link_keeper_exe`, the policy artifact) were not audited.
 - [ ] 4.2 View construction: tmpfs `/bin` and `/usr/bin` populated from the namespace directory, one bind of `devcroft` for runtime targets; `Identity`'s `/bin/sh` and `/usr/bin/env` become namespace entries.
 - [ ] 4.3 Fleet agent and provisioning views get the same entries (today their `identity` is `None`).
 - [ ] 4.4 Refuse at `up` where the view cannot be constructed; no partial namespace.

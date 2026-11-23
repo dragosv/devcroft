@@ -24,20 +24,40 @@ pub fn available() -> bool {
     !LIBRARY.is_empty()
 }
 
-/// Write the library to `path` unless it already holds these bytes, so a
-/// running sandbox never sees it rewritten in place. Written to a temporary
-/// name and renamed, since dyld maps the file.
-pub fn materialize(path: &std::path::Path) -> std::io::Result<()> {
-    if std::fs::read(path).is_ok_and(|b| b == LIBRARY) {
-        return Ok(());
-    }
-    let tmp = path.with_extension("dylib.tmp");
-    std::fs::write(&tmp, LIBRARY)?;
+/// The library's directory under a sandbox's artifact directory.
+pub const DIR: &str = "redirect";
+
+/// The keeper's own names for the library and the namespace. Never
+/// [`INSERT_VAR`] on the keeper itself: dyld would load the library before
+/// the keeper restricts itself, and the file is where the sandbox can write.
+/// The keeper turns these into [`INSERT_VAR`] and [`NS_VAR`] for its
+/// children, which start inside the boundary ([`child_vars`]).
+pub const KEEPER_LIB_VAR: &str = "DEVCROFT_REDIRECT_LIB";
+pub const KEEPER_NS_VAR: &str = "DEVCROFT_REDIRECT_NS";
+
+/// Write the library beside the runtime links; returns its path.
+pub fn materialize(artifact_dir: &std::path::Path) -> std::io::Result<std::path::PathBuf> {
+    super::owned_dir::OwnedDir::open(artifact_dir, DIR)?.write(FILE_NAME, LIBRARY)?;
+    Ok(artifact_dir.join(DIR).join(FILE_NAME))
+}
+
+/// The variables a sandbox process starts with, from the keeper's own; `own`
+/// is the insert list the process would otherwise have, which is kept.
+pub fn child_vars(own: Option<std::ffi::OsString>) -> Vec<(&'static str, std::ffi::OsString)> {
+    let (Some(lib), Some(ns)) = (
+        std::env::var_os(KEEPER_LIB_VAR),
+        std::env::var_os(KEEPER_NS_VAR),
+    ) else {
+        return Vec::new();
+    };
+    let mut insert = lib.clone();
+    if let Some(own) = own.filter(|o| !o.is_empty())
+        && !std::env::split_paths(&own).any(|p| p.as_os_str() == lib)
     {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o755))?;
+        insert.push(":");
+        insert.push(own);
     }
-    std::fs::rename(&tmp, path)
+    vec![(INSERT_VAR, insert), (NS_VAR, ns)]
 }
 
 #[cfg(test)]

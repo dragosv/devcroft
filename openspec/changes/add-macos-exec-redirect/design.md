@@ -67,15 +67,17 @@ entitlements, and kept the library. **Not measured:** the official
 injection were not run in this session).
 
 In these runs the variables were set through `[env.vars]`, so the keeper
-loaded the library itself as well. D3 sets them only in the environment the
-keeper builds for its children, which is the narrower shape.
+loaded the library itself as well (confirmed with `lsof`, 2026-11-23). That is
+not a shape to ship; see D3.
+
+The signing rows' "kept the library" was measured **outside** a sandbox.
 
 Not measured: `cargo build` with a `build.rs` that runs `sh` (task 0.5), and
 a service whose own program uses `popen` (0.4; a hook's `popen` is covered by
 `initdb` above).
 
-**Stop criterion (0.6): not hit.** Nothing a qualified provider ordinarily
-runs dropped the library.
+**Stop criterion (0.6): not hit by anything measured, and not yet
+decidable.** mise's one qualified tool is among the unmeasured.
 
 ## Goals / Non-Goals
 
@@ -118,8 +120,14 @@ runtime entry with `[interpreter, optional argument, script, argv[1..]]`, the
 kernel's convention. Anything it cannot parse is passed through unchanged.
 
 ### D3. Injected by the keeper at every spawn point
-The variable is set in the one environment construction used for sessions,
-hooks, confined activation and services (`KeeperEnv`), before spawn. devcroft's
+*Corrected 2026-11-23.* The variable is set by the keeper on each child it
+spawns (`keeper::session::apply_activation_env`, the one path sessions, hooks,
+confined activation and services share), and **never on the keeper or the
+provisioning process**. This said `KeeperEnv`, which is the keeper's own
+environment: dyld runs an inserted library before `main`, so before the keeper
+restricts itself, and the library sits where the sandbox can write. The keeper
+gets the two paths under names of its own (`DEVCROFT_REDIRECT_LIB`, `_NS`),
+which are stripped from sessions. devcroft's
 own `env` and shell re-add it if a caller cleared it but kept running devcroft
 code. `/bin/sh` maps to the namespace entry for `sh`, the shell resolved for the
 sandbox, exactly as on Linux.

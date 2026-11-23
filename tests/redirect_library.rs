@@ -42,9 +42,10 @@ impl Fixture {
             });
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(root.join("ns")).unwrap();
-        std::fs::create_dir_all(root.join("rt")).unwrap();
-        devcroft::runtime::redirect::materialize(&root.join("lib.dylib")).unwrap();
-        std::os::unix::fs::symlink(env!("CARGO_BIN_EXE_devcroft"), root.join("rt/env")).unwrap();
+        std::fs::create_dir_all(root.join("runtime")).unwrap();
+        std::fs::write(root.join("lib.dylib"), devcroft::runtime::redirect::LIBRARY).unwrap();
+        std::os::unix::fs::symlink(env!("CARGO_BIN_EXE_devcroft"), root.join("runtime/env"))
+            .unwrap();
         // An entry that says it ran, with its arguments.
         for name in ["echo", "sh"] {
             write_exec(
@@ -66,7 +67,7 @@ impl Fixture {
 
     /// `env <args>`: devcroft's applet execs `args[0]`.
     fn env(&self, args: &[&str]) -> Output {
-        self.command(&self.root.join("rt/env"))
+        self.command(&self.root.join("runtime/env"))
             .args(args)
             .output()
             .unwrap()
@@ -111,7 +112,7 @@ fn everything_else_passes_through_unchanged() {
         "{o:?}"
     );
     // Without the namespace variable, nothing maps.
-    let o = Command::new(f.root.join("rt/env"))
+    let o = Command::new(f.root.join("runtime/env"))
         .env("DYLD_INSERT_LIBRARIES", f.root.join("lib.dylib"))
         .env_remove("DEVCROFT_NS")
         .args(["/bin/echo", "host"])
@@ -233,4 +234,19 @@ int main(int argc, char **argv) {
         .output()
         .unwrap();
     assert_eq!(stdout(&o), format!("spawn err {}\n", libc::E2BIG), "{o:?}");
+}
+
+#[test]
+fn devcrofts_own_env_keeps_the_redirect_when_it_clears_the_environment() {
+    let f = Fixture::new("restore");
+    let o = f.env(&["-i", "/bin/echo", "kept"]);
+    assert_eq!(stdout(&o), "REDIRECTED:echo:kept\n", "{o:?}");
+    // Through PATH, and one process further: the variables really are in
+    // the child's environment.
+    let env = f.root.join("runtime/env");
+    let path = format!("PATH={}", f.root.join("runtime").display());
+    let o = f.env(&["-i", &path, "env", "/bin/echo", "twice"]);
+    assert_eq!(stdout(&o), "REDIRECTED:echo:twice\n", "{o:?}");
+    let o = f.env(&["-i", env.to_str().unwrap()]);
+    assert!(stdout(&o).contains("DEVCROFT_NS="), "{o:?}");
 }

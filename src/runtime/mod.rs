@@ -14,6 +14,8 @@
 
 pub mod applets;
 pub mod layer;
+pub mod namespace;
+pub mod owned_dir;
 pub mod provenance;
 pub mod redirect;
 
@@ -40,27 +42,12 @@ pub const DIR: &str = "runtime";
 /// directory: that link sits in the artifact directory, which a view
 /// contains only when the manifest grants the project root, and the
 /// runtime must not depend on that grant.
-pub fn materialize(dir: &std::path::Path, exe: &std::path::Path) -> std::io::Result<()> {
-    std::fs::create_dir_all(dir)?;
-    for entry in std::fs::read_dir(dir)? {
-        let entry = entry?;
-        let name = entry.file_name();
-        if name.to_str().and_then(applets::find).is_none() {
-            std::fs::remove_file(entry.path())?;
-        }
-    }
-    for applet in applets::INVENTORY {
-        let link = dir.join(applet.name);
-        match std::fs::read_link(&link) {
-            Ok(target) if target == exe => continue,
-            Ok(_) => std::fs::remove_file(&link)?,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-            // Not a link (a file someone put there): replaced.
-            Err(_) => std::fs::remove_file(&link)?,
-        }
-        std::os::unix::fs::symlink(exe, &link)?;
-    }
-    Ok(())
+pub fn materialize(artifact_dir: &std::path::Path, exe: &std::path::Path) -> std::io::Result<()> {
+    let links: Vec<_> = applets::INVENTORY
+        .iter()
+        .map(|a| (a.name.to_owned(), exe.to_path_buf()))
+        .collect();
+    owned_dir::sync_links(artifact_dir, DIR, &links)
 }
 
 /// Revision of [`BASE_NAMES`]. Bumped whenever the list changes, so a
@@ -102,14 +89,16 @@ mod tests {
 
     #[test]
     fn materialize_writes_exactly_this_generations_links() {
-        let dir = std::env::temp_dir().join(format!("dc-rtdir-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
+        let top = std::env::temp_dir().join(format!("dc-rtdir-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&top);
+        let artifacts = top.join(".devcroft/n");
+        let dir = artifacts.join(DIR);
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("stale"), "").unwrap();
         std::os::unix::fs::symlink("/elsewhere", dir.join("ls")).unwrap();
         let exe = std::path::Path::new("/opt/devcroft/bin/devcroft");
-        materialize(&dir, exe).unwrap();
-        materialize(&dir, exe).unwrap();
+        materialize(&artifacts, exe).unwrap();
+        materialize(&artifacts, exe).unwrap();
         let mut names: Vec<String> = std::fs::read_dir(&dir)
             .unwrap()
             .map(|e| e.unwrap().file_name().into_string().unwrap())
@@ -122,7 +111,7 @@ mod tests {
         expected.sort();
         assert_eq!(names, expected);
         assert_eq!(std::fs::read_link(dir.join("ls")).unwrap(), exe);
-        let _ = std::fs::remove_dir_all(&dir);
+        let _ = std::fs::remove_dir_all(&top);
     }
 
     #[test]

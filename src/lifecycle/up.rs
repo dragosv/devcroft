@@ -1062,10 +1062,21 @@ fn up_process(
     // devcroft's runtime (`add-own-userland` 3.1): one link per utility to
     // this binary, in a directory of its own with a grant of its own, before
     // the plan, so the keeper restricts itself with the grant in it.
-    let runtime_dir = crate::services::artifact_dir(project_root, &manifest.sandbox.name)
-        .join(crate::runtime::DIR);
-    crate::runtime::materialize(&runtime_dir, &exe)?;
-    let compiled = compiled.with_runtime(&runtime_dir, crate::runtime::GENERATION);
+    let artifact_dir = crate::services::artifact_dir(project_root, &manifest.sandbox.name);
+    let runtime_dir = artifact_dir.join(crate::runtime::DIR);
+    crate::runtime::materialize(&artifact_dir, &exe)?;
+    // The namespace directory exists before the plan resolves its grant and
+    // is filled below, from the `PATH` and grants that plan yields.
+    crate::runtime::owned_dir::OwnedDir::open(&artifact_dir, crate::runtime::namespace::DIR)?;
+    // Native mode gets no redirect (`add-macos-exec-redirect` 2.5).
+    let redirect_lib = (crate::runtime::redirect::available() && provider.native().is_none())
+        .then(|| crate::runtime::redirect::materialize(&artifact_dir))
+        .transpose()?;
+    let compiled = compiled.with_runtime_dirs(
+        &artifact_dir,
+        crate::runtime::GENERATION,
+        redirect_lib.is_some(),
+    );
 
     // Who the sandbox's user is, in its view (`fleet::mount::Identity`):
     // only where there is a view, and only for the paths no grant covers.
@@ -1130,6 +1141,20 @@ fn up_process(
             &roots,
         )
     };
+    // Rule B (`add-own-userland` 4.1): one target per base name.
+    {
+        let roots: Vec<PathBuf> = mount_grants.iter().map(|g| g.path.clone()).collect();
+        crate::runtime::owned_dir::sync_links(
+            &artifact_dir,
+            crate::runtime::namespace::DIR,
+            &crate::runtime::namespace::compute(
+                &sandbox_path_value,
+                &shell.path,
+                Some(&runtime_dir),
+                &roots,
+            ),
+        )?;
+    }
     let sandbox_env = {
         let mut env = resolution.env.clone();
         env.insert("PATH".to_owned(), sandbox_path_value.clone());
@@ -1387,6 +1412,17 @@ fn up_process(
     // (`sandbox_path`). One value, so the record cannot disagree with it.
     unset.retain(|k| k != "PATH");
     env.insert("PATH".to_string(), sandbox_path_value.clone());
+    // Last, so neither the environment nor `[env.vars]` can name another.
+    use crate::runtime::redirect::{KEEPER_LIB_VAR, KEEPER_NS_VAR};
+    for key in [KEEPER_LIB_VAR, KEEPER_NS_VAR] {
+        env.remove(key);
+    }
+    if let Some(lib) = &redirect_lib {
+        let ns = artifact_dir.join(crate::runtime::namespace::DIR);
+        for (key, path) in [(KEEPER_LIB_VAR, lib), (KEEPER_NS_VAR, &ns)] {
+            env.insert(key.to_owned(), path.to_string_lossy().into_owned());
+        }
+    }
     // The user's credentials, from this shell (checked present above). Their
     // values go to the keeper's environment and nowhere else: not `Meta`,
     // which records the names, not the policy, and not the log.
@@ -1771,7 +1807,9 @@ fn prepare_services(
 /// helper and `spawn_keeper` add. Named one by one rather than by prefix,
 /// since a project may name its own variables `DEVCROFT_*` (this repository's
 /// tests do) and a fleet task's process is meant to see `DEVCROFT_TASK`.
-const KEEPER_INTERNAL: [&str; 14] = [
+const KEEPER_INTERNAL: [&str; 16] = [
+    crate::runtime::redirect::KEEPER_LIB_VAR,
+    crate::runtime::redirect::KEEPER_NS_VAR,
     "DEVCROFT_CAPABILITY_PLAN",
     "DEVCROFT_SSH_HOST_KEY",
     "DEVCROFT_SSH_AUTHORIZED_KEY",
