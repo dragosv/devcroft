@@ -148,7 +148,7 @@ fn platform_grants(shell: &Path) -> Result<Vec<String>, String> {
                 ));
             }
             let candidate: Option<std::path::PathBuf> = if needed.starts_with('/') {
-                Some(PathBuf::from(&needed))
+                Some(std::path::PathBuf::from(&needed))
             } else {
                 DIRS.iter()
                     .map(|d| Path::new(d).join(&base))

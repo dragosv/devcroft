@@ -10,9 +10,10 @@ The goal this serves: every shell or utility a sandbox can execute comes from
 a pinned source — the provider's lock, or (once it exists) a devcroft runtime
 the project pins — and never from the host, except named exceptions. This page
 documents what is recorded today. The runtime's utilities exist and are on
-every sandbox's `PATH` by name; the absolute-path namespace and a runtime
-shell are planned (`openspec/changes/add-own-userland`,
-`add-macos-exec-redirect`, `embed-brush-runtime`).
+every sandbox's `PATH` by name, and on macOS by absolute path too
+(`openspec/changes/add-macos-exec-redirect`); the absolute-path namespace on
+Linux and a runtime shell are planned (`add-own-userland`,
+`embed-brush-runtime`).
 
 ## The base names (revision 1)
 
@@ -131,6 +132,7 @@ By absolute path: on Linux, the view writes `/bin/sh` (the resolved shell)
 and `/usr/bin/env` (only where the environment's `PATH` has an `env` inside
 a provider grant, see [known-gaps.md](known-gaps.md)); everything
 else is absent unless granted. On a merged-`/usr` host `/usr/bin/sh` is the
-same file as the view's `/bin/sh`. On macOS, every absolute path is refused unless
-granted, so `#!/bin/sh` and `#!/usr/bin/env` scripts fail — see
+same file as the view's `/bin/sh`. On macOS, outside native mode,
+an exec of a base name's absolute path is redirected to what the name resolves
+to by name; the programs that lose the redirect are listed in
 [known-gaps.md](known-gaps.md).

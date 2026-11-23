@@ -38,17 +38,20 @@ Record each result in `design.md`, tagged measured, with macOS version and arch.
 
 ## 3. Tests
 
-- [ ] 3.1 macOS provider-row test, in a real sandbox: `system()`, `popen()`, `#!/bin/sh` from C and from the session shell, `#!/usr/bin/env python3`, a closure binary executing `/bin/sh`; the consistency check from `add-own-userland` 4.5 (`/bin/<name>` and `<name>` run the same file: GNU from the closure on the nix row, the runtime on a flox-minimal row); and a base name with no entry, `/usr/bin/make` and `/usr/bin/python3` fail with `EPERM`.
-- [ ] 3.2 A hook test: a `post_create` hook whose program uses `popen`.
+- [x] 3.1 macOS provider-row test, in a real sandbox: `system()`, `popen()`, `#!/bin/sh` from C and from the session shell, `#!/usr/bin/env python3`, a closure binary executing `/bin/sh`; the consistency check from `add-own-userland` 4.5 (`/bin/<name>` and `<name>` run the same file: GNU from the closure on the nix row, the runtime on a flox-minimal row); and a base name with no entry, `/usr/bin/make` and `/usr/bin/python3` fail with `EPERM`.
+  - `tests/macos_exec_redirect.rs` (nix flake; flox with python3 and no coreutils) and the consistency check in `tests/base_runtime_provenance.rs`, which skips sandboxes with `host:` or `native:` entries, so the test row and swift do not exercise it. Pass on nix, flox, devbox 2026-11-23. Linux consistency is `add-own-userland` 4.5.
+- [x] 3.2 A hook test: a `post_create` hook whose program uses `popen`.
+  - The nix test's `post_create` hook runs a C program using `system()` and `popen()`.
 - [x] 3.3 Update the provenance witness: on macOS, absolute base-name paths stop being `absent` and match their by-name provenance (`closure:` or `runtime:gen-N`) for non-native sandboxes.
   - The record takes the namespace; the witness reads the program dyld loaded (`DYLD_PRINT_LIBRARIES`), since `-ef` sees the host file at the path. Not applied where the shell is the host's (mise): Apple's `/bin/sh` drops the redirect. Measured 2026-11-23 on the nix, flox, devbox and test rows: no mismatch.
 
 ## 4. Documentation
 
-- [ ] 4.1 `docs/known-gaps.md`: replace the macOS `EPERM` entry with the redirect's limits (Apple-signed, hardened runtime, cleared environment), each with its measured examples.
-- [ ] 4.2 `docs/threat-model.md`: one sentence — the redirect is compatibility, not a boundary.
+- [x] 4.1 `docs/known-gaps.md`: replace the macOS `EPERM` entry with the redirect's limits (Apple-signed, hardened runtime, cleared environment), each with its measured examples.
+- [x] 4.2 `docs/threat-model.md`: one sentence — the redirect is compatibility, not a boundary.
 
 ## 5. Verification
 
-- [ ] 5.1 `cargo build` on macOS and Linux (Linux embeds nothing), `fmt`, `clippy`, `doc --no-deps`, `test`, skip inventory recorded.
-- [ ] 5.2 `openspec validate add-macos-exec-redirect --type change`.
+- [x] 5.1 `cargo build` on macOS and Linux (Linux embeds nothing), `fmt`, `clippy`, `doc --no-deps`, `test`, skip inventory recorded.
+  - macOS 15.8.3 arm64, 2026-11-23: suite 765 passed, 0 failed, 77 skip lines (devenv absent 38+, Linux namespaces 15, flox login/first lock ~13, others); fmt clean, rustdoc clean, clippy clean on the crate and three unused-item warnings in two tests this change does not touch. Linux aarch64 (container, no nix, unprivileged): builds, library embedded as 0 bytes; 787 passed, 51 failed, all 51 "flakes-enabled nix is not on PATH" from the default row; 174 skip lines; clippy not run. The Linux build was broken since `d3b73f5` (missing `PathBuf` import in `layer.rs`); fixed here. Not run: a Linux sandbox e2e with a real provider, the mise and pixi rows.
+- [x] 5.2 `openspec validate add-macos-exec-redirect --type change`.

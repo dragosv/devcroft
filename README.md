@@ -518,8 +518,9 @@ defaults) and tasks whose outcomes devcroft observes.
 project changes; agents that authenticate with a subscription login (a
 credential file), which neither reaches a sandbox nor can be brokered;
 running a project with no environment file; Linux-equivalent port isolation on
-macOS; a shell and utilities by absolute path on macOS (`#!/bin/sh`,
-`system()` fail there), and `#!/usr/bin/env` on Linux where the environment
+macOS; a shell and utilities by absolute path on macOS from programs that drop
+the exec redirect (Apple-signed, or hardened without the entitlements), and
+`#!/usr/bin/env` on Linux where the environment
 has no `env` —
 `devcroft policy --render` shows where each resolves
 ([docs/base-runtime.md](docs/base-runtime.md)).

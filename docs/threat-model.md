@@ -84,6 +84,10 @@ But the change moves provisioning from "no boundary" to "process-tier boundary".
 It does not deliver use case B. Any wording in that change implying otherwise is
 overclaiming.
 
+**Not part of the boundary.** The macOS exec redirect, which makes `/bin/sh`
+and the other base names resolve inside a sandbox, is compatibility: a process
+can drop it, and what it may then execute is decided by the policy alone.
+
 **Where the per-backend detail lives.** This document states which use case each
 tier backs. What any given backend can and cannot do — fleet, service ports,
 resource limits, egress filtering, and the platform differences — is declared

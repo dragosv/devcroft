@@ -474,24 +474,39 @@ Found while making the test suite run on macOS for the first time
 (`add-macos-unix-socket-scoping`); the Linux half of the same test is unchanged
 and still asserts the full compile-link-run path.
 
-## Shell and utilities by absolute path fail on macOS
+## On macOS, absolute paths are redirected, and some programs lose the redirect
 
-Inside a macOS sandbox, nothing can run a shell or a basic utility by
-absolute path. `#!/bin/sh` and `#!/usr/bin/env` scripts, `system()`,
-`popen()`, and a direct `/bin/ls` all fail with `EPERM`: the host's `/bin` and
-`/usr/bin` are refused (correctly — that is "Host binaries execute on macOS …
-— fixed" above), and macOS has no per-sandbox view to put anything else at
-those paths. Programs that shell out through `popen` fail in ways that do not
-name the cause: `initdb` reports that `postgres` is missing because its
-`popen("postgres -V")` never ran (measured 2026-11-22, devbox sandbox).
+Inside a macOS sandbox the host's `/bin` and `/usr/bin` are refused, and there
+is no per-sandbox view to put anything else there. devcroft instead loads a
+small library into every process it starts in the sandbox, which redirects an
+exec of a base name's absolute path (`/bin/sh`, `/usr/bin/env`, `/bin/ls`) to
+the file that name resolves to on the sandbox's `PATH`. `#!` scripts,
+`system()` and `popen()` follow. `devcroft policy --render` lists where each
+resolves ([base-runtime.md](base-runtime.md)). Native-mode sandboxes (swift)
+run the host's files and have no redirect.
 
-What still works: running the same programs by name, from the environment's
-`PATH`. `devcroft policy --render` lists, for every base name, what resolves
-by name and by absolute path ([base-runtime.md](base-runtime.md)).
+The redirect is compatibility, not a boundary: where it is lost, the policy
+decides, so the exec fails with `EPERM`. The exception is a sandbox granted
+the host's shell (mise and pixi environments that install none): `/bin` is
+granted there, so the host's file runs. Measured 2026-11-23, macOS 15.8.3
+arm64, unless noted:
 
-Addressed by `openspec/changes/add-macos-exec-redirect` (absolute paths
-resolve as their names do, through an exec redirect inside sandbox processes)
-together with `add-own-userland`.
+| What loses it | Example |
+|---|---|
+| Apple-signed programs | the host's `/bin/sh` drops the library, so in a sandbox whose shell is the host's, what that shell runs by absolute path is the host's file. `/usr/bin/make` drops it outside a sandbox and does not start inside one (2026-11-22) |
+| Hardened-runtime programs without the entitlements that allow it | mise's official `go1.24.0.darwin-arm64`; programs started by `go run` do not get it either. `go test` and `go generate` were not run. Node's official 26.4.0 is hardened but carries the entitlements, and keeps it |
+| A cleared environment | GNU `env -i /bin/sh` fails with `EPERM`. devcroft's own `env -i` keeps the redirect |
+
+Two further limits:
+
+- Names that are not base names are never redirected: `/usr/bin/make` and
+  `/usr/bin/python3` stay refused, and so does a base name that neither the
+  environment nor the runtime supplies (`/usr/bin/awk` in a minimal flox
+  sandbox).
+- The library is a file under `.devcroft/<name>/redirect/`, which the sandbox
+  can write. If it is removed, dyld aborts processes that try to load it, so
+  new sessions are expected to fail until the next `up`. The abort (exit 134) was measured
+  outside a sandbox. The keeper itself never loads the library.
 
 ## `#!/usr/bin/env` fails on Linux where the closure has no `env`
 

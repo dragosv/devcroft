@@ -385,14 +385,10 @@ fn a_real_build_succeeds_from_the_devbox_closure_with_the_host_toolchain_denied(
 #[test]
 fn a_postgres_service_comes_up_ready_and_answers_from_inside() {
     // Linux only, as add-devbox-services 2.3 records. Measured on macOS
-    // (2026-11-22): `initdb` runs `postgres -V` through `popen`, i.e.
-    // `/bin/sh`, which Seatbelt refuses there since there is no view to
-    // write one into, so `initdb` reports `postgres` missing. Past that
-    // sits the `shmget` EPERM (`docs/nono-sysv-ipc-issue.md`).
+    // (2026-11-23): with the exec redirect `initdb`'s `popen` works, and it
+    // stops at the `shmget` EPERM (`docs/nono-sysv-ipc-issue.md`).
     if cfg!(target_os = "macos") {
-        eprintln!(
-            "skipping: postgres cannot initialise under Seatbelt (`/bin/sh` refused, then SysV `shmget`)"
-        );
+        eprintln!("skipping: postgres cannot initialise under Seatbelt (SysV `shmget`)");
         return;
     }
     let Some(sandbox) = Sandbox::new("pg", &["postgresql@latest", "process-compose@latest"], true)

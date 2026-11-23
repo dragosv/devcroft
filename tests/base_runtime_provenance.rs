@@ -258,6 +258,46 @@ fn the_base_runtime_record_matches_what_runs_inside() {
             mismatches.join("\n")
         );
 
+        // Rule B on macOS (`add-own-userland` 4.5): `/bin/<name>` and
+        // `<name>` are one file, or neither runs. Both halves were just
+        // checked against the sandbox, so the record can be compared with
+        // itself. Not where the host's files are granted (native mode, or a
+        // host shell), which the redirect does not cover.
+        if cfg!(target_os = "macos")
+            && !record
+                .entries
+                .iter()
+                .any(|e| matches!(e.provenance.kind(), "host" | "native"))
+        {
+            let file = |p: &devcroft::runtime::provenance::Provenance| {
+                p.path().map(|p| {
+                    let p = Path::new(p);
+                    // A runtime link's name selects the utility, so it is
+                    // compared as a path: all of them reach one binary.
+                    if p.parent().is_some_and(|d| d.ends_with("runtime")) {
+                        p.to_path_buf()
+                    } else {
+                        p.canonicalize().unwrap_or_else(|_| p.to_path_buf())
+                    }
+                })
+            };
+            let mut differ = Vec::new();
+            for e in record.entries.iter().filter(|e| e.lookup != BY_NAME) {
+                let by_name = record
+                    .entries
+                    .iter()
+                    .find(|n| n.name == e.name && n.lookup == BY_NAME)
+                    .unwrap();
+                if file(&e.provenance) != file(&by_name.provenance) {
+                    differ.push(format!(
+                        "{} is {}, but by name {}",
+                        e.lookup, e.provenance, by_name.provenance
+                    ));
+                }
+            }
+            assert!(differ.is_empty(), "{}", differ.join("\n"));
+        }
+
         // The invariant, where it already holds: a row whose every
         // provider grant is a store path has no business resolving shell
         // or userland to the host.

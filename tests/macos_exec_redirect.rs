@@ -44,7 +44,8 @@ fn absolute_paths_resolve_as_names_do_and_the_keeper_stays_clean() {
         root.join("devcroft.toml"),
         format!(
             "[sandbox]\nname = \"{name}\"\n[env]\nprovider = \"nix\"\n\
-             [filesystem]\nallow = [\".\"]\n[hooks]\npost_create = './s.sh > hook.out'\n"
+             [filesystem]\nallow = [\".\"]\n[hooks]\npost_create = './s.sh > hook.out; \
+             if [ -x ./p ]; then ./p >> hook.out; fi'\n"
         ),
     )
     .unwrap();
@@ -82,7 +83,16 @@ fn absolute_paths_resolve_as_names_do_and_the_keeper_stays_clean() {
         want("shebang sh", sh("./s.sh"), &|g| g == "shebang-sh\n");
         want("shebang env", sh("./e.sh"), &|g| g == "shebang-env\n");
         let hook = std::fs::read_to_string(root.join("hook.out")).unwrap_or_default();
-        want("hook", hook, &|g| g == "shebang-sh\n");
+        want("hook", hook, &|g| {
+            g.starts_with("shebang-sh\n")
+                && (!have_c || (g.contains("via-system") && g.contains("via-popen")))
+        });
+        // The closure's bash, not the session's own lookup, execs `/bin/sh`.
+        want(
+            "a closure binary executes /bin/sh",
+            sh("bash -c '/bin/sh -c \"echo from-closure\"'"),
+            &|g| g == "from-closure\n",
+        );
         if have_c {
             want("system and popen", sh("./p"), &|g| {
                 g.contains("via-system") && g.contains("via-popen")
@@ -138,6 +148,100 @@ fn absolute_paths_resolve_as_names_do_and_the_keeper_stays_clean() {
             }
         }
         want("a keeper was inspected", keepers.to_string(), &|g| g != "0");
+    }
+    let _ = dc(&root, &["rm", "--yes"]);
+    let _ = std::fs::remove_dir_all(&root);
+    assert!(up.status.success(), "{up_text}");
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+/// A closure with python3 and no coreutils: the runtime supplies the base
+/// names, by absolute path as by name, and what neither supplies is refused.
+#[test]
+fn a_minimal_environment_gets_the_runtime_by_absolute_path() {
+    if !devcroft::policy::backend_supported()
+        || !devcroft::provider::host_can_build_nix_closures()
+        || Command::new("flox").arg("--version").output().is_err()
+    {
+        eprintln!("skipping: no usable Seatbelt, nix store or flox here");
+        return;
+    }
+    // Short: the supervisor's socket lives under this path (103-byte limit).
+    let name = format!("rf{}", std::process::id());
+    let root = std::env::temp_dir().join(&name);
+    let env = root.join(".flox/env");
+    std::fs::create_dir_all(&env).unwrap();
+    let root = root.canonicalize().unwrap();
+    // Already locked: resolving a manifest needs a FloxHub login.
+    let sample = Path::new(env!("CARGO_MANIFEST_DIR")).join("samples/flox-services-sample");
+    for f in [
+        ".flox/env.json",
+        ".flox/env/manifest.toml",
+        ".flox/env/manifest.lock",
+    ] {
+        std::fs::copy(sample.join(f), root.join(f)).unwrap();
+    }
+    std::fs::write(
+        root.join("devcroft.toml"),
+        format!(
+            "[sandbox]\nname = \"{name}\"\n[env]\nprovider = \"flox\"\n\
+             [filesystem]\nallow = [\".\"]\n"
+        ),
+    )
+    .unwrap();
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let py = root.join("e.py");
+        std::fs::write(
+            &py,
+            "#!/usr/bin/env python3\n\
+             import os, subprocess, sys\n\
+             print('py', sys.argv[1], flush=True)\n\
+             os.system('echo via-system')\n\
+             print(os.popen('echo via-popen').read(), end='', flush=True)\n\
+             subprocess.run('echo via-shell', shell=True)\n\
+             os.execv('/bin/sh', ['sh', '-c', 'echo via-execv'])\n",
+        )
+        .unwrap();
+        std::fs::set_permissions(&py, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+
+    let up = dc(&root, &["up"]);
+    let up_text = text(&up);
+    let sh = |script: &str| text(&dc(&root, &["exec", "--", "sh", "-c", script]));
+    let mut failures = Vec::new();
+    let mut want = |what: &str, got: String, ok: &dyn Fn(&str) -> bool| {
+        println!("{what}: {got:?}");
+        if !ok(&got) {
+            failures.push(format!("{what}: {got}"));
+        }
+    };
+    if up.status.success() {
+        want("env python3", sh("./e.py arg"), &|g| {
+            g == "py arg\nvia-system\nvia-popen\nvia-shell\nvia-execv\n"
+        });
+        // The link's name selects the utility, so two of them are checked.
+        for n in ["ls", "cat"] {
+            let by_name = sh(&format!("{n} --version"));
+            want(n, sh(&format!("/bin/{n} --version")), &|g| {
+                g == by_name && g.starts_with(&format!("{n} ")) && g.contains("(uutils coreutils)")
+            });
+        }
+        for p in [
+            "/bin/awk",
+            "/usr/bin/awk",
+            "/usr/bin/grep",
+            "/usr/bin/make",
+            "/usr/bin/python3",
+        ] {
+            want(p, sh(&format!("{p} --version; echo rc=$?")), &|g| {
+                // macOS has no /bin/awk to refuse.
+                g.contains(if p == "/bin/awk" { "rc=127" } else { "rc=126" })
+            });
+        }
+        want("awk by name", sh("awk --version; echo rc=$?"), &|g| {
+            g.contains("rc=127")
+        });
     }
     let _ = dc(&root, &["rm", "--yes"]);
     let _ = std::fs::remove_dir_all(&root);
