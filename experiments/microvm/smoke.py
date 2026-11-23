@@ -199,7 +199,7 @@ def boot(binary, launch, instance, out, index, timeout, keeper=False):
         for thread in threads:
             thread.join(timeout=2)
         if keeper:
-            result["guest_console_captured"] = b"guest keeper: nono applied; serving port 1025" in stderr
+            result["guest_console_captured"] = b"guest keeper: nono applied; serving port 1025" in bytes(stdout + stderr)
             if not result["guest_console_captured"]:
                 result.update(status="failed", console_error="missing keeper console positive control")
         for name, data in [("stdout", stdout), ("stderr", stderr)]:
