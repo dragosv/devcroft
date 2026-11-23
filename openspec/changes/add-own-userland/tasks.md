@@ -1,31 +1,40 @@
 ## 0. Preconditions and measurement
 
-- [ ] 0.1 `add-runtime-provenance` is implemented; its provider-row test is the witness every task below updates explicitly.
-- [ ] 0.2 Commit the spike evidence this change cites (`spikes/brush-uutils-native/` from the owner's Linux host), selectively, or record in `design.md` that it is unavailable.
-- [ ] 0.3 Measure the baseline: stripped size of `devcroft` built from this revision, and the shipped-dependency inventory as `scripts/gen-third-party-licenses.py` counts it (four targets).
+- [x] 0.1 `add-runtime-provenance` is implemented; its provider-row test is the witness every task below updates explicitly.
+  - Implemented and passing on Linux (nix, flox, devbox rows; 2026-11-22). Its macOS runs (its tasks 3.1, 3.3, 3.4, 5.1) are still open; this change's Linux work does not depend on them.
+- [x] 0.2 Commit the spike evidence this change cites (`spikes/brush-uutils-native/` from the owner's Linux host), selectively, or record in `design.md` that it is unavailable.
+  - Unavailable: not in this checkout or on this host (recorded in `design.md`).
+- [x] 0.3 Measure the baseline: stripped size of `devcroft` built from this revision, and the shipped-dependency inventory as `scripts/gen-third-party-licenses.py` counts it (four targets).
+  - `37c605d`, aarch64 Linux, `cargo build --release`: 35,692,272 bytes, 25,555,840 stripped; 381 shipped dependencies (recorded in `design.md`).
 
 ## 1. Runtime core
 
-- [ ] 1.1 `src/runtime/`: the inventory (names, upstream crate, version), the generation constant, and the published `docs/base-runtime.md` (extends the page from `add-runtime-provenance`).
-- [ ] 1.2 Promote the 39 coreutils `uu_*` crates and `uucore` to `[dependencies]` at one pinned generation; keep the packaging allowlist and add no `[[bin]]`.
-- [ ] 1.3 `argv[0]` dispatch as the first statement of `main` in `src/bin/devcroft.rs`, through the upstream wrapper of the pinned version; unknown basenames fall through. `tests/cli_help_and_version.rs` still passes unchanged.
-- [ ] 1.4 Tests: dispatch per applet; `devcroft ls` is an unknown command; `ls | head` dies by `SIGPIPE` without a panic; `cat` on a missing file exits 1 with a translated message (not a translation key); `--help` text is real text.
+- [x] 1.1 `src/runtime/`: the inventory (names, upstream crate, version), the generation constant, and the published `docs/base-runtime.md` (extends the page from `add-runtime-provenance`).
+- [x] 1.2 Promote the 39 coreutils `uu_*` crates and `uucore` to `[dependencies]` at one pinned generation; keep the packaging allowlist and add no `[[bin]]`.
+  - All at `=0.13.0` (current on crates.io 2026-11-22). The three `uu_*` 0.6.0 dev-dependencies of `examples/test-row-sh.rs` collided by name and were dropped; the example uses the shipped crates. `cargo package --list` gains only `src/runtime/applets.rs`.
+- [x] 1.3 `argv[0]` dispatch as the first statement of `main` in `src/bin/devcroft.rs`, through the upstream wrapper of the pinned version; unknown basenames fall through. `tests/cli_help_and_version.rs` still passes unchanged.
+- [x] 1.4 Tests: dispatch per applet; `devcroft ls` is an unknown command; `ls | head` dies by `SIGPIPE` without a panic; `cat` on a missing file exits 1 with a translated message (not a translation key); `--help` text is real text.
+  - `tests/runtime_applets.rs`. `test --version` is true by POSIX (GNU reads it only as `[`), so `test` is checked by status. `ls | head` needs more than a pipe buffer of output to see the closed pipe: with 5000 short names `ls` exits 0 (measured), with 20000 long ones it dies by `SIGPIPE`, as GNU `ls` does.
 
 ## 2. Generation and config
 
-- [ ] 2.1 `[runtime] generation` in `src/config/mod.rs`, `deny_unknown_fields`; validation errors at layer `config`, exit 2.
-- [ ] 2.2 `up` refuses a mismatch naming both generations; prints the pin line when absent; records the generation in `Meta`.
-- [ ] 2.3 `status` shows the sandbox's generation and the installed binary's; a mismatch with a live keeper says `up --recreate`.
-- [ ] 2.4 Tests for each of the three cases.
+- [x] 2.1 `[runtime] generation` in `src/config/mod.rs`, `deny_unknown_fields`; validation errors at layer `config`, exit 2.
+- [x] 2.2 `up` refuses a mismatch naming both generations; prints the pin line when absent; records the generation in `Meta`.
+- [x] 2.3 `status` shows the sandbox's generation and the installed binary's; a mismatch with a live keeper says `up --recreate`.
+- [x] 2.4 Tests for each of the three cases.
 
 ## 3. PATH and the common layer
 
-- [ ] 3.1 Materialise the runtime directory at `up` (links to the `EXE_LINK` binary, beside it under `<project>/.devcroft/<name>/`), idempotent like `link_keeper_exe`; read grant with origin `runtime:gen-N`.
+- [x] 3.1 Materialise the runtime directory at `up` (links to the `EXE_LINK` binary, beside it under `<project>/.devcroft/<name>/`), idempotent like `link_keeper_exe`; read grant with origin `runtime:gen-N`.
+  - Links name the keeper binary directly, not `EXE_LINK`: that link sits in the artifact directory, which a view contains only when the manifest grants `.`.
 - [ ] 3.2 Generalise `path_ending_in_shell_dir` into the shared `PATH` builder: provider `PATH`, shell dir, runtime dir; drop the canonical host tail. Use it from `up` and `fleet::project::prepare`.
+  - `up`: done (`sandbox_path`, `project_path`); one value feeds both the record and the keeper. "Host tail" is implemented as "entries outside every resolved grant", which keeps swift's declared `/usr/bin`. Fleet: with 4.3, when agents get a runtime directory.
 - [ ] 3.3 The common runtime layer after provider resolution; move the shell fallback out of `mise.rs` and `pixi.rs` into it; host shell only as one file grant, recorded `host:` and warned.
-- [ ] 3.4 `native` declaration on the provider seam with a reason string; swift declares it; `up`, `status`, `policy --render` show it; provenance `native:swift`.
+- [x] 3.4 `native` declaration on the provider seam with a reason string; swift declares it; `up`, `status`, `policy --render` show it; provenance `native:swift`.
+  - `ProviderKind::native` (`SWIFT_NATIVE_REASON`) and a defaulted `ProviderEntry::native` (forgetting it fails safe: `host:` and warned). `Provenance::Native`; the reason travels in the record for `--render`. Measured on macOS 2026-11-22 (`swift_provider_e2e`, no skips): all three surfaces state it, `/bin/sh` renders `native:swift:`, no per-name host warning; the nix control prints no native line.
 - [ ] 3.5 Refuse a manifest grant of an individual host developer tool made to obtain a base name in a non-native sandbox, naming native mode.
 - [ ] 3.6 Update the provenance test's expectations: closure providers' utilities by name now `closure:` or `runtime:gen-N`, never `absent`; mise/pixi utilities `runtime:gen-N`, shell still `host:`.
+  - Linux, measured 2026-11-22 (in-sandbox `-ef` probe, 0 mismatches each): nix/devbox rows `hostname` → runtime, everything else closure; flox row the same plus grep…gzip absent; flox-services-sample (no coreutils) 39 runtime (was 0); pixi 39 runtime, `sh` host; mise 38 runtime, `sh` and `env` host — its fallback puts the host's `/usr/bin` on `PATH` as the shell's directory (pre-existing, 3.3's job).
 
 ## 4. The namespace (rule B) and the Linux view
 
@@ -50,7 +59,7 @@
 - [ ] 6.2 Regenerate `THIRD-PARTY-LICENSES.md`; make an MIT entry without a vendored text fail the generator.
 - [ ] 6.3 `docs/known-gaps.md`: uutils ≠ GNU where the provider supplies nothing; awk and tar not in the runtime; the Linux `/usr/bin/env` gap closed.
 - [ ] 6.4 `docs/decisions.md`: extend "devcroft's shell is devcroft's dependency" to the runtime, with the project-pin rule and the native exception.
-- [ ] 6.5 `CLAUDE.md`: the `runtime:gen-N` and `native:<provider>` origins in the policy invariant list.
+- [x] 6.5 `CLAUDE.md`: the `runtime:gen-N` and `native:<provider>` origins in the policy invariant list.
 
 ## 7. Verification
 

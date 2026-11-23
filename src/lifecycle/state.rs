@@ -510,6 +510,12 @@ pub struct Meta {
     /// as "not recorded" rather than computing it from another source.
     #[serde(default)]
     pub base_runtime: Option<crate::runtime::provenance::Record>,
+    /// The runtime generation the keeper was started with
+    /// (`add-own-userland` D2). It keeps it until `up --recreate`, whatever
+    /// binary is installed later; `None` for a sandbox started before the
+    /// runtime existed.
+    #[serde(default)]
+    pub runtime_generation: Option<u32>,
 }
 
 /// One `up`'s tooling layer, as [`Meta::tools`] records it.
@@ -1045,6 +1051,7 @@ mod tests {
             credentials: Vec::new(),
             brokers: Vec::new(),
             base_runtime: None,
+            runtime_generation: None,
         };
         write_meta(&paths.meta, &meta).unwrap();
         assert_eq!(read_meta(&paths.meta).unwrap(), Some(meta));
@@ -1081,6 +1088,7 @@ mod tests {
             credentials: Vec::new(),
             brokers: Vec::new(),
             base_runtime: None,
+            runtime_generation: None,
         };
         write_meta(&paths.meta, &meta).unwrap();
         assert!(!paths.meta.with_extension("json.tmp").exists());

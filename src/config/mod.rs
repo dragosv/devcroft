@@ -27,6 +27,24 @@ pub struct Manifest {
     pub ssh: Ssh,
     pub hooks: Hooks,
     pub provisioning: Provisioning,
+    pub runtime: Runtime,
+}
+
+/// `[runtime]`: which devcroft runtime generation the project requires
+/// (`add-own-userland` D2). It changes no provider setting; `up` refuses a
+/// binary whose generation differs (`crate::runtime::GENERATION`).
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct Runtime {
+    /// `None` when the project does not pin one; `up` then uses the
+    /// binary's and prints the line that pins it.
+    pub generation: Option<u32>,
+}
+
+/// `[runtime]` as written, before the positive-integer check.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+struct RawRuntime {
+    generation: Option<i64>,
 }
 
 /// The policy a provider's activation script runs under
@@ -254,6 +272,7 @@ struct RawManifest {
     ssh: Ssh,
     hooks: Hooks,
     provisioning: Provisioning,
+    runtime: RawRuntime,
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
@@ -523,6 +542,18 @@ pub fn parse(text: &str) -> Result<(Manifest, Vec<Warning>), ConfigError> {
         }
     }
 
+    let generation = match raw.runtime.generation {
+        None => None,
+        Some(g) if g >= 1 && g <= i64::from(u32::MAX) => Some(g as u32),
+        Some(g) => {
+            return Err(ConfigError::Parse(format!(
+                "runtime.generation: {g} is not a runtime generation (a positive integer; \
+                 this devcroft's is {})",
+                crate::runtime::GENERATION
+            )));
+        }
+    };
+
     validate::check_filesystem(&raw.filesystem)?;
     validate::check_env(&raw.env)?;
 
@@ -544,6 +575,7 @@ pub fn parse(text: &str) -> Result<(Manifest, Vec<Warning>), ConfigError> {
             ssh: raw.ssh,
             hooks: raw.hooks,
             provisioning: raw.provisioning,
+            runtime: Runtime { generation },
         },
         warnings,
     ))
@@ -551,6 +583,23 @@ pub fn parse(text: &str) -> Result<(Manifest, Vec<Warning>), ConfigError> {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn runtime_generation_parses_and_is_strictly_checked() {
+        let base = "[sandbox]\nname = \"p\"\n";
+        let (m, _) = parse(&format!("{base}[runtime]\ngeneration = 1\n")).unwrap();
+        assert_eq!(m.runtime.generation, Some(1));
+        let (m, _) = parse(base).unwrap();
+        assert_eq!(m.runtime.generation, None);
+        let err = parse(&format!("{base}[runtime]\nshell = \"bash\"\n")).unwrap_err();
+        assert!(err.to_string().contains("runtime.shell"), "{err}");
+        for bad in ["0", "-1", "\"1\""] {
+            assert!(
+                parse(&format!("{base}[runtime]\ngeneration = {bad}\n")).is_err(),
+                "generation = {bad} must be refused"
+            );
+        }
+    }
 
     #[test]
     fn provisioning_network_parses_and_inherits_nothing_from_runtime() {

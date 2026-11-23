@@ -39,6 +39,18 @@ builds on, restated so the change stands alone:
   `cargo info`): `findutils` 0.11.0, `diffutils` 0.6.0, `uu_grep` 0.2.0,
   `sed` 0.3.0, all from `github.com/uutils`. `uu_ls` is at 0.13.0.
 
+- **Spike evidence is not available in this repository** (task 0.2): the
+  `spikes/brush-uutils-native/` tree lives only on the owner's Linux host, so
+  every claim above that rests on it is re-measured here on the integrated
+  build rather than cited.
+- **Baseline, measured** (task 0.3; `37c605d`, aarch64 Linux, rustc stable,
+  `cargo build --release`): `devcroft` 35,692,272 bytes, **25,555,840
+  stripped**; **381 shipped dependencies** as the generator counts them over its
+  four targets. (The generator's text hashes for a few crates differ between
+  hosts — e.g. `deranged`, `num-conv` — while the count does not; a
+  pre-existing nondeterminism in which license file it picks, not a change in
+  what ships.)
+
 ## Goals / Non-Goals
 
 **Goals:**
@@ -70,6 +82,17 @@ Each applet goes through the upstream wrapper of the pinned version
 (`uucore::bin!` or its equivalent), never a bare `uumain` call: at 0.12 the
 wrapper also initialises localisation, without which help and diagnostics print
 translation keys (R5).
+
+*Measured at 0.13.0 (2026-11-22):* `bin!` expands to a `pub fn main()` that
+calls `$util::uumain`, so each applet gets a module of its own whose name is
+not the crate's (`true`, `false`, `test` cannot name modules anyway). Its
+locale data is embedded by `uucore`'s build script, which, for a crates.io
+build, embeds the `.ftl` files of **every** `uu_*` crate unpacked beside it in
+the cargo registry, plus the build host's `LANG` locale if one exists. The
+English text the applets print does not depend on either, but the binary's
+bytes do: two hosts with different registry contents or `LANG` build different
+`devcroft` binaries from the same lock. Recorded, not fixed (upstream's build
+script); it matters if devcroft ever claims reproducible binaries.
 
 ### D2. The generation is a small integer the project pins
 `[runtime] generation = N`. It identifies behaviour, not the devcroft release:

@@ -12,6 +12,11 @@ use std::sync::Arc;
 use devcroft::keeper::{Keeper, LocalSessionBackend, Registry, SessionBackend};
 
 fn main() {
+    // `add-own-userland`: a link named after a runtime applet (`ls`, `env`,
+    // ...) runs that applet and exits, before anything is parsed. Every
+    // other basename — `devcroft` itself included — falls through, so the
+    // command surface is unchanged and `devcroft ls` is still unknown.
+    devcroft::runtime::applets::dispatch_argv0();
     let args: Vec<String> = std::env::args().collect();
     match args.get(1).map(String::as_str) {
         Some("__keeper") => {
@@ -2571,6 +2576,9 @@ fn print_tier(provider: &str) {
         return;
     };
     println!("devcroft: guarantee: {}", kind.tier().describe());
+    if let Some(reason) = kind.native() {
+        println!("devcroft: native mode ({provider}): {reason}");
+    }
 }
 
 /// The `swift` provider puts a wrapper ahead of the toolchain's `swift`
@@ -3000,6 +3008,9 @@ fn print_status(s: &devcroft::lifecycle::SandboxStatus, provider: &str) {
     println!("sandbox: {}", s.name);
     if let Ok(kind) = devcroft::provider::ProviderKind::from_name(provider) {
         println!("guarantee: {}", kind.tier().describe());
+        if let Some(reason) = kind.native() {
+            println!("native mode: {reason}");
+        }
     }
     match &s.keeper {
         devcroft::lifecycle::KeeperStatus::None => println!("keeper: not running"),
@@ -3051,6 +3062,21 @@ fn print_status(s: &devcroft::lifecycle::SandboxStatus, provider: &str) {
         Some("process") => println!("isolation: process"),
         Some(backend) => println!("isolation: hardened ({backend})"),
         None => println!("isolation: unknown (no successful `up` yet)"),
+    }
+    // `add-own-userland`: the generation the keeper started with, beside
+    // the installed binary's. A live keeper keeps its own until
+    // `up --recreate`, so a difference is worth one line saying so.
+    let installed = devcroft::runtime::GENERATION;
+    match s.runtime_generation {
+        Some(g) if g == installed => println!("runtime: generation {g}"),
+        Some(g) => println!(
+            "runtime: generation {g} (the installed devcroft embeds {installed}; \
+             sessions keep {g} until `devcroft up --recreate`)"
+        ),
+        None => println!(
+            "runtime: not recorded (the installed devcroft embeds generation {installed}; \
+             `devcroft up --recreate` starts the sandbox with it)"
+        ),
     }
     // `add-runtime-provenance`: counts per kind, and every host entry by
     // name, since those are what break reproducibility at this level.
@@ -4096,6 +4122,19 @@ fn compile_with_provider_grants(
             .map(|kind| (kind.static_name(), &t.grants))
     }) {
         Some((origin, grants)) => compiled.with_tools_grants(origin, grants),
+        None => compiled,
+    };
+    // The runtime directory's grant, at the generation `up` started with
+    // (`add-own-userland`, `Origin::Runtime`).
+    let compiled = match meta.runtime_generation {
+        Some(generation) => compiled.with_runtime(
+            &devcroft::services::artifact_dir(
+                std::path::Path::new(&meta.project_root),
+                &manifest.sandbox.name,
+            )
+            .join(devcroft::runtime::DIR),
+            generation,
+        ),
         None => compiled,
     };
     let compiled = if meta.own_procfs {

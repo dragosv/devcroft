@@ -26,6 +26,15 @@ pub enum Provenance {
     Closure { path: String },
     /// Inside an artifact provider's own install (the artifact store).
     Provider { provider: String, path: String },
+    /// devcroft's own runtime, at a generation (`add-own-userland`). `path`
+    /// is the runtime link that runs, not the binary it points at: the
+    /// link's name is what selects the utility.
+    Runtime { generation: u32, path: String },
+    /// A host file in a sandbox whose provider declares native mode
+    /// (`add-own-userland` D5): the host's userland on purpose, with a
+    /// reason, rather than by omission. Recorded and shown, not warned
+    /// about: `up` states the mode and its reason once instead.
+    Native { provider: String, path: String },
     /// A host file.
     Host { path: String },
     /// Does not resolve inside the sandbox.
@@ -54,6 +63,8 @@ impl Provenance {
         match self {
             Provenance::Closure { path }
             | Provenance::Provider { path, .. }
+            | Provenance::Runtime { path, .. }
+            | Provenance::Native { path, .. }
             | Provenance::Host { path } => Some(path),
             Provenance::Absent { .. } => None,
         }
@@ -64,6 +75,8 @@ impl Provenance {
         match self {
             Provenance::Closure { .. } => "closure",
             Provenance::Provider { .. } => "provider",
+            Provenance::Runtime { .. } => "runtime",
+            Provenance::Native { .. } => "native",
             Provenance::Host { .. } => "host",
             Provenance::Absent { .. } => "absent",
         }
@@ -75,6 +88,10 @@ impl fmt::Display for Provenance {
         match self {
             Provenance::Closure { path } => write!(f, "closure:{path}"),
             Provenance::Provider { provider, path } => write!(f, "provider:{provider}:{path}"),
+            Provenance::Runtime { generation, path } => {
+                write!(f, "runtime:gen-{generation}:{path}")
+            }
+            Provenance::Native { provider, path } => write!(f, "native:{provider}:{path}"),
             Provenance::Host { path } => write!(f, "host:{path}"),
             Provenance::Absent { reason } => match reason {
                 Absence::NotPresent => write!(f, "absent (not present)"),
@@ -103,6 +120,11 @@ pub struct Record {
     /// [`BASE_NAMES_REVISION`] at the time it was computed.
     pub revision: u32,
     pub entries: Vec<Entry>,
+    /// The provider's native-mode reason, when it declares one
+    /// (`add-own-userland` D5), so `policy --render` can state it beside the
+    /// `native:` entries it explains.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub native: Option<String>,
 }
 
 impl Record {
@@ -116,7 +138,7 @@ impl Record {
     }
 
     /// How many entries of each kind, in a fixed order.
-    pub fn counts(&self) -> [(&'static str, usize); 4] {
+    pub fn counts(&self) -> [(&'static str, usize); 6] {
         let count = |k: &str| {
             self.entries
                 .iter()
@@ -126,6 +148,8 @@ impl Record {
         [
             ("closure", count("closure")),
             ("provider", count("provider")),
+            ("runtime", count("runtime")),
+            ("native", count("native")),
             ("host", count("host")),
             ("absent", count("absent")),
         ]
@@ -218,6 +242,12 @@ pub struct Inputs<'a> {
     pub artifact_root: Option<&'a Path>,
     /// The provider's name, for `provider:` entries.
     pub provider: &'a str,
+    /// devcroft's runtime directory and its generation, for `runtime:`
+    /// entries; `None` where the sandbox has no runtime.
+    pub runtime: Option<(&'a Path, u32)>,
+    /// The provider's native-mode reason, when it declares one: host files
+    /// then record as `native:<provider>` rather than `host:`.
+    pub native: Option<&'a str>,
     /// `Some` where the sandbox has a mount view (Linux); `None` where the
     /// host filesystem is visible and the policy decides (macOS).
     pub view: Option<ViewEntries<'a>>,
@@ -244,6 +274,7 @@ pub fn compute(inputs: &Inputs<'_>) -> Record {
     Record {
         revision: BASE_NAMES_REVISION,
         entries,
+        native: inputs.native.map(str::to_owned),
     }
 }
 
@@ -265,6 +296,11 @@ fn classify(inputs: &Inputs<'_>, canonical: &Path) -> Provenance {
         .is_some_and(|r| canonical.starts_with(r))
     {
         Provenance::Provider {
+            provider: inputs.provider.to_owned(),
+            path,
+        }
+    } else if inputs.native.is_some() {
+        Provenance::Native {
             provider: inputs.provider.to_owned(),
             path,
         }
@@ -291,6 +327,16 @@ fn by_name(inputs: &Inputs<'_>, name: &str) -> Provenance {
         if !is_executable_file(&candidate) {
             continue;
         }
+        // Before canonicalizing: a runtime link canonicalizes to the
+        // devcroft binary, which says nothing about which utility runs.
+        if let Some((dir, generation)) = inputs.runtime
+            && Path::new(dir) == dir_of(&candidate)
+        {
+            return Provenance::Runtime {
+                generation,
+                path: candidate.to_string_lossy().into_owned(),
+            };
+        }
         let Ok(canonical) = candidate.canonicalize() else {
             continue;
         };
@@ -301,6 +347,10 @@ fn by_name(inputs: &Inputs<'_>, name: &str) -> Provenance {
     Provenance::Absent {
         reason: Absence::NotPresent,
     }
+}
+
+fn dir_of(path: &Path) -> &Path {
+    path.parent().unwrap_or(Path::new(""))
 }
 
 fn absolute(inputs: &Inputs<'_>, abs: &Path) -> Provenance {
@@ -384,6 +434,8 @@ mod tests {
             grants: &grants,
             artifact_root: None,
             provider: "test",
+            runtime: None,
+            native: None,
             view: None,
         });
         assert_eq!(
@@ -405,6 +457,8 @@ mod tests {
             grants: &grants,
             artifact_root: None,
             provider: "test",
+            runtime: None,
+            native: None,
             view: None,
         });
         assert!(find(&r, "cat", BY_NAME).path().is_some());
@@ -425,6 +479,8 @@ mod tests {
             grants: &grants,
             artifact_root: Some(&root),
             provider: "pixi",
+            runtime: None,
+            native: None,
             view: None,
         });
         assert_eq!(
@@ -443,6 +499,8 @@ mod tests {
             grants: &[],
             artifact_root: None,
             provider: "test",
+            runtime: None,
+            native: None,
             view: None,
         });
         assert_eq!(
@@ -461,6 +519,8 @@ mod tests {
             grants: &[],
             artifact_root: None,
             provider: "test",
+            runtime: None,
+            native: None,
             view: None,
         });
         assert_eq!(
@@ -474,6 +534,8 @@ mod tests {
             grants: &[],
             artifact_root: None,
             provider: "test",
+            runtime: None,
+            native: None,
             view: Some(ViewEntries {
                 sh: None,
                 env: None,
@@ -496,6 +558,8 @@ mod tests {
             grants: &[],
             artifact_root: None,
             provider: "test",
+            runtime: None,
+            native: None,
             view: Some(ViewEntries {
                 sh: Some(&shell),
                 env: None,
@@ -529,6 +593,8 @@ mod tests {
             grants: &grants,
             artifact_root: None,
             provider: "test",
+            runtime: None,
+            native: None,
             view: Some(ViewEntries {
                 sh: Some(&shell),
                 env: None,
@@ -537,6 +603,37 @@ mod tests {
         assert_eq!(
             find(&r, "sh", BY_NAME).path(),
             Some(shell.to_str().unwrap())
+        );
+    }
+
+    #[test]
+    fn a_runtime_link_is_the_runtime_not_the_binary_it_points_at() {
+        let s = Scratch::new("runtime");
+        let exe = s.exe("host/devcroft");
+        let dir = s.0.join("rt");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::os::unix::fs::symlink(&exe, dir.join("ls")).unwrap();
+        let path = dir.to_string_lossy().into_owned();
+        let grants = [s.0.clone()];
+        let r = compute(&Inputs {
+            path: &path,
+            grants: &grants,
+            artifact_root: None,
+            provider: "flox",
+            runtime: Some((&dir, 3)),
+            native: None,
+            view: None,
+        });
+        assert_eq!(
+            find(&r, "ls", BY_NAME),
+            &Provenance::Runtime {
+                generation: 3,
+                path: dir.join("ls").to_string_lossy().into_owned()
+            }
+        );
+        assert_eq!(
+            find(&r, "ls", BY_NAME).to_string(),
+            format!("runtime:gen-3:{}", dir.join("ls").display())
         );
     }
 
@@ -567,6 +664,7 @@ mod tests {
                     },
                 },
             ],
+            native: None,
         };
         let w = r.host_warning().unwrap();
         assert!(
@@ -578,12 +676,45 @@ mod tests {
     }
 
     #[test]
+    fn a_native_provider_records_host_files_as_native_and_warns_of_none() {
+        let s = Scratch::new("native");
+        let sh = s.exe("bin/sh");
+        let path = sh.parent().unwrap().to_string_lossy().into_owned();
+        let grants = [s.0.clone()];
+        let r = compute(&Inputs {
+            path: &path,
+            grants: &grants,
+            artifact_root: None,
+            provider: "swift",
+            runtime: None,
+            native: Some("the reason"),
+            view: None,
+        });
+        assert_eq!(
+            find(&r, "sh", BY_NAME),
+            &Provenance::Native {
+                provider: "swift".into(),
+                path: sh.to_string_lossy().into_owned()
+            }
+        );
+        assert!(
+            find(&r, "sh", BY_NAME)
+                .to_string()
+                .starts_with("native:swift:")
+        );
+        assert_eq!(r.native.as_deref(), Some("the reason"));
+        assert!(r.host_warning().is_none());
+    }
+
+    #[test]
     fn the_record_round_trips_through_json() {
         let r = compute(&Inputs {
             path: "",
             grants: &[],
             artifact_root: None,
             provider: "test",
+            runtime: None,
+            native: None,
             view: None,
         });
         let back: Record = serde_json::from_str(&serde_json::to_string(&r).unwrap()).unwrap();

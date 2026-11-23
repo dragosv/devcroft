@@ -687,7 +687,29 @@ impl ProviderKind {
             ProviderKind::Swift | ProviderKind::Mise | ProviderKind::Pixi => Tier::Artifact,
         }
     }
+
+    /// Why this provider runs on the host's shell and userland on purpose,
+    /// or `None` for every provider that gets devcroft's runtime
+    /// (`add-own-userland` D5: one declared native exception).
+    ///
+    /// Like [`ProviderKind::tier`], a fact the provider states, never
+    /// inferred from its grants. `up`, `status` and `policy --render` show
+    /// it with its reason, and the host files it reaches are recorded
+    /// `native:<provider>` rather than warned about one by one.
+    pub fn native(self) -> Option<&'static str> {
+        match self {
+            ProviderKind::Swift => Some(SWIFT_NATIVE_REASON),
+            _ => None,
+        }
+    }
 }
+
+/// Swift's native-mode reason (`add-own-userland` D5). Every part of it was
+/// measured: Xcode's `xcrun` runs `sh -c` and reads `/var/select/sh`, the
+/// provider's own shim is `#!/bin/sh`, and `codesign` lives in `/usr/bin`.
+/// Apple-signed binaries strip `DYLD_*`, so a toolchain that is native
+/// for some names and devcroft's for others is not possible on macOS.
+pub const SWIFT_NATIVE_REASON: &str = "Xcode's toolchain runs the host's /bin/sh (xcrun runs      `sh -c` and reads /var/select/sh) and its signing tools live in /usr/bin, so this      sandbox uses the host's shell and userland rather than devcroft's runtime";
 
 impl Provider for ProviderKind {
     fn resolve(&self, project_root: &Path) -> Result<Resolution, ProviderError> {
@@ -756,6 +778,16 @@ pub trait ProviderEntry {
     /// see `provider-injection-seam`: no origin token may exist that a real
     /// provider could not emit.
     fn static_name(&self) -> &'static str;
+
+    /// The provider's native-mode reason ([`ProviderKind::native`]).
+    ///
+    /// Defaulted, unlike [`ProviderEntry::tier`], because forgetting it
+    /// fails in the safe direction: a provider that does not say it is
+    /// native gets the runtime, and any host file it still reaches is
+    /// recorded `host:` and warned about rather than hidden.
+    fn native(&self) -> Option<&'static str> {
+        None
+    }
 }
 
 impl ProviderEntry for ProviderKind {
@@ -784,6 +816,10 @@ impl ProviderEntry for ProviderKind {
 
     fn tier(&self) -> Tier {
         ProviderKind::tier(*self)
+    }
+
+    fn native(&self) -> Option<&'static str> {
+        ProviderKind::native(*self)
     }
 }
 

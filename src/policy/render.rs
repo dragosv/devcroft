@@ -143,6 +143,11 @@ fn render_base_runtime(out: &mut String, record: &crate::runtime::provenance::Re
         record.revision
     )
     .unwrap();
+    // `add-own-userland` D5: the `native:` entries below are deliberate, and
+    // the reason is stated where they are listed.
+    if let Some(reason) = &record.native {
+        writeln!(out, "  native mode: {reason}").unwrap();
+    }
     for e in &record.entries {
         let lookup = if e.lookup == crate::runtime::provenance::BY_NAME {
             format!("{} (by name)", e.name)

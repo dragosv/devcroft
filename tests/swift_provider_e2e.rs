@@ -172,6 +172,34 @@ fn swift_resolves_as_artifact_tier_without_reading_the_package_graph() {
          disclosed; stderr was:\n{up_stderr}"
     );
 
+    // `add-own-userland` 3.4: swift is the one native provider, and says
+    // so with its reason at `up`, in `status` and in the policy, where its
+    // host shell is recorded `native:swift`, never `host:` (and so never
+    // warned about one name at a time).
+    for (label, haystack) in [
+        ("up", &up_stdout),
+        ("status", &status_out),
+        ("policy --render", &rendered),
+    ] {
+        assert!(
+            haystack.contains("native mode") && haystack.contains("xcrun"),
+            "{label} must state native mode and its reason; got:\n{haystack}"
+        );
+    }
+    let sh_line = rendered
+        .lines()
+        .find(|l| l.trim_start().starts_with("/bin/sh "))
+        .unwrap_or_default();
+    assert!(
+        sh_line.contains("native:swift:"),
+        "/bin/sh must be recorded native:swift; policy was:\n{rendered}"
+    );
+    assert!(
+        !up_stderr.contains("resolve to the host"),
+        "a native sandbox's host userland is stated once, not warned per name; \
+         stderr was:\n{up_stderr}"
+    );
+
     // The artifact tier's host grants are visible, with their origin.
     assert!(
         rendered.contains("provider:swift"),
@@ -285,6 +313,10 @@ fn a_closure_provider_makes_no_such_disclosure() {
     assert!(
         up_stdout.contains("closure"),
         "and it must report the closure tier; stdout was:\n{up_stdout}"
+    );
+    assert!(
+        !up_stdout.contains("native mode"),
+        "only swift declares native mode; stdout was:\n{up_stdout}"
     );
 }
 

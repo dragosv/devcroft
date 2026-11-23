@@ -93,12 +93,56 @@ toml_edit = { version = "0.25.13", default-features = false, features = ["parse"
 sha2 = "0.11.0"
 object = { version = "0.37.3", default-features = false, features = ["read", "std", "elf", "macho"] }
 
+# The base runtime (`add-own-userland`): uutils coreutils linked into the
+# `devcroft` binary and dispatched on `argv[0]` (`src/runtime/applets.rs`).
+# Pinned exactly: their versions are part of the runtime generation
+# (`runtime::GENERATION`), so a bump here is a new generation.
+uucore = "=0.13.0"
+uu_env = "=0.13.0"
+uu_ls = "=0.13.0"
+uu_cat = "=0.13.0"
+uu_cp = "=0.13.0"
+uu_mv = "=0.13.0"
+uu_rm = "=0.13.0"
+uu_mkdir = "=0.13.0"
+uu_rmdir = "=0.13.0"
+uu_ln = "=0.13.0"
+uu_touch = "=0.13.0"
+uu_head = "=0.13.0"
+uu_tail = "=0.13.0"
+uu_wc = "=0.13.0"
+uu_sort = "=0.13.0"
+uu_uniq = "=0.13.0"
+uu_cut = "=0.13.0"
+uu_tr = "=0.13.0"
+uu_echo = "=0.13.0"
+uu_printf = "=0.13.0"
+uu_test = "=0.13.0"
+uu_pwd = "=0.13.0"
+uu_true = "=0.13.0"
+uu_false = "=0.13.0"
+uu_seq = "=0.13.0"
+uu_basename = "=0.13.0"
+uu_dirname = "=0.13.0"
+uu_readlink = "=0.13.0"
+uu_realpath = "=0.13.0"
+uu_stat = "=0.13.0"
+uu_chmod = "=0.13.0"
+uu_mktemp = "=0.13.0"
+uu_tee = "=0.13.0"
+uu_date = "=0.13.0"
+uu_id = "=0.13.0"
+uu_uname = "=0.13.0"
+uu_hostname = "=0.13.0"
+uu_yes = "=0.13.0"
+uu_sleep = "=0.13.0"
+uu_nohup = "=0.13.0"
+
 [dev-dependencies]
 # A local TLS upstream for the brokered-credential tests (`proxy::server`).
 # Both are already in the tree through `nono-proxy`, so neither adds a crate.
 rcgen = "0.14"
 rustls = "0.23"
 brush-shell = "0.4.0"
-uu_echo = "0.6.0"
-uu_pwd = "0.6.0"
-uu_sleep = "0.6.0"
+# `uu_echo`, `uu_pwd` and `uu_sleep` for `examples/test-row-sh.rs` come from
+# `[dependencies]` since `add-own-userland` linked the runtime in.

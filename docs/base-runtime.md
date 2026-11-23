@@ -30,6 +30,26 @@ Each name has two lookup forms:
 
 The list changes only with a new revision, recorded here.
 
+## The runtime (generation 1)
+
+devcroft carries its own utilities, linked into the `devcroft` binary and run
+when it is invoked through a link named after one of them (`ls`, `env`, ...).
+They are where a sandbox's environment supplies nothing: the provider's own
+executables always come first.
+
+| Generation | Upstream | Version | Utilities |
+|---|---|---|---|
+| 1 | [uutils coreutils](https://github.com/uutils/coreutils) (MIT) | 0.13.0 | `env ls cat cp mv rm mkdir rmdir ln touch head tail wc sort uniq cut tr echo printf test pwd true false seq basename dirname readlink realpath stat chmod mktemp tee date id uname hostname yes sleep nohup` |
+
+The runtime has no shell yet, and no `grep`, `sed`, `awk`, `find`, `xargs`,
+`diff`, `tar` or `gzip`: those come from the environment or not at all. uutils
+is not GNU coreutils; where an option behaves differently, a project that
+wants GNU declares `coreutils` in its environment and gets it.
+
+A generation identifies the runtime's behaviour (its utilities, their
+upstream version and the absolute-path rules), not the devcroft release, and
+changes only when one of those does.
+
 ## Provenance
 
 `up` records one of these for every name and lookup form:

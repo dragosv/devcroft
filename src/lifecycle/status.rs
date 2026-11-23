@@ -64,6 +64,9 @@ pub struct SandboxStatus {
     /// Where shell and userland resolve, as the last `up` recorded it
     /// (`add-runtime-provenance`). `None` when no `up` recorded one.
     pub base_runtime: Option<crate::runtime::provenance::Record>,
+    /// The runtime generation the sandbox's keeper started with
+    /// (`add-own-userland`); `None` before the runtime existed.
+    pub runtime_generation: Option<u32>,
 }
 
 /// What a sandbox's agent said needs a human, from `devcroft agent
@@ -182,6 +185,7 @@ pub fn status_with_provider(
         &manifest.sandbox.name,
     );
     let base_runtime = meta.as_ref().and_then(|meta| meta.base_runtime.clone());
+    let runtime_generation = meta.as_ref().and_then(|meta| meta.runtime_generation);
     let isolation = meta.map(|meta| meta.resolved_backend);
 
     let degraded = policy::detect_degraded(&policy::compile(manifest));
@@ -196,6 +200,7 @@ pub fn status_with_provider(
         allocations,
         attention,
         base_runtime,
+        runtime_generation,
     })
 }
 
@@ -420,6 +425,7 @@ mod tests {
                     credentials: Vec::new(),
                     brokers: Vec::new(),
                     base_runtime: None,
+                    runtime_generation: None,
                 },
             )
             .unwrap();

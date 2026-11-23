@@ -181,6 +181,10 @@ pub fn prepare(
             provider.static_name(),
             None,
             view,
+            // Fleet agents get the runtime with the namespace
+            // (`add-own-userland` 4.3); until then, none.
+            None,
+            provider.native(),
         )
     });
     if let Some(warning) = base_runtime.as_ref().and_then(|r| r.host_warning()) {

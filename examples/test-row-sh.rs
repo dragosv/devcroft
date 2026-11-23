@@ -28,7 +28,8 @@
 /// builtin does not satisfy `Command::new("pwd")`, which is what devcroft's
 /// keeper actually calls. The utilities are `uutils` reimplementations, and
 /// cost 4 crates on top of `brush` because the shared `uucore` layer is
-/// already in the tree.
+/// already in the tree. Since `add-own-userland` they are the shipped
+/// runtime's own pinned crates (`[dependencies]`), not dev-dependencies.
 fn main() {
     let arg0 = std::env::args_os().next().unwrap_or_default();
     let name = std::path::Path::new(&arg0)

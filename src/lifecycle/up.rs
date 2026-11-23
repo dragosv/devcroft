@@ -247,6 +247,27 @@ fn up_locked(
     provider: &dyn crate::provider::ProviderEntry,
     paths: &StatePaths,
 ) -> Result<UpOutcome, UpError> {
+    // `add-own-userland` D2: the project's pin is checked before anything
+    // else, since a mismatch means this binary carries a different runtime
+    // than the one the project was written against.
+    match manifest.runtime.generation {
+        Some(pinned) if pinned != crate::runtime::GENERATION => {
+            return Err(UpError::Config(format!(
+                "this project pins runtime generation {pinned} (`[runtime] generation = \
+                 {pinned}` in devcroft.toml), but this devcroft embeds generation {}; \
+                 install a devcroft whose runtime is generation {pinned}, or pin \
+                 generation {} after checking what it changes (docs/base-runtime.md)",
+                crate::runtime::GENERATION,
+                crate::runtime::GENERATION
+            )));
+        }
+        Some(_) => {}
+        None => eprintln!(
+            "devcroft: runtime generation {g} (this project does not pin one; add \
+             `[runtime]` with `generation = {g}` to devcroft.toml to pin it)",
+            g = crate::runtime::GENERATION
+        ),
+    }
     let initial_grants = policy::compile(manifest)
         .to_capability_plan()
         .resolved_grants(project_root)
@@ -587,6 +608,7 @@ fn up_locked(
             brokers: opts.brokers.to_vec(),
             // Computed by `up_process` once the view is decided.
             base_runtime: None,
+            runtime_generation: Some(crate::runtime::GENERATION),
         },
     )?;
 
@@ -1028,6 +1050,14 @@ fn up_process(
             .map(|a| (a.service.clone(), a.var.clone(), a.port)),
     );
 
+    // devcroft's runtime (`add-own-userland` 3.1): one link per utility to
+    // this binary, in a directory of its own with a grant of its own, before
+    // the plan, so the keeper restricts itself with the grant in it.
+    let runtime_dir = crate::services::artifact_dir(project_root, &manifest.sandbox.name)
+        .join(crate::runtime::DIR);
+    crate::runtime::materialize(&runtime_dir, &exe)?;
+    let compiled = compiled.with_runtime(&runtime_dir, crate::runtime::GENERATION);
+
     // Who the sandbox's user is, in its view (`fleet::mount::Identity`):
     // only where there is a view, and only for the paths no grant covers.
     let identity = (cfg!(target_os = "linux") && mount_supported).then(|| {
@@ -1073,13 +1103,43 @@ fn up_process(
     // a hook query the daemon (measured 2026-11-05).
     refuse_package_manager_authority(&mount_grants)?;
 
+    // The sandbox's one `PATH` (`add-own-userland` D3), computed here so the
+    // base-runtime record below and the keeper's environment further down
+    // are the same value.
+    let sandbox_path_value = {
+        let roots: Vec<PathBuf> = mount_grants.iter().map(|g| g.path.clone()).collect();
+        sandbox_path(
+            project_path(
+                &resolution.env,
+                &resolution.unset,
+                tools.map(|(_, record)| record.path_entries.as_slice()),
+                manifest,
+            )
+            .as_deref(),
+            shell.path.parent(),
+            Some(&runtime_dir),
+            &roots,
+        )
+    };
+    let sandbox_env = {
+        let mut env = resolution.env.clone();
+        env.insert("PATH".to_owned(), sandbox_path_value.clone());
+        env
+    };
+    let sandbox_unset: Vec<String> = resolution
+        .unset
+        .iter()
+        .filter(|k| *k != "PATH")
+        .cloned()
+        .collect();
+
     // Where shell and userland resolve (`add-runtime-provenance`), from the
     // same grants, view entries and `PATH` the sandbox gets — computed, not
     // probed. Recorded in `Meta` and in the policy artifact, and warned
     // about once when anything resolves to the host.
     let base_runtime = base_runtime_record(
-        &resolution.env,
-        &resolution.unset,
+        &sandbox_env,
+        &sandbox_unset,
         shell,
         &mount_grants,
         provider.static_name(),
@@ -1087,6 +1147,8 @@ fn up_process(
         // A view exists exactly where mount isolation is supported; Linux
         // without it is refused just below.
         mount_supported,
+        Some(&runtime_dir),
+        provider.native(),
     );
     if let Some(warning) = base_runtime.host_warning() {
         eprintln!("devcroft: warning: {warning}");
@@ -1311,6 +1373,11 @@ fn up_process(
         );
     }
     apply_manifest_env(manifest, &mut env);
+    // The `PATH` computed above from these same steps, with the shell's and
+    // the runtime's directories and without the unreachable host tail
+    // (`sandbox_path`). One value, so the record cannot disagree with it.
+    unset.retain(|k| k != "PATH");
+    env.insert("PATH".to_string(), sandbox_path_value.clone());
     // The user's credentials, from this shell (checked present above). Their
     // values go to the keeper's environment and nowhere else: not `Meta`,
     // which records the names, not the policy, and not the log.
@@ -1749,6 +1816,7 @@ pub(crate) fn is_keeper_internal(name: &str) -> bool {
 
 /// The base-runtime provenance record for a sandbox (`crate::runtime`),
 /// shared by `up` and fleet so the two compute it from the same inputs.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn base_runtime_record(
     env: &std::collections::BTreeMap<String, String>,
     unset: &[String],
@@ -1757,6 +1825,8 @@ pub(crate) fn base_runtime_record(
     provider: &str,
     identity: Option<&crate::fleet::mount::Identity>,
     has_view: bool,
+    runtime_dir: Option<&Path>,
+    native: Option<&str>,
 ) -> crate::runtime::provenance::Record {
     use crate::runtime::provenance::{Inputs, ViewEntries, compute};
     let path = path_ending_in_shell_dir(env, unset, &shell.path).unwrap_or_else(|| {
@@ -1813,6 +1883,8 @@ pub(crate) fn base_runtime_record(
         grants: &roots,
         artifact_root: artifact_root.as_deref(),
         provider,
+        runtime: runtime_dir.map(|d| (d, crate::runtime::GENERATION)),
+        native,
         view,
     })
 }
@@ -1834,6 +1906,80 @@ fn path_ending_in_shell_dir(
         Some(path) => Some(format!("{path}:{dir}")),
         None => Some(dir.to_owned()),
     }
+}
+
+/// The `PATH` the project's side of the environment amounts to, before
+/// devcroft adds anything: the provider's (unless activation unset it),
+/// then the tooling layer's entries (`crate::tooling::compose_path`), then
+/// a `PATH` the manifest's `[env.vars]` sets, which has the last word as
+/// every other `[env.vars]` key does. The same steps `up_process` applies
+/// to the keeper's environment, computed early so the base-runtime record
+/// and the keeper see one `PATH`.
+pub(crate) fn project_path(
+    env: &std::collections::BTreeMap<String, String>,
+    unset: &[String],
+    tools: Option<&[String]>,
+    manifest: &Manifest,
+) -> Option<String> {
+    if let Some(path) = manifest.env.vars.get("PATH") {
+        return Some(path.clone());
+    }
+    let provider = env
+        .get("PATH")
+        .filter(|_| !unset.iter().any(|k| k == "PATH"))
+        .cloned();
+    match tools {
+        Some(entries) => Some(crate::tooling::compose_path(provider.as_deref(), entries)),
+        None => provider,
+    }
+}
+
+/// The sandbox's `PATH` (`add-own-userland` D3): the project's entries the
+/// sandbox can reach, then the resolved shell's directory, then devcroft's
+/// runtime, then nothing.
+///
+/// "Can reach" is "inside a resolved grant", the rule the view and the
+/// backend already apply: an entry outside every grant is absent from a
+/// Linux view and refused by Seatbelt, so keeping it only makes `command -v`
+/// lie. That drops the host directories every provider's captured `PATH`
+/// ends in (`/usr/local/bin:/usr/bin:/bin`), and keeps them where a
+/// provider grants them (swift's declared `/usr/bin`). An entry that does
+/// not exist yet is kept when it lies lexically inside a grant (a
+/// project-local `bin/` a build creates later).
+///
+/// The shell's directory comes before the runtime's, so a provider's own
+/// `sh`, then devcroft's shell, then devcroft's utilities is the order a
+/// lookup meets them, and a project that declares its own coreutils keeps
+/// them.
+pub(crate) fn sandbox_path(
+    project: Option<&str>,
+    shell_dir: Option<&Path>,
+    runtime_dir: Option<&Path>,
+    grants: &[PathBuf],
+) -> String {
+    let reachable = |entry: &Path| {
+        let canonical = entry.canonicalize().ok();
+        grants
+            .iter()
+            .any(|g| canonical.as_deref().is_some_and(|c| c.starts_with(g)) || entry.starts_with(g))
+    };
+    let mut out: Vec<String> = Vec::new();
+    for entry in project.unwrap_or_default().split(':') {
+        if entry.is_empty() || out.iter().any(|e| e == entry) {
+            continue;
+        }
+        if reachable(Path::new(entry)) {
+            out.push(entry.to_owned());
+        }
+    }
+    for dir in [shell_dir, runtime_dir].into_iter().flatten() {
+        if let Some(dir) = dir.to_str()
+            && !out.iter().any(|e| e == dir)
+        {
+            out.push(dir.to_owned());
+        }
+    }
+    out.join(":")
 }
 
 /// Everything the keeper reads from its environment, in the order it is

@@ -17,6 +17,7 @@ const SECTIONS: &[(&str, &[&str])] = &[
         ],
     ),
     ("filesystem", &["allow", "read", "deny"]),
+    ("runtime", &["generation"]),
     (
         "network",
         &["default", "allow", "ports", "loopback", "services"],

@@ -232,6 +232,10 @@ pub enum Origin {
     /// (`[[credentials.broker]]`, `add-agent-workload` 4b.6). From the
     /// user's configuration, never the manifest, and never the value.
     CredentialBroker,
+    /// devcroft's own runtime, read-only, at the generation the sandbox
+    /// started with (`add-own-userland`): the directory of links to the
+    /// runtime's utilities. Never from a manifest or a provider.
+    Runtime(u32),
 }
 
 /// Serialized as its displayed form (`manifest:filesystem.allow`,
@@ -270,7 +274,10 @@ impl<'de> serde::Deserialize<'de> for Origin {
                 (Some(key), _, _) => Ok(Origin::Manifest(leak(key))),
                 (_, Some(name), _) => Ok(Origin::Provider(leak(name))),
                 (_, _, Some(name)) => Ok(Origin::Tools(leak(name))),
-                _ => Err(serde::de::Error::custom(format!("unknown origin {t:?}"))),
+                _ => match t.strip_prefix("runtime:gen-").map(str::parse) {
+                    Some(Ok(generation)) => Ok(Origin::Runtime(generation)),
+                    _ => Err(serde::de::Error::custom(format!("unknown origin {t:?}"))),
+                },
             },
         }
     }
@@ -293,6 +300,7 @@ impl std::fmt::Display for Origin {
             Origin::Identity => write!(f, "identity"),
             Origin::Tools(provider) => write!(f, "tools:{provider}"),
             Origin::CredentialBroker => write!(f, "credential:broker"),
+            Origin::Runtime(generation) => write!(f, "runtime:gen-{generation}"),
         }
     }
 }
@@ -591,6 +599,18 @@ impl CompiledPolicy {
         self.filesystem_read.extend(paths.iter().map(|p| {
             AnnotatedValue::new(p.as_ref().to_string_lossy().into_owned(), Origin::Identity)
         }));
+        self
+    }
+
+    /// devcroft's runtime directory, read-only, with origin
+    /// `runtime:gen-N` (`add-own-userland` 3.1). Its own grant, never
+    /// borrowed from the project root's: a manifest that does not grant
+    /// `.` must still get the runtime.
+    pub fn with_runtime(mut self, dir: &std::path::Path, generation: u32) -> Self {
+        self.filesystem_read.push(AnnotatedValue::new(
+            dir.to_string_lossy().into_owned(),
+            Origin::Runtime(generation),
+        ));
         self
     }
 
