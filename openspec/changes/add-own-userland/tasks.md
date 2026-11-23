@@ -52,6 +52,7 @@
 ## 5. Inventory growth
 
 - [ ] 5.1 Build the option corpus: commands and flags used by the eleven agent samples' typical tool calls and by the hooks of the qualified providers' samples.
+  - Hooks half done (`design.md` D6): only coreutils-floor names, no `grep`/`sed`/`find`/`xargs`/`diff`. Agent half open: not in the repository, needs one logged run per agent with its credentials (owner).
 - [ ] 5.2 Qualify `findutils`, `uu_grep`, `sed` (and decide on `diffutils`) against it; check each exposes an entry usable through the multicall wrapper; record results in `design.md`.
 - [ ] 5.3 Owner decision per family; admitted families bump the generation.
 - [ ] 5.4 Re-measure each `devenv-<agent>-sample` without its manual userland declarations; drop the ones the runtime covers, keep the rest with a reason.
@@ -61,7 +62,9 @@
 - [ ] 6.1 Measure the integrated binary (standard and `release-small`), build time, and the shipped-dependency delta with the generator's own definition; record in `design.md`.
 - [ ] 6.2 Regenerate `THIRD-PARTY-LICENSES.md`; make an MIT entry without a vendored text fail the generator.
 - [ ] 6.3 `docs/known-gaps.md`: uutils ≠ GNU where the provider supplies nothing; awk and tar not in the runtime; the Linux `/usr/bin/env` gap closed.
-- [ ] 6.4 `docs/decisions.md`: extend "devcroft's shell is devcroft's dependency" to the runtime, with the project-pin rule and the native exception.
+  - uutils ≠ GNU and the missing families/shell: written (2026-11-23). The `/usr/bin/env` entry says what is left; it is marked closed with 4.2.
+- [x] 6.4 `docs/decisions.md`: extend "devcroft's shell is devcroft's dependency" to the runtime, with the project-pin rule and the native exception.
+  - "Decided: shell and userland are devcroft's dependency, pinned by the project" (§1), and the mise entry names the common layer. `docs/base-runtime.md` also gained the `runtime:`/`native:` kinds, the host-shell layer and native mode.
 - [x] 6.5 `CLAUDE.md`: the `runtime:gen-N` and `native:<provider>` origins in the policy invariant list.
 
 ## 7. Verification

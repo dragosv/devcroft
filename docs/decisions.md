@@ -381,7 +381,9 @@ only, so they are refused rather than extrapolated.
   `Meta`. `rm` reclaims the unreferenced ones under a store lock that every
   `up` holds shared.
 - The shell is the host's shell *file*, plus its loader and libraries, on
-  Linux, and `/bin` with `/var/select` on macOS. `/usr/bin` is never granted,
+  Linux, and `/bin` with `/var/select` on macOS — supplied since
+  `add-own-userland` by the common runtime layer rather than by the mise
+  provider, under origin `host-shell`. `/usr/bin` is never granted,
   so criterion 5 is tested rather than assumed: a host `cc`, `gcc`, `ld` or
   `git` does not run inside (`tests/mise_provider_e2e.rs`).
 
@@ -488,6 +490,51 @@ What to do instead, all from `add-agent-workload`:
 Revisit if an agent ships as a single static binary with a published
 checksum, pinned somewhere devcroft can verify. That would be a different
 artifact, not this shortcut.
+
+### Decided: shell and userland are devcroft's dependency, pinned by the project
+
+**Property that fails without it:** 5 (completeness), for a reason no
+provider can fix by itself. No real flox, devenv, mise or pixi manifest
+declares `ls`, `cat` or `env`, because under the provider's own activation the
+host's `PATH` still resolves them. `own-policy-baseline` removed host access
+without replacing it, so a minimal flox sandbox had none of 24 basic utilities
+(measured 2026-11-22). The shell was the first case of this, and its rule
+("devcroft's shell is devcroft's dependency, not the project's") is the one
+extended here.
+
+What `add-own-userland` decided (owner, 2026-11-22):
+
+- **devcroft carries a runtime**: the uutils coreutils floor, linked into the
+  `devcroft` binary and dispatched on `argv[0]`, one process per call. Not a
+  second installed binary (the `spike` lesson: `cargo install` would put a
+  generic name on the user's `PATH`), and not in-process (the utilities call
+  `exit` and own their signals).
+- **The project pins it**: `[runtime] generation = N`. A generation names
+  the runtime's behaviour, not the devcroft release, and a binary refuses a
+  project pinned to another generation, at layer `config`. An unpinned
+  project gets the binary's generation and the line that pins it. Report
+  without a pin was rejected: a project's closure shell is already pinned by
+  its lock, and an unpinned runtime would be weaker than that.
+- **The project wins**: the sandbox's `PATH` is the environment's, then the
+  shell's directory, then the runtime, then nothing from the host. A project
+  that declares GNU coreutils runs GNU.
+- **An absolute path resolves as its name does** (rule B). In a nix sandbox
+  `/bin/ls` is the closure's GNU `ls`, not the runtime's, so one sandbox
+  never runs two implementations of one name.
+- **One declared exception, native mode**, for a provider that cannot work
+  any other way and states why. swift is the only one: Xcode's `xcrun` runs
+  `sh -c` and reads `/var/select/sh`, and Apple-signed binaries strip
+  `DYLD_*`, so a half-native toolchain is not possible. Its host files are
+  recorded `native:swift`. A manifest cannot reproduce this one file at a
+  time: granting `/usr/bin/grep` to a non-native sandbox is refused.
+- **Until the runtime has a shell**, an environment without one gets the
+  host's from one common layer, never from a provider's private copy, and
+  it is recorded `host:` and warned about.
+
+**Revisit if** refusing a generation mismatch proves too strict in practice
+(the recorded alternative is a content-addressed runtime artifact separate
+from the binary), or if the closure-tier providers start supplying a
+userland by default, which would make the runtime a fallback nobody meets.
 
 ### Rejected: asdf, proto
 

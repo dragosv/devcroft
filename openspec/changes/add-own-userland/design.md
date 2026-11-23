@@ -164,6 +164,27 @@ generation. Under rule B these matter exactly where the environment is silent
 (flox, devenv, mise, pixi). Success measure: how many of the eleven
 `devenv-<agent>-sample` declarations become unnecessary.
 
+*Corpus, first half (task 5.1, 2026-11-23).* The provider hooks and
+activation scripts of every sample, read from the repository: `flox-clap`,
+`flox-rustup` (`[hook].on-activate`), `devenv-sample` and
+`devenv-antigravity-sample` (`enterShell`), `pixi-sample` and
+`pixi-go-sample` (`[activation]` scripts and the `make` targets its tasks
+run), `mise-sample` (`[tasks]`), `devbox-services-sample` (`[hooks]
+post_create`), and the three nix samples' `shellHook`s. Outside the
+provider's own tools (`cargo`, `go`, `gradle`, `rustup`, `initdb`) and shell
+builtins, they call: `mkdir -p` with several operands, `date -u +FORMAT`,
+`seq 1 N`, `sleep 0.1`, `echo`, and `[`/`test` with `-e`, `-f`, `-n`. Every
+one is in the coreutils floor. **No hook in the repository calls `grep`,
+`sed`, `find`, `xargs` or `diff`**, so this half of the corpus gives no
+evidence for admitting any family.
+
+*The second half is not in the repository.* What the eleven agents run
+through their shell tools is not recorded anywhere here, and recalling it
+would be the unmeasured claim this change exists to avoid. It needs one run
+per agent in its sample with commands logged, which needs each agent's own
+credentials, so it is the owner's to collect. Until it exists, 5.2 has
+nothing to qualify against, and the families stay out.
+
 ## Risks / Trade-offs
 
 - [Binary size roughly triples] → measured on the integrated build before

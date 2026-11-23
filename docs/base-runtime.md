@@ -9,9 +9,10 @@ at that level.
 The goal this serves: every shell or utility a sandbox can execute comes from
 a pinned source — the provider's lock, or (once it exists) a devcroft runtime
 the project pins — and never from the host, except named exceptions. This page
-documents what is recorded today. The runtime itself is planned
-(`openspec/changes/add-own-userland`, `add-macos-exec-redirect`,
-`embed-brush-runtime`).
+documents what is recorded today. The runtime's utilities exist and are on
+every sandbox's `PATH` by name; the absolute-path namespace and a runtime
+shell are planned (`openspec/changes/add-own-userland`,
+`add-macos-exec-redirect`, `embed-brush-runtime`).
 
 ## The base names (revision 1)
 
@@ -58,6 +59,8 @@ changes only when one of those does.
 |---|---|
 | `closure:<path>` | inside the provider's closure (the Nix store), pinned by its lock |
 | `provider:<name>:<path>` | inside an artifact provider's own install (mise, pixi) |
+| `runtime:gen-<N>:<path>` | devcroft's runtime, at the generation the sandbox started with; `path` is the link whose name selects the utility |
+| `native:<provider>:<path>` | a host file in a sandbox whose provider declares native mode (swift), on purpose and with a stated reason |
 | `host:<path>` | a host file — not reproducible at this level |
 | `absent (not present)` | nothing by that name on `PATH`, or no file at that path |
 | `absent (refused by policy)` | the file exists on the host and the policy does not grant it (macOS) |
@@ -67,6 +70,31 @@ It is computed from what the sandbox is actually given — its `PATH`, its
 resolved grants, and on Linux the entries its view writes — without spawning
 anything, and a test runs every name in both forms inside a real sandbox to
 check that the record matches.
+
+## The host shell, until the runtime has one
+
+An environment that resolves no POSIX shell gets the host's, from one place
+for every provider (`src/runtime/layer.rs`): a link
+`.devcroft/<name>/host-shell/sh`, so the sandbox's `PATH` gains `sh` and
+nothing else from the host, and grants with their own origin, `host-shell`,
+in `policy --render`. On Linux those are the shell file and the C library
+files it loads; on macOS, `/bin` and `/var/select`. The shell is recorded
+`host:` and `up` warns about it. Today that is mise and pixi environments
+that install no shell.
+
+## Native mode
+
+One provider runs on the host's shell and userland on purpose: swift, whose
+toolchain runs the host's `/bin/sh` (`xcrun` runs `sh -c` and reads
+`/var/select/sh`) and whose signing tools live in `/usr/bin`. `up`, `status`
+and `policy --render` say so with that reason, and its host files are
+recorded `native:swift` rather than warned about one by one. No other
+provider declares it.
+
+A manifest cannot do the same one file at a time: a `filesystem.allow` or
+`filesystem.read` entry naming a base name directly under a host `bin`
+directory (`/usr/bin/grep`, `/bin/sh`) is refused at layer `config`, unless
+the provider is native. To pin your own `grep`, add it to the environment.
 
 ## Where to see it
 
@@ -85,7 +113,12 @@ Measured 2026-11-22 on macOS arm64, by name, in real sandboxes:
 | devbox | bash from stdenv | the same, with or without a toolchain |
 | flox | a bash from the closure's requisites | none |
 | mise, pixi | the environment's own `sh` if any, else the host's | only what the environment installs |
-| swift | the host's (declared by the provider) | the host's `/usr/bin` (declared) |
+| swift | the host's (native mode) | the host's `/usr/bin` (native mode) |
+
+Since generation 1, every name the environment does not supply and the
+runtime carries resolves to the runtime by name (`runtime:gen-1`), after the
+environment's own executables and the shell's directory. The table above is
+what the environment supplies before that.
 
 On Linux (measured 2026-11-22, aarch64) the same holds by name for nix,
 devbox and flox, and devenv supplies the full GNU userland as nix does, even

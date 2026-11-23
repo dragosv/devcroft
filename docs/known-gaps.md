@@ -517,7 +517,34 @@ store-backed row with `env` by name has `/usr/bin/env`, and fails on the
 flox row with the old check.
 
 Addressed by `openspec/changes/add-own-userland` (`/usr/bin/env` is always
-present, from the environment or from devcroft's runtime).
+present, from the environment or from devcroft's runtime). Not closed yet:
+the runtime's `env` is on `PATH` by name since generation 1, but the view
+does not put it at `/usr/bin/env` until that change's namespace lands.
+
+## devcroft's runtime is uutils, not GNU, and has no `awk`, `tar`, `grep`, `sed` or `find`
+
+Where a sandbox's environment supplies no coreutils (a flox, devenv, mise or
+pixi project that does not declare them), its `ls`, `cat`, `env` and the rest
+of the coreutils floor come from devcroft's runtime: [uutils
+coreutils](https://github.com/uutils/coreutils) 0.13.0, linked into the
+`devcroft` binary ([base-runtime.md](base-runtime.md)). uutils aims at GNU
+compatibility and does not reach it on every option, so a script tuned to
+GNU behaviour can differ there. A project that wants GNU declares `coreutils`
+in its environment, and its executables come first on `PATH`. nix and devbox
+sandboxes get GNU from stdenv and never meet the runtime's versions of those
+names.
+
+The runtime carries no `grep`, `sed`, `find`, `xargs`, `diff`, `awk`, `tar` or
+`gzip`. uutils publishes `findutils`, `diffutils`, `grep` and `sed` crates;
+each enters the runtime only after it is qualified against the options real
+workloads use and by a recorded decision (`add-own-userland` D6). `awk` and
+`tar` have no uutils crate. Until then those names come from the environment
+or not at all, which is why every `devenv-<agent>-sample` still declares
+`findutils`, `gnugrep` and `gnused`.
+
+The runtime has no shell either: an environment without one gets the host's,
+recorded `host:` and warned about ([base-runtime.md](base-runtime.md)).
+`embed-brush-runtime` is the change that replaces it.
 
 ## Interactive pty sessions are refused on macOS — fixed
 
