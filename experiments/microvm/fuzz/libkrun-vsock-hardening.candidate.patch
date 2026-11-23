@@ -1,0 +1,109 @@
+--- a/src/devices/src/virtio/vsock/unix_proxy/mod.rs
++++ b/src/devices/src/virtio/vsock/unix_proxy/mod.rs
+@@ -346,16 +346,14 @@
+         ProxyStatus::WaitingOnAccept
+     }
+     fn connect(&mut self, _: &VsockPacket, _: TsiConnectReq) -> ProxyUpdate {
+-        unreachable!()
+-    }
+-    fn getpeername(&mut self, _: &VsockPacket) {
+-        unreachable!()
++        ProxyUpdate::default()
+     }
++    fn getpeername(&mut self, _: &VsockPacket) {}
+     fn sendmsg(&mut self, _: &VsockPacket) -> ProxyUpdate {
+-        unreachable!()
++        ProxyUpdate::default()
+     }
+     fn sendto_addr(&mut self, _: TsiSendtoAddr) -> ProxyUpdate {
+-        unreachable!()
++        ProxyUpdate::default()
+     }
+     fn listen(
+         &mut self,
+@@ -363,19 +361,19 @@
+         _: TsiListenReq,
+         _: &Option<HashMap<u16, u16>>,
+     ) -> ProxyUpdate {
+-        unreachable!()
++        ProxyUpdate::default()
+     }
+     fn accept(&mut self, _: TsiAcceptReq) -> ProxyUpdate {
+-        unreachable!()
++        ProxyUpdate::default()
+     }
+     fn update_peer_credit(&mut self, _: &VsockPacket) -> ProxyUpdate {
+-        unreachable!()
++        ProxyUpdate::default()
+     }
+     fn process_op_response(&mut self, _: &VsockPacket) -> ProxyUpdate {
+-        unreachable!()
++        ProxyUpdate::default()
+     }
+     fn release(&mut self) -> ProxyUpdate {
+-        unreachable!()
++        ProxyUpdate::default()
+     }
+     fn process_event(&mut self, evset: EventSet) -> ProxyUpdate {
+         sys::process_acceptor_event(self, evset)
+--- a/src/devices/src/virtio/vsock/packet.rs
++++ b/src/devices/src/virtio/vsock/packet.rs
+@@ -287,24 +287,26 @@
+         // Copy into a contiguous owned buffer.
+         let mut owned_buf: Vec<u8> = Vec::with_capacity(pkt_len as usize);
+ 
+-        if head_data_size > 0 {
++        let head_take = head_data_size.min(pkt_len as usize);
++        if head_take > 0 {
+             let buf_addr = head
+                 .addr
+                 .checked_add(VSOCK_PKT_HDR_SIZE as u64)
+                 .ok_or(VsockError::GuestMemoryBounds)?;
+-            let src = get_host_address(head.mem, buf_addr, head_data_size)
++            let src = get_host_address(head.mem, buf_addr, head_take)
+                 .map_err(VsockError::GuestMemoryMmap)?;
+             owned_buf.extend_from_slice(unsafe {
+-                std::slice::from_raw_parts(src as *const u8, head_data_size)
++                std::slice::from_raw_parts(src as *const u8, head_take)
+             });
+         }
+ 
+         // First data descriptor (already validated as readable above).
+-        if buf_desc.len > 0 {
+-            let src = get_host_address(buf_desc.mem, buf_desc.addr, buf_desc.len as usize)
++        let take = (buf_desc.len as usize).min(pkt_len as usize - owned_buf.len());
++        if take > 0 {
++            let src = get_host_address(buf_desc.mem, buf_desc.addr, take)
+                 .map_err(VsockError::GuestMemoryMmap)?;
+             owned_buf.extend_from_slice(unsafe {
+-                std::slice::from_raw_parts(src as *const u8, buf_desc.len as usize)
++                std::slice::from_raw_parts(src as *const u8, take)
+             });
+         }
+ 
+@@ -313,11 +315,12 @@
+             if desc.is_write_only() {
+                 return Err(VsockError::UnreadableDescriptor);
+             }
+-            if desc.len > 0 {
+-                let src = get_host_address(desc.mem, desc.addr, desc.len as usize)
++            let take = (desc.len as usize).min(pkt_len as usize - owned_buf.len());
++            if take > 0 {
++                let src = get_host_address(desc.mem, desc.addr, take)
+                     .map_err(VsockError::GuestMemoryMmap)?;
+                 owned_buf.extend_from_slice(unsafe {
+-                    std::slice::from_raw_parts(src as *const u8, desc.len as usize)
++                    std::slice::from_raw_parts(src as *const u8, take)
+                 });
+             }
+             next = desc.next_descriptor();
+--- a/src/devices/src/virtio/vsock/unix_proxy/unix.rs
++++ b/src/devices/src/virtio/vsock/unix_proxy/unix.rs
+@@ -587,6 +587,7 @@
+             Ok(accept_fd) => {
+                 // Safe because we've just obtained the FD from the `accept` call above.
+                 let new_fd = unsafe { OwnedFd::from_raw_fd(accept_fd) };
++                let _ = fcntl(&new_fd, FcntlArg::F_SETFL(OFlag::O_NONBLOCK));
+                 update.new_proxy = Some((
+                     proxy.peer_port,
+                     new_fd,

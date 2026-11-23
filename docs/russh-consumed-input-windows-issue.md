@@ -385,14 +385,20 @@ handle.consumed(channel, n as u32)?;
 
 For a manual-credit channel, the server debits the receive window on receipt and replenishes it only from credits returned through `consumed`. In our stdin-forwarding case, `consumed` means that the downstream pipe accepted the bytes in a successful write. It does not mean that the child process has read or processed them. Removing bytes from an application queue alone does not return credit.
 
-The application returns credit once per successfully written byte, including partial writes. Credit notifications can originate outside the session task, including from a blocking writer thread, and are coalesced until the session loop processes them. Channels using automatic credit retain their current behavior.
+The application returns credit once per successfully written byte, and can return it in parts. Credit notifications can originate outside the session task, including from a blocking writer thread, and are coalesced until the session loop processes them. Channels using automatic credit retain their current behavior.
 
 Two details need a decision:
 
 - **Delivery must not block the session loop.** Manual credit bounds what the peer can send, but the session loop still awaits `chan.send(...)` (L1513). If the channel's window is larger than its queue (`channel_buffer_size` times the packet size, 100 × 32 KiB by default), an application that stops reading can still stall the connection. Either the manual window must stay within the queue's capacity, or delivery for manual channels must use `try_send` with a backlog bounded by the window.
 - **A peer that exceeds the window.** russh ignores the excess today, citing RFC 4254 §5.2. Under manual credit, ignoring it would drop bytes, so we propose disconnecting. OpenSSH allows 10% over the window and then disconnects with "peer ignored channel window" ([channels.c#L3635-L3651](https://github.com/openssh/openssh-portable/blob/1ec60f13ce4bfca18f2269b2696a2d1b6995b6e3/channels.c#L3635-L3651)).
 
-We run this design in a fork based on 0.62.5. With it, a command that doesn't read stdin leaves other channels responsive, a stock OpenSSH client transfers 16 MiB in each direction through one session, and russh's own tests pass. These are fork results, separate from the upstream 0.65.1 runs.
+We run the credit half of this design in a fork based on 0.62.5:
+
+- `manual_receive_window` and `consumed` work as described, and a peer that exceeds the window ends the connection.
+- The fork doesn't change delivery. Our server drops the `Channel` read half and takes data in `Handler::data`, so the awaited `chan.send(...)` can't block on an unread queue. A general solution has to address delivery.
+- It also makes outgoing packet writes non-blocking for the session loop. That is a separate change, and it isn't part of this proposal.
+
+With the fork, a command that doesn't read stdin leaves other channels responsive, a stock OpenSSH client transfers 16 MiB in each direction through one session, and russh's library tests pass. Channels that we still forward through `Channel::into_stream()`, such as `direct-tcpip`, show the original stall. These are fork results, separate from the upstream 0.65.1 runs.
 
 Other shapes would also work for us, for example non-blocking delivery in the session loop with a per-channel backlog, or a per-channel version of `adjust_window`.
 

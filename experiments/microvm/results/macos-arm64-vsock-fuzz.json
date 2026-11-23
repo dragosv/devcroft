@@ -1,0 +1,90 @@
+{
+  "schema": 1,
+  "date": "2026-11-23",
+  "platform": "macos-arm64-native",
+  "status": "findings-open",
+  "qualification": "device-level host fuzzing of the pinned, patched sources in scratch copies; no VM booted; debug builds with overflow checks; not coverage-guided; not an audit",
+  "revisions": {
+    "libkrun": "6151710f4ea627cf0e5dbce78e4192fb4d64c2e9 plus the three recorded patches",
+    "hvi": "351d1a15728e998486232e4815ba075a22e44f56 plus hvi-vsock-fixed-ports.patch"
+  },
+  "files": {
+    "fuzz/libkrun_vsock_fuzz.rs": "5935bf7f5cd37c0d2eeee53a90b7c4bb251790c638a23263f0d24f679403f4a8",
+    "fuzz/hvi_vsock_fuzz.rs": "bbef3b9923fd0f4636ff53d91067210841ae18248dba9afc4469958a45bc6920",
+    "fuzz/libkrun-vsock-hardening.candidate.patch": "1858787fefd4205f8508df1fdc8eeb4b0971da44a89f6845bb9bd8256bc2406e"
+  },
+  "findings": [
+    {
+      "id": "krun-acceptor-unreachable",
+      "origin": "upstream code, untouched by local patches",
+      "trigger": "guest packet src_port=<host-listened port>, dst_port=620 with stream RESPONSE, RST, RW or CREDIT_UPDATE, or dgram RW; TSI disabled",
+      "observed": "UnixAcceptorProxy unreachable!() panics on the caller; the poisoned proxy lock then panics the muxer thread; the device serves no new connection",
+      "control": "REQUEST, SHUTDOWN and unknown ops leave it healthy",
+      "exposure": "the experimental helper registers its ports with listen=true",
+      "scope": "availability of that VM's helper; no escape or cross-VM effect shown"
+    },
+    {
+      "id": "krun-tx-chain-amplification",
+      "origin": "upstream code, untouched by local patches",
+      "trigger": "header len=1 with 100 chained 16-MiB descriptors over the same memory in a 32-MiB guest",
+      "observed": "whole chain copied before comparison with len; max RSS 1620 MiB in 0.3 s; freed afterwards",
+      "with_candidate_patch": "max RSS 6 MiB",
+      "limit": "128-entry queue in the probe"
+    },
+    {
+      "id": "krun-rw-before-response",
+      "origin": "gap in patches/libkrun-vsock-host-backpressure.patch",
+      "trigger": "guest sends 16 64-KiB RW packets before RESPONSE while the host client does not read",
+      "observed": "accepted socket is still blocking; device did not finish within 5 s and resumed once the client closed",
+      "control": "RESPONSE first: finishes"
+    },
+    {
+      "id": "hvi-pending-unbounded",
+      "origin": "upstream pin; local patch not compared",
+      "trigger": "REQUEST or CREDIT_REQUEST while no RX buffer is posted",
+      "observed": "pending grew to 200001 entries for 200000 packets",
+      "control": "with RX buffers posted, pending stayed at 1"
+    }
+  ],
+  "random": {
+    "libkrun_candidate_patched": {
+      "seeds": [
+        1,
+        2,
+        3,
+        4
+      ],
+      "seconds_per_seed": 240,
+      "packets": 1172000,
+      "rounds": 2930,
+      "panics": 0,
+      "rounds_failing_final_check": 35,
+      "classified": {
+        "host connect ECONNREFUSED": 34,
+        "RX ring exhausted at timeout": 1
+      },
+      "note": "not explained conclusively: the harness never stops earlier rounds' device threads and the listen backlog is 5; failures were not seed-stable",
+      "earlier_harness_revisions": "three more runs with the same seeds, 3447200 packets, no panic or hang"
+    },
+    "libkrun_unpatched": "all four workers stopped making progress inside sendmsg (krun-rw-before-response) after hitting the acceptor panic; run terminated",
+    "hvi": {
+      "seeds": [
+        1,
+        2,
+        3,
+        4
+      ],
+      "seconds_per_seed": 120,
+      "actions": 6135000,
+      "panics": 0,
+      "rounds_failing_final_check": 0
+    }
+  },
+  "not_run": [
+    "guest-driven reproduction in a booted VM",
+    "coverage-guided fuzzing",
+    "TSI-enabled paths",
+    "concurrent header mutation (double fetch)",
+    "Linux"
+  ]
+}

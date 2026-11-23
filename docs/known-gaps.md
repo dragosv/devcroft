@@ -1240,8 +1240,16 @@ window for exec/shell channels is returned only once the child has consumed
 the input, so a client cannot send more than the child takes. One stalled
 channel leaves its connection, the other channels and the server
 responsive, and channel close still reaps the child. A client that ignores
-the window is refused beyond an 8 MiB backlog with exit status 255, never
-silently truncated.
+the 2 MiB window loses its connection. The 8 MiB backlog limit with exit
+status 255 is a backstop behind that: no client reaches it at the current
+window size. Input is never silently truncated.
+
+**Still open: forwarded ports.** `ssh -L` channels use
+russh's automatic window and its awaited channel queue. Measured on
+2026-11-23 with a target that never reads: after 4.1 MiB, opening another
+channel on the same connection got no answer in 5 s. With a target that
+reads, it took 5 ms. Other connections were not part of that measurement.
+SFTP goes through the same `into_stream()` path, but was not measured.
 
 **The cost.** russh 0.62.5 cannot do this: it returns window credit on
 receipt, with one target window per session. devcroft therefore carries a
