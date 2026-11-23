@@ -4114,6 +4114,7 @@ fn compile_with_provider_grants(
             provider_static_name(&manifest.env.provider),
             &meta.read_only_grants,
         )
+        .with_host_shell(&meta.host_shell_grants)
         .with_trust_store(&meta.trust_store);
     // The tooling layer's grant, as `up` compiled it (`Origin::Tools`).
     let compiled = match meta.tools.as_ref().and_then(|t| {

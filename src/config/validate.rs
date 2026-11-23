@@ -128,6 +128,50 @@ pub fn check_filesystem(fs: &Filesystem) -> Result<(), ConfigError> {
     Ok(())
 }
 
+/// The host directories a base name is commonly granted from.
+const HOST_BIN_DIRS: &[&str] = &[
+    "/bin",
+    "/usr/bin",
+    "/sbin",
+    "/usr/sbin",
+    "/usr/local/bin",
+    "/opt/homebrew/bin",
+];
+
+/// Refuses a manifest grant of one host copy of a base name
+/// (`/usr/bin/grep`, `/bin/sh`) unless the provider declares native mode
+/// (`add-own-userland` 3.5). Lexical, like every other config check: what
+/// it judges is what the manifest says it wants, not what the host has.
+pub fn check_host_tool_grants(fs: &Filesystem, provider: &str) -> Result<(), ConfigError> {
+    let native = crate::provider::ProviderKind::from_name(
+        &crate::provider::normalize_provider_name(provider),
+    )
+    .is_ok_and(|kind| kind.native().is_some());
+    if native {
+        return Ok(());
+    }
+    for (field, values) in [("allow", &fs.allow), ("read", &fs.read)] {
+        for value in values {
+            let path = std::path::Path::new(value.trim_end_matches('/'));
+            let (Some(dir), Some(name)) =
+                (path.parent(), path.file_name().and_then(|n| n.to_str()))
+            else {
+                continue;
+            };
+            if HOST_BIN_DIRS.iter().any(|d| std::path::Path::new(d) == dir)
+                && crate::runtime::BASE_NAMES.contains(&name)
+            {
+                return Err(ConfigError::HostToolGrant {
+                    field,
+                    path: value.clone(),
+                    name: name.to_owned(),
+                });
+            }
+        }
+    }
+    Ok(())
+}
+
 pub fn collect_warnings(env: &Env, filesystem: &Filesystem, warnings: &mut Vec<Warning>) {
     for path in &filesystem.allow {
         if SENSITIVE_PATHS

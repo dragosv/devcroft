@@ -188,6 +188,25 @@ fn locked_restore_runtime_boundaries_sharing_and_reclamation() {
             "/usr/bin is granted: {line}"
         );
     }
+    // `add-own-userland` 3.3: the fixture installs no shell, so the host's
+    // comes from the common runtime layer — granted under its own origin,
+    // reached as `sh` through a link directory holding nothing else, and
+    // recorded `host:` — never from a copy inside the mise provider.
+    assert!(render.contains("host-shell"), "{render}");
+    let path = text(&sh(&a, "printf %s \"$PATH\""));
+    assert!(
+        path.split(':').any(|d| d.ends_with("/host-shell")),
+        "the host shell's link directory is not on PATH: {path}"
+    );
+    assert!(
+        !path.split(':').any(|d| d == "/usr/bin" || d == "/bin"),
+        "a host directory is on PATH: {path}"
+    );
+    let sh_line = render
+        .lines()
+        .find(|l| l.trim_start().starts_with("sh (by name)"))
+        .unwrap_or_default();
+    assert!(sh_line.contains("host:"), "{render}");
 
     // 6.4 staleness: a newly consumed dotenv, then its removal.
     let manifest = std::fs::read_to_string(a.0.join("mise.toml")).unwrap();

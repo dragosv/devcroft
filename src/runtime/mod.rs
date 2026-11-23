@@ -13,6 +13,7 @@
 //! `docs/base-runtime.md` publishes the same list.
 
 pub mod applets;
+pub mod layer;
 pub mod provenance;
 
 /// The runtime generation this binary embeds (`add-own-userland` D2).

@@ -426,6 +426,7 @@ mod tests {
                     brokers: Vec::new(),
                     base_runtime: None,
                     runtime_generation: None,
+                    host_shell_grants: Vec::new(),
                 },
             )
             .unwrap();

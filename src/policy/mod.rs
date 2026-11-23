@@ -236,6 +236,10 @@ pub enum Origin {
     /// started with (`add-own-userland`): the directory of links to the
     /// runtime's utilities. Never from a manifest or a provider.
     Runtime(u32),
+    /// The host's POSIX shell, supplied by the common runtime layer to an
+    /// environment that resolves none (`add-own-userland` 3.3,
+    /// `crate::runtime::layer`). Never from a manifest or a provider.
+    HostShell,
 }
 
 /// Serialized as its displayed form (`manifest:filesystem.allow`,
@@ -266,6 +270,7 @@ impl<'de> serde::Deserialize<'de> for Origin {
             "pid-namespace" => Ok(Origin::PidNamespace),
             "identity" => Ok(Origin::Identity),
             "credential:broker" => Ok(Origin::CredentialBroker),
+            "host-shell" => Ok(Origin::HostShell),
             t => match (
                 t.strip_prefix("manifest:"),
                 t.strip_prefix("provider:"),
@@ -301,6 +306,7 @@ impl std::fmt::Display for Origin {
             Origin::Tools(provider) => write!(f, "tools:{provider}"),
             Origin::CredentialBroker => write!(f, "credential:broker"),
             Origin::Runtime(generation) => write!(f, "runtime:gen-{generation}"),
+            Origin::HostShell => write!(f, "host-shell"),
         }
     }
 }
@@ -611,6 +617,19 @@ impl CompiledPolicy {
             dir.to_string_lossy().into_owned(),
             Origin::Runtime(generation),
         ));
+        self
+    }
+
+    /// The host shell's grants, read-only, with origin `host-shell`
+    /// (`crate::runtime::layer`): its own origin, so a sandbox running the
+    /// host's shell says so in `policy --render` rather than attributing
+    /// the grant to the provider that lacked one.
+    pub fn with_host_shell(mut self, grants: &[String]) -> Self {
+        self.filesystem_read.extend(
+            grants
+                .iter()
+                .map(|g| AnnotatedValue::new(g.clone(), Origin::HostShell)),
+        );
         self
     }
 

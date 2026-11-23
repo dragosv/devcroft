@@ -503,17 +503,23 @@ fn up_locked(
     // `Meta` with everything else the client side needs later, and so a
     // sandbox that has no shell at all fails before any state that
     // implies a working one is written.
-    let shell =
-        crate::shell::resolve(&resolution.env, &resolution.read_only_grants).ok_or_else(|| {
-            UpError::Provider(crate::provider::ProviderError::ResolutionFailed(
-                "no POSIX shell found in this environment or its closure, and devcroft \
-             needs one for `shell`, SSH login sessions and services; add one to the \
-             environment manifest (e.g. `flox install bash`)\nsearched: the store \
-             entries on the resolved environment's PATH, then their closure \
-             requisites"
-                    .to_string(),
-            ))
-        })?;
+    //
+    // Through the common runtime layer (`add-own-userland` 3.3): the
+    // environment's own shell when it has one, otherwise the host's, linked
+    // and granted in one place for every provider and recorded `host:`.
+    let shell_choice = crate::runtime::layer::resolve_shell(
+        &resolution.env,
+        &resolution.read_only_grants,
+        &crate::services::artifact_dir(project_root, &manifest.sandbox.name),
+    )
+    .map_err(|why| {
+        UpError::Provider(crate::provider::ProviderError::ResolutionFailed(format!(
+            "no POSIX shell found in this environment or its closure, and the host's \
+             cannot be used ({why}); devcroft needs one for `shell`, SSH login sessions \
+             and services; add one to the environment manifest (e.g. `flox install bash`)"
+        )))
+    })?;
+    let shell = &shell_choice.shell;
 
     // The provider's own grants plus the store path the resolved shell
     // lives in, folded together *here* rather than at compile time so
@@ -609,6 +615,7 @@ fn up_locked(
             // Computed by `up_process` once the view is decided.
             base_runtime: None,
             runtime_generation: Some(crate::runtime::GENERATION),
+            host_shell_grants: shell_choice.host_grants.clone(),
         },
     )?;
 
@@ -620,7 +627,7 @@ fn up_locked(
         opts,
         outcome,
         &resolution,
-        &shell,
+        &shell_choice,
         &provider_grants,
         &trust_store.grants,
         proxy,
@@ -826,7 +833,7 @@ fn up_process(
     opts: &UpOptions,
     outcome: UpOutcome,
     resolution: &Resolution,
-    shell: &crate::shell::ResolvedShell,
+    shell_choice: &crate::runtime::layer::ShellChoice,
     provider_grants: &[String],
     trust_store: &[String],
     proxy: Option<(u16, String)>,
@@ -841,9 +848,11 @@ fn up_process(
     // fact, so it shows up in `policy --render`/`why` like every other
     // grant (own-policy-baseline task 6.1).
     let exe = keeper_exe()?;
+    let shell = &shell_choice.shell;
     let compiled = policy::compile(manifest)
         .with_keeper_exe_grant(exe.to_string_lossy().into_owned())
         .with_provider_grants(provider.static_name(), provider_grants)
+        .with_host_shell(&shell_choice.host_grants)
         .with_trust_store(trust_store);
     let compiled = match tools {
         Some((origin, record)) => compiled.with_tools_grants(origin, &record.grants),

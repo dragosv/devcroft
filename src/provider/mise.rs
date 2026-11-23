@@ -809,45 +809,18 @@ pub(crate) fn resolve(root: &Path, skip_hooks: bool) -> Result<Resolution, Provi
     // directories, env snapshots) enters a runtime environment.
     resolved.insert("PATH".into(), paths.join(":"));
     let mut grants = vec![installs.to_string_lossy().into_owned()];
-    let installed_shell = paths
-        .iter()
-        .map(|p| Path::new(p).join("sh"))
-        .filter_map(|p| p.canonicalize().ok())
-        .find(|p| p.starts_with(&installs) && p.is_file());
-    let needs_host_shell = installed_shell.is_none();
-    let shell = installed_shell.map(Ok).unwrap_or_else(|| {
-        Path::new("/bin/sh")
-            .canonicalize()
-            .map_err(|e| fail(format!("host POSIX shell: {e}")))
-    })?;
-    let shell_dir = object.join("shell");
-    std::fs::create_dir_all(&shell_dir).map_err(|e| fail(e.to_string()))?;
-    if !shell_dir.join("sh").exists() {
-        std::os::unix::fs::symlink(&shell, shell_dir.join("sh"))
-            .map_err(|e| fail(e.to_string()))?;
-    }
-    grants.push(shell_dir.to_string_lossy().into_owned());
-    #[cfg(target_os = "macos")]
-    if needs_host_shell {
-        grants.extend(["/bin".into(), "/var/select".into()]);
-    }
+    // No shell of mise's own: a tool that installs `sh` is found on the
+    // `PATH` above, and an environment without one gets the host's from the
+    // common runtime layer (`crate::runtime::layer`, `add-own-userland`
+    // 3.3), which used to be a private copy here.
     #[cfg(target_os = "linux")]
-    {
-        if needs_host_shell {
-            grants.push(shell.to_string_lossy().into_owned());
-        }
-        if Path::new("/etc/ssl/openssl.cnf").is_file() {
-            grants.push("/etc/ssl/openssl.cnf".into());
-        }
+    if Path::new("/etc/ssl/openssl.cnf").is_file() {
+        grants.push("/etc/ssl/openssl.cnf".into());
     }
-    resolved
-        .get_mut("PATH")
-        .unwrap()
-        .push_str(&format!(":{}", shell_dir.display()));
     // Go's default caches are below the sandbox HOME; its toolchain chooser
     // must never fetch a different compiler during a supposedly locked session.
     resolved.insert("GOTOOLCHAIN".into(), "local".into());
-    grants.extend(runtime_grants(&installs, &shell)?);
+    grants.extend(runtime_grants(&installs)?);
     grants.sort();
     grants.dedup();
     Ok(Resolution {
@@ -864,7 +837,7 @@ fn dependencies(path: &Path) -> Result<Vec<String>, ProviderError> {
     artifacts::header_dependencies(PROVIDER, path)
 }
 
-fn runtime_grants(installs: &Path, shell: &Path) -> Result<Vec<String>, ProviderError> {
+fn runtime_grants(installs: &Path) -> Result<Vec<String>, ProviderError> {
     fn collect(root: &Path, out: &mut Vec<PathBuf>) -> Result<(), ProviderError> {
         for entry in std::fs::read_dir(root).map_err(|e| fail(e.to_string()))? {
             let entry = entry.map_err(|e| fail(e.to_string()))?;
@@ -884,10 +857,6 @@ fn runtime_grants(installs: &Path, shell: &Path) -> Result<Vec<String>, Provider
         .filter(|p| std::fs::metadata(p).is_ok_and(|m| m.permissions().mode() & 0o111 != 0))
         .cloned()
         .collect();
-    #[cfg(target_os = "linux")]
-    queue.push(shell.to_path_buf());
-    #[cfg(target_os = "macos")]
-    let _ = shell; // The OS shell/loader is the measured macOS runtime inventory.
     let env = Path::new("/usr/bin/env")
         .canonicalize()
         .map_err(|e| fail(e.to_string()))?;

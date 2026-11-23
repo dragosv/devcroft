@@ -793,27 +793,27 @@ pub(crate) fn resolve(root: &Path) -> Result<Resolution, ProviderError> {
         .map(|s| bin.join(s))
         .filter_map(|p| p.canonicalize().ok())
         .find(|p| p.starts_with(&prefix) && p.is_file());
-    let shell = match &prefix_shell {
-        Some(shell) => shell.clone(),
-        None => Path::new("/bin/sh")
-            .canonicalize()
-            .map_err(|e| fail(format!("host POSIX shell: {e}")))?,
-    };
+    // The prefix's own shell, linked as `sh` so a `bash`-only prefix still
+    // supplies one by that name. A prefix without either gets the host's
+    // from the common runtime layer (`crate::runtime::layer`,
+    // `add-own-userland` 3.3), which used to be a private copy here.
     let shell_dir = object.join("shell");
-    std::fs::create_dir_all(&shell_dir).map_err(io(&shell_dir))?;
     let link = shell_dir.join("sh");
-    if std::fs::read_link(&link).ok().as_deref() != Some(shell.as_path()) {
-        let _ = std::fs::remove_file(&link);
-        std::os::unix::fs::symlink(&shell, &link).map_err(io(&link))?;
+    match &prefix_shell {
+        Some(shell) => {
+            std::fs::create_dir_all(&shell_dir).map_err(io(&shell_dir))?;
+            if std::fs::read_link(&link).ok().as_deref() != Some(shell.as_path()) {
+                let _ = std::fs::remove_file(&link);
+                std::os::unix::fs::symlink(shell, &link).map_err(io(&link))?;
+            }
+            grants.push(shell_dir.to_string_lossy().into_owned());
+        }
+        // A link left by an earlier resolution would still be found on `PATH`.
+        None => {
+            let _ = std::fs::remove_file(&link);
+        }
     }
-    grants.push(shell_dir.to_string_lossy().into_owned());
-    if prefix_shell.is_none() {
-        #[cfg(target_os = "macos")]
-        grants.extend(["/bin".to_owned(), "/var/select".to_owned()]);
-        #[cfg(target_os = "linux")]
-        grants.push(shell.to_string_lossy().into_owned());
-    }
-    let (runtime, unmet) = runtime_grants(&prefix, &shell)?;
+    let (runtime, unmet) = runtime_grants(&prefix)?;
     grants.extend(runtime);
     grants.sort();
     grants.dedup();
@@ -826,7 +826,10 @@ pub(crate) fn resolve(root: &Path) -> Result<Resolution, ProviderError> {
     }
     let env = BTreeMap::from([(
         "PATH".to_owned(),
-        format!("{}:{}", bin.display(), shell_dir.display()),
+        match prefix_shell {
+            Some(_) => format!("{}:{}", bin.display(), shell_dir.display()),
+            None => bin.display().to_string(),
+        },
     )]);
     Ok(Resolution {
         env,
@@ -870,7 +873,7 @@ type Unmet = BTreeSet<(String, String)>;
 /// The host libraries the prefix's `bin/` executables need, read from their
 /// headers: granted when the profile's inventory carries them, otherwise
 /// returned as `(executable, library)` for one warning.
-fn runtime_grants(prefix: &Path, shell: &Path) -> Result<(Vec<String>, Unmet), ProviderError> {
+fn runtime_grants(prefix: &Path) -> Result<(Vec<String>, Unmet), ProviderError> {
     // Every file in the prefix by name: a library found through an rpath
     // (perl's `@rpath/libperl.dylib` lives under `lib/perl5/.../CORE`) is
     // inside the prefix wherever it sits, so it needs no host grant.
@@ -903,12 +906,6 @@ fn runtime_grants(prefix: &Path, shell: &Path) -> Result<(Vec<String>, Unmet), P
         .filter(|p| p.starts_with(prefix) && p.is_file())
         .filter(|p| std::fs::metadata(p).is_ok_and(|m| m.permissions().mode() & 0o111 != 0))
         .collect();
-    // A host shell's own needs are read on Linux, where it is granted as a
-    // file. On macOS it is a universal binary under the granted `/bin`, and
-    // its libraries live in the dyld cache.
-    if cfg!(target_os = "linux") && !shell.starts_with(prefix) {
-        queue.push(shell.to_path_buf());
-    }
     let mut grants = BTreeSet::new();
     let mut unmet = BTreeSet::new();
     let mut seen = BTreeSet::new();

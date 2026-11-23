@@ -307,6 +307,15 @@ pub enum ConfigError {
         provider: &'static str,
         actual: String,
     },
+    /// A grant of one host copy of a base name (`/usr/bin/grep`) in a
+    /// sandbox whose provider is not native (`add-own-userland` 3.5): it
+    /// would put the host's userland back one file at a time, under the
+    /// project's name instead of a declared native mode.
+    HostToolGrant {
+        field: &'static str,
+        path: String,
+        name: String,
+    },
     InvalidName {
         name: String,
         suggestion: String,
@@ -372,6 +381,14 @@ impl fmt::Display for ConfigError {
                 f,
                 "`{key}` only applies to `provider = \"{provider}\"`; this manifest declares \
                  `{actual}`, under which the key would do nothing"
+            ),
+            ConfigError::HostToolGrant { field, path, name } => write!(
+                f,
+                "`filesystem.{field}` grants `{path}`, the host's own `{name}`; a sandbox \
+                 gets `{name}` from its environment or from devcroft's runtime, never from \
+                 the host one file at a time. Add `{name}` to the environment to pin your \
+                 own; only a provider that declares native mode (swift) runs on the host's \
+                 userland (docs/base-runtime.md)"
             ),
             ConfigError::Parse(e) => write!(f, "invalid TOML: {e}"),
             ConfigError::UnknownKey { path, suggestion } => {
@@ -556,6 +573,7 @@ pub fn parse(text: &str) -> Result<(Manifest, Vec<Warning>), ConfigError> {
 
     validate::check_filesystem(&raw.filesystem)?;
     validate::check_env(&raw.env)?;
+    validate::check_host_tool_grants(&raw.filesystem, &raw.env.provider)?;
 
     let mut warnings = Vec::new();
     validate::collect_warnings(&raw.env, &raw.filesystem, &mut warnings);
@@ -583,6 +601,38 @@ pub fn parse(text: &str) -> Result<(Manifest, Vec<Warning>), ConfigError> {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn a_host_copy_of_a_base_name_is_refused_unless_the_provider_is_native() {
+        let manifest = |provider: &str, field: &str, path: &str| {
+            format!(
+                "[sandbox]\nname = \"p\"\n[env]\nprovider = \"{provider}\"\n\
+                 [filesystem]\n{field} = [\".\", \"{path}\"]\n"
+            )
+        };
+        for (field, path, name) in [
+            ("read", "/usr/bin/grep", "grep"),
+            ("read", "/bin/sh", "sh"),
+            ("allow", "/opt/homebrew/bin/sed", "sed"),
+            ("read", "/usr/bin/env/", "env"),
+        ] {
+            let err = parse(&manifest("flox", field, path)).unwrap_err();
+            assert!(
+                matches!(&err, ConfigError::HostToolGrant { name: n, .. } if n == name),
+                "{path}: {err}"
+            );
+            assert!(err.to_string().contains("native mode"), "{err}");
+        }
+        // Not a base name, not a host bin directory, or a native provider.
+        for (provider, path) in [
+            ("flox", "/usr/bin/python3"),
+            ("flox", "/opt/tools/grep"),
+            ("swift", "/usr/bin/grep"),
+        ] {
+            parse(&manifest(provider, "read", path))
+                .unwrap_or_else(|e| panic!("{provider} {path}: {e}"));
+        }
+    }
 
     #[test]
     fn runtime_generation_parses_and_is_strictly_checked() {

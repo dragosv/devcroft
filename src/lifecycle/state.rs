@@ -516,6 +516,11 @@ pub struct Meta {
     /// runtime existed.
     #[serde(default)]
     pub runtime_generation: Option<u32>,
+    /// What the common runtime layer granted for the host's shell, origin
+    /// `host-shell` (`add-own-userland` 3.3); empty when the environment
+    /// supplied its own.
+    #[serde(default)]
+    pub host_shell_grants: Vec<String>,
 }
 
 /// One `up`'s tooling layer, as [`Meta::tools`] records it.
@@ -1051,6 +1056,7 @@ mod tests {
             credentials: Vec::new(),
             brokers: Vec::new(),
             base_runtime: None,
+            host_shell_grants: Vec::new(),
             runtime_generation: None,
         };
         write_meta(&paths.meta, &meta).unwrap();
@@ -1088,6 +1094,7 @@ mod tests {
             credentials: Vec::new(),
             brokers: Vec::new(),
             base_runtime: None,
+            host_shell_grants: Vec::new(),
             runtime_generation: None,
         };
         write_meta(&paths.meta, &meta).unwrap();
