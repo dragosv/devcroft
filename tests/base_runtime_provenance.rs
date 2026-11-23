@@ -60,7 +60,7 @@ fn run_in_sandbox(paths: &StatePaths, shell: &str, cwd: &Path, script: &str) -> 
 /// through the view's `/bin/sh`, and so agreed with a record that said
 /// `host:` (measured, a flox sandbox).
 fn probe_script(record: &devcroft::runtime::provenance::Record) -> String {
-    let mut s = String::from("exec </dev/null\n");
+    let mut s = String::from("exec </dev/null\nnl='\n'\n");
     for e in &record.entries {
         let recorded = e.provenance.path().unwrap_or("/nonexistent");
         if e.lookup == BY_NAME {
@@ -73,14 +73,18 @@ fn probe_script(record: &devcroft::runtime::provenance::Record) -> String {
                 n = e.name
             ));
         } else {
-            let args = if e.name == "sh" {
-                "-c true"
-            } else {
-                "--version"
+            let args = match e.name.as_str() {
+                "sh" => "-c true",
+                // BSD `nohup --version` runs `--version`, and reports 127.
+                "nohup" => "true",
+                _ => "--version",
             };
+            // BSD `yes --version` prints forever (the swift row, where the
+            // host's runs); with no stdout it fails its first write.
+            let out = if e.name == "yes" { "&-" } else { "/dev/null" };
             s.push_str(&format!(
-                "{abs} {args} >/dev/null 2>&1; rc=$?; \
-                 if [ '{abs}' -ef '{recorded}' ]; then same=1; else same=0; fi; \
+                "v=$(DYLD_PRINT_LIBRARIES=1 {abs} {args} 2>&1 >{out}); rc=$?; \
+                 if [ '{abs}' -ef '{recorded}' ]; then same=1; else same=${{v%%\"$nl\"*}}; fi; \
                  echo \"{n}|{abs}|$rc|$same\"\n",
                 abs = e.lookup,
                 n = e.name
@@ -88,6 +92,23 @@ fn probe_script(record: &devcroft::runtime::provenance::Record) -> String {
         }
     }
     s
+}
+
+/// On macOS an exec of an absolute path is redirected, so the file *at* that
+/// path (`-ef`) is not the one that ran. dyld's first `DYLD_PRINT_LIBRARIES`
+/// line names the program it actually loaded: `dyld[pid]: <uuid> /path`.
+fn ran_recorded(first_line: &str, recorded: Option<&str>) -> bool {
+    let ran = first_line
+        .strip_prefix("dyld[")
+        .and_then(|l| l.split_once("> "))
+        .map(|(_, path)| Path::new(path));
+    match (ran, recorded.map(Path::new)) {
+        (Some(ran), Some(recorded)) => match (ran.canonicalize(), recorded.canonicalize()) {
+            (Ok(a), Ok(b)) => a == b,
+            _ => false,
+        },
+        _ => false,
+    }
 }
 
 #[test]
@@ -116,13 +137,13 @@ fn the_base_runtime_record_matches_what_runs_inside() {
         let shell = meta.shell.clone().expect("`up` records the shell");
 
         let output = run_in_sandbox(&paths, &shell, &root, &probe_script(&record));
-        let observed: BTreeMap<(String, String), (String, bool)> = output
+        let observed: BTreeMap<(String, String), (String, String)> = output
             .lines()
             .filter_map(|l| {
                 let mut parts = l.splitn(4, '|');
                 Some((
                     (parts.next()?.to_owned(), parts.next()?.to_owned()),
-                    (parts.next()?.to_owned(), parts.next()? == "1"),
+                    (parts.next()?.to_owned(), parts.next()?.to_owned()),
                 ))
             })
             .collect();
@@ -133,6 +154,7 @@ fn the_base_runtime_record_matches_what_runs_inside() {
                 mismatches.push(format!("{} {}: no probe output", e.name, e.lookup));
                 continue;
             };
+            let same = same == "1" || ran_recorded(same, e.provenance.path());
             let recorded_runs = e.provenance.path().is_some();
             if e.lookup == BY_NAME {
                 let found = !seen.is_empty();

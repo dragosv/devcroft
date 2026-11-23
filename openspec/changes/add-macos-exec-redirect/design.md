@@ -72,12 +72,35 @@ not a shape to ship; see D3.
 
 The signing rows' "kept the library" was measured **outside** a sandbox.
 
-Not measured: `cargo build` with a `build.rs` that runs `sh` (task 0.5), and
-a service whose own program uses `popen` (0.4; a hook's `popen` is covered by
-`initdb` above).
+**The remaining three, measured 2026-11-23** in sandboxes, same host, with the
+library of `0cbfaa6` set through `[env.vars]` and a namespace whose `sh` is the
+brush fixture (the runs are not in `run.sh`):
 
-**Stop criterion (0.6): not hit by anything measured, and not yet
-decidable.** mise's one qualified tool is among the unmeasured.
+| Case | Result |
+|---|---|
+| flox service whose program calls `os.popen` | redirected |
+| `cargo build --offline` with a `build.rs` running `/bin/sh` (nix) | redirected; `/bin/ls`, without an entry, `EPERM`. Needed `TMPDIR` inside the project (nix's known stale `TMPDIR`) |
+| mise's official `go1.24.0.darwin-arm64` | **drops the library**: hardened runtime (`flags=0x10000`), no entitlements shown |
+| a program built by that Go, started directly by the keeper | redirected |
+| the same kind of program through `go run`, or through the host's `/bin/sh` | the variable does not reach it |
+
+In a mise sandbox the host's `/bin` is granted until `embed-brush-runtime`, so
+where the redirect is lost there the **host's** file runs, not `EPERM`
+(`/bin/ls` listed `/`). The base-runtime record keeps saying `host:` for a
+sandbox whose shell is the host's for that reason.
+
+An x86_64 program under Rosetta was aborted by dyld (exit 134, outside a
+sandbox) because the library was arm64 only; it is universal since. A missing
+library aborts a process the same way, so removing `.devcroft/<name>/redirect/`
+from inside breaks that sandbox's sessions until the next `up`.
+
+**Stop criterion (0.6): reported, and the owner decided 2026-11-23 that it does
+not block this change.** mise's one qualified tool
+drops the library. Its ordinary workload (`go build`) runs today, on the host
+shell the `/bin` grant allows. What its children do by absolute path
+(`go run`, and by the same inheritance `go test` and `go generate`) is expected
+to become `EPERM` once that grant goes; not measured, so `embed-brush-runtime`
+measures `go test` and `go generate` before it removes the grant.
 
 ## Goals / Non-Goals
 

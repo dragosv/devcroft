@@ -250,3 +250,31 @@ fn devcrofts_own_env_keeps_the_redirect_when_it_clears_the_environment() {
     let o = f.env(&["-i", env.to_str().unwrap()]);
     assert!(stdout(&o).contains("DEVCROFT_NS="), "{o:?}");
 }
+
+/// dyld aborts a process whose architecture an inserted library lacks, so an
+/// arm64-only library would break every x86_64 program under Rosetta.
+#[test]
+fn an_x86_64_program_is_redirected_too() {
+    let f = Fixture::new("rosetta");
+    std::fs::write(
+        f.root.join("x.c"),
+        "#include <unistd.h>\nint main(void){char *a[]={\"echo\",\"x86\",0};\
+         execv(\"/bin/echo\",a);return 1;}\n",
+    )
+    .unwrap();
+    let built = Command::new("cc")
+        .current_dir(&f.root)
+        .args(["-arch", "x86_64", "-o", "x", "x.c"])
+        .status()
+        .is_ok_and(|s| s.success());
+    if !built
+        || !Command::new(f.root.join("x"))
+            .output()
+            .is_ok_and(|o| o.status.success())
+    {
+        eprintln!("skipping: cannot build or run x86_64 programs here");
+        return;
+    }
+    let o = f.command(&f.root.join("x")).output().unwrap();
+    assert_eq!(stdout(&o), "REDIRECTED:echo:x86\n", "{o:?}");
+}

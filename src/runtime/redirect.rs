@@ -44,18 +44,26 @@ pub fn materialize(artifact_dir: &std::path::Path) -> std::io::Result<std::path:
 /// The variables a sandbox process starts with, from the keeper's own; `own`
 /// is the insert list the process would otherwise have, which is kept.
 pub fn child_vars(own: Option<std::ffi::OsString>) -> Vec<(&'static str, std::ffi::OsString)> {
-    let (Some(lib), Some(ns)) = (
+    match (
         std::env::var_os(KEEPER_LIB_VAR),
         std::env::var_os(KEEPER_NS_VAR),
-    ) else {
-        return Vec::new();
-    };
+    ) {
+        (Some(lib), Some(ns)) => vars_for(lib, ns, own),
+        _ => Vec::new(),
+    }
+}
+
+fn vars_for(
+    lib: std::ffi::OsString,
+    ns: std::ffi::OsString,
+    own: Option<std::ffi::OsString>,
+) -> Vec<(&'static str, std::ffi::OsString)> {
     let mut insert = lib.clone();
-    if let Some(own) = own.filter(|o| !o.is_empty())
-        && !std::env::split_paths(&own).any(|p| p.as_os_str() == lib)
-    {
-        insert.push(":");
-        insert.push(own);
+    for path in own.iter().flat_map(std::env::split_paths) {
+        if !path.as_os_str().is_empty() && path.as_os_str() != lib {
+            insert.push(":");
+            insert.push(path);
+        }
     }
     vec![(INSERT_VAR, insert), (NS_VAR, ns)]
 }
@@ -75,5 +83,18 @@ mod tests {
                 "not a Mach-O"
             );
         }
+    }
+
+    #[test]
+    fn the_library_comes_first_once_and_keeps_the_processs_own() {
+        let insert = |own: Option<&str>| {
+            vars_for("/l".into(), "/ns".into(), own.map(Into::into))[0]
+                .1
+                .clone()
+        };
+        assert_eq!(insert(None), "/l");
+        assert_eq!(insert(Some("")), "/l");
+        assert_eq!(insert(Some("/x")), "/l:/x");
+        assert_eq!(insert(Some("/x:/l")), "/l:/x");
     }
 }

@@ -78,7 +78,21 @@ fn apply_activation_env(cmd: &mut Command) {
             cmd.env_remove(name);
         }
     }
-    if let Some(overlay) = ACTIVATION_ENV.get() {
+    apply_overlay(cmd, ACTIVATION_ENV.get(), |own| {
+        crate::runtime::redirect::child_vars(own)
+    });
+}
+
+/// The activation overlay, then the exec redirect. In this order: an
+/// activation script run by a shell that drops `DYLD_*` (Apple's `/bin/sh`)
+/// or that unsets it must not take the redirect away from every session
+/// (measured with the variables in the keeper's own environment, mise).
+fn apply_overlay(
+    cmd: &mut Command,
+    overlay: Option<&EnvOverlay>,
+    redirect: impl Fn(Option<std::ffi::OsString>) -> Vec<(&'static str, std::ffi::OsString)>,
+) {
+    if let Some(overlay) = overlay {
         for name in &overlay.unset {
             cmd.env_remove(name);
         }
@@ -91,7 +105,7 @@ fn apply_activation_env(cmd: &mut Command) {
         Some((_, value)) => value.map(std::ffi::OsStr::to_owned),
         None => std::env::var_os(insert),
     };
-    cmd.envs(crate::runtime::redirect::child_vars(own));
+    cmd.envs(redirect(own));
 }
 
 /// Local fork/exec — today's only backend, and the `process` tier's.
@@ -304,6 +318,22 @@ mod tests {
 
     /// `ENOENT` names which input was missing: a program not on `PATH` read
     /// as a missing directory before.
+    #[test]
+    fn an_overlay_that_unsets_the_redirect_does_not_take_it_from_sessions() {
+        let insert = crate::runtime::redirect::INSERT_VAR;
+        let mut cmd = Command::new("true");
+        let overlay = EnvOverlay {
+            set: Default::default(),
+            unset: vec![insert.to_owned()],
+        };
+        apply_overlay(&mut cmd, Some(&overlay), |own| {
+            assert_eq!(own, None, "what activation unset is not resurrected");
+            vec![(insert, "/l".into())]
+        });
+        let got = cmd.get_envs().find(|(k, _)| *k == insert).unwrap().1;
+        assert_eq!(got, Some(std::ffi::OsStr::new("/l")));
+    }
+
     #[test]
     fn a_missing_program_and_a_missing_directory_are_told_apart() {
         let req = |cmd: &str, cwd: &str| SpawnRequest {

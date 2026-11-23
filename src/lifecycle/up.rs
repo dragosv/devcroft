@@ -1142,19 +1142,20 @@ fn up_process(
         )
     };
     // Rule B (`add-own-userland` 4.1): one target per base name.
-    {
+    let namespace = {
         let roots: Vec<PathBuf> = mount_grants.iter().map(|g| g.path.clone()).collect();
-        crate::runtime::owned_dir::sync_links(
-            &artifact_dir,
-            crate::runtime::namespace::DIR,
-            &crate::runtime::namespace::compute(
-                &sandbox_path_value,
-                &shell.path,
-                Some(&runtime_dir),
-                &roots,
-            ),
-        )?;
-    }
+        crate::runtime::namespace::compute(
+            &sandbox_path_value,
+            &shell.path,
+            Some(&runtime_dir),
+            &roots,
+        )
+    };
+    crate::runtime::owned_dir::sync_links(
+        &artifact_dir,
+        crate::runtime::namespace::DIR,
+        &namespace,
+    )?;
     let sandbox_env = {
         let mut env = resolution.env.clone();
         env.insert("PATH".to_owned(), sandbox_path_value.clone());
@@ -1183,6 +1184,10 @@ fn up_process(
         mount_supported,
         Some(&runtime_dir),
         provider.native(),
+        // Not where the shell is the host's: Apple's `/bin/sh` drops the
+        // redirect, so what it starts by absolute path is the granted host
+        // file (measured, mise), and the record must keep saying so.
+        (redirect_lib.is_some() && !shell_choice.is_host()).then_some(namespace.as_slice()),
     );
     if let Some(warning) = base_runtime.host_warning() {
         eprintln!("devcroft: warning: {warning}");
@@ -1874,6 +1879,7 @@ pub(crate) fn base_runtime_record(
     has_view: bool,
     runtime_dir: Option<&Path>,
     native: Option<&str>,
+    namespace: Option<&[(String, PathBuf)]>,
 ) -> crate::runtime::provenance::Record {
     use crate::runtime::provenance::{Inputs, ViewEntries, compute};
     let path = path_ending_in_shell_dir(env, unset, &shell.path).unwrap_or_else(|| {
@@ -1933,6 +1939,7 @@ pub(crate) fn base_runtime_record(
         runtime: runtime_dir.map(|d| (d, crate::runtime::GENERATION)),
         native,
         view,
+        namespace,
     })
 }
 

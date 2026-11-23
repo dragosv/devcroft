@@ -185,6 +185,8 @@ pub fn prepare(
             // (`add-own-userland` 4.3); until then, none.
             None,
             provider.native(),
+            // The redirect is macOS's and fleet is Linux's.
+            None,
         )
     });
     if let Some(warning) = base_runtime.as_ref().and_then(|r| r.host_warning()) {

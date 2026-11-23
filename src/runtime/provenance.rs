@@ -251,6 +251,9 @@ pub struct Inputs<'a> {
     /// `Some` where the sandbox has a mount view (Linux); `None` where the
     /// host filesystem is visible and the policy decides (macOS).
     pub view: Option<ViewEntries<'a>>,
+    /// The namespace an exec of an absolute base-name path is redirected
+    /// into (`super::namespace`, macOS); `None` where none is in effect.
+    pub namespace: Option<&'a [(String, PathBuf)]>,
 }
 
 /// The record for one sandbox.
@@ -263,7 +266,7 @@ pub fn compute(inputs: &Inputs<'_>) -> Record {
             provenance: by_name(inputs, name),
         });
         for abs in absolute_paths(name) {
-            let provenance = absolute(inputs, Path::new(&abs));
+            let provenance = absolute(inputs, name, Path::new(&abs));
             entries.push(Entry {
                 name: (*name).to_owned(),
                 lookup: abs,
@@ -353,7 +356,19 @@ fn dir_of(path: &Path) -> &Path {
     path.parent().unwrap_or(Path::new(""))
 }
 
-fn absolute(inputs: &Inputs<'_>, abs: &Path) -> Provenance {
+fn absolute(inputs: &Inputs<'_>, name: &str, abs: &Path) -> Provenance {
+    if let Some((_, target)) = inputs
+        .namespace
+        .and_then(|ns| ns.iter().find(|(n, _)| n == name))
+    {
+        return match inputs.runtime {
+            Some((dir, generation)) if dir == dir_of(target) => Provenance::Runtime {
+                generation,
+                path: target.to_string_lossy().into_owned(),
+            },
+            _ => resolve_written(inputs, target),
+        };
+    }
     if let Some(target) = inputs.view.and_then(|v| v.written_at(abs)) {
         return resolve_written(inputs, target);
     }
@@ -437,6 +452,7 @@ mod tests {
             runtime: None,
             native: None,
             view: None,
+            namespace: None,
         });
         assert_eq!(
             find(&r, "ls", BY_NAME),
@@ -460,6 +476,7 @@ mod tests {
             runtime: None,
             native: None,
             view: None,
+            namespace: None,
         });
         assert!(find(&r, "cat", BY_NAME).path().is_some());
     }
@@ -482,6 +499,7 @@ mod tests {
             runtime: None,
             native: None,
             view: None,
+            namespace: None,
         });
         assert_eq!(
             find(&r, "sh", BY_NAME),
@@ -502,6 +520,7 @@ mod tests {
             runtime: None,
             native: None,
             view: None,
+            namespace: None,
         });
         assert_eq!(
             find(&r, "grep", BY_NAME),
@@ -522,6 +541,7 @@ mod tests {
             runtime: None,
             native: None,
             view: None,
+            namespace: None,
         });
         assert_eq!(
             find(&without, "sh", "/bin/sh"),
@@ -540,6 +560,7 @@ mod tests {
                 sh: None,
                 env: None,
             }),
+            namespace: None,
         });
         assert_eq!(
             find(&with, "sh", "/bin/sh"),
@@ -564,6 +585,7 @@ mod tests {
                 sh: Some(&shell),
                 env: None,
             }),
+            namespace: None,
         });
         assert_eq!(
             find(&r, "sh", "/bin/sh").path(),
@@ -599,6 +621,7 @@ mod tests {
                 sh: Some(&shell),
                 env: None,
             }),
+            namespace: None,
         });
         assert_eq!(
             find(&r, "sh", BY_NAME).path(),
@@ -623,6 +646,7 @@ mod tests {
             runtime: Some((&dir, 3)),
             native: None,
             view: None,
+            namespace: None,
         });
         assert_eq!(
             find(&r, "ls", BY_NAME),
@@ -635,6 +659,35 @@ mod tests {
             find(&r, "ls", BY_NAME).to_string(),
             format!("runtime:gen-3:{}", dir.join("ls").display())
         );
+    }
+
+    #[test]
+    fn a_redirected_absolute_path_is_its_namespace_entry() {
+        let s = Scratch::new("namespace");
+        let exe = s.exe("host/devcroft");
+        let sh = s.exe("env/bin/bash");
+        let dir = s.0.join("rt");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::os::unix::fs::symlink(&exe, dir.join("ls")).unwrap();
+        let ns = [
+            ("sh".to_owned(), sh.clone()),
+            ("ls".to_owned(), dir.join("ls")),
+        ];
+        let r = compute(&Inputs {
+            path: "",
+            grants: &[],
+            artifact_root: None,
+            provider: "test",
+            runtime: Some((&dir, 3)),
+            native: None,
+            view: None,
+            namespace: Some(&ns),
+        });
+        assert_eq!(find(&r, "sh", "/bin/sh").path(), sh.to_str());
+        assert_eq!(find(&r, "ls", "/bin/ls").kind(), "runtime");
+        assert_eq!(find(&r, "ls", "/bin/ls").path(), dir.join("ls").to_str());
+        // No entry: the policy decides, as without the redirect.
+        assert_eq!(find(&r, "cat", "/bin/cat").path(), None);
     }
 
     #[test]
@@ -689,6 +742,7 @@ mod tests {
             runtime: None,
             native: Some("the reason"),
             view: None,
+            namespace: None,
         });
         assert_eq!(
             find(&r, "sh", BY_NAME),
@@ -716,6 +770,7 @@ mod tests {
             runtime: None,
             native: None,
             view: None,
+            namespace: None,
         });
         let back: Record = serde_json::from_str(&serde_json::to_string(&r).unwrap()).unwrap();
         assert_eq!(r, back);

@@ -16,6 +16,7 @@
 
 - [ ] 2.1 `src/shell.rs`: third resolution step (runtime shell) after requisites; `Meta.shell` keeps the launch form (`sh` link) for it.
 - [ ] 2.2 Remove the host shell file grant (Linux) and `/bin` + `/var/select` (macOS) from the mise and pixi paths; the common layer never grants a host shell.
+- [ ] 2.2a Before 2.2 removes the host shell grant on macOS: measure `go test` and `go generate` in a mise sandbox without it. mise's official Go is hardened and drops the exec redirect, so its children may meet `EPERM` at `/bin/sh` (`add-macos-exec-redirect` 0.6). If ordinary workloads break, report to the owner first.
 - [ ] 2.3 The namespace entry for `sh` follows the resolved shell, so `/bin/sh` and `sh` agree on every row.
 - [ ] 2.4 Provenance witness: mise and pixi `sh` and `/bin/sh` become `runtime:gen-N`; nix, devbox, flox keep `closure:`; no `host:` entry remains for any non-native provider.
 - [ ] 2.5 Tests: a pixi sample without bash runs its activation and a `#!/bin/sh` script; adding `bash` from conda-forge makes `/bin/sh` that bash; `#!/bin/bash` fails without bash and no host bash runs; `tests/mise_provider_e2e.rs` still passes; a nix sandbox's `/bin/sh` is still the closure's bash.

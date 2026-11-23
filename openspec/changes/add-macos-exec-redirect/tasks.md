@@ -5,13 +5,14 @@ Record each result in `design.md`, tagged measured, with macOS version and arch.
 - [x] 0.1 Commit the 2026-11-22 prototype (`interpose.c`, the two test programs, the in-sandbox scripts) under `spikes/macos-exec-redirect/`, so the evidence in `design.md` is reproducible from the repo.
 - [x] 0.2 Go: a Go binary in a sandbox calling `exec.Command("/bin/sh", "-c", …)` and `os/exec` of a `#!/bin/sh` script — redirected or not.
   - Redirected, `syscall.Exec` too; `/bin/ls` stays `EPERM` (`goprobe/`, design.md "Group 0").
-- [ ] 0.3 Artifact tools: the notarised tools used by the mise and pixi samples (and Node's official build) — does each keep `DYLD_INSERT_LIBRARIES`; does `/bin/sh` from each reach the runtime or `EPERM`.
-  - pixi's conda-forge tools: ad-hoc, no hardened runtime, keep it. Node 26.4.0: hardened but entitled, keeps it. **Open:** mise's official `go1.24.0.darwin-arm64`.
-- [ ] 0.4 process-compose (Go) starting a service whose command is a shell line; services that themselves `popen`.
-  - Shell-line service starts with the variables in its environment (flox). **Open:** a service whose own program `popen`s.
-- [ ] 0.5 Real workloads through `/bin/sh`: `npm run` with a script, `make` from a closure, `cargo build` with a `build.rs` that runs `sh`, `python -c 'import subprocess; subprocess.run("true", shell=True)'`.
-  - Python and Node redirected; `make` and `npm run` never reach `/bin/sh` (closure shell by name or store path); `initdb`'s `popen` redirected. **Open:** `cargo build` with a `build.rs`.
-- [ ] 0.6 Stop criterion: if a qualified provider's ordinary workload cannot run because its tools drop the library, report to the owner before group 1.
+- [x] 0.3 Artifact tools: the notarised tools used by the mise and pixi samples (and Node's official build) — does each keep `DYLD_INSERT_LIBRARIES`; does `/bin/sh` from each reach the runtime or `EPERM`.
+  - pixi's conda-forge tools: ad-hoc, no hardened runtime, keep it. Node 26.4.0: hardened but entitled, keeps it. mise's official Go 1.24.0: hardened, no entitlements, **drops it**; its children lose it too (design.md).
+- [x] 0.4 process-compose (Go) starting a service whose command is a shell line; services that themselves `popen`.
+  - Shell-line service starts with the variables in its environment (flox). A service whose program `popen`s: redirected (2026-11-23).
+- [x] 0.5 Real workloads through `/bin/sh`: `npm run` with a script, `make` from a closure, `cargo build` with a `build.rs` that runs `sh`, `python -c 'import subprocess; subprocess.run("true", shell=True)'`.
+  - Python and Node redirected; `make` and `npm run` never reach `/bin/sh` (closure shell by name or store path); `initdb`'s `popen` redirected. `cargo build` with a `build.rs` running `/bin/sh`: redirected (2026-11-23).
+- [x] 0.6 Stop criterion: if a qualified provider's ordinary workload cannot run because its tools drop the library, report to the owner before group 1.
+  - Reported 2026-11-23 (mise's Go, 0.3). **Owner's decision: does not block.** Published as a limit (4.1); removing the `/bin` grant in `embed-brush-runtime` is conditional on measuring `go test` and `go generate` first (a task there).
 
 ## 1. The library
 
@@ -39,7 +40,8 @@ Record each result in `design.md`, tagged measured, with macOS version and arch.
 
 - [ ] 3.1 macOS provider-row test, in a real sandbox: `system()`, `popen()`, `#!/bin/sh` from C and from the session shell, `#!/usr/bin/env python3`, a closure binary executing `/bin/sh`; the consistency check from `add-own-userland` 4.5 (`/bin/<name>` and `<name>` run the same file: GNU from the closure on the nix row, the runtime on a flox-minimal row); and a base name with no entry, `/usr/bin/make` and `/usr/bin/python3` fail with `EPERM`.
 - [ ] 3.2 A hook test: a `post_create` hook whose program uses `popen`.
-- [ ] 3.3 Update the provenance witness: on macOS, absolute base-name paths stop being `absent` and match their by-name provenance (`closure:` or `runtime:gen-N`) for non-native sandboxes.
+- [x] 3.3 Update the provenance witness: on macOS, absolute base-name paths stop being `absent` and match their by-name provenance (`closure:` or `runtime:gen-N`) for non-native sandboxes.
+  - The record takes the namespace; the witness reads the program dyld loaded (`DYLD_PRINT_LIBRARIES`), since `-ef` sees the host file at the path. Not applied where the shell is the host's (mise): Apple's `/bin/sh` drops the redirect. Measured 2026-11-23 on the nix, flox, devbox and test rows: no mismatch.
 
 ## 4. Documentation
 

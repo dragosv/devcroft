@@ -4,8 +4,10 @@
 //! `cargo install` installs binaries only, so the library cannot ship as a
 //! file of its own: it is compiled from `src/runtime/redirect.c` here, with
 //! the C compiler the `cc` crate selects for the target, and written at `up`.
-//! The linker ad-hoc signs it, which arm64 requires. Other targets get an
-//! empty file and embed nothing.
+//! The linker ad-hoc signs it, which arm64 requires. Universal, because dyld
+//! aborts a process whose architecture an inserted library lacks (measured: an
+//! x86_64 program under Rosetta, exit 134). Other targets get an empty file
+//! and embed nothing.
 
 use std::path::PathBuf;
 
@@ -19,11 +21,27 @@ fn main() {
         std::fs::write(&dylib, b"").expect("write the empty placeholder");
         return;
     }
-    let compiler = cc::Build::new()
+    let slices = ["aarch64-apple-darwin", "x86_64-apple-darwin"].map(|target| {
+        let slice = out.join(format!("{target}.dylib"));
+        compile(source, target, &slice);
+        slice
+    });
+    let status = std::process::Command::new("lipo")
+        .arg("-create")
+        .args(&slices)
+        .arg("-output")
+        .arg(&dylib)
+        .status()
+        .expect("run lipo for the exec-redirect library");
+    assert!(status.success(), "joining the exec-redirect slices failed");
+}
+
+fn compile(source: &str, target: &str, dylib: &std::path::Path) {
+    let status = cc::Build::new()
         .cargo_metadata(false)
+        .target(target)
         .opt_level(2)
-        .get_compiler();
-    let status = compiler
+        .get_compiler()
         .to_command()
         .args([
             "-dynamiclib",
@@ -36,9 +54,9 @@ fn main() {
             "@rpath/libdevcroft-redirect.dylib",
             "-o",
         ])
-        .arg(&dylib)
+        .arg(dylib)
         .arg(source)
         .status()
         .expect("run the C compiler for the exec-redirect library");
-    assert!(status.success(), "compiling {source} failed");
+    assert!(status.success(), "compiling {source} for {target} failed");
 }
