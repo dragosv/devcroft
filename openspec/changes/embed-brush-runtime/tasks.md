@@ -25,8 +25,8 @@
 - [x] 2.3 The namespace entry for `sh` follows the resolved shell, so `/bin/sh` and `sh` agree on every row.
 - [x] 2.4 Provenance witness: mise and pixi `sh` and `/bin/sh` become `runtime:gen-N`; nix, devbox, flox keep `closure:`; no `host:` entry remains for any non-native provider.
   - mise asserted on both platforms (`host 0`); pixi measured through its own e2e, which has no such assertion.
-- [ ] 2.5 Tests: a pixi sample without bash runs its activation and a `#!/bin/sh` script; adding `bash` from conda-forge makes `/bin/sh` that bash; `#!/bin/bash` fails without bash and no host bash runs; `tests/mise_provider_e2e.rs` still passes; a nix sandbox's `/bin/sh` is still the closure's bash.
-  - Done on mise: a `#!/bin/sh` script, `#!/bin/bash` refused, both platforms. **Open:** a pixi project with and without bash of its own (its sample installs tools, and its e2e passes).
+- [x] 2.5 Tests: a pixi sample without bash runs its activation and a `#!/bin/sh` script; adding `bash` from conda-forge makes `/bin/sh` that bash; `#!/bin/bash` fails without bash and no host bash runs; `tests/mise_provider_e2e.rs` still passes; a nix sandbox's `/bin/sh` is still the closure's bash.
+  - `tests/pixi_provider_e2e.rs` (without bash on its sample, with bash on `tests/fixtures/pixi-bash`), `tests/mise_provider_e2e.rs`; nix in `tests/macos_exec_redirect.rs` and `tests/runtime_namespace.rs`. Found by it: on macOS the keeper's own exec of a `#!/bin/sh` script or a base name's path was not redirected; it is now (`redirect::rewrite`).
 - [x] 2.6 `up` prints the removed host grants once for affected projects; README and `docs/known-gaps.md` note the BREAKING change and the remedy.
 
 ## 3. Slice B — interactive fallback (after the HUP/TERM part of BR-01 is fixed upstream)
@@ -42,8 +42,8 @@
 - [x] 4.3 `$!` non-empty and valid; `wait "$!"` returns 0 and 7 for children exiting 0 and 7; non-child `wait` returns 127.
 - [x] 4.4 Bare `kill PID` sends `TERM` to an independent target.
 - [x] 4.5 POSIX mode as `sh`; differences from dash on a small POSIX corpus recorded.
-- [ ] 4.6 Startup budget declared (proposed: `brush_core` `-c :` median ≤ 2× bash on the same host) and measured on Linux and macOS.
-  - Measured: Linux release 1.20 ms, dash 0.24 ms. macOS only in a debug build (8.4 ms, dash 1.6). bash not measured, so the proposed budget (2x bash) is not judged.
+- [x] 4.6 Startup budget declared (proposed: `brush_core` `-c :` median ≤ 2× bash on the same host) and measured on Linux and macOS.
+  - Release builds, 2026-11-24, medians. Linux aarch64 (200): runtime 0.86 ms, closure bash 5.3 0.76, host bash 0.31, dash 0.17. macOS arm64 (100): runtime 5.52, closure bash 5.97, host bash 2.18, dash 1.79, `true` 1.54. Within 2x of the bash a closure supplies (1.1x, 0.9x), not of the host's (2.8x, 2.5x). The closure's is the one a sandbox would otherwise run.
 - [x] 4.7 Record each result against the revision and executable hash in `docs/base-runtime.md`; every unqualified behaviour listed in `docs/known-gaps.md` for runtime-shell sandboxes, and surfaced by `status` there.
 
 ## 5. Documentation and verification

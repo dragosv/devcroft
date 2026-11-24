@@ -222,7 +222,11 @@ fn outside_a_sandbox_the_hook_is_silent() {
         .stdout(Stdio::piped())
         .spawn()
         .unwrap();
-    std::io::Write::write_all(&mut child.stdin.take().unwrap(), input.as_bytes()).unwrap();
+    // Outside a sandbox it may exit before it reads anything.
+    match std::io::Write::write_all(&mut child.stdin.take().unwrap(), input.as_bytes()) {
+        Err(e) if e.kind() != std::io::ErrorKind::BrokenPipe => panic!("{e}"),
+        _ => {}
+    }
     let out = child.wait_with_output().unwrap();
     assert!(out.status.success());
     assert!(

@@ -143,6 +143,80 @@ fn store() -> PathBuf {
     PathBuf::from(std::env::var("HOME").unwrap()).join(".local/share/devcroft-artifacts/pixi")
 }
 
+/// The record's line for one lookup.
+fn entry<'a>(render: &'a str, lookup: &str) -> &'a str {
+    render
+        .lines()
+        .find(|l| l.trim_start().starts_with(&format!("{lookup} ")))
+        .unwrap_or_default()
+}
+
+/// `text` as an executable file, run by name from the project.
+fn script(p: &Project, text: &str) -> Output {
+    use std::os::unix::fs::PermissionsExt;
+    let file = p.0.join("shebang-probe");
+    std::fs::write(&file, text).unwrap();
+    std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let o = devcroft(&p.0, &["exec", "--", "./shebang-probe"]);
+    std::fs::remove_file(&file).unwrap();
+    o
+}
+
+/// `embed-brush-runtime` 2.5: an environment with a `bash` of its own keeps
+/// it, as `sh` too, by name and by path.
+#[test]
+fn an_environment_with_bash_has_that_bash_as_its_shell() {
+    let _store = serialized();
+    if !qualified_host() {
+        return;
+    }
+    let name = format!("pixish{}", std::process::id());
+    let dir = std::env::temp_dir().join(format!("devcroft-pixi-e2e-{name}"));
+    std::fs::create_dir_all(&dir).unwrap();
+    let dir = dir.canonicalize().unwrap();
+    let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/pixi-bash");
+    for file in ["pixi.toml", "pixi.lock"] {
+        std::fs::copy(fixture.join(file), dir.join(file)).unwrap();
+    }
+    std::fs::write(
+        dir.join("devcroft.toml"),
+        format!(
+            "[sandbox]\nname = \"{name}\"\n[env]\nprovider = \"pixi\"\n\
+             [filesystem]\nallow = [\".\"]\n[network]\ndefault = \"deny\"\n"
+        ),
+    )
+    .unwrap();
+    let p = Project(dir);
+    let up = up(&p);
+    assert!(!up.contains("no shell"), "{up}");
+    let render = text(&devcroft(&p.0, &["policy", "--render"]));
+    for lookup in ["sh (by name)", "/bin/sh"] {
+        let line = entry(&render, lookup);
+        assert!(line.contains("provider:pixi:"), "{lookup}: {render}");
+    }
+    assert!(render.contains(" host 0,"), "{render}");
+    for command in ["sh", "/bin/sh"] {
+        let o = devcroft(
+            &p.0,
+            &[
+                "exec",
+                "--",
+                "sh",
+                "-c",
+                &format!("{command} -c 'echo $BASH_VERSION'"),
+            ],
+        );
+        assert!(text(&o).starts_with("5."), "{command}: {}", text(&o));
+    }
+    for shebang in ["#!/bin/sh", "#!/usr/bin/env bash"] {
+        let o = script(&p, &format!("{shebang}\necho v$BASH_VERSION\n"));
+        assert!(text(&o).starts_with("v5."), "{shebang}: {}", text(&o));
+    }
+    // `/bin/bash` is no base name: nothing is there, and nothing answers.
+    let o = script(&p, "#!/bin/bash\necho ran-bash\n");
+    assert!(!text(&o).contains("ran-bash"), "{}", text(&o));
+}
+
 #[test]
 fn locked_restore_activation_boundaries_sharing_and_reclamation() {
     let _store = serialized();
@@ -191,6 +265,25 @@ fn locked_restore_activation_boundaries_sharing_and_reclamation() {
         assert!(
             path != "/usr/bin" && path != "/usr",
             "host program directory granted: {line}"
+        );
+    }
+
+    // `embed-brush-runtime` 2.5: no shell in this environment, so `sh` is the
+    // runtime's, by name and by path, its activation script ran in it, and no
+    // `bash` answers for one.
+    for lookup in ["sh (by name)", "/bin/sh"] {
+        let line = entry(&render, lookup);
+        assert!(line.contains("runtime:gen-2:"), "{lookup}: {render}");
+    }
+    assert!(render.contains(" host 0,"), "{render}");
+    let o = script(&a, "#!/bin/sh\necho from-shebang\n");
+    assert!(text(&o).contains("from-shebang"), "{}", text(&o));
+    for shebang in ["#!/bin/bash", "#!/usr/bin/env bash"] {
+        let o = script(&a, &format!("{shebang}\necho ran-bash\n"));
+        assert!(
+            !o.status.success() && !text(&o).contains("ran-bash"),
+            "{shebang}: {}",
+            text(&o)
         );
     }
 

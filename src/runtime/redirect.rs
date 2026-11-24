@@ -53,6 +53,90 @@ pub fn child_vars(own: Option<std::ffi::OsString>) -> Vec<(&'static str, std::ff
     }
 }
 
+/// What to start in place of a command the redirect would rewrite.
+#[derive(Debug, PartialEq, Eq)]
+pub struct Rewrite {
+    pub program: std::path::PathBuf,
+    pub arg0: String,
+    /// Before the command's own arguments.
+    pub args: Vec<String>,
+}
+
+/// The rewrite of the keeper's own spawn of `cmd`, as the library rewrites an
+/// exec (`redirect.c`): the keeper never loads it, so a base name's path or a
+/// `#!/bin/sh` script it starts itself would reach the host's file and be
+/// refused. `None` leaves the command as it is.
+pub fn rewrite(cmd: &str, cwd: &std::path::Path, path: Option<&str>) -> Option<Rewrite> {
+    rewrite_in(
+        std::path::Path::new(&std::env::var_os(KEEPER_NS_VAR)?),
+        cmd,
+        cwd,
+        path,
+    )
+}
+
+fn rewrite_in(
+    ns: &std::path::Path,
+    cmd: &str,
+    cwd: &std::path::Path,
+    path: Option<&str>,
+) -> Option<Rewrite> {
+    use std::io::Read;
+    use std::os::unix::fs::PermissionsExt;
+    let executable = |p: &std::path::Path| {
+        std::fs::metadata(p).is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
+    };
+    let entry = |at: &str| {
+        let name = at
+            .strip_prefix("/bin/")
+            .or_else(|| at.strip_prefix("/usr/bin/"))?;
+        let entry = ns.join(name);
+        (!name.is_empty() && !name.contains('/') && !name.starts_with('.') && executable(&entry))
+            .then_some(entry)
+    };
+    if let Some(program) = entry(cmd) {
+        return Some(Rewrite {
+            program,
+            arg0: cmd.to_owned(),
+            args: Vec::new(),
+        });
+    }
+    // The script as its interpreter is given it: the path that was named, or
+    // the one the search found.
+    let script = if cmd.contains('/') {
+        cmd.to_owned()
+    } else {
+        path?
+            .split(':')
+            .filter(|d| !d.is_empty())
+            .map(|d| std::path::Path::new(d).join(cmd))
+            .find(|p| executable(&cwd.join(p)))?
+            .to_str()?
+            .to_owned()
+    };
+    let file = cwd.join(&script);
+    if !executable(&file) {
+        return None;
+    }
+    let mut head = Vec::new();
+    std::fs::File::open(&file)
+        .ok()?
+        .take(512)
+        .read_to_end(&mut head)
+        .ok()?;
+    let line = head.strip_prefix(b"#!")?.split(|b| *b == b'\n').next()?;
+    let line = std::str::from_utf8(line).ok()?.trim();
+    let (interp, arg) = match line.split_once([' ', '\t']) {
+        Some((interp, arg)) => (interp, Some(arg.trim())),
+        None => (line, None),
+    };
+    Some(Rewrite {
+        program: entry(interp)?,
+        arg0: interp.to_owned(),
+        args: arg.map(str::to_owned).into_iter().chain([script]).collect(),
+    })
+}
+
 /// `existing` GOFLAGS with an `-exec` that gives a program Go starts its
 /// redirect back: the official Go is hardened, so dyld drops it there.
 /// `None` where there is an `-exec` already, or a path has a quote in it
@@ -107,6 +191,55 @@ mod tests {
                 "not a Mach-O"
             );
         }
+    }
+
+    #[test]
+    fn the_keepers_own_spawns_are_rewritten_as_the_library_would() {
+        use std::os::unix::fs::PermissionsExt;
+        let t = std::env::temp_dir().join(format!("dc-rewrite-{}", std::process::id()));
+        std::fs::create_dir_all(t.join("ns")).unwrap();
+        std::fs::create_dir_all(t.join("bin")).unwrap();
+        let file = |name: &str, text: &str, mode| {
+            std::fs::write(t.join(name), text).unwrap();
+            std::fs::set_permissions(t.join(name), std::fs::Permissions::from_mode(mode)).unwrap();
+        };
+        file("ns/sh", "x", 0o755);
+        file("ns/env", "x", 0o755);
+        file("ns/date", "x", 0o644);
+        file("s", "#!/bin/sh\n", 0o755);
+        file("bin/e", "#! /usr/bin/env  -S python3 x\r\n", 0o755);
+        file("plain", "#!/bin/sh\n", 0o644);
+        file("other", "#!/opt/sh\n", 0o755);
+        let bin = t.join("bin").to_str().unwrap().to_owned();
+        let go = |cmd: &str| {
+            rewrite_in(&t.join("ns"), cmd, &t, Some(&bin)).map(|r| {
+                assert!(r.program.starts_with(t.join("ns")));
+                (r.arg0, r.args)
+            })
+        };
+        assert_eq!(go("/bin/sh"), Some(("/bin/sh".into(), vec![])));
+        assert_eq!(go("./s"), Some(("/bin/sh".into(), vec!["./s".into()])));
+        assert_eq!(
+            go("e"),
+            Some((
+                "/usr/bin/env".into(),
+                vec!["-S python3 x".into(), format!("{bin}/e")]
+            ))
+        );
+        for cmd in [
+            "/bin/date",
+            "/bin/cat",
+            "/bin/../bin/sh",
+            "/usr/bin/a/b",
+            "./plain",
+            "./other",
+            "missing",
+            "./missing",
+            "sh",
+        ] {
+            assert_eq!(go(cmd), None, "{cmd}");
+        }
+        let _ = std::fs::remove_dir_all(&t);
     }
 
     #[test]

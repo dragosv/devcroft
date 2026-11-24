@@ -124,4 +124,5 @@ def med(sh, n=20):
     for _ in range(n):
         s = time.perf_counter(); subprocess.run([sh, "-c", ":"]); t.append(time.perf_counter() - s)
     return sorted(t)[n // 2] * 1000
-print(f"== startup, median ms: runtime {med(SH):.2f}, reference {med(REF):.2f}")
+refs = [REF] + [p for p in ("/opt/homebrew/bin/bash", "/bin/bash") if os.path.exists(p)][:1]
+print("== startup, median ms of 60:", ", ".join(f"{p} {med(p, 60):.2f}" for p in [SH] + refs))

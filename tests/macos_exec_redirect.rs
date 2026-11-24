@@ -104,6 +104,18 @@ fn absolute_paths_resolve_as_names_do_and_the_keeper_stays_clean() {
         want("/bin/ls is GNU", sh("/bin/ls --version"), &|g| {
             g.contains("GNU coreutils")
         });
+        // The keeper's own exec, which no library sees.
+        let direct = |args: &[&str]| text(&dc(&root, &[&["exec", "--"], args].concat()));
+        want("exec /bin/ls", direct(&["/bin/ls", "--version"]), &|g| {
+            g.contains("GNU coreutils")
+        });
+        want("exec ./s.sh", direct(&["./s.sh"]), &|g| g == "shebang-sh\n");
+        want("exec ./e.sh", direct(&["./e.sh"]), &|g| {
+            g == "shebang-env\n"
+        });
+        want("exec /usr/bin/make", direct(&["/usr/bin/make"]), &|g| {
+            g.contains("not permitted")
+        });
         // devcroft's own `env` keeps the redirect over a cleared environment;
         // the closure's GNU `env` does not (published limit), and what
         // follows is a refusal, never the host's shell.

@@ -1,0 +1,7 @@
+[workspace]
+name = "pixi-bash"
+channels = ["conda-forge"]
+platforms = ["osx-arm64", "linux-aarch64"]
+
+[dependencies]
+bash = "5.*"

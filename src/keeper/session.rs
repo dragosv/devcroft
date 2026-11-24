@@ -155,9 +155,32 @@ unsafe fn reset_forwarded_signal_dispositions() {
     }
 }
 
-fn spawn_piped(req: &SpawnRequest) -> io::Result<SpawnedSession> {
-    let mut cmd = Command::new(&req.cmd);
+/// `req`'s program, before its arguments, with what activation left and the
+/// redirect. The keeper's own exec is redirected here, since the keeper does
+/// not load the library (`runtime::redirect::rewrite`).
+fn command(req: &SpawnRequest) -> Command {
+    let path = req
+        .env
+        .get("PATH")
+        .cloned()
+        .or_else(|| ACTIVATION_ENV.get()?.set.get("PATH").cloned())
+        .or_else(|| std::env::var("PATH").ok());
+    let cwd = std::path::Path::new(&req.cwd);
+    let mut cmd = match crate::runtime::redirect::rewrite(&req.cmd, cwd, path.as_deref()) {
+        Some(rewrite) => {
+            use std::os::unix::process::CommandExt;
+            let mut cmd = Command::new(rewrite.program);
+            cmd.arg0(rewrite.arg0).args(rewrite.args);
+            cmd
+        }
+        None => Command::new(&req.cmd),
+    };
     apply_activation_env(&mut cmd);
+    cmd
+}
+
+fn spawn_piped(req: &SpawnRequest) -> io::Result<SpawnedSession> {
+    let mut cmd = command(req);
     cmd.args(&req.args)
         .current_dir(&req.cwd)
         .envs(&req.env)
@@ -259,8 +282,7 @@ fn spawn_pty(req: &SpawnRequest, size: &PtySize) -> io::Result<SpawnedSession> {
     let resize_handle = opened.master.try_clone()?;
     let slave_fd = opened.slave_fd;
 
-    let mut cmd = Command::new(&req.cmd);
-    apply_activation_env(&mut cmd);
+    let mut cmd = command(req);
     cmd.args(&req.args)
         .current_dir(&req.cwd)
         .envs(&req.env)

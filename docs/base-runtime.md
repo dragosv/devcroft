@@ -94,7 +94,7 @@ against dash, the same on macOS arm64 and Linux aarch64:
 | `trap '' INT` | yes |
 | a `trap` handler on a real `TERM`; `trap '' TERM`, `trap '' HUP` | no |
 | `$!`; `wait PID`; `kill` with no signal, `kill -0` | no |
-| startup | 1.20 ms, dash 0.24 ms (Linux, release, median of 20) |
+| startup, median, release | Linux 0.86 ms (a closure's bash 0.76, dash 0.17); macOS 5.5 ms (6.0, 1.8) |
 
 ## Native mode
 
