@@ -15,7 +15,7 @@ What environments supply, measured 2026-11-22 on macOS inside real sandboxes:
 | nix | `bash-5.3p15` | environment `PATH` (stdenv) |
 | devbox | `bash-5.3p15` / `bash-5.3p20` | environment `PATH` (stdenv), with and without a toolchain |
 | flox | `bash-5.3p9` / `bash-interactive-5.3p9` | closure requisites (the environment `PATH` has none) |
-| devenv | `bash-interactive-5.3p15` | environment `PATH`, first entry (measured 2026-11-24, Linux aarch64; macOS not) |
+| devenv | `bash-interactive-5.3p15` | environment `PATH`, first entry (measured 2026-11-24, Linux aarch64 and macOS arm64) |
 | mise, pixi | the tools' own `sh` if any, else **the host's** | provider fallback (`mise.rs:987–1012`, `pixi.rs:790–815`) |
 
 So under rule B the runtime shell is needed at `/bin/sh` only for mise and pixi

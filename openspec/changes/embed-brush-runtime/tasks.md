@@ -4,8 +4,8 @@
   - Texts ready, reproductions re-run on the registry 0.4.0: `new/brush-issues-2026-11-24.md`.
 - [ ] 0.2 Commit the spike package (`spikes/brush-uutils-native/`, `examples/brush-native-probe.rs`) from the owner's Linux host, selectively, so the qualification probes in group 4 re-run from the repo.
 - [ ] 0.3 Turn the supplemental observations (`$!`, non-child `wait`, `kill` default, `EXIT` trap) into automated probes in that package.
-- [ ] 0.4 Measure devenv's resolved shell on Linux and macOS (not measured 2026-11-22) and confirm it comes from requisites.
-  - Linux aarch64, 2026-11-24, `devenv-sample`: bash-interactive 5.3p15, first on the environment's `PATH`, **not** from requisites as assumed; `sh` and `/bin/sh` are it, `host 0`. **Open:** macOS, where devenv is not installed.
+- [x] 0.4 Measure devenv's resolved shell on Linux and macOS (not measured 2026-11-22) and confirm it comes from requisites.
+  - Linux aarch64, 2026-11-24, `devenv-sample`: bash-interactive 5.3p15, first on the environment's `PATH`, **not** from requisites as assumed; `sh` and `/bin/sh` are it, `host 0`. macOS arm64 (devenv 2.4.0): the same.
 
 ## 1. The runtime shell
 
