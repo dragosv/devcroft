@@ -137,6 +137,12 @@ uu_hostname = "=0.13.0"
 uu_yes = "=0.13.0"
 uu_sleep = "=0.13.0"
 uu_nohup = "=0.13.0"
+# Its shell (`src/runtime/sh.rs`, `embed-brush-runtime`), where an environment
+# has none. Pinned for the same reason. `minimal` is line input and nothing
+# else: no line editor.
+brush-core = "=0.5.0"
+brush-builtins = "=0.2.0"
+brush-interactive = { version = "=0.4.0", default-features = false, features = ["minimal"] }
 
 [build-dependencies]
 # The macOS exec-redirect library (`build.rs`); already in the lock.

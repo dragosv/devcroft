@@ -228,8 +228,8 @@ and the sigstore crates it links rather than the Rust-conventional dual
 `MIT OR Apache-2.0` — a dual license would let a user take MIT and no
 patent grant while changing none of their real obligations, since nono,
 russh and every `sigstore-*` are Apache-2.0-only and linked regardless.
-346 of the 511 shipped dependencies list Apache-2.0 (511 since the
-uutils runtime, 2026-11-23; 381 before it), whose §4(a) requires
+377 of the 572 shipped dependencies list Apache-2.0 (572 since the
+runtime's shell, 2026-11-24; 381 before the runtime), whose §4(a) requires
 recipients get a copy of the License.
 The generator's non-obvious part: `nono`, `russh` and every `sigstore-*`
 declare Apache-2.0 but vendor no license file, so it substitutes the
@@ -342,7 +342,7 @@ rendered with a `provider:<name>` origin. mise still passes the six
 criteria — see `docs/decisions.md` §1, which now carries the constraint.
 `add-mise-provider` was later re-proposed on exactly that basis and is
 implemented for one measured profile: `http:` tools only, native ARM64,
-with the host shell granted as a file and never `/usr/bin`. The core
+with no host shell (`embed-brush-runtime`) and never `/usr/bin`. The core
 backends are refused because `mise install` runs what it downloaded,
 host-side. `docs/decisions.md` §1, "Built: mise", has the evidence, and
 `samples/mise-sample` is the runnable form. `add-pixi-provider` followed,

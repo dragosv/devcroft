@@ -505,20 +505,28 @@ fn up_locked(
     // implies a working one is written.
     //
     // Through the common runtime layer (`add-own-userland` 3.3): the
-    // environment's own shell when it has one, otherwise the host's, linked
-    // and granted in one place for every provider and recorded `host:`.
+    // environment's own shell when it has one, otherwise the runtime's.
     let shell_choice = crate::runtime::layer::resolve_shell(
         &resolution.env,
         &resolution.read_only_grants,
         &crate::services::artifact_dir(project_root, &manifest.sandbox.name),
-    )
-    .map_err(|why| {
-        UpError::Provider(crate::provider::ProviderError::ResolutionFailed(format!(
-            "no POSIX shell found in this environment or its closure, and the host's \
-             cannot be used ({why}); devcroft needs one for `shell`, SSH login sessions \
-             and services; add one to the environment manifest (e.g. `flox install bash`)"
-        )))
-    })?;
+    );
+    if shell_choice.runtime {
+        eprintln!(
+            "devcroft: {}",
+            crate::runtime::layer::runtime_shell_notice()
+        );
+    }
+    // `embed-brush-runtime` 2.6: said by the first `up` after the change.
+    let removed = state::read_meta(&paths.meta)?
+        .map(|m| m.host_shell_grants)
+        .unwrap_or_default();
+    if !removed.is_empty() {
+        eprintln!(
+            "devcroft: this sandbox no longer gets the host's shell: {} is not granted any more",
+            removed.join(", ")
+        );
+    }
     let shell = &shell_choice.shell;
 
     // The provider's own grants plus the store path the resolved shell
@@ -616,7 +624,7 @@ fn up_locked(
             // Computed by `up_process` once the view is decided.
             base_runtime: None,
             runtime_generation: Some(crate::runtime::GENERATION),
-            host_shell_grants: shell_choice.host_grants.clone(),
+            host_shell_grants: Vec::new(),
         },
     )?;
 
@@ -853,7 +861,6 @@ fn up_process(
     let compiled = policy::compile(manifest)
         .with_keeper_exe_grant(exe.to_string_lossy().into_owned())
         .with_provider_grants(provider.static_name(), provider_grants)
-        .with_host_shell(&shell_choice.host_grants)
         .with_trust_store(trust_store);
     let compiled = match tools {
         Some((origin, record)) => compiled.with_tools_grants(origin, &record.grants),
@@ -1193,10 +1200,7 @@ fn up_process(
         mount_supported.then_some(view_entries.as_slice()),
         &runtime_dir,
         provider.native(),
-        // Not where the shell is the host's: Apple's `/bin/sh` drops the
-        // redirect, so what it starts by absolute path is the granted host
-        // file (measured, mise), and the record must keep saying so.
-        (redirect_lib.is_some() && !shell_choice.is_host()).then_some(namespace.as_slice()),
+        redirect_lib.is_some().then_some(namespace.as_slice()),
     );
     if let Some(warning) = base_runtime.host_warning() {
         eprintln!("devcroft: warning: {warning}");
@@ -1423,6 +1427,35 @@ fn up_process(
     for key in ["USER", "LOGNAME"] {
         unset.retain(|k| k != key);
         env.insert(key.to_owned(), sandbox_identity.user.clone());
+    }
+    // mise's official Go drops the redirect, and so does what it starts; this
+    // is how it starts a built program (`embed-brush-runtime` 2.2a).
+    if let Some(lib) = &redirect_lib
+        && provider.static_name() == "mise"
+        && sandbox_path_value
+            .split(':')
+            .any(|d| Path::new(d).join("go").is_file())
+    {
+        match crate::runtime::redirect::go_flags(
+            env.get("GOFLAGS").map(String::as_str),
+            &runtime_dir.join("env"),
+            lib,
+            &artifact_dir.join(crate::runtime::namespace::DIR),
+        ) {
+            Some(flags) => {
+                env.insert("GOFLAGS".to_owned(), flags);
+                eprintln!(
+                    "devcroft: GOFLAGS gains an -exec, so programs `go run` and `go test` start \
+                     reach /bin/sh and the other base names; `go generate` starts its commands \
+                     itself and does not (use `sh ./script`)"
+                );
+            }
+            None => eprintln!(
+                "devcroft: warning: GOFLAGS is left as it is (it has an -exec, or this path \
+                 cannot be quoted in it), so programs `go run` and `go test` start cannot run \
+                 /bin/sh or a `#!/bin/sh` script (fallback: call them by name)"
+            ),
+        }
     }
     // Last, so neither the environment nor `[env.vars]` can name another.
     use crate::runtime::redirect::{KEEPER_LIB_VAR, KEEPER_NS_VAR};

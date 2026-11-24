@@ -67,6 +67,8 @@ pub struct SandboxStatus {
     /// The runtime generation the sandbox's keeper started with
     /// (`add-own-userland`); `None` before the runtime existed.
     pub runtime_generation: Option<u32>,
+    /// Whether its `sh` is the runtime's shell, the environment having none.
+    pub runtime_shell: bool,
     /// Who the sandbox runs as; `None` before it had an identity of its own.
     pub sandbox_identity: Option<crate::identity::SandboxIdentity>,
 }
@@ -189,6 +191,11 @@ pub fn status_with_provider(
     let base_runtime = meta.as_ref().and_then(|meta| meta.base_runtime.clone());
     let runtime_generation = meta.as_ref().and_then(|meta| meta.runtime_generation);
     let sandbox_identity = meta.as_ref().and_then(|meta| meta.sandbox_identity.clone());
+    let runtime_shell = base_runtime.as_ref().is_some_and(|r| {
+        r.entries
+            .iter()
+            .any(|e| e.lookup == "/bin/sh" && e.provenance.kind() == "runtime")
+    });
     let isolation = meta.map(|meta| meta.resolved_backend);
 
     let degraded = policy::detect_degraded(&policy::compile(manifest));
@@ -205,6 +212,7 @@ pub fn status_with_provider(
         base_runtime,
         runtime_generation,
         sandbox_identity,
+        runtime_shell,
     })
 }
 

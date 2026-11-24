@@ -183,7 +183,7 @@ fn locked_restore_runtime_boundaries_sharing_and_reclamation() {
     let render = text(&devcroft(&a.0, &["policy", "--render"]));
     assert!(render.contains("provider:mise"), "{render}");
     // `env` by path is `env` by name, the runtime's, never the host's.
-    if cfg!(target_os = "linux") {
+    {
         for env in ["env", "/usr/bin/env"] {
             let o = sh(&a, &format!("{env} --version"));
             assert!(text(&o).contains("uutils"), "{env}: {}", text(&o));
@@ -196,25 +196,60 @@ fn locked_restore_runtime_boundaries_sharing_and_reclamation() {
             "/usr/bin is granted: {line}"
         );
     }
-    // `add-own-userland` 3.3: the fixture installs no shell, so the host's
-    // comes from the common runtime layer — granted under its own origin,
-    // reached as `sh` through a link directory holding nothing else, and
-    // recorded `host:` — never from a copy inside the mise provider.
-    assert!(render.contains("host-shell"), "{render}");
+    // `embed-brush-runtime` slice A: the fixture installs no shell, so `sh` is
+    // the runtime's by name and by path, and nothing of the host's is granted.
     let path = text(&sh(&a, "printf %s \"$PATH\""));
-    assert!(
-        path.split(':').any(|d| d.ends_with("/host-shell")),
-        "the host shell's link directory is not on PATH: {path}"
-    );
     assert!(
         !path.split(':').any(|d| d == "/usr/bin" || d == "/bin"),
         "a host directory is on PATH: {path}"
     );
-    let sh_line = render
-        .lines()
-        .find(|l| l.trim_start().starts_with("sh (by name)"))
-        .unwrap_or_default();
-    assert!(sh_line.contains("host:"), "{render}");
+    for lookup in ["sh (by name)", "/bin/sh"] {
+        let line = render
+            .lines()
+            .find(|l| l.trim_start().starts_with(lookup))
+            .unwrap_or_default();
+        assert!(line.contains("runtime:gen-2:"), "{lookup}: {render}");
+    }
+    assert!(
+        !render.contains("host:") && render.contains(" host 0,"),
+        "{render}"
+    );
+    for line in render.lines().map(str::trim_start) {
+        assert!(
+            !["/bin ", "/var/select ", "/usr/bin/env  ", "/usr/bin/dash "]
+                .iter()
+                .any(|g| line.starts_with(g) && !line.contains("runtime:")),
+            "a host shell path is granted: {line}"
+        );
+    }
+    assert!(
+        text(&devcroft(&a.0, &["status"])).contains("shell: this environment has no shell"),
+        "the runtime shell is not stated"
+    );
+    let o = sh(
+        &a,
+        "printf '#!/bin/sh\\necho shebang $0\\n' > s.sh; chmod +x s.sh; ./s.sh",
+    );
+    assert!(text(&o).contains("shebang ./s.sh"), "{}", text(&o));
+    let o = sh(
+        &a,
+        "printf '#!/bin/bash\\necho ran\\n' > b.sh; chmod +x b.sh; ./b.sh",
+    );
+    assert!(!text(&o).contains("ran\n"), "bash ran: {}", text(&o));
+    // A program Go starts reaches `/bin/sh` too (GOFLAGS, macOS).
+    std::fs::write(
+        a.0.join("exec_test.go"),
+        "package main\nimport (\"os/exec\"; \"testing\")\n\
+         func TestSh(t *testing.T) { for _, c := range [][]string{{\"/bin/sh\", \"-c\", \"true\"}, \
+         {\"./s.sh\"}, {\"/usr/bin/env\", \"true\"}} { if o, e := exec.Command(c[0], c[1:]...).CombinedOutput(); \
+         e != nil { t.Fatal(c, string(o), e) } } }\n",
+    )
+    .unwrap();
+    let o = sh(&a, "go test -buildvcs=false .");
+    assert!(o.status.success(), "{}", text(&o));
+    for f in ["exec_test.go", "s.sh", "b.sh"] {
+        std::fs::remove_file(a.0.join(f)).unwrap();
+    }
 
     // 6.4 staleness: a newly consumed dotenv, then its removal.
     let manifest = std::fs::read_to_string(a.0.join("mise.toml")).unwrap();

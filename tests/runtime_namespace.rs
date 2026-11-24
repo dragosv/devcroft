@@ -128,7 +128,7 @@ fn a_minimal_environment_runs_the_runtime_at_absolute_paths() {
             render
                 .lines()
                 .any(|l| l.trim_start().starts_with(&format!("{lookup} "))
-                    && l.contains("runtime:gen-1:")),
+                    && l.contains("runtime:gen-2:")),
             "{lookup}: {render}"
         );
     }

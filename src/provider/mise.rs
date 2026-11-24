@@ -857,13 +857,7 @@ fn runtime_grants(installs: &Path) -> Result<Vec<String>, ProviderError> {
         .filter(|p| std::fs::metadata(p).is_ok_and(|m| m.permissions().mode() & 0o111 != 0))
         .cloned()
         .collect();
-    // macOS only: the host shell these sandboxes run drops the exec redirect,
-    // so `#!/usr/bin/env` there needs the host's. On Linux the view's
-    // `/usr/bin/env` is the environment's or devcroft's runtime.
-    #[cfg(target_os = "macos")]
-    let mut grants = vec!["/usr/bin/env".to_owned()];
-    #[cfg(not(target_os = "macos"))]
-    let mut grants = Vec::new();
+    let mut grants: Vec<String> = Vec::new();
     let mut visited = std::collections::BTreeSet::new();
     while let Some(binary) = queue.pop() {
         if !visited.insert(binary.clone()) {

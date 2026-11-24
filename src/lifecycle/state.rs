@@ -520,9 +520,8 @@ pub struct Meta {
     /// runtime existed.
     #[serde(default)]
     pub runtime_generation: Option<u32>,
-    /// What the common runtime layer granted for the host's shell, origin
-    /// `host-shell` (`add-own-userland` 3.3); empty when the environment
-    /// supplied its own.
+    /// What an older devcroft granted for the host's shell. Never written
+    /// now; read so the first `up` after can say it is gone.
     #[serde(default)]
     pub host_shell_grants: Vec<String>,
 }

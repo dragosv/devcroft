@@ -37,6 +37,7 @@ LICENSE_FILENAMES = [
     "LICENSE.md",
     "LICENSE.txt",
     "LICENSE",
+    "LICENCE",
     "COPYING",
     "UNLICENSE",
     "LICENSE-CC0",

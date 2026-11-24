@@ -53,6 +53,30 @@ pub fn child_vars(own: Option<std::ffi::OsString>) -> Vec<(&'static str, std::ff
     }
 }
 
+/// `existing` GOFLAGS with an `-exec` that gives a program Go starts its
+/// redirect back: the official Go is hardened, so dyld drops it there.
+/// `None` where there is an `-exec` already, or a path has a quote in it
+/// (GOFLAGS has no escape for one).
+pub fn go_flags(
+    existing: Option<&str>,
+    env: &std::path::Path,
+    lib: &std::path::Path,
+    ns: &std::path::Path,
+) -> Option<String> {
+    let existing = existing.unwrap_or_default().trim();
+    let paths = [env, lib, ns].map(|p| p.to_string_lossy().into_owned());
+    if existing.contains("-exec") || paths.iter().any(|p| p.contains(['\'', '"'])) {
+        return None;
+    }
+    let [env, lib, ns] = paths;
+    let flag = format!("\"-exec='{env}' '{INSERT_VAR}={lib}' '{NS_VAR}={ns}'\"");
+    Some(if existing.is_empty() {
+        flag
+    } else {
+        format!("{existing} {flag}")
+    })
+}
+
 fn vars_for(
     lib: std::ffi::OsString,
     ns: std::ffi::OsString,
@@ -83,6 +107,22 @@ mod tests {
                 "not a Mach-O"
             );
         }
+    }
+
+    #[test]
+    fn go_flags_keep_what_is_there_and_never_replace_an_exec() {
+        use std::path::Path;
+        let flags = |existing, dir: &str| {
+            let d = Path::new(dir);
+            go_flags(existing, &d.join("env"), &d.join("l"), &d.join("ns"))
+        };
+        assert_eq!(
+            flags(Some("-mod=mod"), "/a b").unwrap(),
+            "-mod=mod \"-exec='/a b/env' 'DYLD_INSERT_LIBRARIES=/a b/l' 'DEVCROFT_NS=/a b/ns'\""
+        );
+        assert!(flags(None, "/a").unwrap().starts_with("\"-exec='/a/env'"));
+        assert_eq!(flags(Some("-exec=x"), "/a"), None);
+        assert_eq!(flags(None, "/it's"), None);
     }
 
     #[test]

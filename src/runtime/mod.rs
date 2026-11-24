@@ -18,21 +18,23 @@ pub mod namespace;
 pub mod owned_dir;
 pub mod provenance;
 pub mod redirect;
+pub mod sh;
 
 /// The runtime generation this binary embeds (`add-own-userland` D2).
 ///
 /// It identifies the runtime's *behaviour* — the applet inventory and
-/// its upstream version ([`applets::VERSION`]), the absolute-path mapping
+/// its upstream version ([`applets::VERSION`]), the shell's ([`sh::VERSION`]),
+/// the absolute-path mapping
 /// rules, and anything later added to the runtime — not the devcroft
 /// release. A project pins it with `[runtime] generation`, and a binary
 /// whose generation differs refuses that project at `up`.
-pub const GENERATION: u32 = 1;
+pub const GENERATION: u32 = 2;
 
 /// The runtime directory's name under a sandbox's artifact directory
 /// (`<project>/.devcroft/<name>/runtime/`).
 pub const DIR: &str = "runtime";
 
-/// Write the runtime directory: one link per applet, named after it, to
+/// Write the runtime directory: one link per applet and one for the shell, named after it, to
 /// `exe` (devcroft's own binary), which dispatches on that name
 /// ([`applets::dispatch_argv0`]). Idempotent: a correct link is left alone,
 /// a wrong one replaced, and an entry that is no applet of this generation
@@ -45,7 +47,9 @@ pub const DIR: &str = "runtime";
 pub fn materialize(artifact_dir: &std::path::Path, exe: &std::path::Path) -> std::io::Result<()> {
     let links: Vec<_> = applets::INVENTORY
         .iter()
-        .map(|a| (a.name.to_owned(), exe.to_path_buf()))
+        .map(|a| a.name)
+        .chain([sh::NAME])
+        .map(|name| (name.to_owned(), exe.to_path_buf()))
         .collect();
     owned_dir::sync_links(artifact_dir, DIR, &links)
 }
@@ -107,6 +111,7 @@ mod tests {
         let mut expected: Vec<String> = applets::INVENTORY
             .iter()
             .map(|a| a.name.to_owned())
+            .chain([sh::NAME.to_owned()])
             .collect();
         expected.sort();
         assert_eq!(names, expected);

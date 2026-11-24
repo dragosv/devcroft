@@ -3090,6 +3090,12 @@ fn print_status(s: &devcroft::lifecycle::SandboxStatus, provider: &str) {
              `devcroft up --recreate` starts the sandbox with it)"
         ),
     }
+    if s.runtime_shell {
+        println!(
+            "shell: {}",
+            devcroft::runtime::layer::runtime_shell_notice()
+        );
+    }
     // `add-runtime-provenance`: counts per kind, and every host entry by
     // name, since those are what break reproducibility at this level.
     match &s.base_runtime {
@@ -4126,7 +4132,6 @@ fn compile_with_provider_grants(
             provider_static_name(&manifest.env.provider),
             &meta.read_only_grants,
         )
-        .with_host_shell(&meta.host_shell_grants)
         .with_trust_store(&meta.trust_store);
     // The tooling layer's grant, as `up` compiled it (`Origin::Tools`).
     let compiled = match meta.tools.as_ref().and_then(|t| {

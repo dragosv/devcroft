@@ -486,15 +486,13 @@ resolves ([base-runtime.md](base-runtime.md)). Native-mode sandboxes (swift)
 run the host's files and have no redirect.
 
 The redirect is compatibility, not a boundary: where it is lost, the policy
-decides, so the exec fails with `EPERM`. The exception is a sandbox granted
-the host's shell (mise and pixi environments that install none): `/bin` is
-granted there, so the host's file runs. Measured 2026-11-23, macOS 15.8.3
+decides, so the exec fails with `EPERM`. Measured 2026-11-23, macOS 15.8.3
 arm64, unless noted:
 
 | What loses it | Example |
 |---|---|
-| Apple-signed programs | the host's `/bin/sh` drops the library, so in a sandbox whose shell is the host's, what that shell runs by absolute path is the host's file. `/usr/bin/make` drops it outside a sandbox and does not start inside one (2026-11-22) |
-| Hardened-runtime programs without the entitlements that allow it | mise's official `go1.24.0.darwin-arm64`; programs started by `go run` do not get it either. `go test` and `go generate` were not run. Node's official 26.4.0 is hardened but carries the entitlements, and keeps it |
+| Apple-signed programs | `/usr/bin/make` drops it outside a sandbox and does not start inside one (2026-11-22) |
+| Hardened-runtime programs without the entitlements that allow it | mise's official `go1.24.0.darwin-arm64`. For a Go from mise devcroft adds an `-exec` to `GOFLAGS`, so programs `go run` and `go test` start have it again (2026-11-24). What `go generate` starts does not: a `#!/bin/sh` script there is `EPERM`, and `sh ./script` works. Node's official 26.4.0 is hardened but carries the entitlements, and keeps it |
 | A cleared environment | GNU `env -i /bin/sh` fails with `EPERM`. devcroft's own `env -i` keeps the redirect |
 
 Two further limits:
@@ -559,9 +557,27 @@ workloads use and by a recorded decision (`add-own-userland` D6). `awk` and
 or not at all, which is why every `devenv-<agent>-sample` still declares
 `findutils`, `gnugrep` and `gnused`.
 
-The runtime has no shell either: an environment without one gets the host's,
-recorded `host:` and warned about ([base-runtime.md](base-runtime.md)).
-`embed-brush-runtime` is the change that replaces it.
+## The runtime's `sh` is brush, and is not a complete POSIX shell
+
+It is `sh` only where an environment has no shell (mise and pixi projects that
+install none). Measured against dash, `brush-core` 0.5.0, 2026-11-24, macOS and
+Linux (`spikes/brush-runtime/qualify.py`):
+
+| Behaviour | In the runtime's `sh` |
+|---|---|
+| `trap 'handler' TERM` | the handler never runs; the signal kills the shell |
+| `trap '' TERM`, `trap '' HUP` | not ignored |
+| an `EXIT` trap in a subshell | does not run |
+| `$!` | empty, so `wait $!` and `kill $!` do nothing useful |
+| `wait PID` | status 99, not implemented |
+| `kill PID`, `kill -0 PID` | refused; `kill -TERM PID` works |
+| an `IFS` that is not whitespace | **also splits literal words**: with `IFS=:`, `echo a:b` prints `a b`; `printf a:b` then never ends; a leading separator loses its empty field |
+| `x="export Z=9"; $x` | does not set `Z` |
+| `read` in a script piped to `sh` | consumes the rest of the script |
+
+Add a shell to the environment to use that instead (pixi: `pixi add bash`).
+`#!/bin/bash` fails where the environment has no bash; nothing else answers
+for it.
 
 ## Interactive pty sessions are refused on macOS — fixed
 

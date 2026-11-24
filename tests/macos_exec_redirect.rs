@@ -130,7 +130,7 @@ fn absolute_paths_resolve_as_names_do_and_the_keeper_stays_clean() {
         want("render", render, &|g| {
             ["/ns ", "/redirect "].iter().all(|d| {
                 g.lines()
-                    .any(|l| l.contains(d) && l.contains("runtime:gen-1"))
+                    .any(|l| l.contains(d) && l.contains("runtime:gen-2"))
             })
         });
         // The load-bearing one: dyld runs a library before `main`, so before
@@ -220,6 +220,17 @@ fn a_minimal_environment_gets_the_runtime_by_absolute_path() {
         want("env python3", sh("./e.py arg"), &|g| {
             g == "py arg\nvia-system\nvia-popen\nvia-shell\nvia-execv\n"
         });
+        // Asking first gets the same answer (GNU make checks before it execs);
+        // reading the host's file does not.
+        want(
+            "access and stat",
+            sh(
+                "python3 -c 'import os; print(os.access(\"/bin/ls\", os.X_OK), \
+                os.path.isfile(\"/usr/bin/env\"), os.access(\"/usr/bin/awk\", os.X_OK), \
+                os.path.exists(\"/usr/bin/make\"))'; cat /bin/ls >/dev/null; echo rc=$?",
+            ),
+            &|g| g.starts_with("True True False False\n") && g.contains("rc=1"),
+        );
         // The link's name selects the utility, so two of them are checked.
         for n in ["ls", "cat"] {
             let by_name = sh(&format!("{n} --version"));

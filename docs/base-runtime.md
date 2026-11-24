@@ -30,7 +30,7 @@ Each name has two lookup forms:
 
 The list changes only with a new revision, recorded here.
 
-## The runtime (generation 1)
+## The runtime (generation 2)
 
 devcroft carries its own utilities, linked into the `devcroft` binary and run
 when it is invoked through a link named after one of them (`ls`, `env`, ...).
@@ -40,8 +40,9 @@ executables always come first.
 | Generation | Upstream | Version | Utilities |
 |---|---|---|---|
 | 1 | [uutils coreutils](https://github.com/uutils/coreutils) (MIT) | 0.13.0 | `env ls cat cp mv rm mkdir rmdir ln touch head tail wc sort uniq cut tr echo printf test pwd true false seq basename dirname readlink realpath stat chmod mktemp tee date id uname hostname yes sleep nohup` |
+| 2 | the same, and [brush](https://github.com/reubeno/brush) (MIT) | 0.13.0; `brush-core` 0.5.0 | the same, and `sh` |
 
-The runtime has no shell yet, and no `grep`, `sed`, `awk`, `find`, `xargs`,
+The runtime has no `grep`, `sed`, `awk`, `find`, `xargs`,
 `diff`, `tar` or `gzip`: those come from the environment or not at all. uutils
 is not GNU coreutils; where an option behaves differently, a project that
 wants GNU declares `coreutils` in its environment and gets it.
@@ -70,16 +71,30 @@ resolved grants, and on Linux the entries its view writes — without spawning
 anything, and a test runs every name in both forms inside a real sandbox to
 check that the record matches.
 
-## The host shell, until the runtime has one
+## The shell
 
-An environment that resolves no POSIX shell gets the host's, from one place
-for every provider (`src/runtime/layer.rs`): a link
-`.devcroft/<name>/host-shell/sh`, so the sandbox's `PATH` gains `sh` and
-nothing else from the host, and grants with their own origin, `host-shell`,
-in `policy --render`. On Linux those are the shell file and the C library
-files it loads; on macOS, `/bin` and `/var/select`. The shell is recorded
-`host:` and `up` warns about it. Today that is mise and pixi environments
-that install no shell.
+A sandbox's shell is, in order: one on the environment's `PATH`, inside a
+grant; one from the closure's requisites; the runtime's `sh`. The host's is
+never granted. The runtime's is reached only where an environment has none,
+which today is a mise or pixi project that installs none: `up` and `status`
+say so there.
+
+The runtime's shell is `brush_core` in a process of its own, always in POSIX
+mode. It evaluates nothing before the command: no profile, no rc file, not
+`ENV` or `BASH_ENV`, no brush configuration. It is not a complete POSIX shell;
+[known-gaps.md](known-gaps.md) lists what it does not do, and the remedy is a
+shell in the environment (pixi: `pixi add bash`). It never serves `bash`.
+
+Qualification, `brush-core` 0.5.0, 2026-11-24, `spikes/brush-runtime/qualify.py`
+against dash, the same on macOS arm64 and Linux aarch64:
+
+| Behaviour | Qualified |
+|---|---|
+| POSIX mode as `sh`; `-c`, `-s`, `-e`, scripts, positional arguments, exit status | yes |
+| `trap '' INT` | yes |
+| a `trap` handler on a real `TERM`; `trap '' TERM`, `trap '' HUP` | no |
+| `$!`; `wait PID`; `kill` with no signal, `kill -0` | no |
+| startup | 1.20 ms, dash 0.24 ms (Linux, release, median of 20) |
 
 ## Native mode
 
@@ -111,20 +126,18 @@ Measured 2026-11-22 on macOS arm64, by name, in real sandboxes:
 | nix | bash from stdenv | GNU coreutils, grep, sed, gawk, findutils, diffutils, tar, gzip |
 | devbox | bash from stdenv | the same, with or without a toolchain |
 | flox | a bash from the closure's requisites | none |
-| mise, pixi | the environment's own `sh` if any, else the host's | only what the environment installs |
+| mise, pixi | the environment's own `sh` if any, else the runtime's | only what the environment installs |
 | swift | the host's (native mode) | the host's `/usr/bin` (native mode) |
 
 Since generation 1, every name the environment does not supply and the
-runtime carries resolves to the runtime by name (`runtime:gen-1`), after the
+runtime carries resolves to the runtime by name (`runtime:gen-2`), after the
 environment's own executables and the shell's directory. The table above is
 what the environment supplies before that.
 
 On Linux (measured 2026-11-22, aarch64) the same holds by name for nix,
 devbox and flox, and devenv supplies the full GNU userland as nix does, even
 for a project that declares only two unrelated packages. `hostname` is absent
-everywhere: coreutils does not ship it. mise and pixi sandboxes resolve `sh`
-(and, for mise, `env`) to the host's, granted by the provider, and are the
-only ones whose `up` prints the host warning.
+everywhere: coreutils does not ship it. No sandbox but swift's resolves a base name to the host.
 
 By absolute path, a base name runs what it resolves to by name. On Linux the
 view, a fleet agent's included, holds a link for each at `/bin` and

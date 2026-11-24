@@ -380,10 +380,8 @@ only, so they are refused rather than extrapolated.
 - Objects are immutable, shared by recipe and referenced by each sandbox's
   `Meta`. `rm` reclaims the unreferenced ones under a store lock that every
   `up` holds shared.
-- The shell is the host's shell *file*, plus its loader and libraries, on
-  Linux, and `/bin` with `/var/select` on macOS — supplied since
-  `add-own-userland` by the common runtime layer rather than by the mise
-  provider, under origin `host-shell`. `/usr/bin` is never granted,
+- The shell is the environment's, or devcroft's runtime's; the host's is
+  never granted (`embed-brush-runtime`), nor is `/usr/bin`,
   so criterion 5 is tested rather than assumed: a host `cc`, `gcc`, `ld` or
   `git` does not run inside (`tests/mise_provider_e2e.rs`).
 

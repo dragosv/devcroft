@@ -1886,6 +1886,9 @@ name = "devcroft"
 version = "0.0.1"
 dependencies = [
  "base64 0.22.1",
+ "brush-builtins",
+ "brush-core",
+ "brush-interactive",
  "brush-shell",
  "cc",
  "libc",

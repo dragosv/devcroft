@@ -233,6 +233,43 @@ static int dc_execvp(const char *file, char *const argv[]) {
     return execve(target, use_nv ? nv : argv, dc_env(envp, ev));
 }
 
+/*
+ * Asking about a path gets the answer executing it would: a program that
+ * checks `access("/bin/ls", X_OK)` before it execs (GNU make, through gnulib)
+ * is refused by the sandbox there, and never reaches the exec. Nothing is
+ * opened for it: reading `/bin/ls` stays refused.
+ */
+static int dc_access(const char *path, int mode) {
+    char mapped[PATH_MAX];
+    const char *m = dc_map(path, mapped, sizeof mapped);
+    return access(m ? m : path, mode);
+}
+
+static int dc_faccessat(int fd, const char *path, int mode, int flag) {
+    char mapped[PATH_MAX];
+    const char *m = dc_map(path, mapped, sizeof mapped);
+    return faccessat(fd, m ? m : path, mode, flag);
+}
+
+static int dc_stat(const char *path, struct stat *st) {
+    char mapped[PATH_MAX];
+    const char *m = dc_map(path, mapped, sizeof mapped);
+    return stat(m ? m : path, st);
+}
+
+/* The entry is a link of devcroft's; what it stands for is a file. */
+static int dc_lstat(const char *path, struct stat *st) {
+    char mapped[PATH_MAX];
+    const char *m = dc_map(path, mapped, sizeof mapped);
+    return m ? stat(m, st) : lstat(path, st);
+}
+
+static int dc_fstatat(int fd, const char *path, struct stat *st, int flag) {
+    char mapped[PATH_MAX];
+    const char *m = dc_map(path, mapped, sizeof mapped);
+    return m ? stat(m, st) : fstatat(fd, path, st, flag);
+}
+
 /* dyld applies these to every image but this one, so the calls above reach
  * the real functions. Calls made inside libSystem (system(), popen(), the
  * execl family) are interposed too (measured, design.md D1). */
@@ -245,4 +282,9 @@ __attribute__((used)) static const struct {
     {(const void *)dc_execve, (const void *)execve},
     {(const void *)dc_execv, (const void *)execv},
     {(const void *)dc_execvp, (const void *)execvp},
+    {(const void *)dc_access, (const void *)access},
+    {(const void *)dc_faccessat, (const void *)faccessat},
+    {(const void *)dc_stat, (const void *)stat},
+    {(const void *)dc_lstat, (const void *)lstat},
+    {(const void *)dc_fstatat, (const void *)fstatat},
 };

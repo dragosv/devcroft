@@ -117,6 +117,10 @@ pub fn dispatch_argv0() {
     else {
         return;
     };
+    // A login shell's `argv[0]` is `-sh`.
+    if base.strip_prefix('-').unwrap_or(base) == super::sh::NAME {
+        super::sh::main();
+    }
     if let Some(applet) = find(base) {
         // `bin!`'s `main` always exits.
         (applet.main)();
@@ -146,6 +150,6 @@ mod tests {
     #[test]
     fn devcroft_itself_is_not_an_applet() {
         assert!(find("devcroft").is_none());
-        assert!(find("sh").is_none(), "the runtime has no shell yet");
+        assert!(find("sh").is_none(), "the shell is not an applet");
     }
 }

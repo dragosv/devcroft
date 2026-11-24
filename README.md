@@ -375,8 +375,8 @@ them runs the downloaded binary on the host. mise installs host-side from a
 derived, tools-only copy of the definition, in an isolated environment, into a
 read-only object under `~/.local/share/devcroft-artifacts/mise/`. Sandboxes
 with the same recipe share that object, and the last `rm` reclaims it. devcroft
-interprets `[env]` itself and runs it inside the sandbox. The host gets the
-shell file, its loader and libraries, never `/usr/bin`: a host `cc` or `git`
+interprets `[env]` itself and runs it inside the sandbox. The host gives it
+libraries alone, no shell and never `/usr/bin`: a host `cc` or `git`
 does not resolve inside. `mise run` is not available in the sandbox, and
 `[daemons]` is refused until `add-mise-daemons`. See
 [samples/mise-sample](samples/mise-sample/).
@@ -396,8 +396,7 @@ profile is Conda-only:
   mise's.
 - **Activation:** pixi emits it as text, devcroft points it at the project,
   and it runs inside the sandbox.
-- **Host grants:** the host gets the shell and the libc family, never
-  `/usr/bin`.
+- **Host grants:** the libc family; no shell, and never `/usr/bin`.
 
 `pixi run` is not available in the sandbox. See
 [samples/pixi-sample](samples/pixi-sample/).

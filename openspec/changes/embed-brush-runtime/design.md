@@ -61,7 +61,8 @@ Brush evidence, restated:
 its own startup and configuration loading (BR-07). The adaptor builds a
 `brush_core::Shell` with profile and rc loading skipped, explicit working
 directory, name and positional arguments, `BashMode` builtins, and
-`run_dash_c_command` on a current-thread Tokio runtime, in a child started from
+`run_dash_c_command` on a Tokio runtime (current-thread was the plan; measured
+2026-11-24, it deadlocks on a substitution larger than a pipe), in a child started from
 the `devcroft` binary. It is also the faster path (1.43 ms vs 3.99 ms). Process
 state (`umask`, signal dispositions, `exec`, terminal and process groups) is why
 it never runs in the keeper.
@@ -129,6 +130,15 @@ program through `-exec`. With `GOFLAGS='-exec=env DYLD_INSERT_LIBRARIES=<lib>
 DEVCROFT_NS=<ns>'` (the values a session already has) all four tests and
 every `go run` case pass, and `go build` ignores it. It does not reach
 `go generate`, whose commands Go starts itself.
+
+## Found while qualifying (2026-11-24), beyond BR-01 to BR-10
+
+In stock `brush-shell` 0.4.0 too, where it was checked: an `IFS` that is not
+whitespace splits literal words (`IFS=:; echo a:b` prints `a b`, and
+`printf a:b` in a substitution never ends); a leading `IFS` separator loses
+its empty field; an `EXIT` trap in a subshell does not run. For the owner to
+file with the others. **Owner, 2026-11-24:** the `IFS` defect is accepted and published; it does
+not hold slice A back, and devcroft keeps no fork.
 
 ## Risks / Trade-offs
 

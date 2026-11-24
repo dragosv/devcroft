@@ -7,21 +7,27 @@
 
 ## 1. The runtime shell
 
-- [ ] 1.1 Promote `brush-core` and `brush-builtins` to `[dependencies]` at a pinned revision; record source revision and lockfile hash in the generation identity.
-- [ ] 1.2 Adaptor: `Shell::builder` with profile and rc skipped, no `ENV`/`BASH_ENV`/config-file evaluation, explicit cwd, name and positional arguments, `run_dash_c_command`, current-thread Tokio, explicit mapping of exit, signal termination and interpreter errors.
-- [ ] 1.3 `sh` dispatch through the multicall, in a dedicated child; POSIX mode on when invoked as `sh`.
-- [ ] 1.4 Tests: hostile `.bashrc`, `.profile`, `BASH_ENV`, `ENV` and brush config file write no marker; `set -o` shows posix on as `sh`; quoting, positional arguments, exit codes and `SIGPIPE` controls from the spike stay green.
+- [x] 1.1 Promote `brush-core` and `brush-builtins` to `[dependencies]` at a pinned revision; record source revision and lockfile hash in the generation identity.
+  - Registry `=0.5.0`, `=0.2.0`, and `brush-interactive =0.4.0` (`minimal`) for the read loop. The lockfile's revision is the pin; no Git source.
+- [x] 1.2 Adaptor: `Shell::builder` with profile and rc skipped, no `ENV`/`BASH_ENV`/config-file evaluation, explicit cwd, name and positional arguments, `run_dash_c_command`, current-thread Tokio, explicit mapping of exit, signal termination and interpreter errors.
+  - Multi-thread Tokio, not current-thread: that one deadlocks on a substitution larger than a pipe (measured). Input backend of devcroft's own, a complete command at a time.
+- [x] 1.3 `sh` dispatch through the multicall, in a dedicated child; POSIX mode on when invoked as `sh`.
+- [x] 1.4 Tests: hostile `.bashrc`, `.profile`, `BASH_ENV`, `ENV` and brush config file write no marker; `set -o` shows posix on as `sh`; quoting, positional arguments, exit codes and `SIGPIPE` controls from the spike stay green.
+  - `tests/runtime_shell.rs`; `SIGPIPE` not covered there.
 
 ## 2. Slice A — runtime shell where the environment has none
 
-- [ ] 2.1 `src/shell.rs`: third resolution step (runtime shell) after requisites; `Meta.shell` keeps the launch form (`sh` link) for it.
-- [ ] 2.2 Remove the host shell file grant (Linux) and `/bin` + `/var/select` (macOS) from the mise and pixi paths; the common layer never grants a host shell.
+- [x] 2.1 `src/shell.rs`: third resolution step (runtime shell) after requisites; `Meta.shell` keeps the launch form (`sh` link) for it.
+- [x] 2.2 Remove the host shell file grant (Linux) and `/bin` + `/var/select` (macOS) from the mise and pixi paths; the common layer never grants a host shell.
+  - The layer, its origin and its grants are gone; `Meta.host_shell_grants` is only read, for 2.6.
 - [x] 2.2a Before 2.2 removes the host shell grant on macOS: measure `go test` and `go generate` in a mise sandbox without it. mise's official Go is hardened and drops the exec redirect, so its children may meet `EPERM` at `/bin/sh` (`add-macos-exec-redirect` 0.6). If ordinary workloads break, report to the owner first.
-  - Measured 2026-11-24 (design.md): `go run` and `go test` programs lose absolute paths and shebangs, with a `-exec` remedy that works; `go generate` of a `#!/bin/sh` script breaks with none. **Owner decides before 2.2.**
-- [ ] 2.3 The namespace entry for `sh` follows the resolved shell, so `/bin/sh` and `sh` agree on every row.
-- [ ] 2.4 Provenance witness: mise and pixi `sh` and `/bin/sh` become `runtime:gen-N`; nix, devbox, flox keep `closure:`; no `host:` entry remains for any non-native provider.
+  - Measured 2026-11-24 (design.md): `go run` and `go test` programs lose absolute paths and shebangs, with a `-exec` remedy that works; `go generate` of a `#!/bin/sh` script breaks with none. **Owner, 2026-11-24: remove the host shell and add the `-exec`.** Implemented (`redirect::go_flags`), where the project's GOFLAGS has no `-exec`. GNU make from conda-forge checks `access()` first, which hid behind the `/bin` grant: the redirect answers `access` and `stat` too.
+- [x] 2.3 The namespace entry for `sh` follows the resolved shell, so `/bin/sh` and `sh` agree on every row.
+- [x] 2.4 Provenance witness: mise and pixi `sh` and `/bin/sh` become `runtime:gen-N`; nix, devbox, flox keep `closure:`; no `host:` entry remains for any non-native provider.
+  - mise asserted on both platforms (`host 0`); pixi measured through its own e2e, which has no such assertion.
 - [ ] 2.5 Tests: a pixi sample without bash runs its activation and a `#!/bin/sh` script; adding `bash` from conda-forge makes `/bin/sh` that bash; `#!/bin/bash` fails without bash and no host bash runs; `tests/mise_provider_e2e.rs` still passes; a nix sandbox's `/bin/sh` is still the closure's bash.
-- [ ] 2.6 `up` prints the removed host grants once for affected projects; README and `docs/known-gaps.md` note the BREAKING change and the remedy.
+  - Done on mise: a `#!/bin/sh` script, `#!/bin/bash` refused, both platforms. **Open:** a pixi project with and without bash of its own (its sample installs tools, and its e2e passes).
+- [x] 2.6 `up` prints the removed host grants once for affected projects; README and `docs/known-gaps.md` note the BREAKING change and the remedy.
 
 ## 3. Slice B — interactive fallback (after the HUP/TERM part of BR-01 is fixed upstream)
 
@@ -31,17 +37,19 @@
 
 ## 4. Qualification records — per pinned revision
 
-- [ ] 4.1 Trap handlers on a real `TERM`: in a builtin-only loop, during `read`, during `wait`.
-- [ ] 4.2 `trap ''` ignores `TERM`, `HUP`, `INT`, each in a fresh process.
-- [ ] 4.3 `$!` non-empty and valid; `wait "$!"` returns 0 and 7 for children exiting 0 and 7; non-child `wait` returns 127.
-- [ ] 4.4 Bare `kill PID` sends `TERM` to an independent target.
-- [ ] 4.5 POSIX mode as `sh`; differences from dash on a small POSIX corpus recorded.
+- [x] 4.1 Trap handlers on a real `TERM`: in a builtin-only loop, during `read`, during `wait`.
+- [x] 4.2 `trap ''` ignores `TERM`, `HUP`, `INT`, each in a fresh process.
+- [x] 4.3 `$!` non-empty and valid; `wait "$!"` returns 0 and 7 for children exiting 0 and 7; non-child `wait` returns 127.
+- [x] 4.4 Bare `kill PID` sends `TERM` to an independent target.
+- [x] 4.5 POSIX mode as `sh`; differences from dash on a small POSIX corpus recorded.
 - [ ] 4.6 Startup budget declared (proposed: `brush_core` `-c :` median ≤ 2× bash on the same host) and measured on Linux and macOS.
-- [ ] 4.7 Record each result against the revision and executable hash in `docs/base-runtime.md`; every unqualified behaviour listed in `docs/known-gaps.md` for runtime-shell sandboxes, and surfaced by `status` there.
+  - Measured: Linux release 1.20 ms, dash 0.24 ms. macOS only in a debug build (8.4 ms, dash 1.6). bash not measured, so the proposed budget (2x bash) is not judged.
+- [x] 4.7 Record each result against the revision and executable hash in `docs/base-runtime.md`; every unqualified behaviour listed in `docs/known-gaps.md` for runtime-shell sandboxes, and surfaced by `status` there.
 
 ## 5. Documentation and verification
 
-- [ ] 5.1 `docs/base-runtime.md`: the shell, its place in resolution, its startup policy, the slices and the qualification records.
-- [ ] 5.2 Regenerate `THIRD-PARTY-LICENSES.md`; measure the integrated binary size.
+- [x] 5.1 `docs/base-runtime.md`: the shell, its place in resolution, its startup policy, the slices and the qualification records.
+- [x] 5.2 Regenerate `THIRD-PARTY-LICENSES.md`; measure the integrated binary size.
+  - 572 dependencies. Linux aarch64 release stripped 38,077,784 bytes, +4.7 MB on 33,356,376. Two `uucore` (0.8.0 through brush).
 - [ ] 5.3 `cargo build`, `fmt`, `clippy`, `doc --no-deps`, `test`, skip inventory recorded.
 - [ ] 5.4 `openspec validate embed-brush-runtime --type change`.
