@@ -126,6 +126,53 @@ stay the user's, mode 0700, and denied to the sandbox as today.
 (sessions run as the real user) no longer holds by default; the ownership
 problems it avoided are handled by D5 and are the price of the default.
 
+## Measured: Linux (tasks 0.4, 0.5 in part), 2026-11-24
+
+`spikes/sandbox-identity/` (`run.sh`), Debian 12, kernel 7.2 aarch64, overlayfs,
+in the devcontainer with `uidmap` and `acl` installed. A prototype, not
+devcroft's own view code.
+
+**0.4, the mapping: works.** `0 -> caller` and `1000 -> subordinate id` in one
+user namespace, with a tmpfs view and `pivot_root`, a fresh `/proc` in a PID
+namespace and Landlock. Setup as inside 0 can give `HOME` to the mapped id; the
+workload then drops to 1000 with `CapEff` 0 and cannot return to 0. Two
+sandboxes get distinct host owners; an id outside the range is refused by
+`newuidmap`. Details an implementation needs: the id change clears
+`PR_SET_DUMPABLE` (set again, so `/proc/self` stays readable);
+`CapBnd` stays full, so `no_new_privs` is what keeps a setuid file owned by the
+user from regaining inside 0; `newuidmap` is setuid, so a caller that already
+has `no_new_privs` cannot use it (not measured); `sandbox HOME` cannot be
+removed by the user, only through a namespace that maps its owner.
+
+**0.5, the workspace ACLs: D5 does not hold.** Without one the sandbox cannot
+write the workspace, as expected. With access and default entries for both ids:
+
+| Created inside with | The user, from the host |
+|---|---|
+| the usual `open(..., 0666)` (shell, Python `open`) | edits it |
+| an explicit `0644` | **refused** (mask `r--`) |
+| an explicit `0600` | **refused**, reading too (mask `---`) |
+| `mkdir` `0755` | **cannot create in it** |
+| `mkdir` `0700` | **cannot open it** |
+
+A POSIX default ACL is masked by the mode the creator passes, so any program
+that passes one takes the user's access away. The user can still replace a
+file or remove an empty-enough directory where they may write the parent. One
+`0600` file or `0700` directory is enough for the user's own `git add -A` to
+fail. git inside refuses the workspace ("dubious ownership") until
+`safe.directory` names it; after that status, add and commit work.
+
+So "the user able to read and write everything the sandbox creates" cannot be
+met by ACLs on Linux. Idmapped mounts would meet it, but mounting one needs
+privilege in the filesystem's own user namespace, and it would make the user
+the owner, against the scenario that the sandbox's uid is. VS Code and JetBrains
+were not run: the refusal is the kernel's, for any of the user's processes.
+
+**Proposed, for the owner:** `shared` is the default on Linux too, with the
+dedicated name inside; `separate` is opt-in, for projects that accept the table
+above, or for fleet agents, whose clone is their own and is exchanged through
+git rather than edited in place.
+
 ## Risks / Trade-offs
 
 - [Onboarding: a fresh Linux host without subordinate ranges, or a Mac without

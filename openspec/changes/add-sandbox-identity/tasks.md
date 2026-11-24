@@ -3,9 +3,12 @@
 - [x] 0.1 Owner: confirm the reading of "the process tier requires no external backend binary" that admits `newuidmap`/`newgidmap` as host identity helpers (design D2), or decide that `separate` is not the Linux default.
   - Confirmed by the owner 2026-11-24: `newuidmap`/`newgidmap` are the host's identity helpers, not a sandbox backend.
 - [ ] 0.2 Owner: confirm that a launchd helper which is the `devcroft` binary itself satisfies "never a child of a separate sandboxing binary" (design D3), and accept a signed macOS package for `separate` mode.
+  - Open; 2026-11-24 the recommendation is to defer (macOS stays `shared`).
 - [ ] 0.3 Owner: may the manifest select `shared`, or only the user (design, open question)?
-- [ ] 0.4 Linux: measure, on a host with delegated ranges, a user namespace mapping a non-zero inside uid to a subordinate host uid through `newuidmap`, combined with the existing mount view, PID namespace and Landlock; record what breaks.
+- [x] 0.4 Linux: measure, on a host with delegated ranges, a user namespace mapping a non-zero inside uid to a subordinate host uid through `newuidmap`, combined with the existing mount view, PID namespace and Landlock; record what breaks.
+  - Works; design.md "Measured: Linux". With a prototype of the view, not devcroft's own.
 - [ ] 0.5 Linux and macOS: measure ACL inheritance for a sandbox-created file edited afterwards by the user from VS Code, a JetBrains IDE and `git`; record `safe.directory` behaviour.
+  - Linux, command line and git: **D5's ACLs do not keep the user's access** (an explicit mode masks it). `separate` as the Linux default waits for the owner. **Open:** macOS.
 - [ ] 0.6 macOS: measure creating a hidden account, starting a process as it from a root helper with inherited descriptors, and Seatbelt applied after; record what Swift (native) loses under such an account.
 
 ## 1. Config and model
