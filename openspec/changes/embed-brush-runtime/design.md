@@ -107,6 +107,29 @@ A `#!/bin/bash` script asks for bash. Serving it with brush would break the
 explicit-interpreter rule and hide every incompatibility as brush behaviour.
 `#!/usr/bin/env bash` works through the namespace's `env` and `PATH`.
 
+## Measured: 2.2a, Go in a macOS mise sandbox without the host shell (2026-11-24)
+
+macOS 15 arm64, mise's official Go 1.24.0, at `a521a96` with two temporary
+edits: `layer::resolve_shell` links `examples/test-row-sh` (brush) as `sh` and
+grants no `/bin`, and mise does not grant `/usr/bin/env`. `spikes/brush-runtime/`.
+
+| Workload | Today | Without the host shell |
+|---|---|---|
+| `go build`, `go vet`, the built program started by a session | works | works; its `/bin/sh`, `/bin/ls`, `#!/bin/sh` and `/usr/bin/env` are redirected (`/usr/bin/env` is `EPERM` today) |
+| `go run`, `go test`: the program calls a shell or tool **by name** | works | works |
+| the same **by absolute path**, or a `#!/bin/sh` script | works (the host's files) | **`EPERM`** |
+| `//go:generate sh -c ...` | works | works |
+| `//go:generate ./gen.sh` (`#!/bin/sh`) | works | **`EPERM`** (generate stops there; `/bin/sh` as the command was not reached) |
+
+The cause is the one already published: Apple's dyld drops the library in Go's
+hardened binary, and its children inherit nothing.
+
+**A remedy that needs no re-signing:** `go run` and `go test` start the built
+program through `-exec`. With `GOFLAGS='-exec=env DYLD_INSERT_LIBRARIES=<lib>
+DEVCROFT_NS=<ns>'` (the values a session already has) all four tests and
+every `go run` case pass, and `go build` ignores it. It does not reach
+`go generate`, whose commands Go starts itself.
+
 ## Risks / Trade-offs
 
 - [mise/pixi projects whose scripts rely on traps, `$!` or `wait PID` break when
