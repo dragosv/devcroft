@@ -1,6 +1,7 @@
 ## 0. Owner decisions and measurement gate
 
-- [ ] 0.1 Owner: confirm the reading of "the process tier requires no external backend binary" that admits `newuidmap`/`newgidmap` as host identity helpers (design D2), or decide that `separate` is not the Linux default.
+- [x] 0.1 Owner: confirm the reading of "the process tier requires no external backend binary" that admits `newuidmap`/`newgidmap` as host identity helpers (design D2), or decide that `separate` is not the Linux default.
+  - Confirmed by the owner 2026-11-24: `newuidmap`/`newgidmap` are the host's identity helpers, not a sandbox backend.
 - [ ] 0.2 Owner: confirm that a launchd helper which is the `devcroft` binary itself satisfies "never a child of a separate sandboxing binary" (design D3), and accept a signed macOS package for `separate` mode.
 - [ ] 0.3 Owner: may the manifest select `shared`, or only the user (design, open question)?
 - [ ] 0.4 Linux: measure, on a host with delegated ranges, a user namespace mapping a non-zero inside uid to a subordinate host uid through `newuidmap`, combined with the existing mount view, PID namespace and Landlock; record what breaks.
@@ -15,9 +16,12 @@
 
 ## 2. The environment is read-only to the workload (both modes)
 
-- [ ] 2.1 Linux view: `.devcroft/<name>/` mounted read-only except `home/`.
-- [ ] 2.2 macOS: Seatbelt write denial under `.devcroft/<name>/` except `home/`.
-- [ ] 2.3 Tests: overwriting a runtime or namespace entry, the compiled profile and the redirect library fails from a session; the workspace and `HOME` stay writable.
+- [x] 2.1 Linux view: `.devcroft/<name>/` mounted read-only except `home/`.
+  - Plus `run/` (design D4). Fleet agents too.
+- [x] 2.2 macOS: Seatbelt write denial under `.devcroft/<name>/` except `home/`.
+  - `(deny file-write* (require-all … (require-not …)))`; also refuses moving `.devcroft`.
+- [x] 2.3 Tests: overwriting a runtime or namespace entry, the compiled profile and the redirect library fails from a session; the workspace and `HOME` stay writable.
+  - `tests/runtime_namespace.rs`, both platforms, with the policy artifact, the `devcroft` link, `services.yaml` and new files. Suites 2026-11-23: macOS 767/0; Linux aarch64 `test-support` 854/2, the two in `fleet_init` failing without this change too.
 
 ## 3. Linux
 

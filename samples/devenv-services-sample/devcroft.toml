@@ -1,6 +1,6 @@
 [sandbox]
 # Short on purpose. The supervisor's unix socket lives at
-# `<project>/.devcroft/<name>/services.sock`, and the OS caps a
+# `<project>/.devcroft/<name>/run/svc.sock`, and the OS caps a
 # unix socket path at 103 bytes — `devenv-services-sample` as a
 # name puts this sample's own path at 112 and `up` refuses,
 # naming the limit. A sample that cannot come up where it lives

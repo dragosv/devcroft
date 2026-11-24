@@ -1017,6 +1017,7 @@ fn bind_probe_main(args: &[String]) -> i32 {
         filesystem_read: Vec::new(),
         filesystem_deny: Vec::new(),
         filesystem_write_deny: Vec::new(),
+        filesystem_write_except: Vec::new(),
         network_block: true,
         network_ports: vec![port],
         network_loopback_any: false,
@@ -4308,13 +4309,11 @@ fn cli_agent(args: &[String]) -> i32 {
             return 2;
         }
     };
-    match report::update(&dir.join(report::FILE), task.as_deref(), change) {
+    let file = dir.join(devcroft::services::RUN_DIR).join(report::FILE);
+    match report::update(&file, task.as_deref(), change) {
         Ok(()) => 0,
         Err(e) => {
-            eprintln!(
-                "devcroft agent: writing {}: {e}",
-                dir.join(report::FILE).display()
-            );
+            eprintln!("devcroft agent: writing {}: {e}", file.display());
             1
         }
     }

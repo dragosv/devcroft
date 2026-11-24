@@ -493,17 +493,11 @@ impl Supervisor {
                 Some(port) => policy.clone().with_proxy_port(port),
                 None => policy.clone(),
             };
-            let artifact = crate::services::artifact_dir(&launch.workspace, id).join("policy.json");
-            if let Some(parent) = artifact.parent() {
-                std::fs::create_dir_all(parent)?;
-            }
-            std::fs::write(
-                &artifact,
-                translate(crate::services::PolicyArtifact::new(policy).to_json()),
+            crate::services::write_policy_artifact(
+                &crate::services::artifact_dir(&launch.workspace, id),
+                &translate(crate::services::PolicyArtifact::new(policy).to_json()),
+                &self.exe,
             )?;
-            if let Some(parent) = artifact.parent() {
-                crate::services::link_keeper_exe(parent, &self.exe)?;
-            }
         }
 
         // The provider's activation script runs before the keeper, in its own

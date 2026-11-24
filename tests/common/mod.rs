@@ -384,7 +384,7 @@ impl ProviderFixture for SwiftRow {
 /// A project root short enough for `sun_path` and already canonical.
 ///
 /// Both halves are lessons this suite keeps relearning: the service
-/// supervisor's socket lives at `<root>/.devcroft/<name>/services.sock` and
+/// supervisor's socket lives at `<root>/.devcroft/<name>/run/svc.sock` and
 /// overflows 103 bytes under macOS's `$TMPDIR`, and `/tmp` on macOS is a
 /// symlink whose un-canonicalized spelling a sandbox is refused
 /// (docs/known-gaps.md).

@@ -54,6 +54,9 @@ pub struct CapabilityPlan {
     /// See [`CompiledPolicy::filesystem_write_deny`].
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub filesystem_write_deny: Vec<String>,
+    /// See [`CompiledPolicy::filesystem_write_except`].
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub filesystem_write_except: Vec<String>,
     pub network_block: bool,
     pub network_ports: Vec<u16>,
     /// See [`CompiledPolicy::network_loopback_any`]. Skipped when false, so
@@ -159,6 +162,11 @@ impl CompiledPolicy {
                 .collect(),
             filesystem_write_deny: self
                 .filesystem_write_deny
+                .iter()
+                .map(|a| a.value.clone())
+                .collect(),
+            filesystem_write_except: self
+                .filesystem_write_except
                 .iter()
                 .map(|a| a.value.clone())
                 .collect(),
@@ -271,7 +279,11 @@ impl CapabilityPlan {
         {
             caps = scope_exec_to_read_grants(caps)?;
             caps = grant_pty_slaves(caps)?;
-            caps = deny_writes(caps, &self.filesystem_write_deny)?;
+            caps = deny_writes(
+                caps,
+                &self.filesystem_write_deny,
+                &self.filesystem_write_except,
+            )?;
         }
         self.apply_network_and_signal(caps)
     }
@@ -364,7 +376,7 @@ impl CapabilityPlan {
         // AF_UNIX `bind`/`connect` as network operations, so a
         // `network.default = "deny"` sandbox is refused its *own* control
         // sockets without an explicit grant — measured, with the service
-        // supervisor unable to create `services.sock` inside a project
+        // supervisor unable to create `svc.sock` inside a project
         // root it had full read-write access to. Landlock mediates no
         // AF_UNIX operation at all, so on Linux this would be a no-op rule
         // rather than a missing one.
@@ -473,33 +485,39 @@ fn grant_pty_slaves(caps: CapabilitySet) -> Result<CapabilitySet, CapabilitySetE
 }
 
 /// macOS only: `filesystem_write_deny`, after every grant, so it wins under
-/// Seatbelt's last-rule-wins evaluation. Only ever devcroft's own artifact
-/// directories (`<project>/.devcroft/<name>/<dir>`).
+/// Seatbelt's last-rule-wins evaluation. The exceptions are carved out of
+/// the denial rather than allowed after it, so none can widen a grant.
 #[cfg(target_os = "macos")]
 fn deny_writes(
     mut caps: CapabilitySet,
     paths: &[String],
+    except: &[String],
 ) -> Result<CapabilitySet, CapabilitySetError> {
-    for value in paths {
-        let path = Path::new(value);
-        let canonical = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
-        let mut spellings = vec![path];
-        if canonical != path {
-            spellings.push(&canonical);
+    let spellings = |value: &str| {
+        let path = PathBuf::from(value);
+        let canonical = path.canonicalize().unwrap_or_else(|_| path.clone());
+        let mut out = vec![path];
+        if canonical != out[0] {
+            out.push(canonical);
         }
-        for p in spellings {
+        out
+    };
+    let kept: String = except
+        .iter()
+        .flat_map(|e| spellings(e))
+        .map(|e| format!(" (require-not (subpath \"{}\"))", seatbelt_escape(&e)))
+        .collect();
+    for path in paths.iter().flat_map(|p| spellings(p)) {
+        caps = caps.platform_rule(format!(
+            "(deny file-write* (require-all (subpath \"{}\"){kept}))",
+            seatbelt_escape(&path)
+        ))?;
+        // Nor its parent (`.devcroft`) moved aside with it.
+        if let Some(parent) = path.parent() {
             caps = caps.platform_rule(format!(
-                "(deny file-write* (subpath \"{}\"))",
-                seatbelt_escape(p)
+                "(deny file-write-unlink (literal \"{}\"))",
+                seatbelt_escape(parent)
             ))?;
-            // Nor its parents moved aside, up to the project root:
-            // `.devcroft/<name>` and `.devcroft`.
-            for parent in p.ancestors().skip(1).take(2) {
-                caps = caps.platform_rule(format!(
-                    "(deny file-write-unlink (literal \"{}\"))",
-                    seatbelt_escape(parent)
-                ))?;
-            }
         }
     }
     Ok(caps)

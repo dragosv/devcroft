@@ -33,6 +33,15 @@ impl OwnedDir {
     /// `<artifact_dir>/<sub>`, created as needed. The last two components of
     /// `artifact_dir` (`.devcroft/<name>`) and `sub` must be real directories.
     pub fn open(artifact_dir: &Path, sub: &str) -> io::Result<Self> {
+        Self::walk(artifact_dir, Some(sub))
+    }
+
+    /// `artifact_dir` itself, under the same rule.
+    pub fn artifact(artifact_dir: &Path) -> io::Result<Self> {
+        Self::walk(artifact_dir, None)
+    }
+
+    fn walk(artifact_dir: &Path, sub: Option<&str>) -> io::Result<Self> {
         let bad = || io::Error::other(format!("{}: not an artifact dir", artifact_dir.display()));
         let name = artifact_dir.file_name().ok_or_else(bad)?;
         let parent = artifact_dir.parent().ok_or_else(bad)?;
@@ -40,7 +49,7 @@ impl OwnedDir {
         let root = parent.parent().ok_or_else(bad)?;
         let mut dir: OwnedFd = std::fs::File::open(root)?.into();
         let mut at = root.to_path_buf();
-        for part in [top, name, OsStr::new(sub)] {
+        for part in [top, name].into_iter().chain(sub.map(OsStr::new)) {
             at.push(part);
             let part = c(part)?;
             let flags = libc::O_RDONLY | libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC;

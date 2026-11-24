@@ -99,7 +99,7 @@ holding the port.
 
 `devcroft ps` lists services indented under their sandbox; `devcroft
 status` reports them with pids. A service's own output goes to
-`.devcroft/<sandbox>/services.log`, not to `devcroft logs`, which shows
+`.devcroft/<sandbox>/run/services.log`, not to `devcroft logs`, which shows
 the keeper's.
 
 ## Two things this sample had to work around, both worth knowing

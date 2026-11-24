@@ -87,6 +87,17 @@ can). On macOS, Seatbelt denies writes under `.devcroft/<name>/` except `home/`
 (last-rule-wins, the same technique as `scope_exec_to_read_grants`). Ownership:
 in `separate` mode those files belong to the user and the sandbox identity has
 only read access. The closure and artifact objects are already read-only grants.
+*Implemented 2026-11-23, with one correction:* `home/` was not the only thing a
+sandbox writes there. process-compose binds its socket and writes its log, and
+an agent writes its report, so those moved to `run/`, writable too (`svc.sock`,
+so the path is a byte shorter than before and no project nears the OS limit
+because of it). macOS carves the two out of the denial (`require-not`) instead
+of allowing them after it, which would have granted them where the manifest
+does not grant the project. A sandbox named `swift` also keeps `cache/`, the
+swift provider's. `up`'s own writes there follow no link
+(`runtime::owned_dir`). Not covered: sibling directories under `.devcroft/`
+(another sandbox of the project, a derived flox environment), which remain
+writable with the project.
 `add-own-userland` gains the matching requirement for the runtime and
 namespace directory, so it holds even before this change ships.
 

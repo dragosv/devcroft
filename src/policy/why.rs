@@ -46,6 +46,7 @@ pub fn why_path(compiled: &CompiledPolicy, path: &str, op: Op) -> Explanation {
     }
     if matches!(op, Op::Write | Op::ReadWrite)
         && let Some(rule) = matching(&compiled.filesystem_write_deny, path)
+        && matching(&compiled.filesystem_write_except, path).is_none()
     {
         return Explanation {
             allowed: false,
@@ -213,6 +214,7 @@ pub fn why_resolved(
         filesystem_read: resolve(&compiled.filesystem_read),
         filesystem_deny: resolve(&compiled.filesystem_deny),
         filesystem_write_deny: resolve(&compiled.filesystem_write_deny),
+        filesystem_write_except: resolve(&compiled.filesystem_write_except),
         ..compiled.clone()
     };
     why_path(&resolved, &lexical(path).to_string_lossy(), op)

@@ -1,6 +1,6 @@
 [sandbox]
 # Short on purpose, like `devenvsvc`: the supervisor's socket lives at
-# `<project>/.devcroft/<name>/services.sock`, and the OS caps a unix
+# `<project>/.devcroft/<name>/run/svc.sock`, and the OS caps a unix
 # socket path at 103 bytes.
 name = "devboxsvc"
 

@@ -161,6 +161,15 @@ pub fn policy_artifact(project_root: &Path, sandbox_name: &str) -> PathBuf {
     artifact_dir(project_root, sandbox_name).join("policy.json")
 }
 
+/// What a sandbox writes in its artifact directory besides its home: the
+/// supervisor's socket and log, and an agent's report. The rest is read-only
+/// inside (`add-sandbox-identity` D4).
+pub const RUN_DIR: &str = "run";
+
+pub fn run_dir(project_root: &Path, sandbox_name: &str) -> PathBuf {
+    artifact_dir(project_root, sandbox_name).join(RUN_DIR)
+}
+
 /// What [`policy_artifact`] holds: the compiled policy, plus the host's home,
 /// which a `~` rule means and which the sandbox cannot learn — its `HOME` is
 /// its own. Without it, a path a `~` rule grants could not be told from one
@@ -196,14 +205,12 @@ impl PolicyArtifact {
 /// sits in the project.
 pub const EXE_LINK: &str = "devcroft";
 
-/// Point `<dir>/devcroft` at `exe`, replacing what is there.
-pub fn link_keeper_exe(dir: &Path, exe: &Path) -> std::io::Result<()> {
-    let link = dir.join(EXE_LINK);
-    match std::fs::remove_file(&link) {
-        Err(e) if e.kind() != std::io::ErrorKind::NotFound => return Err(e),
-        _ => {}
-    }
-    std::os::unix::fs::symlink(exe, link)
+/// Write the policy artifact and the link to `exe` beside it, for a sandbox
+/// whose project may hold anything at those paths by now.
+pub fn write_policy_artifact(dir: &Path, json: &str, exe: &Path) -> std::io::Result<()> {
+    let dir = crate::runtime::owned_dir::OwnedDir::artifact(dir)?;
+    dir.write("policy.json", json.as_bytes())?;
+    dir.link(EXE_LINK, exe)
 }
 
 /// A `.gitignore` of `*` in the artifact directory: it ignores everything
@@ -217,10 +224,12 @@ pub fn ignore_artifacts(project_root: &Path) -> std::io::Result<()> {
     let dir = project_root.join(ARTIFACT_DIR);
     std::fs::create_dir_all(&dir)?;
     let ignore = dir.join(".gitignore");
-    if !ignore.exists() {
-        std::fs::write(ignore, "*\n")?;
+    // `create_new` follows no link a sandbox left there.
+    match std::fs::File::create_new(ignore) {
+        Ok(mut f) => std::io::Write::write_all(&mut f, b"*\n"),
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => Ok(()),
+        Err(e) => Err(e),
     }
-    Ok(())
 }
 
 pub fn config_path(project_root: &Path, sandbox_name: &str) -> PathBuf {
@@ -228,7 +237,7 @@ pub fn config_path(project_root: &Path, sandbox_name: &str) -> PathBuf {
 }
 
 pub fn log_path(project_root: &Path, sandbox_name: &str) -> PathBuf {
-    artifact_dir(project_root, sandbox_name).join("services.log")
+    run_dir(project_root, sandbox_name).join("services.log")
 }
 
 /// How long process-compose waits for a service to exit on SIGTERM
@@ -482,13 +491,12 @@ pub fn render_config(services: &[ServiceDecl], shell: &Path) -> String {
 }
 
 pub fn socket_path(project_root: &Path, sandbox_name: &str) -> PathBuf {
-    artifact_dir(project_root, sandbox_name).join("services.sock")
+    run_dir(project_root, sandbox_name).join("svc.sock")
 }
 
 /// `sockaddr_un.sun_path` is 108 bytes on Linux and 104 on macOS, minus
 /// the NUL — a limit that bites here rather than theoretically, because
-/// [`socket_path`] is one directory deeper than it used to be
-/// (per-sandbox keying) and the project root is chosen by the user, not
+/// [`socket_path`] is per sandbox, and the project root is chosen by the user, not
 /// by devcroft. Over the limit, `process-compose` fails to bind with an
 /// error naming neither the path nor the reason, so `up` checks it
 /// host-side and fails at layer `config` instead.
@@ -950,10 +958,14 @@ pub fn write_config(
         )));
     }
     let config_path = config_path(project_root, sandbox_name);
-    if let Some(dir) = config_path.parent() {
-        std::fs::create_dir_all(dir)?;
-    }
-    std::fs::write(&config_path, supervisor().render_config(services, shell))?;
+    use crate::runtime::owned_dir::OwnedDir;
+    let dir = artifact_dir(project_root, sandbox_name);
+    OwnedDir::open(&dir, RUN_DIR)?;
+    let name = config_path.file_name().and_then(|n| n.to_str());
+    OwnedDir::artifact(&dir)?.write(
+        name.expect("a fixed file name"),
+        supervisor().render_config(services, shell).as_bytes(),
+    )?;
     Ok(())
 }
 

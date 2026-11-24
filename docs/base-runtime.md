@@ -132,9 +132,10 @@ view, a fleet agent's included, holds a link for each at `/bin` and
 outside native mode, an exec of such a path is redirected. The exceptions on
 both are in [known-gaps.md](known-gaps.md).
 
-A process inside cannot modify the directories this rests on
-(`.devcroft/<name>/runtime` and `ns`, and `redirect` on macOS): they are
-read-only mounts on Linux and a write denial on macOS, listed as
-`filesystem.write_deny` by `policy --render`. On Linux a process can still
-move their parent directory aside; that takes the runtime off its own `PATH`,
-and the absolute paths keep their targets.
+A process inside cannot modify what this rests on: `.devcroft/<name>/` is
+read-only to it, except `home` (its `HOME`) and `run` (the service
+supervisor's socket and log, an agent's report). Read-only mounts on Linux, a
+write denial on macOS, listed as `filesystem.write_deny` by `policy --render`.
+On Linux a process can still move `.devcroft` itself aside, since it sits in
+the project: that takes the runtime off its own `PATH`, and the absolute paths
+keep their targets. macOS refuses the move.

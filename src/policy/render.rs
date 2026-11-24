@@ -20,6 +20,11 @@ pub fn render(compiled: &CompiledPolicy) -> String {
             "filesystem.write_deny",
             &compiled.filesystem_write_deny,
         );
+        render_section(
+            &mut out,
+            "filesystem.write_deny, except",
+            &compiled.filesystem_write_except,
+        );
     }
     writeln!(out).unwrap();
     writeln!(out, "network.block: {}", compiled.network_block).unwrap();

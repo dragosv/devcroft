@@ -34,7 +34,7 @@ fn devbox_available() -> bool {
 
 /// A fresh project root, short and canonical, for the reason
 /// `tests/common/mod.rs`'s `fixture_root` gives: the supervisor's socket at
-/// `<root>/.devcroft/<name>/services.sock` overflows 103 bytes under macOS's
+/// `<root>/.devcroft/<name>/run/svc.sock` overflows 103 bytes under macOS's
 /// `$TMPDIR`, and `up` refuses — which is what both services tests here did
 /// on a Mac until they moved off `std::env::temp_dir()`.
 fn short_root(tag: &str) -> PathBuf {

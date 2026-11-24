@@ -32,7 +32,7 @@ use std::time::{Duration, Instant};
 /// A project root short enough for the service supervisor's unix socket.
 ///
 /// `std::env::temp_dir()` is `/var/folders/<two>/<long>/T/` on macOS, and
-/// the supervisor's socket lives at `<root>/.devcroft/<name>/services.sock`
+/// the supervisor's socket lives at `<root>/.devcroft/<name>/run/svc.sock`
 /// — which overflows `sun_path`'s 103 usable bytes before any of these
 /// tests get to assert anything. devcroft catches that itself and fails
 /// with a clear `UpError::Config`, so the tests were failing on the

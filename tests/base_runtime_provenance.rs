@@ -263,10 +263,9 @@ fn the_base_runtime_record_matches_what_runs_inside() {
         // checked against the sandbox, so the record can be compared with
         // itself. Not in native mode, nor on macOS with a host shell, where
         // the host's files are granted and the redirect does not apply.
-        if !record.entries.iter().any(|e| match e.provenance.kind() {
-            "native" => true,
-            "host" => cfg!(target_os = "macos"),
-            _ => false,
+        if !record.entries.iter().any(|e| {
+            let kind = e.provenance.kind();
+            kind == "native" || (kind == "host" && cfg!(target_os = "macos"))
         }) {
             let file = |p: &devcroft::runtime::provenance::Provenance| {
                 p.path().map(|p| {

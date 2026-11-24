@@ -71,8 +71,10 @@ not yet implement `separate`, `up` SHALL state the mode it uses instead.
 In both modes, the sandbox identity SHALL NOT be able to modify: the provider's
 closure and artifact-store objects, devcroft's runtime, the namespace
 directory, the macOS redirect library, the compiled policy and other artifacts
-under `<project>/.devcroft/<name>/` except the sandbox `HOME`. It SHALL be able
-to write the workspace and the sandbox `HOME`. In `separate` mode this SHALL
+under `<project>/.devcroft/<name>/` except the sandbox `HOME` and the `run`
+directory, which holds only what the sandbox itself produces: the service
+supervisor's socket and log, and an agent's report. It SHALL be able to write
+the workspace, the sandbox `HOME` and `run`. In `separate` mode this SHALL
 hold by ownership as well as by policy.
 
 #### Scenario: The runtime cannot be replaced from inside

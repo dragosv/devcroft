@@ -75,7 +75,7 @@ development, killing process-compose alone left its child running and
 holding the port.
 
 `status` and `ps` report per-service state by querying that API over
-its unix socket (`.devcroft/services.sock`) — which is why
+its unix socket (`.devcroft/<sandbox>/run/svc.sock`) — which is why
 process-compose is not started with `--no-server`, even though that would
 also avoid the default TCP bind:
 
@@ -87,7 +87,7 @@ service api: running pid=57009
 Immediately after `up` that line reads `not started` for about a second,
 until process-compose has bound its socket. It is a race in the report,
 not in the service. What `devcroft logs` shows is the *keeper's* log; a
-service's own output goes to `.devcroft/<sandbox>/services.log`.
+service's own output goes to `.devcroft/<sandbox>/run/services.log`.
 
 Two things you may hit:
 

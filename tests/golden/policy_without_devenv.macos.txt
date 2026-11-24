@@ -71,6 +71,7 @@ CompiledPolicy {
         },
     ],
     filesystem_write_deny: [],
+    filesystem_write_except: [],
     network_block: true,
     network_allow_domain: [
         AnnotatedValue {

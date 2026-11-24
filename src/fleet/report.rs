@@ -7,10 +7,10 @@
 //! the two are shown side by side, never merged: an agent that says `done`
 //! and exits 1 shows both.
 //!
-//! **Beside the agent's home.** `HOME` inside a sandbox is
+//! **Near the agent's home.** `HOME` inside a sandbox is
 //! `<project>/.devcroft/<x>/home`, which devcroft sets and nothing else
 //! does (the rule `why` uses to find its own policy), so the report is
-//! `.devcroft/<x>/report.json`: in the workspace, already writable, no
+//! `.devcroft/<x>/run/report.json`: in the workspace, already writable, no
 //! socket and no grant. It survives the reporting process, and goes with
 //! the clone.
 //!
@@ -26,7 +26,7 @@ use std::path::{Path, PathBuf};
 /// with what it reports.
 pub const TASK_ENV: &str = "DEVCROFT_TASK";
 
-/// The file's name, beside the agent's home.
+/// The file's name, in `services::RUN_DIR` beside the agent's home.
 pub const FILE: &str = "report.json";
 
 /// The most of a report the host reads. A larger one is reported as
@@ -78,7 +78,7 @@ impl std::fmt::Display for ClaimOutcome {
 
 /// Agent `id`'s report, as the host finds it in the agent's workspace.
 pub fn path(workspace: &Path, id: &str) -> PathBuf {
-    crate::services::artifact_dir(workspace, id).join(FILE)
+    crate::services::run_dir(workspace, id).join(FILE)
 }
 
 /// The report at `path`: `Ok(None)` when there is none, `Err` with why when

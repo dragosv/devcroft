@@ -493,6 +493,15 @@ pub fn construct_view(
         .map_err(|e| ctx(e, "recreating merged-/usr symlinks", new_root))?;
     write_namespace(new_root, &runtime.entries)?;
     // After the workspace bind, which would otherwise cover them.
+    // Writable first, each as a mount of its own, which the recursive bind
+    // of the directory around it then carries along. One that is not in the
+    // view was not granted.
+    for path in &runtime.writable {
+        let target = new_root.join(path.strip_prefix("/").unwrap_or(path));
+        if target.is_dir() {
+            bind_mount(&target, &target, true).map_err(|e| ctx(e, "keeping writable", path))?;
+        }
+    }
     for path in &runtime.read_only {
         pin_read_only(new_root, path)?;
     }
@@ -1016,11 +1025,12 @@ fn write_namespace(
     Ok(())
 }
 
-/// Make `path`, already in the view through some grant, read-only there.
+/// Make `path`, already in the view through some grant, read-only there,
+/// and leave the mounts inside it as they are.
 #[cfg(target_os = "linux")]
 fn pin_read_only(new_root: &std::path::Path, path: &std::path::Path) -> io::Result<()> {
     let target = new_root.join(path.strip_prefix("/").unwrap_or(path));
-    bind_mount(&target, &target, false)
+    bind_mount(&target, &target, true)
         .and_then(|()| remount_readonly(&target, false))
         .map_err(|e| ctx(e, "making read-only", path))
 }

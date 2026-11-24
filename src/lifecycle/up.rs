@@ -1068,6 +1068,10 @@ fn up_process(
     // The namespace directory exists before the plan resolves its grant and
     // is filled below, from the `PATH` and grants that plan yields.
     crate::runtime::owned_dir::OwnedDir::open(&artifact_dir, crate::runtime::namespace::DIR)?;
+    // What the sandbox itself writes there; the rest is read-only inside.
+    for dir in ["home", crate::services::RUN_DIR] {
+        crate::runtime::owned_dir::OwnedDir::open(&artifact_dir, dir)?;
+    }
     // Native mode gets no redirect (`add-macos-exec-redirect` 2.5).
     let redirect_lib = (crate::runtime::redirect::available() && provider.native().is_none())
         .then(|| crate::runtime::redirect::materialize(&artifact_dir))
@@ -1159,16 +1163,8 @@ fn up_process(
         let roots: Vec<PathBuf> = mount_grants.iter().map(|g| g.path.clone()).collect();
         crate::runtime::namespace::view_entries(&namespace, &roots)
     };
-    let runtime_view = crate::runtime::namespace::RuntimeView::new(
-        &view_entries,
-        &runtime_dir,
-        &exe,
-        // Canonical, as the grants the view binds are.
-        plan.filesystem_write_deny
-            .iter()
-            .map(|p| Path::new(p).canonicalize())
-            .collect::<io::Result<_>>()?,
-    );
+    let runtime_view =
+        crate::runtime::namespace::RuntimeView::new(&view_entries, &runtime_dir, &exe, &plan);
 
     // Where shell and userland resolve (`add-runtime-provenance`), from the
     // same grants, view entries and `PATH` the sandbox gets — computed, not
@@ -1271,16 +1267,9 @@ fn up_process(
     // whose policy cannot be inspected from inside it does not meet the
     // invariant it is started under.
     crate::services::ignore_artifacts(project_root)?;
-    let policy_artifact = crate::services::policy_artifact(project_root, &manifest.sandbox.name);
-    if let Some(dir) = policy_artifact.parent() {
-        std::fs::create_dir_all(dir)?;
-    }
     let artifact = crate::services::PolicyArtifact::new(compiled.clone()).to_json();
-    std::fs::write(&policy_artifact, &artifact)?;
     // Beside it, the binary the denial hook runs (`services::EXE_LINK`).
-    if let Some(dir) = policy_artifact.parent() {
-        crate::services::link_keeper_exe(dir, &keeper_exe()?)?;
-    }
+    crate::services::write_policy_artifact(&artifact_dir, &artifact, &keeper_exe()?)?;
     // After the artifact, so a record naming a digest always has the file
     // it names; an `up` that fails between the two leaves the old digest,
     // which no longer matches, and the host falls back to reconstructing.
@@ -1670,7 +1659,7 @@ fn up_process(
     // `wait_until_responsive` returns as soon as the keeper answers a
     // `Query`, which it does immediately after *spawning* the supervisor
     // — not after the supervisor has bound anything. Measured: `up`
-    // returned 17 ms before `services.sock` existed, so a `status` run
+    // returned 17 ms before `svc.sock` existed, so a `status` run
     // straight after `up` reported `supervisor unreachable` and every
     // service as `not started`, three times out of three, while the
     // services were in fact starting normally.

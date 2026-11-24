@@ -47,6 +47,8 @@ pub struct RuntimeView {
     pub entries: Vec<(PathBuf, PathBuf)>,
     /// Directories remounted read-only over whatever grant covers them.
     pub read_only: Vec<PathBuf>,
+    /// Directories inside those that stay as their grant made them.
+    pub writable: Vec<PathBuf>,
 }
 
 /// Where a view puts each target of `namespace`: `/bin/<name>` and
@@ -80,8 +82,15 @@ impl RuntimeView {
         entries: &[(PathBuf, PathBuf)],
         runtime_dir: &Path,
         exe: &Path,
-        read_only: Vec<PathBuf>,
+        plan: &crate::policy::CapabilityPlan,
     ) -> Self {
+        // Canonical, as the grants the view binds are.
+        let canonical = |paths: &[String]| -> Vec<PathBuf> {
+            paths
+                .iter()
+                .map(|p| Path::new(p).canonicalize().unwrap_or_else(|_| p.into()))
+                .collect()
+        };
         let exe = exe.canonicalize().unwrap_or_else(|_| exe.to_path_buf());
         Self {
             entries: entries
@@ -94,7 +103,8 @@ impl RuntimeView {
                     )
                 })
                 .collect(),
-            read_only,
+            read_only: canonical(&plan.filesystem_write_deny),
+            writable: canonical(&plan.filesystem_write_except),
         }
     }
 
@@ -107,6 +117,7 @@ impl RuntimeView {
                 .map(|(at, target)| (at.clone(), f(target)))
                 .collect(),
             read_only: self.read_only.iter().map(|p| f(p)).collect(),
+            writable: self.writable.iter().map(|p| f(p)).collect(),
         }
     }
 }
@@ -169,11 +180,14 @@ mod tests {
             &ns,
             &[PathBuf::from("/usr/lib"), PathBuf::from("/usr/bin/dash")],
         );
+        let manifest = "[sandbox]\nname = \"n\"\n[env]\nprovider = \"nix\"\n";
+        let plan =
+            crate::policy::compile(&crate::config::parse(manifest).unwrap().0).to_capability_plan();
         let view = RuntimeView::new(
             &entries,
             Path::new("/p/rt"),
             Path::new("/no/devcroft"),
-            vec![],
+            &plan,
         );
         let target = |name: &str| {
             view.entries

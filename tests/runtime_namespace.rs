@@ -196,19 +196,20 @@ fn the_runtime_cannot_be_modified_from_inside() {
     for (d, saved) in dirs.iter().zip(&saved) {
         assert_eq!(&before(d), saved, "{d}");
     }
-    // Moving a parent aside (Linux allows it) changes no absolute path.
+    // Moving a parent aside changes no absolute path: macOS refuses it, and
+    // Linux allows it for `.devcroft` alone, which is in the project.
     let out = s.sh(&format!(
-        "mv {a} {root}/.devcroft/away && mkdir -p {a}/ns {a}/runtime \
-         && printf '#!/bin/sh\\necho planted\\n' > {a}/runtime/ls; \
+        "cd {root}; mv .devcroft away; mkdir -p {a}/runtime; \
+         printf '#!/bin/sh\\necho planted\\n' > {a}/runtime/ls; \
          /bin/ls --version; echo rc=$?",
         root = s.root.display()
     ));
     println!("parent moved: {out}");
     assert!(out.contains("ls (uutils coreutils)"), "{out}");
-    let away = s.root.join(".devcroft/away");
+    let away = s.root.join("away");
     if away.exists() {
-        let _ = std::fs::remove_dir_all(&art);
-        std::fs::rename(&away, &art).unwrap();
+        let _ = std::fs::remove_dir_all(s.root.join(".devcroft"));
+        std::fs::rename(&away, s.root.join(".devcroft")).unwrap();
     }
     // The project around it stays writable, and the denial is shown.
     assert!(s.sh("echo x > here && echo ok").contains("ok"));
@@ -217,15 +218,27 @@ fn the_runtime_cannot_be_modified_from_inside() {
         .split("filesystem.write_deny:")
         .nth(1)
         .unwrap_or_else(|| panic!("{render}"));
-    for d in dirs {
-        assert!(denied.contains(&format!("/{d} ")), "{d}: {render}");
+    assert!(denied.contains(&format!("{a} ")), "{render}");
+    // Everything else `up` wrote there, and nothing new beside it.
+    for attempt in [
+        format!("echo x >> {a}/policy.json"),
+        format!("rm -f {a}/policy.json"),
+        format!("ln -sf /tmp/x {a}/devcroft"),
+        format!("echo x > {a}/services.yaml"),
+        format!("mkdir {a}/new"),
+        format!("mv {a} {a}.away"),
+    ] {
+        let out = s.sh(&format!("{attempt}; echo rc=$?"));
+        assert!(out.contains("rc=1"), "{attempt}: {out}");
     }
+    // What the sandbox itself writes there.
+    let out = s.sh(&format!(
+        "echo x > \"$HOME/f\" && mkdir \"$HOME/d\" && echo x > {a}/run/f && echo wrote"
+    ));
+    assert!(out.contains("wrote"), "{out}");
     let why = text(&dc(
         &s.root,
         &["why", "--path", &format!("{a}/ns/ls"), "--op", "write"],
     ));
-    assert!(
-        why.contains("DENIED") && why.contains("runtime:gen-1"),
-        "{why}"
-    );
+    assert!(why.contains("DENIED") && why.contains("baseline"), "{why}");
 }

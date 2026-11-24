@@ -179,10 +179,14 @@ pub fn prepare(
     crate::runtime::materialize(&artifact_dir, exe).map_err(io)?;
     crate::runtime::owned_dir::OwnedDir::open(&artifact_dir, crate::runtime::namespace::DIR)
         .map_err(io)?;
+    for dir in ["home", crate::services::RUN_DIR] {
+        crate::runtime::owned_dir::OwnedDir::open(&artifact_dir, dir).map_err(io)?;
+    }
     compiled = compiled.with_runtime_dirs(&artifact_dir, crate::runtime::GENERATION, false);
     if !view {
         // Read-only is a mount of the view's; without one, nothing to claim.
         compiled.filesystem_write_deny.clear();
+        compiled.filesystem_write_except.clear();
     }
     let plan = compiled.to_capability_plan();
     let grants = plan
@@ -205,12 +209,7 @@ pub fn prepare(
     )
     .map_err(io)?;
     let entries = crate::runtime::namespace::view_entries(&namespace, &roots);
-    let runtime = crate::runtime::namespace::RuntimeView::new(
-        &entries,
-        &runtime_dir,
-        exe,
-        plan.filesystem_write_deny.iter().map(Into::into).collect(),
-    );
+    let runtime = crate::runtime::namespace::RuntimeView::new(&entries, &runtime_dir, exe, &plan);
     // Where shell and userland resolve for this agent
     // (`add-runtime-provenance` 1.4), with `up`'s function, from the
     // agent's own grants.
