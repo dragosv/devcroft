@@ -43,7 +43,8 @@ pub fn resolve_shell(
 pub fn runtime_shell_notice() -> String {
     format!(
         "this environment has no shell, so `sh` is devcroft's own ({} {}): signal traps, `$!`, \
-         `wait PID` and an `IFS` other than the default do not work in it as in another shell \
+         `wait PID`, an `IFS` other than the default and `printf` with unused arguments do not \
+         work in it as in another shell \
          (docs/known-gaps.md); add a shell to the environment to use that instead",
         super::sh::UPSTREAM,
         super::sh::VERSION

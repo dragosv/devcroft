@@ -148,7 +148,11 @@ fn inherited_fds() -> impl Iterator<Item = i32> {
 async fn run(argv0: &str, inv: Invocation) -> u8 {
     use std::io::IsTerminal;
     // Before anything here opens a descriptor of its own.
-    let fds = inherited_fds()
+    // Standard input too, as a file: brush's own handle for it reads ahead,
+    // so a `read` would take the rest of a script that comes from there.
+    let fds = [0]
+        .into_iter()
+        .chain(inherited_fds())
         .filter_map(|fd| brush_core::sys::fd::try_get_file_for_open_fd(fd).map(|f| (fd, f)))
         .collect();
     let script = inv.command.is_none() && !inv.from_stdin && !inv.operands.is_empty();

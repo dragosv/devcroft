@@ -137,6 +137,11 @@ fn standard_input_is_read_a_complete_command_at_a_time() {
     let s = Shell::new("stdin");
     let o = s.stdin("if true\nthen echo multi\nfi\ncat <<X\nhere $((1+1))\nX\necho a \\\n b\n");
     assert_eq!(out(&o), "multi\nhere 2\na b\n", "{o:?}");
+    let o =
+        s.stdin("echo a\nread l\nx y\necho \"[$l]\"\nwhile read m; do echo \"<$m>\"; done\n1\n2\n");
+    assert_eq!(out(&o), "a\n[x y]\n<1>\n<2>\n", "{o:?}");
+    let o = s.c("printf 'p\\nq\\n' | { read x; echo $x; cat; }; echo done");
+    assert_eq!(out(&o), "p\nq\ndone\n", "{o:?}");
     // What a command reads is not swallowed by the shell.
     assert_eq!(out(&s.stdin("cat\nrest\n")), "rest\n");
 }

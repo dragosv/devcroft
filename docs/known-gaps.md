@@ -571,9 +571,9 @@ Linux (`spikes/brush-runtime/qualify.py`):
 | `$!` | empty, so `wait $!` and `kill $!` do nothing useful |
 | `wait PID` | status 99, not implemented |
 | `kill PID`, `kill -0 PID` | refused; `kill -TERM PID` works |
-| an `IFS` that is not whitespace | **also splits literal words**: with `IFS=:`, `echo a:b` prints `a b`; `printf a:b` then never ends; a leading separator loses its empty field |
+| an `IFS` that is not whitespace | **also splits literal words**: with `IFS=:`, `echo a:b` prints `a b`; empty fields are lost |
+| `printf` with arguments its format does not use (`printf a b`) | **never ends** |
 | `x="export Z=9"; $x` | does not set `Z` |
-| `read` in a script piped to `sh` | consumes the rest of the script |
 
 Add a shell to the environment to use that instead (pixi: `pixi add bash`).
 `#!/bin/bash` fails where the environment has no bash; nothing else answers

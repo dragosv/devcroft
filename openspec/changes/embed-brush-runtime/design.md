@@ -15,7 +15,7 @@ What environments supply, measured 2026-11-22 on macOS inside real sandboxes:
 | nix | `bash-5.3p15` | environment `PATH` (stdenv) |
 | devbox | `bash-5.3p15` / `bash-5.3p20` | environment `PATH` (stdenv), with and without a toolchain |
 | flox | `bash-5.3p9` / `bash-interactive-5.3p9` | closure requisites (the environment `PATH` has none) |
-| devenv | `bash-interactive-5.3p15` | recorded in earlier sandbox metadata; not measured that day |
+| devenv | `bash-interactive-5.3p15` | environment `PATH`, first entry (measured 2026-11-24, Linux aarch64; macOS not) |
 | mise, pixi | the tools' own `sh` if any, else **the host's** | provider fallback (`mise.rs:987–1012`, `pixi.rs:790–815`) |
 
 So under rule B the runtime shell is needed at `/bin/sh` only for mise and pixi
@@ -133,12 +133,15 @@ every `go run` case pass, and `go build` ignores it. It does not reach
 
 ## Found while qualifying (2026-11-24), beyond BR-01 to BR-10
 
-In stock `brush-shell` 0.4.0 too, where it was checked: an `IFS` that is not
-whitespace splits literal words (`IFS=:; echo a:b` prints `a b`, and
-`printf a:b` in a substitution never ends); a leading `IFS` separator loses
-its empty field; an `EXIT` trap in a subshell does not run. For the owner to
-file with the others. **Owner, 2026-11-24:** the `IFS` defect is accepted and published; it does
-not hold slice A back, and devcroft keeps no fork.
+All in stock `brush-shell` 0.4.0 too: an `IFS` that is not whitespace splits
+literal words (`IFS=:; echo a:b` prints `a b`); its empty fields are lost;
+`printf` with arguments its format does not use never ends (`printf a b`; first
+seen through `IFS`, but it needs none); an `EXIT` trap in a subshell does not
+run; a script on standard input is run a line at a time, so a multi-line `if`
+fails (devcroft's adaptor reads complete commands, and gives brush an
+unbuffered descriptor 0 so `read` does not take the rest). For the owner to
+file with the others (`new/brush-issues-2026-11-24.md`). **Owner, 2026-11-24:** the `IFS` and `printf` defects are accepted and
+published; they do not hold slice A back, and devcroft keeps no fork.
 
 ## Risks / Trade-offs
 

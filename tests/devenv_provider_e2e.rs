@@ -521,8 +521,8 @@ fn a_compile_inside_the_sandbox_uses_the_closures_toolchain_and_not_the_hosts() 
 fn declared_processes_run_as_supervised_services() {
     let Some(sandbox) = Sandbox::with_processes(
         "services",
-        r#"  processes.slow.exec = "sleep 600";
-  processes.alsoslow = { exec = "sleep 600"; after = [ "devenv:processes:slow" ]; };"#,
+        r#"  processes.slow.exec = "sleep 601";
+  processes.alsoslow = { exec = "sleep 601"; after = [ "devenv:processes:slow" ]; };"#,
     ) else {
         return;
     };
@@ -540,9 +540,10 @@ fn declared_processes_run_as_supervised_services() {
 
     assert!(sandbox.run(&["down"]).status.success());
     // The `services` spec's own wording: verified by observing process
-    // absence rather than by a stop command's exit status.
+    // absence rather than by a stop command's exit status. The search is
+    // host-wide, so the duration is this test's alone.
     let survivors = Command::new("pgrep")
-        .args(["-f", "sleep 600"])
+        .args(["-f", "sleep 601"])
         .output()
         .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
         .unwrap_or_default();
