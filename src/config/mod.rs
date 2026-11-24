@@ -28,6 +28,23 @@ pub struct Manifest {
     pub hooks: Hooks,
     pub provisioning: Provisioning,
     pub runtime: Runtime,
+    pub identity: Identity,
+}
+
+/// `[identity]`: who the sandbox's processes are inside
+/// (`add-sandbox-identity`). Which host ids they stand for is never the
+/// repository's to say, so `mode` accepts only `shared`, the user's own.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Identity {
+    pub user: String,
+}
+
+/// `[identity]` as written.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+struct RawIdentity {
+    user: Option<String>,
+    mode: Option<String>,
 }
 
 /// `[runtime]`: which devcroft runtime generation the project requires
@@ -273,6 +290,7 @@ struct RawManifest {
     hooks: Hooks,
     provisioning: Provisioning,
     runtime: RawRuntime,
+    identity: RawIdentity,
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
@@ -571,6 +589,34 @@ pub fn parse(text: &str) -> Result<(Manifest, Vec<Warning>), ConfigError> {
         }
     };
 
+    let user = raw
+        .identity
+        .user
+        .unwrap_or_else(|| crate::identity::DEFAULT_USER.to_owned());
+    if !crate::identity::valid_user(&user) {
+        return Err(ConfigError::Parse(format!(
+            "identity.user: {user:?} is not a name a sandbox's user can have (lowercase \
+             letters, digits, `_` and `-`, not starting with a digit or `-`, at most 32; \
+             not `root` or `nobody`)"
+        )));
+    }
+    match raw.identity.mode.as_deref() {
+        None | Some("shared") => {}
+        Some("separate") => {
+            return Err(ConfigError::Parse(
+                "identity.mode: `separate` is the user's choice, never a manifest's: it can \
+                 leave files in the project that the user cannot edit; and this devcroft does \
+                 not implement it yet"
+                    .to_owned(),
+            ));
+        }
+        Some(other) => {
+            return Err(ConfigError::Parse(format!(
+                "identity.mode: {other:?} is not a mode; a manifest may say only `shared`"
+            )));
+        }
+    }
+
     validate::check_filesystem(&raw.filesystem)?;
     validate::check_env(&raw.env)?;
     validate::check_host_tool_grants(&raw.filesystem, &raw.env.provider)?;
@@ -594,6 +640,7 @@ pub fn parse(text: &str) -> Result<(Manifest, Vec<Warning>), ConfigError> {
             hooks: raw.hooks,
             provisioning: raw.provisioning,
             runtime: Runtime { generation },
+            identity: Identity { user },
         },
         warnings,
     ))
@@ -631,6 +678,26 @@ mod tests {
         ] {
             parse(&manifest(provider, "read", path))
                 .unwrap_or_else(|e| panic!("{provider} {path}: {e}"));
+        }
+    }
+
+    #[test]
+    fn identity_parses_and_is_strictly_checked() {
+        let base = "[sandbox]\nname = \"p\"\n";
+        assert_eq!(parse(base).unwrap().0.identity.user, "devcroft");
+        let parsed = parse(&format!(
+            "{base}[identity]\nuser = \"dev\"\nmode = \"shared\"\n"
+        ));
+        assert_eq!(parsed.unwrap().0.identity.user, "dev");
+        for (line, key) in [
+            ("user = \"root\"", "identity.user"),
+            ("user = \"a:b\"", "identity.user"),
+            ("mode = \"separate\"", "identity.mode"),
+            ("mode = \"x\"", "identity.mode"),
+            ("uid = 501", "identity.uid"),
+        ] {
+            let err = parse(&format!("{base}[identity]\n{line}\n")).unwrap_err();
+            assert!(err.to_string().contains(key), "{line}: {err}");
         }
     }
 

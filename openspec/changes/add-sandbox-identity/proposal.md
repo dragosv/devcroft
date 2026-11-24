@@ -33,11 +33,12 @@ as an explicit alternative. Two further facts make it pressing now:
   `getpwuid`, `id`, `$USER`. No workload process — session, hook, service,
   agent — ever runs as uid 0 inside.
 - **Two modes, selected explicitly**:
-  - `separate` — **the default**: the dedicated identity maps to a host uid
+  - `separate` — **selected by the user**: the dedicated identity maps to a host uid
     different from the user's, one per sandbox. Linux: a user namespace mapped
     into the user's delegated subordinate range. macOS: a dedicated local
     account per sandbox, prepared once by a privileged devcroft helper.
-  - `shared`: the dedicated identity maps to the user's own host uid (Linux,
+  - `shared` — **the default** (owner, 2026-11-24, after the measurement in
+    design.md): the dedicated identity maps to the user's own host uid (Linux,
     user namespace); on macOS only the host user is available, and that is
     stated.
 - **No silent fallback.** When `separate` is selected and its preconditions are
@@ -49,7 +50,8 @@ as an explicit alternative. Two further facts make it pressing now:
   and the policy artifacts are not writable by it, in either mode; the
   workspace and the sandbox `HOME` are.
 - **Workspace access in `separate` mode** through an explicit, removable grant
-  (ACLs, with inheritance so the user keeps editing what the sandbox creates);
+  (ACLs; on Linux they do not cover what the sandbox creates with an explicit
+  mode, which is published);
   never `chown -R`, never world-writable. Fleet clones are created owned by the
   sandbox identity.
 - **The control plane stays the user's**: the CLI, host-side provisioning, the
@@ -57,10 +59,8 @@ as an explicit alternative. Two further facts make it pressing now:
   needs as inherited descriptors.
 - `status` and `policy --render` show the internal identity, the host identity
   and the mode.
-- **BREAKING** (on platforms where `separate` ships): a host without the
-  preconditions refuses `up` by default until prepared or switched to
-  `shared`; files the sandbox creates in `separate` mode are owned by the
-  sandbox uid, with an ACL for the user.
+- **BREAKING** on Linux: a session is `devcroft` (uid 1000), not the user's
+  name and uid; files in the workspace still belong to the user.
 
 ## Capabilities
 

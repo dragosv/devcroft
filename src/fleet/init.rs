@@ -34,7 +34,7 @@
 //! namespace hides nothing (the inherited procfs still lists the host).
 //! Once its setup is done it **returns to the user's own uid**, in a nested
 //! user namespace mapping that uid onto its 0
-//! (`fleet::mount::return_to_host_identity`). Only uid 0 keeps capabilities
+//! (`fleet::mount::become_sandbox_user`). Only uid 0 keeps capabilities
 //! across `execve`, which the setup needs, but a command that saw itself as
 //! root broke programs that refuse root, `mariadbd` among them. It still
 //! starts the command with `SECBIT_NOROOT`, which no longer matters once the
@@ -657,7 +657,12 @@ fn setup(signals: &libc::sigset_t) -> io::Result<Started> {
 
     // Last thing that needs uid 0's map writes, and before Landlock, which
     // would refuse them. From here on PID 1 and the command are the user.
-    super::mount::return_to_host_identity().map_err(|e| step("return to the host's uid", e))?;
+    let id = spec
+        .view
+        .as_ref()
+        .and_then(|v| v.identity.as_ref())
+        .map(|i| (i.uid, i.gid));
+    super::mount::become_sandbox_user(id).map_err(|e| step("become the sandbox's user", e))?;
 
     // Resolved now, inside the view: the rules must bind to the inodes the
     // agent will see, its private /tmp and devpts included.
@@ -690,7 +695,7 @@ fn setup(signals: &libc::sigset_t) -> io::Result<Started> {
     // SAFETY: `prctl` only, in the forked child of this single-threaded
     // process. With NOROOT set, uid 0 gains no capabilities across the
     // exec, so the command starts with none; LOCKED keeps it from undoing
-    // that. Since `return_to_host_identity` the uid is 0 here only when
+    // that. Since `become_sandbox_user` the uid is 0 here only when
     // devcroft itself runs as root; for anyone else the exec already drops
     // them.
     unsafe {

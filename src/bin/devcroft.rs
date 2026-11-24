@@ -3067,6 +3067,14 @@ fn print_status(s: &devcroft::lifecycle::SandboxStatus, provider: &str) {
         Some(backend) => println!("isolation: hardened ({backend})"),
         None => println!("isolation: unknown (no successful `up` yet)"),
     }
+    match (&s.sandbox_identity, &s.isolation) {
+        (Some(id), _) => println!("identity: {id}"),
+        (None, Some(_)) => println!(
+            "identity: legacy (the user's uid and name; `devcroft up --recreate` starts the \
+             sandbox with its own)"
+        ),
+        (None, None) => {}
+    }
     // `add-own-userland`: the generation the keeper started with, beside
     // the installed binary's. A live keeper keeps its own until
     // `up --recreate`, so a difference is worth one line saying so.
@@ -4151,6 +4159,10 @@ fn compile_with_provider_grants(
     };
     let compiled = match &meta.identity {
         Some(identity) => compiled.with_identity(&identity.write),
+        None => compiled,
+    };
+    let compiled = match &meta.sandbox_identity {
+        Some(id) => compiled.with_sandbox_identity(id.clone()),
         None => compiled,
     };
     // Reporting, as `up` recorded it (`add-runtime-provenance`).

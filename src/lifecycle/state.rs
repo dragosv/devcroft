@@ -412,6 +412,10 @@ pub struct Meta {
     /// recorded so `policy --render` shows the rules it needed.
     #[serde(default)]
     pub identity: Option<crate::fleet::mount::Identity>,
+    /// Who the sandbox runs as. `None` for one started before it had an
+    /// identity of its own (`status` says legacy), and before `up` decides.
+    #[serde(default)]
+    pub sandbox_identity: Option<crate::identity::SandboxIdentity>,
     /// The absolute POSIX shell this `up` resolved out of the sandbox's
     /// own closure (`shell::resolve`).
     ///
@@ -1044,6 +1048,7 @@ mod tests {
             activation_provisioned: false,
             post_create_pending: false,
             identity: None,
+            sandbox_identity: None,
             shell: None,
             trust_store: Vec::new(),
             own_procfs: false,
@@ -1082,6 +1087,7 @@ mod tests {
             activation_provisioned: false,
             post_create_pending: false,
             identity: None,
+            sandbox_identity: None,
             shell: None,
             trust_store: Vec::new(),
             own_procfs: false,

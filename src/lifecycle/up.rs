@@ -598,6 +598,7 @@ fn up_locked(
             post_create_pending,
             // Decided by `up_process`, which records it.
             identity: None,
+            sandbox_identity: None,
             shell: Some(shell.path.to_string_lossy().into_owned()),
             trust_store: trust_store.grants.clone(),
             // Decided by `up_process`, which records it.
@@ -1084,19 +1085,32 @@ fn up_process(
 
     // Who the sandbox's user is, in its view (`fleet::mount::Identity`):
     // only where there is a view, and only for the paths no grant covers.
+    let sandbox_identity = crate::identity::SandboxIdentity::shared(&manifest.identity.user);
+    let compiled = compiled.with_sandbox_identity(sandbox_identity.clone());
     let identity = (cfg!(target_os = "linux") && mount_supported).then(|| {
-        sandbox_identity(
+        crate::fleet::mount::Identity::new(
+            &sandbox_identity,
             &compiled,
-            shell,
-            &crate::services::artifact_dir(project_root, &manifest.sandbox.name).join("home"),
+            &shell.path,
+            &artifact_dir.join("home"),
+            // An `up` sandbox sees the host's name (no UTS namespace of its own).
+            host_name(),
         )
     });
+    if !cfg!(target_os = "linux") {
+        eprintln!(
+            "devcroft: this sandbox runs as you, {} (uid {}): this platform maps no ids, so \
+             the name {:?} is not available inside",
+            sandbox_identity.user, sandbox_identity.uid, manifest.identity.user
+        );
+    }
     let compiled = match &identity {
         Some(identity) => compiled.with_identity(&identity.write),
         None => compiled,
     };
     if let Some(mut meta) = state::read_meta(&paths.meta)? {
         meta.identity = identity.clone();
+        meta.sandbox_identity = Some(sandbox_identity.clone());
         state::write_meta(&paths.meta, &meta)?;
     }
 
@@ -1405,6 +1419,11 @@ fn up_process(
     // (`sandbox_path`). One value, so the record cannot disagree with it.
     unset.retain(|k| k != "PATH");
     env.insert("PATH".to_string(), sandbox_path_value.clone());
+    // One answer for whoever asks by variable, by uid or by `HOME`.
+    for key in ["USER", "LOGNAME"] {
+        unset.retain(|k| k != key);
+        env.insert(key.to_owned(), sandbox_identity.user.clone());
+    }
     // Last, so neither the environment nor `[env.vars]` can name another.
     use crate::runtime::redirect::{KEEPER_LIB_VAR, KEEPER_NS_VAR};
     for key in [KEEPER_LIB_VAR, KEEPER_NS_VAR] {
@@ -2678,62 +2697,6 @@ fn host_name() -> String {
     String::from_utf8_lossy(&buf[..end]).into_owned()
 }
 
-/// The sandbox's user for its view: the host user's name and ids, the
-/// sandbox's own home and devcroft's resolved shell. `write` leaves out any
-/// path a grant already covers, so a manifest granting the host's
-/// `/etc/passwd` gets that file.
-fn sandbox_identity(
-    compiled: &policy::CompiledPolicy,
-    shell: &crate::shell::ResolvedShell,
-    home: &Path,
-) -> crate::fleet::mount::Identity {
-    use crate::fleet::mount::Identity;
-    // SAFETY: plain getters.
-    let (uid, gid) = unsafe { (libc::getuid(), libc::getgid()) };
-    let user = host_user_name(uid).unwrap_or_else(|| "devcroft".to_owned());
-    let mut identity = Identity {
-        user,
-        uid,
-        gid,
-        home: home.to_path_buf(),
-        shell: shell.path.clone(),
-        // An `up` sandbox sees the host's name (no UTS namespace of its own).
-        hostname: host_name(),
-        write: Vec::new(),
-    };
-    let granted = |p: &Path| {
-        compiled
-            .filesystem_read
-            .iter()
-            .chain(&compiled.filesystem_allow)
-            .any(|g| Path::new(&g.value) == p)
-    };
-    identity.write = identity
-        .candidates()
-        .into_iter()
-        .filter(|p| !granted(p))
-        .collect();
-    identity
-}
-
-/// The host's name for `uid`, read before any restriction, from the host's
-/// own `/etc/passwd` through libc.
-fn host_user_name(uid: libc::uid_t) -> Option<String> {
-    // SAFETY: `getpwuid` returns a pointer into static storage or null;
-    // the name is copied out before anything else can call it, and `up` is
-    // single-threaded here.
-    unsafe {
-        let pw = libc::getpwuid(uid);
-        if pw.is_null() || (*pw).pw_name.is_null() {
-            return None;
-        }
-        std::ffi::CStr::from_ptr((*pw).pw_name)
-            .to_str()
-            .ok()
-            .map(str::to_owned)
-    }
-}
-
 /// `network.loopback = "any"` is a grant on the sandbox's *own* loopback, so
 /// it is refused, never degraded, wherever there is none to give
 /// (`allow-loopback-ephemeral-ports` design.md L3). With `default = "allow"`
@@ -2848,7 +2811,9 @@ fn confine_on_exec(cmd: &mut Command, c: Confinement) {
                     identity.as_ref(),
                     &runtime_view,
                 )?;
-                crate::fleet::mount::return_to_host_identity()?;
+                crate::fleet::mount::become_sandbox_user(
+                    identity.as_ref().map(|i| (i.uid, i.gid)),
+                )?;
                 std::env::set_current_dir(&project_root_owned)?;
             }
             Ok(())

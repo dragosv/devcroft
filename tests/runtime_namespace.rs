@@ -52,7 +52,8 @@ impl Sandbox {
             root.join("devcroft.toml"),
             format!(
                 "[sandbox]\nname = \"{name}\"\n[env]\nprovider = \"{provider}\"\n\
-                 [filesystem]\nallow = [\".\"]\n"
+                 [filesystem]\nallow = [\".\"]\n\
+                 [hooks]\npost_create = \"id -u > hook.out; id -un >> hook.out\"\n"
             ),
         )
         .unwrap();
@@ -241,4 +242,40 @@ fn the_runtime_cannot_be_modified_from_inside() {
         &["why", "--path", &format!("{a}/ns/ls"), "--op", "write"],
     ));
     assert!(why.contains("DENIED") && why.contains("baseline"), "{why}");
+}
+
+/// `add-sandbox-identity` 5.1: one identity for a session, a hook and every
+/// other process in the sandbox, its services and the keeper among them.
+#[test]
+fn every_process_is_the_sandboxs_own_user() {
+    let Some(s) = minimal_flox("ni") else { return };
+    let hook = std::fs::read_to_string(s.root.join("hook.out")).unwrap();
+    let asked = s.sh("id -u; id -un; echo $USER $LOGNAME; : > made; echo \"$HOME\"");
+    let mut lines = asked.lines();
+    let (uid, name) = (lines.next().unwrap(), lines.next().unwrap());
+    assert_eq!(hook, format!("{uid}\n{name}\n"));
+    assert_eq!(lines.next(), Some(format!("{name} {name}").as_str()));
+    let home = s.root.join(".devcroft").join(&s.name).join("home");
+    assert_eq!(lines.next(), home.to_str(), "{asked}");
+    use std::os::unix::fs::MetadataExt;
+    // SAFETY: a plain getter.
+    let host = unsafe { libc::getuid() };
+    assert_eq!(std::fs::metadata(s.root.join("made")).unwrap().uid(), host);
+    let status = text(&dc(&s.root, &["status"]));
+    let render = text(&dc(&s.root, &["policy", "--render"]));
+    for out in [&status, &render] {
+        assert!(
+            out.contains(&format!("identity: {name} (uid {uid}, ")) && out.contains("mode: shared"),
+            "{out}"
+        );
+    }
+    if !cfg!(target_os = "linux") {
+        assert_eq!(uid, host.to_string());
+        return;
+    }
+    assert_eq!((uid, name), ("1000", "devcroft"));
+    let procs = s.sh("for p in /proc/[0-9]*; do while read -r k r e rest; do \
+         [ \"$k\" = Uid: ] && echo \"$r $e\"; done < $p/status; done");
+    assert!(procs.lines().count() >= 3, "{procs}");
+    assert!(procs.lines().all(|l| l == "1000 1000"), "{procs}");
 }

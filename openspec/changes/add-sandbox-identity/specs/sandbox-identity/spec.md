@@ -22,8 +22,9 @@ restriction is applied, and SHALL NOT run project code while it does.
 - **WHEN** the manifest sets `[identity] user = "dev"`
 - **THEN** `id -un` prints `dev` in every session of that sandbox
 
-### Requirement: Separate host identity is the default
-In mode `separate`, the default, the sandbox identity SHALL map to a host uid
+### Requirement: Separate host identity is selected by the user
+Mode `separate` SHALL be selected only by the user, never by a manifest. In it
+the sandbox identity SHALL map to a host uid
 and gid different from those of the user who ran `up`, and distinct from those
 of every other sandbox the user has up. On Linux the mapping SHALL use a user
 namespace into the user's delegated subordinate ranges. On macOS it SHALL use a
@@ -39,12 +40,12 @@ processes it owns remain.
 - **WHEN** two `separate` sandboxes are up for the same user
 - **THEN** their host uids differ from each other and from the user's
 
-### Requirement: Shared host identity is an explicit alternative
-In mode `shared`, selected by `[identity] mode = "shared"`, the sandbox identity
-SHALL map to the host uid and gid of the user who ran `up`. On Linux the
+### Requirement: Shared host identity is the default
+In mode `shared`, the default, the sandbox identity SHALL map to the host uid and gid of the user who ran `up`. On Linux the
 dedicated name and uid inside SHALL still apply, through a user namespace. On
 macOS, where no such mapping exists, the inside identity SHALL be the host
-user's, and `up` SHALL state that the dedicated name is not available.
+user's, and `up` SHALL state that the dedicated name is not available. The
+non-root requirement then holds as far as the user is not root.
 
 #### Scenario: Shared mode on Linux
 - **WHEN** a `shared` sandbox on Linux creates a file in the workspace
@@ -87,8 +88,11 @@ hold by ownership as well as by policy.
 
 ### Requirement: Workspace access in separate mode is explicit and reversible
 In mode `separate`, `up` SHALL give the sandbox identity access to the workspace
-through an explicit grant that leaves the user able to read and write
-everything the sandbox creates, and `rm` SHALL remove it. devcroft SHALL NOT
+through an explicit grant, and `rm` SHALL remove it. On macOS the grant SHALL
+leave the user able to read and write everything the sandbox creates. On Linux
+it does so only for what is created without an explicit narrower mode; the
+limit SHALL be published, and `up` SHALL state it when it starts such a
+sandbox. devcroft SHALL NOT
 change the owner of the user's existing files and SHALL NOT make any path
 world-writable. Fleet clones SHALL be created owned by the agent's identity.
 Version control run inside the sandbox SHALL treat the workspace as trusted.

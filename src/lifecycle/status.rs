@@ -67,6 +67,8 @@ pub struct SandboxStatus {
     /// The runtime generation the sandbox's keeper started with
     /// (`add-own-userland`); `None` before the runtime existed.
     pub runtime_generation: Option<u32>,
+    /// Who the sandbox runs as; `None` before it had an identity of its own.
+    pub sandbox_identity: Option<crate::identity::SandboxIdentity>,
 }
 
 /// What a sandbox's agent said needs a human, from `devcroft agent
@@ -186,6 +188,7 @@ pub fn status_with_provider(
     );
     let base_runtime = meta.as_ref().and_then(|meta| meta.base_runtime.clone());
     let runtime_generation = meta.as_ref().and_then(|meta| meta.runtime_generation);
+    let sandbox_identity = meta.as_ref().and_then(|meta| meta.sandbox_identity.clone());
     let isolation = meta.map(|meta| meta.resolved_backend);
 
     let degraded = policy::detect_degraded(&policy::compile(manifest));
@@ -201,6 +204,7 @@ pub fn status_with_provider(
         attention,
         base_runtime,
         runtime_generation,
+        sandbox_identity,
     })
 }
 
@@ -413,6 +417,7 @@ mod tests {
                     activation_provisioned: false,
                     post_create_pending: false,
                     identity: None,
+                    sandbox_identity: None,
                     shell: None,
                     trust_store: Vec::new(),
                     own_procfs: false,

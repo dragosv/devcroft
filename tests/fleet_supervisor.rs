@@ -124,6 +124,7 @@ impl Fleet {
             repository: None,
             store_roots: Vec::new(),
             runtime: Default::default(),
+            identity: None,
             provisioning_allow: Vec::new(),
             policy: None,
         }

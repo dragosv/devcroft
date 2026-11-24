@@ -168,10 +168,18 @@ privilege in the filesystem's own user namespace, and it would make the user
 the owner, against the scenario that the sandbox's uid is. VS Code and JetBrains
 were not run: the refusal is the kernel's, for any of the user's processes.
 
-**Proposed, for the owner:** `shared` is the default on Linux too, with the
-dedicated name inside; `separate` is opt-in, for projects that accept the table
-above, or for fleet agents, whose clone is their own and is exchanged through
-git rather than edited in place.
+**Decided by the owner 2026-11-24:** `shared` is the default on Linux too, with
+the dedicated name inside; `separate` is opt-in and the user's alone, never a
+manifest's; the macOS helper (D3) is deferred. Where the user selects it (a
+user configuration key or a flag) is decided with 3.2. D1's "default" and the
+risks below that assume `separate` by default are superseded.
+
+**`shared`, implemented** (`src/identity.rs`): inside uid and gid 1000, mapped
+onto the caller by the nested user namespace that used to give back the
+caller's own ids. `USER` and `LOGNAME` are set over the environment, so a
+manifest's `[env]` cannot make them disagree. Run as root, devcroft's sandboxes
+are no longer uid 0 inside. An agent started without a view keeps the user's
+ids, since it sees the host's `/etc/passwd`.
 
 ## Risks / Trade-offs
 

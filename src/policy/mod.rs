@@ -436,6 +436,9 @@ pub struct CompiledPolicy {
     /// deserialized from input that does not itself live forever.
     #[serde(skip_deserializing, default = "signal_mode")]
     pub signal_mode: &'static str,
+    /// Who the sandbox runs as. Reporting, not a rule, like `base_runtime`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sandbox_identity: Option<crate::identity::SandboxIdentity>,
     /// Where shell and userland resolve in this sandbox
     /// (`add-runtime-provenance`), folded in by [`Self::with_base_runtime`]
     /// at `up` once the view is decided. Reporting, not a rule: nothing in
@@ -566,6 +569,7 @@ pub fn compile(manifest: &Manifest) -> CompiledPolicy {
         credentials_broker: Vec::new(),
         signal_mode: SIGNAL_MODE,
         base_runtime: None,
+        sandbox_identity: None,
     }
 }
 
@@ -700,6 +704,12 @@ impl CompiledPolicy {
                 .iter()
                 .map(|g| AnnotatedValue::new(g.clone(), Origin::Tools(provider))),
         );
+        self
+    }
+
+    /// Who the sandbox runs as, for rendering.
+    pub fn with_sandbox_identity(mut self, id: crate::identity::SandboxIdentity) -> Self {
+        self.sandbox_identity = Some(id);
         self
     }
 

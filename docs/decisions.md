@@ -990,11 +990,20 @@ metadata like `portsAttributes` is the editor's concern, not devcroft's.
 extensions on every SSH host, including all devcroft sandboxes. This
 belongs in the user's editor config, not in a per-project manifest.
 
-### `remoteUser`, UID/GID mapping → not applicable
+### `remoteUser`, UID/GID mapping → devcroft's own, not a manifest's choice of ids
 
-Sessions run as the actual user on the actual filesystem. The entire class
-of bind-mount ownership problems does not exist. This is an architectural
-advantage, not an unimplemented feature.
+On Linux a sandbox's processes run as a user of their own, `devcroft` unless
+`[identity] user` names another, with uid 1000, mapped onto the user who ran
+`up` by a user namespace (`add-sandbox-identity`, mode `shared`). Files in the
+workspace still belong to that user, so the bind-mount ownership problems
+`remoteUser` exists for still do not arise. macOS maps no ids: there the
+sandbox runs as the host user, and `up` says so.
+
+A manifest cannot name a host uid, gid or account. A mode with a host uid of
+its own (`separate`) is designed and not built; it would be the user's to
+select, never a repository's. It was measured on Linux (2026-11-24): the
+mapping works, and POSIX ACLs do not keep the user's access to files a sandbox
+creates with an explicit mode such as `0644`.
 
 ### GPU access → not applicable
 

@@ -280,7 +280,7 @@ pub(crate) fn denials(
 /// /nix/store writable: Operation not permitted` when it falls back to the
 /// local store — `nix build`, `nix profile install`, `nix-env -i` and
 /// `nix-store --realise` alike. Those were measured as uid 0. Since the
-/// sandbox is the user's own uid (`fleet::mount::return_to_host_identity`),
+/// sandbox is not uid 0 inside (`fleet::mount::become_sandbox_user`),
 /// nix finds `/nix/var/nix` hidden and says so, `'/nix/var/nix' does not
 /// exist`, before falling back to a chroot store in the sandbox's home. A store path that is merely missing is not
 /// this: it is a store path that was never realised, or was collected.

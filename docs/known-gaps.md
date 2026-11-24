@@ -523,6 +523,21 @@ What is left: a manifest that grants a directory holding those places
 inside it, absolute paths in it run the host's files, and `up` reports them
 `host:`.
 
+## On Linux, data that names your user was made before the sandbox had its own
+
+A sandbox recreated with this version runs as `devcroft`, not as your user
+name. Data a service wrote under the old name keeps it: a postgres cluster
+initialised before has your name as its role, so a client that does not say
+`-U` asks for `devcroft` and is refused. Set `[identity] user` to your own
+name, or initialise the data again. Expected from how postgres picks its
+default role, not measured.
+
+## A sandbox on macOS runs under your own name and uid
+
+Linux gives a sandbox a user of its own inside, through a user namespace. macOS
+maps no ids, so there `id -un` is the host user's name, `[identity] user` has
+no effect, and `up` says so once.
+
 ## devcroft's runtime is uutils, not GNU, and has no `awk`, `tar`, `grep`, `sed` or `find`
 
 Where a sandbox's environment supplies no coreutils (a flox, devenv, mise or

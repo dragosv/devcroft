@@ -203,15 +203,15 @@ fn a_sandbox_sees_only_its_own_processes_and_down_ends_them() {
     assert!(after.is_empty(), "still running after down: {after:?}");
 }
 
-/// A session in a sandbox with its own user namespace is the user, not
-/// root. The setup maps `0 → uid`, since only uid 0 keeps its capabilities
+/// A session in a sandbox with its own user namespace is the sandbox's user
+/// (`add-sandbox-identity`, mode `shared`), never root. The setup maps `0 → uid`, since only uid 0 keeps its capabilities
 /// across `execve` there, and every session used to inherit that and report
 /// uid 0. `mariadbd` refuses to run as root, and so does postgres's
-/// `initdb` (`fleet::mount::return_to_host_identity`). Checked from both
+/// `initdb` (`fleet::mount::become_sandbox_user`). Checked from both
 /// sides: the uid a session reports, and the owner a file it creates has on
 /// the host.
 #[test]
-fn a_session_is_the_users_own_uid_not_root() {
+fn a_session_is_the_sandboxs_own_user_and_its_files_are_the_hosts() {
     if !devcroft::policy::backend_supported() {
         eprintln!("skipping: this host has no usable Landlock/Seatbelt support");
         return;
@@ -257,7 +257,7 @@ fn a_session_is_the_users_own_uid_not_root() {
             "--",
             "sh",
             "-c",
-            "echo \"$UID $EUID\"; : > made-inside",
+            "echo \"$UID $EUID $USER $LOGNAME\"; : > made-inside",
         ])
         .output()
         .unwrap();
@@ -281,8 +281,8 @@ fn a_session_is_the_users_own_uid_not_root() {
     );
     assert_eq!(
         out.trim(),
-        format!("{uid} {uid}"),
-        "a session must report the user's own uid, not 0"
+        "1000 1000 devcroft devcroft",
+        "a session must report the sandbox's user, not 0 and not the host's"
     );
     use std::os::unix::fs::MetadataExt;
     let made = made.expect("the session's file must exist on the host");
@@ -290,7 +290,7 @@ fn a_session_is_the_users_own_uid_not_root() {
 }
 
 /// The view names its user (`fleet::mount::Identity`): an `/etc/passwd`
-/// with the user's own uid, the sandbox's home and devcroft's shell; an
+/// with the sandbox's user, the sandbox's home and devcroft's shell; an
 /// `/etc/hosts` resolving `localhost`, each a rule with
 /// origin `identity` in the policy artifact. A path the manifest grants
 /// itself is the host's, not written: here `/etc/hosts`.
@@ -311,9 +311,6 @@ fn the_view_names_its_user_and_a_granted_path_stays_the_hosts() {
     };
     // SAFETY: this process runs a single test.
     unsafe { std::env::set_var("DEVCROFT_KEEPER_EXE", exe) };
-    // SAFETY: a plain getter.
-    let uid = unsafe { libc::getuid() };
-
     let pid = std::process::id();
     let project = PathBuf::from(format!("/tmp/dcupident{pid}"));
     let _ = std::fs::remove_dir_all(&project);
@@ -322,7 +319,7 @@ fn the_view_names_its_user_and_a_granted_path_stays_the_hosts() {
     let name = format!("e2eupident{pid}");
     let (manifest, _) = parse(&format!(
         "[sandbox]\nname = {name:?}\n\n[network]\ndefault = \"deny\"\n\n\
-         [filesystem]\nread = [\"/etc/hosts\"]\n"
+         [filesystem]\nread = [\"/etc/hosts\"]\n[identity]\nuser = \"dev\"\n"
     ))
     .unwrap();
     let paths = StatePaths::new(&name).unwrap();
@@ -369,7 +366,8 @@ fn the_view_names_its_user_and_a_granted_path_stays_the_hosts() {
         .find_map(|l| l.strip_prefix("passwd "))
         .expect("an /etc/passwd line");
     let fields: Vec<&str> = user_line.split(':').collect();
-    assert_eq!(fields[2], uid.to_string(), "{user_line}");
+    assert_eq!(fields[0], "dev", "{user_line}");
+    assert_eq!(fields[2], "1000", "{user_line}");
     assert_eq!(fields[5], home.display().to_string(), "{user_line}");
     assert!(fields[6].starts_with("/nix/store/"), "{user_line}");
     assert!(out.contains("bin-sh-ran"), "{out}");

@@ -91,6 +91,8 @@ pub struct AgentLaunch {
     pub policy: Option<crate::policy::CompiledPolicy>,
     /// What its view holds for the runtime, as host paths.
     pub runtime: crate::runtime::namespace::RuntimeView,
+    /// Who it runs as, for its view, with its home as a host path.
+    pub identity: Option<super::mount::Identity>,
 }
 
 impl AgentLaunch {
@@ -550,9 +552,10 @@ impl Supervisor {
                 root,
                 proxy_socket: relay.map(|_| proxy_socket.clone()),
                 workspace: Some(mounted.clone()),
-                // Not yet for agents (add-linux-agent-fleet task): `up`'s
-                // sandboxes get one, fleet's tests need sudo to verify it.
-                identity: None,
+                identity: launch.identity.clone().map(|mut i| {
+                    i.home = PathBuf::from(translate(i.home.to_string_lossy().into_owned()));
+                    i
+                }),
                 runtime: launch
                     .runtime
                     .map(|p| PathBuf::from(translate(p.to_string_lossy().into_owned()))),
@@ -726,7 +729,10 @@ impl Supervisor {
                         .unwrap_or(&launch.workspace)
                         .clone(),
                 ),
-                identity: None,
+                identity: launch.identity.clone().map(|mut i| {
+                    i.home = PathBuf::from(translate(i.home.to_string_lossy().into_owned()));
+                    i
+                }),
                 runtime: launch
                     .runtime
                     .map(|p| PathBuf::from(translate(p.to_string_lossy().into_owned()))),

@@ -108,10 +108,10 @@ fn write_id_map(path: &str, contents: &str) -> io::Result<()> {
     std::fs::File::create(path)?.write_all(contents.as_bytes())
 }
 
-/// Gives the sandbox back the user's own uid and gid, once the setup that
-/// needed uid 0 is done. Call it last, after every mount, `sethostname`
-/// and the loopback ioctl, and before Landlock, which would refuse the
-/// map writes.
+/// Become the sandbox's user, once the setup that needed uid 0 is done: `id`
+/// where the view names one (`crate::identity`), else the user's own ids.
+/// Call it last, after every mount, `sethostname` and the loopback ioctl,
+/// and before Landlock, which would refuse the map writes.
 ///
 /// **Why the setup's identity is not kept.** [`enter_mount_namespace_with_network`]
 /// and fleet's init helper map `0 → uid`, because only uid 0 keeps its
@@ -120,18 +120,22 @@ fn write_id_map(path: &str, contents: &str) -> io::Result<()> {
 /// `mariadbd` exits with "Please consult the Knowledge Base to find out
 /// how to run mysqld as root!" (measured, a devbox mariadb project), and
 /// postgres's `initdb` refuses root too. So this enters a nested user
-/// namespace mapping the user's own uid onto the setup's 0 (`uid 0 1`).
-/// Files are still owned by the real user on the host, and `id` inside
-/// matches `id` outside.
+/// namespace mapping the sandbox's uid onto the setup's 0 (`<uid> 0 1`).
+/// Files are still owned by the real user on the host.
 ///
 /// Nothing after this needs a capability: `apply_auto` needs none, and
-/// signalling and reaping a child of the same uid need none. A process
-/// whose outer uid is already 0 (devcroft run as root) is left as it is,
-/// since that is its own identity.
+/// signalling and reaping a child of the same uid need none. With no `id`, a
+/// process whose outer uid is already 0 (devcroft run as root) is left as it
+/// is, since that is its own identity.
 #[cfg(target_os = "linux")]
-pub fn return_to_host_identity() -> io::Result<()> {
-    let uid = outer_id("/proc/self/uid_map")?;
-    let gid = outer_id("/proc/self/gid_map")?;
+pub fn become_sandbox_user(id: Option<(u32, u32)>) -> io::Result<()> {
+    let (uid, gid) = match id {
+        Some(id) => id,
+        None => (
+            outer_id("/proc/self/uid_map")?,
+            outer_id("/proc/self/gid_map")?,
+        ),
+    };
     if uid == 0 {
         return Ok(());
     }
@@ -158,7 +162,7 @@ fn outer_id(map: &str) -> io::Result<u32> {
 }
 
 #[cfg(not(target_os = "linux"))]
-pub fn return_to_host_identity() -> io::Result<()> {
+pub fn become_sandbox_user(_id: Option<(u32, u32)>) -> io::Result<()> {
     Ok(())
 }
 
@@ -266,6 +270,39 @@ impl Identity {
     pub const PASSWD: &'static str = "/etc/passwd";
     pub const GROUP: &'static str = "/etc/group";
     pub const HOSTS: &'static str = "/etc/hosts";
+
+    /// `id`'s files for a view, leaving out the paths `compiled` grants: a
+    /// manifest granting the host's `/etc/passwd` gets that file.
+    pub fn new(
+        id: &crate::identity::SandboxIdentity,
+        compiled: &crate::policy::CompiledPolicy,
+        shell: &std::path::Path,
+        home: &std::path::Path,
+        hostname: String,
+    ) -> Self {
+        let mut identity = Self {
+            user: id.user.clone(),
+            uid: id.uid,
+            gid: id.gid,
+            home: home.to_path_buf(),
+            shell: shell.to_path_buf(),
+            hostname,
+            write: Vec::new(),
+        };
+        let granted = |p: &std::path::Path| {
+            compiled
+                .filesystem_read
+                .iter()
+                .chain(&compiled.filesystem_allow)
+                .any(|g| std::path::Path::new(&g.value) == p)
+        };
+        identity.write = identity
+            .candidates()
+            .into_iter()
+            .filter(|p| !granted(p))
+            .collect();
+        identity
+    }
 
     /// Every path this identity can supply, before any is left out.
     pub fn candidates(&self) -> Vec<std::path::PathBuf> {

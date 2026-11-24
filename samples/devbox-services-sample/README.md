@@ -99,8 +99,8 @@ $ devcroft exec -- sh -c 'psql -h "$PGHOST" -d postgres -Atc "select 40 + 2"'
 42
 
 $ devcroft exec -- sh -c 'id -un; psql -h "$PGHOST" -d postgres -Atc "select current_user"'
-vscode
-vscode
+devcroft
+devcroft
 
 $ devcroft down
 $ pgrep -x postgres; pgrep -x process-compose
@@ -118,7 +118,7 @@ sandbox whose view holds only what is granted, four things were missing,
 each measured failing before it was fixed:
 
 - **Sessions were uid 0**, and `initdb` refuses to run as root. They now
-  run as your own uid.
+  run as the sandbox's own user, `devcroft`, uid 1000.
 - **No `/etc/passwd`**, so `initdb` and `psql` could not look up the uid.
   process-compose had been logging `Failed get user` too.
 - **No `/bin/sh`**, which `popen()` starts by absolute path. `initdb`

@@ -29,6 +29,7 @@ pub mod backend_capabilities;
 pub mod config;
 pub mod exec;
 pub mod fleet;
+pub mod identity;
 pub mod keeper;
 pub mod lifecycle;
 pub(crate) mod paths;

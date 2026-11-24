@@ -138,6 +138,9 @@ pub fn render(compiled: &CompiledPolicy) -> String {
     .unwrap();
     writeln!(out).unwrap();
     render_filesystem_view_note(&mut out);
+    if let Some(id) = &compiled.sandbox_identity {
+        writeln!(out, "identity: {id}").unwrap();
+    }
     // Only once an `up` recorded it: the manifest alone cannot say where a
     // name resolves, and inventing an answer is what this command forbids.
     if let Some(record) = &compiled.base_runtime {

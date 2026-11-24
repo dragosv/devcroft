@@ -188,6 +188,24 @@ pub fn prepare(
         compiled.filesystem_write_deny.clear();
         compiled.filesystem_write_except.clear();
     }
+    let sandbox_identity = crate::identity::SandboxIdentity::shared(&manifest.identity.user);
+    compiled = compiled.with_sandbox_identity(sandbox_identity.clone());
+    // The files are the view's; on the host's root its own are what is seen,
+    // and the agent keeps the user's ids with them.
+    let identity = view.then(|| {
+        super::mount::Identity::new(
+            &sandbox_identity,
+            &compiled,
+            &shell.path,
+            &artifact_dir.join("home"),
+            agent_id.to_owned(),
+        )
+    });
+    if let Some(identity) = &identity {
+        compiled = compiled.with_identity(&identity.write);
+    } else {
+        compiled.sandbox_identity = None;
+    }
     let plan = compiled.to_capability_plan();
     let grants = plan
         .resolved_grants(workspace)
@@ -251,6 +269,12 @@ pub fn prepare(
     env.insert("PATH".to_owned(), path);
     let mut unset = resolution.unset;
     unset.retain(|k| k != "PATH");
+    if let Some(identity) = &identity {
+        for key in ["USER", "LOGNAME"] {
+            unset.retain(|k| k != key);
+            env.insert(key.to_owned(), identity.user.clone());
+        }
+    }
 
     Ok(AgentLaunch {
         workspace: workspace.to_path_buf(),
@@ -279,6 +303,7 @@ pub fn prepare(
         provisioning_allow: manifest.provisioning.network.allow.clone(),
         policy: Some(policy),
         runtime,
+        identity,
     })
 }
 

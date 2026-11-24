@@ -594,6 +594,13 @@ sites, and never require the project to declare one: that would fail the
 first `up` of every existing project for a dependency devcroft
 introduced.
 
+**A sandbox has its own user** (`src/identity.rs`, `add-sandbox-identity`).
+On Linux everything inside is `devcroft` (`[identity] user`), uid 1000,
+never 0, mapped onto the caller, so files stay the caller's; macOS runs as the
+host user and says so. A manifest never names a host id, and never selects
+`separate` (not built). `.devcroft/<name>/` is read-only inside except `home`
+and `run` (`filesystem.write_deny`).
+
 **Error contract.** Every error names its layer — `config` | `provider` |
 `backend` | `keeper` | `ssh`. Exit codes are stable: 0 success, 1 runtime,
 2 usage/config, 3 environment/provider, 4 backend, 5 keeper/connection.

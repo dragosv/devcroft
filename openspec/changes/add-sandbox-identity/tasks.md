@@ -2,9 +2,11 @@
 
 - [x] 0.1 Owner: confirm the reading of "the process tier requires no external backend binary" that admits `newuidmap`/`newgidmap` as host identity helpers (design D2), or decide that `separate` is not the Linux default.
   - Confirmed by the owner 2026-11-24: `newuidmap`/`newgidmap` are the host's identity helpers, not a sandbox backend.
-- [ ] 0.2 Owner: confirm that a launchd helper which is the `devcroft` binary itself satisfies "never a child of a separate sandboxing binary" (design D3), and accept a signed macOS package for `separate` mode.
+- [x] 0.2 Owner: confirm that a launchd helper which is the `devcroft` binary itself satisfies "never a child of a separate sandboxing binary" (design D3), and accept a signed macOS package for `separate` mode.
   - Open; 2026-11-24 the recommendation is to defer (macOS stays `shared`).
-- [ ] 0.3 Owner: may the manifest select `shared`, or only the user (design, open question)?
+  - Deferred by the owner 2026-11-24: macOS stays `shared`; groups 4.2–4.6 wait.
+- [x] 0.3 Owner: may the manifest select `shared`, or only the user (design, open question)?
+  - Owner 2026-11-24: a manifest may say `shared`; `separate` is only the user's.
 - [x] 0.4 Linux: measure, on a host with delegated ranges, a user namespace mapping a non-zero inside uid to a subordinate host uid through `newuidmap`, combined with the existing mount view, PID namespace and Landlock; record what breaks.
   - Works; design.md "Measured: Linux". With a prototype of the view, not devcroft's own.
 - [ ] 0.5 Linux and macOS: measure ACL inheritance for a sandbox-created file edited afterwards by the user from VS Code, a JetBrains IDE and `git`; record `safe.directory` behaviour.
@@ -13,9 +15,12 @@
 
 ## 1. Config and model
 
-- [ ] 1.1 `[identity]` table (`user`, `mode`) with validation at layer `config`; `root`, unknown keys and host ids refused.
-- [ ] 1.2 Identity model in `Meta`: inside name/uid/gid, mode, host uid/gid, allocation record; old `Meta` reads as "legacy".
-- [ ] 1.3 `status` and `policy --render` show it.
+- [x] 1.1 `[identity]` table (`user`, `mode`) with validation at layer `config`; `root`, unknown keys and host ids refused.
+  - `mode = "separate"` in a manifest is refused, naming why.
+- [x] 1.2 Identity model in `Meta`: inside name/uid/gid, mode, host uid/gid, allocation record; old `Meta` reads as "legacy".
+  - `Meta.sandbox_identity`; the allocation record comes with 3.2.
+- [x] 1.3 `status` and `policy --render` show it.
+  - `identity:` in both; legacy is reported.
 
 ## 2. The environment is read-only to the workload (both modes)
 
@@ -28,7 +33,8 @@
 
 ## 3. Linux
 
-- [ ] 3.1 `shared`: dedicated inside name and uid through the existing user namespace; `/etc/passwd` and `/etc/group` in the view name the dedicated identity; `$USER`, `$LOGNAME` set.
+- [x] 3.1 `shared`: dedicated inside name and uid through the existing user namespace; `/etc/passwd` and `/etc/group` in the view name the dedicated identity; `$USER`, `$LOGNAME` set.
+  - Linux aarch64, run as uid 1000, uid 2000 and root (`tests/runtime_namespace.rs`).
 - [ ] 3.2 `separate`: subordinate-range allocation, `newuidmap`/`newgidmap`, sandbox `HOME` owned by the mapped id, keeper and every workload process under it; setup helper root only before restriction.
 - [ ] 3.3 Fleet: agents and the init helper follow the same mapping; clones owned by the agent's identity.
 - [ ] 3.4 Precondition checks and refusal at layer `backend` (exit 4) naming each missing item and `shared`; the same in `doctor`.
@@ -37,7 +43,8 @@
 
 ## 4. macOS
 
-- [ ] 4.1 `shared` is the platform default until 4.2–4.5 ship; `up` states it.
+- [x] 4.1 `shared` is the platform default until 4.2–4.5 ship; `up` states it.
+  - One line at `up`.
 - [ ] 4.2 The privileged helper (same binary, `SMAppService`), authenticated, with the narrow protocol of design D3.
 - [ ] 4.3 Per-sandbox hidden accounts, created and released; bounded pool; listed by `doctor`.
 - [ ] 4.4 Keeper started as the account with inherited listeners; Seatbelt applied by the keeper as today.
@@ -46,7 +53,8 @@
 
 ## 5. Tests
 
-- [ ] 5.1 Every workload process (session, hook, service, agent) reports a non-zero uid and the dedicated name.
+- [x] 5.1 Every workload process (session, hook, service, agent) reports a non-zero uid and the dedicated name.
+  - Session, hook, and every process `/proc` lists (services and the keeper); an agent in `tests/fleet_commands.rs`. SSH shares the session path and is not asked separately.
 - [ ] 5.2 Split `tests/up_pid_namespace.rs` into the `shared` and `separate` contracts.
 - [ ] 5.3 Two `separate` sandboxes get distinct host uids; a released id is not reused while files remain.
 - [ ] 5.4 The refusal message names each missing precondition.
@@ -54,10 +62,12 @@
 
 ## 6. Documentation
 
-- [ ] 6.1 `docs/decisions.md`: rewrite "`remoteUser`, UID/GID mapping → not applicable".
+- [x] 6.1 `docs/decisions.md`: rewrite "`remoteUser`, UID/GID mapping → not applicable".
 - [ ] 6.2 `docs/threat-model.md`: what a separate uid adds (DAC) and what it does not (a boundary).
+  - Waits for `separate`; `shared` adds nothing to the claim.
 - [ ] 6.3 `docs/known-gaps.md`: macOS `shared` limits; Swift under a separate account; ownership-sensitive tools.
 - [ ] 6.4 `CLAUDE.md`: the identity model and the two modes.
+  - `shared`: written. `separate` with 3.2.
 
 ## 7. Verification
 
