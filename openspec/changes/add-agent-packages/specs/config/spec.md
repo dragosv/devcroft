@@ -2,10 +2,8 @@
 
 ### Requirement: Agent selection in the user configuration
 The user configuration SHALL accept an `[agent]` table with `name`, naming a
-recipe, an optional `version`, and an optional `auth` (`"api-key"`, `"login"`
-or `"env"`). Unknown keys or unsupported `auth` values SHALL fail at layer
-`config`. It MAY hold `[agent.credentials.<recipe>]` with `command`, a non-empty
-`argv`. `devcroft up --agent <recipe>` (and `--agent-auth <mode>`), `--no-agent`
+recipe, an optional `version`, and an optional `auth` (a mode qualified for that recipe and platform). Unknown keys or unsupported `auth` values SHALL fail at layer
+`config`. `devcroft up --agent <recipe>` (and `--agent-auth <mode>`), `--no-agent`
 and `--agent-from-config` SHALL choose explicitly (`--agent`, `--no-agent` and
 `--agent-from-config` being mutually exclusive, and `--agent-auth` without a
 resulting agent failing at layer `config`). For a brand-new sandbox (no `Meta`
@@ -27,7 +25,7 @@ pointing to the user configuration, and selecting an agent SHALL NOT change the
 project's provider or its resolved environment.
 
 #### Scenario: Flag overrides configuration
-- **WHEN** the user configuration names `claude-code` and `up --agent opencode` is run
+- **WHEN** the user configuration names `fixture-agent` and `up --agent opencode` is run
 - **THEN** the sandbox gets the `opencode` recipe and records that explicit selection
 
 #### Scenario: Opting out survives recreate
@@ -35,24 +33,24 @@ project's provider or its resolved environment.
 - **THEN** the sandbox has no agent rules, hosts or broker after each
 
 #### Scenario: Recreate keeps the recipe and the mode
-- **WHEN** the configuration's default is `claude-code` and a sandbox brought up with `--agent opencode --agent-auth login` is recreated without flags
-- **THEN** it still runs `opencode` under `login`
+- **WHEN** the configuration's default is `fixture-agent` and a sandbox brought up with `--agent opencode --agent-auth api-key` is recreated without flags
+- **THEN** it still runs `opencode` under `api-key`
 
 #### Scenario: Adopting the default
 - **WHEN** that sandbox is brought up with `up --agent-from-config --recreate`
-- **THEN** it runs `claude-code` and records that selection
+- **THEN** it runs `fixture-agent` and records that selection
 
 #### Scenario: Changed default
 - **WHEN** the user edits `[agent] name` or `version` and runs plain `up` or `up --recreate` on a sandbox with a recorded selection
 - **THEN** its agent is unchanged, and `status` says the default differs and names `--agent-from-config`
 
 #### Scenario: Sandbox that never had a selection
-- **WHEN** a sandbox was created before `[agent]` was configured, stopped with `down`, and plain `up`, `up --agent claude-code` (without `--recreate`), then `up --recreate` run
-- **THEN** plain `up` adds no agent or host, `up --agent claude-code` without `--recreate` fails naming `--recreate`, and `up --recreate` applies and records `[agent]`
+- **WHEN** a sandbox was created before `[agent]` was configured, stopped with `down`, and plain `up`, `up --agent fixture-agent` (without `--recreate`), then `up --recreate` run
+- **THEN** plain `up` adds no agent or host, `up --agent fixture-agent` without `--recreate` fails naming `--recreate`, and `up --recreate` applies and records `[agent]`
 
-#### Scenario: Switching recipe drops old mode and respects configured target mode
-- **WHEN** `[agent]` configures `claude-code` with `auth = "login"`, a sandbox recorded with `opencode` under `api-key` runs `up --agent claude-code --recreate`, and another recorded with `claude-code` under `login` runs `up --agent opencode --recreate`
-- **THEN** the first runs `claude-code` under `login` (from `[agent]`) and the second runs `opencode` under `opencode`'s own default mode (inheriting nothing from `claude-code`)
+#### Scenario: Switching recipes drops the old version
+- **WHEN** a sandbox pinned to version 1 of a fixture recipe is recreated with a different recipe configured at version 2
+- **THEN** it selects version 2 and the authentication mode applicable to the new recipe
 
 #### Scenario: Recorded recipe no longer shipped
 - **WHEN** a sandbox is down, devcroft is upgraded to a release without its recipe version, and plain `up` runs
@@ -67,7 +65,7 @@ project's provider or its resolved environment.
 - **THEN** loading it fails at layer `config` naming the user configuration file
 
 #### Scenario: Misspelled key
-- **WHEN** the user configuration contains `[agent] nmae = "claude-code"`
+- **WHEN** the user configuration contains `[agent] nmae = "fixture-agent"`
 - **THEN** it fails at layer `config` naming the key
 
 ### Requirement: PATH order with tools and agent

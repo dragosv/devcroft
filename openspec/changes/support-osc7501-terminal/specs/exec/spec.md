@@ -41,11 +41,7 @@ terminal:
 - **THEN** the raw OSC escape sequence is stripped/escaped before reaching the terminal
 
 ### Requirement: Local terminal mode is safe and checked
-The exec client SHALL enter raw mode only after the keeper accepted the spawn
-and before any session byte is read or written, with the forwarded signals
-already blocked. It SHALL retry on `EINTR`, SHALL fail the session if a TTY
-cannot be put in raw mode, and SHALL restore the original attributes on every
-exit it can observe, including a forwarded termination signal.
+The exec client SHALL keep normal signal handling while waiting for the keeper's `SpawnOk`, and after `SpawnOk` SHALL block forwarded signals (`SIGINT`, `SIGTERM`, `SIGHUP`, plus `SIGWINCH` on PTYs) before enabling raw mode and before reading or writing any session byte. It SHALL retry `tcsetattr` on `EINTR`, fail the session if a TTY cannot enter raw mode, and restore the terminal's original settings on every observable exit, including forwarded termination signals.
 
 #### Scenario: Interrupting a client that waits on the keeper
 - **WHEN** the keeper does not answer the spawn and the user presses Ctrl-C

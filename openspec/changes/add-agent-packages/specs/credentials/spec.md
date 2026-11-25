@@ -7,8 +7,8 @@ credential variables and that sandbox only. A project's manifest SHALL NOT be
 able to make that request. Baseline denials SHALL stand.
 
 #### Scenario: Sandbox without the recipe
-- **WHEN** a credential command is configured for a recipe and a sandbox selects none
-- **THEN** the command is not run and no credential or broker of that recipe exists there
+- **WHEN** a brokered key is available for a recipe and a sandbox selects none
+- **THEN** no credential or broker of that recipe exists there
 
 ### Requirement: A recipe's active hosts are the only user-configured egress
 A user's own broker entry SHALL keep granting no egress. The active hosts of a
