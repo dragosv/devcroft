@@ -474,7 +474,7 @@ pub fn spawn_helper(
 }
 
 #[cfg(target_os = "macos")]
-fn capture_start_time_ns(pid: u32) -> Option<u64> {
+pub(crate) fn capture_start_time_ns(pid: u32) -> Option<u64> {
     let mut info: libc::proc_bsdinfo = unsafe { std::mem::zeroed() };
     let size = std::mem::size_of::<libc::proc_bsdinfo>() as libc::c_int;
     let n = unsafe {
@@ -497,7 +497,7 @@ fn capture_start_time_ns(pid: u32) -> Option<u64> {
 }
 
 #[cfg(target_os = "linux")]
-fn capture_start_time_ns(pid: u32) -> Option<u64> {
+pub(crate) fn capture_start_time_ns(pid: u32) -> Option<u64> {
     let stat = fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
     let after_comm = stat.rfind(')')?;
     // Field 22 (1-indexed) in /proc/<pid>/stat is index 19 after ') '.
@@ -508,15 +508,18 @@ fn capture_start_time_ns(pid: u32) -> Option<u64> {
 }
 
 #[cfg(not(any(target_os = "macos", target_os = "linux")))]
-fn capture_start_time_ns(_pid: u32) -> Option<u64> {
+pub(crate) fn capture_start_time_ns(_pid: u32) -> Option<u64> {
     None
 }
 
-fn process_matches_identity(identity: &HostProcessIdentity) -> bool {
-    match capture_start_time_ns(identity.pid) {
-        Some(observed) => observed == identity.start_time_ns,
-        None => unsafe { libc::kill(identity.pid as libc::pid_t, 0) == 0 },
-    }
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+pub(crate) fn process_matches_identity(identity: &HostProcessIdentity) -> bool {
+    capture_start_time_ns(identity.pid).is_some_and(|observed| observed == identity.start_time_ns)
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+pub(crate) fn process_matches_identity(identity: &HostProcessIdentity) -> bool {
+    unsafe { libc::kill(identity.pid as libc::pid_t, 0) == 0 }
 }
 
 #[cfg(test)]

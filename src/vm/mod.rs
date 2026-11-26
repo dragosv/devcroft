@@ -1,5 +1,4 @@
-//! Phase 1, Phase 2, and Phase 3 host-side VM primitives for
-//! `add-vm-project-runtime`.
+//! Phase 1–4 host-side VM runtime primitives for `add-vm-project-runtime`.
 //!
 //! Implemented incrementally following the owner decision on
 //! `evaluate-microvm-runtimes` task 4.5 (`docs/decisions.md`, 2026-11-26;
@@ -15,6 +14,7 @@ pub mod editor;
 pub mod grants;
 pub mod guest_init;
 pub mod launcher;
+pub mod lifecycle;
 pub mod manifest;
 pub mod preparation;
 pub mod proxy_channel;
@@ -57,6 +57,12 @@ pub use guest_init::{
 pub use launcher::{
     HelperArtifactInput, HelperLaunchFileV1, HelperProcess, LaunchError, LogSnapshot,
     VmEndpointPaths, prepare_instance_layout, spawn_helper, write_private_launch_record,
+};
+pub use lifecycle::{
+    RemovalReport, RestartPlan, ShutdownOutcome, VmInstancePaths, VmLifecycleError,
+    VmRollbackPolicy, export_retained_vm_disk, graceful_down, guard_new_vm_creation,
+    is_owned_helper_alive, load_vm_state, prepare_cold_restart, probe_vm_health,
+    remove_owned_instance, save_vm_state,
 };
 pub use manifest::{
     ArtifactEntry, ManifestError, PackagedLayout, TrustedArtifactManifestV1, TrustedArtifactsV1,

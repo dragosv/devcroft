@@ -27,9 +27,9 @@
 
 ## 4. Complete lifecycle and migration
 
-- [ ] 4.1 Persist instance generation, process ownership, target/artifact identities and independent health states.
-- [ ] 4.2 Implement graceful down, forced-stop reporting and cold restart recovery without losing private data.
-- [ ] 4.3 Implement owned-resource removal and leased-cache collection; test PID reuse, sibling survival and incompatible disks.
-- [ ] 4.4 Run adversarial transport/host-access tests with positive controls and complete guest workload regressions on each supported row.
-- [ ] 4.5 Reconcile decisions, threat model, provider/lifecycle/SSH/policy specs, README, `CLAUDE.md`, capabilities, each changed invariant, `add-agent-interaction` and `add-macos-service-vm` before release/default migration.
-- [ ] 4.6 Verify native regression behavior and rollback/export access for retained VM disks; document unsupported targets without fallback.
+- [x] 4.1 Persist instance generation, process ownership, target/artifact identities and independent health states. Evidence: `src/vm/contract.rs` (`VmStateRecordV1`, `VmHealthBreakdown`) and `src/vm/lifecycle.rs` (`save_vm_state`, `load_vm_state`, `probe_vm_health`, `is_owned_helper_alive`).
+- [x] 4.2 Implement graceful down, forced-stop reporting and cold restart recovery without losing private data. Evidence: `src/vm/lifecycle.rs` (`graceful_down`, `prepare_cold_restart`, retained disk preserved across `Orderly`/`ForcedStop` and `IncompatibleState`).
+- [x] 4.3 Implement owned-resource removal and leased-cache collection; test PID reuse, sibling survival and incompatible disks. Evidence: `src/vm/lifecycle.rs` (`remove_owned_instance`, `pid_reuse_removal_sibling_survival_cache_gc_and_rollback_export`).
+- [x] 4.4 Run adversarial transport/host-access tests with positive controls and complete guest workload regressions on each supported row. Evidence: `tests/vm_runtime_adversarial.rs` (end-to-end host/transport/credential/cache/lifecycle controls) plus native `macos-arm64` guest workload regressions consolidated in `experiments/microvm/results/macos-arm64-evaluation-assessment-v16.json` (`180/180` hardened density cases, Nix/Alpine workloads, Chrome/Remote-SSH, CLI/TLS start, PID 1 & vsock hardening).
+- [ ] 4.5 Reconcile decisions, threat model, provider/lifecycle/SSH/policy specs, README, `CLAUDE.md`, capabilities, each changed invariant, `add-agent-interaction` and `add-macos-service-vm` before release/default migration. Remains open until CLI opt-in wiring and default-migration readiness (per 2026-11-26 owner decision keeping process tier as default while preparation VM execution, host suspend, credential brokering, and native Linux remain open).
+- [x] 4.6 Verify native regression behavior and rollback/export access for retained VM disks; document unsupported targets without fallback. Evidence: `src/vm/lifecycle.rs` (`VmRollbackPolicy`, `guard_new_vm_creation`, `export_retained_vm_disk`), `openspec/changes/add-vm-project-runtime/distribution.md` §5, and passing native regression suite (`cargo test --lib` + `experiments/microvm` Python suite).

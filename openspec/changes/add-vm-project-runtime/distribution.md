@@ -40,3 +40,8 @@ On macOS ARM64 (`macOS 14+`), `Hypervisor.framework` fails (`0xfae94007`) withou
 
 - `TrustedArtifactManifestV1` bounds `min_compatible_controller..=max_compatible_controller` (`check_controller_compatible`) and `LaunchRecordV1`/`HandshakeV1` bind `schema = 1`, `instance_generation`, `protocol_version`, `target`, and `boot_artifact_sha256`.
 - Unqualified platforms (`linux-arm64`, `linux-x86_64`, `macos-x86_64`) remain disabled in `src/vm/qualification.rs` until dedicated native runners pass E3/E4 and signed release manifests exist for those targets.
+
+## 5. Unsupported Targets & Rollback Policy (`add-vm-project-runtime` Task 4.6)
+
+- **Unsupported targets without fallback:** `linux-arm64`, `linux-x86_64`, and `macos-x86_64` fail closed in `resolve_runtime` and `qualification_for` (`ErrorLayer::Backend`, exit code `4`). No unqualified target downgrades to native execution, and Darwin-only `swift` never boots in a Linux VM.
+- **Rollback path (`VmRollbackPolicy`):** Disabling VM creation (`creation_disabled = true`) blocks creating new VM instances (`ErrorLayer::Backend`) without altering existing native sandboxes or downgrading existing VM instances. Retained private VM disks remain inspectable, exportable with byte-for-byte SHA-256 verification (`export_retained_vm_disk`), and removable via `remove_owned_instance`.
