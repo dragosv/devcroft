@@ -10,9 +10,13 @@
 pub mod contract;
 pub mod editor;
 pub mod grants;
+pub mod guest_init;
 pub mod launcher;
 pub mod manifest;
+pub mod preparation;
+pub mod publication;
 pub mod qualification;
+pub(crate) mod sha256;
 pub mod ssh;
 pub mod transport;
 
@@ -30,12 +34,26 @@ pub use grants::{
     RuntimeDispatchError, RuntimeGrant, RuntimeGrantStore, RuntimePolicyMode, RuntimeRequest,
     resolve_runtime,
 };
+pub use guest_init::{
+    GuestInitError, GuestInitPlanV1, GuestMount, StopQuiescePlan, format_stop_request,
+    parse_and_verify_ready_handshake, render_ready_handshake, verify_stop_acknowledgement,
+    wait_for_verified_handshake,
+};
 pub use launcher::{
     HelperArtifactInput, HelperLaunchFileV1, HelperProcess, LaunchError, LogSnapshot,
     VmEndpointPaths, prepare_instance_layout, spawn_helper, write_private_launch_record,
 };
 pub use manifest::{
     ArtifactEntry, ManifestError, PackagedLayout, TrustedArtifactManifestV1, TrustedArtifactsV1,
+};
+pub use preparation::{
+    CANONICAL_GUEST_WORKSPACE, CapturedLinuxProfileV1, HashedInputFile, InputSetPolicy,
+    PreparationError, PreparationJobSpecV1, RecipeIdentity, collect_recipe_identity,
+    requalify_provider_for_linux,
+};
+pub use publication::{
+    ArtifactCacheStore, CrossProjectEligibility, GuestOutputEnvelopeV1, PublicationError,
+    PublishedArtifactRecordV1, RetentionLeaseV1, StagedPublication,
 };
 pub use qualification::{
     HostPlatform, PlatformQualification, QualificationStatus, current_host_platform,

@@ -9,11 +9,11 @@
 ## 2. Build the isolated execution path
 
 - [x] 2.1 Add helper launch with descriptor minimization, pre-vCPU confinement and bounded per-instance endpoints. Evidence: `src/vm/launcher.rs` (`prepare_instance_layout`, `write_private_launch_record`, `spawn_helper`, `BoundedLogCapture`, `HostProcessIdentity`).
-- [ ] 2.2 Add Linux guest init, mounts, identity, reaping and keeper bootstrap with handshake validation.
+- [x] 2.2 Add Linux guest init, mounts, identity, reaping and keeper bootstrap with handshake validation. Evidence: `src/vm/guest_init.rs` (`GuestInitPlanV1`, `wait_for_verified_handshake`, `StopQuiescePlan`, `verify_stop_acknowledgement`).
 - [x] 2.3 Connect host exec/control transport to the guest keeper and test PID/PTY/signal/exit behavior. Evidence: `src/exec.rs` (`exec_on_socket`, `connect_and_spawn_socket`) and `src/vm/transport.rs` (`VmControlClient`, `VmKeeperClient`, `VmSession`).
 - [x] 2.4 Connect guest SSH/SFTP/local forwarding; test guest filesystem/network semantics, distinct instance keys and client configuration that offers no agent, X11 or remote forwarding. Evidence: `src/vm/ssh.rs` (`VmSshKeyMaterial`, `VmSshBootstrapSeed`, `render_vm_ssh_config_host`, `build_vm_ssh_client_args`).
-- [ ] 2.5 Add private preparation jobs and target-specific provider/tooling capture with declared input sets, per-provider Linux requalification, generated profiles and canonical guest paths.
-- [ ] 2.6 Add controller-owned atomic artifact publication, immutable identity/provenance, per-project namespaces and retention leases; test interrupted publication and that one project's output cannot reach another's consumer.
+- [x] 2.5 Add private preparation jobs and target-specific provider/tooling capture with declared input sets, per-provider Linux requalification, generated profiles and canonical guest paths. Evidence: `src/vm/preparation.rs` (`requalify_provider_for_linux`, `collect_recipe_identity`, `PreparationJobSpecV1`, `CapturedLinuxProfileV1`).
+- [x] 2.6 Add controller-owned atomic artifact publication, immutable identity/provenance, per-project namespaces and retention leases; test interrupted publication and that one project's output cannot reach another's consumer. Evidence: `src/vm/publication.rs` (`ArtifactCacheStore`, `stage_guest_output`, `commit_publication`, `lookup_for_project`, `acquire_lease`, `collect_unleased`).
 - [x] 2.7 Classify editor clients, gate `ssh-config` entries on the trusted-editor grant, and connect a guest-served editor through a local forward. Evidence: `src/vm/editor.rs` (`classify_editor`, `ssh_config_for_vm_instance`, `guest_served_editor_forward_args`) and `src/vm/grants.rs` (`grant_trusted_editor`).
 
 ## 3. Enforce authority and phase transitions
