@@ -42,6 +42,7 @@ pub mod shell;
 pub mod ssh;
 pub mod tooling;
 pub mod trust_store;
+pub mod vm;
 
 /// The test-only seam, compiled only under the non-default `test-support`
 /// feature.

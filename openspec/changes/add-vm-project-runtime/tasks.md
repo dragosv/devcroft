@@ -1,10 +1,10 @@
 ## 1. Qualify and define interfaces
 
-- [ ] 1.1 Confirm the accepted microVM report and platform-specific required controls; stop adoption if no candidate qualifies.
-- [ ] 1.2 Specify versioned launch/handshake/state records, runtime dispatch and error attribution under the existing layers and exit codes, without changing native instances.
-- [ ] 1.3 Define trusted artifact manifest, verification keys, update compatibility and packaged guest/helper layout, including the preparation image.
-- [ ] 1.4 Decide the helper and artifact channel separate from the crate: source obligations and licence inventory for guest artifacts, macOS entitlement and signing, and Git-pinned VMM dependencies.
-- [ ] 1.5 Implement the user-owned runtime grant; test that a manifest or Darwin-only provider cannot reach native without it, with and without a terminal.
+- [x] 1.1 Confirm the accepted microVM report and platform-specific required controls; stop adoption if no candidate qualifies. Evidence: `src/vm/qualification.rs` (`macos-arm64` opt-in `libkrun` 2.0 on `macOS 14+` backed by `results/macos-arm64-evaluation-assessment-v16.json`; `linux-arm64`, `linux-x86_64`, `macos-x86_64` explicitly unqualified).
+- [x] 1.2 Specify versioned launch/handshake/state records, runtime dispatch and error attribution under the existing layers and exit codes, without changing native instances. Evidence: `src/vm/contract.rs` (`LaunchRecordV1`, `HandshakeV1`, `VmStateRecordV1`, `ErrorLayer`, `#[serde(deny_unknown_fields)]`).
+- [x] 1.3 Define trusted artifact manifest, verification keys, update compatibility and packaged guest/helper layout, including the preparation image. Evidence: `src/vm/manifest.rs` (`TrustedArtifactManifestV1`, `PackagedLayout`, repo-bootstrap rejection).
+- [x] 1.4 Decide the helper and artifact channel separate from the crate: source obligations and licence inventory for guest artifacts, macOS entitlement and signing, and Git-pinned VMM dependencies. Evidence: `openspec/changes/add-vm-project-runtime/distribution.md` (zero VMM/Git crates in root `Cargo.toml`).
+- [x] 1.5 Implement the user-owned runtime grant; test that a manifest or Darwin-only provider cannot reach native without it, with and without a terminal. Evidence: `src/vm/grants.rs` (`RuntimeGrantStore`, `resolve_runtime`, TTY and non-TTY tests).
 
 ## 2. Build the isolated execution path
 
