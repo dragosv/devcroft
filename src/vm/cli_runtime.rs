@@ -7,13 +7,13 @@
 use std::collections::BTreeMap;
 use std::env;
 use std::ffi::OsStr;
-use std::fmt;
+use std::fmt::{self, Write as _};
 use std::fs::{self, OpenOptions};
 use std::io::{self, BufRead, BufReader, Read, Write};
 use std::net::IpAddr;
 use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::os::unix::net::UnixStream;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -21,11 +21,16 @@ use rand::Rng;
 use serde::{Deserialize, Serialize};
 
 use crate::config::{BrokerDecl, is_valid_name};
+use crate::keeper::protocol::{Frame, SpawnRequest};
 use crate::lifecycle::{StatePaths, acquire_lifecycle_lock};
 
+use super::authority::{
+    ExplorationProfileV1, ProjectAuthorityRequest, UserAuthorityGrants, compile_effective_authority,
+};
 use super::contract::{
-    CONTRACT_SCHEMA_V1, ComponentHealth, ErrorLayer, HostProcessIdentity, RuntimeKind,
-    StopClassification, VmHealthBreakdown, VmStateRecordV1,
+    CONTRACT_SCHEMA_V1, ComponentHealth, DiskAttachment, ErrorLayer, GuestPhase, GuestTarget,
+    HostChannels, HostProcessIdentity, LaunchRecordV1, ResourceBudgets, RuntimeKind,
+    StopClassification, VmAdapter, VmHealthBreakdown, VmStateRecordV1,
 };
 use super::grants::{
     ExistingRuntime, ProjectIdentity, RuntimeGrantStore, RuntimePolicyMode, RuntimeRequest,
@@ -40,7 +45,7 @@ use super::lifecycle::{
     export_retained_vm_disk, guard_new_vm_creation, is_owned_helper_alive, load_vm_state,
     prepare_cold_restart, save_vm_state,
 };
-use super::manifest::TrustedArtifactManifestV1;
+use super::manifest::{ArtifactEntry, TrustedArtifactManifestV1, TrustedArtifactsV1};
 use super::preparation::CANONICAL_GUEST_WORKSPACE;
 use super::proxy_channel::is_forbidden_private_or_local_ip;
 use super::qualification::current_host_platform;
@@ -1565,6 +1570,584 @@ pub fn current_grant_timestamp() -> String {
     format!("unix:{secs}")
 }
 
+const MAX_SYNC_FILES: usize = 1000;
+const MAX_SYNC_BYTES: u64 = 32 * 1024 * 1024;
+const SYNC_EXCLUDED_DIRS: &[&str] = &[
+    ".git",
+    ".devcroft",
+    "target",
+    "node_modules",
+    ".flox",
+    ".devenv",
+    ".devbox",
+];
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InstallLocalVmBundleRequest {
+    pub helper: PathBuf,
+    pub kernel: PathBuf,
+    pub initramfs: PathBuf,
+    pub runtime_image: PathBuf,
+    pub version: String,
+    pub out_dir: Option<PathBuf>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InstalledVmBundleSummary {
+    pub manifest_path: PathBuf,
+    pub bundle_dir: PathBuf,
+    pub manifest_version: String,
+    pub target: GuestTarget,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VmSyncSummary {
+    pub files_synced: usize,
+    pub bytes_synced: u64,
+    pub skipped_entries: usize,
+}
+
+fn validate_bundle_version(version: &str) -> Result<(), VmCliError> {
+    if version.is_empty()
+        || version.len() > 64
+        || version == "."
+        || version == ".."
+        || !version
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'))
+    {
+        return Err(VmCliError::layered(
+            ErrorLayer::Config,
+            format!(
+                "invalid VM bundle version `{version}` (expected 1..=64 ASCII alphanumeric/._- characters)"
+            ),
+        ));
+    }
+    Ok(())
+}
+
+fn copy_regular_artifact(
+    label: &str,
+    src: &Path,
+    dest: &Path,
+    mode: u32,
+) -> Result<(), VmCliError> {
+    let canonical = fs::canonicalize(src).map_err(|e| {
+        VmCliError::layered(
+            ErrorLayer::Backend,
+            format!("VM {label} {}: {e}", src.display()),
+        )
+    })?;
+    if !canonical.is_file() {
+        return Err(VmCliError::layered(
+            ErrorLayer::Backend,
+            format!("VM {label} {} is not a regular file", canonical.display()),
+        ));
+    }
+    let bytes = fs::read(&canonical).map_err(|e| {
+        VmCliError::StateIo(format!("reading VM {label} {}: {e}", canonical.display()))
+    })?;
+    let mut f = OpenOptions::new()
+        .create(true)
+        .truncate(true)
+        .write(true)
+        .mode(mode)
+        .open(dest)
+        .map_err(|e| VmCliError::StateIo(format!("{}: {e}", dest.display())))?;
+    f.write_all(&bytes)
+        .and_then(|_| f.sync_all())
+        .map_err(|e| VmCliError::StateIo(format!("{}: {e}", dest.display())))?;
+    fs::set_permissions(dest, fs::Permissions::from_mode(mode))
+        .map_err(|e| VmCliError::StateIo(format!("{}: {e}", dest.display())))?;
+    Ok(())
+}
+
+fn artifact_entry_for_file(rel: &str, path: &Path) -> Result<ArtifactEntry, VmCliError> {
+    let sha256 = sha256_file_hex(path)
+        .map_err(|e| VmCliError::StateIo(format!("{}: {e}", path.display())))?;
+    let size_bytes = fs::metadata(path)
+        .map_err(|e| VmCliError::StateIo(format!("{}: {e}", path.display())))?
+        .len();
+    Ok(ArtifactEntry {
+        relative_path: rel.to_owned(),
+        sha256,
+        size_bytes,
+        license_id: "Apache-2.0".to_owned(),
+        source_url: "https://releases.devcroft.invalid/local".to_owned(),
+    })
+}
+
+/// Copies a verified set of local microVM artifacts (helper, kernel, initramfs,
+/// runtime image) into user-owned storage (`~/.local/share/devcroft/vm-artifacts`)
+/// and writes a self-checked `manifest.json` so `devcroft up --vm` works without
+/// `--vm-manifest`.
+pub fn install_local_vm_bundle(
+    req: &InstallLocalVmBundleRequest,
+) -> Result<InstalledVmBundleSummary, VmCliError> {
+    validate_bundle_version(&req.version)?;
+    let out_dir = match &req.out_dir {
+        Some(p) => p.clone(),
+        None => data_dir()?.join("vm-artifacts"),
+    };
+    fs::create_dir_all(&out_dir).map_err(|e| VmCliError::StateIo(e.to_string()))?;
+    fs::set_permissions(&out_dir, fs::Permissions::from_mode(0o700))
+        .map_err(|e| VmCliError::StateIo(e.to_string()))?;
+
+    let bundle_dir = out_dir.join(&req.version);
+    fs::create_dir_all(&bundle_dir).map_err(|e| VmCliError::StateIo(e.to_string()))?;
+    fs::set_permissions(&bundle_dir, fs::Permissions::from_mode(0o700))
+        .map_err(|e| VmCliError::StateIo(e.to_string()))?;
+
+    let helper_dest = bundle_dir.join("devcroft-vm-helper");
+    let kernel_dest = bundle_dir.join("Image");
+    let initramfs_dest = bundle_dir.join("initramfs.cpio");
+    let runtime_dest = bundle_dir.join("runtime.img");
+    let prep_dest = bundle_dir.join("prep.img");
+    let licenses_dest = bundle_dir.join("LICENSES.txt");
+
+    copy_regular_artifact("helper", &req.helper, &helper_dest, 0o755)?;
+    copy_regular_artifact("kernel", &req.kernel, &kernel_dest, 0o644)?;
+    copy_regular_artifact("initramfs", &req.initramfs, &initramfs_dest, 0o644)?;
+    copy_regular_artifact("runtime_image", &req.runtime_image, &runtime_dest, 0o644)?;
+    fs::write(&prep_dest, b"devcroft-local-prep-placeholder\n")
+        .map_err(|e| VmCliError::StateIo(format!("{}: {e}", prep_dest.display())))?;
+    fs::write(&licenses_dest, b"Apache-2.0 GPL-2.0-only\n")
+        .map_err(|e| VmCliError::StateIo(format!("{}: {e}", licenses_dest.display())))?;
+
+    let manifest = TrustedArtifactManifestV1 {
+        schema: CONTRACT_SCHEMA_V1,
+        manifest_version: req.version.clone(),
+        min_compatible_controller: "0.0.1".to_owned(),
+        max_compatible_controller: "9.9.9".to_owned(),
+        publisher_key_id: "local-install".to_owned(),
+        signature_ed25519: "a".repeat(128),
+        target: GuestTarget::LinuxArm64,
+        artifacts: TrustedArtifactsV1 {
+            helper: artifact_entry_for_file("devcroft-vm-helper", &helper_dest)?,
+            kernel: artifact_entry_for_file("Image", &kernel_dest)?,
+            initramfs: artifact_entry_for_file("initramfs.cpio", &initramfs_dest)?,
+            runtime_image: artifact_entry_for_file("runtime.img", &runtime_dest)?,
+            preparation_image: artifact_entry_for_file("prep.img", &prep_dest)?,
+            license_inventory: artifact_entry_for_file("LICENSES.txt", &licenses_dest)?,
+        },
+    };
+
+    let manifest_path = out_dir.join("manifest.json");
+    let manifest_bytes =
+        serde_json::to_vec_pretty(&manifest).map_err(|e| VmCliError::StateIo(e.to_string()))?;
+    {
+        let mut f = OpenOptions::new()
+            .create(true)
+            .truncate(true)
+            .write(true)
+            .mode(0o600)
+            .open(&manifest_path)
+            .map_err(|e| VmCliError::StateIo(format!("{}: {e}", manifest_path.display())))?;
+        f.write_all(&manifest_bytes)
+            .and_then(|_| f.sync_all())
+            .map_err(|e| VmCliError::StateIo(format!("{}: {e}", manifest_path.display())))?;
+    }
+    fs::set_permissions(&manifest_path, fs::Permissions::from_mode(0o600))
+        .map_err(|e| VmCliError::StateIo(format!("{}: {e}", manifest_path.display())))?;
+
+    let text = fs::read_to_string(&manifest_path)
+        .map_err(|e| VmCliError::StateIo(format!("{}: {e}", manifest_path.display())))?;
+    let verified = TrustedArtifactManifestV1::from_json_str(&text)
+        .map_err(|e| VmCliError::layered(e.layer(), e.to_string()))?;
+    verified
+        .check_controller_compatible(env!("CARGO_PKG_VERSION"))
+        .map_err(|e| VmCliError::layered(e.layer(), e.to_string()))?;
+
+    Ok(InstalledVmBundleSummary {
+        manifest_path,
+        bundle_dir,
+        manifest_version: verified.manifest_version,
+        target: verified.target,
+    })
+}
+
+/// Inspects `~/.local/share/devcroft/vm-artifacts/manifest.json` if present.
+pub fn inspect_default_vm_bundle() -> Result<Option<InstalledVmBundleSummary>, VmCliError> {
+    let out_dir = data_dir()?.join("vm-artifacts");
+    let manifest_path = out_dir.join("manifest.json");
+    if !manifest_path.is_file() {
+        return Ok(None);
+    }
+    let text = fs::read_to_string(&manifest_path)
+        .map_err(|e| VmCliError::StateIo(format!("{}: {e}", manifest_path.display())))?;
+    let parsed = TrustedArtifactManifestV1::from_json_str(&text)
+        .map_err(|e| VmCliError::layered(e.layer(), e.to_string()))?;
+    Ok(Some(InstalledVmBundleSummary {
+        manifest_path,
+        bundle_dir: out_dir.join(&parsed.manifest_version),
+        manifest_version: parsed.manifest_version,
+        target: parsed.target,
+    }))
+}
+
+fn write_ustar_header(
+    archive: &mut Vec<u8>,
+    rel_path: &str,
+    mode: u32,
+    size: u64,
+    typeflag: u8,
+) -> Result<(), VmCliError> {
+    let mut header = [0u8; 512];
+    let bytes = rel_path.as_bytes();
+    if bytes.len() <= 100 {
+        header[..bytes.len()].copy_from_slice(bytes);
+    } else if bytes.len() <= 255 {
+        let split = bytes.len().saturating_sub(100);
+        if let Some(pos) = bytes[split..]
+            .iter()
+            .position(|b| *b == b'/')
+            .map(|idx| split + idx)
+            && pos <= 155
+            && bytes.len() - pos - 1 <= 100
+        {
+            let prefix = &bytes[..pos];
+            let name = &bytes[pos + 1..];
+            header[..name.len()].copy_from_slice(name);
+            header[345..345 + prefix.len()].copy_from_slice(prefix);
+        } else {
+            return Err(VmCliError::layered(
+                ErrorLayer::Config,
+                format!("sync path exceeds POSIX ustar component limits: `{rel_path}`"),
+            ));
+        }
+    } else {
+        return Err(VmCliError::layered(
+            ErrorLayer::Config,
+            format!("sync path exceeds 255 bytes: `{rel_path}`"),
+        ));
+    }
+
+    let mode_s = format!("{:07o}\0", mode & 0o7777);
+    header[100..108].copy_from_slice(mode_s.as_bytes());
+    header[108..116].copy_from_slice(b"0000000\0");
+    header[116..124].copy_from_slice(b"0000000\0");
+    let size_s = format!("{size:011o}\0");
+    header[124..136].copy_from_slice(size_s.as_bytes());
+    header[136..148].copy_from_slice(b"00000000000\0");
+    header[148..156].fill(b' ');
+    header[156] = typeflag;
+    header[257..263].copy_from_slice(b"ustar\0");
+    header[263..265].copy_from_slice(b"00");
+    header[265..269].copy_from_slice(b"root");
+    header[297..301].copy_from_slice(b"root");
+
+    let csum: u32 = header.iter().map(|&b| u32::from(b)).sum();
+    let csum_s = format!("{csum:06o}\0 ");
+    header[148..156].copy_from_slice(csum_s.as_bytes());
+    archive.extend_from_slice(&header);
+    Ok(())
+}
+
+fn collect_ustar_dir(
+    root: &Path,
+    rel: &Path,
+    archive: &mut Vec<u8>,
+    summary: &mut VmSyncSummary,
+) -> Result<(), VmCliError> {
+    let dir_path = if rel.as_os_str().is_empty() {
+        root.to_path_buf()
+    } else {
+        root.join(rel)
+    };
+    let mut entries: Vec<PathBuf> = fs::read_dir(&dir_path)
+        .map_err(|e| VmCliError::StateIo(format!("{}: {e}", dir_path.display())))?
+        .filter_map(Result::ok)
+        .map(|e| e.path())
+        .collect();
+    entries.sort();
+
+    for entry in entries {
+        let Some(file_name) = entry.file_name().and_then(|s| s.to_str()) else {
+            summary.skipped_entries += 1;
+            continue;
+        };
+        let meta = fs::symlink_metadata(&entry)
+            .map_err(|e| VmCliError::StateIo(format!("{}: {e}", entry.display())))?;
+        if meta.file_type().is_symlink() {
+            summary.skipped_entries += 1;
+            continue;
+        }
+        if meta.is_dir() && SYNC_EXCLUDED_DIRS.contains(&file_name) {
+            summary.skipped_entries += 1;
+            continue;
+        }
+        let child_rel = rel.join(file_name);
+        if child_rel.components().any(|c| {
+            matches!(
+                c,
+                Component::ParentDir | Component::RootDir | Component::Prefix(_)
+            )
+        }) {
+            return Err(VmCliError::layered(
+                ErrorLayer::Config,
+                format!("unsafe sync path `{}`", child_rel.display()),
+            ));
+        }
+        let rel_str = child_rel.to_str().ok_or_else(|| {
+            VmCliError::layered(
+                ErrorLayer::Config,
+                format!("non-UTF-8 path `{}`", child_rel.display()),
+            )
+        })?;
+
+        if meta.is_dir() {
+            let dir_entry = format!("{rel_str}/");
+            write_ustar_header(archive, &dir_entry, 0o755, 0, b'5')?;
+            collect_ustar_dir(root, &child_rel, archive, summary)?;
+        } else if meta.is_file() {
+            if summary.files_synced >= MAX_SYNC_FILES {
+                return Err(VmCliError::layered(
+                    ErrorLayer::Config,
+                    format!("project sync exceeds MAX_SYNC_FILES ({MAX_SYNC_FILES})"),
+                ));
+            }
+            let data = fs::read(&entry)
+                .map_err(|e| VmCliError::StateIo(format!("{}: {e}", entry.display())))?;
+            let len = u64::try_from(data.len()).unwrap_or(u64::MAX);
+            if summary.bytes_synced.saturating_add(len) > MAX_SYNC_BYTES {
+                return Err(VmCliError::layered(
+                    ErrorLayer::Config,
+                    format!(
+                        "project sync exceeds MAX_SYNC_BYTES ({} MiB)",
+                        MAX_SYNC_BYTES / (1024 * 1024)
+                    ),
+                ));
+            }
+            let mode = if meta.permissions().mode() & 0o111 != 0 {
+                0o755
+            } else {
+                0o644
+            };
+            write_ustar_header(archive, rel_str, mode, len, b'0')?;
+            archive.extend_from_slice(&data);
+            let rem = data.len() % 512;
+            if rem != 0 {
+                archive.resize(archive.len() + (512 - rem), 0);
+            }
+            summary.files_synced += 1;
+            summary.bytes_synced += len;
+        } else {
+            summary.skipped_entries += 1;
+        }
+    }
+    Ok(())
+}
+
+fn encode_ustar_archive(root: &Path) -> Result<(Vec<u8>, VmSyncSummary), VmCliError> {
+    let mut archive = Vec::new();
+    let mut summary = VmSyncSummary {
+        files_synced: 0,
+        bytes_synced: 0,
+        skipped_entries: 0,
+    };
+    collect_ustar_dir(root, Path::new(""), &mut archive, &mut summary)?;
+    archive.resize(archive.len() + 1024, 0);
+    Ok((archive, summary))
+}
+
+/// Safely streams project files into `/workspace` inside a running VM over the
+/// keeper transport (`tar -xf - -C /workspace`), never following symlinks or
+/// crossing outside `project_root`.
+pub fn sync_project_into_vm(sandbox_name: &str) -> Result<VmSyncSummary, VmCliError> {
+    let instance = load_vm_instance(sandbox_name)?.ok_or_else(|| {
+        VmCliError::layered(
+            ErrorLayer::Config,
+            format!("VM sandbox '{sandbox_name}' not found"),
+        )
+    })?;
+    if !instance
+        .state
+        .host_process
+        .as_ref()
+        .is_some_and(is_owned_helper_alive)
+    {
+        return Err(VmCliError::layered(
+            ErrorLayer::Keeper,
+            format!("VM sandbox '{sandbox_name}' is not running; run `devcroft up --vm` first"),
+        ));
+    }
+
+    let (archive, summary) = encode_ustar_archive(&instance.meta.project_root)?;
+    let client = VmKeeperClient::new(instance.keeper_socket(), Duration::from_secs(30));
+    let mut session = client
+        .open_session(SpawnRequest {
+            cmd: "/bin/tar".to_owned(),
+            args: vec![
+                "-xf".to_owned(),
+                "-".to_owned(),
+                "-C".to_owned(),
+                CANONICAL_GUEST_WORKSPACE.to_owned(),
+            ],
+            cwd: CANONICAL_GUEST_WORKSPACE.to_owned(),
+            env: BTreeMap::new(),
+            pty: None,
+        })
+        .map_err(|e| VmCliError::layered(e.layer(), e.to_string()))?;
+
+    for chunk in archive.chunks(32 * 1024) {
+        session
+            .write_stdin(chunk)
+            .map_err(|e| VmCliError::layered(e.layer(), e.to_string()))?;
+    }
+    session
+        .close_stdin()
+        .map_err(|e| VmCliError::layered(e.layer(), e.to_string()))?;
+
+    let mut err_buf = Vec::new();
+    let exit = loop {
+        match session
+            .read_frame()
+            .map_err(|e| VmCliError::layered(e.layer(), e.to_string()))?
+        {
+            Frame::Stdout(_) => {}
+            Frame::Stderr(b) if err_buf.len() < 4096 => {
+                err_buf.extend_from_slice(&b[..b.len().min(4096 - err_buf.len())]);
+            }
+            Frame::Exit(st) => break st,
+            _ => {}
+        }
+    };
+    if exit.code != Some(0) {
+        let stderr = String::from_utf8_lossy(&err_buf);
+        return Err(VmCliError::layered(
+            ErrorLayer::Keeper,
+            format!("guest tar extraction failed ({exit:?}): {stderr}"),
+        ));
+    }
+    Ok(summary)
+}
+
+/// Renders the VM runtime authority, egress routes, and credential brokering
+/// plan for `devcroft policy --render --vm` without exposing any secret values.
+#[allow(clippy::too_many_arguments)]
+pub fn render_vm_policy_plan(
+    sandbox_name: &str,
+    project_root: &Path,
+    network_default_allow: bool,
+    egress_allow: &[String],
+    provisioning_allow: &[String],
+    brokers: &[BrokerDecl],
+    direct_credentials: &[String],
+    vcpus: u8,
+    memory_mib: u32,
+) -> Result<String, VmCliError> {
+    if network_default_allow {
+        return Err(VmCliError::layered(
+            ErrorLayer::Config,
+            "VM sandboxes do not allow unrestricted `network.default = \"allow\"`; use `network.default = \"deny\"` with explicit `network.allow` hosts via the host egress proxy",
+        ));
+    }
+    validate_vm_egress_allow(egress_allow)?;
+
+    let host = current_host_platform();
+    let req = ProjectAuthorityRequest {
+        preparation_egress: provisioning_allow.to_vec(),
+        setup_egress: Vec::new(),
+        runtime_egress: egress_allow.to_vec(),
+        requested_credentials: direct_credentials.to_vec(),
+        requested_host_mounts: Vec::new(),
+        requested_daemon_sockets: Vec::new(),
+        requested_ssh_agent: false,
+        requested_device_passthrough: Vec::new(),
+        requested_guest_grants: Vec::new(),
+    };
+    let grants = UserAuthorityGrants {
+        project_root: project_root.to_path_buf(),
+        definition_sha256: "policy-preview".to_owned(),
+        preparation_egress: Some(provisioning_allow.to_vec()),
+        setup_egress: None,
+        runtime_egress: Some(egress_allow.to_vec()),
+        authorized_credentials: direct_credentials.to_vec(),
+    };
+    let budgets = ResourceBudgets {
+        vcpus: u32::from(vcpus),
+        guest_memory_mib: memory_mib,
+        writable_disk_mib: 64,
+        log_bytes_cap: 1024 * 1024,
+        readiness_timeout_secs: 30,
+    };
+    let compiled = compile_effective_authority(
+        &req,
+        Some(&grants),
+        &ExplorationProfileV1::default_profile(),
+        &budgets,
+        false,
+        host,
+    )
+    .map_err(|e| VmCliError::layered(e.layer(), e.to_string()))?;
+
+    let existing = load_vm_instance(sandbox_name)?;
+    let generation = existing
+        .as_ref()
+        .map_or(1, |inst| inst.state.instance_generation);
+    let boot_sha = existing.as_ref().map_or_else(
+        || "pending".to_owned(),
+        |inst| inst.state.boot_artifact_sha256.clone(),
+    );
+    let launch_preview = LaunchRecordV1 {
+        schema: CONTRACT_SCHEMA_V1,
+        instance_generation: generation,
+        target: GuestTarget::LinuxArm64,
+        adapter: VmAdapter::Libkrun,
+        phase: GuestPhase::Runtime,
+        boot_artifact_sha256: boot_sha,
+        required_capabilities: vec!["com.apple.security.hypervisor".to_owned()],
+        disks: vec![
+            DiskAttachment {
+                id: "runtime".to_owned(),
+                path: "<bundle>/runtime.img".to_owned(),
+                read_only: true,
+                sha256: None,
+            },
+            DiskAttachment {
+                id: format!("vm-state-{sandbox_name}"),
+                path: format!("~/.local/share/devcroft/{sandbox_name}/vm-inst/state.img"),
+                read_only: false,
+                sha256: None,
+            },
+        ],
+        channels: HostChannels {
+            control_socket: "control.sock (vsock:1024)".to_owned(),
+            keeper_socket: "keeper.sock (vsock:1025)".to_owned(),
+            ssh_socket: "ssh.sock (vsock:1026)".to_owned(),
+            proxy_socket: (!egress_allow.is_empty())
+                .then(|| "proxy.sock (vsock:1027 -> 127.0.0.1:18080)".to_owned()),
+            allow_nic: false,
+            allow_tsi: false,
+        },
+        resources: budgets,
+    };
+
+    let mut out = compiled.render_plan(&launch_preview);
+    if egress_allow.is_empty() {
+        let _ = writeln!(out, "  egress-proxy: offline (network.allow is empty)");
+    } else {
+        let _ = writeln!(
+            out,
+            "  egress-proxy: guest 127.0.0.1:{VM_GUEST_EGRESS_PROXY_PORT} -> vsock:1027 -> host proxy.sock -> nono-proxy (allow: {})",
+            egress_allow.join(", ")
+        );
+    }
+    for (i, b) in brokers.iter().enumerate() {
+        let prefix = crate::proxy::broker_prefix(i);
+        let endpoint = crate::proxy::broker_endpoint(VM_GUEST_EGRESS_PROXY_PORT, &prefix);
+        let _ = writeln!(
+            out,
+            "  broker: {} -> {endpoint} (host {}, header {})",
+            b.env, b.host, b.header
+        );
+    }
+    for name in direct_credentials {
+        let _ = writeln!(out, "  credential-clear-env: {name}");
+    }
+    Ok(out)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1604,6 +2187,31 @@ mod tests {
         assert_eq!(reply, format!("SYNCED 7 {nonce}"));
 
         server.join().unwrap();
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn encode_ustar_archive_skips_symlinks_and_excluded_dirs() {
+        let base = std::env::temp_dir().join(format!("dc-vm-tar-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&base);
+        fs::create_dir_all(base.join("src")).unwrap();
+        fs::create_dir_all(base.join(".git")).unwrap();
+        fs::create_dir_all(base.join("target")).unwrap();
+        fs::write(base.join("src/main.rs"), b"fn main() {}\n").unwrap();
+        fs::write(base.join(".git/config"), b"ignored\n").unwrap();
+        fs::write(base.join("target/bin"), b"ignored\n").unwrap();
+        std::os::unix::fs::symlink("/etc/hosts", base.join("escape-link")).unwrap();
+
+        let (archive, summary) = encode_ustar_archive(&base).unwrap();
+        assert_eq!(summary.files_synced, 1);
+        assert_eq!(summary.bytes_synced, b"fn main() {}\n".len() as u64);
+        assert_eq!(summary.skipped_entries, 3);
+        let text = String::from_utf8_lossy(&archive);
+        assert!(text.contains("src/main.rs"), "{text}");
+        assert!(!text.contains(".git/config"));
+        assert!(!text.contains("target/bin"));
+        assert!(!text.contains("escape-link"));
+
         let _ = fs::remove_dir_all(&base);
     }
 }

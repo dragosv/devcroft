@@ -1,9 +1,11 @@
 use std::collections::BTreeMap;
 use std::fs;
+use std::io::{Read, Write};
+use std::net::{TcpListener, TcpStream};
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::process::{Command, Output, Stdio};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use devcroft::vm::{
     ArtifactEntry, ComponentHealth, GuestTarget, RuntimeGrantStore, RuntimeKind,
@@ -947,5 +949,246 @@ fn real_libkrun_vm_egress_proxy_and_brokered_credentials_e2e() {
         String::from_utf8_lossy(&rm.stderr)
     );
     assert!(!h.home.join(".local/share/devcroft/vmegressproj").exists());
+    h.sandbox_to_cleanup = None;
+}
+
+#[test]
+fn vm_policy_render_and_doctor_surface_vm_authority_without_secrets() {
+    let h = TempHarness::new("vm-policy-doctor");
+    let proj = h.root.join("vmpolproj");
+    fs::create_dir_all(&proj).unwrap();
+    fs::write(
+        proj.join("devcroft.toml"),
+        "[sandbox]\nname = \"vmpolproj\"\n\n[env]\nprovider = \"flox\"\n\n[network]\ndefault = \"deny\"\nallow = [\"api.anthropic.com\"]\n",
+    )
+    .unwrap();
+
+    let real_secret = "sk-ant-policy-secret-never-render";
+    let user_cfg_dir = h.xdg_config.join("devcroft");
+    fs::create_dir_all(&user_cfg_dir).unwrap();
+    fs::write(
+        user_cfg_dir.join("config.toml"),
+        "[[credentials.broker]]\nhost = \"api.anthropic.com\"\nheader = \"x-api-key\"\nenv = \"ANTHROPIC_API_KEY\"\nendpoint_env = \"ANTHROPIC_BASE_URL\"\nplaceholder = \"sk-ant-proxy-{}\"\n",
+    )
+    .unwrap();
+
+    let pol = h.run_in(
+        &proj,
+        &["policy", "--render", "--vm"],
+        &[("ANTHROPIC_API_KEY", real_secret)],
+    );
+    assert_eq!(
+        pol.status.code(),
+        Some(0),
+        "stderr: {}",
+        String::from_utf8_lossy(&pol.stderr)
+    );
+    let pol_out = String::from_utf8_lossy(&pol.stdout);
+    assert!(pol_out.contains("vm-plan:"), "{pol_out}");
+    assert!(pol_out.contains("nic=false tsi=false"), "{pol_out}");
+    assert!(pol_out.contains("api.anthropic.com"), "{pol_out}");
+    assert!(
+        pol_out.contains("broker: ANTHROPIC_API_KEY -> http://127.0.0.1:18080/broker0"),
+        "{pol_out}"
+    );
+    assert!(
+        !pol_out.contains(real_secret),
+        "policy render leaked real host secret: {pol_out}"
+    );
+
+    // Refuses network.default = "allow" in VM mode.
+    fs::write(
+        proj.join("devcroft.toml"),
+        "[sandbox]\nname = \"vmpolproj\"\n\n[env]\nprovider = \"flox\"\n\n[network]\ndefault = \"allow\"\n",
+    )
+    .unwrap();
+    let bad_pol = h.run_in(&proj, &["policy", "--render", "--vm"], &[]);
+    assert_eq!(bad_pol.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&bad_pol.stderr).contains("network.default = \"allow\""));
+
+    // `doctor` surfaces opt-in VM qualification and artifact status without failing.
+    let doc = h.run_in(&proj, &["doctor"], &[]);
+    let doc_out = String::from_utf8_lossy(&doc.stdout);
+    assert!(doc_out.contains("[INFO] vm-runtime:"), "{doc_out}");
+    assert!(doc_out.contains("[INFO] vm-artifacts:"), "{doc_out}");
+}
+
+#[test]
+fn real_libkrun_vm_install_local_sync_and_ssh_e2e() {
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let helper_src = repo_root.join("experiments/microvm/libkrun/target/debug/devcroft-krun-spike");
+    let kernel_src = repo_root.join("experiments/microvm/artifacts/kernel-landlock/Image");
+    let initramfs_src =
+        repo_root.join("experiments/microvm/artifacts/stage-b-egress-proxy/initramfs.cpio");
+    let runtime_src =
+        repo_root.join("experiments/microvm/artifacts/stage-b-egress-proxy/runtime.img");
+    if !helper_src.is_file()
+        || !kernel_src.is_file()
+        || !initramfs_src.is_file()
+        || !runtime_src.is_file()
+    {
+        eprintln!(
+            "skipping real_libkrun_vm_install_local_sync_and_ssh_e2e: local stage-b-egress-proxy artifacts absent"
+        );
+        return;
+    }
+
+    let mut h = TempHarness::new("sync-ssh-e2e");
+    h.sandbox_to_cleanup = Some("vmsyncproj".into());
+
+    let proj = h.root.join("vmsyncproj");
+    write_project_manifest(&proj, "vmsyncproj", "flox");
+    fs::create_dir_all(proj.join("src")).unwrap();
+    fs::write(proj.join("src/hello.txt"), b"hello-from-host\n").unwrap();
+    fs::create_dir_all(proj.join(".git")).unwrap();
+    fs::write(proj.join(".git/HEAD"), b"ref: refs/heads/main\n").unwrap();
+    std::os::unix::fs::symlink("/etc/hosts", proj.join("escape-link")).unwrap();
+
+    // 1. Install local bundle into default user store (`~/.local/share/devcroft/vm-artifacts`).
+    let inst = h.run_in(
+        &proj,
+        &[
+            "runtime",
+            "install-local",
+            "--helper",
+            helper_src.to_str().unwrap(),
+            "--kernel",
+            kernel_src.to_str().unwrap(),
+            "--initramfs",
+            initramfs_src.to_str().unwrap(),
+            "--runtime",
+            runtime_src.to_str().unwrap(),
+            "--version",
+            "local-e2e-1",
+        ],
+        &[],
+    );
+    assert_eq!(
+        inst.status.code(),
+        Some(0),
+        "install-local failed\nstdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&inst.stdout),
+        String::from_utf8_lossy(&inst.stderr)
+    );
+
+    let rstat = h.run_in(&proj, &["runtime", "status"], &[]);
+    assert_eq!(rstat.status.code(), Some(0));
+    let rstat_out = String::from_utf8_lossy(&rstat.stdout);
+    assert!(
+        rstat_out.contains("vm-artifacts: installed (local-e2e-1,"),
+        "{rstat_out}"
+    );
+
+    // 2. Boot opt-in VM WITHOUT `--vm-manifest` (using default installed bundle).
+    let up = h.run_in(&proj, &["up", "--vm"], &[]);
+    assert_eq!(
+        up.status.code(),
+        Some(0),
+        "up --vm failed without --vm-manifest\nstdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&up.stdout),
+        String::from_utf8_lossy(&up.stderr)
+    );
+
+    // 3. Sync project workspace safely into `/workspace` (skips symlinks & `.git`).
+    let sync = h.run_in(&proj, &["runtime", "sync-in"], &[]);
+    assert_eq!(
+        sync.status.code(),
+        Some(0),
+        "sync-in failed\nstdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&sync.stdout),
+        String::from_utf8_lossy(&sync.stderr)
+    );
+    let sync_out = String::from_utf8_lossy(&sync.stdout);
+    assert!(sync_out.contains("synced 2 file(s)"), "{sync_out}");
+
+    let check_sync = h.run_in(
+        &proj,
+        &[
+            "exec",
+            "--",
+            "/bin/sh",
+            "-c",
+            "cat /workspace/src/hello.txt; test ! -e /workspace/escape-link; test ! -e /workspace/.git/HEAD; echo SYNC_OK",
+        ],
+        &[],
+    );
+    assert_eq!(
+        check_sync.status.code(),
+        Some(0),
+        "stderr: {}",
+        String::from_utf8_lossy(&check_sync.stderr)
+    );
+    let check_out = String::from_utf8_lossy(&check_sync.stdout);
+    assert!(check_out.contains("hello-from-host"), "{check_out}");
+    assert!(check_out.contains("SYNC_OK"), "{check_out}");
+
+    // 4. Real OpenSSH exec over per-instance keys + `devcroft proxy --no-up` -> vsock 1026.
+    let ssh_exec = h.run_in(
+        &proj,
+        &[
+            "ssh",
+            "vmsyncproj",
+            "--",
+            "sh",
+            "-c",
+            "uname -s; cat /workspace/src/hello.txt",
+        ],
+        &[],
+    );
+    assert_eq!(
+        ssh_exec.status.code(),
+        Some(0),
+        "devcroft ssh failed\nstdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&ssh_exec.stdout),
+        String::from_utf8_lossy(&ssh_exec.stderr)
+    );
+    let ssh_out = String::from_utf8_lossy(&ssh_exec.stdout);
+    assert!(ssh_out.contains("Linux"), "{ssh_out}");
+    assert!(ssh_out.contains("hello-from-host"), "{ssh_out}");
+
+    // 5. Real SSH local port-forward (`-N -L`) to the guest's allowed loopback service (:8080).
+    let free_port = {
+        let l = TcpListener::bind("127.0.0.1:0").unwrap();
+        l.local_addr().unwrap().port()
+    };
+    let forward_spec = format!("127.0.0.1:{free_port}:127.0.0.1:8080");
+    let mut tunnel = Command::new(devcroft_bin())
+        .args(["ssh", "-N", "-L", &forward_spec, "vmsyncproj"])
+        .current_dir(&proj)
+        .env("HOME", &h.home)
+        .env("XDG_CONFIG_HOME", &h.xdg_config)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn devcroft ssh -N -L tunnel");
+
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let mut response = String::new();
+    while Instant::now() < deadline {
+        if let Ok(mut stream) = TcpStream::connect(("127.0.0.1", free_port)) {
+            let _ = stream.set_read_timeout(Some(Duration::from_secs(2)));
+            let _ =
+                stream.write_all(b"GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n");
+            let mut buf = Vec::new();
+            let _ = stream.read_to_end(&mut buf);
+            let text = String::from_utf8_lossy(&buf).into_owned();
+            if !text.is_empty() {
+                response = text;
+                break;
+            }
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    let _ = tunnel.kill();
+    let _ = tunnel.wait();
+    assert!(
+        response.contains("200 OK") && response.contains("instance="),
+        "expected forwarded HTTP fixture response from guest :8080, got: {response}"
+    );
+
+    let rm = h.run_in(&proj, &["rm", "--yes"], &[]);
+    assert_eq!(rm.status.code(), Some(0));
+    assert!(!h.home.join(".local/share/devcroft/vmsyncproj").exists());
     h.sandbox_to_cleanup = None;
 }

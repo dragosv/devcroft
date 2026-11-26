@@ -2033,6 +2033,8 @@ fn cli_doctor() -> i32 {
     doctor_service_supervisor();
     println!();
     doctor_backend_capabilities();
+    println!();
+    doctor_vm_runtime();
 
     println!();
     if ok {
@@ -2131,6 +2133,44 @@ fn doctor_backend_capabilities() {
                 }
             }
         }
+    }
+}
+
+fn doctor_vm_runtime() {
+    let host = devcroft::vm::current_host_platform();
+    let qual = devcroft::vm::qualification_for(host);
+    println!("opt-in vm runtime:");
+    match qual.status {
+        devcroft::vm::QualificationStatus::QualifiedOptIn {
+            adapter,
+            guest_target,
+            min_os,
+            ..
+        } => {
+            println!(
+                "  [INFO] vm-runtime:                      qualified-opt-in ({} -> {}, {min_os}; default remains process)",
+                adapter.as_str(),
+                guest_target.as_str()
+            );
+        }
+        devcroft::vm::QualificationStatus::Unqualified { reason, .. } => {
+            println!(
+                "  [INFO] vm-runtime:                      unqualified on {} ({reason})",
+                host.as_str()
+            );
+        }
+    }
+    match devcroft::vm::inspect_default_vm_bundle() {
+        Ok(Some(bundle)) => println!(
+            "  [INFO] vm-artifacts:                    installed ({}, {} -> {})",
+            bundle.manifest_version,
+            bundle.target.as_str(),
+            bundle.manifest_path.display()
+        ),
+        Ok(None) => println!(
+            "  [INFO] vm-artifacts:                    not installed (run `devcroft runtime install-local ...` or pass `--vm-manifest`)"
+        ),
+        Err(e) => println!("  [INFO] vm-artifacts:                    error reading bundle ({e})"),
     }
 }
 
@@ -4568,15 +4608,20 @@ fn parse_local_forward_spec(raw: &str) -> Result<devcroft::vm::LocalPortForward,
 fn cli_ssh(args: &[String]) -> i32 {
     use std::os::unix::process::CommandExt;
 
-    const USAGE: &str = "devcroft ssh: usage: devcroft ssh [--no-up] [name] [-N] [-L 127.0.0.1:<local>:127.0.0.1:<guest>]";
+    const USAGE: &str = "devcroft ssh: usage: devcroft ssh [--no-up] [name] [-N] [-L 127.0.0.1:<local>:127.0.0.1:<guest>] [-- <cmd>...]";
     let mut no_up = false;
     let mut tunnel_only = false;
     let mut forwards: Vec<devcroft::vm::LocalPortForward> = Vec::new();
     let mut name_args: Vec<String> = Vec::new();
+    let mut remote_cmd: Vec<String> = Vec::new();
 
     let mut it = args.iter();
     while let Some(a) = it.next() {
         match a.as_str() {
+            "--" => {
+                remote_cmd.extend(it.cloned());
+                break;
+            }
             "--no-up" => no_up = true,
             "-N" => tunnel_only = true,
             "-L" => {
@@ -4601,6 +4646,10 @@ fn cli_ssh(args: &[String]) -> i32 {
     }
     if name_args.len() > 1 {
         eprintln!("{USAGE}");
+        return 2;
+    }
+    if tunnel_only && !remote_cmd.is_empty() {
+        eprintln!("devcroft ssh: `-N` cannot be combined with a remote command");
         return 2;
     }
 
@@ -4666,6 +4715,10 @@ fn cli_ssh(args: &[String]) -> i32 {
                 let tail = ssh_args.pop().expect("host alias present");
                 ssh_args.push("-N".to_string());
                 ssh_args.push(tail);
+            }
+            if !remote_cmd.is_empty() {
+                ssh_args.push("--".to_string());
+                ssh_args.extend(remote_cmd);
             }
             let err = std::process::Command::new("ssh").args(&ssh_args).exec();
             eprintln!("devcroft ssh: exec ssh: {err}");
@@ -4771,7 +4824,7 @@ fn resolve_runtime_project_arg(
 
 /// `devcroft runtime status | list | grant-native | grant-trusted-editor | export-disk`
 fn cli_runtime(args: &[String]) -> i32 {
-    const USAGE: &str = "devcroft runtime: usage: devcroft runtime <status|list|grant-native|grant-trusted-editor|export-disk> [args...]";
+    const USAGE: &str = "devcroft runtime: usage: devcroft runtime <status|list|grant-native|grant-trusted-editor|install-local|sync-in|export-disk> [args...]";
     let Some((sub, rest)) = args.split_first() else {
         eprintln!("{USAGE}");
         return 2;
@@ -4816,6 +4869,17 @@ fn cli_runtime(args: &[String]) -> i32 {
             match devcroft::vm::RuntimeGrantStore::user_grants_path() {
                 Some(path) => println!("grants-file: {}", path.display()),
                 None => println!("grants-file: unavailable (HOME/XDG_CONFIG_HOME unset)"),
+            }
+            match devcroft::vm::inspect_default_vm_bundle() {
+                Ok(Some(bundle)) => println!(
+                    "vm-artifacts: installed ({}, {})",
+                    bundle.manifest_version,
+                    bundle.manifest_path.display()
+                ),
+                Ok(None) => println!(
+                    "vm-artifacts: not installed (run `devcroft runtime install-local ...`)"
+                ),
+                Err(e) => println!("vm-artifacts: invalid ({e})"),
             }
             0
         }
@@ -4910,6 +4974,116 @@ fn cli_runtime(args: &[String]) -> i32 {
             );
             0
         }
+        "install-local" => {
+            const SUB_USAGE: &str = "devcroft runtime install-local: usage: devcroft runtime install-local --helper <path> --kernel <path> --initramfs <path> --runtime <path> [--version <ver>] [--out <dir>]";
+            let mut helper: Option<std::path::PathBuf> = None;
+            let mut kernel: Option<std::path::PathBuf> = None;
+            let mut initramfs: Option<std::path::PathBuf> = None;
+            let mut runtime_image: Option<std::path::PathBuf> = None;
+            let mut version = "local-1".to_string();
+            let mut out_dir: Option<std::path::PathBuf> = None;
+            let mut it = rest.iter();
+            while let Some(a) = it.next() {
+                match a.as_str() {
+                    "--helper" => {
+                        let Some(v) = it.next() else {
+                            eprintln!("{SUB_USAGE}");
+                            return 2;
+                        };
+                        helper = Some(std::path::PathBuf::from(v));
+                    }
+                    "--kernel" => {
+                        let Some(v) = it.next() else {
+                            eprintln!("{SUB_USAGE}");
+                            return 2;
+                        };
+                        kernel = Some(std::path::PathBuf::from(v));
+                    }
+                    "--initramfs" => {
+                        let Some(v) = it.next() else {
+                            eprintln!("{SUB_USAGE}");
+                            return 2;
+                        };
+                        initramfs = Some(std::path::PathBuf::from(v));
+                    }
+                    "--runtime" => {
+                        let Some(v) = it.next() else {
+                            eprintln!("{SUB_USAGE}");
+                            return 2;
+                        };
+                        runtime_image = Some(std::path::PathBuf::from(v));
+                    }
+                    "--version" => {
+                        let Some(v) = it.next() else {
+                            eprintln!("{SUB_USAGE}");
+                            return 2;
+                        };
+                        version = v.clone();
+                    }
+                    "--out" => {
+                        let Some(v) = it.next() else {
+                            eprintln!("{SUB_USAGE}");
+                            return 2;
+                        };
+                        out_dir = Some(std::path::PathBuf::from(v));
+                    }
+                    _ => {
+                        eprintln!("{SUB_USAGE}");
+                        return 2;
+                    }
+                }
+            }
+            let (Some(helper), Some(kernel), Some(initramfs), Some(runtime_image)) =
+                (helper, kernel, initramfs, runtime_image)
+            else {
+                eprintln!("{SUB_USAGE}");
+                return 2;
+            };
+            let req = devcroft::vm::InstallLocalVmBundleRequest {
+                helper,
+                kernel,
+                initramfs,
+                runtime_image,
+                version,
+                out_dir,
+            };
+            match devcroft::vm::install_local_vm_bundle(&req) {
+                Ok(summary) => {
+                    println!(
+                        "devcroft: installed VM bundle '{}' ({}) at {}",
+                        summary.manifest_version,
+                        summary.target.as_str(),
+                        summary.manifest_path.display()
+                    );
+                    0
+                }
+                Err(e) => {
+                    eprintln!("devcroft runtime install-local: {e}");
+                    e.exit_code()
+                }
+            }
+        }
+        "sync-in" => {
+            const SUB_USAGE: &str =
+                "devcroft runtime sync-in: usage: devcroft runtime sync-in [name]";
+            let name = match resolve_name_arg(rest, SUB_USAGE, "runtime sync-in") {
+                Ok(n) => n,
+                Err(code) => return code,
+            };
+            match devcroft::vm::sync_project_into_vm(&name) {
+                Ok(summary) => {
+                    println!(
+                        "devcroft: synced {} file(s) ({} bytes, skipped {} excluded/symlink entry(ies)) into VM '{name}' (/workspace)",
+                        summary.files_synced, summary.bytes_synced, summary.skipped_entries
+                    );
+                    0
+                }
+                Err(e) => {
+                    eprintln!("devcroft runtime sync-in: {e}");
+                    e.exit_code()
+                }
+            }
+        }
         "export-disk" => {
             const SUB_USAGE: &str = "devcroft runtime export-disk: usage: devcroft runtime export-disk [name] --out <path>";
             let mut out_path: Option<std::path::PathBuf> = None;
@@ -4963,13 +5137,16 @@ fn cli_runtime(args: &[String]) -> i32 {
 /// `devcroft policy --render [--backend nono] [name]` (policy spec's
 /// "Inspectable policy" requirement).
 fn cli_policy(args: &[String]) -> i32 {
-    const USAGE: &str = "devcroft policy: usage: devcroft policy --render [--backend nono] [name]";
+    const USAGE: &str =
+        "devcroft policy: usage: devcroft policy --render [--backend nono] [--vm] [name]";
     let mut render = false;
+    let mut vm_mode = false;
     let mut name_arg: Option<String> = None;
     let mut it = args.iter();
     while let Some(a) = it.next() {
         match a.as_str() {
             "--render" => render = true,
+            "--vm" => vm_mode = true,
             "--backend" => match it.next().map(String::as_str) {
                 Some("nono") => {}
                 _ => {
@@ -5000,6 +5177,44 @@ fn cli_policy(args: &[String]) -> i32 {
         Ok(m) => m,
         Err(code) => return code,
     };
+    let project_root = devcroft::config::discover(&cwd)
+        .ok()
+        .and_then(|p| p.parent().map(std::path::Path::to_path_buf))
+        .unwrap_or_else(|| cwd.clone());
+    if vm_mode
+        || devcroft::vm::load_vm_instance(&manifest.sandbox.name)
+            .ok()
+            .flatten()
+            .is_some()
+    {
+        let user_config = match devcroft::config::load_user_config() {
+            Ok(c) => c,
+            Err(e) => {
+                eprintln!("devcroft policy: {e}");
+                return 2;
+            }
+        };
+        return match devcroft::vm::render_vm_policy_plan(
+            &manifest.sandbox.name,
+            &project_root,
+            manifest.network.default == devcroft::config::NetworkDefault::Allow,
+            &manifest.network.allow,
+            &manifest.provisioning.network.allow,
+            &user_config.brokers,
+            &user_config.credentials,
+            devcroft::vm::DEFAULT_VM_VCPUS,
+            devcroft::vm::DEFAULT_VM_MEMORY_MIB,
+        ) {
+            Ok(plan) => {
+                print!("{plan}");
+                0
+            }
+            Err(e) => {
+                eprintln!("devcroft policy: {e}");
+                e.exit_code()
+            }
+        };
+    }
     let (compiled, fidelity) = compile_with_provider_grants(&manifest);
     // Said, never implied: a rendering missing what `up` added is not the
     // policy, and printing it as one is the bug this exists to prevent. It is
