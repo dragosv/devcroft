@@ -66,6 +66,11 @@
         "path": "patches/hvi-vsock-fixed-ports.patch",
         "sha256": "4641b57e08f32f0c4814db39dbbd8280a4b974d3218618fe1a85e48df78ef14d",
         "status": "local experimental fixed-port bridge extension; not upstream merged"
+      },
+      {
+        "path": "patches/hvi-vsock-pending-bound.patch",
+        "sha256": "16ea5d793ef42716f76ec409418e14b0557c6b0fd171b74726fb8437d989a19d",
+        "status": "local experimental TX backpressure at the RX backlog watermark, resumed by RX notifications"
       }
     ],
     "verified_api": [

@@ -12,6 +12,9 @@ artifacts themselves: the build recipes refuse a drifted source tree.
 - hvi: append `hvi_vsock_fuzz.rs` to `src/devices/virtio/vsock.rs`.
 - `FUZZ_SEED` and `FUZZ_SECS` control the random runs.
 
-The fixes are now `../patches/libkrun-vsock-hardening.patch`, the last patch in
-the series. The recorded results in `../results/macos-arm64-vsock-fuzz.json`
+The libkrun fixes are now `../patches/libkrun-vsock-hardening.patch`, the last patch in
+its series. The recorded results in `../results/macos-arm64-vsock-fuzz.json`
 used its candidate form, under this directory in commit 848cf35.
+
+The hvi pending reply queue bound is now `../patches/hvi-vsock-pending-bound.patch`,
+verified in `../results/macos-arm64-hvi-pending-bound.json`.

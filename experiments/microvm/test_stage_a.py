@@ -201,6 +201,25 @@ class LaunchValidation(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("private disk is already in use", result.stderr)
 
+    def test_hvi_provenance_identifies_the_reviewed_patches(self):
+        hvi_helper = ROOT / "hvi/target/debug/devcroft-hvi-spike"
+        if not hvi_helper.is_file():
+            self.skipTest("hvi helper not built")
+        info = json.loads(subprocess.check_output([str(hvi_helper), "provenance"], timeout=5))
+        self.assertEqual(info["adapter"], "hvi")
+        self.assertEqual(info["revision"], "351d1a15728e998486232e4815ba075a22e44f56")
+        expected = [
+            {
+                "file": "hvi-vsock-fixed-ports.patch",
+                "sha256": hashlib.sha256((ROOT / "patches/hvi-vsock-fixed-ports.patch").read_bytes()).hexdigest(),
+            },
+            {
+                "file": "hvi-vsock-pending-bound.patch",
+                "sha256": hashlib.sha256((ROOT / "patches/hvi-vsock-pending-bound.patch").read_bytes()).hexdigest(),
+            },
+        ]
+        self.assertEqual(info["patches"], expected)
+
 
 if __name__ == "__main__":
     unittest.main()

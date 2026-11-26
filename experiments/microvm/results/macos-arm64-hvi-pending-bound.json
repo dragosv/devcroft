@@ -1,0 +1,110 @@
+{
+  "schema": 1,
+  "date": "2026-11-25",
+  "platform": "macos-arm64-native",
+  "status": "passed-scoped",
+  "qualification": "bounded hvi host pending reply queue (TX_PENDING_WATERMARK = 256) with five ordinary VM regressions and device-level fuzzing; these show no VM regression and the device-level queue bound, not guest-driven VM trigger reproduction",
+  "revision": "351d1a15728e998486232e4815ba075a22e44f56",
+  "helper_sha256": "0187e0af327dfc9a444c82c34c5f7c03c48d794a8142e42ae82880e8f317b965",
+  "patches": {
+    "fixed_ports": {
+      "path": "patches/hvi-vsock-fixed-ports.patch",
+      "sha256": "4641b57e08f32f0c4814db39dbbd8280a4b974d3218618fe1a85e48df78ef14d"
+    },
+    "pending_bound": {
+      "path": "patches/hvi-vsock-pending-bound.patch",
+      "sha256": "16ea5d793ef42716f76ec409418e14b0557c6b0fd171b74726fb8437d989a19d"
+    }
+  },
+  "hvi_library_tests": {
+    "command": "cargo test --manifest-path experiments/microvm/artifacts/hvi-source/Cargo.toml --lib --locked --offline",
+    "passed": 563,
+    "failed": 0,
+    "ignored": 6,
+    "includes": [
+      "devices::virtio::vsock::session_tests::transmit_pauses_without_receive_buffers_and_resumes_without_loss"
+    ]
+  },
+  "device_level_fuzzing": {
+    "harness": {
+      "path": "fuzz/hvi_vsock_fuzz.rs",
+      "sha256": "bbef3b9923fd0f4636ff53d91067210841ae18248dba9afc4469958a45bc6920"
+    },
+    "fuzz_control": "passed",
+    "fuzz_pending_growth": {
+      "packets_per_case": 200000,
+      "unpatched_reference": "pending=200001 when rx_posted=false (results/macos-arm64-vsock-fuzz.json)",
+      "patched_observed": [
+        {"rx_posted": false, "op": "OP_REQUEST", "pending": 256},
+        {"rx_posted": false, "op": "OP_CREDIT_REQUEST", "pending": 256},
+        {"rx_posted": true, "op": "OP_REQUEST", "pending": 1}
+      ]
+    },
+    "fuzz_random": {
+      "seeds": [1, 2, 3, 4],
+      "seconds_per_seed": 30,
+      "rounds_total": 7949,
+      "actions_total": 7949000,
+      "unhealthy_rounds": 0,
+      "panics": 0,
+      "per_seed": [
+        {"seed": 1, "rounds": 2003, "actions": 2003000, "unhealthy": 0, "panics": 0},
+        {"seed": 2, "rounds": 1981, "actions": 1981000, "unhealthy": 0, "panics": 0},
+        {"seed": 3, "rounds": 1936, "actions": 1936000, "unhealthy": 0, "panics": 0},
+        {"seed": 4, "rounds": 2029, "actions": 2029000, "unhealthy": 0, "panics": 0}
+      ]
+    }
+  },
+  "rows": {
+    "stage-a": {
+      "status": "passed",
+      "raw": "runs/20261124-hvi-pending-native-stage-a/report.json",
+      "sha256": "2a4985c7122b731c528a2198dcad1bacaecb5a574b37ac7b1a3b6aae4c205c97",
+      "guest": "stage-a-raw-disks",
+      "helper": "0187e0af327dfc9a444c82c34c5f7c03c48d794a8142e42ae82880e8f317b965"
+    },
+    "keeper": {
+      "status": "passed",
+      "raw": "runs/20261124-hvi-pending-native-keeper/report.json",
+      "sha256": "92ce515f6b74b2cfc5b93db7089064b499c932b60178ef370953eb60bb9a9574",
+      "guest": "stage-b-real-keeper",
+      "helper": "0187e0af327dfc9a444c82c34c5f7c03c48d794a8142e42ae82880e8f317b965"
+    },
+    "ssh": {
+      "status": "passed",
+      "raw": "runs/20261124-hvi-pending-native-ssh/report.json",
+      "sha256": "a00125fefde36c9314cbe361b26e8d9fa634eb835d02c6333c8e6ec26790c275",
+      "guest": "stage-b-real-keeper",
+      "helper": "0187e0af327dfc9a444c82c34c5f7c03c48d794a8142e42ae82880e8f317b965"
+    },
+    "protocol": {
+      "status": "passed",
+      "cases": 39,
+      "raw": "runs/20261125-hvi-pending-protocol/report.json",
+      "sha256": "3f0cdef07d42b1b563c286f0ec0970d87d5fc11d1f92150756b65b14c2c4c867",
+      "guest": "stage-b-real-keeper",
+      "helper": "0187e0af327dfc9a444c82c34c5f7c03c48d794a8142e42ae82880e8f317b965"
+    },
+    "stop": {
+      "status": "passed",
+      "cases": 7,
+      "poweroff_exit_qualified": true,
+      "raw": "runs/20261125-hvi-pending-stop-2/report.json",
+      "sha256": "196353a6f89c75d1c56cc88b721cb939e8825a0265911f27b0d40690262d5aeb",
+      "guest": "stage-b-nix-closure-ext4",
+      "helper": "0187e0af327dfc9a444c82c34c5f7c03c48d794a8142e42ae82880e8f317b965"
+    }
+  },
+  "excluded": [
+    "runs/20261124-hvi-pending-stage-a: failed inside enclosing Seatbelt sandbox with EPERM on confinement selftest",
+    "runs/20261124-hvi-pending-keeper: failed inside enclosing Seatbelt sandbox with EPERM on confinement selftest",
+    "runs/20261124-hvi-pending-ssh: failed inside enclosing Seatbelt sandbox with EPERM on confinement selftest",
+    "runs/20261125-hvi-pending-stop: failed on stop_probe.py because the harness still compared hvi provenance only against the superseded single-patch binary hash in results/hvi-macos-arm64-stop-receipts.json (poweroff_exit_qualified=false); superblock and quiescence marker passed, and stop_probe.py was updated to verify against fixtures/upstream.json before the passing rerun"
+  ],
+  "not_run": [
+    "guest-driven reproduction of hvi-pending-unbounded in a booted VM",
+    "coverage-guided fuzzing",
+    "Linux",
+    "x86-64"
+  ]
+}

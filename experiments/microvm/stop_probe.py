@@ -64,10 +64,21 @@ def main():
     # hvi's reviewed wrapper succeeds only for Stop::SystemOff. libkrun's
     # original HVF backend merged OFF and RESET; demand the reviewed seam.
     if args.adapter == 'hvi':
-        reference = ROOT / 'results/hvi-macos-arm64-stop-receipts.json'
-        prior = json.loads(reference.read_text())
-        poweroff_qualified = (expected_helper['sha256'] == prior['helper']['sha256']
-                              and provenance == prior['helper_provenance'])
+        reference = ROOT / 'fixtures/upstream.json'
+        pinned = json.loads(reference.read_text())['hvi']
+        expected_patches = [
+            {'file': Path(item['path']).name, 'sha256': item['sha256']}
+            for item in pinned['patches']
+        ]
+        poweroff_qualified = (
+            provenance.get('adapter') == 'hvi'
+            and provenance.get('revision') == pinned['revision']
+            and provenance.get('patches') == expected_patches
+            and all(
+                hashlib.sha256((ROOT / item['path']).read_bytes()).hexdigest() == item['sha256']
+                for item in pinned['patches']
+            )
+        )
     else:
         reference = ROOT / 'patches/libkrun-macos-reset-exit.patch'
         poweroff_qualified = (

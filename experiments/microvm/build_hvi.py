@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Prepare the exact upstream revision plus the reviewed patch, then build/sign.
+"""Prepare the exact upstream revision plus reviewed patches, then build/sign.
 
 The source checkout is an ignored artifact, never a change to a Cargo registry
 cache. --from may seed it from an existing checkout containing the exact pin.
@@ -7,21 +7,42 @@ cache. --from may seed it from an existing checkout containing the exact pin.
 import argparse
 import hashlib
 import json
+import os
 from pathlib import Path
 import platform
 import subprocess
+import tempfile
 
 ROOT = Path(__file__).resolve().parent
 SOURCE = ROOT / "artifacts/hvi-source"
 PATCH = ROOT / "patches/hvi-vsock-fixed-ports.patch"
+PENDING_PATCH = ROOT / "patches/hvi-vsock-pending-bound.patch"
+PATCHES = (PATCH, PENDING_PATCH)
 REVISION = "351d1a15728e998486232e4815ba075a22e44f56"
 URL = "https://github.com/brig-sh/hvi-vmm"
 STAMP = ".devcroft-patches.json"
 
 
-def git(*args, capture=False):
+def git(*args, capture=False, env=None):
     command = ["git", "-C", str(SOURCE), *args]
-    return subprocess.check_output(command) if capture else subprocess.run(command, check=True)
+    if capture:
+        return subprocess.check_output(command, env=env)
+    return subprocess.run(command, check=True, env=env)
+
+
+def expected_diff():
+    # Patches touch the same file, so compare against the applied series.
+    with tempfile.TemporaryDirectory() as tmp:
+        env = {**os.environ, "GIT_INDEX_FILE": str(Path(tmp) / "index")}
+        git("read-tree", "HEAD", env=env)
+        for patch in PATCHES:
+            git("apply", "--cached", str(patch), env=env)
+        return git("diff", "--cached", "HEAD", "--binary", "--no-ext-diff", "--no-color",
+                   "--src-prefix=a/", "--dst-prefix=b/", capture=True, env=env)
+
+
+def patch_records():
+    return [{"path": str(p.relative_to(ROOT)), "sha256": digest(p)} for p in PATCHES]
 
 
 def digest(path):
@@ -30,10 +51,13 @@ def digest(path):
 
 def verify_source():
     stamp = json.loads((SOURCE / STAMP).read_text())
-    if git("rev-parse", "HEAD", capture=True).decode().strip() != REVISION:
+    head = git("rev-parse", "HEAD", capture=True).decode().strip()
+    if stamp.get("revision") != REVISION or head != REVISION:
         raise ValueError("upstream checkout is not at the recorded revision")
-    if stamp["patch_sha256"] != digest(PATCH):
-        raise ValueError("patch changed; prepare a fresh source artifact explicitly")
+    patches = patch_records()
+    if (stamp.get("schema") != 2 or stamp.get("patches") != patches
+            or stamp.get("patch_sha256") != patches[0]["sha256"]):
+        raise ValueError("patch series changed; prepare a fresh source artifact explicitly")
     dirty = set(git("diff", "HEAD", "--name-only", capture=True).decode().splitlines())
     if dirty != set(stamp["files"]):
         raise ValueError("unexpected upstream modifications outside the recorded patch")
@@ -42,11 +66,11 @@ def verify_source():
     actual = git("diff", "HEAD", "--binary", "--no-ext-diff", "--no-color",
                  "--src-prefix=a/", "--dst-prefix=b/", capture=True)
     # Object-id abbreviations depend on local Git settings. All patch content,
-    # modes, paths and hunks must match the reviewed file byte-for-byte.
+    # modes, paths and hunks must match the applied patch series byte-for-byte.
     normalize = lambda data: b"\n".join(line for line in data.splitlines()
                                        if not line.startswith(b"index "))
-    if normalize(actual) != normalize(PATCH.read_bytes()):
-        raise ValueError("effective upstream diff does not match the reviewed patch")
+    if normalize(actual) != normalize(expected_diff()):
+        raise ValueError("effective upstream diff does not match the reviewed patch series")
     for file, expected in stamp["files"].items():
         if digest(SOURCE / file) != expected:
             raise ValueError(f"patched source drift: {file}")
@@ -63,10 +87,13 @@ def prepare(seed):
             git("init")
             git("fetch", "--depth", "1", URL, REVISION)
         git("checkout", "--detach", REVISION)
-        git("apply", "--check", str(PATCH))
-        git("apply", str(PATCH))
+        for patch in PATCHES:
+            git("apply", "--check", str(patch))
+            git("apply", str(patch))
         files = git("diff", "--name-only", capture=True).decode().splitlines()
-        stamp = {"schema": 1, "revision": REVISION, "patch_sha256": digest(PATCH),
+        patches = patch_records()
+        stamp = {"schema": 2, "revision": REVISION, "patch_sha256": patches[0]["sha256"],
+                 "patches": patches,
                  "files": {file: digest(SOURCE / file) for file in files}}
         (SOURCE / STAMP).write_text(json.dumps(stamp, indent=2) + "\n")
     return verify_source()

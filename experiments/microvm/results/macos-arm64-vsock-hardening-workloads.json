@@ -1,0 +1,94 @@
+{
+  "schema": 1,
+  "date": "2026-11-25",
+  "platform": "macos-arm64-native",
+  "status": "passed",
+  "qualification": "matched native Nix workload, Nix Chrome editor, agent start rows for the hardened libkrun helper (59d009804d6c...) and matched 180-case native density comparison across both hardened helpers (libkrun 59d009804d6c... and hvi 0187e0af...); production no-go unchanged",
+  "helpers": {
+    "libkrun": {
+      "path": "/Users/dragos/Development/devcroft-codex/experiments/microvm/libkrun/target/debug/devcroft-krun-spike",
+      "sha256": "59d009804d6cbeb11de3cda4685836700e022761a13a4fbfff4f12f3cbf93125"
+    },
+    "hvi": {
+      "path": "/Users/dragos/Development/devcroft-codex/experiments/microvm/hvi/target/debug/devcroft-hvi-spike",
+      "sha256": "0187e0af327dfc9a444c82c34c5f7c03c48d794a8142e42ae82880e8f317b965"
+    }
+  },
+  "libkrun_rows": {
+    "nix_workload": {
+      "status": "passed",
+      "raw": "runs/20261125-libkrun-hardening-nix-workload/report.json",
+      "sha256": "ff66c99d467c9925ee4540fece1854db913da06140772067a37c0f909013b91e",
+      "helper": "59d009804d6cbeb11de3cda4685836700e022761a13a4fbfff4f12f3cbf93125",
+      "guest": "stage-b-nix-closure-ext4"
+    },
+    "nix_editor": {
+      "status": "passed",
+      "raw": "runs/20261125-libkrun-hardening-nix-editor/report.json",
+      "sha256": "8e2f186a99a20a90b06537b5ce612026d6106aae84bb19d208d2d6d606477406",
+      "helper": "59d009804d6cbeb11de3cda4685836700e022761a13a4fbfff4f12f3cbf93125",
+      "guest": "stage-b-nix-closure-ext4",
+      "persisted_editor_file_and_binary_after_restart": true
+    },
+    "agent_start": {
+      "status": "passed",
+      "raw": "runs/20261125-libkrun-hardening-agent-start/report.json",
+      "sha256": "f12c26e0a0b95a7089b4837668be04c6fe233b67c7ba6accad24ccb265d4251f",
+      "helper": "59d009804d6cbeb11de3cda4685836700e022761a13a4fbfff4f12f3cbf93125",
+      "guest": "stage-b-real-agent-tls-probe",
+      "threshold_seconds": 5,
+      "agents": {
+        "codex": {
+          "startup_within_5_seconds": true,
+          "maximum_seconds": 1.1992793750250712,
+          "repetitions_seconds": [
+            1.1992793750250712,
+            1.1409758329973556,
+            1.0937218749895692,
+            1.1170692919986323,
+            1.1060495829442516
+          ]
+        },
+        "claude": {
+          "startup_within_5_seconds": true,
+          "maximum_seconds": 1.520966292009689,
+          "repetitions_seconds": [
+            1.520966292009689,
+            1.452964374970179,
+            1.464430583990179,
+            1.4688756669638678,
+            1.4589287500130013
+          ]
+        }
+      }
+    }
+  },
+  "density": {
+    "status": "passed",
+    "summary_path": "results/macos-arm64-density-vsock-hardened.json",
+    "summary_sha256": "2a272fc2118d3cc45c59e4becaa439d70adba8abdf39010ba75beb895d6d198e",
+    "raw": "runs/20261125-vsock-hardened-density/report.json",
+    "source_report_sha256": "c04056762810c4bc0e03d7a1b742448721418b43984d59175b1ea64c0676170d",
+    "expected_cases": 180,
+    "recorded_cases": 180,
+    "complete": true,
+    "comparison_eligible": true,
+    "thresholds": {
+      "post_build_idle_memory_mib": 4096,
+      "physical_storage_per_environment_gib": 8
+    },
+    "post_build_idle_maximum_per_environment_mib": {
+      "libkrun": 383.35633850097656,
+      "hvi": 401.40901947021484
+    },
+    "runtime_storage_standalone_maximum_gib": {
+      "libkrun": 2.0462989807128906,
+      "hvi": 2.0414505004882812
+    }
+  },
+  "not_run": [
+    "guest-driven reproduction of the libkrun/hvi device-fuzzing triggers in a booted VM",
+    "Linux",
+    "x86-64"
+  ]
+}

@@ -7,9 +7,11 @@ fn main() {
     for path in [
         "build_hvi.py",
         "patches/hvi-vsock-fixed-ports.patch",
+        "patches/hvi-vsock-pending-bound.patch",
         "artifacts/hvi-source/src",
         "artifacts/hvi-source/Cargo.toml",
         "artifacts/hvi-source/.git/HEAD",
+        "artifacts/hvi-source/.devcroft-patches.json",
     ] {
         println!("cargo:rerun-if-changed={}", root.join(path).display());
     }
@@ -29,5 +31,9 @@ fn main() {
     println!(
         "cargo:rustc-env=DEVCROFT_HVI_PATCH_SHA256={}",
         stamp["patch_sha256"].as_str().unwrap()
+    );
+    println!(
+        "cargo:rustc-env=DEVCROFT_HVI_PENDING_PATCH_SHA256={}",
+        stamp["patches"][1]["sha256"].as_str().unwrap()
     );
 }

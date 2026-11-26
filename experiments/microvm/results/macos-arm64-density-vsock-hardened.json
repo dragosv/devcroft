@@ -1,0 +1,1242 @@
+{
+  "schema": 1,
+  "platform": "macos-arm64-native",
+  "host": [
+    "Darwin",
+    "Dragoss-MacBook-Pro.local",
+    "24.6.0",
+    "Darwin Kernel Version 24.6.0: Sun Oct 11 23:43:31 PDT 2026; root:xnu-11417.140.69.713.47~2/RELEASE_ARM64_T6041",
+    "arm64"
+  ],
+  "qualification": "native matched density evidence; remaining qualification stated per criterion",
+  "status": "passed",
+  "raw_evidence": "experiments/microvm/runs/20261125-vsock-hardened-density",
+  "protocol": {
+    "schema": 1,
+    "platform": "macos-arm64-native",
+    "thresholds": {
+      "path": "fixtures/no-go-thresholds.json",
+      "sha256": "5db6e27a67179c45403b159684b22db7789d2bc019552ae205d8a1ca2ba3768e"
+    },
+    "adapters": [
+      "libkrun",
+      "hvi"
+    ],
+    "fixtures": [
+      "alpine",
+      "nix"
+    ],
+    "instances": [
+      1,
+      4,
+      8
+    ],
+    "resources_per_instance": {
+      "vcpus": 2,
+      "memory_mib": 512
+    },
+    "launch_stop_cycles": 10,
+    "full_build_idle_repetitions": 5,
+    "idle_observation_seconds": 60,
+    "sample_interval_seconds": 0.25,
+    "adapter_order": "alternate per repetition within each fixture/instance-count pair",
+    "cache_condition": "verified immutable inputs already materialized; warm OS cache, no attempt to flush user machine caches; fresh private disks for each build repetition; repeated launch cycles reuse one private cohort",
+    "workload": "actual GCC xxHash build/upstream sanity, 2048 small files, Redis with appendfsync always, persisted-output verification",
+    "memory": "report task physical footprint and resident bytes separately; no PSS claim; include controller/observer and all recursively discovered runtime/client/proxy descendants; record sampled and VMM lifetime peaks",
+    "cpu": "calibrate libproc CPU units against POSIX process CPU time; record raw calibration and convert before computing one-core CPU percentages",
+    "recovery": "separate real-build recovery from a controlled in-guest allocate/touch/free phase; equal 60-second windows",
+    "session_start": "new pinned-key SSH command session in an already prepared VM, tiny guest readiness marker; record as substrate session, not full AI-agent completion",
+    "durability": "libkrun SyncMode::Full and hvi File::sync_data -> macOS Rust 1.95 F_FULLFSYNC; no host-power-loss claim",
+    "preconditions": [
+      "private Linux builder stopped",
+      "same common kernel and architecture-matched guest artifacts",
+      "host hardware/OS/power state recorded",
+      "no diagnostic unconfined or calibration row included in qualifying comparison",
+      "at least 2 GiB free host storage before each cohort; exhaustion is retained and remaining samples become not-run",
+      "exclusive dedicated-builder lease for the entire density series; no concurrent materialization or nested runner"
+    ],
+    "failures": "retain every failure/exhaustion and requested instance count; an incomplete cohort never counts as successful density",
+    "storage": "count logical bytes and stat blocks*512; common verified inputs once per cohort, private disks per instance; retain standalone full-cost and amortized figures; preparation-output namespaces stay per-project",
+    "retention": "keep raw logs and exported verification artifacts; delete only owned successful private instance directories after storage accounting; retain failed instance disks for diagnosis",
+    "controlled_recovery_repetitions": 1,
+    "controlled_memory_mib": 256,
+    "controlled_hold_seconds": 2,
+    "minimum_host_free_storage_bytes": 2147483648,
+    "collector": {
+      "method": "native autonomous 250-ms Mach absolute deadlines, independent session, direct bounded-buffer JSONL output; phase markers written separately by Python",
+      "qos": "only observer requests QOS_CLASS_USER_INITIATED (25); VMM priorities unchanged; no realtime scheduling",
+      "latency_evidence": "per-pid libproc time, process-tree enumeration time and previous output-flush time recorded",
+      "controller_independence": "seven native snapshots persisted while the owned Python controller process group was SIGSTOPped for two seconds; not a host/VM suspend qualification"
+    },
+    "cohort_headroom_rule": "at least 2 GiB reserve plus requested instances * (512 MiB configured guest RAM + private seed capacity + 16 MiB bootstrap state); fail before preparation if unavailable",
+    "method_revisions": [
+      {
+        "previous_protocol_sha256": "1b5a2defb82d28462de2b37bfff89e49a074d09ad3ea90e9b07f493fa2cd22d2",
+        "recorded_at": "2026-11-10T18:12:12.446021+00:00",
+        "reason": "v1 relative waits accumulated coalescing; v2 synchronous polling had isolated multi-second gaps and the first native 8-VM calibration exhausted host storage. Retain all attempts. Use autonomous native timing, separate collection/output timings, reclaim only regenerable experiment compiler caches, and reserve potential guest RAM/private disk capacity before a cohort. Original 4096 MiB/600 s/5 s/8 GiB E5 limits and 60-second/250-ms sampling requirements are unchanged."
+      }
+    ]
+  },
+  "thresholds": {
+    "path": "/Users/dragos/Development/devcroft-codex/experiments/microvm/fixtures/no-go-thresholds.json",
+    "sha256": "5db6e27a67179c45403b159684b22db7789d2bc019552ae205d8a1ca2ba3768e"
+  },
+  "coverage": {
+    "expected_cases": 180,
+    "recorded_cases": 180,
+    "missing_cases": 0,
+    "complete": true,
+    "comparison_eligible": true,
+    "missing": []
+  },
+  "rows": [
+    {
+      "fixture": "alpine",
+      "adapter": "libkrun",
+      "instances_requested": 1,
+      "functional_status": "passed",
+      "comparison_eligible": true,
+      "successful_launch_repetitions": 10,
+      "successful_build_repetitions": 5,
+      "requested_launch_repetitions": 10,
+      "requested_build_repetitions": 5,
+      "launch_cohort_ready_seconds": {
+        "n": 10,
+        "minimum": 2.221301624958869,
+        "median": 2.2597245210199617,
+        "maximum": 2.329353708017152
+      },
+      "ssh_substrate_session_max_per_cohort_seconds": {
+        "n": 10,
+        "minimum": 1.077964374970179,
+        "median": 1.088617791479919,
+        "maximum": 1.1037194160162471
+      },
+      "source_import_max_per_cohort_seconds": {
+        "n": 5,
+        "minimum": 1.1780728329904377,
+        "median": 1.2052838749950752,
+        "maximum": 1.234630333026871
+      },
+      "build_verify_max_per_cohort_seconds": {
+        "n": 5,
+        "minimum": 4.8514554589637555,
+        "median": 4.920101833005901,
+        "maximum": 4.965411291981582
+      },
+      "post_build_idle_maximum_per_environment_mib": {
+        "n": 5,
+        "minimum": 342.93992614746094,
+        "median": 347.48677825927734,
+        "maximum": 351.65860748291016
+      },
+      "post_build_idle_end_total_mib": {
+        "n": 5,
+        "minimum": 342.93992614746094,
+        "median": 347.48677825927734,
+        "maximum": 351.65860748291016
+      },
+      "post_build_idle_helper_cpu_percent_one_core": {
+        "n": 5,
+        "minimum": 1.4052926694628693,
+        "median": 1.4528992490984325,
+        "maximum": 1.5133724725379365
+      },
+      "post_build_idle_all_owned_cpu_percent_one_core": {
+        "n": 5,
+        "minimum": 1.58023711043104,
+        "median": 1.6470879590741578,
+        "maximum": 1.6953194693885296
+      },
+      "idle_process_sets_stable": true,
+      "sampled_full_run_peak_total_mib": {
+        "n": 5,
+        "minimum": 356.75354766845703,
+        "median": 361.5346374511719,
+        "maximum": 534.269287109375
+      },
+      "controlled_recovery": [
+        {
+          "repetition": 0,
+          "post_build_end_total_mib": 342.93992614746094,
+          "controlled_end_total_mib": 346.54932403564453,
+          "residual_delta_total_mib": 3.6093978881835938,
+          "residual_delta_per_environment_mib": 3.6093978881835938,
+          "scope": "additional stress-program compile, 256-MiB full-page touch/free and equal idle window; not real-build peak recovery"
+        }
+      ],
+      "runtime_storage_standalone_upper_bound_gib": {
+        "n": 5,
+        "minimum": 0.7486839294433594,
+        "median": 0.7486839294433594,
+        "maximum": 0.7486839294433594
+      },
+      "runtime_storage_amortized_per_environment_gib": {
+        "n": 5,
+        "minimum": 0.7486839294433594,
+        "median": 0.7486839294433594,
+        "maximum": 0.7486839294433594
+      },
+      "criteria": {
+        "post_build_idle_memory": "passed",
+        "deployed_runtime_storage": "passed",
+        "actual_agent_start_in_this_density_fixture": "not-run; SSH marker is not an agent",
+        "cold_preparation": "not-run; immutable inputs already materialized"
+      },
+      "failures": []
+    },
+    {
+      "fixture": "alpine",
+      "adapter": "hvi",
+      "instances_requested": 1,
+      "functional_status": "passed",
+      "comparison_eligible": true,
+      "successful_launch_repetitions": 10,
+      "successful_build_repetitions": 5,
+      "requested_launch_repetitions": 10,
+      "requested_build_repetitions": 5,
+      "launch_cohort_ready_seconds": {
+        "n": 10,
+        "minimum": 2.2153470829944126,
+        "median": 2.2664914164924994,
+        "maximum": 2.511878292018082
+      },
+      "ssh_substrate_session_max_per_cohort_seconds": {
+        "n": 10,
+        "minimum": 1.047540875035338,
+        "median": 1.0920633124769665,
+        "maximum": 1.1037022499949671
+      },
+      "source_import_max_per_cohort_seconds": {
+        "n": 5,
+        "minimum": 1.117027500004042,
+        "median": 1.1474065000074916,
+        "maximum": 1.1721142079913989
+      },
+      "build_verify_max_per_cohort_seconds": {
+        "n": 5,
+        "minimum": 4.859492917021271,
+        "median": 4.871367709012702,
+        "maximum": 4.936813582957257
+      },
+      "post_build_idle_maximum_per_environment_mib": {
+        "n": 5,
+        "minimum": 350.8930969238281,
+        "median": 363.5337219238281,
+        "maximum": 370.36182403564453
+      },
+      "post_build_idle_end_total_mib": {
+        "n": 5,
+        "minimum": 350.8930969238281,
+        "median": 363.5337219238281,
+        "maximum": 370.36182403564453
+      },
+      "post_build_idle_helper_cpu_percent_one_core": {
+        "n": 5,
+        "minimum": 1.4000511015695802,
+        "median": 1.4343098297925094,
+        "maximum": 1.4630915313127089
+      },
+      "post_build_idle_all_owned_cpu_percent_one_core": {
+        "n": 5,
+        "minimum": 1.5705222996976884,
+        "median": 1.6113747643705112,
+        "maximum": 1.6523790510521
+      },
+      "idle_process_sets_stable": true,
+      "sampled_full_run_peak_total_mib": {
+        "n": 5,
+        "minimum": 362.4879913330078,
+        "median": 375.972412109375,
+        "maximum": 555.5817413330078
+      },
+      "controlled_recovery": [
+        {
+          "repetition": 0,
+          "post_build_end_total_mib": 365.9087219238281,
+          "controlled_end_total_mib": 543.7213363647461,
+          "residual_delta_total_mib": 177.81261444091797,
+          "residual_delta_per_environment_mib": 177.81261444091797,
+          "scope": "additional stress-program compile, 256-MiB full-page touch/free and equal idle window; not real-build peak recovery"
+        }
+      ],
+      "runtime_storage_standalone_upper_bound_gib": {
+        "n": 5,
+        "minimum": 0.7437667846679688,
+        "median": 0.7437667846679688,
+        "maximum": 0.7437667846679688
+      },
+      "runtime_storage_amortized_per_environment_gib": {
+        "n": 5,
+        "minimum": 0.7437667846679688,
+        "median": 0.7437667846679688,
+        "maximum": 0.7437667846679688
+      },
+      "criteria": {
+        "post_build_idle_memory": "passed",
+        "deployed_runtime_storage": "passed",
+        "actual_agent_start_in_this_density_fixture": "not-run; SSH marker is not an agent",
+        "cold_preparation": "not-run; immutable inputs already materialized"
+      },
+      "failures": []
+    },
+    {
+      "fixture": "alpine",
+      "adapter": "libkrun",
+      "instances_requested": 4,
+      "functional_status": "passed",
+      "comparison_eligible": true,
+      "successful_launch_repetitions": 10,
+      "successful_build_repetitions": 5,
+      "requested_launch_repetitions": 10,
+      "requested_build_repetitions": 5,
+      "launch_cohort_ready_seconds": {
+        "n": 10,
+        "minimum": 2.487552082980983,
+        "median": 2.511491687007947,
+        "maximum": 2.5861442500026897
+      },
+      "ssh_substrate_session_max_per_cohort_seconds": {
+        "n": 10,
+        "minimum": 1.0675784170161933,
+        "median": 1.108867562492378,
+        "maximum": 1.1180680000106804
+      },
+      "source_import_max_per_cohort_seconds": {
+        "n": 5,
+        "minimum": 1.2254111250513233,
+        "median": 1.2334430830087513,
+        "maximum": 1.2390586669789627
+      },
+      "build_verify_max_per_cohort_seconds": {
+        "n": 5,
+        "minimum": 5.017545957991388,
+        "median": 5.093505665950943,
+        "maximum": 5.145175374986138
+      },
+      "post_build_idle_maximum_per_environment_mib": {
+        "n": 5,
+        "minimum": 325.4467716217041,
+        "median": 326.2357654571533,
+        "maximum": 331.9272689819336
+      },
+      "post_build_idle_end_total_mib": {
+        "n": 5,
+        "minimum": 1294.0838470458984,
+        "median": 1299.5838012695312,
+        "maximum": 1312.7869262695312
+      },
+      "post_build_idle_helper_cpu_percent_one_core": {
+        "n": 5,
+        "minimum": 4.808099186637619,
+        "median": 4.949302718273781,
+        "maximum": 5.018490888526482
+      },
+      "post_build_idle_all_owned_cpu_percent_one_core": {
+        "n": 5,
+        "minimum": 5.025256577264581,
+        "median": 5.192194926611236,
+        "maximum": 5.251894377258042
+      },
+      "idle_process_sets_stable": true,
+      "sampled_full_run_peak_total_mib": {
+        "n": 5,
+        "minimum": 1347.0099334716797,
+        "median": 1354.5882873535156,
+        "maximum": 2063.5422134399414
+      },
+      "controlled_recovery": [
+        {
+          "repetition": 0,
+          "post_build_end_total_mib": 1294.0838470458984,
+          "controlled_end_total_mib": 1306.3651885986328,
+          "residual_delta_total_mib": 12.281341552734375,
+          "residual_delta_per_environment_mib": 3.0703353881835938,
+          "scope": "additional stress-program compile, 256-MiB full-page touch/free and equal idle window; not real-build peak recovery"
+        }
+      ],
+      "runtime_storage_standalone_upper_bound_gib": {
+        "n": 5,
+        "minimum": 0.7486839294433594,
+        "median": 0.7486839294433594,
+        "maximum": 0.7486839294433594
+      },
+      "runtime_storage_amortized_per_environment_gib": {
+        "n": 5,
+        "minimum": 0.2523822784423828,
+        "median": 0.2523822784423828,
+        "maximum": 0.2523822784423828
+      },
+      "criteria": {
+        "post_build_idle_memory": "passed",
+        "deployed_runtime_storage": "passed",
+        "actual_agent_start_in_this_density_fixture": "not-run; SSH marker is not an agent",
+        "cold_preparation": "not-run; immutable inputs already materialized"
+      },
+      "failures": []
+    },
+    {
+      "fixture": "alpine",
+      "adapter": "hvi",
+      "instances_requested": 4,
+      "functional_status": "passed",
+      "comparison_eligible": true,
+      "successful_launch_repetitions": 10,
+      "successful_build_repetitions": 5,
+      "requested_launch_repetitions": 10,
+      "requested_build_repetitions": 5,
+      "launch_cohort_ready_seconds": {
+        "n": 10,
+        "minimum": 2.4506725419778377,
+        "median": 2.4939161250076722,
+        "maximum": 2.5470156249939464
+      },
+      "ssh_substrate_session_max_per_cohort_seconds": {
+        "n": 10,
+        "minimum": 1.0641982920351438,
+        "median": 1.0831467084644828,
+        "maximum": 1.1118076659622602
+      },
+      "source_import_max_per_cohort_seconds": {
+        "n": 5,
+        "minimum": 1.166560334037058,
+        "median": 1.1800733749987558,
+        "maximum": 1.2359323339769617
+      },
+      "build_verify_max_per_cohort_seconds": {
+        "n": 5,
+        "minimum": 5.056035957997665,
+        "median": 5.102694874978624,
+        "maximum": 5.1665060829836875
+      },
+      "post_build_idle_maximum_per_environment_mib": {
+        "n": 5,
+        "minimum": 342.1851215362549,
+        "median": 344.08751678466797,
+        "maximum": 346.07583808898926
+      },
+      "post_build_idle_end_total_mib": {
+        "n": 5,
+        "minimum": 1365.224838256836,
+        "median": 1370.006202697754,
+        "maximum": 1371.9591674804688
+      },
+      "post_build_idle_helper_cpu_percent_one_core": {
+        "n": 5,
+        "minimum": 4.849750962559072,
+        "median": 4.943192929522268,
+        "maximum": 5.1382291914641085
+      },
+      "post_build_idle_all_owned_cpu_percent_one_core": {
+        "n": 5,
+        "minimum": 5.085622042571172,
+        "median": 5.191052053621531,
+        "maximum": 5.41447593883648
+      },
+      "idle_process_sets_stable": true,
+      "sampled_full_run_peak_total_mib": {
+        "n": 5,
+        "minimum": 1415.9950866699219,
+        "median": 1418.4635391235352,
+        "maximum": 2141.855010986328
+      },
+      "controlled_recovery": [
+        {
+          "repetition": 0,
+          "post_build_end_total_mib": 1371.9591674804688,
+          "controlled_end_total_mib": 2089.053398132324,
+          "residual_delta_total_mib": 717.0942306518555,
+          "residual_delta_per_environment_mib": 179.27355766296387,
+          "scope": "additional stress-program compile, 256-MiB full-page touch/free and equal idle window; not real-build peak recovery"
+        }
+      ],
+      "runtime_storage_standalone_upper_bound_gib": {
+        "n": 5,
+        "minimum": 0.7437667846679688,
+        "median": 0.7437667846679688,
+        "maximum": 0.7437667846679688
+      },
+      "runtime_storage_amortized_per_environment_gib": {
+        "n": 5,
+        "minimum": 0.25115299224853516,
+        "median": 0.25115299224853516,
+        "maximum": 0.25115299224853516
+      },
+      "criteria": {
+        "post_build_idle_memory": "passed",
+        "deployed_runtime_storage": "passed",
+        "actual_agent_start_in_this_density_fixture": "not-run; SSH marker is not an agent",
+        "cold_preparation": "not-run; immutable inputs already materialized"
+      },
+      "failures": []
+    },
+    {
+      "fixture": "alpine",
+      "adapter": "libkrun",
+      "instances_requested": 8,
+      "functional_status": "passed",
+      "comparison_eligible": true,
+      "successful_launch_repetitions": 10,
+      "successful_build_repetitions": 5,
+      "requested_launch_repetitions": 10,
+      "requested_build_repetitions": 5,
+      "launch_cohort_ready_seconds": {
+        "n": 10,
+        "minimum": 2.681020916963462,
+        "median": 2.7118426249944605,
+        "maximum": 2.8825865000253543
+      },
+      "ssh_substrate_session_max_per_cohort_seconds": {
+        "n": 10,
+        "minimum": 1.08088270801818,
+        "median": 1.108111708483193,
+        "maximum": 1.1347404579864815
+      },
+      "source_import_max_per_cohort_seconds": {
+        "n": 5,
+        "minimum": 1.2494066249928437,
+        "median": 1.2932154589798301,
+        "maximum": 1.3265299170161597
+      },
+      "build_verify_max_per_cohort_seconds": {
+        "n": 5,
+        "minimum": 5.722990875015967,
+        "median": 5.798045792034827,
+        "maximum": 6.072142000019085
+      },
+      "post_build_idle_maximum_per_environment_mib": {
+        "n": 5,
+        "minimum": 325.4153299331665,
+        "median": 326.6496591567993,
+        "maximum": 329.21611404418945
+      },
+      "post_build_idle_end_total_mib": {
+        "n": 5,
+        "minimum": 2550.260025024414,
+        "median": 2576.681785583496,
+        "maximum": 2591.2443313598633
+      },
+      "post_build_idle_helper_cpu_percent_one_core": {
+        "n": 5,
+        "minimum": 8.980060702204588,
+        "median": 9.199751546490882,
+        "maximum": 9.563419016833025
+      },
+      "post_build_idle_all_owned_cpu_percent_one_core": {
+        "n": 5,
+        "minimum": 9.25075934192883,
+        "median": 9.467487799942718,
+        "maximum": 9.834890760943479
+      },
+      "idle_process_sets_stable": true,
+      "sampled_full_run_peak_total_mib": {
+        "n": 5,
+        "minimum": 2658.441261291504,
+        "median": 2695.394660949707,
+        "maximum": 4116.551300048828
+      },
+      "controlled_recovery": [
+        {
+          "repetition": 0,
+          "post_build_end_total_mib": 2550.8849563598633,
+          "controlled_end_total_mib": 2582.713333129883,
+          "residual_delta_total_mib": 31.82837677001953,
+          "residual_delta_per_environment_mib": 3.9785470962524414,
+          "scope": "additional stress-program compile, 256-MiB full-page touch/free and equal idle window; not real-build peak recovery"
+        }
+      ],
+      "runtime_storage_standalone_upper_bound_gib": {
+        "n": 5,
+        "minimum": 0.7486839294433594,
+        "median": 0.7486839294433594,
+        "maximum": 0.7486839294433594
+      },
+      "runtime_storage_amortized_per_environment_gib": {
+        "n": 5,
+        "minimum": 0.16966533660888672,
+        "median": 0.16966533660888672,
+        "maximum": 0.16966533660888672
+      },
+      "criteria": {
+        "post_build_idle_memory": "passed",
+        "deployed_runtime_storage": "passed",
+        "actual_agent_start_in_this_density_fixture": "not-run; SSH marker is not an agent",
+        "cold_preparation": "not-run; immutable inputs already materialized"
+      },
+      "failures": []
+    },
+    {
+      "fixture": "alpine",
+      "adapter": "hvi",
+      "instances_requested": 8,
+      "functional_status": "passed",
+      "comparison_eligible": true,
+      "successful_launch_repetitions": 10,
+      "successful_build_repetitions": 5,
+      "requested_launch_repetitions": 10,
+      "requested_build_repetitions": 5,
+      "launch_cohort_ready_seconds": {
+        "n": 10,
+        "minimum": 2.6691482499591075,
+        "median": 2.686220708012115,
+        "maximum": 2.829291334026493
+      },
+      "ssh_substrate_session_max_per_cohort_seconds": {
+        "n": 10,
+        "minimum": 1.0771224170457572,
+        "median": 1.0977290834998712,
+        "maximum": 1.1208989580045454
+      },
+      "source_import_max_per_cohort_seconds": {
+        "n": 5,
+        "minimum": 1.1747782499878667,
+        "median": 1.2526362909702584,
+        "maximum": 1.3076138750184327
+      },
+      "build_verify_max_per_cohort_seconds": {
+        "n": 5,
+        "minimum": 5.751157208986115,
+        "median": 5.881993832997978,
+        "maximum": 5.904784417012706
+      },
+      "post_build_idle_maximum_per_environment_mib": {
+        "n": 5,
+        "minimum": 339.3450632095337,
+        "median": 340.98766708374023,
+        "maximum": 344.7063684463501
+      },
+      "post_build_idle_end_total_mib": {
+        "n": 5,
+        "minimum": 2671.026336669922,
+        "median": 2684.6982803344727,
+        "maximum": 2699.7920532226562
+      },
+      "post_build_idle_helper_cpu_percent_one_core": {
+        "n": 5,
+        "minimum": 9.101716785245692,
+        "median": 9.328727487018767,
+        "maximum": 9.415725478367834
+      },
+      "post_build_idle_all_owned_cpu_percent_one_core": {
+        "n": 5,
+        "minimum": 9.346827030318615,
+        "median": 9.593439608188698,
+        "maximum": 9.674266334831515
+      },
+      "idle_process_sets_stable": true,
+      "sampled_full_run_peak_total_mib": {
+        "n": 5,
+        "minimum": 2777.3167419433594,
+        "median": 2790.113914489746,
+        "maximum": 4251.1623458862305
+      },
+      "controlled_recovery": [
+        {
+          "repetition": 0,
+          "post_build_end_total_mib": 2692.4483489990234,
+          "controlled_end_total_mib": 4136.808708190918,
+          "residual_delta_total_mib": 1444.3603591918945,
+          "residual_delta_per_environment_mib": 180.54504489898682,
+          "scope": "additional stress-program compile, 256-MiB full-page touch/free and equal idle window; not real-build peak recovery"
+        }
+      ],
+      "runtime_storage_standalone_upper_bound_gib": {
+        "n": 5,
+        "minimum": 0.7437667846679688,
+        "median": 0.7437667846679688,
+        "maximum": 0.7437667846679688
+      },
+      "runtime_storage_amortized_per_environment_gib": {
+        "n": 5,
+        "minimum": 0.1690506935119629,
+        "median": 0.1690506935119629,
+        "maximum": 0.1690506935119629
+      },
+      "criteria": {
+        "post_build_idle_memory": "passed",
+        "deployed_runtime_storage": "passed",
+        "actual_agent_start_in_this_density_fixture": "not-run; SSH marker is not an agent",
+        "cold_preparation": "not-run; immutable inputs already materialized"
+      },
+      "failures": []
+    },
+    {
+      "fixture": "nix",
+      "adapter": "libkrun",
+      "instances_requested": 1,
+      "functional_status": "passed",
+      "comparison_eligible": true,
+      "successful_launch_repetitions": 10,
+      "successful_build_repetitions": 5,
+      "requested_launch_repetitions": 10,
+      "requested_build_repetitions": 5,
+      "launch_cohort_ready_seconds": {
+        "n": 10,
+        "minimum": 7.295972166000865,
+        "median": 7.339788041979773,
+        "maximum": 7.389724499953445
+      },
+      "ssh_substrate_session_max_per_cohort_seconds": {
+        "n": 10,
+        "minimum": 1.0567252499749884,
+        "median": 1.0642221455345862,
+        "maximum": 1.1065633749822155
+      },
+      "source_import_max_per_cohort_seconds": {
+        "n": 5,
+        "minimum": 1.1691345000290312,
+        "median": 1.2157863750471734,
+        "maximum": 1.2427092909929343
+      },
+      "build_verify_max_per_cohort_seconds": {
+        "n": 5,
+        "minimum": 5.831299749959726,
+        "median": 5.848189708951395,
+        "maximum": 5.901076957990881
+      },
+      "post_build_idle_maximum_per_environment_mib": {
+        "n": 5,
+        "minimum": 378.17425537109375,
+        "median": 380.33052825927734,
+        "maximum": 383.36173248291016
+      },
+      "post_build_idle_end_total_mib": {
+        "n": 5,
+        "minimum": 378.17425537109375,
+        "median": 380.33052825927734,
+        "maximum": 383.36173248291016
+      },
+      "post_build_idle_helper_cpu_percent_one_core": {
+        "n": 5,
+        "minimum": 1.5210708223320075,
+        "median": 1.5714687365697748,
+        "maximum": 1.593039309151188
+      },
+      "post_build_idle_all_owned_cpu_percent_one_core": {
+        "n": 5,
+        "minimum": 1.6971098633685713,
+        "median": 1.7474066782936324,
+        "maximum": 1.781277531063301
+      },
+      "idle_process_sets_stable": true,
+      "sampled_full_run_peak_total_mib": {
+        "n": 5,
+        "minimum": 389.1751708984375,
+        "median": 391.9567413330078,
+        "maximum": 575.0817184448242
+      },
+      "controlled_recovery": [
+        {
+          "repetition": 0,
+          "post_build_end_total_mib": 381.58050537109375,
+          "controlled_end_total_mib": 387.06490325927734,
+          "residual_delta_total_mib": 5.484397888183594,
+          "residual_delta_per_environment_mib": 5.484397888183594,
+          "scope": "additional stress-program compile, 256-MiB full-page touch/free and equal idle window; not real-build peak recovery"
+        }
+      ],
+      "runtime_storage_standalone_upper_bound_gib": {
+        "n": 5,
+        "minimum": 2.045562744140625,
+        "median": 2.045562744140625,
+        "maximum": 2.045562744140625
+      },
+      "runtime_storage_amortized_per_environment_gib": {
+        "n": 5,
+        "minimum": 2.045562744140625,
+        "median": 2.045562744140625,
+        "maximum": 2.045562744140625
+      },
+      "criteria": {
+        "post_build_idle_memory": "passed",
+        "deployed_runtime_storage": "passed",
+        "actual_agent_start_in_this_density_fixture": "not-run; SSH marker is not an agent",
+        "cold_preparation": "not-run; immutable inputs already materialized"
+      },
+      "failures": []
+    },
+    {
+      "fixture": "nix",
+      "adapter": "hvi",
+      "instances_requested": 1,
+      "functional_status": "passed",
+      "comparison_eligible": true,
+      "successful_launch_repetitions": 10,
+      "successful_build_repetitions": 5,
+      "requested_launch_repetitions": 10,
+      "requested_build_repetitions": 5,
+      "launch_cohort_ready_seconds": {
+        "n": 10,
+        "minimum": 7.322006375005003,
+        "median": 7.351899083005264,
+        "maximum": 7.459312582970597
+      },
+      "ssh_substrate_session_max_per_cohort_seconds": {
+        "n": 10,
+        "minimum": 1.0524295420036651,
+        "median": 1.0651086670113727,
+        "maximum": 1.0978523339726962
+      },
+      "source_import_max_per_cohort_seconds": {
+        "n": 5,
+        "minimum": 1.124455958022736,
+        "median": 1.189351250010077,
+        "maximum": 1.2313559579779394
+      },
+      "build_verify_max_per_cohort_seconds": {
+        "n": 5,
+        "minimum": 5.800723374995869,
+        "median": 5.843733125017025,
+        "maximum": 5.89920887502376
+      },
+      "post_build_idle_maximum_per_environment_mib": {
+        "n": 5,
+        "minimum": 398.33057403564453,
+        "median": 400.4868469238281,
+        "maximum": 401.4087219238281
+      },
+      "post_build_idle_end_total_mib": {
+        "n": 5,
+        "minimum": 398.33057403564453,
+        "median": 400.4868469238281,
+        "maximum": 401.4087219238281
+      },
+      "post_build_idle_helper_cpu_percent_one_core": {
+        "n": 5,
+        "minimum": 1.5717723875701275,
+        "median": 1.5746478011669025,
+        "maximum": 1.5936334014712428
+      },
+      "post_build_idle_all_owned_cpu_percent_one_core": {
+        "n": 5,
+        "minimum": 1.7351816306190415,
+        "median": 1.7577296401892646,
+        "maximum": 1.7603464884069207
+      },
+      "idle_process_sets_stable": true,
+      "sampled_full_run_peak_total_mib": {
+        "n": 5,
+        "minimum": 409.3629913330078,
+        "median": 412.1440124511719,
+        "maximum": 592.6755142211914
+      },
+      "controlled_recovery": [
+        {
+          "repetition": 0,
+          "post_build_end_total_mib": 401.18994903564453,
+          "controlled_end_total_mib": 581.2994613647461,
+          "residual_delta_total_mib": 180.10951232910156,
+          "residual_delta_per_environment_mib": 180.10951232910156,
+          "scope": "additional stress-program compile, 256-MiB full-page touch/free and equal idle window; not real-build peak recovery"
+        }
+      ],
+      "runtime_storage_standalone_upper_bound_gib": {
+        "n": 5,
+        "minimum": 2.0406455993652344,
+        "median": 2.0406455993652344,
+        "maximum": 2.0406455993652344
+      },
+      "runtime_storage_amortized_per_environment_gib": {
+        "n": 5,
+        "minimum": 2.0406455993652344,
+        "median": 2.0406455993652344,
+        "maximum": 2.0406455993652344
+      },
+      "criteria": {
+        "post_build_idle_memory": "passed",
+        "deployed_runtime_storage": "passed",
+        "actual_agent_start_in_this_density_fixture": "not-run; SSH marker is not an agent",
+        "cold_preparation": "not-run; immutable inputs already materialized"
+      },
+      "failures": []
+    },
+    {
+      "fixture": "nix",
+      "adapter": "libkrun",
+      "instances_requested": 4,
+      "functional_status": "passed",
+      "comparison_eligible": true,
+      "successful_launch_repetitions": 10,
+      "successful_build_repetitions": 5,
+      "requested_launch_repetitions": 10,
+      "requested_build_repetitions": 5,
+      "launch_cohort_ready_seconds": {
+        "n": 10,
+        "minimum": 8.122258457995486,
+        "median": 8.154257332993438,
+        "maximum": 8.332248708000407
+      },
+      "ssh_substrate_session_max_per_cohort_seconds": {
+        "n": 10,
+        "minimum": 1.0723033749964088,
+        "median": 1.1137855420238338,
+        "maximum": 1.1342719999956898
+      },
+      "source_import_max_per_cohort_seconds": {
+        "n": 5,
+        "minimum": 1.229678125004284,
+        "median": 1.2357345000491478,
+        "maximum": 1.2837383329751901
+      },
+      "build_verify_max_per_cohort_seconds": {
+        "n": 5,
+        "minimum": 6.033649208024144,
+        "median": 6.062371000007261,
+        "maximum": 6.11876070901053
+      },
+      "post_build_idle_maximum_per_environment_mib": {
+        "n": 5,
+        "minimum": 355.5678195953369,
+        "median": 356.0443363189697,
+        "maximum": 358.4896488189697
+      },
+      "post_build_idle_end_total_mib": {
+        "n": 5,
+        "minimum": 1405.7399139404297,
+        "median": 1411.1460266113281,
+        "maximum": 1418.9742431640625
+      },
+      "post_build_idle_helper_cpu_percent_one_core": {
+        "n": 5,
+        "minimum": 5.3458143730119225,
+        "median": 5.412582084965977,
+        "maximum": 5.428741584586179
+      },
+      "post_build_idle_all_owned_cpu_percent_one_core": {
+        "n": 5,
+        "minimum": 5.567008084241038,
+        "median": 5.647240617187738,
+        "maximum": 5.691870390831954
+      },
+      "idle_process_sets_stable": true,
+      "sampled_full_run_peak_total_mib": {
+        "n": 5,
+        "minimum": 1453.8847045898438,
+        "median": 1460.572021484375,
+        "maximum": 2189.0419845581055
+      },
+      "controlled_recovery": [
+        {
+          "repetition": 0,
+          "post_build_end_total_mib": 1415.7712326049805,
+          "controlled_end_total_mib": 1441.9119491577148,
+          "residual_delta_total_mib": 26.140716552734375,
+          "residual_delta_per_environment_mib": 6.535179138183594,
+          "scope": "additional stress-program compile, 256-MiB full-page touch/free and equal idle window; not real-build peak recovery"
+        }
+      ],
+      "runtime_storage_standalone_upper_bound_gib": {
+        "n": 5,
+        "minimum": 2.045562744140625,
+        "median": 2.045562744140625,
+        "maximum": 2.045562744140625
+      },
+      "runtime_storage_amortized_per_environment_gib": {
+        "n": 5,
+        "minimum": 0.5766019821166992,
+        "median": 0.5766019821166992,
+        "maximum": 0.5766019821166992
+      },
+      "criteria": {
+        "post_build_idle_memory": "passed",
+        "deployed_runtime_storage": "passed",
+        "actual_agent_start_in_this_density_fixture": "not-run; SSH marker is not an agent",
+        "cold_preparation": "not-run; immutable inputs already materialized"
+      },
+      "failures": []
+    },
+    {
+      "fixture": "nix",
+      "adapter": "hvi",
+      "instances_requested": 4,
+      "functional_status": "passed",
+      "comparison_eligible": true,
+      "successful_launch_repetitions": 10,
+      "successful_build_repetitions": 5,
+      "requested_launch_repetitions": 10,
+      "requested_build_repetitions": 5,
+      "launch_cohort_ready_seconds": {
+        "n": 10,
+        "minimum": 8.07829741598107,
+        "median": 8.13668033349677,
+        "maximum": 8.259718666959088
+      },
+      "ssh_substrate_session_max_per_cohort_seconds": {
+        "n": 10,
+        "minimum": 1.071625792013947,
+        "median": 1.1065575834945776,
+        "maximum": 1.119405834004283
+      },
+      "source_import_max_per_cohort_seconds": {
+        "n": 5,
+        "minimum": 1.1855041249655187,
+        "median": 1.2285542500321753,
+        "maximum": 1.2355396670172922
+      },
+      "build_verify_max_per_cohort_seconds": {
+        "n": 5,
+        "minimum": 6.037674542050809,
+        "median": 6.082556166977156,
+        "maximum": 6.173110207950231
+      },
+      "post_build_idle_maximum_per_environment_mib": {
+        "n": 5,
+        "minimum": 374.43130683898926,
+        "median": 375.8335132598877,
+        "maximum": 385.74773597717285
+      },
+      "post_build_idle_end_total_mib": {
+        "n": 5,
+        "minimum": 1487.8028717041016,
+        "median": 1490.9123611450195,
+        "maximum": 1499.6936569213867
+      },
+      "post_build_idle_helper_cpu_percent_one_core": {
+        "n": 5,
+        "minimum": 5.102018898936999,
+        "median": 5.359556197777144,
+        "maximum": 5.428893083899871
+      },
+      "post_build_idle_all_owned_cpu_percent_one_core": {
+        "n": 5,
+        "minimum": 5.310190504068291,
+        "median": 5.566604404884855,
+        "maximum": 5.646370506335232
+      },
+      "idle_process_sets_stable": true,
+      "sampled_full_run_peak_total_mib": {
+        "n": 5,
+        "minimum": 1536.9477310180664,
+        "median": 1542.4166870117188,
+        "maximum": 2265.574058532715
+      },
+      "controlled_recovery": [
+        {
+          "repetition": 0,
+          "post_build_end_total_mib": 1488.834327697754,
+          "controlled_end_total_mib": 2215.11612701416,
+          "residual_delta_total_mib": 726.2817993164062,
+          "residual_delta_per_environment_mib": 181.57044982910156,
+          "scope": "additional stress-program compile, 256-MiB full-page touch/free and equal idle window; not real-build peak recovery"
+        }
+      ],
+      "runtime_storage_standalone_upper_bound_gib": {
+        "n": 5,
+        "minimum": 2.0406455993652344,
+        "median": 2.0406455993652344,
+        "maximum": 2.0406455993652344
+      },
+      "runtime_storage_amortized_per_environment_gib": {
+        "n": 5,
+        "minimum": 0.5753726959228516,
+        "median": 0.5753726959228516,
+        "maximum": 0.5753726959228516
+      },
+      "criteria": {
+        "post_build_idle_memory": "passed",
+        "deployed_runtime_storage": "passed",
+        "actual_agent_start_in_this_density_fixture": "not-run; SSH marker is not an agent",
+        "cold_preparation": "not-run; immutable inputs already materialized"
+      },
+      "failures": []
+    },
+    {
+      "fixture": "nix",
+      "adapter": "libkrun",
+      "instances_requested": 8,
+      "functional_status": "passed",
+      "comparison_eligible": true,
+      "successful_launch_repetitions": 10,
+      "successful_build_repetitions": 5,
+      "requested_launch_repetitions": 10,
+      "requested_build_repetitions": 5,
+      "launch_cohort_ready_seconds": {
+        "n": 10,
+        "minimum": 8.750203375006095,
+        "median": 8.85428879148094,
+        "maximum": 8.960347959015053
+      },
+      "ssh_substrate_session_max_per_cohort_seconds": {
+        "n": 10,
+        "minimum": 1.085100958996918,
+        "median": 1.1234751875163056,
+        "maximum": 1.1283874590299092
+      },
+      "source_import_max_per_cohort_seconds": {
+        "n": 5,
+        "minimum": 1.2981972079724073,
+        "median": 1.3360441249678843,
+        "maximum": 1.356527832977008
+      },
+      "build_verify_max_per_cohort_seconds": {
+        "n": 5,
+        "minimum": 6.753317583003081,
+        "median": 6.800438792037312,
+        "maximum": 6.914674583997112
+      },
+      "post_build_idle_maximum_per_environment_mib": {
+        "n": 5,
+        "minimum": 349.33120822906494,
+        "median": 352.4972724914551,
+        "maximum": 354.15749740600586
+      },
+      "post_build_idle_end_total_mib": {
+        "n": 5,
+        "minimum": 2774.369010925293,
+        "median": 2783.80655670166,
+        "maximum": 2797.728546142578
+      },
+      "post_build_idle_helper_cpu_percent_one_core": {
+        "n": 5,
+        "minimum": 10.042137669607875,
+        "median": 10.251252039597164,
+        "maximum": 10.300334918364621
+      },
+      "post_build_idle_all_owned_cpu_percent_one_core": {
+        "n": 5,
+        "minimum": 10.332658743437024,
+        "median": 10.536589591999068,
+        "maximum": 10.594295800966872
+      },
+      "idle_process_sets_stable": true,
+      "sampled_full_run_peak_total_mib": {
+        "n": 5,
+        "minimum": 2881.7221450805664,
+        "median": 2893.6443405151367,
+        "maximum": 4340.785903930664
+      },
+      "controlled_recovery": [
+        {
+          "repetition": 0,
+          "post_build_end_total_mib": 2786.40030670166,
+          "controlled_end_total_mib": 2831.166160583496,
+          "residual_delta_total_mib": 44.76585388183594,
+          "residual_delta_per_environment_mib": 5.595731735229492,
+          "scope": "additional stress-program compile, 256-MiB full-page touch/free and equal idle window; not real-build peak recovery"
+        }
+      ],
+      "runtime_storage_standalone_upper_bound_gib": {
+        "n": 5,
+        "minimum": 2.045562744140625,
+        "median": 2.045562744140625,
+        "maximum": 2.045562744140625
+      },
+      "runtime_storage_amortized_per_environment_gib": {
+        "n": 5,
+        "minimum": 0.3317751884460449,
+        "median": 0.3317751884460449,
+        "maximum": 0.3317751884460449
+      },
+      "criteria": {
+        "post_build_idle_memory": "passed",
+        "deployed_runtime_storage": "passed",
+        "actual_agent_start_in_this_density_fixture": "not-run; SSH marker is not an agent",
+        "cold_preparation": "not-run; immutable inputs already materialized"
+      },
+      "failures": []
+    },
+    {
+      "fixture": "nix",
+      "adapter": "hvi",
+      "instances_requested": 8,
+      "functional_status": "passed",
+      "comparison_eligible": true,
+      "successful_launch_repetitions": 10,
+      "successful_build_repetitions": 5,
+      "requested_launch_repetitions": 10,
+      "requested_build_repetitions": 5,
+      "launch_cohort_ready_seconds": {
+        "n": 10,
+        "minimum": 8.671211874985602,
+        "median": 8.848291062487988,
+        "maximum": 8.996219415974338
+      },
+      "ssh_substrate_session_max_per_cohort_seconds": {
+        "n": 10,
+        "minimum": 1.0822537910426036,
+        "median": 1.1232406249910127,
+        "maximum": 1.1321083339862525
+      },
+      "source_import_max_per_cohort_seconds": {
+        "n": 5,
+        "minimum": 1.247797249990981,
+        "median": 1.2816524170339108,
+        "maximum": 1.2903485420392826
+      },
+      "build_verify_max_per_cohort_seconds": {
+        "n": 5,
+        "minimum": 6.817325458978303,
+        "median": 6.853525709011592,
+        "maximum": 6.9031705419765785
+      },
+      "post_build_idle_maximum_per_environment_mib": {
+        "n": 5,
+        "minimum": 374.3881492614746,
+        "median": 381.4427881240845,
+        "maximum": 386.20845890045166
+      },
+      "post_build_idle_end_total_mib": {
+        "n": 5,
+        "minimum": 2936.0110092163086,
+        "median": 2956.042167663574,
+        "maximum": 2968.6827697753906
+      },
+      "post_build_idle_helper_cpu_percent_one_core": {
+        "n": 5,
+        "minimum": 9.983892060053842,
+        "median": 10.040223709361431,
+        "maximum": 10.270284539316853
+      },
+      "post_build_idle_all_owned_cpu_percent_one_core": {
+        "n": 5,
+        "minimum": 10.288520103371553,
+        "median": 10.322086545030574,
+        "maximum": 10.56661081051046
+      },
+      "idle_process_sets_stable": true,
+      "sampled_full_run_peak_total_mib": {
+        "n": 5,
+        "minimum": 3043.8327102661133,
+        "median": 3074.2234268188477,
+        "maximum": 4496.130638122559
+      },
+      "controlled_recovery": [
+        {
+          "repetition": 0,
+          "post_build_end_total_mib": 2940.104782104492,
+          "controlled_end_total_mib": 4387.887107849121,
+          "residual_delta_total_mib": 1447.782325744629,
+          "residual_delta_per_environment_mib": 180.9727907180786,
+          "scope": "additional stress-program compile, 256-MiB full-page touch/free and equal idle window; not real-build peak recovery"
+        }
+      ],
+      "runtime_storage_standalone_upper_bound_gib": {
+        "n": 5,
+        "minimum": 2.0406455993652344,
+        "median": 2.0406455993652344,
+        "maximum": 2.0406455993652344
+      },
+      "runtime_storage_amortized_per_environment_gib": {
+        "n": 5,
+        "minimum": 0.3311605453491211,
+        "median": 0.3311605453491211,
+        "maximum": 0.3311605453491211
+      },
+      "criteria": {
+        "post_build_idle_memory": "passed",
+        "deployed_runtime_storage": "passed",
+        "actual_agent_start_in_this_density_fixture": "not-run; SSH marker is not an agent",
+        "cold_preparation": "not-run; immutable inputs already materialized"
+      },
+      "failures": []
+    }
+  ],
+  "limits_of_interpretation": [
+    "Minimum/median/maximum per cohort; no P95 estimate from five or ten repetitions.",
+    "Physical footprint and resident memory are separate; no PSS or exact global physical attribution claim.",
+    "Storage criterion covers deployed immutable runtime inputs plus the largest private environment; retained builder/download caches are separate.",
+    "Actual Codex/Claude startup is separately measured in one 1024-MiB prepared VM; density guests use 512 MiB and SSH markers do not qualify their agent startup.",
+    "Unavailable native Linux/Intel platform rows remain not-run; these results cannot qualify them."
+  ],
+  "source_report_sha256": "c04056762810c4bc0e03d7a1b742448721418b43984d59175b1ea64c0676170d"
+}

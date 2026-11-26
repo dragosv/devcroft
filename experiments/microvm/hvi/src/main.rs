@@ -227,7 +227,15 @@ fn entry() -> Result<(), String> {
     if args.len() == 2 && args[1] == "provenance" {
         println!(
             "{}",
-            serde_json::json!({"adapter":"hvi","revision":REVISION,"core_version":hvi::CORE_VERSION,"patches":[{"file":"hvi-vsock-fixed-ports.patch", "sha256":env!("DEVCROFT_HVI_PATCH_SHA256")}]})
+            serde_json::json!({
+                "adapter": "hvi",
+                "revision": REVISION,
+                "core_version": hvi::CORE_VERSION,
+                "patches": [
+                    {"file": "hvi-vsock-fixed-ports.patch", "sha256": env!("DEVCROFT_HVI_PATCH_SHA256")},
+                    {"file": "hvi-vsock-pending-bound.patch", "sha256": env!("DEVCROFT_HVI_PENDING_PATCH_SHA256")}
+                ]
+            })
         );
         return Ok(());
     }

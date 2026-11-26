@@ -1,0 +1,96 @@
+diff --git a/src/devices/virtio/vsock.rs b/src/devices/virtio/vsock.rs
+index 44e0388..761160b 100644
+--- a/src/devices/virtio/vsock.rs
++++ b/src/devices/virtio/vsock.rs
+@@ -130,6 +130,8 @@ const MAX_TX_PACKET: usize = HDR_LEN + 64 * 1024;
+ /// the rest of its socket goes into the backlog, bounded by the socket's
+ /// receive buffer.
+ const HOST_BACKLOG_MAX: usize = 64 * 1024;
++/// Pause guest TX at this many queued RX packets until the guest replenishes RX.
++const TX_PENDING_WATERMARK: usize = 256;
+ /// How often [`HostGate::wait`] checks whether its reader should stop
+ /// waiting, for a stop or a host hangup.
+ const GATE_POLL: Duration = Duration::from_millis(100);
+@@ -938,7 +940,11 @@ impl VirtioVsock {
+                 mmio::QUEUE_READY => self.queue().set_ready(v, mem),
+                 mmio::QUEUE_NOTIFY => match v as u16 {
+                     TX_QUEUE => self.process_tx(mem),
+-                    RX_QUEUE => self.fill_rx(mem),
++                    RX_QUEUE => {
++                        self.fill_rx_buffers(mem);
++                        // Retry TX descriptors held back by the watermark.
++                        self.process_tx(mem);
++                    }
+                     _ => {}
+                 },
+                 mmio::INTERRUPT_ACK => self.interrupt_status &= !v,
+@@ -989,6 +995,9 @@ impl VirtioVsock {
+         };
+         let mut last = tx.last_avail();
+         for _ in 0..pending {
++            if self.pending.len() >= TX_PENDING_WATERMARK {
++                break;
++            }
+             let Some(slot) = self.queues[TX_QUEUE as usize].avail_slot(last) else {
+                 break;
+             };
+@@ -1779,6 +1788,59 @@ mod session_tests {
+         );
+     }
+ 
++    // Without receive buffers the device stops consuming the transmit ring;
++    // once buffers return it consumes the rest and answers every packet.
++    #[test]
++    fn transmit_pauses_without_receive_buffers_and_resumes_without_loss() {
++        const BASE: u64 = 0x4000_0000;
++        const TX: u64 = BASE + 0x4000;
++        const TX_DATA: u64 = BASE + 0x8000;
++        const RX_DATA: u64 = BASE + 0x9000;
++        const QUEUE_SIZE: u16 = 8;
++        const WATERMARK: u16 = TX_PENDING_WATERMARK as u16;
++        const REQUESTS: u16 = WATERMARK + 2 * QUEUE_SIZE;
++        const HOST_PORT: u32 = 40000;
++        let mem = mem_of(0x10000);
++        let mut dev = VirtioVsock::new();
++        program_queue(&mut dev, &mem, RX_QUEUE, BASE, BASE + 0x1000, BASE + 0x2000);
++        program_queue(&mut dev, &mem, TX_QUEUE, TX, TX + 0x1000, TX + 0x2000);
++        for slot in 0..u64::from(QUEUE_SIZE) {
++            mem.write_u64(TX + slot * 16, TX_DATA + slot * 64).unwrap();
++            mem.write_u32(TX + slot * 16 + 8, HDR_LEN as u32).unwrap();
++        }
++
++        let used = |q: u64| mem.read_u16(q + 0x2002).unwrap();
++        let mut sent = 0;
++        for answered in 0..REQUESTS {
++            while sent < REQUESTS && sent - used(TX) < QUEUE_SIZE {
++                let slot = sent % QUEUE_SIZE;
++                let request = pkt(OP_REQUEST, HOST_PORT + u32::from(sent), &[]);
++                mem.write(TX_DATA + u64::from(slot) * 64, &request).unwrap();
++                mem.write_u16(TX + 0x1004 + u64::from(slot) * 2, slot)
++                    .unwrap();
++                sent += 1;
++                mem.write_u16(TX + 0x1002, sent).unwrap();
++                dev.mmio(&mem, mmio::QUEUE_NOTIFY, true, u64::from(TX_QUEUE));
++            }
++            assert!(dev.pending.len() <= TX_PENDING_WATERMARK);
++            let tx_used_before = used(TX);
++            assert_eq!(tx_used_before, sent.min(WATERMARK + answered));
++
++            post_rx_buffer(&mem, BASE, BASE + 0x1000, 0, RX_DATA);
++            dev.mmio(&mem, mmio::QUEUE_NOTIFY, true, u64::from(RX_QUEUE));
++            assert_eq!(used(TX), sent.min(tx_used_before + 1));
++            assert_eq!(used(BASE), answered + 1);
++
++            let mut reply = [0; HDR_LEN];
++            mem.read(RX_DATA, &mut reply).unwrap();
++            let header = Hdr::parse(&reply).unwrap();
++            assert_eq!(header.op, OP_RST);
++            assert_eq!(header.src_port, HOST_PORT + u32::from(answered));
++        }
++        assert_eq!(used(TX), REQUESTS);
++        assert!(dev.pending.is_empty());
++    }
++
+     fn recv(s: &mut UnixStream, n: usize) -> Option<Vec<u8>> {
+         // macOS refuses the timeout on a socket whose peer has shut down, and
+         // a read on that socket does not block anyway.
