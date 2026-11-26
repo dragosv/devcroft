@@ -4,7 +4,7 @@ This is the experimental implementation of `evaluate-microvm-runtimes`.
 `libkrun/` and `hvi/` have their own Cargo workspaces and lockfiles. The main devcroft build and
 published crate do not depend on it. No production VM dispatch exists yet.
 
-The [native assessment](results/macos-arm64-evaluation-assessment-v14.json) records
+The [native assessment](results/macos-arm64-evaluation-assessment-v15.json) records
 the full 180-case macOS ARM64 comparison, clean reconstruction, final SSH fault
 recovery and real CLI/TLS regressions against the five backend criteria. Both
 adapters work on this host. Production adoption remains no-go under the current
@@ -1548,3 +1548,13 @@ Limits:
   child-stdin writes; see `docs/implementation-log.md` (2026-11-20).
 
 Production adoption remains no-go.
+
+### Host vsock fuzzing, hardening, and hardened density rerun (2026-11-23 - 2026-11-25)
+
+Device-level fuzzing of both pinned, patched host vsock implementations (`fuzz/`, no VM booted) exposed three issues in `libkrun` (`krun-acceptor-unreachable`, `krun-tx-chain-amplification`, and `krun-rw-before-response`) and an unbounded host-to-guest pending reply queue in `hvi` (`hvi-pending-unbounded`, 200,001 entries across 200,000 packets without RX buffers).
+
+- **`libkrun` hardening (`3.6.4.2`):** Adopted `patches/libkrun-vsock-hardening.patch` (listening proxies ignore data operations, TX copy is bounded by declared header length, and accepted host sockets stay non-blocking). All 108 `devices` library tests, 22 helper unit tests, and all five ordinary native VM rows (`stage-a`, `keeper`, `ssh`, `protocol`, `stop`) pass with helper `59d009804d6c...`, plus Nix workload, Nix Chrome editor, and Codex/Claude agent start (`<= 1.20 s` / `<= 1.52 s`). Note that the adopted patch drops connections on failed `fcntl` whereas the fuzzed candidate ignored it (35 of 2,930 random rounds failed the final check), and device-level probes were not rerun on that final diff.
+- **`hvi` pending bound (`3.6.4.3`):** Adopted `patches/hvi-vsock-pending-bound.patch` (`TX_PENDING_WATERMARK = 256` with `RX_QUEUE` resumption). All 563 `hvi` library unit tests (6 ignored), device-level `fuzz_pending_growth` (`pending = 256` across 200,000 packets without RX buffers), 7.949 M random actions (0 panics / 0 unhealthy), and all five ordinary native VM rows pass with helper `0187e0af...` (`stop_probe.py` updated to verify provenance against `fixtures/upstream.json`).
+- **Matched hardened density rerun:** The matched 180-case native density comparison passes across both hardened helpers (`libkrun`: max 383.36 MiB post-build idle, 2.046 GiB standalone storage, 4.0–5.6 MiB 8-VM controlled recovery residual per environment; `hvi`: max 401.41 MiB, 2.041 GiB, 180.5–181.0 MiB residual).
+
+Evidence: `results/macos-arm64-vsock-fuzz.json`, `results/macos-arm64-vsock-hardening.json`, `results/macos-arm64-hvi-pending-bound.json`, `results/macos-arm64-vsock-hardening-workloads.json`, `results/macos-arm64-density-vsock-hardened.json`, and `results/macos-arm64-evaluation-assessment-v15.json`. Device-level fuzzing only (no booted-VM trigger reproduction, coverage-guided fuzzing, TSI paths, or double-fetch), Linux and x86-64 rows remain not-run, and production adoption remains no-go.
