@@ -1271,7 +1271,7 @@ sufficient; the measurement above is the cost to argue against. Recorded
 as a real option in
 `add-gvisor-backend`'s own Open Questions, not chosen there either.
 
-### Rejected (for now): a libkrun-backed VM tier
+### Conditionally accepted (opt-in macOS ARM64 backend): a libkrun-backed VM tier
 
 **Property that fails: the boundary it adds does not cover the thing devcroft
 is for.** A microVM hardens the host *kernel* surface. It does not harden the
@@ -1467,6 +1467,52 @@ platform, if libkrun's security model changes, or if `docs/threat-model.md`'s
 use case B (unreviewed code) becomes a goal. Under use case B, an
 integrator-owned boundary resting on an accident-protection sandbox is not
 enough.
+
+#### Owner decision on task 4.5: conditional opt-in adoption on macOS ARM64 (2026-11-26)
+
+On the consolidated evidence in
+`experiments/microvm/results/macos-arm64-evaluation-assessment-v15.json`, the
+owner closed `evaluate-microvm-runtimes` task 4.5 with four explicit decisions:
+
+- **VMM selection & scope:** Conditionally accept **libkrun 2.0** as the
+  opt-in/experimental microVM backend on **macOS ARM64** (unlocking
+  `add-vm-project-runtime` implementation). The process tier remains the
+  default. `hvi` is not selected and remains a working reference alternative
+  whose pinned API lacks balloon/page-reporting and Linux ordering parity.
+- **Thresholds accepted:** Accept the original E5 numeric no-go thresholds in
+  `experiments/microvm/fixtures/no-go-thresholds.json` (`4096 MiB` post-build/60 s
+  idle per environment, `600 s` cold preparation with downloaded inputs, `5 s`
+  agent-session start in a prepared VM, `8 GiB` physical storage per
+  environment) for the next phase, backed by the 180-case hardened density
+  rerun (`383.36 MiB` idle max, `2.05 GiB` runtime storage / `6.59 GiB`
+  single-environment private builder, `1.20 s` Codex / `1.52 s` Claude start,
+  `3.98–5.60 MiB`/VM 8-VM controlled recovery residual).
+- **Platform & release criteria:** Ship **macOS ARM64** (macOS 14+, Apple
+  Silicon) opt-in first. `linux-arm64-native`, `linux-x86_64-native` and
+  `macos-x86_64-native` remain explicitly unsupported (`not-run`) until
+  dedicated native runners exist and pass E3 (Landlock + seccomp pre-vCPU on
+  Linux) with mandatory tests that fail rather than skip; nested VZ/KVM
+  diagnostics do not qualify native Linux.
+- **Security guarantee & revised architectural premises:** Keep
+  `docs/threat-model.md`'s **accident protection** guarantee (use case A); do
+  not claim use case B (unreviewed/hostile code). Note that the evaluated
+  architecture replaced two original premises recorded above: it uses private
+  ext4 disks plus SSH/SFTP rather than `virtio-fs`, and boots an external Linux
+  6.12.95 kernel rather than `libkrunfw`. Accept the remaining costs for the
+  opt-in track: maintaining the four local `libkrun` patches (host half-close,
+  macOS ARM64 PSCI reset/poweroff exit, vsock host backpressure, vsock
+  hardening), Linux kernel GPL distribution/provenance obligations, and
+  non-`cargo install` distribution / ad-hoc `com.apple.security.hypervisor`
+  signing.
+- **General production / default adoption remains blocked** until the open
+  gates close: host-enforced confinement of hostile preparation code,
+  production controller/supervisor stop-receipt integration, physical host
+  suspend/resume and remaining fault coverage, credential brokering, and
+  dedicated native Linux runners before any Linux claim.
+
+**Revisit if** any of the four local `libkrun` patches cannot be maintained across
+upgrades, pre-vCPU host confinement fails on a target platform, a measured
+sample breaches the accepted E5 thresholds, or use case B becomes a product goal.
 
 ### No resource limits (yet)
 

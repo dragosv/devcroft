@@ -4,14 +4,15 @@ This is the experimental implementation of `evaluate-microvm-runtimes`.
 `libkrun/` and `hvi/` have their own Cargo workspaces and lockfiles. The main devcroft build and
 published crate do not depend on it. No production VM dispatch exists yet.
 
-The [native assessment](results/macos-arm64-evaluation-assessment-v15.json) records
-the full 180-case macOS ARM64 comparison, clean reconstruction, final SSH fault
-recovery and real CLI/TLS regressions against the five backend criteria. Both
-adapters work on this host. Production adoption remains no-go under the current
-evidence: hostile preparation confinement, production lifecycle/resource/credential
-handling and remaining platform/fault qualification are still open. The libkrun recommendation is only
-for the next scoped integration experiment, conditional on the recorded
-author-boundary criterion and the owner's acceptance.
+The [native assessment](results/macos-arm64-evaluation-assessment-v16.json) records
+the owner's Task 4.5 conditional opt-in decision for `libkrun` on `macos-arm64`
+(unlocking `add-vm-project-runtime`, with the process tier still default), built
+on the `v15` native evidence across both adapters (180-case hardened density
+comparison, clean reconstruction, final SSH fault recovery, host vsock fuzzing/hardening,
+and real CLI/TLS regressions against the five backend criteria). General production
+and default adoption, unmeasured Linux/x86-64 platforms, hostile preparation
+confinement, production lifecycle/resource/credential handling, and physical host
+suspend remain blocked until their open gates close.
 
 ## hvi macOS ARM64 comparison
 

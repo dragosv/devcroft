@@ -1,0 +1,1155 @@
+{
+  "schema": 1,
+  "status": "passed",
+  "qualification": "owner decision record (task 4.5); conditional opt-in macOS ARM64 backend unlock for libkrun, not general production or Linux approval",
+  "platform": "macos-arm64-native",
+  "production_adoption": "conditional opt-in experimental backend unlocked on macOS ARM64 (libkrun, process tier remains default); general production/default adoption and Linux/x86-64 remain blocked",
+  "thresholds": {
+    "post_build_idle_memory_mib": 4096,
+    "cold_preparation_seconds": 600,
+    "agent_session_start_seconds": 5,
+    "physical_storage_per_environment_gib": 8
+  },
+  "measured_gates": {
+    "density": {
+      "status": "passed",
+      "cases": 180,
+      "scope": "original frozen guest binaries; not rerun for the SSH lifecycle fix"
+    },
+    "post_build_idle_memory": {
+      "status": "passed",
+      "maximum_per_environment_mib": {
+        "libkrun": 382.70518493652344,
+        "hvi": 405.6585159301758
+      }
+    },
+    "cold_preparation": {
+      "status": "passed",
+      "seconds_with_clean_guest_verification": 117.69155374995898,
+      "scope": "downloaded-input offline closure reconstruction; original guest; not full source compilation"
+    },
+    "agent_start_final_guest": {
+      "status": "passed",
+      "scope": "five prepared-VM CLI/SSH sessions per CLI/adapter; dummy-key API rejection, not completed agent task; retained earlier keeper hash, not rerun for the consumed-window fork",
+      "maximum_seconds": {
+        "libkrun": {
+          "codex": 1.4362097079865634,
+          "claude": 1.5155036669457331
+        },
+        "hvi": {
+          "codex": 1.4362105829641223,
+          "claude": 1.5061996669974178
+        }
+      }
+    },
+    "fault_recovery_final_guest": {
+      "status": "passed",
+      "cases_per_adapter": 4,
+      "physical_host_suspend": "not-run",
+      "pid1_death": "not-run",
+      "scope": "Retained earlier SSH-loss-fix guest, with older init/keeper hashes; PID 1 was not tested in this earlier four-case row"
+    },
+    "full_storage": {
+      "status": "passed-scoped",
+      "physical_storage_gib": 6.586322784423828,
+      "scope": "Entire fresh private builder, immutable downloads, retained outputs/receipts, common runtime and guest/controller files charged to one environment; trusted fixed-recipe materializer only",
+      "repetitions": 1,
+      "original_builder_observation": "Retained original 13.49-GiB builder failed the same 8-GiB allocation; no retroactive reclassification"
+    },
+    "cold_preparation_follow_up": {
+      "status": "passed",
+      "seconds_with_clean_guest_verification": 186.38355533301365,
+      "scope": "fresh private downloaded-input closure reconstruction; not source compilation or production preparation confinement",
+      "repetitions": 1
+    },
+    "controller_separation": {
+      "status": "passed",
+      "scope": "Both native adapters: six protected targets, live Unix socket denial, allowed controls, real build/Redis/restart, full SSH and actual CLI/TLS regressions",
+      "density": "Not rerun for these new helper hashes"
+    },
+    "ssh_duplex_and_flow_control": {
+      "status": "passed-scoped",
+      "scope": "experimental consumed-window fork; unpaced native direct-russh 128-KiB/16-MiB and nonreading multiplex tests, 10 repetitions each; native OpenSSH byte-exact VM proofs on both adapters",
+      "guest_keeper_sha256": "d82bd8336200ba98e74c76ed27b15db9f21b900fc6b37f48410f81896f769082",
+      "evidence": "results/macos-arm64-ssh-wire-validation.json"
+    },
+    "fault_recovery_pid1_follow_up": {
+      "status": "passed-scoped",
+      "cases_per_adapter": 5,
+      "scope": "separate test-only PID 1 exit fixture with matching ordinary live sibling; existing builds and 32 acknowledged Redis keys checked without rebuilding after recovery",
+      "guest_keeper_sha256": "d82bd8336200ba98e74c76ed27b15db9f21b900fc6b37f48410f81896f769082",
+      "physical_host_suspend": "not-run",
+      "helper_exit_status_alone": "libkrun panic and clean shutdown both returned 0; hvi SystemReset returned 1; lifecycle classification remains an integration gate",
+      "evidence": "results/macos-arm64-pid1-fault-validation.json"
+    },
+    "adaptable_setup_interruption_follow_up": {
+      "status": "passed-scoped",
+      "platform": "macos-arm64-native",
+      "adapters": [
+        "libkrun",
+        "hvi"
+      ],
+      "fixed_interruption_points_per_adapter": 5,
+      "fresh_vm_boots": 26,
+      "before_patch_gate": "failed on both: baseline copy left an unbootable private base; recipe install exposed a partial signature before its marker",
+      "scope": "helper SIGKILL after five synchronized test-only stalls; four baseline signatures then applied signature; four recovered artifact hashes match fresh uninterrupted reconstruction",
+      "host_power_loss": "not-run",
+      "arbitrary_mid_write_timing": "not-run",
+      "peak_staging_storage_cost": "not measured in that earlier recovery row; the separate staging_storage_follow_up now records scoped observations",
+      "evidence": "results/macos-arm64-setup-interruption-validation.json"
+    },
+    "staging_storage_follow_up": {
+      "status": "passed-scoped",
+      "scope": "private image/state/controller allocation plus guest filesystem counters during five synchronized setup interruptions per adapter, and a fresh uninterrupted reference; excludes full preparation/common/companion storage",
+      "native_boots": 26,
+      "requested_host_sample_interval_ms": 20,
+      "guest_checkpoint_maximum_used_mib": {
+        "libkrun": 363.4765625,
+        "hvi": 363.4765625
+      },
+      "guest_final_recovered_used_mib": {
+        "libkrun": 181.97265625,
+        "hvi": 181.97265625
+      },
+      "host_sequential_observed_peak_private_mib": {
+        "libkrun": 413.22265625,
+        "hvi": 413.58203125
+      },
+      "maximum_actual_sample_gap_ms": {
+        "libkrun": 40.97637499216944,
+        "hvi": 36.798249930143356
+      },
+      "guest_cleanup_reclaims_host_allocation": "not demonstrated; matched staged-copy recovery freed guest blocks but host allocation did not decline",
+      "full_8gib_environment_gate": "not qualified by this subtotal",
+      "evidence": "results/macos-arm64-setup-storage-validation.json"
+    },
+    "cooperative_stop_receipt_follow_up": {
+      "status": "passed-scoped",
+      "scope": "experimental owned-child identity + persisted intent + boot/nonce-bound post-sync reply + clean exit; not full companion stop/unmount or a production supervisor",
+      "cases_per_adapter": 6,
+      "native_boots": 12,
+      "raw_panic_helper_exit_codes": {
+        "libkrun": [
+          0,
+          0
+        ],
+        "hvi": [
+          1,
+          1
+        ]
+      },
+      "tested_outcomes_per_adapter": {
+        "crash": 2,
+        "orderly_cooperative_sync": 2,
+        "forced_stop": 1,
+        "live_negative_controls": 1
+      },
+      "valid_stop_request_before_panic": "observed on both adapters; no acknowledgement; classified crash",
+      "production_integration": "not-run",
+      "evidence": "results/macos-arm64-stop-receipt-validation.json"
+    },
+    "trusted_remote_ssh_follow_up": {
+      "status": "passed-scoped",
+      "scope": "existing other-agent native macOS ARM64 trusted Remote-SSH rows, two boots per adapter/fixture; no new repetitions",
+      "adapters": [
+        "libkrun",
+        "hvi"
+      ],
+      "fixtures": [
+        "alpine",
+        "nix"
+      ],
+      "native_boots": 8,
+      "editor_sessions": 8,
+      "vscode": {
+        "version": "1.146.0",
+        "commit": "69047191fc427f2f92828279aae1d90d8eeda7ab",
+        "remote_ssh_version": "0.128.0"
+      },
+      "task_output_seconds_range": [
+        14.350595792056993,
+        14.518825207953341
+      ],
+      "cold_restart": "first-session output/exported ELF persist and installed server is reused; new task runs in a second folder",
+      "untrusted_editor_path": "not qualified by this trusted row",
+      "complete_editor_builder_closure": "hash-pinned since v11 for the scoped aarch64 fixtures: see editor_materialization_pinning_follow_up",
+      "evidence": "results/macos-arm64-remote-ssh-validation.json"
+    },
+    "post_ack_panic_and_backend_exit_follow_up": {
+      "status": "passed-scoped",
+      "scope": "experimental fixed post-ack init-death panic plus reset/poweroff distinction on native macOS ARM64; no production/other-platform claim",
+      "failed_original_predicate": "real correlated sync ACK followed by kernel panic still returned helper zero and was classified orderly; preserved as failed baseline",
+      "default_ambiguous_ack_plus_zero": "unverified-stop",
+      "cases_per_adapter": 7,
+      "native_boots": 16,
+      "panic_exit_codes_per_adapter": [
+        1,
+        1,
+        1
+      ],
+      "post_ack_panic_classification": "crash on both final helpers",
+      "hvi_helper": "byte-identical to retained earlier native row",
+      "libkrun_helper": "new separately pinned macOS ARM64 reset-exit patch",
+      "python_tests": 77,
+      "evidence": "results/macos-arm64-postack-validation.json"
+    },
+    "keeper_protocol_validation_follow_up": {
+      "status": "passed-scoped",
+      "scope": "scoped keeper frame-schema and connection-phase validation through ordinary minimal guests; fixed sample, not VMM host-parser fuzzing or production VM adoption",
+      "native_cases": 48,
+      "native_boots": 6,
+      "cases_per_adapter": 24,
+      "failed_baseline_refusal_conditions": 11,
+      "failed_baseline_cases": 22,
+      "baseline_boots": 2,
+      "guest_keeper_sha256": "cd56f38623d239eb1c8eb97550307042cae0991c96ee7c012dbd26ac825477ca",
+      "rust_tests_passed": 41,
+      "rust_tests_ignored": 1,
+      "python_tests": 77,
+      "same_vm_and_sibling_canaries": "exact echo after every malformed-message case, plus binary input and valid signal controls",
+      "other_platforms_and_host_vmm_parsers": "not-run",
+      "evidence": "results/macos-arm64-keeper-protocol-validation.json"
+    },
+    "egress_cache_layered_follow_up": {
+      "status": "passed-scoped",
+      "scope": "fixed Alpine keeper-child/host-profile cache and IPv4 sample, explicitly attributed by enforcing layer; not a general firewall, direct virtqueue bypass or production adoption",
+      "final_native_checks": 130,
+      "native_boots": 6,
+      "checks_per_adapter": 65,
+      "keeper_sha256": "cd56f38623d239eb1c8eb97550307042cae0991c96ee7c012dbd26ac825477ca",
+      "udp_loopback": "allowed; not filtered by TCP Landlock rules",
+      "ipv6": "not-run; compiled out",
+      "external_ipv4": "no route; not a general firewall claim",
+      "direct_vmm_backend_bypass": "not-qualified; guest RO flag remains one",
+      "failed_precondition_calibrations": 2,
+      "python_tests": 84,
+      "evidence": "results/macos-arm64-egress-cache-validation.json"
+    },
+    "editor_materialization_pinning_follow_up": {
+      "status": "passed-scoped",
+      "scope": "materialization inputs of the Alpine/npm editor image and the base workload images on the trusted Lima builder; native macOS ARM64 reruns only for the rows listed",
+      "remote_ssh_extensions": {
+        "pinned": "three VSIX packages by SHA-256 and content digest, installed into the isolated profile; every installed file matches its package except .vsixmanifest and package.json __metadata",
+        "native_reruns": "four rows (libkrun/hvi x nix/alpine) from current guest/keeper/init sources, eight sessions, task output in 14.4-14.6 s, exported binaries byte-identical to the earlier trusted rows",
+        "evidence": [
+          "results/libkrun-macos-arm64-remote-ssh-nix-pinned.json",
+          "results/libkrun-macos-arm64-remote-ssh-alpine-pinned.json",
+          "results/hvi-macos-arm64-remote-ssh-nix-pinned.json",
+          "results/hvi-macos-arm64-remote-ssh-alpine-pinned.json"
+        ]
+      },
+      "editor_builder_closure": {
+        "apks": 143,
+        "installed_equals_pinned": true,
+        "tools": {
+          "node": "v24.22.3",
+          "npm": "11.11.0",
+          "gcc": "15.2.0",
+          "python3": "Python 3.12.16"
+        },
+        "entered_with": "pivot_root in a private mount namespace, env -i"
+      },
+      "orchestration_closure": {
+        "apks": 52,
+        "bootstrap": [
+          "apk-tools-static-3.0.9-r0.apk",
+          "alpine-keys-2.6-r0.apk"
+        ],
+        "installed_equals_pinned": true,
+        "host_contract": "Lima VM executes only busybox (absolute path), sudo and the kernel, checked against pinned package versions before the root is touched; Lima base image checked by digest",
+        "lima_image": {
+          "location": "https://dl-cdn.alpinelinux.org/alpine/v3.23/releases/cloud/nocloud_alpine-3.23.3-aarch64-uefi-cloudinit-r0.qcow2",
+          "digest": "sha512:7a3cdfaefb0cbf3bb6824cd6ae80d6a3e0b0e367609e5fc50c5f714374d31e8d70dd607094a4e9cfe2e6ead7537781782469fe93bcea79611fbce4ddeacc92e1"
+        }
+      },
+      "editor_rows": {
+        "editor_image_sha256": "9e09a70e848fd9fcd09ff5035f18786d82862aa852ae9b19b55598794b319215",
+        "adapters_passed": [
+          "libkrun",
+          "hvi"
+        ],
+        "evidence": [
+          "results/libkrun-macos-arm64-editor-pinned-orchestration.json",
+          "results/hvi-macos-arm64-editor-pinned-orchestration.json"
+        ]
+      },
+      "base_workload_reconstruction": {
+        "method": "reconstruct from the same pinned orchestration root and compare with the published image entry by entry (type, mode, owner, content digest, link target; times excluded)",
+        "comparisons": {
+          "toolchain": {
+            "published_sha256": "9d3c6a36a43e238c2b88df3f0a9a418a1af1edbbba70bf16ba466e91814bc45b",
+            "reconstructed_sha256": "719d3bb74a84924a8aa7d6437d6b3ab3159542caafdd870623ed1b0bb5054b6a",
+            "entries": 3695,
+            "differing_entries": [
+              "var/log/apk.log"
+            ],
+            "data_seed_identical_excluding_times": true
+          },
+          "remote_ssh_toolchain": {
+            "published_sha256": "dc3cce42af82058b9e7dfc5a6ed3cb2ca89d1c8f073939a54d371d13060a3234",
+            "reconstructed_sha256": "6d74bd790fa96e7c140fa5bc1322ce3f4bbdb1955a3a2a21be5f2b9ddd4395d6",
+            "entries": 4248,
+            "differing_entries": [
+              "var/log/apk.log"
+            ],
+            "data_seed_identical_excluding_times": true
+          }
+        },
+        "only_difference": "var/log/apk.log records install paths and the apk that ran (the Lima VM's 3.0.3 for the published images, pinned 3.0.9 now)",
+        "published_rows_rerun": false,
+        "reason_not_rerun": "the published images are reproduced from pinned inputs up to times and the apk log; no measured row is relabelled as built from the reconstruction",
+        "corrected_before_comparison_passed": [
+          "root-owned fixture and merge links",
+          "tar keeping 0664 archive modes"
+        ],
+        "evidence": [
+          "fixtures/workload-aarch64-orchestration-build.json",
+          "fixtures/workload-remote-ssh-aarch64-orchestration-build.json"
+        ]
+      },
+      "still_unpinned": [
+        "limactl and Virtualization.framework on the macOS host",
+        "npm registry content beyond the shrinkwrap integrity hashes",
+        "Linux and x86-64 builder rows"
+      ]
+    },
+    "keeper_admission_and_stop_quiescence_follow_up": {
+      "status": "passed-scoped",
+      "scope": "scoped keeper admission/deadline/allocation and PID 1 stop-quiescence validation through fixed native samples; not denial-of-service qualification, VMM host-parser fuzzing, hostile-guest attestation or production supervisor adoption",
+      "admission": {
+        "libkrun": {
+          "cases": 38,
+          "boots": 3,
+          "stalled_flood": {
+            "opened_stalled_connections": 20,
+            "immediate_admission_refusals": 7,
+            "deadline_eof_evictions": 13,
+            "recovered_spawn_while_stalled_fds_open": true
+          }
+        },
+        "hvi": {
+          "cases": 38,
+          "boots": 3,
+          "stalled_flood": {
+            "opened_stalled_connections": 20,
+            "immediate_admission_refusals": 7,
+            "deadline_eof_evictions": 13,
+            "recovered_spawn_while_stalled_fds_open": true
+          }
+        }
+      },
+      "admission_baselines": "v9 guest fails 12 of 12 new cases on both adapters",
+      "quiescence": {
+        "libkrun": {
+          "cases": 7,
+          "boots": 8,
+          "classification": "orderly",
+          "host_superblock_clean": true
+        },
+        "hvi": {
+          "cases": 7,
+          "boots": 8,
+          "classification": "orderly",
+          "host_superblock_clean": true
+        }
+      },
+      "quiescence_baselines": "v8 predicate reports orderly while the workspace superblock needs journal recovery, on both adapters",
+      "relay_shutdown_regression": "found and fixed during qualification: combined guest shutdown(Both) is repeated by libkrun on macOS and fails with ENOTCONN after a client half-close",
+      "evidence": "results/macos-arm64-keeper-admission-quiescence-validation.json"
+    },
+    "session_output_backpressure_follow_up": {
+      "status": "passed-scoped",
+      "scope": "one fixed 64 MiB unread-output sample per row through the real keeper and each native transport; not throughput, aggregate-memory or denial-of-service qualification",
+      "keeper": "the session output channel is bounded at 32 frames of at most 8 KiB (256 KiB); a client that holds its connection open without reading now stalls the child through its pipe/pty instead of growing the keeper",
+      "hvi": {
+        "cases": 39,
+        "child_stalled": true,
+        "same_vm_served_while_unread": true
+      },
+      "libkrun_without_vmm_patch": {
+        "cases_passed": 38,
+        "of": 39,
+        "same_vm_served_while_unread": false,
+        "note": "head-of-line blocking across all vsock connections of the VM"
+      },
+      "libkrun_with_vmm_patch": {
+        "cases": 39,
+        "child_stalled": true,
+        "same_vm_served_while_unread": true,
+        "stop_cases": 7,
+        "ssh_smoke": "passed"
+      },
+      "baselines": "unbounded keeper: the child wrote all 64 MiB while the client read none (hvi; libkrun same)",
+      "evidence": "results/macos-arm64-keeper-backpressure-validation.json"
+    },
+    "host_vsock_fuzzing_and_hardening_follow_up": {
+      "status": "passed-scoped",
+      "scope": "device-level host vsock fuzzing on pinned patched sources (no VM booted) plus adoption of libkrun vsock hardening (patches/libkrun-vsock-hardening.patch) and hvi pending reply bound (patches/hvi-vsock-pending-bound.patch, TX_PENDING_WATERMARK = 256 with RX_QUEUE resumption); five ordinary VM rows rerun on each hardened helper; no guest-driven VM trigger reproduction, coverage-guided fuzzing, TSI paths, double-fetch or Linux/x86-64",
+      "findings_closed_at_device_level": [
+        "krun-acceptor-unreachable",
+        "krun-tx-chain-amplification",
+        "krun-rw-before-response",
+        "hvi-pending-unbounded"
+      ],
+      "libkrun": {
+        "helper_sha256": "59d009804d6cbeb11de3cda4685836700e022761a13a4fbfff4f12f3cbf93125",
+        "patch_sha256": "e737ff613f75acbee2df0fb00a771ddaa5cee5de49f6fd2d697b058a8eed664c",
+        "devices_library_tests": "108 passed",
+        "helper_unit_tests": "22 passed",
+        "ordinary_vm_rows_passed": [
+          "stage-a",
+          "keeper",
+          "ssh",
+          "protocol",
+          "stop"
+        ],
+        "candidate_fuzz_note": "1,172,000 packets / 2,930 rounds / 0 panics on the candidate patch; 35 rounds failed the final check (34 host connect ECONNREFUSED, 1 RX ring exhausted at timeout, not conclusively explained); adopted patch drops on failed fcntl instead of ignoring it and device-level probes were not rerun on that diff"
+      },
+      "hvi": {
+        "helper_sha256": "0187e0af327dfc9a444c82c34c5f7c03c48d794a8142e42ae82880e8f317b965",
+        "patch_sha256": "16ea5d793ef42716f76ec409418e14b0557c6b0fd171b74726fb8437d989a19d",
+        "library_tests": "563 passed, 0 failed, 6 ignored",
+        "pending_growth_200k_packets_without_rx": {
+          "unpatched": 200001,
+          "patched_op_request": 256,
+          "patched_op_credit_request": 256,
+          "control_rx_posted": 1
+        },
+        "random_fuzz": {
+          "seeds": [
+            1,
+            2,
+            3,
+            4
+          ],
+          "seconds_per_seed": 30,
+          "rounds": 7949,
+          "actions": 7949000,
+          "unhealthy": 0,
+          "panics": 0
+        },
+        "ordinary_vm_rows_passed": [
+          "stage-a",
+          "keeper",
+          "ssh",
+          "protocol",
+          "stop"
+        ]
+      },
+      "python_tests": 89,
+      "evidence": [
+        "results/macos-arm64-vsock-fuzz.json",
+        "results/macos-arm64-vsock-hardening.json",
+        "results/macos-arm64-hvi-pending-bound.json"
+      ]
+    },
+    "vsock_hardened_workloads_and_density_follow_up": {
+      "status": "passed",
+      "scope": "matched 180-case native density comparison across both hardened helpers (libkrun 59d009804d6c... and hvi 0187e0af...) plus Nix workload, Nix Chrome editor and Codex/Claude agent-start rows on the hardened libkrun helper; original v1 density and preparation/storage rows remain retained under their original hashes; production no-go unchanged",
+      "density": {
+        "cases": 180,
+        "complete": true,
+        "comparison_eligible": true,
+        "post_build_idle_maximum_per_environment_mib": {
+          "libkrun": 383.35633850097656,
+          "hvi": 401.40901947021484
+        },
+        "runtime_storage_standalone_maximum_gib": {
+          "libkrun": 2.0462989807128906,
+          "hvi": 2.0414505004882812
+        },
+        "controlled_8vm_residual_delta_per_environment_mib": {
+          "libkrun_alpine": 3.9785470962524414,
+          "libkrun_nix": 5.595731735229492,
+          "hvi_alpine": 180.54504489898682,
+          "hvi_nix": 180.9727907180786
+        },
+        "evidence": "results/macos-arm64-density-vsock-hardened.json"
+      },
+      "libkrun_workloads": {
+        "nix_workload": "passed",
+        "nix_editor": "passed (persisted_editor_file_and_binary_after_restart: true)",
+        "agent_start_maximum_seconds": {
+          "codex": 1.1992793750250712,
+          "claude": 1.520966292009689
+        },
+        "evidence": "results/macos-arm64-vsock-hardening-workloads.json"
+      }
+    }
+  },
+  "five_backend_criteria": {
+    "sandbox_core_composition": {
+      "libkrun": "partial: real keeper/nono works inside the confined guest; full product policy/lifecycle translation pending",
+      "hvi": "partial: same keeper/nono guest works; full product policy/lifecycle translation pending"
+    },
+    "fleet_needs": {
+      "libkrun": "partial: independent services/ports/private disks and native density proved; production admission, resource enforcement and credential delivery pending",
+      "hvi": "partial: same functional independence proved; fixed-port local patch and production admission/resource/credential work pending"
+    },
+    "real_toolchains": {
+      "libkrun": "passed scoped native ARM64 Alpine/Nix builds, service/editor fixtures and actual CLI initialization",
+      "hvi": "passed same scoped native ARM64 fixtures; no cross-platform inheritance"
+    },
+    "author_claimed_security_boundary": {
+      "libkrun": "not author-claimed; accepted by owner decision (2026-11-20) as an integrator-owned boundary on macOS ARM64: pinned security-model.md delegates host-device/resource confinement to the integrator, and devcroft confines both sides (pre-vCPU Seatbelt on the VMM helper, nono/Landlock in the guest keeper). No security claim is added and Linux is not covered",
+      "hvi": "explicit hostile-guest boundary claim at the pin, without external audit; the macOS ordering is proved, while Linux source ordering does not satisfy our E3 gate"
+    },
+    "rust_library_integration": {
+      "libkrun": "passed: pinned library embedded in an isolated Rust helper",
+      "hvi": "passed: pinned library embedded in an isolated Rust helper"
+    }
+  },
+  "integration_cost": {
+    "libkrun": [
+      "local vsock half-close patch",
+      "integrator-owned pre-vCPU macOS Seatbelt and Linux confinement",
+      "common kernel/keeper/bootstrap/SSH/raw-disk lifecycle",
+      "balloon/page-reporting integration and per-platform qualification",
+      "maintain the local macOS ARM64 PSCI reset/poweroff exit patch and port correlated receipt classification into the production controller/supervisor; original helper ACK-plus-zero is insufficient",
+      "maintain a local vsock unix-proxy patch: non-blocking host writes with a credit-bounded per-connection queue (up to 8 MiB each), without which one unread host client stalls the whole VM's vsock",
+      "maintain a fourth local vsock hardening patch (acceptor ignores data ops, TX copy bounded by declared length, accepted host sockets non-blocking); device-level fuzz evidence only"
+    ],
+    "hvi": [
+      "local fixed-vsock-port patch and cross-port parser controls",
+      "descriptor inventory and pre-first-entry probes",
+      "common kernel/keeper/bootstrap/SSH/raw-disk lifecycle",
+      "Linux ordering seam/port still pending; no RNG/balloon exposed at pin",
+      "maintain a second local vsock patch bounding the pending host->guest reply queue (TX_PENDING_WATERMARK = 256 with RX_QUEUE resumption)"
+    ],
+    "common_adaptable_setup": [
+      "separate staging copy, synced marker and atomic directory exchange before publication",
+      "cleanup of unpublished/superseded trees on recovery",
+      "additional transient storage and broader failure/host-power-loss qualification still required",
+      "account retained host image allocation separately from guest free blocks; this fixture did not reclaim host allocation at the matched staged-copy recovery checkpoint"
+    ],
+    "common_trusted_remote_ssh": [
+      "separate trusted-only keeper feature and bounded loopback port 9091",
+      "offline hash-pinned VS Code CLI/server archives and VSIX extensions; pinned 143-APK editor builder closure and 52-APK orchestration root on a digest-checked Lima image",
+      "Nix custom-glibc sysroot/patchelf or additional Alpine packages and BusyBox applet links; separate test images and larger seed"
+    ],
+    "common_keeper_protocol": [
+      "maintain closed structured payload schemas and explicit connection-phase validation",
+      "qualify deadlines, connection/thread admission and aggregate memory for incomplete otherwise-valid frames before a denial-of-service claim"
+    ],
+    "common_egress_cache": [
+      "preserve layer attribution for TCP policy, missing routes, filesystem and block read-only observations",
+      "qualify guest-driver-bypassing virtqueue/backend writes separately from BLKROSET success and end-to-end refusal",
+      "qualify full egress/topology profiles and project/fleet cache namespaces before production claims"
+    ],
+    "pinned_materialization": [
+      "apk.static bootstrap and a busybox-only host contract on the builder VM",
+      "host APK store retaining packages the Alpine mirror has already removed"
+    ],
+    "keeper_admission": [
+      "per-tag frame caps and a 1 s frame deadline in the shared keeper; Spawn kept above ARG_MAX",
+      "16-connection keeper and 24-relay guest admission",
+      "PID 1 child termination and verified unmount before a stop acknowledgement",
+      "bounded 256 KiB session output queue in the shared keeper"
+    ]
+  },
+  "conditional_recommendation": {
+    "current_outcome": "conditional opt-in experimental backend unlocked for libkrun on macOS ARM64 (add-vm-project-runtime); process tier remains default and general production/default adoption stays blocked until required_next_evidence closes",
+    "candidate_for_next_macos_arm64_spike": "libkrun; its criterion-four condition was accepted by the owner on 2026-11-20 as an integrator-owned boundary (see owner_decisions)",
+    "reason": "both native functional candidates work; libkrun has lower retained memory and its controlled eight-VM recovery leaves about 4.6-6.0 MiB per environment versus about 181 MiB for hvi in the recorded additional-stress case; the matched 180-case hardened density rerun confirms the same pattern (383.36 MiB vs 401.41 MiB post-build idle max; 4.0-5.6 MiB vs 180.5-181.0 MiB 8-VM controlled recovery residual per environment)",
+    "limits": "one controlled repetition per configuration is not a tail/reliability estimate or a universal workload ranking; correctness/isolation gates precede performance",
+    "alternative": "hvi remains a working macOS ARM64 candidate with an explicit author boundary claim and stronger preopened-only host authority, but different recovery/device/API costs",
+    "required_next_evidence": [
+      "host-enforced confinement for hostile preparation code, admission and resource/credential lifecycle; current fixed trusted Lima materializer does not establish this",
+      "physical host suspend/resume and other untested fault points/platform rows; direct-client duplex and controlled PID 1 death are now closed only for their explicit experimental artifacts",
+      "port and qualify backend exit semantics plus receipt-based classification in the production controller and companion supervisor; the scoped macOS patch does not qualify service-stop/unmount, persistent journal replay or other platform rows",
+      "native Linux runners and per-platform release/regression criteria before any support claim",
+      "owner acceptance of thresholds and release/platform criteria before production adoption; the docs/decisions.md libkrun entry was revisited for criterion four only (2026-11-20)"
+    ]
+  },
+  "unavailable_native_rows": [
+    {
+      "id": "linux-arm64-native",
+      "status": "not-run",
+      "reason": "no native Linux ARM64 host provisioned in this workspace",
+      "regression_location": "required dedicated native Linux ARM64 runner; Landlock ABI >=6 and KVM required; not yet provisioned"
+    },
+    {
+      "id": "linux-x86_64-native",
+      "status": "not-run",
+      "reason": "no native Linux x86-64 host provisioned; architecture-matched kernel/closure and measured syscall filter pending",
+      "regression_location": "required dedicated native Linux x86-64 runner; not yet provisioned"
+    },
+    {
+      "id": "macos-x86_64-native",
+      "status": "not-run",
+      "reason": "no native Intel Mac available; pinned hvi macOS backend supports ARM64 only",
+      "regression_location": "Intel Mac required to determine libkrun support; hvi unsupported at pin"
+    }
+  ],
+  "nested_evidence": "Linux ARM64 VZ/KVM diagnostic only; does not qualify either native Linux row",
+  "remaining_limits": [
+    "No completed authenticated agent task or production credential broker; trusted Remote-SSH is now qualified only for the scoped macOS ARM64 fixtures.",
+    "Guest/host wall-clock differences are recorded; test-certificate validity covers both clocks without changing either clock or bypassing TLS",
+    "Negative controls are not a security audit; exposed hypervisor/kernel interfaces and retained descriptors remain attack surface",
+    "Controller separation and minimal materialization close two experimental gaps; they do not qualify the full product backend or transfer the original 180-case density result to later binaries",
+    "The offline network namespace is guest-enforced in a trusted fixed recipe; it does not exclude escape by hostile guest root into the preparation VM network",
+    "Fresh preparation timing/storage are one complete sample, not a reliability or tail-latency estimate",
+    "The PID 1 exit hook is compile-time test-only and is absent from the ordinary control guest; it does not qualify production fault injection or physical host suspend.",
+    "New fault samples use the consumed-window keeper with new ordinary/test-only initramfs hashes; the original density, materialization and real CLI/TLS-start measurements do not transfer to them.",
+    "A zero libkrun helper status is not proof of orderly guest shutdown; the controlled PID 1 panic returned 0 with an actual kernel panic in the console.",
+    "Five deterministic stalls execute sync before host SIGKILL; host page cache survives. This is not host power-loss durability or arbitrary instruction/timing coverage.",
+    "The classification observes the zlib header, apk package entry and recipe marker. Four final build/dependency hashes match a new reference; this is not full-filesystem equivalence or an audit.",
+    "Uninterrupted adaptation/reconstruction rows are retained other-agent runs with byte-identical boot artifacts, kernel, helper, inputs and seed. They were not counted as new repetitions.",
+    "Staging storage is now sampled for the fixed Alpine workload fixture; complete environment/companion accounting and a bound on arbitrary transient peaks remain unqualified.",
+    "A cooperative stop-receipt prototype now classifies the tested panic/stop cases correctly; production supervisor integration, hostile preparation, other native platforms and physical host suspend remain open.",
+    "The host maximum is sampled, with a requested 20-ms interval and actual maximum gaps reported. Sub-interval or unsampled future peaks are not bounded.",
+    "Guest statvfs/stat counters cover the entire private filesystem, including test state and workspace; checkpoint differences are not an isolated staging-tree inventory.",
+    "Host allocation is stat st_blocks*512 for regular private image/state/controller files, deduplicated by inode. It is not unique APFS extent or snapshot accounting.",
+    "Common helpers/kernel/guest/toolchain files, downloaded inputs, private preparation builder, compiler/evidence storage and the proposed companion VM are excluded. No full 8-GiB environment storage pass is inferred.",
+    "One synchronized five-point run plus a fresh one-pass reference per adapter; not host power loss, arbitrary mid-write timing, agent/density measurements or a reliability estimate.",
+    "The orderly label means a cooperative fixture sync acknowledgement plus owned-child clean exit. It does not establish companion service shutdown/unmount, offline filesystem checks or completed production stop.",
+    "A compromised guest can lie about sync or deliberately power off; this is not attestation. A later fixed post-ack panic sample is now covered; arbitrary timing windows and other post-ack failures remain unqualified.",
+    "The original libkrun helper still returns zero for panic and poweroff, and its v6 predicate also fails for a real post-ack panic. The new experimental macOS ARM64 PSCI reset-exit patch distinguishes the tested cases; production controller/supervisor integration and journal recovery remain open.",
+    "Intent evidence files are fsynced before sending the stop request; host power-loss durability, atomic directory publication and controller restart/replay recovery are not tested.",
+    "PID reuse is tested with synthetic native-identity records; real PID reuse is not forced on the host. Old real wire acknowledgements and guest boot-generation refusal are tested natively.",
+    "Test private disks/controller directories are retained for diagnostics; active helper and endpoint cleanup is verified. No production resource-retention policy is claimed.",
+    "The earlier v6 row retains one six-case sample per adapter; the separate v8 row adds one seven-case sample per adapter. Other platforms, physical host suspend and new-binary density/preparation/agent-start qualification remain outside both proofs.",
+    "Trusted disposable projects only: workspace trust disabled and automatic folder-open tasks allowed; no qualification of untrusted editor paths.",
+    "Host stages hash-pinned CLI/server archives. Extension-driven downloading/scp remains unresolved and is not qualified.",
+    "This reconciliation verifies retained exports, output, persistence, artifact/archive/manifest hashes and report consistency; it does not repeat the UI or VM sessions.",
+    "Alpine results record earlier hashes for the three builder/init files listed per row. Nix source receipts match current files. No new native regression or equivalence claim is made for later source revisions.",
+    "Extension trees, the editor builder closure and the base workload images' orchestration are hash-pinned for the aarch64 fixtures; limactl/Virtualization.framework, npm registry content beyond shrinkwrap integrity and the Linux/x86-64 builder rows remain unpinned. The trusted Lima builder does not qualify hostile-recipe confinement.",
+    "Two boots per adapter/fixture and a second folder after restart; the same-folder automatic task did not rerun in retained diagnostics.",
+    "Editor task timings include compilation and differ from the accepted five-second actual agent-session gate; no transfer of density, preparation or full storage limits to the Remote-SSH artifacts.",
+    "Other native platforms, marketplace/agent-host integrations and fleet eligibility remain unqualified.",
+    "One seven-case run per adapter and one three-boot old-helper counterexample. The initial mixed-helper calibration is invalid and excluded; no reliability or tail-latency estimate.",
+    "The test-only guest requests a 250-ms delivery sleep after sending its sync acknowledgement, then exits global PID 1. This is a fixed injection site, not measured sleep duration or arbitrary scheduler/failure timing coverage.",
+    "The new exit seam distinguishes macOS ARM64 PSCI SYSTEM_RESET from SYSTEM_OFF. Other backend exit paths, Linux/x86-64 and physical host suspend remain unqualified.",
+    "A guest can forge sync completion or deliberately request poweroff. Backend exit distinction and correlated receipts are not guest attestation or proof of complete service stop/unmount.",
+    "Production controller/companion supervisor integration, persistent journal replay, offline filesystem checks and host power-loss durability remain untested.",
+    "New private disks/controller directories were removed after verified owned helper/endpoint cleanup. Raw logs, identity snapshots, stop records, source snapshots and reports remain; no production retention/accounting policy is inferred.",
+    "Prior Remote-SSH, density, preparation, storage and CLI/TLS measurements remain tied to their earlier helper/guest artifacts; none transfers to the new helper by this fault proof.",
+    "One 24-case run per adapter on native macOS ARM64, plus one 22-case old-keeper baseline. No fuzz corpus, random mutation campaign, reliability estimate or other native platform qualification.",
+    "These probes address the keeper inside the guest and the shared codec. They do not qualify the VMM host vsock multiplexer, host administrative parser, broader forbidden-egress or shared-cache matrices.",
+    "Closed payload schemas and connection-owned controls are not authentication or general replay prevention; there is no new global instance/session selection API.",
+    "Known valid headers can still declare up to 16 MiB and wait for incomplete bodies. Per-connection read deadlines, connection/thread admission, aggregate memory and denial-of-service behavior remain unqualified.",
+    "Per-read probe timeouts are diagnostics for these fixed fixtures; reported header-refusal observations are not a universal latency bound.",
+    "The minimal guests have no Nix/service/agent/editor workload. Earlier density, preparation, stop-receipt, CLI/TLS and trusted Remote-SSH rows retain their original keeper hashes and are not transferred to this new keeper.",
+    "The Rust suite reuses the exact shared keeper files and experimental SSH server. One existing OpenSSH test remains ignored by default; the root project full integration suite and Linux confinement rows were not rerun here.",
+    "New private disks/controller directories are removed after owned helper/endpoint cleanup. Compiler cache pruning preserves runtime executables and evidence; it does not establish a full 8-GiB environment storage pass.",
+    "One 65-check sample per adapter across three boots each; the two failed precondition calibrations are retained separately and not counted as successful repetitions or reliability evidence.",
+    "UDP loopback is allowed; the external IPv4 result relies on the absence of a NIC/TSI and route. This is not an arbitrary topology, UDP or domain firewall qualification. IPv6 is compiled out and not qualified.",
+    "The raw write is blocked with guest BLKROGET still one. The older startup ro=1 check likewise cannot alone demonstrate that a software read-only flag was bypassed. Host descriptor/profile proofs are separate; malicious virtqueue writes and direct VMM-backend bypass remain unqualified.",
+    "Cache filesystem refusals in these samples are EROFS, and raw device reads through keeper children are EACCES. Do not merge these distinct layers into an all-purpose guest/host isolation claim.",
+    "Only copied Alpine toolchain input is challenged. Nix/fleet cache namespaces, cache poisoning beyond these fixed operations, hostile preparation, guest-root attestation, host parser fuzzing and other platform rows remain open.",
+    "The test-only PID 1 diagnostic is absent from ordinary guests. Its private positive control uses reserved sector zero of the unmounted state disk, disjoint from boot/bootstrap offsets; no arbitrary device or pathname is accepted from the wire.",
+    "Final verified cache copies and private runtime/controller directories are removed after owned helper/endpoint cleanup; two unchanged calibration copies remain for diagnostics. Source cache images and all earlier raw results are preserved. No storage budget pass is inferred.",
+    "The keeper and VMM binaries are byte-identical to their qualified earlier generations, but this Alpine policy/guest fixture does not inherit prior density, preparation, stop, Nix workload, CLI/TLS or trusted Remote-SSH measurements.",
+    "The base workload images were reconstructed, not replaced: published rows keep their original image hashes, and only the apk log differs from the reconstruction. The pinned-editor rows do not inherit density, preparation or storage measurements.",
+    "Fixed connection/deadline sample only: no aggregate memory bound under many sessions, no adaptive or authenticated admission. Per-session output is bounded (one 64 MiB sample per row).",
+    "The connection cap applies per keeper; a peer able to reach the socket can still hold all 16 slots for up to the 1 s deadline at a time.",
+    "Quiescence covers this fixture's workspace/toolchain mounts and a TERM-ignoring writer; companion services, a process in uninterruptible sleep and host power loss are not qualified.",
+    "Earlier density, preparation, workload, CLI/TLS, Remote-SSH and stop-receipt measurements keep their original keeper/guest hashes and are not transferred to these guests.",
+    "The libkrun host queue is bounded per connection by the advertised 8 MiB credit, not per VM: a guest with many unread connections can hold up to 8 MiB each (24 relays: 192 MiB).",
+    "Linux libkrun rows not run; the patch keeps MSG_DONTWAIT and O_NONBLOCK there too.",
+    "Earlier libkrun density, preparation, workload, Remote-SSH and agent rows used the helper without this patch and are not transferred; only the protocol, stop and SSH smoke rows were rerun with it.",
+    "Host vsock fuzzing was device-level only (no booted VM trigger reproduction, no coverage-guided fuzzing, no TSI paths, no concurrent header mutation / double fetch); Linux and x86-64 remain not-run.",
+    "For libkrun, the adopted hardening patch drops connections on failed fcntl whereas the scratch-fuzzed candidate ignored it (and 35 of 2,930 candidate random rounds failed the final check without a conclusive explanation); device-level probes were not rerun on the final adopted diff.",
+    "The matched 180-case density rerun and hardened libkrun Nix workload/editor/agent-start rows qualify the hardened helpers on macOS ARM64 native only; earlier cold-preparation, Remote-SSH, adaptable-setup and nested-Linux measurements retain their original helper/guest hashes and are not retroactively transferred.",
+    "Production devcroft now bounds exec stdin and carries the consumed-input devcroft-russh fork (draft upstream issue in docs/russh-consumed-input-windows-issue.md, not filed), while forwarded TCP ports still stall their connection (docs/known-gaps.md); production microVM adoption remains no-go pending task 4.5 and missing platform/confinement/supervisor gates."
+  ],
+  "sources": {
+    "results/macos-arm64-density.json": {
+      "sha256": "444221aed69093dc676252ccf2a3e8c878d8244b94049d0d1908c44dab15992b"
+    },
+    "results/macos-arm64-cold-preparation.json": {
+      "sha256": "9d526e9116a1d5c4aff4db062d4004237a9f216664f50f5e3d13e04d09e54174"
+    },
+    "results/macos-arm64-preparation-storage.json": {
+      "sha256": "806ce46707efddb7f394adc026e448d74db9395b09367e8214577f9d4da6fcca"
+    },
+    "results/macos-arm64-closure-storage-overlap.json": {
+      "sha256": "21415e901b609bb63a127051cab1ee5381e9045c8b4d8433195bcfe60324ee4b"
+    },
+    "results/hvi-linux-ordering-audit.json": {
+      "sha256": "7133f4d87268fac3a7f5b9a18b4572a337419d629e14ab4540c5d6d677ab52d1"
+    },
+    "results/macos-arm64-ssh-lifecycle-calibrations.json": {
+      "sha256": "b036909a13912cb277dc9f69ca408dd2ee84318f0aba692af3ec92b7025b0404"
+    },
+    "fixtures/no-go-thresholds.json": {
+      "sha256": "5db6e27a67179c45403b159684b22db7789d2bc019552ae205d8a1ca2ba3768e"
+    },
+    "fixtures/hardware-matrix.json": {
+      "sha256": "e2cea9bf5083a0fc58c21bc8441e843adeacd4ba85c4b91ef32f79d393e0d310"
+    },
+    "results/libkrun-macos-arm64-faults-ssh-fix.json": {
+      "sha256": "3b1bbd231a5040da62a2f8b32fb94d696bdf6f6f5a8810dce07b69602fd30d77"
+    },
+    "results/libkrun-macos-arm64-ssh-regression.json": {
+      "sha256": "d0e6bec8d32f4e074a424a7ab8b9f987a46fbe33b050b77d711489160418ada8"
+    },
+    "results/libkrun-macos-arm64-agent-start-ssh-fix.json": {
+      "sha256": "b532be34ee2ad461257f0c0cd557544f3953f540bf3da1cefbc2c1351ec12bd8"
+    },
+    "results/hvi-macos-arm64-faults-ssh-fix.json": {
+      "sha256": "947b7d7916f32dd6c9ec107aba72b5c5afcbc9a5e010872c8533956fb4ca0ae5"
+    },
+    "results/hvi-macos-arm64-ssh-regression.json": {
+      "sha256": "60bd8dfdfc3f2d669346c1686f7d2535dccfa0dcfa90246fe2adf5b519abd013"
+    },
+    "results/hvi-macos-arm64-agent-start-ssh-fix.json": {
+      "sha256": "06be932736e01479836acdcebd9db55095afc15b83199a07fa375b92c90f05c4"
+    },
+    "results/macos-arm64-minimal-private-preparation.json": {
+      "sha256": "a387b9ec49cb3862e4373b37d5e6a51e8a24dd2738dce701ec9805ea1127a426"
+    },
+    "results/macos-arm64-preparation-retention.json": {
+      "sha256": "6c164bf59877191bdb0436b5c3070202a7c04f0fd5e069f79e47e5421aa163f7"
+    },
+    "results/libkrun-macos-arm64-controller-separation.json": {
+      "sha256": "5ecf5004fa09cf622a9d54252b9f81ad402b997524883be17bbde19373fdd292"
+    },
+    "results/libkrun-macos-arm64-controller-ssh.json": {
+      "sha256": "ca610d6365c4f17f1d8a17246991b67c25aac51de4d2bbc46250e362cb6ded29"
+    },
+    "results/libkrun-macos-arm64-controller-agent.json": {
+      "sha256": "6cae4d96158f133cf81aa3c64993f5e3203995fb858618e4347155e22e812815"
+    },
+    "results/hvi-macos-arm64-controller-separation.json": {
+      "sha256": "c8094cd1664d9558cc83e5b4921b8df3b1a13a2bbe1f61bbb5be6071be923f2f"
+    },
+    "results/hvi-macos-arm64-controller-ssh.json": {
+      "sha256": "4e8a5fe3b5e6b535a52afa98e11aafe63b67a76938397e6f555efbb24b47c3ef"
+    },
+    "results/hvi-macos-arm64-controller-agent.json": {
+      "sha256": "00c7dace048d9dceb3b8435720673a79ca2063e1b21b23f8108269e1db6b00e0"
+    },
+    "results/macos-arm64-ssh-wire-validation.json": {
+      "sha256": "3ccd4799f7b4ce2ebd4dc8ee28ffb9ce16b18f9ae4bf95489818714a6cd3dadc"
+    },
+    "results/libkrun-macos-arm64-ssh-wire-progress.json": {
+      "sha256": "8f49cf2d2c713fd9488687b05f37b343e9dce1e3380c0f379740c832b49325e4"
+    },
+    "results/hvi-macos-arm64-ssh-wire-progress.json": {
+      "sha256": "f633ccbeadf34c5536e39f4f07db153aa21f976536d430e6c0b62a94d32129f5"
+    },
+    "results/macos-arm64-pid1-fault-validation.json": {
+      "sha256": "259d7acedfc2abddc014021ff2591cbfbe8e22e8d28df595729083f00297c057"
+    },
+    "results/libkrun-macos-arm64-faults-pid1.json": {
+      "sha256": "cf99dc4d0d24479de139fe10ec2c1ff613c3d56c44cdb8e06da831e50aad3cc2"
+    },
+    "results/hvi-macos-arm64-faults-pid1.json": {
+      "sha256": "241ed1df7320ae66899b692022bc4ac21d370dfd08bb29e7661d651060acbe30"
+    },
+    "results/libkrun-macos-arm64-setup-interruption-before.json": {
+      "sha256": "8722e2bf2f875c0cce2d2e63ae279d452094d158996816a0f42558498436e4d4"
+    },
+    "results/libkrun-macos-arm64-setup-interruption-atomic.json": {
+      "sha256": "6922c2183698be21c67182e482cf46cb9ac94fab51236e66f5766576e60acbb9"
+    },
+    "results/libkrun-macos-arm64-adaptable-atomic.json": {
+      "sha256": "f78e98b99646fd96665cf26246f1da0785881a7a60c1e006e8799145815bec3e"
+    },
+    "results/hvi-macos-arm64-setup-interruption-before.json": {
+      "sha256": "39536f2be6f38ccd7f9839b6421d3d9c56fab2d6258cb51e0eb4ccca07302fa8"
+    },
+    "results/hvi-macos-arm64-setup-interruption-atomic.json": {
+      "sha256": "882c4daec030dca94b113377d2b454debd2750762c460ddb312caf1d1b1e5290"
+    },
+    "results/hvi-macos-arm64-adaptable-atomic.json": {
+      "sha256": "070ba66635be5531150b29bc894571405c72715c2e0a53587c6ca2f3438415d6"
+    },
+    "results/macos-arm64-setup-interruption-validation.json": {
+      "sha256": "5e8316d1a4055bf79c036e9c38a9a714d04e886992946bf48349210d01778cab"
+    },
+    "results/libkrun-macos-arm64-setup-storage.json": {
+      "sha256": "41f40ad21346cbb11a4e9c21474db1ae511f0d522db8c3130a73720463777510"
+    },
+    "results/hvi-macos-arm64-setup-storage.json": {
+      "sha256": "d085212b99367eae160371eb4cb74e39ddb81d85e7ff5d37f5ceb300e8273717"
+    },
+    "results/macos-arm64-setup-storage-validation.json": {
+      "sha256": "ae48f9eb2031f2b6d16d9380e0ac19b28413879b55b327494a5606053ed37570"
+    },
+    "results/libkrun-macos-arm64-stop-receipts.json": {
+      "sha256": "709ebaa230dc734dbdb85f01f66e82387a45c03afb56adaaae64c8e9ef40b2e9"
+    },
+    "results/hvi-macos-arm64-stop-receipts.json": {
+      "sha256": "3bace4ec72ae1af50ecb038b9936bf83de139c00b5218194e05d607e7fa3c7f4"
+    },
+    "results/macos-arm64-stop-receipt-validation.json": {
+      "sha256": "872167c1b1a2c58beda0f4df66ef5efbf2c8274180e1aa6595c984e43b1d57fd"
+    },
+    "results/hvi-macos-arm64-remote-ssh-alpine.json": {
+      "sha256": "e5470500ba1b418da27bc493412b8aa8abe81ff295ca9b3de3da7aa7199da7a1"
+    },
+    "results/hvi-macos-arm64-remote-ssh-nix.json": {
+      "sha256": "6bb81f26f01559d0378580090506a4c214920b7cb149b045038c8124b532d504"
+    },
+    "results/libkrun-macos-arm64-remote-ssh-alpine.json": {
+      "sha256": "1eceb90cbe003752e9f451bd363a8203dc2638bc6aa719a301987b981e8e674b"
+    },
+    "results/libkrun-macos-arm64-remote-ssh-nix.json": {
+      "sha256": "d71589457e7e944ff4cdef5be89bec2652bd5c6fa164527fa760180a5b8e91c7"
+    },
+    "results/macos-arm64-remote-ssh-findings.json": {
+      "sha256": "7bf95b873ead5015847883cd43c97a8e914924fe41c0ff4fb4c0a7dfcfc2f12f"
+    },
+    "results/macos-arm64-remote-ssh-validation.json": {
+      "sha256": "f1a0183288b5989b750bd2a5f9049c574b4f53d207fee14c0b2370a9a7961d30"
+    },
+    "results/libkrun-macos-arm64-postack-before.json": {
+      "sha256": "74e9cc5d3f499f5da1d4c72e891b703949b716b50b9bbad1bb3d1c580b9f0932"
+    },
+    "results/libkrun-macos-arm64-postack.json": {
+      "sha256": "c7d87188bfa75a8b0cc447ac8b0fb0eb807a937dff30b688c487e56e5bf5d48d"
+    },
+    "results/hvi-macos-arm64-postack.json": {
+      "sha256": "7b53e7aeaef98ff93526056971c7ebccf3fbee2dc4d50ffc6156a9918269216a"
+    },
+    "results/macos-arm64-postack-validation.json": {
+      "sha256": "71d42ec6ad42372ef3e7156adbd7ae1c4c909e812f9d4a8f2f91edb8d7dbf617"
+    },
+    "results/libkrun-macos-arm64-keeper-protocol-before.json": {
+      "sha256": "7c52906ded5c891de70d5ebf3ae599fbad14849c58866d459be6254ef4fff732"
+    },
+    "results/libkrun-macos-arm64-keeper-protocol.json": {
+      "sha256": "ab7a3c87d86bc25e2f8bfcf466a1199370282f343f2a1c79ca1cf86d5b6e507e"
+    },
+    "results/hvi-macos-arm64-keeper-protocol.json": {
+      "sha256": "e6538e2dd689ff230ee08913e1389fe017928e9df2a7b116f66a3da575e1619d"
+    },
+    "results/macos-arm64-keeper-protocol-validation.json": {
+      "sha256": "3b350c5773b62e203de586cbbe2079108ac7c37c523a40da18ba05b1e6137270"
+    },
+    "results/libkrun-macos-arm64-egress-cache.json": {
+      "sha256": "eac3f87a7a504023fe0d91c2113d161ecc536b6a9bea3fa8cfaf8820ea06e942"
+    },
+    "results/hvi-macos-arm64-egress-cache.json": {
+      "sha256": "c4b0121ca1782ff884af54a2f768a30557d1f1fb2e02e143f662e3b8442c4ea1"
+    },
+    "results/libkrun-macos-arm64-egress-cache-mounted-calibration.json": {
+      "sha256": "2b8a964b9e875c0b14ff8d5b4bd1ecebb959c169238738c00167a0670e4af253"
+    },
+    "results/libkrun-macos-arm64-egress-cache-bypass-calibration.json": {
+      "sha256": "f35cf54b86031f02cdaf7de22bdf07fdf5b1c32e27772f60fbdb61db36bed42e"
+    },
+    "results/macos-arm64-egress-cache-validation.json": {
+      "sha256": "7676abf311a681db78671b5a6416e5dcd3b87d7d4c4da1354ee0342eb8207e71"
+    },
+    "results/libkrun-macos-arm64-remote-ssh-nix-pinned.json": {
+      "sha256": "7da1c6c752d5840d3bf78ca5f8e7e6493cf518e692bb265861475c5cc9da9518"
+    },
+    "results/libkrun-macos-arm64-remote-ssh-alpine-pinned.json": {
+      "sha256": "61766543d3f46641dcf5c2c0e0c6a1689f7c23e6f5cdc50c1a52933b2ce05803"
+    },
+    "results/hvi-macos-arm64-remote-ssh-nix-pinned.json": {
+      "sha256": "1c173d642dec568081272ae1ce2747c17af5c5d2f7ad22a360d1aa8aeb9f0472"
+    },
+    "results/hvi-macos-arm64-remote-ssh-alpine-pinned.json": {
+      "sha256": "5b437c66de1e51c45893ddafe5931277800c5e61bd27bbef16944600f7e47f4e"
+    },
+    "results/libkrun-macos-arm64-editor-pinned-orchestration.json": {
+      "sha256": "f181bc51e8bfc2fa9037c354fa6a9c080e5625f3d9da6629e89772fa5d63a716"
+    },
+    "results/hvi-macos-arm64-editor-pinned-orchestration.json": {
+      "sha256": "b3d7b116f724fb47cec416f5be9c7f6e601b58ca94ac756e7d652194237a3629"
+    },
+    "results/libkrun-macos-arm64-editor-pinned-builder.json": {
+      "sha256": "4fa916c5808ea0a5d9273f61387e31dcc794c479cc756ef2050b490cf558a061"
+    },
+    "results/hvi-macos-arm64-editor-pinned-builder.json": {
+      "sha256": "d57a6c9c00afd8c7f0a81a39ae5353f01882d12ca826d3b7d0a729387cd5793f"
+    },
+    "fixtures/editor-aarch64-pinned-builder-build.json": {
+      "sha256": "ab4f12c7973d4f680e7df3e56ccb825f5e2ea23cf9ba9ff4682a563b94ccb3e1"
+    },
+    "fixtures/editor-aarch64-pinned-orchestration-build.json": {
+      "sha256": "27274a1540f48a69dcbb0883ed90c873076a634c6d97359e2c29fa73f8fcf84d"
+    },
+    "fixtures/orchestration-packages-aarch64.json": {
+      "sha256": "968970cb3beaaf854b18142fdd936a5a6b86bfd668129e89108a6b1b494ad80f"
+    },
+    "fixtures/editor-builder-packages-aarch64.json": {
+      "sha256": "bd1c99193326480b28a7c1f781c5c0947fcd92c20a2f71dfdf920570846a939f"
+    },
+    "fixtures/workload-aarch64-orchestration-build.json": {
+      "sha256": "0463047cbbb2d8b4fe7f6843fdc819fde8cb32284e0b2c89d0217c89e01e9723"
+    },
+    "fixtures/workload-remote-ssh-aarch64-orchestration-build.json": {
+      "sha256": "1da0d273f1fef4b59a1ceb8ceb01b44536758e3343df9b0da78a613c2a5816c9"
+    },
+    "results/macos-arm64-keeper-admission-quiescence-validation.json": {
+      "sha256": "35414de09d8145159f3ee767488bf40afd3f97e24622103cf3ba0eb17e9d8033"
+    },
+    "results/libkrun-macos-arm64-keeper-admission.json": {
+      "sha256": "bec6ec06dc1445eb8effc537ee948409181488413a958e8e69d132a2829a717e"
+    },
+    "results/hvi-macos-arm64-keeper-admission.json": {
+      "sha256": "4d2eff85e4d6dc732f6e37a8d5f2578ca88217d230d8e82da68374c849f69c24"
+    },
+    "results/libkrun-macos-arm64-keeper-admission-before.json": {
+      "sha256": "75bb20ddf636cf776a6df2d1004a638a27f6076cdad287a07452e4e96e8bc342"
+    },
+    "results/hvi-macos-arm64-keeper-admission-before.json": {
+      "sha256": "849f755590afa026ceb37581f2959a255ac40fd57eaff3a98fb90a3f9a0adce6"
+    },
+    "results/libkrun-macos-arm64-stop-quiescence.json": {
+      "sha256": "d60fd54328969dd5a45ede62b03d7bf6af24e860be9183865573b14ffe46c372"
+    },
+    "results/hvi-macos-arm64-stop-quiescence.json": {
+      "sha256": "ce5b6abd300bffff9144dec08e19b1f3b9f0df2dc637340837f946f61d46f7cc"
+    },
+    "results/libkrun-macos-arm64-stop-quiescence-before.json": {
+      "sha256": "e75a74141fc78598674397cf73c9ac99ebca1f54f845f4120f3c2256a429879a"
+    },
+    "results/hvi-macos-arm64-stop-quiescence-before.json": {
+      "sha256": "fc5a2ff50e662c17a91826c98165184262218bacce7aa5a0df7bfadb1eb7d11d"
+    },
+    "results/macos-arm64-keeper-backpressure-validation.json": {
+      "sha256": "a779dc78f296ef15e5a590082a2454748a3abc25bb07bbcc5d4d9e56aadc0a26"
+    },
+    "results/hvi-macos-arm64-keeper-backpressure.json": {
+      "sha256": "9fab69f168872b72a16f9eb0f056b35ddbcfd7dead24935e252223f1d8c60263"
+    },
+    "results/hvi-macos-arm64-keeper-backpressure-before.json": {
+      "sha256": "47c67e52beb27d891939890c4e9d3abcd3f39cb7644d0f693eedd4824c330992"
+    },
+    "results/libkrun-macos-arm64-keeper-backpressure.json": {
+      "sha256": "a72fe95a602b7c4e76a7f37b2972d31f73e23d7eb34d202ed50a4bd2bcd0f6bc"
+    },
+    "results/libkrun-macos-arm64-keeper-backpressure-before.json": {
+      "sha256": "49f5520cf34c7b99495f6055d4a526296dc12f1f9d061aefee194a58683b4f0d"
+    },
+    "results/libkrun-macos-arm64-keeper-backpressure-unpatched-vmm.json": {
+      "sha256": "a4fd797a0cbbcd1dc949eb0c0f79504db99ca5c47e5f699afb59879c9242ee36"
+    },
+    "results/libkrun-macos-arm64-stop-vsock-backpressure-patch.json": {
+      "sha256": "7075fc8913f4076c70f7ac2c20b65f1977d21c9cd7eb89d84fc04e5532f85c69"
+    },
+    "results/libkrun-macos-arm64-ssh-vsock-backpressure-patch.json": {
+      "sha256": "3a36ecc2c0b14d333f5a51cea985139775115792f950fbc1aa53b78533e91c48"
+    },
+    "patches/libkrun-vsock-host-backpressure.patch": {
+      "sha256": "67a1e6ea2193dc17a37cdb5965f86b810337c435131440c653aa02576bcced7f"
+    },
+    "results/macos-arm64-vsock-fuzz.json": {
+      "sha256": "8cf5f998fdf66c688bb1905420fb8578530fcf5870014301f9409752c63999f2"
+    },
+    "results/macos-arm64-vsock-hardening.json": {
+      "sha256": "a4fc742fc6043cb3902c6d85e08f400d31fe22a085a03949853ab05f957e752d"
+    },
+    "results/macos-arm64-hvi-pending-bound.json": {
+      "sha256": "43a9ed5d133256a1b339d1e9c6e06ad4f75f3297e2aa95e9bbae0071dbab4e87"
+    },
+    "results/macos-arm64-vsock-hardening-workloads.json": {
+      "sha256": "c62267ba2b75f4f62380b690f9bcfa3a74fbfd28b6699b2e40fe6de8b3c576f6"
+    },
+    "results/macos-arm64-density-vsock-hardened.json": {
+      "sha256": "2a272fc2118d3cc45c59e4becaa439d70adba8abdf39010ba75beb895d6d198e"
+    },
+    "patches/libkrun-vsock-hardening.patch": {
+      "sha256": "e737ff613f75acbee2df0fb00a771ddaa5cee5de49f6fd2d697b058a8eed664c"
+    },
+    "patches/hvi-vsock-pending-bound.patch": {
+      "sha256": "16ea5d793ef42716f76ec409418e14b0557c6b0fd171b74726fb8437d989a19d"
+    },
+    "fixtures/upstream.json": {
+      "sha256": "ea73e73a5a16343fa4b7925badc6d9a13381c25a3543b3281b586d39261a720c"
+    }
+  },
+  "pinned_author_security_sources": {
+    "libkrun": {
+      "revision": "6151710f4ea627cf0e5dbce78e4192fb4d64c2e9",
+      "url": "https://github.com/containers/libkrun/blob/6151710f4ea627cf0e5dbce78e4192fb4d64c2e9/docs/security-model.md",
+      "sha256": "81170ab114eda4b90282ec1ea24816b33447b4fd27b4e80196ae692fcd72e460"
+    },
+    "hvi": {
+      "revision": "351d1a15728e998486232e4815ba075a22e44f56",
+      "url": "https://github.com/brig-sh/hvi-vmm/blob/351d1a15728e998486232e4815ba075a22e44f56/docs/security.md",
+      "sha256": "e073cdc3064ae4e0ce8a425533cf255241b319d78cfe9e3fb7e403ac8745c391"
+    }
+  },
+  "supersedes": {
+    "path": "results/macos-arm64-evaluation-assessment-v15.json",
+    "sha256": "5488848510fbacf6a8265cb3c8accd84a541f0cf64f5d00b000fa168c447cba7",
+    "scope": "owner acceptance decision for task 4.5 (conditional opt-in macOS ARM64 unlock for libkrun, accepted E5 thresholds, macOS-first platform/release criteria, and updated docs/decisions.md); no new measurements; general production/default adoption and missing native platforms remain blocked"
+  },
+  "assessment_revision": 16,
+  "current_artifact_coverage": {
+    "ssh_keeper_sha256": "d82bd8336200ba98e74c76ed27b15db9f21b900fc6b37f48410f81896f769082",
+    "ordinary_pid1_control_receipt": {
+      "path": "experiments/microvm/artifacts/stage-b-nix-pid1-control/guest.json",
+      "sha256": "78335d426252c289d1b877ca9efabfce51139c8751efdccd987c70123dd8a7a9"
+    },
+    "test_only_pid1_exit_receipt": {
+      "path": "experiments/microvm/artifacts/stage-b-nix-pid1-exit/guest.json",
+      "sha256": "3941b4190a4120f6f298abbaf34c0208ecacf3fddb01780d59dda8c0906a5bdb"
+    },
+    "density_and_preparation_inherited": false,
+    "agent_cli_tls_start_with_this_keeper": "not-rerun; prior actual CLI/TLS receipts remain tied to their earlier hashes",
+    "trusted_remote_ssh": {
+      "guest_keeper_sha256": "279e0f7e0833e37db8206348927a6e20bc65712c82dfde26492d72695e7b39e8",
+      "scope": "separate fixture-only port 9091; not an ordinary-keeper density, service, CLI/TLS or stop-regression run",
+      "alpine_builder_init_source_differences": "three recorded differences per Alpine row retained in validation; not retroactively relabelled as current-source tests"
+    },
+    "post_ack_stop_follow_up": {
+      "libkrun_helper": {
+        "path": "/Users/dragos/Development/devcroft-codex/experiments/microvm/libkrun/target/debug/devcroft-krun-spike",
+        "sha256": "8c6221e30c806dd25f57775ede539b55918ebcddeb24346c4ad425b1c5d8456e"
+      },
+      "hvi_helper": {
+        "path": "/Users/dragos/Development/devcroft-codex/experiments/microvm/hvi/target/debug/devcroft-hvi-spike",
+        "sha256": "397023c12b7493e697f73b6e6ae7a781b40552e2d6f7b767126cdfe3ee3b98bd"
+      },
+      "guest_receipts": [
+        {
+          "path": "/Users/dragos/Development/devcroft-codex/experiments/microvm/artifacts/stage-b-nix-postack-exit/guest.json",
+          "sha256": "9b3817908fbb8d008b217305a2977b39021f875f105fcd51f6f4127988030e61"
+        },
+        {
+          "path": "/Users/dragos/Development/devcroft-codex/experiments/microvm/artifacts/stage-b-nix-postack-control/guest.json",
+          "sha256": "3d1083445f0b4929c75543ba729c12f542261b9e0dadbf3bcde360bffba22e34"
+        }
+      ],
+      "source_sha256": "a222bb0da280b7390ad85db1a5c46255b8c9811df0c9dfbf1ede6c84673f868c",
+      "guest_keeper_sha256": "d82bd8336200ba98e74c76ed27b15db9f21b900fc6b37f48410f81896f769082",
+      "density_preparation_editor_agent_measurements_inherited": false
+    },
+    "keeper_protocol_follow_up": {
+      "guest_keeper_sha256": "cd56f38623d239eb1c8eb97550307042cae0991c96ee7c012dbd26ac825477ca",
+      "shared_source_sha256": {
+        "src/keeper/protocol.rs": "7563740c8cd0dedba1e98c353bb6eef5412d9a1c1916cfc31d84f9f1a0ccc770",
+        "src/keeper/connection.rs": "6a9a1eb582a45148e28f6be0f5611237e3207362297fa90ad20ecd906aa424f8"
+      },
+      "guest_receipt": {
+        "path": "/Users/dragos/Development/devcroft-codex/experiments/microvm/artifacts/stage-b-protocol-final/guest.json",
+        "sha256": "b0ea6a018d68f5919f73ca5d38b09764671731cde4a8e141cf254504b6c2a0b0"
+      },
+      "scope": "ordinary minimal native framing fixture; helpers byte-identical to v8",
+      "prior_density_workload_stop_editor_agent_measurements_inherited": false
+    },
+    "egress_cache_follow_up": {
+      "fixture_build": {
+        "path": "experiments/microvm/artifacts/cache-boundary-20261115-premount/build.json",
+        "sha256": "60cef28d79592551fd282cd96ddd235f0cfdfe793a792a13840f377f885c6590"
+      },
+      "keeper_sha256": "cd56f38623d239eb1c8eb97550307042cae0991c96ee7c012dbd26ac825477ca",
+      "guest_c_source_sha256": "22bd310aacaf1464f7ebe2bf10ad95ab9977a125d4d9aed3eb443201af9359c7",
+      "scope": "ordinary/challenge Alpine pair and copied toolchain input",
+      "prior_density_preparation_workload_stop_agent_editor_measurements_inherited": false
+    },
+    "editor_materialization_pinning_follow_up": {
+      "editor_build_receipt": {
+        "path": "fixtures/editor-aarch64-pinned-orchestration-build.json",
+        "sha256": "27274a1540f48a69dcbb0883ed90c873076a634c6d97359e2c29fa73f8fcf84d"
+      },
+      "orchestration_pins": {
+        "path": "fixtures/orchestration-packages-aarch64.json",
+        "sha256": "968970cb3beaaf854b18142fdd936a5a6b86bfd668129e89108a6b1b494ad80f"
+      },
+      "editor_builder_pins": {
+        "path": "fixtures/editor-builder-packages-aarch64.json",
+        "sha256": "bd1c99193326480b28a7c1f781c5c0947fcd92c20a2f71dfdf920570846a939f"
+      },
+      "local_editor_artifact_note": "artifacts/editor-orchestration now holds a later rebuild through the shared module; the published rows are tied to the recorded 9e09a70e image",
+      "prior_density_preparation_storage_agent_measurements_inherited": false
+    },
+    "keeper_admission_and_stop_quiescence_follow_up": {
+      "guest_receipts": {
+        "stage-b-protocol-admission": {
+          "path": "experiments/microvm/artifacts/stage-b-protocol-admission/guest.json",
+          "sha256": "7ee4c2100209c63115c0beb7cbab8111cb8073e793da3d58e71fa7a39e5a5834"
+        },
+        "stage-b-nix-quiescence-control": {
+          "path": "experiments/microvm/artifacts/stage-b-nix-quiescence-control/guest.json",
+          "sha256": "4e429923f2b56287cf69e2c2f75fe3528e8b58e1946781415eba715e9d51fd74"
+        },
+        "stage-b-nix-quiescence-exit": {
+          "path": "experiments/microvm/artifacts/stage-b-nix-quiescence-exit/guest.json",
+          "sha256": "17d8b2bcfaedff04952ae149b8104857e4114517ab2c0536f10c7f83564410e9"
+        }
+      },
+      "shared_source_sha256": {
+        "src/keeper/protocol.rs": "4da304555ee61684e517a40791fce915821afef15521d2e17b6b0647b893e77c",
+        "src/keeper/connection.rs": "e3fb160fdfa9f49db78442f2dd68ecc970b49b8f4719a44d1b0990b5b9dc5c8d",
+        "src/keeper/mod.rs": "c732c95f1ddcfafd063d693a4e31e0c34f350996e387bc5313582d55ad7f9dfa"
+      },
+      "prior_density_preparation_workload_agent_editor_measurements_inherited": false
+    },
+    "session_output_backpressure_follow_up": {
+      "guest_receipt": {
+        "path": "experiments/microvm/artifacts/stage-b-protocol-backpressure/guest.json",
+        "sha256": "3eee694b65a624159312f6b076adb875f756a9e6015cfd787d337b12d3a07624"
+      },
+      "vmm_patch": "67a1e6ea2193dc17a37cdb5965f86b810337c435131440c653aa02576bcced7f",
+      "shared_source_sha256": {
+        "src/keeper/connection.rs": "fb1af33bd1682f3b9d8f2b719a3ba2036be0be529d4f970a94c8ab8436e15bed",
+        "src/keeper/protocol.rs": "4da304555ee61684e517a40791fce915821afef15521d2e17b6b0647b893e77c",
+        "src/keeper/mod.rs": "c732c95f1ddcfafd063d693a4e31e0c34f350996e387bc5313582d55ad7f9dfa"
+      },
+      "prior_density_preparation_workload_agent_editor_measurements_inherited": false
+    },
+    "vsock_hardening_follow_up": {
+      "libkrun_helper": {
+        "path": "/Users/dragos/Development/devcroft-codex/experiments/microvm/libkrun/target/debug/devcroft-krun-spike",
+        "sha256": "59d009804d6cbeb11de3cda4685836700e022761a13a4fbfff4f12f3cbf93125"
+      },
+      "hvi_helper": {
+        "path": "/Users/dragos/Development/devcroft-codex/experiments/microvm/hvi/target/debug/devcroft-hvi-spike",
+        "sha256": "0187e0af327dfc9a444c82c34c5f7c03c48d794a8142e42ae82880e8f317b965"
+      },
+      "patches": {
+        "libkrun_vsock_hardening": "e737ff613f75acbee2df0fb00a771ddaa5cee5de49f6fd2d697b058a8eed664c",
+        "hvi_vsock_pending_bound": "16ea5d793ef42716f76ec409418e14b0557c6b0fd171b74726fb8437d989a19d"
+      },
+      "rerun_rows": [
+        "ordinary five rows on both hardened helpers (stage-a, keeper, ssh, protocol, stop)",
+        "hardened libkrun Nix workload, Nix Chrome editor and Codex/Claude agent-start",
+        "matched 180-case native density across both hardened helpers"
+      ],
+      "prior_cold_preparation_remote_ssh_adaptable_nested_measurements_inherited": false
+    }
+  },
+  "owner_decisions": {
+    "libkrun_criterion_four": {
+      "date": "2026-11-20",
+      "decision": "accept an integrator-owned boundary in place of an author-claimed one",
+      "platform": "macos-arm64 only; Landlock-before-vCPU ordering under KVM is unmeasured and Landlock does not mediate AF_UNIX",
+      "unchanged": [
+        "the criterion for other candidates",
+        "devcroft's stated guarantee (accident protection)",
+        "production no-go",
+        "task 4.5 (thresholds and release/platform criteria still need acceptance)"
+      ],
+      "record": {
+        "path": "docs/decisions.md",
+        "sha256": "ac6d29148b33b855f5aa86d3d3188133b60e10fa78537e8814977982750f9d0d"
+      }
+    },
+    "task_4_5_adoption_decision": {
+      "date": "2026-11-26",
+      "decision": "conditionally accept libkrun 2.0 as an opt-in/experimental microVM backend on macOS ARM64 (unlocking add-vm-project-runtime implementation); keep process tier as default; do not select hvi",
+      "thresholds_accepted": {
+        "source": "fixtures/no-go-thresholds.json",
+        "sha256": "5db6e27a67179c45403b159684b22db7789d2bc019552ae205d8a1ca2ba3768e",
+        "status": "accepted as-is for next phase (4096 MiB / 600 s / 5 s / 8 GiB)"
+      },
+      "platform_release_criteria": "macOS ARM64 (macOS 14+, Apple Silicon) opt-in first; linux-arm64-native, linux-x86_64-native and macos-x86_64-native remain explicitly unsupported until dedicated native runners exist and pass E3 with mandatory non-skipping tests",
+      "security_guarantee": "unchanged: accident protection (use case A in docs/threat-model.md); no use case B claim",
+      "architecture_revisions_noted": [
+        "private ext4 disks + SSH/SFTP instead of virtio-fs",
+        "external Linux 6.12.95 kernel instead of libkrunfw",
+        "four local libkrun patches maintained"
+      ],
+      "still_blocked_before_general_production": [
+        "host-enforced confinement of hostile preparation code",
+        "production controller/supervisor stop-receipt integration",
+        "physical host suspend/resume and remaining fault coverage",
+        "credential brokering",
+        "dedicated native Linux runners and E3 qualification before any Linux support claim"
+      ],
+      "record": {
+        "path": "docs/decisions.md",
+        "sha256": "8251478de25304b89e2ca932a27546126124d1dce462c131f243dc420fb61db2"
+      }
+    }
+  }
+}
