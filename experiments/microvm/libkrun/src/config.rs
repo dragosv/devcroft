@@ -2,13 +2,14 @@ use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use std::fs::{self, File};
 use std::io::{self, Read};
-use std::os::unix::fs::MetadataExt;
+use std::os::unix::fs::{FileTypeExt, MetadataExt};
 use std::path::{Path, PathBuf};
 
 pub const REVISION: &str = "6151710f4ea627cf0e5dbce78e4192fb4d64c2e9";
 pub const CONTROL_PORT: u32 = 1024;
 pub const KEEPER_PORT: u32 = 1025;
 pub const SSH_PORT: u32 = 1026;
+pub const PROXY_PORT: u32 = 1027;
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -28,6 +29,8 @@ pub struct Launch {
     pub data: Option<PathBuf>,
     pub state: PathBuf,
     pub instance_dir: PathBuf,
+    #[serde(default)]
+    pub proxy_socket: Option<PathBuf>,
     pub vcpus: u8,
     pub memory_mib: u32,
 }
@@ -140,6 +143,30 @@ impl Launch {
             if socket.as_os_str().len() > 100 || occupied {
                 return Err("config: socket is occupied or its path exceeds 100 bytes".into());
             }
+        }
+        if let Some(proxy_raw) = cfg.proxy_socket.take() {
+            let canon = fs::canonicalize(&proxy_raw)
+                .map_err(|e| format!("config: proxy_socket {}: {e}", proxy_raw.display()))?;
+            let meta = fs::metadata(&canon).map_err(|e| format!("config: proxy_socket: {e}"))?;
+            if !meta.file_type().is_socket()
+                || meta.uid() != unsafe { libc::geteuid() }
+                || meta.mode() & 0o077 != 0
+            {
+                return Err(
+                    "config: proxy_socket must be a user-owned private (0600) unix socket".into(),
+                );
+            }
+            if canon.parent() != Some(cfg.instance_dir.as_path())
+                || canon.as_os_str().len() > 100
+                || canon == cfg.control_socket()
+                || canon == cfg.keeper_socket()
+                || canon == cfg.ssh_socket()
+            {
+                return Err(
+                    "config: proxy_socket must be a distinct <=100-byte socket directly inside instance_dir".into(),
+                );
+            }
+            cfg.proxy_socket = Some(canon);
         }
         Ok(cfg)
     }

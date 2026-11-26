@@ -3,7 +3,7 @@ mod config;
 mod linux;
 mod sandbox;
 
-use config::{CONTROL_PORT, KEEPER_PORT, Launch, REVISION, SSH_PORT};
+use config::{CONTROL_PORT, KEEPER_PORT, Launch, PROXY_PORT, REVISION, SSH_PORT};
 use krun::api::{
     BalloonDevice, BlockDevice, ConsoleDevice, DiskFormat, FreePageReportingMode, KernelFormat,
     MmioDeviceManager, Payload, RngDevice, SyncMode, TsiFlags, VmmBuilder, VsockDevice,
@@ -92,6 +92,7 @@ fn entry() -> Result<(), String> {
             serde_json::json!({"schema":1,"revision":REVISION,
             "control_socket":cfg.control_socket(), "vcpus":cfg.vcpus,
             "memory_mib":cfg.memory_mib, "nic":false,"tsi":false,
+            "egress_proxy":cfg.proxy_socket.is_some(),
             "status":"inputs-validated","qualification":"not-run"})
         );
         return Ok(());
@@ -187,6 +188,9 @@ fn boot(cfg: &Launch) -> Result<(), String> {
     vsock.add_unix_port(CONTROL_PORT, text_path(&cfg.control_socket())?, true);
     vsock.add_unix_port(KEEPER_PORT, text_path(&cfg.keeper_socket())?, true);
     vsock.add_unix_port(SSH_PORT, text_path(&cfg.ssh_socket())?, true);
+    if let Some(proxy) = &cfg.proxy_socket {
+        vsock.add_unix_port(PROXY_PORT, text_path(proxy)?, false);
+    }
     devices.add(vsock);
     devices.add(RngDevice::new().map_err(map)?);
     let mut balloon = BalloonDevice::new().map_err(map)?;

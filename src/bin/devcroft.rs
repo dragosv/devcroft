@@ -353,7 +353,12 @@ fn cli_exec(args: &[String]) -> i32 {
                 args: cmd_rest.to_vec(),
                 cwd: devcroft::vm::map_guest_cwd(&vm.meta.project_root, &cwd),
             };
-            return match devcroft::exec::exec_on_socket(&vm.keeper_socket(), &req) {
+            let session_env = devcroft::vm::vm_session_env(&vm);
+            return match devcroft::exec::exec_on_socket_with_env(
+                &vm.keeper_socket(),
+                &req,
+                session_env,
+            ) {
                 Ok(code) => code,
                 Err(e) => {
                     eprintln!("devcroft exec: {e}");
@@ -438,7 +443,12 @@ fn cli_shell(args: &[String]) -> i32 {
             let req = devcroft::exec::ShellRequest {
                 cwd: devcroft::vm::map_guest_cwd(&vm.meta.project_root, &cwd),
             };
-            return match devcroft::exec::shell_on_socket(&vm.keeper_socket(), &req) {
+            let session_env = devcroft::vm::vm_session_env(&vm);
+            return match devcroft::exec::shell_on_socket_with_env(
+                &vm.keeper_socket(),
+                &req,
+                session_env,
+            ) {
                 Ok(code) => code,
                 Err(e) => {
                     eprintln!("devcroft shell: {e}");
@@ -3137,6 +3147,13 @@ fn cli_up(args: &[String]) -> i32 {
     }
 
     if vm_flags.vm_mode == Some(true) {
+        let user_config = match devcroft::config::load_user_config() {
+            Ok(c) => c,
+            Err(e) => {
+                eprintln!("devcroft up: {e}");
+                return 2;
+            }
+        };
         println!(
             "devcroft: bringing up opt-in VM sandbox '{}'...",
             manifest.sandbox.name
@@ -3147,6 +3164,13 @@ fn cli_up(args: &[String]) -> i32 {
             memory_mib: vm_flags.memory_mib,
             recreate,
             rollback_disabled: vm_rollback_creation_disabled(),
+            network_default_allow: manifest.network.default
+                == devcroft::config::NetworkDefault::Allow,
+            egress_allow: manifest.network.allow.clone(),
+            brokers: user_config.brokers,
+            direct_env_vars: manifest.env.vars.clone(),
+            env_forward: manifest.env.forward.clone(),
+            direct_credentials: user_config.credentials,
         };
         return match devcroft::vm::up_vm_instance(
             &manifest.sandbox.name,
@@ -3187,6 +3211,27 @@ fn cli_up(args: &[String]) -> i32 {
                 );
                 if let Some(id) = &outcome.instance.state.host_process {
                     println!("devcroft: helper pid: {}", id.pid);
+                }
+                if outcome.instance.meta.egress_allow.is_empty() {
+                    println!("devcroft: egress-proxy: offline (network.allow is empty)");
+                } else {
+                    println!(
+                        "devcroft: egress-proxy: host relay active (guest 127.0.0.1:{} -> host proxy.sock; allow: {})",
+                        devcroft::vm::VM_GUEST_EGRESS_PROXY_PORT,
+                        outcome.instance.meta.egress_allow.join(", ")
+                    );
+                }
+                for b in &outcome.instance.meta.broker_sessions {
+                    println!(
+                        "devcroft: broker: {} -> {} (host {})",
+                        b.env, b.endpoint, b.host
+                    );
+                }
+                if !outcome.instance.meta.disclosed_credentials.is_empty() {
+                    println!(
+                        "devcroft: credentials delivered (in clear to sandbox sessions): {}",
+                        outcome.instance.meta.disclosed_credentials.join(", ")
+                    );
                 }
                 0
             }
@@ -3402,6 +3447,20 @@ fn print_vm_status(st: &devcroft::vm::VmLiveStatus) {
         println!("guest-state-counter: {guest_state}");
     }
     println!("private-disk: {}", st.instance.meta.private_disk.display());
+    match st.proxy_alive {
+        Some(true) => println!(
+            "egress-proxy: healthy (allow: {})",
+            st.instance.meta.egress_allow.join(", ")
+        ),
+        Some(false) => println!(
+            "egress-proxy: stopped (allow: {})",
+            st.instance.meta.egress_allow.join(", ")
+        ),
+        None => println!("egress-proxy: disabled (offline; network.allow is empty)"),
+    }
+    for b in &st.instance.meta.broker_sessions {
+        println!("broker: {} -> {} (host {})", b.env, b.endpoint, b.host);
+    }
     if let Some(stop) = st.instance.state.last_stop {
         let label = match stop {
             devcroft::vm::StopClassification::Orderly => "orderly",

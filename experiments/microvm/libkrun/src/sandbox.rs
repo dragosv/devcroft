@@ -173,6 +173,12 @@ fn profile(cfg: &Launch) -> Result<String, String> {
             quoted(&socket)?
         ));
     }
+    if let Some(proxy) = &cfg.proxy_socket {
+        p.push_str(&format!(
+            "(allow network-outbound (local unix-socket (path {})))\n",
+            quoted(proxy)?
+        ));
+    }
     for path in ["/dev/null", "/dev/random", "/dev/urandom"] {
         p.push_str(&format!("(allow file-read* (literal \"{path}\"))\n"));
     }

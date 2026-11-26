@@ -87,11 +87,22 @@ pub fn exec(sandbox_name: &str, req: &ExecRequest) -> Result<i32, ExecError> {
 /// Runs `req` directly against an already-verified keeper endpoint socket
 /// (used by VM transport without consulting native sandbox `StatePaths`).
 pub fn exec_on_socket(socket_path: &Path, req: &ExecRequest) -> Result<i32, ExecError> {
+    exec_on_socket_with_env(socket_path, req, BTreeMap::new())
+}
+
+/// Runs `req` directly against an already-verified keeper endpoint socket,
+/// injecting per-session environment variables (such as VM proxy and broker
+/// endpoints).
+pub fn exec_on_socket_with_env(
+    socket_path: &Path,
+    req: &ExecRequest,
+    env: BTreeMap<String, String>,
+) -> Result<i32, ExecError> {
     let spawn_req = SpawnRequest {
         cmd: req.cmd.clone(),
         args: req.args.clone(),
         cwd: req.cwd.clone(),
-        env: BTreeMap::new(),
+        env,
         pty: None,
     };
     let stream = connect_and_spawn_socket(socket_path, &spawn_req)?;
@@ -183,6 +194,16 @@ pub fn shell(sandbox_name: &str, req: &ShellRequest) -> Result<i32, ExecError> {
 /// Runs an interactive or piped shell directly against an already-verified
 /// keeper socket (used by VM transport without consulting native `StatePaths`).
 pub fn shell_on_socket(socket_path: &Path, req: &ShellRequest) -> Result<i32, ExecError> {
+    shell_on_socket_with_env(socket_path, req, BTreeMap::new())
+}
+
+/// Runs an interactive or piped shell directly against an already-verified
+/// keeper socket with explicit session environment overrides.
+pub fn shell_on_socket_with_env(
+    socket_path: &Path,
+    req: &ShellRequest,
+    env: BTreeMap<String, String>,
+) -> Result<i32, ExecError> {
     let size = terminal_size().unwrap_or(PtySize { rows: 24, cols: 80 });
     let interactive = unsafe { libc::isatty(libc::STDIN_FILENO) } != 0;
 
@@ -190,7 +211,7 @@ pub fn shell_on_socket(socket_path: &Path, req: &ShellRequest) -> Result<i32, Ex
         cmd: "/bin/sh".to_string(),
         args: Vec::new(),
         cwd: req.cwd.clone(),
-        env: BTreeMap::new(),
+        env,
         pty: interactive.then_some(size),
     };
 

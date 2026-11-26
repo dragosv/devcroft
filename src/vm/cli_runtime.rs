@@ -4,10 +4,13 @@
 //! Coordinates the Phase 1–4 `crate::vm` primitives against the real `devcroft`
 //! CLI without altering native `process`-tier defaults (`meta.json` stays untouched).
 
+use std::collections::BTreeMap;
+use std::env;
 use std::ffi::OsStr;
 use std::fmt;
 use std::fs::{self, OpenOptions};
 use std::io::{self, BufRead, BufReader, Read, Write};
+use std::net::IpAddr;
 use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
@@ -17,7 +20,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use rand::Rng;
 use serde::{Deserialize, Serialize};
 
-use crate::config::is_valid_name;
+use crate::config::{BrokerDecl, is_valid_name};
 use crate::lifecycle::{StatePaths, acquire_lifecycle_lock};
 
 use super::contract::{
@@ -29,8 +32,8 @@ use super::grants::{
     resolve_runtime,
 };
 use super::launcher::{
-    HelperArtifactInput, HelperLaunchFileV1, MAX_SOCKET_PATH_BYTES, prepare_instance_layout,
-    spawn_detached_helper, write_private_launch_record,
+    HelperArtifactInput, HelperLaunchFileV1, MAX_SOCKET_PATH_BYTES, capture_start_time_ns,
+    prepare_instance_layout, spawn_detached_helper, write_private_launch_record,
 };
 use super::lifecycle::{
     RemovalReport, ShutdownOutcome, VmInstancePaths, VmLifecycleError, VmRollbackPolicy,
@@ -39,6 +42,7 @@ use super::lifecycle::{
 };
 use super::manifest::TrustedArtifactManifestV1;
 use super::preparation::CANONICAL_GUEST_WORKSPACE;
+use super::proxy_channel::is_forbidden_private_or_local_ip;
 use super::qualification::current_host_platform;
 use super::sha256::sha256_file_hex;
 use super::ssh::VmSshKeyMaterial;
@@ -48,9 +52,20 @@ pub const VM_CLI_META_SCHEMA_V1: u32 = 1;
 pub const DEFAULT_VM_VCPUS: u8 = 2;
 pub const DEFAULT_VM_MEMORY_MIB: u32 = 1024;
 pub const PRIVATE_STATE_DISK_BYTES: u64 = 1024 * 1024;
+pub const VM_GUEST_EGRESS_PROXY_PORT: u16 = 18080;
 const READY_POLL_TIMEOUT: Duration = Duration::from_secs(20);
 const CONTROL_IO_TIMEOUT: Duration = Duration::from_secs(2);
 const SHUTDOWN_WAIT_TIMEOUT: Duration = Duration::from_secs(5);
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct VmBrokerSessionEntry {
+    pub host: String,
+    pub env: String,
+    pub endpoint_env: String,
+    pub placeholder: String,
+    pub endpoint: String,
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -68,6 +83,18 @@ pub struct VmCliMetadata {
     pub manifest_path: PathBuf,
     pub vcpus: u8,
     pub memory_mib: u32,
+    #[serde(default)]
+    pub egress_allow: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub proxy_process: Option<HostProcessIdentity>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub proxy_log: Option<PathBuf>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub broker_sessions: Vec<VmBrokerSessionEntry>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub direct_env: BTreeMap<String, String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub disclosed_credentials: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -89,6 +116,10 @@ impl VmCliInstance {
         self.meta.instance_dir.join("ssh.sock")
     }
 
+    pub fn proxy_socket(&self) -> PathBuf {
+        self.meta.instance_dir.join("proxy.sock")
+    }
+
     pub fn state_file(&self) -> PathBuf {
         self.meta.controller_dir.join("vm-state.json")
     }
@@ -105,6 +136,24 @@ impl VmCliInstance {
     }
 }
 
+/// Returns the per-session environment variables injected into VM `exec` /
+/// `shell` sessions (`[env.vars]`, `[env.forward]`, `[credentials] env`, plus
+/// the loopback proxy URLs and brokered credential placeholders/endpoints when
+/// the host egress proxy is active).
+pub fn vm_session_env(instance: &VmCliInstance) -> BTreeMap<String, String> {
+    let mut env = instance.meta.direct_env.clone();
+    if !instance.meta.egress_allow.is_empty() && instance.meta.proxy_process.is_some() {
+        for (k, v) in crate::proxy::client_env(VM_GUEST_EGRESS_PROXY_PORT, "") {
+            env.insert(k, v);
+        }
+        for b in &instance.meta.broker_sessions {
+            env.insert(b.endpoint_env.clone(), b.endpoint.clone());
+            env.insert(b.env.clone(), b.placeholder.clone());
+        }
+    }
+    env
+}
+
 #[derive(Debug, Clone)]
 pub struct VmUpOptions {
     pub manifest_path: Option<PathBuf>,
@@ -112,6 +161,12 @@ pub struct VmUpOptions {
     pub memory_mib: u32,
     pub recreate: bool,
     pub rollback_disabled: bool,
+    pub network_default_allow: bool,
+    pub egress_allow: Vec<String>,
+    pub brokers: Vec<BrokerDecl>,
+    pub direct_env_vars: BTreeMap<String, String>,
+    pub env_forward: Vec<String>,
+    pub direct_credentials: Vec<String>,
 }
 
 impl Default for VmUpOptions {
@@ -122,6 +177,12 @@ impl Default for VmUpOptions {
             memory_mib: DEFAULT_VM_MEMORY_MIB,
             recreate: false,
             rollback_disabled: false,
+            network_default_allow: false,
+            egress_allow: Vec::new(),
+            brokers: Vec::new(),
+            direct_env_vars: BTreeMap::new(),
+            env_forward: Vec::new(),
+            direct_credentials: Vec::new(),
         }
     }
 }
@@ -140,6 +201,7 @@ pub struct VmLiveStatus {
     pub uptime_secs: Option<u64>,
     pub session_count: Option<usize>,
     pub guest_state: Option<u64>,
+    pub proxy_alive: Option<bool>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -555,12 +617,118 @@ fn create_zeroed_private_disk(path: &Path, size_bytes: u64) -> Result<(), VmCliE
 }
 
 fn cleanup_stale_sockets(instance_dir: &Path) {
-    for sock in ["control.sock", "keeper.sock", "ssh.sock"] {
+    for sock in ["control.sock", "keeper.sock", "ssh.sock", "proxy.sock"] {
         let p = instance_dir.join(sock);
         if p.symlink_metadata().is_ok() {
             let _ = fs::remove_file(p);
         }
     }
+}
+
+fn validate_vm_egress_allow(allow: &[String]) -> Result<(), VmCliError> {
+    for entry in allow {
+        let trimmed = entry.trim();
+        let host = trimmed.trim_end_matches('.');
+        if host.eq_ignore_ascii_case("localhost")
+            || host.to_ascii_lowercase().ends_with(".localhost")
+        {
+            return Err(VmCliError::layered(
+                ErrorLayer::Config,
+                format!("network.allow entry `{entry}` targets localhost, which VM egress refuses"),
+            ));
+        }
+        if let Ok(ip) = host.parse::<IpAddr>()
+            && is_forbidden_private_or_local_ip(ip)
+        {
+            return Err(VmCliError::layered(
+                ErrorLayer::Config,
+                format!(
+                    "network.allow entry `{entry}` targets a private or local IP (`{ip}`), which VM egress refuses"
+                ),
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn check_vm_brokers(opts: &VmUpOptions) -> Result<(), VmCliError> {
+    if opts.brokers.is_empty() {
+        return Ok(());
+    }
+    let filter = nono::HostFilter::new_strict(&opts.egress_allow);
+    for b in &opts.brokers {
+        let key = format!("credentials.broker (`{}`)", b.env);
+        if !filter.check_host(&b.host, &[]).is_allowed() {
+            return Err(VmCliError::layered(
+                ErrorLayer::Config,
+                format!(
+                    "{key}: `{}` is not in this project's `network.allow`; brokering grants no egress of its own, so add the host there",
+                    b.host
+                ),
+            ));
+        }
+        for name in [&b.env, &b.endpoint_env] {
+            if opts.direct_env_vars.contains_key(name) {
+                return Err(VmCliError::layered(
+                    ErrorLayer::Config,
+                    format!(
+                        "{key}: `{name}` is also set by this project's `[env.vars]`; remove it from whichever you did not mean"
+                    ),
+                ));
+            }
+        }
+        if env::var_os(&b.env).is_none() {
+            return Err(VmCliError::layered(
+                ErrorLayer::Config,
+                format!(
+                    "{key}: `{}` is not set in this shell, and the proxy reads the real value from it; set it, or remove the entry from your user configuration",
+                    b.env
+                ),
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn validate_and_resolve_direct_env(
+    opts: &VmUpOptions,
+) -> Result<(BTreeMap<String, String>, Vec<String>), VmCliError> {
+    for name in &opts.direct_credentials {
+        if opts.direct_env_vars.contains_key(name) {
+            return Err(VmCliError::layered(
+                ErrorLayer::Config,
+                format!(
+                    "`{name}` is requested by your `[credentials] env` and also set by this project's `[env.vars]`"
+                ),
+            ));
+        }
+        if env::var_os(name).is_none() {
+            return Err(VmCliError::layered(
+                ErrorLayer::Config,
+                format!(
+                    "`{name}` is requested by your `[credentials] env` but is not set in this shell; set it, or remove it from your user configuration"
+                ),
+            ));
+        }
+    }
+    let mut resolved = opts.direct_env_vars.clone();
+    for name in &opts.env_forward {
+        if let Ok(val) = env::var(name) {
+            resolved.insert(name.clone(), val);
+        }
+    }
+    for name in &opts.direct_credentials {
+        resolved.insert(name.clone(), env::var(name).unwrap_or_default());
+    }
+    Ok((resolved, opts.direct_credentials.clone()))
+}
+
+fn brokers_match_session(recorded: &[VmBrokerSessionEntry], configured: &[BrokerDecl]) -> bool {
+    recorded.len() == configured.len()
+        && recorded
+            .iter()
+            .zip(configured.iter())
+            .all(|(r, c)| r.host == c.host && r.env == c.env && r.endpoint_env == c.endpoint_env)
 }
 
 fn terminate_owned_helper_group(id: &HostProcessIdentity, grace: Duration) {
@@ -599,6 +767,15 @@ pub fn up_vm_instance(
             "VM resources require --vm-vcpus in 1..=8 and --vm-memory in 128..=4096 MiB",
         ));
     }
+    if opts.network_default_allow {
+        return Err(VmCliError::layered(
+            ErrorLayer::Config,
+            "VM sandboxes do not allow unrestricted `network.default = \"allow\"`; use `network.default = \"deny\"` with explicit `network.allow` hosts via the host egress proxy",
+        ));
+    }
+    validate_vm_egress_allow(&opts.egress_allow)?;
+    let (resolved_direct_env, disclosed_credentials) = validate_and_resolve_direct_env(opts)?;
+    check_vm_brokers(opts)?;
 
     let state_paths = StatePaths::new(sandbox_name)
         .map_err(|e| VmCliError::layered(ErrorLayer::Config, e.to_string()))?;
@@ -660,14 +837,27 @@ pub fn up_vm_instance(
     let _lock = acquire_lifecycle_lock(&state_paths.lifecycle_lock)
         .map_err(|e| VmCliError::StateIo(format!("acquiring lifecycle lock: {e}")))?;
 
-    // Check if an existing VM instance is already healthy.
+    // Check if an existing VM instance is already healthy with matching egress/env config.
     if let Some(existing) = existing_vm.clone() {
         let helper_alive = existing
             .state
             .host_process
             .as_ref()
             .is_some_and(is_owned_helper_alive);
-        if helper_alive && !opts.recreate {
+        let proxy_ok = if opts.egress_allow.is_empty() {
+            existing.meta.egress_allow.is_empty()
+        } else {
+            existing.meta.egress_allow == opts.egress_allow
+                && existing
+                    .meta
+                    .proxy_process
+                    .as_ref()
+                    .is_some_and(is_owned_helper_alive)
+        };
+        let same_env = brokers_match_session(&existing.meta.broker_sessions, &opts.brokers)
+            && existing.meta.direct_env == resolved_direct_env
+            && existing.meta.disclosed_credentials == disclosed_credentials;
+        if helper_alive && proxy_ok && same_env && !opts.recreate {
             let live_ctrl = probe_live_control(&existing.control_socket(), CONTROL_IO_TIMEOUT);
             let live_keeper =
                 VmKeeperClient::new(existing.keeper_socket(), CONTROL_IO_TIMEOUT).query();
@@ -731,6 +921,11 @@ pub fn up_vm_instance(
             .host_process
             .as_ref()
             .is_some_and(is_owned_helper_alive)
+            || existing
+                .meta
+                .proxy_process
+                .as_ref()
+                .is_some_and(is_owned_helper_alive)
         {
             down_vm_instance_inner(existing)?;
         }
@@ -749,12 +944,17 @@ pub fn up_vm_instance(
     ) = if !opts.recreate
         && let Some(existing) = load_vm_instance(sandbox_name)?
     {
-        // Clean dead helper sockets before cold restart if helper already exited.
+        // Clean dead/stale helper or proxy sockets before cold restart.
         if existing
             .state
             .host_process
             .as_ref()
             .is_some_and(is_owned_helper_alive)
+            || existing
+                .meta
+                .proxy_process
+                .as_ref()
+                .is_some_and(is_owned_helper_alive)
         {
             down_vm_instance_inner(&existing)?;
         }
@@ -811,6 +1011,91 @@ pub fn up_vm_instance(
     let endpoints = prepare_instance_layout(&ctrl_dir, &instance_dir)
         .map_err(|e| VmCliError::layered(e.layer(), e.to_string()))?;
 
+    let (proxy_proc, proxy_log, broker_sessions, launch_proxy_socket) =
+        if opts.egress_allow.is_empty() {
+            (None, None, Vec::new(), None)
+        } else {
+            let exe = env::current_exe().map_err(|e| {
+                VmCliError::layered(
+                    ErrorLayer::Backend,
+                    format!("resolving current devcroft binary for egress proxy: {e}"),
+                )
+            })?;
+            let proxy_socket = endpoints.instance_dir.join("proxy.sock");
+            let proxy_log_path = endpoints.controller_dir.join("proxy.log");
+            let routes: Vec<crate::proxy::BrokerRoute> = opts
+                .brokers
+                .iter()
+                .enumerate()
+                .map(|(i, b)| crate::proxy::BrokerRoute {
+                    prefix: crate::proxy::broker_prefix(i),
+                    host: b.host.clone(),
+                    header: b.header.clone(),
+                    env: b.env.clone(),
+                    placeholder: b.placeholder.clone(),
+                    tls_ca: None,
+                    value: env::var(&b.env).unwrap_or_default(),
+                })
+                .collect();
+            let spawned = crate::proxy::spawn_at(
+                &exe,
+                &proxy_socket,
+                &proxy_log_path,
+                &opts.egress_allow,
+                &routes,
+                |_| Ok(()),
+            );
+            drop(routes);
+            let (proxy_pid, _tcp_port, token) = spawned.map_err(|e| {
+                VmCliError::layered(
+                    ErrorLayer::Backend,
+                    format!("starting host egress proxy: {e}"),
+                )
+            })?;
+            let token = zeroize::Zeroizing::new(token);
+            let start_time_ns = capture_start_time_ns(proxy_pid as u32).unwrap_or_else(|| {
+                SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .map(|d| d.as_nanos() as u64)
+                    .unwrap_or(0)
+            });
+            let proxy_id = HostProcessIdentity {
+                pid: proxy_pid as u32,
+                start_time_ns,
+            };
+            let mut sessions = Vec::with_capacity(opts.brokers.len());
+            for (i, b) in opts.brokers.iter().enumerate() {
+                let prefix = crate::proxy::broker_prefix(i);
+                let endpoint = crate::proxy::broker_endpoint(VM_GUEST_EGRESS_PROXY_PORT, &prefix);
+                let Some(placeholder) =
+                    crate::proxy::broker_phantom(&token, b.placeholder.as_deref())
+                else {
+                    terminate_owned_helper_group(&proxy_id, Duration::from_secs(1));
+                    cleanup_stale_sockets(&endpoints.instance_dir);
+                    return Err(VmCliError::layered(
+                        ErrorLayer::Config,
+                        format!(
+                            "credentials.broker: `{}`'s placeholder does not render",
+                            b.env
+                        ),
+                    ));
+                };
+                sessions.push(VmBrokerSessionEntry {
+                    host: b.host.clone(),
+                    env: b.env.clone(),
+                    endpoint_env: b.endpoint_env.clone(),
+                    placeholder,
+                    endpoint,
+                });
+            }
+            (
+                Some(proxy_id),
+                Some(proxy_log_path),
+                sessions,
+                Some(proxy_socket),
+            )
+        };
+
     let launch = HelperLaunchFileV1 {
         schema: 1,
         kernel: HelperArtifactInput {
@@ -829,28 +1114,48 @@ pub fn up_vm_instance(
         data: None,
         state: private_disk.clone(),
         instance_dir: endpoints.instance_dir.clone(),
+        proxy_socket: launch_proxy_socket,
         vcpus: opts.vcpus,
         memory_mib: opts.memory_mib,
     };
-    let launch_path = write_private_launch_record(
+    let launch_path = match write_private_launch_record(
         &endpoints.controller_dir,
         &endpoints.instance_dir,
         "launch.json",
         &launch,
-    )
-    .map_err(|e| VmCliError::layered(e.layer(), e.to_string()))?;
+    ) {
+        Ok(p) => p,
+        Err(e) => {
+            if let Some(proxy_id) = proxy_proc.as_ref() {
+                terminate_owned_helper_group(proxy_id, Duration::from_secs(1));
+            }
+            cleanup_stale_sockets(&endpoints.instance_dir);
+            return Err(VmCliError::layered(e.layer(), e.to_string()));
+        }
+    };
 
     let helper_log = endpoints.controller_dir.join("helper.log");
-    let host_proc = spawn_detached_helper(
+    let host_proc = match spawn_detached_helper(
         &helper_path,
         &[OsStr::new("run"), launch_path.as_os_str()],
         &helper_log,
-    )
-    .map_err(|e| VmCliError::layered(e.layer(), e.to_string()))?;
+    ) {
+        Ok(proc_id) => proc_id,
+        Err(e) => {
+            if let Some(proxy_id) = proxy_proc.as_ref() {
+                terminate_owned_helper_group(proxy_id, Duration::from_secs(1));
+            }
+            cleanup_stale_sockets(&endpoints.instance_dir);
+            return Err(VmCliError::layered(e.layer(), e.to_string()));
+        }
+    };
 
     let deadline = Instant::now() + READY_POLL_TIMEOUT;
     let observed_guest_state = loop {
         if !is_owned_helper_alive(&host_proc) {
+            if let Some(proxy_id) = proxy_proc.as_ref() {
+                terminate_owned_helper_group(proxy_id, Duration::from_secs(1));
+            }
             cleanup_stale_sockets(&endpoints.instance_dir);
             let tail = log_tail(&helper_log, 20);
             return Err(VmCliError::layered(
@@ -871,6 +1176,9 @@ pub fn up_vm_instance(
         }
         if Instant::now() >= deadline {
             terminate_owned_helper_group(&host_proc, Duration::from_secs(1));
+            if let Some(proxy_id) = proxy_proc.as_ref() {
+                terminate_owned_helper_group(proxy_id, Duration::from_secs(1));
+            }
             cleanup_stale_sockets(&endpoints.instance_dir);
             let tail = log_tail(&helper_log, 20);
             return Err(VmCliError::layered(
@@ -923,6 +1231,12 @@ pub fn up_vm_instance(
         manifest_path: fs::canonicalize(&manifest_path).unwrap_or(manifest_path),
         vcpus: opts.vcpus,
         memory_mib: opts.memory_mib,
+        egress_allow: opts.egress_allow.clone(),
+        proxy_process: proxy_proc,
+        proxy_log,
+        broker_sessions,
+        direct_env: resolved_direct_env,
+        disclosed_credentials,
     };
 
     save_vm_state(&vm_state_path(&endpoints.controller_dir), &state)?;
@@ -974,6 +1288,18 @@ pub fn status_vm_instance(sandbox_name: &str) -> Result<VmLiveStatus, VmCliError
             Err(_) => (ComponentHealth::Stopped, None, None),
         };
 
+    let proxy_alive = if instance.meta.egress_allow.is_empty() {
+        None
+    } else {
+        Some(
+            instance
+                .meta
+                .proxy_process
+                .as_ref()
+                .is_some_and(is_owned_helper_alive),
+        )
+    };
+
     let health = VmHealthBreakdown {
         helper,
         transport,
@@ -988,6 +1314,7 @@ pub fn status_vm_instance(sandbox_name: &str) -> Result<VmLiveStatus, VmCliError
         uptime_secs,
         session_count,
         guest_state,
+        proxy_alive,
     })
 }
 
@@ -1029,6 +1356,12 @@ fn down_vm_instance_inner(instance: &VmCliInstance) -> Result<ShutdownOutcome, V
         }
     }
 
+    if let Some(proxy_id) = instance.meta.proxy_process.as_ref()
+        && is_owned_helper_alive(proxy_id)
+    {
+        terminate_owned_helper_group(proxy_id, Duration::from_secs(2));
+    }
+
     let classification = if orderly {
         StopClassification::Orderly
     } else if state.host_process.is_some() {
@@ -1045,6 +1378,13 @@ fn down_vm_instance_inner(instance: &VmCliInstance) -> Result<ShutdownOutcome, V
     state.health.keeper = ComponentHealth::Stopped;
     state.health.services = ComponentHealth::Stopped;
     save_vm_state(&paths.state_file, &state)?;
+    let meta_path = cli_meta_path(&paths.controller_dir);
+    if let Some(mut meta) = load_cli_metadata(&meta_path)?
+        && meta.proxy_process.is_some()
+    {
+        meta.proxy_process = None;
+        save_cli_metadata(&meta_path, &meta)?;
+    }
 
     Ok(ShutdownOutcome {
         classification,
@@ -1088,6 +1428,11 @@ pub fn rm_vm_instance(sandbox_name: &str) -> Result<RemovalReport, VmCliError> {
         .host_process
         .as_ref()
         .is_some_and(is_owned_helper_alive)
+        || instance
+            .meta
+            .proxy_process
+            .as_ref()
+            .is_some_and(is_owned_helper_alive)
     {
         down_vm_instance_inner(&instance)?;
     }
@@ -1118,8 +1463,14 @@ pub fn logs_vm_instance(
             format!("VM sandbox '{sandbox_name}' not found"),
         )
     })?;
-    let contents = fs::read_to_string(&instance.meta.helper_log)
+    let mut contents = fs::read_to_string(&instance.meta.helper_log)
         .map_err(|e| VmCliError::StateIo(format!("{}: {e}", instance.meta.helper_log.display())))?;
+    if let Some(proxy_log) = &instance.meta.proxy_log
+        && let Ok(proxy_contents) = fs::read_to_string(proxy_log)
+    {
+        contents.push_str("\n--- egress proxy ---\n");
+        contents.push_str(&proxy_contents);
+    }
     match tail_lines {
         None => Ok(contents),
         Some(n) => {

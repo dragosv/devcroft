@@ -42,6 +42,8 @@ pub struct HelperLaunchFileV1 {
     pub data: Option<PathBuf>,
     pub state: PathBuf,
     pub instance_dir: PathBuf,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub proxy_socket: Option<PathBuf>,
     pub vcpus: u8,
     pub memory_mib: u32,
 }
@@ -679,6 +681,7 @@ mod tests {
             data: None,
             state: inst.join("state.img"),
             instance_dir: inst.clone(),
+            proxy_socket: None,
             vcpus: 2,
             memory_mib: 512,
         };

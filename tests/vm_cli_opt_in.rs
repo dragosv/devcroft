@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
@@ -302,6 +303,12 @@ fn vm_ssh_config_gates_on_trusted_editor_grant_and_preserves_native_default() {
         manifest_path: h.root.join("unused/manifest.json"),
         vcpus: 2,
         memory_mib: 1024,
+        egress_allow: Vec::new(),
+        proxy_process: None,
+        proxy_log: None,
+        broker_sessions: Vec::new(),
+        direct_env: BTreeMap::new(),
+        disclosed_credentials: Vec::new(),
     };
     fs::write(
         ctrl.join("vm-cli.json"),
@@ -561,5 +568,384 @@ fn real_libkrun_vm_cli_end_to_end_smoke() {
         String::from_utf8_lossy(&rm.stderr)
     );
     assert!(!h.home.join(".local/share/devcroft/vmcliproj").exists());
+    h.sandbox_to_cleanup = None;
+}
+
+#[test]
+fn up_vm_refuses_unrestricted_network_default_allow() {
+    let h = TempHarness::new("net-allow-refuse");
+    let proj = h.root.join("vmopenproj");
+    fs::create_dir_all(&proj).unwrap();
+    fs::write(
+        proj.join("devcroft.toml"),
+        "[sandbox]\nname = \"vmopenproj\"\n\n[env]\nprovider = \"flox\"\n\n[network]\ndefault = \"allow\"\n",
+    )
+    .unwrap();
+
+    let out = h.run_in(&proj, &["up", "--vm"], &[]);
+    assert_eq!(
+        out.status.code(),
+        Some(2),
+        "stdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("network.default = \"allow\""),
+        "expected network.default refusal message, got: {stderr}"
+    );
+}
+
+#[test]
+fn real_libkrun_vm_egress_proxy_and_brokered_credentials_e2e() {
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let helper_src = repo_root.join("experiments/microvm/libkrun/target/debug/devcroft-krun-spike");
+    let kernel_src = repo_root.join("experiments/microvm/artifacts/kernel-landlock/Image");
+    let initramfs_src =
+        repo_root.join("experiments/microvm/artifacts/stage-b-egress-proxy/initramfs.cpio");
+    let runtime_src =
+        repo_root.join("experiments/microvm/artifacts/stage-b-egress-proxy/runtime.img");
+    if !helper_src.is_file()
+        || !kernel_src.is_file()
+        || !initramfs_src.is_file()
+        || !runtime_src.is_file()
+    {
+        eprintln!(
+            "skipping real_libkrun_vm_egress_proxy_and_brokered_credentials_e2e: local stage-b-egress-proxy artifacts absent"
+        );
+        return;
+    }
+
+    let mut h = TempHarness::new("egress-e2e");
+    h.sandbox_to_cleanup = Some("vmegressproj".into());
+
+    let bundle_root = h.root.join("trusted-bundle");
+    let ver_dir = bundle_root.join("2026.11.1");
+    fs::create_dir_all(&ver_dir).unwrap();
+    std::os::unix::fs::symlink(&helper_src, ver_dir.join("devcroft-vm-helper")).unwrap();
+    std::os::unix::fs::symlink(&kernel_src, ver_dir.join("Image")).unwrap();
+    std::os::unix::fs::symlink(&initramfs_src, ver_dir.join("initramfs.cpio")).unwrap();
+    std::os::unix::fs::symlink(&runtime_src, ver_dir.join("runtime.img")).unwrap();
+    let prep_dummy = ver_dir.join("prep.img");
+    let lic_dummy = ver_dir.join("LICENSES.txt");
+    fs::write(&prep_dummy, b"prep-placeholder").unwrap();
+    fs::write(&lic_dummy, b"Apache-2.0 GPL-2.0-only\n").unwrap();
+
+    let mk_entry = |rel: &str, src: &Path| ArtifactEntry {
+        relative_path: rel.into(),
+        sha256: sha256_file_hex(src).unwrap(),
+        size_bytes: fs::metadata(src).unwrap().len(),
+        license_id: "Apache-2.0".into(),
+        source_url: "https://releases.devcroft.invalid/local".into(),
+    };
+    let manifest = TrustedArtifactManifestV1 {
+        schema: CONTRACT_SCHEMA_V1,
+        manifest_version: "2026.11.1".into(),
+        min_compatible_controller: "0.0.1".into(),
+        max_compatible_controller: "9.9.9".into(),
+        publisher_key_id: "local-dev".into(),
+        signature_ed25519: "a".repeat(128),
+        target: GuestTarget::LinuxArm64,
+        artifacts: TrustedArtifactsV1 {
+            helper: mk_entry("devcroft-vm-helper", &helper_src),
+            kernel: mk_entry("Image", &kernel_src),
+            initramfs: mk_entry("initramfs.cpio", &initramfs_src),
+            runtime_image: mk_entry("runtime.img", &runtime_src),
+            preparation_image: mk_entry("prep.img", &prep_dummy),
+            license_inventory: mk_entry("LICENSES.txt", &lic_dummy),
+        },
+    };
+    let manifest_path = bundle_root.join("manifest.json");
+    fs::write(
+        &manifest_path,
+        serde_json::to_vec_pretty(&manifest).unwrap(),
+    )
+    .unwrap();
+
+    let proj = h.root.join("vmegressproj");
+    fs::create_dir_all(&proj).unwrap();
+    fs::write(
+        proj.join("devcroft.toml"),
+        "[sandbox]\nname = \"vmegressproj\"\n\n[env]\nprovider = \"flox\"\n\n[env.vars]\nAPP_MODE = \"vm-e2e\"\n\n[network]\ndefault = \"deny\"\nallow = [\"api.openai.com\", \"api.anthropic.com\"]\n",
+    )
+    .unwrap();
+
+    let real_secret = "sk-ant-real-host-secret-9999";
+    let user_cfg_dir = h.xdg_config.join("devcroft");
+    fs::create_dir_all(&user_cfg_dir).unwrap();
+    fs::write(
+        user_cfg_dir.join("config.toml"),
+        "[[credentials.broker]]\nhost = \"api.anthropic.com\"\nheader = \"x-api-key\"\nenv = \"ANTHROPIC_API_KEY\"\nendpoint_env = \"ANTHROPIC_BASE_URL\"\nplaceholder = \"sk-ant-proxy-{}\"\n",
+    )
+    .unwrap();
+
+    let up = h.run_in(
+        &proj,
+        &[
+            "up",
+            "--vm",
+            "--vm-manifest",
+            manifest_path.to_str().unwrap(),
+        ],
+        &[("ANTHROPIC_API_KEY", real_secret)],
+    );
+    assert_eq!(
+        up.status.code(),
+        Some(0),
+        "up --vm failed\nstdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&up.stdout),
+        String::from_utf8_lossy(&up.stderr)
+    );
+    let up_out = String::from_utf8_lossy(&up.stdout);
+    assert!(
+        up_out.contains("egress-proxy: host relay active"),
+        "{up_out}"
+    );
+    assert!(
+        up_out.contains("broker: ANTHROPIC_API_KEY -> http://127.0.0.1:18080/broker0"),
+        "{up_out}"
+    );
+
+    // `status` reports healthy egress-proxy and broker line.
+    let status = h.run_in(&proj, &["status"], &[]);
+    assert_eq!(status.status.code(), Some(0));
+    let st_out = String::from_utf8_lossy(&status.stdout);
+    assert!(st_out.contains("egress-proxy: healthy"), "{st_out}");
+    assert!(
+        st_out.contains("broker: ANTHROPIC_API_KEY -> http://127.0.0.1:18080/broker0"),
+        "{st_out}"
+    );
+
+    // Zero-secret invariant: neither vm controller files nor guest env hold `real_secret`.
+    let ctrl_root = h.home.join(".local/share/devcroft/vmegressproj");
+    let cli_meta_json: serde_json::Value = serde_json::from_slice(
+        &fs::read(ctrl_root.join("vm-ctrl/vm-cli.json")).expect("read vm-cli.json"),
+    )
+    .expect("parse vm-cli.json");
+    let proxy_pid = cli_meta_json["proxy_process"]["pid"]
+        .as_i64()
+        .expect("proxy_process.pid") as libc::pid_t;
+    for entry in fs::read_dir(ctrl_root.join("vm-ctrl")).unwrap() {
+        let p = entry.unwrap().path();
+        if p.is_file()
+            && let Ok(bytes) = fs::read(&p)
+        {
+            let text = String::from_utf8_lossy(&bytes);
+            assert!(
+                !text.contains(real_secret),
+                "controller file {} leaked real broker secret!",
+                p.display()
+            );
+        }
+    }
+
+    let env_probe = h.run_in(
+        &proj,
+        &[
+            "exec",
+            "--",
+            "/bin/sh",
+            "-c",
+            "printf 'HTTPS_PROXY=%s\\nNO_PROXY=%s\\nAPP_MODE=%s\\nANTHROPIC_BASE_URL=%s\\nANTHROPIC_API_KEY=%s\\n' \"$HTTPS_PROXY\" \"$NO_PROXY\" \"$APP_MODE\" \"$ANTHROPIC_BASE_URL\" \"$ANTHROPIC_API_KEY\"",
+        ],
+        &[],
+    );
+    assert_eq!(
+        env_probe.status.code(),
+        Some(0),
+        "stderr: {}",
+        String::from_utf8_lossy(&env_probe.stderr)
+    );
+    let env_out = String::from_utf8_lossy(&env_probe.stdout);
+    assert!(
+        env_out.contains("HTTPS_PROXY=http://127.0.0.1:18080"),
+        "{env_out}"
+    );
+    assert!(
+        env_out.contains("NO_PROXY=localhost,127.0.0.1,::1"),
+        "{env_out}"
+    );
+    assert!(env_out.contains("APP_MODE=vm-e2e"), "{env_out}");
+    assert!(
+        env_out.contains("ANTHROPIC_BASE_URL=http://127.0.0.1:18080/broker0"),
+        "{env_out}"
+    );
+    assert!(
+        env_out.contains("ANTHROPIC_API_KEY=sk-ant-proxy-"),
+        "{env_out}"
+    );
+    assert!(
+        !env_out.contains(real_secret),
+        "guest env leaked real secret: {env_out}"
+    );
+
+    // Denied host via proxy (`HTTP_PROXY=http://127.0.0.1:18080`) -> 403.
+    let denied_host = h.run_in(
+        &proj,
+        &[
+            "exec",
+            "--",
+            "/bin/sh",
+            "-c",
+            "/bin/busybox wget -Y on -T 5 -S -O - http://example.com/ 2>&1 || true",
+        ],
+        &[],
+    );
+    assert_eq!(
+        denied_host.status.code(),
+        Some(0),
+        "stdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&denied_host.stdout),
+        String::from_utf8_lossy(&denied_host.stderr)
+    );
+    let denied_out = String::from_utf8_lossy(&denied_host.stdout);
+    assert!(
+        denied_out.contains("403"),
+        "expected 403 for example.com, got: {denied_out}"
+    );
+
+    // Brokered request with wrong placeholder -> refused before reaching upstream.
+    let wrong_broker = h.run_in(
+        &proj,
+        &[
+            "exec",
+            "--",
+            "/bin/sh",
+            "-c",
+            "/bin/busybox wget -Y off -T 5 -S -O - --header=\"x-api-key: sk-ant-wrong\" \"$ANTHROPIC_BASE_URL/v1/models\" 2>&1 || true",
+        ],
+        &[],
+    );
+    assert_eq!(
+        wrong_broker.status.code(),
+        Some(0),
+        "stdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&wrong_broker.stdout),
+        String::from_utf8_lossy(&wrong_broker.stderr)
+    );
+    let wrong_broker_out = String::from_utf8_lossy(&wrong_broker.stdout).to_ascii_lowercase();
+    assert!(
+        wrong_broker_out.contains("401") || wrong_broker_out.contains("403"),
+        "expected 401/403 for wrong broker placeholder, got: {wrong_broker_out}"
+    );
+    assert!(
+        !wrong_broker_out.contains("anthropic-") && !wrong_broker_out.contains("cf-ray"),
+        "wrong placeholder unexpectedly reached upstream Anthropic API: {wrong_broker_out}"
+    );
+
+    // Brokered request with valid placeholder -> host proxy injects real host key
+    // and completes live HTTPS call to https://api.anthropic.com/v1/models.
+    let valid_broker = h.run_in(
+        &proj,
+        &[
+            "exec",
+            "--",
+            "/bin/sh",
+            "-c",
+            "/bin/busybox wget -Y off -T 10 -S -O - --header=\"x-api-key: $ANTHROPIC_API_KEY\" \"$ANTHROPIC_BASE_URL/v1/models\" 2>&1 || true",
+        ],
+        &[],
+    );
+    assert_eq!(
+        valid_broker.status.code(),
+        Some(0),
+        "stdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&valid_broker.stdout),
+        String::from_utf8_lossy(&valid_broker.stderr)
+    );
+    let valid_broker_raw = String::from_utf8_lossy(&valid_broker.stdout);
+    let valid_broker_lower = valid_broker_raw.to_ascii_lowercase();
+    assert!(
+        !valid_broker_raw.contains(real_secret),
+        "response leaked real host secret: {valid_broker_raw}"
+    );
+    assert!(
+        !valid_broker_lower.contains("403"),
+        "brokered request with valid placeholder was refused locally: {valid_broker_raw}"
+    );
+    assert!(
+        valid_broker_lower.contains("http/1.1 401 unauthorized")
+            || valid_broker_lower.contains("http/1.1 200"),
+        "expected live upstream Anthropic HTTPS response (401 for synthetic key or 200), got: {valid_broker_raw}"
+    );
+
+    // Allowlisted non-brokered LLM host via proxy -> reaches api.openai.com.
+    let allow_http = h.run_in(
+        &proj,
+        &[
+            "exec",
+            "--",
+            "/bin/sh",
+            "-c",
+            "/bin/busybox wget -Y on -T 10 -S -O - http://api.openai.com/ 2>&1 || true",
+        ],
+        &[],
+    );
+    assert_eq!(
+        allow_http.status.code(),
+        Some(0),
+        "stdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&allow_http.stdout),
+        String::from_utf8_lossy(&allow_http.stderr)
+    );
+    let allow_out = String::from_utf8_lossy(&allow_http.stdout);
+    let allow_lower = allow_out.to_ascii_lowercase();
+    assert!(
+        allow_lower.contains("http/1.1") && !allow_lower.contains("devcroft: egress denied"),
+        "expected live upstream HTTP response from api.openai.com, got: {allow_out}"
+    );
+
+    // Direct outbound bypass attempt fails (no guest NIC + Landlock blocks non-proxy ports).
+    let direct_bypass = h.run_in(
+        &proj,
+        &[
+            "exec",
+            "--",
+            "/bin/sh",
+            "-c",
+            "/bin/busybox wget -Y off -T 2 -O - http://1.1.1.1/",
+        ],
+        &[],
+    );
+    assert_ne!(
+        direct_bypass.status.code(),
+        Some(0),
+        "direct bypass 1.1.1.1 unexpectedly succeeded!"
+    );
+
+    // `logs` surfaces both helper logs and host egress proxy logs without secrets.
+    let logs = h.run_in(&proj, &["logs"], &[]);
+    assert_eq!(logs.status.code(), Some(0));
+    let logs_out = String::from_utf8_lossy(&logs.stdout);
+    assert!(logs_out.contains("--- egress proxy ---"), "{logs_out}");
+    assert!(logs_out.contains("example.com"), "{logs_out}");
+    assert!(logs_out.contains("api.openai.com"), "{logs_out}");
+    assert!(!logs_out.contains(real_secret), "logs leaked real secret!");
+
+    // `down` stops both VM helper and host egress proxy cleanly.
+    let down = h.run_in(&proj, &["down"], &[]);
+    assert_eq!(
+        down.status.code(),
+        Some(0),
+        "stderr: {}",
+        String::from_utf8_lossy(&down.stderr)
+    );
+    // Give the kernel a brief moment to reap the terminated proxy process if needed.
+    std::thread::sleep(std::time::Duration::from_millis(100));
+    let kill_rc = unsafe { libc::kill(proxy_pid, 0) };
+    assert_eq!(
+        kill_rc, -1,
+        "egress proxy pid {proxy_pid} remained alive after down"
+    );
+
+    let rm = h.run_in(&proj, &["rm", "--yes"], &[]);
+    assert_eq!(
+        rm.status.code(),
+        Some(0),
+        "stderr: {}",
+        String::from_utf8_lossy(&rm.stderr)
+    );
+    assert!(!h.home.join(".local/share/devcroft/vmegressproj").exists());
     h.sandbox_to_cleanup = None;
 }

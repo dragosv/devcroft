@@ -2,13 +2,15 @@ use crate::keeper;
 use nono::{AccessMode, CapabilitySet, Sandbox, SignalMode};
 use std::io::{self, Read, Write};
 use std::net::Shutdown;
-use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
+use std::os::fd::{AsRawFd, FromRawFd, IntoRawFd, OwnedFd};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 const SOCKET: &str = "/run/keeper/control.sock";
 const SSH_SOCKET: &str = "/run/keeper/ssh.sock";
+const EGRESS_PROXY_PORT: u16 = 18080;
+const VSOCK_PROXY_PORT: u32 = 1027;
 const MAX_TRANSPORT_RELAYS: usize = 24;
 
 struct RelaySlot(Arc<AtomicUsize>);
@@ -110,6 +112,69 @@ fn serve_transport(transport: OwnedFd, path: &'static str) -> io::Result<()> {
             let _slot = slot;
             if let Err(e) = relay(stream, path) {
                 eprintln!("guest relay: {e}");
+            }
+        });
+    }
+}
+
+fn vsock_connect_host(port: u32) -> io::Result<OwnedFd> {
+    // SAFETY: checked socket/connect result; sockaddr_vm initialized cleanly.
+    unsafe {
+        let raw = libc::socket(libc::AF_VSOCK, libc::SOCK_STREAM | libc::SOCK_CLOEXEC, 0);
+        if raw < 0 {
+            return Err(io::Error::last_os_error());
+        }
+        let fd = OwnedFd::from_raw_fd(raw);
+        let mut addr: libc::sockaddr_vm = std::mem::zeroed();
+        addr.svm_family = libc::AF_VSOCK as _;
+        addr.svm_cid = 2; // VMADDR_CID_HOST
+        addr.svm_port = port;
+        if libc::connect(
+            raw,
+            (&addr as *const libc::sockaddr_vm).cast(),
+            std::mem::size_of_val(&addr) as _,
+        ) != 0
+        {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(fd)
+    }
+}
+
+fn relay_tcp_to_vsock(mut tcp: std::net::TcpStream, vsock_port: u32) -> io::Result<()> {
+    let vsock_fd = vsock_connect_host(vsock_port)?;
+    // SAFETY: vsock_fd is uniquely owned and used for stream byte I/O only.
+    let mut vsock = unsafe { UnixStream::from_raw_fd(vsock_fd.into_raw_fd()) };
+    let mut tcp_reader = tcp.try_clone()?;
+    let mut vsock_writer = vsock.try_clone()?;
+    let upstream = std::thread::spawn(move || {
+        let result = io::copy(&mut tcp_reader, &mut vsock_writer);
+        let _ = vsock_writer.shutdown(Shutdown::Write);
+        result
+    });
+    let downstream = io::copy(&mut vsock, &mut tcp);
+    let _ = tcp.shutdown(Shutdown::Both);
+    let _ = vsock.shutdown(Shutdown::Write);
+    let _ = vsock.shutdown(Shutdown::Read);
+    let _ = upstream
+        .join()
+        .map_err(|_| io::Error::other("egress relay panicked"))?;
+    downstream?;
+    Ok(())
+}
+
+fn serve_egress_proxy(listener: std::net::TcpListener, vsock_port: u32) {
+    let active = Arc::new(AtomicUsize::new(0));
+    for stream in listener.incoming() {
+        let Ok(client) = stream else { return };
+        let Some(slot) = RelaySlot::try_acquire(&active) else {
+            drop(client);
+            continue;
+        };
+        std::thread::spawn(move || {
+            let _slot = slot;
+            if let Err(e) = relay_tcp_to_vsock(client, vsock_port) {
+                eprintln!("guest egress relay: {e}");
             }
         });
     }
@@ -224,6 +289,30 @@ pub(super) fn run() -> Result<(), Box<dyn std::error::Error>> {
         caps = caps.allow_tcp_connect(9091).allow_tcp_bind(9091);
         eprintln!("guest keeper: trusted Remote-SSH fixture port 9091");
     }
+    let egress_listener = match vsock_connect_host(VSOCK_PROXY_PORT) {
+        Ok(probe) => {
+            drop(probe);
+            // Enable loopback listener before Landlock locks down TCP binds.
+            Some(std::net::TcpListener::bind((
+                "127.0.0.1",
+                EGRESS_PROXY_PORT,
+            ))?)
+        }
+        Err(_) => None,
+    };
+    if egress_listener.is_some() {
+        caps = caps.allow_tcp_connect(EGRESS_PROXY_PORT);
+        // Single-threaded prologue before spawning worker/session threads.
+        let proxy_url = format!("http://127.0.0.1:{EGRESS_PROXY_PORT}");
+        unsafe {
+            std::env::set_var("HTTP_PROXY", &proxy_url);
+            std::env::set_var("HTTPS_PROXY", &proxy_url);
+            std::env::set_var("http_proxy", &proxy_url);
+            std::env::set_var("https_proxy", &proxy_url);
+            std::env::set_var("NO_PROXY", "localhost,127.0.0.1,::1");
+            std::env::set_var("no_proxy", "localhost,127.0.0.1,::1");
+        }
+    }
     Sandbox::apply_landlock(&caps)?;
     // Denials must have a working baseline: PID 1 created these fixtures.
     let denials = [
@@ -283,6 +372,12 @@ pub(super) fn run() -> Result<(), Box<dyn std::error::Error>> {
             std::process::exit(1);
         }
     });
+    if let Some(egress) = egress_listener {
+        std::thread::spawn(move || serve_egress_proxy(egress, VSOCK_PROXY_PORT));
+        eprintln!(
+            "guest egress proxy: nono applied; listening 127.0.0.1:{EGRESS_PROXY_PORT} -> vsock:{VSOCK_PROXY_PORT}"
+        );
+    }
     eprintln!("guest keeper: nono applied; serving port 1025");
     // Readiness is only published after restriction and the keeper accept loop.
     std::fs::write("/tmp/keeper-ready", b"ready")?;
