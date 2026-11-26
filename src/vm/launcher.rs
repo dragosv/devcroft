@@ -403,6 +403,82 @@ impl Drop for HelperProcess {
     }
 }
 
+/// Spawn `helper_bin` detached with stdin closed (`/dev/null`), stdout/stderr
+/// redirected directly to an owner-only (`0600`) log file, strict umask `0077`,
+/// dedicated process group, and all ambient file descriptors `>= 3` closed
+/// before `exec`. Dropping the spawned `Child` handle leaves the helper running
+/// across short-lived CLI commands such as `devcroft up --vm`.
+pub fn spawn_detached_helper(
+    helper_bin: &Path,
+    args: &[&OsStr],
+    log_path: &Path,
+) -> Result<HostProcessIdentity, LaunchError> {
+    if !helper_bin.is_file() {
+        return Err(LaunchError::Spawn(format!(
+            "helper binary {} not found",
+            helper_bin.display()
+        )));
+    }
+    if let Some(parent) = log_path.parent() {
+        create_private_dir(parent)?;
+    }
+    let log_out = fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .mode(0o600)
+        .open(log_path)
+        .map_err(|e| LaunchError::Io(format!("{}: {e}", log_path.display())))?;
+    fs::set_permissions(log_path, fs::Permissions::from_mode(0o600))
+        .map_err(|e| LaunchError::Io(format!("{}: {e}", log_path.display())))?;
+    let log_err = log_out
+        .try_clone()
+        .map_err(|e| LaunchError::Io(format!("{}: {e}", log_path.display())))?;
+
+    let mut cmd = Command::new(helper_bin);
+    cmd.args(args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::from(log_out))
+        .stderr(Stdio::from(log_err));
+
+    // SAFETY: only async-signal-safe libc calls (`umask`, `setpgid`,
+    // `getrlimit`, `close`) execute between `fork` and `exec`.
+    unsafe {
+        cmd.pre_exec(|| {
+            libc::umask(0o077);
+            libc::setpgid(0, 0);
+            let mut rl = libc::rlimit {
+                rlim_cur: 0,
+                rlim_max: 0,
+            };
+            let max_fd = if libc::getrlimit(libc::RLIMIT_NOFILE, &mut rl) == 0 {
+                rl.rlim_cur.min(8192) as libc::c_int
+            } else {
+                4096
+            };
+            for fd in 3..=max_fd {
+                libc::close(fd);
+            }
+            Ok(())
+        });
+    }
+
+    let child = cmd
+        .spawn()
+        .map_err(|e| LaunchError::Spawn(format!("{}: {e}", helper_bin.display())))?;
+    let pid = child.id();
+    let start_time_ns = capture_start_time_ns(pid).unwrap_or_else(|| {
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_nanos() as u64)
+            .unwrap_or(0)
+    });
+    // Intentionally detach: VM helper outlives `devcroft up --vm` and is
+    // later controlled/reaped via `VmControlClient` and `HostProcessIdentity`.
+    drop(child);
+
+    Ok(HostProcessIdentity { pid, start_time_ns })
+}
+
 /// Spawn `helper_bin` with stdin closed (`/dev/null`), bounded stdout/stderr
 /// pipes, strict umask `0077`, dedicated process group, and all ambient file
 /// descriptors `>= 3` closed before `exec`.
@@ -683,5 +759,37 @@ mod tests {
         assert!(status.success());
         let out = String::from_utf8_lossy(&proc_ver.stdout_snapshot().bytes).into_owned();
         assert!(out.contains("libkrun"), "{out}");
+    }
+
+    #[test]
+    fn spawn_detached_helper_logs_privately_and_returns_valid_identity() {
+        let base = std::env::temp_dir().join(format!("dc-vm-detach-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&base);
+        let ctrl = base.join("ctrl");
+        let log_path = ctrl.join("helper.log");
+
+        let id = spawn_detached_helper(
+            Path::new("/bin/sh"),
+            &[OsStr::new("-c"), OsStr::new("echo detached-ok; exit 0")],
+            &log_path,
+        )
+        .unwrap();
+        assert!(id.pid > 0);
+        assert!(id.start_time_ns > 0);
+
+        let deadline = Instant::now() + Duration::from_secs(3);
+        loop {
+            let content = fs::read_to_string(&log_path).unwrap_or_default();
+            if content.contains("detached-ok") {
+                break;
+            }
+            assert!(Instant::now() < deadline, "detached log never flushed");
+            thread::sleep(Duration::from_millis(10));
+        }
+        assert_eq!(
+            fs::metadata(&log_path).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+        let _ = fs::remove_dir_all(&base);
     }
 }

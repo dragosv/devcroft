@@ -23,11 +23,11 @@ mod terminate;
 pub(crate) mod up;
 
 pub use hooks::HookError;
-pub(crate) use state::recorded_artifact_objects;
 pub use state::{
     Allocation, Health, Meta, StatePaths, ToolsRecord, client_key_paths, fleet_state_dir, health,
     policy_digest, read_meta,
 };
+pub(crate) use state::{acquire_lifecycle_lock, recorded_artifact_objects};
 pub use status::{KeeperStatus, SandboxStatus, SandboxSummary, StatusError, logs, ps, status};
 pub use terminate::{GRACE_PERIOD, TerminateError, down, rm};
 pub use up::{

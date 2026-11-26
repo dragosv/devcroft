@@ -1,0 +1,1258 @@
+//! Host-side opt-in VM CLI orchestration (`up --vm`, `down`, `rm`, `status`,
+//! `logs`, `ps`, `exec`, `shell`, `proxy`, `ssh-config`, and `runtime` grants).
+//!
+//! Coordinates the Phase 1–4 `crate::vm` primitives against the real `devcroft`
+//! CLI without altering native `process`-tier defaults (`meta.json` stays untouched).
+
+use std::ffi::OsStr;
+use std::fmt;
+use std::fs::{self, OpenOptions};
+use std::io::{self, BufRead, BufReader, Read, Write};
+use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+use std::os::unix::net::UnixStream;
+use std::path::{Path, PathBuf};
+use std::thread;
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+
+use rand::Rng;
+use serde::{Deserialize, Serialize};
+
+use crate::config::is_valid_name;
+use crate::lifecycle::{StatePaths, acquire_lifecycle_lock};
+
+use super::contract::{
+    CONTRACT_SCHEMA_V1, ComponentHealth, ErrorLayer, HostProcessIdentity, RuntimeKind,
+    StopClassification, VmHealthBreakdown, VmStateRecordV1,
+};
+use super::grants::{
+    ExistingRuntime, ProjectIdentity, RuntimeGrantStore, RuntimePolicyMode, RuntimeRequest,
+    resolve_runtime,
+};
+use super::launcher::{
+    HelperArtifactInput, HelperLaunchFileV1, MAX_SOCKET_PATH_BYTES, prepare_instance_layout,
+    spawn_detached_helper, write_private_launch_record,
+};
+use super::lifecycle::{
+    RemovalReport, ShutdownOutcome, VmInstancePaths, VmLifecycleError, VmRollbackPolicy,
+    export_retained_vm_disk, guard_new_vm_creation, is_owned_helper_alive, load_vm_state,
+    prepare_cold_restart, save_vm_state,
+};
+use super::manifest::TrustedArtifactManifestV1;
+use super::preparation::CANONICAL_GUEST_WORKSPACE;
+use super::qualification::current_host_platform;
+use super::sha256::sha256_file_hex;
+use super::ssh::VmSshKeyMaterial;
+use super::transport::{MAX_CONTROL_LINE, TransportError, VmKeeperClient};
+
+pub const VM_CLI_META_SCHEMA_V1: u32 = 1;
+pub const DEFAULT_VM_VCPUS: u8 = 2;
+pub const DEFAULT_VM_MEMORY_MIB: u32 = 1024;
+pub const PRIVATE_STATE_DISK_BYTES: u64 = 1024 * 1024;
+const READY_POLL_TIMEOUT: Duration = Duration::from_secs(20);
+const CONTROL_IO_TIMEOUT: Duration = Duration::from_secs(2);
+const SHUTDOWN_WAIT_TIMEOUT: Duration = Duration::from_secs(5);
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct VmCliMetadata {
+    pub schema: u32,
+    pub sandbox_name: String,
+    pub project_root: PathBuf,
+    pub controller_dir: PathBuf,
+    pub instance_dir: PathBuf,
+    pub private_disk: PathBuf,
+    pub helper_log: PathBuf,
+    pub ssh_identity_file: PathBuf,
+    pub ssh_known_hosts: PathBuf,
+    pub guest_boot_state: u64,
+    pub manifest_path: PathBuf,
+    pub vcpus: u8,
+    pub memory_mib: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VmCliInstance {
+    pub meta: VmCliMetadata,
+    pub state: VmStateRecordV1,
+}
+
+impl VmCliInstance {
+    pub fn control_socket(&self) -> PathBuf {
+        self.meta.instance_dir.join("control.sock")
+    }
+
+    pub fn keeper_socket(&self) -> PathBuf {
+        self.meta.instance_dir.join("keeper.sock")
+    }
+
+    pub fn ssh_socket(&self) -> PathBuf {
+        self.meta.instance_dir.join("ssh.sock")
+    }
+
+    pub fn state_file(&self) -> PathBuf {
+        self.meta.controller_dir.join("vm-state.json")
+    }
+
+    pub fn instance_paths(&self) -> VmInstancePaths {
+        VmInstancePaths {
+            controller_dir: self.meta.controller_dir.clone(),
+            instance_dir: self.meta.instance_dir.clone(),
+            state_file: self.state_file(),
+            private_disk: self.meta.private_disk.clone(),
+            control_socket: self.control_socket(),
+            keeper_socket: self.keeper_socket(),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct VmUpOptions {
+    pub manifest_path: Option<PathBuf>,
+    pub vcpus: u8,
+    pub memory_mib: u32,
+    pub recreate: bool,
+    pub rollback_disabled: bool,
+}
+
+impl Default for VmUpOptions {
+    fn default() -> Self {
+        Self {
+            manifest_path: None,
+            vcpus: DEFAULT_VM_VCPUS,
+            memory_mib: DEFAULT_VM_MEMORY_MIB,
+            recreate: false,
+            rollback_disabled: false,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VmUpOutcome {
+    pub instance: VmCliInstance,
+    pub already_up: bool,
+    pub restarted: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VmLiveStatus {
+    pub instance: VmCliInstance,
+    pub health: VmHealthBreakdown,
+    pub uptime_secs: Option<u64>,
+    pub session_count: Option<usize>,
+    pub guest_state: Option<u64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LiveControlReply {
+    pub guest_state: u64,
+    pub greeting: String,
+}
+
+#[derive(Debug)]
+pub enum VmCliError {
+    StateIo(String),
+    Layered { layer: ErrorLayer, message: String },
+}
+
+impl VmCliError {
+    pub fn exit_code(&self) -> i32 {
+        match self {
+            VmCliError::StateIo(_) => 1,
+            VmCliError::Layered { layer, .. } => i32::from(layer.exit_code()),
+        }
+    }
+
+    fn layered(layer: ErrorLayer, message: impl Into<String>) -> Self {
+        Self::Layered {
+            layer,
+            message: message.into(),
+        }
+    }
+}
+
+impl fmt::Display for VmCliError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            VmCliError::StateIo(msg) => write!(f, "state: {msg}"),
+            VmCliError::Layered { layer, message } => {
+                write!(f, "{}: {message}", layer.layer_name())
+            }
+        }
+    }
+}
+
+impl std::error::Error for VmCliError {}
+
+impl From<VmLifecycleError> for VmCliError {
+    fn from(value: VmLifecycleError) -> Self {
+        Self::layered(value.layer(), value.to_string())
+    }
+}
+
+fn data_dir() -> Result<PathBuf, VmCliError> {
+    let home = std::env::var_os("HOME")
+        .ok_or_else(|| VmCliError::StateIo("HOME is not set".to_string()))?;
+    Ok(PathBuf::from(home).join(".local/share/devcroft"))
+}
+
+pub fn vm_controller_dir(sandbox_name: &str) -> Result<PathBuf, VmCliError> {
+    if !is_valid_name(sandbox_name) {
+        return Err(VmCliError::layered(
+            ErrorLayer::Config,
+            format!("'{sandbox_name}' is not a valid sandbox name ([a-z0-9][a-z0-9-]{{0,31}})"),
+        ));
+    }
+    Ok(data_dir()?.join(sandbox_name).join("vm-ctrl"))
+}
+
+fn cli_meta_path(controller_dir: &Path) -> PathBuf {
+    controller_dir.join("vm-cli.json")
+}
+
+fn vm_state_path(controller_dir: &Path) -> PathBuf {
+    controller_dir.join("vm-state.json")
+}
+
+fn load_cli_metadata(path: &Path) -> Result<Option<VmCliMetadata>, VmCliError> {
+    let bytes = match fs::read(path) {
+        Ok(b) => b,
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(VmCliError::StateIo(format!("{}: {e}", path.display()))),
+    };
+    let parsed: VmCliMetadata = serde_json::from_slice(&bytes).map_err(|e| {
+        VmCliError::layered(ErrorLayer::Config, format!("invalid vm-cli.json: {e}"))
+    })?;
+    if parsed.schema != VM_CLI_META_SCHEMA_V1 {
+        return Err(VmCliError::layered(
+            ErrorLayer::Config,
+            format!("unsupported vm-cli.json schema {}", parsed.schema),
+        ));
+    }
+    Ok(Some(parsed))
+}
+
+fn save_cli_metadata(path: &Path, meta: &VmCliMetadata) -> Result<(), VmCliError> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|e| VmCliError::StateIo(e.to_string()))?;
+        fs::set_permissions(parent, fs::Permissions::from_mode(0o700))
+            .map_err(|e| VmCliError::StateIo(e.to_string()))?;
+    }
+    let tmp = path.with_extension("json.tmp");
+    let body = serde_json::to_vec_pretty(meta).map_err(|e| VmCliError::StateIo(e.to_string()))?;
+    {
+        let mut f = OpenOptions::new()
+            .create(true)
+            .truncate(true)
+            .write(true)
+            .mode(0o600)
+            .open(&tmp)
+            .map_err(|e| VmCliError::StateIo(e.to_string()))?;
+        f.write_all(&body)
+            .map_err(|e| VmCliError::StateIo(e.to_string()))?;
+        f.sync_data()
+            .map_err(|e| VmCliError::StateIo(e.to_string()))?;
+    }
+    fs::set_permissions(&tmp, fs::Permissions::from_mode(0o600))
+        .map_err(|e| VmCliError::StateIo(e.to_string()))?;
+    fs::rename(&tmp, path).map_err(|e| VmCliError::StateIo(e.to_string()))?;
+    Ok(())
+}
+
+/// Loads VM state + CLI metadata for `sandbox_name` if a VM instance exists.
+pub fn load_vm_instance(sandbox_name: &str) -> Result<Option<VmCliInstance>, VmCliError> {
+    let ctrl = vm_controller_dir(sandbox_name)?;
+    let Some(state) = load_vm_state(&vm_state_path(&ctrl))? else {
+        return Ok(None);
+    };
+    let Some(meta) = load_cli_metadata(&cli_meta_path(&ctrl))? else {
+        return Err(VmCliError::layered(
+            ErrorLayer::Config,
+            format!(
+                "missing {} alongside {}",
+                cli_meta_path(&ctrl).display(),
+                vm_state_path(&ctrl).display()
+            ),
+        ));
+    };
+    Ok(Some(VmCliInstance { meta, state }))
+}
+
+/// Lists all VM instances stored under `~/.local/share/devcroft`.
+pub fn list_vm_instances() -> Result<Vec<VmCliInstance>, VmCliError> {
+    let root = data_dir()?;
+    let entries = match fs::read_dir(&root) {
+        Ok(e) => e,
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(e) => return Err(VmCliError::StateIo(format!("{}: {e}", root.display()))),
+    };
+    let mut out = Vec::new();
+    for entry in entries.flatten() {
+        if !entry.file_type().map(|ft| ft.is_dir()).unwrap_or(false) {
+            continue;
+        }
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if !is_valid_name(&name) {
+            continue;
+        }
+        if let Some(inst) = load_vm_instance(&name)? {
+            out.push(inst);
+        }
+    }
+    out.sort_by(|a, b| a.meta.sandbox_name.cmp(&b.meta.sandbox_name));
+    Ok(out)
+}
+
+/// Resolves `(manifest_file, trusted_root)` from `--vm-manifest`,
+/// `DEVCROFT_VM_MANIFEST`, or `~/.local/share/devcroft/vm-artifacts/manifest.json`.
+pub fn resolve_vm_manifest_path(flag: Option<&Path>) -> Result<(PathBuf, PathBuf), VmCliError> {
+    let raw = if let Some(p) = flag {
+        p.to_path_buf()
+    } else if let Some(env_p) = std::env::var_os("DEVCROFT_VM_MANIFEST").filter(|v| !v.is_empty()) {
+        PathBuf::from(env_p)
+    } else {
+        data_dir()?.join("vm-artifacts").join("manifest.json")
+    };
+
+    let cwd = std::env::current_dir().map_err(|e| VmCliError::StateIo(e.to_string()))?;
+    let abs = if raw.is_absolute() {
+        raw
+    } else {
+        cwd.join(raw)
+    };
+    let manifest_file = if abs.is_dir() {
+        abs.join("manifest.json")
+    } else {
+        abs
+    };
+    if !manifest_file.is_file() {
+        return Err(VmCliError::layered(
+            ErrorLayer::Backend,
+            format!(
+                "trusted VM artifact manifest {} not found; pass `--vm-manifest <path>` or set DEVCROFT_VM_MANIFEST",
+                manifest_file.display()
+            ),
+        ));
+    }
+    let trusted_root = manifest_file
+        .parent()
+        .ok_or_else(|| {
+            VmCliError::layered(ErrorLayer::Config, "VM manifest path has no parent dir")
+        })?
+        .to_path_buf();
+    Ok((manifest_file, trusted_root))
+}
+
+fn choose_instance_dir(controller_dir: &Path) -> Result<PathBuf, VmCliError> {
+    if let Some(parent) = controller_dir.parent() {
+        fs::create_dir_all(parent).map_err(|e| VmCliError::StateIo(e.to_string()))?;
+        let canon_parent = fs::canonicalize(parent).unwrap_or_else(|_| parent.to_path_buf());
+        let candidate = canon_parent.join("vm-inst");
+        if candidate.join("control.sock").as_os_str().len() <= MAX_SOCKET_PATH_BYTES {
+            return Ok(candidate);
+        }
+    }
+
+    // macOS `HOME` or test temp roots can make `<data_dir>/<name>/vm-inst/control.sock`
+    // exceed `sun_path` (104 bytes on Darwin). Fall back to a per-uid private directory
+    // under `/tmp` whose canonical path (`/private/tmp/dc-vm-<uid>-<hash12>/control.sock`)
+    // is always ~54 bytes (`<= 100`).
+    let digest = super::sha256::sha256_hex(controller_dir.to_string_lossy().as_bytes());
+    let uid = unsafe { libc::geteuid() };
+    let tmp_base = fs::canonicalize(Path::new("/tmp")).unwrap_or_else(|_| PathBuf::from("/tmp"));
+    let fallback = tmp_base.join(format!("dc-vm-{uid}-{}", &digest[..12]));
+    if fallback.join("control.sock").as_os_str().len() > MAX_SOCKET_PATH_BYTES {
+        return Err(VmCliError::layered(
+            ErrorLayer::Config,
+            format!(
+                "instance socket path {} exceeds {MAX_SOCKET_PATH_BYTES} bytes",
+                fallback.join("control.sock").display()
+            ),
+        ));
+    }
+    Ok(fallback)
+}
+
+fn random_hex(bytes: usize) -> String {
+    let mut raw = vec![0u8; bytes];
+    rand::rng().fill_bytes(&mut raw);
+    let mut out = String::with_capacity(bytes * 2);
+    for b in raw {
+        out.push_str(&format!("{b:02x}"));
+    }
+    out
+}
+
+fn parse_guest_state_from_ready(greeting: &str) -> Option<u64> {
+    let rest = greeting.strip_prefix("READY ")?;
+    for tok in rest.split_whitespace() {
+        if let Some(val) = tok.strip_prefix("state=") {
+            return val.parse::<u64>().ok();
+        }
+    }
+    None
+}
+
+/// Connects to `guest/init.c`'s vsock control channel, reads the initial `READY 1 state=<N>`
+/// greeting, and verifies a `PING <nonce>` / `PONG <nonce>` round-trip.
+pub fn probe_live_control(
+    control_socket: &Path,
+    timeout: Duration,
+) -> Result<LiveControlReply, TransportError> {
+    let mut stream = UnixStream::connect(control_socket)?;
+    stream.set_read_timeout(Some(timeout))?;
+    stream.set_write_timeout(Some(timeout))?;
+
+    let mut reader = BufReader::new(stream.try_clone()?);
+    let mut greeting = String::new();
+    let n = (&mut reader)
+        .take((MAX_CONTROL_LINE + 2) as u64)
+        .read_line(&mut greeting)?;
+    if n == 0 || !greeting.ends_with('\n') {
+        return Err(TransportError::ControlProtocol(
+            "control socket closed before READY greeting".into(),
+        ));
+    }
+    let greeting_trimmed = greeting.trim_end_matches(['\r', '\n']).to_owned();
+    let guest_state = parse_guest_state_from_ready(&greeting_trimmed).ok_or_else(|| {
+        TransportError::ControlProtocol(format!("unexpected control greeting `{greeting_trimmed}`"))
+    })?;
+
+    let token = random_hex(8);
+    let req = format!("PING {token}\n");
+    stream.write_all(req.as_bytes())?;
+    stream.flush()?;
+
+    let mut reply = String::new();
+    let rn = reader
+        .take((MAX_CONTROL_LINE + 2) as u64)
+        .read_line(&mut reply)?;
+    if rn == 0 || !reply.ends_with('\n') {
+        return Err(TransportError::ControlProtocol(
+            "control socket closed before PONG reply".into(),
+        ));
+    }
+    let expected = format!("PONG {token}");
+    let reply_trimmed = reply.trim_end_matches(['\r', '\n']);
+    if reply_trimmed != expected {
+        return Err(TransportError::ControlProtocol(format!(
+            "unexpected PING reply `{reply_trimmed}` (expected `{expected}`)"
+        )));
+    }
+
+    Ok(LiveControlReply {
+        guest_state,
+        greeting: greeting_trimmed,
+    })
+}
+
+/// Sends `SHUTDOWN <state> <64-hex-nonce>` to `guest/init.c` and verifies `SYNCED <state> <nonce>`.
+pub fn send_live_shutdown(
+    control_socket: &Path,
+    nonce_64_hex: &str,
+    timeout: Duration,
+) -> Result<(u64, String), TransportError> {
+    let mut stream = UnixStream::connect(control_socket)?;
+    stream.set_read_timeout(Some(timeout))?;
+    stream.set_write_timeout(Some(timeout))?;
+
+    let mut reader = BufReader::new(stream.try_clone()?);
+    let mut greeting = String::new();
+    let n = (&mut reader)
+        .take((MAX_CONTROL_LINE + 2) as u64)
+        .read_line(&mut greeting)?;
+    if n == 0 || !greeting.ends_with('\n') {
+        return Err(TransportError::ControlProtocol(
+            "control socket closed before READY greeting".into(),
+        ));
+    }
+    let greeting_trimmed = greeting.trim_end_matches(['\r', '\n']);
+    let guest_state = parse_guest_state_from_ready(greeting_trimmed).ok_or_else(|| {
+        TransportError::ControlProtocol(format!("unexpected control greeting `{greeting_trimmed}`"))
+    })?;
+
+    let req = format!("SHUTDOWN {guest_state} {nonce_64_hex}\n");
+    stream.write_all(req.as_bytes())?;
+    stream.flush()?;
+
+    let mut reply = String::new();
+    let rn = reader
+        .take((MAX_CONTROL_LINE + 2) as u64)
+        .read_line(&mut reply)?;
+    if rn == 0 || !reply.ends_with('\n') {
+        return Err(TransportError::ControlProtocol(
+            "control socket closed before SYNCED acknowledgement".into(),
+        ));
+    }
+    let reply_trimmed = reply.trim_end_matches(['\r', '\n']).to_owned();
+    let expected = format!("SYNCED {guest_state} {nonce_64_hex}");
+    if reply_trimmed != expected {
+        return Err(TransportError::ControlProtocol(format!(
+            "shutdown rejected or mismatched: got `{reply_trimmed}`, expected `{expected}`"
+        )));
+    }
+    Ok((guest_state, reply_trimmed))
+}
+
+fn log_tail(path: &Path, max_lines: usize) -> String {
+    let Ok(text) = fs::read_to_string(path) else {
+        return String::new();
+    };
+    let lines: Vec<&str> = text.lines().collect();
+    let start = lines.len().saturating_sub(max_lines);
+    lines[start..].join("\n")
+}
+
+fn verify_artifact_file(
+    label: &str,
+    path: &Path,
+    expected_sha256: &str,
+) -> Result<(PathBuf, String), VmCliError> {
+    if !path.is_file() {
+        return Err(VmCliError::layered(
+            ErrorLayer::Backend,
+            format!("trusted VM {label} artifact {} not found", path.display()),
+        ));
+    }
+    let canonical = fs::canonicalize(path).map_err(|e| {
+        VmCliError::layered(ErrorLayer::Backend, format!("{}: {e}", path.display()))
+    })?;
+    let actual = sha256_file_hex(&canonical).map_err(|e| {
+        VmCliError::layered(ErrorLayer::Backend, format!("{}: {e}", canonical.display()))
+    })?;
+    if actual != expected_sha256.to_ascii_lowercase() {
+        return Err(VmCliError::layered(
+            ErrorLayer::Backend,
+            format!(
+                "trusted VM {label} artifact {} SHA-256 mismatch (expected {}, got {actual})",
+                canonical.display(),
+                expected_sha256
+            ),
+        ));
+    }
+    Ok((canonical, actual))
+}
+
+fn create_zeroed_private_disk(path: &Path, size_bytes: u64) -> Result<(), VmCliError> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|e| VmCliError::StateIo(e.to_string()))?;
+        fs::set_permissions(parent, fs::Permissions::from_mode(0o700))
+            .map_err(|e| VmCliError::StateIo(e.to_string()))?;
+    }
+    let file = OpenOptions::new()
+        .create(true)
+        .truncate(true)
+        .write(true)
+        .mode(0o600)
+        .open(path)
+        .map_err(|e| VmCliError::StateIo(format!("{}: {e}", path.display())))?;
+    file.set_len(size_bytes)
+        .map_err(|e| VmCliError::StateIo(format!("{}: {e}", path.display())))?;
+    file.sync_data()
+        .map_err(|e| VmCliError::StateIo(format!("{}: {e}", path.display())))?;
+    fs::set_permissions(path, fs::Permissions::from_mode(0o600))
+        .map_err(|e| VmCliError::StateIo(format!("{}: {e}", path.display())))?;
+    Ok(())
+}
+
+fn cleanup_stale_sockets(instance_dir: &Path) {
+    for sock in ["control.sock", "keeper.sock", "ssh.sock"] {
+        let p = instance_dir.join(sock);
+        if p.symlink_metadata().is_ok() {
+            let _ = fs::remove_file(p);
+        }
+    }
+}
+
+fn terminate_owned_helper_group(id: &HostProcessIdentity, grace: Duration) {
+    if !is_owned_helper_alive(id) {
+        return;
+    }
+    let pid = id.pid as libc::pid_t;
+    unsafe {
+        libc::kill(-pid, libc::SIGTERM);
+    }
+    let deadline = Instant::now() + grace;
+    while is_owned_helper_alive(id) && Instant::now() < deadline {
+        thread::sleep(Duration::from_millis(20));
+    }
+    if is_owned_helper_alive(id) {
+        unsafe {
+            libc::kill(-pid, libc::SIGKILL);
+        }
+        let kill_deadline = Instant::now() + Duration::from_millis(500);
+        while is_owned_helper_alive(id) && Instant::now() < kill_deadline {
+            thread::sleep(Duration::from_millis(20));
+        }
+    }
+}
+
+/// Brings up or cold-restarts an opt-in VM sandbox on a qualified host.
+pub fn up_vm_instance(
+    sandbox_name: &str,
+    project_root: &Path,
+    provider: &str,
+    opts: &VmUpOptions,
+) -> Result<VmUpOutcome, VmCliError> {
+    if !(1..=8).contains(&opts.vcpus) || !(128..=4096).contains(&opts.memory_mib) {
+        return Err(VmCliError::layered(
+            ErrorLayer::Config,
+            "VM resources require --vm-vcpus in 1..=8 and --vm-memory in 128..=4096 MiB",
+        ));
+    }
+
+    let state_paths = StatePaths::new(sandbox_name)
+        .map_err(|e| VmCliError::layered(ErrorLayer::Config, e.to_string()))?;
+    let project = ProjectIdentity::from_root(project_root)
+        .map_err(|e| VmCliError::layered(e.layer(), e.to_string()))?;
+    let grants =
+        RuntimeGrantStore::load().map_err(|e| VmCliError::layered(e.layer(), e.to_string()))?;
+
+    let ctrl_dir = vm_controller_dir(sandbox_name)?;
+    let existing_vm = load_vm_instance(sandbox_name)?;
+    let native_meta_exists = state_paths.meta.is_file() && existing_vm.is_none();
+    if native_meta_exists {
+        return Err(VmCliError::layered(
+            ErrorLayer::Config,
+            format!(
+                "sandbox '{sandbox_name}' already exists as a native process-tier instance; run `devcroft rm {sandbox_name}` or use `--name` before starting a VM instance"
+            ),
+        ));
+    }
+
+    let existing_runtime = existing_vm
+        .as_ref()
+        .map(|inst| match inst.state.runtime_kind {
+            RuntimeKind::Native => ExistingRuntime::Native,
+            RuntimeKind::Vm { target, adapter } => ExistingRuntime::Vm { target, adapter },
+        });
+
+    guard_new_vm_creation(
+        VmRollbackPolicy {
+            creation_disabled: opts.rollback_disabled,
+        },
+        existing_runtime,
+    )?;
+
+    let decision = resolve_runtime(&RuntimeRequest {
+        project: &project,
+        provider,
+        existing_instance: existing_runtime,
+        explicit_vm_opt_in: true,
+        policy_mode: RuntimePolicyMode::OptInVm,
+        grants: &grants,
+        host: current_host_platform(),
+        stdin_is_terminal: false,
+    })
+    .map_err(|e| VmCliError::layered(e.layer(), e.to_string()))?;
+
+    let (guest_target, vm_adapter) = match decision.runtime {
+        RuntimeKind::Vm { target, adapter } => (target, adapter),
+        RuntimeKind::Native => {
+            return Err(VmCliError::layered(
+                ErrorLayer::Config,
+                format!(
+                    "sandbox '{sandbox_name}' is already bound to the native runtime; cannot switch to VM"
+                ),
+            ));
+        }
+    };
+
+    let _lock = acquire_lifecycle_lock(&state_paths.lifecycle_lock)
+        .map_err(|e| VmCliError::StateIo(format!("acquiring lifecycle lock: {e}")))?;
+
+    // Check if an existing VM instance is already healthy.
+    if let Some(existing) = existing_vm.clone() {
+        let helper_alive = existing
+            .state
+            .host_process
+            .as_ref()
+            .is_some_and(is_owned_helper_alive);
+        if helper_alive && !opts.recreate {
+            let live_ctrl = probe_live_control(&existing.control_socket(), CONTROL_IO_TIMEOUT);
+            let live_keeper =
+                VmKeeperClient::new(existing.keeper_socket(), CONTROL_IO_TIMEOUT).query();
+            if live_ctrl.is_ok() && live_keeper.is_ok() {
+                return Ok(VmUpOutcome {
+                    instance: existing,
+                    already_up: true,
+                    restarted: false,
+                });
+            }
+        }
+    }
+
+    // Resolve and strictly verify trusted artifacts BEFORE creating/restarting instance disks.
+    let (manifest_path, trusted_root) = resolve_vm_manifest_path(opts.manifest_path.as_deref())?;
+    let manifest_text = fs::read_to_string(&manifest_path).map_err(|e| {
+        VmCliError::layered(
+            ErrorLayer::Backend,
+            format!("{}: {e}", manifest_path.display()),
+        )
+    })?;
+    let artifact_manifest = TrustedArtifactManifestV1::from_json_str(&manifest_text)
+        .map_err(|e| VmCliError::layered(e.layer(), e.to_string()))?;
+    artifact_manifest
+        .check_controller_compatible(env!("CARGO_PKG_VERSION"))
+        .map_err(|e| VmCliError::layered(e.layer(), e.to_string()))?;
+    let packaged = artifact_manifest
+        .packaged_layout(&trusted_root, project.as_path())
+        .map_err(|e| VmCliError::layered(e.layer(), e.to_string()))?;
+
+    let (helper_path, _) = verify_artifact_file(
+        "helper",
+        &packaged.helper,
+        &artifact_manifest.artifacts.helper.sha256,
+    )?;
+    let (kernel_path, kernel_sha) = verify_artifact_file(
+        "kernel",
+        &packaged.kernel,
+        &artifact_manifest.artifacts.kernel.sha256,
+    )?;
+    let (initramfs_path, initramfs_sha) = verify_artifact_file(
+        "initramfs",
+        &packaged.initramfs,
+        &artifact_manifest.artifacts.initramfs.sha256,
+    )?;
+    let (runtime_path, runtime_sha) = verify_artifact_file(
+        "runtime_image",
+        &packaged.runtime_image,
+        &artifact_manifest.artifacts.runtime_image.sha256,
+    )?;
+
+    let boot_sha_input = format!("{kernel_sha}:{initramfs_sha}:{runtime_sha}");
+    let boot_artifact_sha256 = super::sha256::sha256_hex(boot_sha_input.as_bytes());
+    let private_disk_id = format!("vm-state-{sandbox_name}");
+
+    if opts.recreate
+        && let Some(existing) = existing_vm.as_ref()
+    {
+        if existing
+            .state
+            .host_process
+            .as_ref()
+            .is_some_and(is_owned_helper_alive)
+        {
+            down_vm_instance_inner(existing)?;
+        }
+        let _ = fs::remove_file(&existing.meta.private_disk);
+        let _ = fs::remove_file(existing.state_file());
+        let _ = fs::remove_file(cli_meta_path(&existing.meta.controller_dir));
+    }
+
+    let (
+        instance_dir,
+        private_disk,
+        next_generation,
+        ssh_identity_file,
+        ssh_known_hosts,
+        restarted,
+    ) = if !opts.recreate
+        && let Some(existing) = load_vm_instance(sandbox_name)?
+    {
+        // Clean dead helper sockets before cold restart if helper already exited.
+        if existing
+            .state
+            .host_process
+            .as_ref()
+            .is_some_and(is_owned_helper_alive)
+        {
+            down_vm_instance_inner(&existing)?;
+        }
+        let plan = prepare_cold_restart(
+            &existing.instance_paths(),
+            guest_target,
+            vm_adapter,
+            &private_disk_id,
+        )?;
+        cleanup_stale_sockets(&existing.meta.instance_dir);
+        let canonical_disk = fs::canonicalize(&plan.preserved_private_disk)
+            .map_err(|e| VmCliError::StateIo(e.to_string()))?;
+        (
+            existing.meta.instance_dir,
+            canonical_disk,
+            plan.next_generation,
+            existing.meta.ssh_identity_file,
+            existing.meta.ssh_known_hosts,
+            true,
+        )
+    } else {
+        let inst_dir = choose_instance_dir(&ctrl_dir)?;
+        if inst_dir.exists() {
+            cleanup_stale_sockets(&inst_dir);
+        }
+        let endpoints = prepare_instance_layout(&ctrl_dir, &inst_dir)
+            .map_err(|e| VmCliError::layered(e.layer(), e.to_string()))?;
+        let disk_path = endpoints.instance_dir.join("state.img");
+        create_zeroed_private_disk(&disk_path, PRIVATE_STATE_DISK_BYTES)?;
+        let instance_id_hex = random_hex(16);
+        let ssh_keys = VmSshKeyMaterial::generate(
+            &endpoints.controller_dir,
+            &format!("{sandbox_name}.devcroft"),
+            &instance_id_hex,
+        )
+        .map_err(|e| VmCliError::layered(e.layer(), e.to_string()))?;
+        ssh_keys
+            .bootstrap_seed
+            .write_to_disk(&disk_path)
+            .map_err(|e| VmCliError::layered(e.layer(), e.to_string()))?;
+        let canonical_disk =
+            fs::canonicalize(&disk_path).map_err(|e| VmCliError::StateIo(e.to_string()))?;
+        (
+            endpoints.instance_dir,
+            canonical_disk,
+            1u64,
+            ssh_keys.client_private_key,
+            ssh_keys.known_hosts,
+            false,
+        )
+    };
+
+    cleanup_stale_sockets(&instance_dir);
+    let endpoints = prepare_instance_layout(&ctrl_dir, &instance_dir)
+        .map_err(|e| VmCliError::layered(e.layer(), e.to_string()))?;
+
+    let launch = HelperLaunchFileV1 {
+        schema: 1,
+        kernel: HelperArtifactInput {
+            path: kernel_path,
+            sha256: kernel_sha,
+        },
+        initramfs: HelperArtifactInput {
+            path: initramfs_path,
+            sha256: initramfs_sha,
+        },
+        runtime: HelperArtifactInput {
+            path: runtime_path,
+            sha256: runtime_sha,
+        },
+        workload: None,
+        data: None,
+        state: private_disk.clone(),
+        instance_dir: endpoints.instance_dir.clone(),
+        vcpus: opts.vcpus,
+        memory_mib: opts.memory_mib,
+    };
+    let launch_path = write_private_launch_record(
+        &endpoints.controller_dir,
+        &endpoints.instance_dir,
+        "launch.json",
+        &launch,
+    )
+    .map_err(|e| VmCliError::layered(e.layer(), e.to_string()))?;
+
+    let helper_log = endpoints.controller_dir.join("helper.log");
+    let host_proc = spawn_detached_helper(
+        &helper_path,
+        &[OsStr::new("run"), launch_path.as_os_str()],
+        &helper_log,
+    )
+    .map_err(|e| VmCliError::layered(e.layer(), e.to_string()))?;
+
+    let deadline = Instant::now() + READY_POLL_TIMEOUT;
+    let observed_guest_state = loop {
+        if !is_owned_helper_alive(&host_proc) {
+            cleanup_stale_sockets(&endpoints.instance_dir);
+            let tail = log_tail(&helper_log, 20);
+            return Err(VmCliError::layered(
+                ErrorLayer::Backend,
+                if tail.is_empty() {
+                    "VM helper exited before readiness handshake completed".to_string()
+                } else {
+                    format!("VM helper exited before readiness:\n{tail}")
+                },
+            ));
+        }
+        if let Ok(ctrl_reply) = probe_live_control(&endpoints.control_socket, CONTROL_IO_TIMEOUT)
+            && VmKeeperClient::new(&endpoints.keeper_socket, CONTROL_IO_TIMEOUT)
+                .query()
+                .is_ok()
+        {
+            break ctrl_reply.guest_state;
+        }
+        if Instant::now() >= deadline {
+            terminate_owned_helper_group(&host_proc, Duration::from_secs(1));
+            cleanup_stale_sockets(&endpoints.instance_dir);
+            let tail = log_tail(&helper_log, 20);
+            return Err(VmCliError::layered(
+                ErrorLayer::Keeper,
+                if tail.is_empty() {
+                    format!(
+                        "timed out waiting for VM readiness on {}",
+                        endpoints.control_socket.display()
+                    )
+                } else {
+                    format!("timed out waiting for VM readiness:\n{tail}")
+                },
+            ));
+        }
+        thread::sleep(Duration::from_millis(50));
+    };
+
+    let state = VmStateRecordV1 {
+        schema: CONTRACT_SCHEMA_V1,
+        runtime_kind: RuntimeKind::Vm {
+            target: guest_target,
+            adapter: vm_adapter,
+        },
+        selection_source: decision.selected_by,
+        instance_generation: next_generation,
+        host_process: Some(host_proc),
+        private_disk_id,
+        boot_artifact_sha256,
+        health: VmHealthBreakdown {
+            helper: ComponentHealth::Healthy,
+            transport: ComponentHealth::Healthy,
+            keeper: ComponentHealth::Healthy,
+            environment_fresh: true,
+            services: ComponentHealth::Stopped,
+        },
+        last_stop: None,
+    };
+
+    let cli_meta = VmCliMetadata {
+        schema: VM_CLI_META_SCHEMA_V1,
+        sandbox_name: sandbox_name.to_owned(),
+        project_root: project.as_path().to_path_buf(),
+        controller_dir: endpoints.controller_dir.clone(),
+        instance_dir: endpoints.instance_dir,
+        private_disk,
+        helper_log,
+        ssh_identity_file,
+        ssh_known_hosts,
+        guest_boot_state: observed_guest_state,
+        manifest_path: fs::canonicalize(&manifest_path).unwrap_or(manifest_path),
+        vcpus: opts.vcpus,
+        memory_mib: opts.memory_mib,
+    };
+
+    save_vm_state(&vm_state_path(&endpoints.controller_dir), &state)?;
+    save_cli_metadata(&cli_meta_path(&endpoints.controller_dir), &cli_meta)?;
+
+    Ok(VmUpOutcome {
+        instance: VmCliInstance {
+            meta: cli_meta,
+            state,
+        },
+        already_up: false,
+        restarted,
+    })
+}
+
+/// Probes live helper, control channel, and guest keeper independently.
+pub fn status_vm_instance(sandbox_name: &str) -> Result<VmLiveStatus, VmCliError> {
+    let instance = load_vm_instance(sandbox_name)?.ok_or_else(|| {
+        VmCliError::layered(
+            ErrorLayer::Config,
+            format!("VM sandbox '{sandbox_name}' not found"),
+        )
+    })?;
+
+    let helper = match &instance.state.host_process {
+        Some(id) if is_owned_helper_alive(id) => ComponentHealth::Healthy,
+        _ => ComponentHealth::Stopped,
+    };
+
+    let (transport, guest_state) =
+        match probe_live_control(&instance.control_socket(), CONTROL_IO_TIMEOUT) {
+            Ok(reply) => (ComponentHealth::Healthy, Some(reply.guest_state)),
+            Err(TransportError::ControlProtocol(_)) if helper == ComponentHealth::Healthy => {
+                (ComponentHealth::Unhealthy, None)
+            }
+            Err(_) => (ComponentHealth::Stopped, None),
+        };
+
+    let (keeper, uptime_secs, session_count) =
+        match VmKeeperClient::new(instance.keeper_socket(), CONTROL_IO_TIMEOUT).query() {
+            Ok(res) => (
+                ComponentHealth::Healthy,
+                Some(res.uptime_secs),
+                Some(res.sessions.len()),
+            ),
+            Err(_) if helper == ComponentHealth::Healthy => {
+                (ComponentHealth::Unhealthy, None, None)
+            }
+            Err(_) => (ComponentHealth::Stopped, None, None),
+        };
+
+    let health = VmHealthBreakdown {
+        helper,
+        transport,
+        keeper,
+        environment_fresh: instance.state.health.environment_fresh,
+        services: instance.state.health.services,
+    };
+
+    Ok(VmLiveStatus {
+        instance,
+        health,
+        uptime_secs,
+        session_count,
+        guest_state,
+    })
+}
+
+fn down_vm_instance_inner(instance: &VmCliInstance) -> Result<ShutdownOutcome, VmCliError> {
+    let paths = instance.instance_paths();
+    let mut state = instance.state.clone();
+    let helper_alive = state
+        .host_process
+        .as_ref()
+        .is_some_and(is_owned_helper_alive);
+
+    let mut orderly = false;
+    let mut control_reply = None;
+
+    if helper_alive || paths.control_socket.exists() {
+        let nonce = random_hex(32);
+        if let Ok((_guest_state, reply)) =
+            send_live_shutdown(&paths.control_socket, &nonce, SHUTDOWN_WAIT_TIMEOUT)
+        {
+            orderly = true;
+            control_reply = Some(reply);
+        }
+    }
+
+    if let Some(id) = state.host_process.clone()
+        && is_owned_helper_alive(&id)
+    {
+        if orderly {
+            let deadline = Instant::now() + SHUTDOWN_WAIT_TIMEOUT;
+            while is_owned_helper_alive(&id) && Instant::now() < deadline {
+                thread::sleep(Duration::from_millis(20));
+            }
+            if is_owned_helper_alive(&id) {
+                orderly = false;
+                terminate_owned_helper_group(&id, Duration::from_secs(2));
+            }
+        } else {
+            terminate_owned_helper_group(&id, Duration::from_secs(2));
+        }
+    }
+
+    let classification = if orderly {
+        StopClassification::Orderly
+    } else if state.host_process.is_some() {
+        StopClassification::ForcedStop
+    } else {
+        state.last_stop.unwrap_or(StopClassification::Orderly)
+    };
+
+    cleanup_stale_sockets(&paths.instance_dir);
+    state.last_stop = Some(classification);
+    state.host_process = None;
+    state.health.helper = ComponentHealth::Stopped;
+    state.health.transport = ComponentHealth::Stopped;
+    state.health.keeper = ComponentHealth::Stopped;
+    state.health.services = ComponentHealth::Stopped;
+    save_vm_state(&paths.state_file, &state)?;
+
+    Ok(ShutdownOutcome {
+        classification,
+        private_disk_retained: paths.private_disk.is_file(),
+        control_reply,
+    })
+}
+
+/// Gracefully quiesces and powers off a running VM instance while retaining its
+/// private disk for cold restart or rollback export.
+pub fn down_vm_instance(sandbox_name: &str) -> Result<ShutdownOutcome, VmCliError> {
+    let state_paths = StatePaths::new(sandbox_name)
+        .map_err(|e| VmCliError::layered(ErrorLayer::Config, e.to_string()))?;
+    let _lock = acquire_lifecycle_lock(&state_paths.lifecycle_lock)
+        .map_err(|e| VmCliError::StateIo(format!("acquiring lifecycle lock: {e}")))?;
+
+    let instance = load_vm_instance(sandbox_name)?.ok_or_else(|| {
+        VmCliError::layered(
+            ErrorLayer::Config,
+            format!("VM sandbox '{sandbox_name}' not found"),
+        )
+    })?;
+    down_vm_instance_inner(&instance)
+}
+
+/// Stops (if still running) and removes only the owned directories/files of a VM instance.
+pub fn rm_vm_instance(sandbox_name: &str) -> Result<RemovalReport, VmCliError> {
+    let state_paths = StatePaths::new(sandbox_name)
+        .map_err(|e| VmCliError::layered(ErrorLayer::Config, e.to_string()))?;
+    let _lock = acquire_lifecycle_lock(&state_paths.lifecycle_lock)
+        .map_err(|e| VmCliError::StateIo(format!("acquiring lifecycle lock: {e}")))?;
+
+    let instance = load_vm_instance(sandbox_name)?.ok_or_else(|| {
+        VmCliError::layered(
+            ErrorLayer::Config,
+            format!("VM sandbox '{sandbox_name}' not found"),
+        )
+    })?;
+    if instance
+        .state
+        .host_process
+        .as_ref()
+        .is_some_and(is_owned_helper_alive)
+    {
+        down_vm_instance_inner(&instance)?;
+    }
+
+    let project = ProjectIdentity::from_root(&instance.meta.project_root)
+        .map_err(|e| VmCliError::layered(e.layer(), e.to_string()))?;
+    let report = super::lifecycle::remove_owned_instance(
+        &instance.instance_paths(),
+        sandbox_name,
+        &project,
+        None,
+    )?;
+
+    if state_paths.root.is_dir() {
+        let _ = fs::remove_dir(&state_paths.root);
+    }
+    Ok(report)
+}
+
+/// Returns captured helper/guest logs for a VM instance.
+pub fn logs_vm_instance(
+    sandbox_name: &str,
+    tail_lines: Option<usize>,
+) -> Result<String, VmCliError> {
+    let instance = load_vm_instance(sandbox_name)?.ok_or_else(|| {
+        VmCliError::layered(
+            ErrorLayer::Config,
+            format!("VM sandbox '{sandbox_name}' not found"),
+        )
+    })?;
+    let contents = fs::read_to_string(&instance.meta.helper_log)
+        .map_err(|e| VmCliError::StateIo(format!("{}: {e}", instance.meta.helper_log.display())))?;
+    match tail_lines {
+        None => Ok(contents),
+        Some(n) => {
+            let lines: Vec<&str> = contents.lines().collect();
+            let start = lines.len().saturating_sub(n);
+            let mut out = lines[start..].join("\n");
+            if !out.is_empty() {
+                out.push('\n');
+            }
+            Ok(out)
+        }
+    }
+}
+
+/// Exports the retained private disk of a stopped VM instance with SHA-256 verification.
+pub fn export_vm_disk(sandbox_name: &str, destination: &Path) -> Result<u64, VmCliError> {
+    let instance = load_vm_instance(sandbox_name)?.ok_or_else(|| {
+        VmCliError::layered(
+            ErrorLayer::Config,
+            format!("VM sandbox '{sandbox_name}' not found"),
+        )
+    })?;
+    let abs_dest = if destination.is_absolute() {
+        destination.to_path_buf()
+    } else {
+        std::env::current_dir()
+            .map_err(|e| VmCliError::StateIo(e.to_string()))?
+            .join(destination)
+    };
+    Ok(export_retained_vm_disk(
+        &instance.instance_paths(),
+        &abs_dest,
+    )?)
+}
+
+/// Upserts a per-VM managed SSH block in `~/.ssh/config`, preserving user rules
+/// and the native `Host *.devcroft` wildcard block.
+pub fn write_vm_ssh_config_section(
+    config_path: &Path,
+    sandbox_name: &str,
+    block: &str,
+) -> io::Result<()> {
+    let begin = format!("# >>> devcroft-vm {sandbox_name} — do not edit >>>");
+    let end = format!("# <<< devcroft-vm {sandbox_name} — do not edit <<<");
+    let existing = fs::read_to_string(config_path).unwrap_or_default();
+    let wrapped = format!("{begin}\n{block}{end}\n");
+
+    let updated = match (existing.find(&begin), existing.find(&end)) {
+        (Some(start), Some(stop)) if start < stop => {
+            let stop = stop + end.len();
+            let mut out = String::with_capacity(existing.len() + wrapped.len());
+            out.push_str(&existing[..start]);
+            out.push_str(&wrapped);
+            let rest = existing[stop..]
+                .strip_prefix('\n')
+                .unwrap_or(&existing[stop..]);
+            out.push_str(rest);
+            out
+        }
+        _ => {
+            let mut out = existing;
+            if !out.is_empty() && !out.ends_with('\n') {
+                out.push('\n');
+            }
+            if !out.is_empty() {
+                out.push('\n');
+            }
+            out.push_str(&wrapped);
+            out
+        }
+    };
+
+    if let Some(parent) = config_path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    fs::write(config_path, updated)?;
+    fs::set_permissions(config_path, fs::Permissions::from_mode(0o600))?;
+    Ok(())
+}
+
+/// Maps a host working directory into the canonical guest workspace (`/workspace`).
+pub fn map_guest_cwd(_project_root: &Path, _host_cwd: &Path) -> String {
+    CANONICAL_GUEST_WORKSPACE.to_string()
+}
+
+/// Formats current UNIX epoch seconds as a deterministic timestamp string for grants.
+pub fn current_grant_timestamp() -> String {
+    let secs = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    format!("unix:{secs}")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::os::unix::net::UnixListener;
+
+    #[test]
+    fn parse_and_probe_live_control_roundtrips_ping_and_shutdown() {
+        let base = std::env::temp_dir().join(format!("dc-vm-clictl-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&base);
+        fs::create_dir_all(&base).unwrap();
+        let sock = base.join("control.sock");
+        let listener = UnixListener::bind(&sock).unwrap();
+
+        let server = thread::spawn(move || {
+            for stream in listener.incoming().take(2).flatten() {
+                let mut reader = BufReader::new(stream.try_clone().unwrap());
+                let mut w = stream;
+                w.write_all(b"READY 1 state=7 ro=1 landlock=5 policy=1\n")
+                    .unwrap();
+                let mut line = String::new();
+                if reader.read_line(&mut line).is_ok() {
+                    if let Some(tok) = line.trim_end().strip_prefix("PING ") {
+                        writeln!(w, "PONG {tok}").unwrap();
+                    } else if let Some(rest) = line.trim_end().strip_prefix("SHUTDOWN 7 ") {
+                        writeln!(w, "SYNCED 7 {rest}").unwrap();
+                    }
+                }
+            }
+        });
+
+        let ping = probe_live_control(&sock, Duration::from_secs(2)).unwrap();
+        assert_eq!(ping.guest_state, 7);
+
+        let nonce = "a".repeat(64);
+        let (st, reply) = send_live_shutdown(&sock, &nonce, Duration::from_secs(2)).unwrap();
+        assert_eq!(st, 7);
+        assert_eq!(reply, format!("SYNCED 7 {nonce}"));
+
+        server.join().unwrap();
+        let _ = fs::remove_dir_all(&base);
+    }
+}

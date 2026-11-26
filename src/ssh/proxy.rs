@@ -104,6 +104,12 @@ pub fn proxy(sandbox_name: &str) -> Result<(), ProxyError> {
     bridge(UnixStream::connect(&paths.ssh_socket).map_err(ProxyError::Connect)?)
 }
 
+/// Connects directly to an already-verified SSH Unix socket (used by the VM
+/// transport without touching native sandbox `StatePaths`) and bridges stdio.
+pub fn proxy_socket(socket_path: &std::path::Path) -> Result<(), ProxyError> {
+    bridge(UnixStream::connect(socket_path).map_err(ProxyError::Connect)?)
+}
+
 /// [`proxy`] for one agent of a fleet: its own SSH socket, which its keeper
 /// serves on a listener the supervisor bound before the agent was
 /// restricted. No health probe beyond connecting: a stopped agent's socket

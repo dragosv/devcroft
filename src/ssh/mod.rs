@@ -16,7 +16,7 @@ pub use config::{
 pub use keys::{KeyError, ensure_client_keypair, generate_host_key};
 #[cfg(target_os = "linux")]
 pub use proxy::proxy_fleet_agent;
-pub use proxy::{ProxyError, fleet_agent_from_host, proxy, sandbox_name_from_host};
+pub use proxy::{ProxyError, fleet_agent_from_host, proxy, proxy_socket, sandbox_name_from_host};
 
 use russh::keys::PrivateKey;
 use russh::keys::ssh_key::PublicKey;

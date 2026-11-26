@@ -180,6 +180,35 @@ pub fn shell(sandbox_name: &str, req: &ShellRequest) -> Result<i32, ExecError> {
     stream_session(stream, interactive)
 }
 
+/// Runs an interactive or piped shell directly against an already-verified
+/// keeper socket (used by VM transport without consulting native `StatePaths`).
+pub fn shell_on_socket(socket_path: &Path, req: &ShellRequest) -> Result<i32, ExecError> {
+    let size = terminal_size().unwrap_or(PtySize { rows: 24, cols: 80 });
+    let interactive = unsafe { libc::isatty(libc::STDIN_FILENO) } != 0;
+
+    let primary_req = SpawnRequest {
+        cmd: "/bin/sh".to_string(),
+        args: Vec::new(),
+        cwd: req.cwd.clone(),
+        env: BTreeMap::new(),
+        pty: interactive.then_some(size),
+    };
+
+    let stream = match connect_and_spawn_socket(socket_path, &primary_req) {
+        Err(ExecError::SpawnErr(_)) => {
+            let fallback_req = SpawnRequest {
+                cmd: FALLBACK_SHELL.to_string(),
+                ..primary_req
+            };
+            connect_and_spawn_socket(socket_path, &fallback_req)?
+        }
+        result => result?,
+    };
+
+    let _raw_mode = RawModeGuard::enable();
+    stream_session(stream, interactive)
+}
+
 /// Connects to `sandbox_name`'s keeper and sends `spawn_req`, returning
 /// the connection positioned right after `SpawnOk` — ready for
 /// [`stream_session`]. Split out from it so `shell`'s `$SHELL`-then-

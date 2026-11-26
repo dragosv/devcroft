@@ -169,6 +169,7 @@ fn main() {
         Some("ps") => std::process::exit(cli_ps()),
         Some("fleet") => std::process::exit(cli_fleet(&args[2..])),
         Some("ssh") => std::process::exit(cli_ssh(&args[2..])),
+        Some("runtime") => std::process::exit(cli_runtime(&args[2..])),
         Some("policy") => std::process::exit(cli_policy(&args[2..])),
         Some("why") => std::process::exit(cli_why(&args[2..])),
         Some("help") | Some("--help") | Some("-h") => {
@@ -216,9 +217,21 @@ sandboxes
       [--agent claude-code]     (also the hook telling the agent when the policy refused it)
   up [name] [--name <n>]      build the environment, apply the policy, start the sandbox
       [--tools <dir>]           (--name gives this project root its own sandbox;
-      [--recreate]               --tools adds your own tooling layer's PATH)
+      [--recreate]               --tools adds your own tooling layer's PATH;
+      [--vm]                     --vm uses opt-in macOS ARM64 microVM runtime; process tier
+      [--vm-manifest <path>]     remains default)
   down [name]                 stop a sandbox, keeping its state
   rm [name] [--yes]           stop a sandbox and delete its state
+
+runtime (opt-in VM & user grants)
+  runtime status              show host microVM qualification and default tier
+  runtime list                list user-owned native and trusted-editor grants
+  runtime grant-native        authorize native process-tier execution for a project
+      [--project <dir>]
+  runtime grant-trusted-editor  allow Remote-SSH ssh-config for a VM project
+      [--project <dir>]
+  runtime export-disk [name]  export a stopped VM's private disk with SHA-256 verification
+      --out <path>
 
 running things
   exec [name] -- <cmd>        run one command inside a sandbox
@@ -263,7 +276,7 @@ inside an agent or sandbox
 
 ssh
   ssh [name]                  connect over the sandbox's own SSH server
-  ssh-config [--write]        emit (or install) the ~/.ssh/config block
+  ssh-config [--write] [name] emit (or install) ~/.ssh/config (name required for VM instances)
   proxy <name>.devcroft       ProxyCommand handler; not typed directly
 
   help                        this text
@@ -322,6 +335,39 @@ fn cli_exec(args: &[String]) -> i32 {
         },
     };
 
+    match devcroft::vm::load_vm_instance(&sandbox_name) {
+        Ok(Some(vm)) => {
+            if !vm
+                .state
+                .host_process
+                .as_ref()
+                .is_some_and(devcroft::vm::is_owned_helper_alive)
+            {
+                eprintln!(
+                    "devcroft exec: VM sandbox '{sandbox_name}' is not running; run `devcroft up --vm` first"
+                );
+                return 5;
+            }
+            let req = devcroft::exec::ExecRequest {
+                cmd: cmd.clone(),
+                args: cmd_rest.to_vec(),
+                cwd: devcroft::vm::map_guest_cwd(&vm.meta.project_root, &cwd),
+            };
+            return match devcroft::exec::exec_on_socket(&vm.keeper_socket(), &req) {
+                Ok(code) => code,
+                Err(e) => {
+                    eprintln!("devcroft exec: {e}");
+                    5
+                }
+            };
+        }
+        Ok(None) => {}
+        Err(e) => {
+            eprintln!("devcroft exec: {e}");
+            return e.exit_code();
+        }
+    }
+
     if !no_up && let Err(msg) = maybe_auto_up(&sandbox_name, &cwd) {
         eprintln!("devcroft exec: {msg}");
         return 3; // environment/provider layer, per CLAUDE.md's error contract
@@ -375,6 +421,37 @@ fn cli_shell(args: &[String]) -> i32 {
             }
         },
     };
+
+    match devcroft::vm::load_vm_instance(&sandbox_name) {
+        Ok(Some(vm)) => {
+            if !vm
+                .state
+                .host_process
+                .as_ref()
+                .is_some_and(devcroft::vm::is_owned_helper_alive)
+            {
+                eprintln!(
+                    "devcroft shell: VM sandbox '{sandbox_name}' is not running; run `devcroft up --vm` first"
+                );
+                return 5;
+            }
+            let req = devcroft::exec::ShellRequest {
+                cwd: devcroft::vm::map_guest_cwd(&vm.meta.project_root, &cwd),
+            };
+            return match devcroft::exec::shell_on_socket(&vm.keeper_socket(), &req) {
+                Ok(code) => code,
+                Err(e) => {
+                    eprintln!("devcroft shell: {e}");
+                    5
+                }
+            };
+        }
+        Ok(None) => {}
+        Err(e) => {
+            eprintln!("devcroft shell: {e}");
+            return e.exit_code();
+        }
+    }
 
     if !no_up && let Err(msg) = maybe_auto_up(&sandbox_name, &cwd) {
         eprintln!("devcroft shell: {msg}");
@@ -458,6 +535,36 @@ fn cli_proxy(args: &[String]) -> i32 {
         }
     };
 
+    // VM instances keep their own per-instance SSH host key and authorized key,
+    // so route directly to `vm.ssh_socket()` without running native keygen/auto-up.
+    match devcroft::vm::load_vm_instance(&sandbox_name) {
+        Ok(Some(vm)) => {
+            if !vm
+                .state
+                .host_process
+                .as_ref()
+                .is_some_and(devcroft::vm::is_owned_helper_alive)
+            {
+                eprintln!(
+                    "devcroft proxy: VM sandbox '{sandbox_name}' is not running; run `devcroft up --vm` first"
+                );
+                return 5;
+            }
+            return match devcroft::ssh::proxy_socket(&vm.ssh_socket()) {
+                Ok(()) => 0,
+                Err(e) => {
+                    eprintln!("devcroft proxy: {e}");
+                    5
+                }
+            };
+        }
+        Ok(None) => {}
+        Err(e) => {
+            eprintln!("devcroft proxy: {e}");
+            return e.exit_code();
+        }
+    }
+
     // ssh spec's key-management requirement: any ssh-related command
     // ensures the client keypair exists before proceeding, so the real
     // ssh client on the other end of stdio finds its `IdentityFile` in
@@ -481,20 +588,38 @@ fn cli_proxy(args: &[String]) -> i32 {
     }
 }
 
-/// `devcroft ssh-config [--write]` (ssh spec's "ssh-config emission"
+/// `devcroft ssh-config [--write] [name]` (ssh spec's "ssh-config emission"
 /// requirement, task 6.2): prints design.md decision 3's wildcard `Host
-/// *.devcroft` block, or with `--write`, idempotently inserts/updates it
-/// as a marker-delimited managed section in `~/.ssh/config`.
+/// *.devcroft` block for native sandboxes, or gates VM instance blocks behind
+/// `trusted_editor` user grants.
 fn cli_ssh_config(args: &[String]) -> i32 {
-    const USAGE: &str = "devcroft ssh-config: usage: devcroft ssh-config [--write]";
-    let write = match args {
-        [] => false,
-        [flag] if flag == "--write" => true,
-        _ => {
+    const USAGE: &str = "devcroft ssh-config: usage: devcroft ssh-config [--write] [name]";
+    let mut write = false;
+    let mut name: Option<String> = None;
+    for a in args {
+        if a == "--write" {
+            write = true;
+        } else if a.starts_with('-') {
+            eprintln!("{USAGE}");
+            return 2;
+        } else if name.is_none() {
+            if !devcroft::config::is_valid_name(a) {
+                eprintln!(
+                    "devcroft ssh-config: '{a}' is not a valid sandbox name \
+                     ([a-z0-9][a-z0-9-]{{0,31}})"
+                );
+                return 2;
+            }
+            name = Some(a.clone());
+        } else {
             eprintln!("{USAGE}");
             return 2;
         }
-    };
+    }
+
+    if let Some(sandbox_name) = name {
+        return cli_vm_ssh_config(&sandbox_name, write);
+    }
 
     if let Err(e) = ensure_client_keypair() {
         eprintln!("devcroft ssh-config: {e}");
@@ -533,6 +658,85 @@ fn cli_ssh_config(args: &[String]) -> i32 {
         config_path.display()
     );
     0
+}
+
+fn cli_vm_ssh_config(sandbox_name: &str, write: bool) -> i32 {
+    let vm = match devcroft::vm::load_vm_instance(sandbox_name) {
+        Ok(Some(vm)) => vm,
+        Ok(None) => {
+            eprintln!(
+                "devcroft ssh-config: '{sandbox_name}' is not a VM instance; run `devcroft ssh-config{}` without a name for native *.devcroft",
+                if write { " --write" } else { "" }
+            );
+            return 2;
+        }
+        Err(e) => {
+            eprintln!("devcroft ssh-config: {e}");
+            return e.exit_code();
+        }
+    };
+    let project = match devcroft::vm::ProjectIdentity::from_root(&vm.meta.project_root) {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("devcroft ssh-config: {e}");
+            return i32::from(e.layer().exit_code());
+        }
+    };
+    let grants = match devcroft::vm::RuntimeGrantStore::load() {
+        Ok(g) => g,
+        Err(e) => {
+            eprintln!("devcroft ssh-config: {e}");
+            return i32::from(e.layer().exit_code());
+        }
+    };
+    let devcroft_bin = std::env::current_exe().unwrap_or_else(|_| "devcroft".into());
+    let proxy_command = format!("{} proxy --no-up %n", devcroft_bin.display());
+    match devcroft::vm::ssh_config_for_vm_instance(
+        sandbox_name,
+        &project,
+        &grants,
+        &proxy_command,
+        &vm.meta.ssh_identity_file,
+        &vm.meta.ssh_known_hosts,
+    ) {
+        devcroft::vm::VmSshConfigOutcome::Omitted {
+            reason,
+            guest_served_editor_hint,
+            grant_hint,
+        } => {
+            eprintln!("devcroft ssh-config: {reason}");
+            eprintln!("devcroft ssh-config: {guest_served_editor_hint}");
+            eprintln!("devcroft ssh-config: or authorize Remote-SSH via `{grant_hint}`");
+            if write { 2 } else { 0 }
+        }
+        devcroft::vm::VmSshConfigOutcome::Emitted(block) => {
+            if !write {
+                print!("{block}");
+                return 0;
+            }
+            let config_path = match ssh_config_path() {
+                Ok(p) => p,
+                Err(e) => {
+                    eprintln!("devcroft ssh-config: {e}");
+                    return 1;
+                }
+            };
+            if let Err(e) =
+                devcroft::vm::write_vm_ssh_config_section(&config_path, sandbox_name, &block)
+            {
+                eprintln!(
+                    "devcroft ssh-config: writing {}: {e}",
+                    config_path.display()
+                );
+                return 1;
+            }
+            println!(
+                "devcroft: wrote VM ssh-config block for '{sandbox_name}' to {}",
+                config_path.display()
+            );
+            0
+        }
+    }
 }
 
 fn ssh_config_path() -> Result<std::path::PathBuf, String> {
@@ -2755,9 +2959,115 @@ fn print_tools_layer(
     }
 }
 
+struct UpVmFlags {
+    vm_mode: Option<bool>,
+    manifest_path: Option<std::path::PathBuf>,
+    vcpus: u8,
+    memory_mib: u32,
+}
+
+fn take_vm_flags(args: &[String]) -> Result<(UpVmFlags, Vec<String>), String> {
+    let mut rest = Vec::new();
+    let mut vm_mode: Option<bool> = None;
+    let mut manifest_path: Option<std::path::PathBuf> = None;
+    let mut vcpus = devcroft::vm::DEFAULT_VM_VCPUS;
+    let mut memory_mib = devcroft::vm::DEFAULT_VM_MEMORY_MIB;
+    let mut it = args.iter();
+    while let Some(a) = it.next() {
+        if a == "--vm" {
+            if vm_mode == Some(false) {
+                return Err("--vm conflicts with --runtime native".to_string());
+            }
+            vm_mode = Some(true);
+        } else if a == "--runtime" {
+            let Some(v) = it.next() else {
+                return Err("--runtime requires `native` or `vm`".to_string());
+            };
+            match v.as_str() {
+                "vm" => {
+                    if vm_mode == Some(false) {
+                        return Err("--runtime vm conflicts with --runtime native".to_string());
+                    }
+                    vm_mode = Some(true);
+                }
+                "native" => {
+                    if vm_mode == Some(true) {
+                        return Err("--runtime native conflicts with --vm".to_string());
+                    }
+                    vm_mode = Some(false);
+                }
+                other => return Err(format!("--runtime {other:?}: expected `native` or `vm`")),
+            }
+        } else if let Some(v) = a.strip_prefix("--runtime=") {
+            match v {
+                "vm" => {
+                    if vm_mode == Some(false) {
+                        return Err("--runtime=vm conflicts with --runtime=native".to_string());
+                    }
+                    vm_mode = Some(true);
+                }
+                "native" => {
+                    if vm_mode == Some(true) {
+                        return Err("--runtime=native conflicts with --vm".to_string());
+                    }
+                    vm_mode = Some(false);
+                }
+                other => return Err(format!("--runtime={other:?}: expected `native` or `vm`")),
+            }
+        } else if a == "--vm-manifest" {
+            let Some(v) = it.next() else {
+                return Err("--vm-manifest requires a path".to_string());
+            };
+            manifest_path = Some(std::path::PathBuf::from(v));
+        } else if let Some(v) = a.strip_prefix("--vm-manifest=") {
+            manifest_path = Some(std::path::PathBuf::from(v));
+        } else if a == "--vm-vcpus" {
+            let Some(v) = it.next() else {
+                return Err("--vm-vcpus requires a number (1-8)".to_string());
+            };
+            vcpus = v
+                .parse::<u8>()
+                .map_err(|_| format!("--vm-vcpus {v:?}: expected an integer 1..=8"))?;
+        } else if let Some(v) = a.strip_prefix("--vm-vcpus=") {
+            vcpus = v
+                .parse::<u8>()
+                .map_err(|_| format!("--vm-vcpus={v:?}: expected an integer 1..=8"))?;
+        } else if a == "--vm-memory" {
+            let Some(v) = it.next() else {
+                return Err("--vm-memory requires MiB (128-4096)".to_string());
+            };
+            memory_mib = v
+                .parse::<u32>()
+                .map_err(|_| format!("--vm-memory {v:?}: expected MiB 128..=4096"))?;
+        } else if let Some(v) = a.strip_prefix("--vm-memory=") {
+            memory_mib = v
+                .parse::<u32>()
+                .map_err(|_| format!("--vm-memory={v:?}: expected MiB 128..=4096"))?;
+        } else {
+            rest.push(a.clone());
+        }
+    }
+    Ok((
+        UpVmFlags {
+            vm_mode,
+            manifest_path,
+            vcpus,
+            memory_mib,
+        },
+        rest,
+    ))
+}
+
+fn vm_rollback_creation_disabled() -> bool {
+    matches!(
+        std::env::var("DEVCROFT_VM_ROLLBACK").ok().as_deref(),
+        Some("1") | Some("true") | Some("TRUE")
+    )
+}
+
 fn cli_up(args: &[String]) -> i32 {
     const USAGE: &str = "devcroft up: usage: devcroft up [name] [--name <n>] [--tools <dir>] \
-                         [--recreate] [--yes] [--skip-hooks]";
+                         [--recreate] [--yes] [--skip-hooks] [--vm] [--vm-manifest <path>]";
     let (name_override, args) = match take_name_override(args) {
         Ok(v) => v,
         Err(msg) => {
@@ -2766,6 +3076,13 @@ fn cli_up(args: &[String]) -> i32 {
         }
     };
     let (tools_flag, args) = match take_tools_flag(&args) {
+        Ok(v) => v,
+        Err(msg) => {
+            eprintln!("devcroft up: {msg}");
+            return 2;
+        }
+    };
+    let (vm_flags, args) = match take_vm_flags(&args) {
         Ok(v) => v,
         Err(msg) => {
             eprintln!("devcroft up: {msg}");
@@ -2809,12 +3126,6 @@ fn cli_up(args: &[String]) -> i32 {
         },
         None => manifest,
     };
-    // config spec: "validation succeeds but a warning is printed at
-    // `up`, once". Printed before the sandbox comes up, so a grant of
-    // `~/.ssh` is visible above whatever the run produces rather than
-    // scrolled off underneath it.
-    print_manifest_warnings(&cwd);
-    print_degraded_capabilities(&manifest);
     let project_root = match devcroft::config::discover(&cwd) {
         Ok(p) => p.parent().unwrap_or(&cwd).to_path_buf(),
         Err(_) => cwd.clone(),
@@ -2824,6 +3135,83 @@ fn cli_up(args: &[String]) -> i32 {
         eprintln!("devcroft up: --recreate is destructive; pass --yes to run non-interactively");
         return 2;
     }
+
+    if vm_flags.vm_mode == Some(true) {
+        println!(
+            "devcroft: bringing up opt-in VM sandbox '{}'...",
+            manifest.sandbox.name
+        );
+        let opts = devcroft::vm::VmUpOptions {
+            manifest_path: vm_flags.manifest_path,
+            vcpus: vm_flags.vcpus,
+            memory_mib: vm_flags.memory_mib,
+            recreate,
+            rollback_disabled: vm_rollback_creation_disabled(),
+        };
+        return match devcroft::vm::up_vm_instance(
+            &manifest.sandbox.name,
+            &project_root,
+            &manifest.env.provider,
+            &opts,
+        ) {
+            Ok(outcome) => {
+                let verb = if outcome.already_up {
+                    "already up".to_string()
+                } else if outcome.restarted {
+                    format!(
+                        "restarted (generation {})",
+                        outcome.instance.state.instance_generation
+                    )
+                } else {
+                    "started".to_string()
+                };
+                println!(
+                    "devcroft: VM sandbox '{}' is {verb}.",
+                    manifest.sandbox.name
+                );
+                let runtime_label = match outcome.instance.state.runtime_kind {
+                    devcroft::vm::RuntimeKind::Vm { target, adapter } => {
+                        format!(
+                            "{} ({} / {}) [opt-in]",
+                            "vm",
+                            adapter.as_str(),
+                            target.as_str()
+                        )
+                    }
+                    devcroft::vm::RuntimeKind::Native => "native".to_string(),
+                };
+                println!("devcroft: runtime: {runtime_label}");
+                println!(
+                    "devcroft: selected-by: {}",
+                    outcome.instance.state.selection_source.describe()
+                );
+                if let Some(id) = &outcome.instance.state.host_process {
+                    println!("devcroft: helper pid: {}", id.pid);
+                }
+                0
+            }
+            Err(e) => {
+                eprintln!("devcroft up: {e}");
+                e.exit_code()
+            }
+        };
+    }
+
+    if let Ok(Some(_)) = devcroft::vm::load_vm_instance(&manifest.sandbox.name) {
+        eprintln!(
+            "devcroft up: config: sandbox '{}' is an existing VM instance; run `devcroft up --vm` or `devcroft rm {}` first",
+            manifest.sandbox.name, manifest.sandbox.name
+        );
+        return 2;
+    }
+
+    // config spec: "validation succeeds but a warning is printed at
+    // `up`, once". Printed before the sandbox comes up, so a grant of
+    // `~/.ssh` is visible above whatever the run produces rather than
+    // scrolled off underneath it.
+    print_manifest_warnings(&cwd);
+    print_degraded_capabilities(&manifest);
+
     let (user_config, tools) = match select_tools_layer(tools_flag.as_deref(), "up") {
         Ok(v) => v,
         Err(code) => return code,
@@ -2884,6 +3272,36 @@ fn cli_down(args: &[String]) -> i32 {
         Ok(name) => name,
         Err(code) => return code,
     };
+    match devcroft::vm::load_vm_instance(&name) {
+        Ok(Some(_)) => match devcroft::vm::down_vm_instance(&name) {
+            Ok(outcome) => {
+                let stop_label = match outcome.classification {
+                    devcroft::vm::StopClassification::Orderly => "orderly",
+                    devcroft::vm::StopClassification::ForcedStop => "forced-stop",
+                    devcroft::vm::StopClassification::Crash => "crash",
+                    devcroft::vm::StopClassification::UnverifiedStop => "unverified-stop",
+                };
+                println!(
+                    "devcroft: VM sandbox '{name}' is down ({stop_label}, private disk {}).",
+                    if outcome.private_disk_retained {
+                        "retained"
+                    } else {
+                        "missing"
+                    }
+                );
+                return 0;
+            }
+            Err(e) => {
+                eprintln!("devcroft down: {e}");
+                return e.exit_code();
+            }
+        },
+        Ok(None) => {}
+        Err(e) => {
+            eprintln!("devcroft down: {e}");
+            return e.exit_code();
+        }
+    }
     match devcroft::lifecycle::down(&name) {
         Ok(()) => {
             println!("devcroft: sandbox '{name}' is down.");
@@ -2916,6 +3334,24 @@ fn cli_rm(args: &[String]) -> i32 {
         return 2;
     }
 
+    match devcroft::vm::load_vm_instance(&name) {
+        Ok(Some(_)) => match devcroft::vm::rm_vm_instance(&name) {
+            Ok(_) => {
+                println!("devcroft: removed all VM state for '{name}'.");
+                return 0;
+            }
+            Err(e) => {
+                eprintln!("devcroft rm: {e}");
+                return e.exit_code();
+            }
+        },
+        Ok(None) => {}
+        Err(e) => {
+            eprintln!("devcroft rm: {e}");
+            return e.exit_code();
+        }
+    }
+
     match devcroft::lifecycle::rm(&name) {
         Ok(()) => {
             println!("devcroft: removed all state for '{name}'.");
@@ -2925,6 +3361,55 @@ fn cli_rm(args: &[String]) -> i32 {
             eprintln!("devcroft rm: {e}");
             1
         }
+    }
+}
+
+fn component_health_label(h: devcroft::vm::ComponentHealth) -> &'static str {
+    match h {
+        devcroft::vm::ComponentHealth::Healthy => "healthy",
+        devcroft::vm::ComponentHealth::Unhealthy => "unhealthy",
+        devcroft::vm::ComponentHealth::Stopped => "stopped",
+        devcroft::vm::ComponentHealth::Unknown => "unknown",
+    }
+}
+
+fn print_vm_status(st: &devcroft::vm::VmLiveStatus) {
+    println!("sandbox: {}", st.instance.meta.sandbox_name);
+    match st.instance.state.runtime_kind {
+        devcroft::vm::RuntimeKind::Vm { target, adapter } => {
+            println!(
+                "runtime: vm ({} / {}) [opt-in]",
+                adapter.as_str(),
+                target.as_str()
+            );
+        }
+        devcroft::vm::RuntimeKind::Native => println!("runtime: native"),
+    }
+    println!(
+        "selected-by: {}",
+        st.instance.state.selection_source.describe()
+    );
+    println!("generation: {}", st.instance.state.instance_generation);
+    println!("helper: {}", component_health_label(st.health.helper));
+    println!("transport: {}", component_health_label(st.health.transport));
+    match (st.health.keeper, st.uptime_secs, st.session_count) {
+        (devcroft::vm::ComponentHealth::Healthy, Some(uptime), Some(sessions)) => {
+            println!("keeper: healthy (uptime {uptime}s, {sessions} session(s))");
+        }
+        _ => println!("keeper: {}", component_health_label(st.health.keeper)),
+    }
+    if let Some(guest_state) = st.guest_state {
+        println!("guest-state-counter: {guest_state}");
+    }
+    println!("private-disk: {}", st.instance.meta.private_disk.display());
+    if let Some(stop) = st.instance.state.last_stop {
+        let label = match stop {
+            devcroft::vm::StopClassification::Orderly => "orderly",
+            devcroft::vm::StopClassification::ForcedStop => "forced-stop",
+            devcroft::vm::StopClassification::Crash => "crash",
+            devcroft::vm::StopClassification::UnverifiedStop => "unverified-stop",
+        };
+        println!("last-stop: {label}");
     }
 }
 
@@ -2939,6 +3424,28 @@ fn cli_status(args: &[String]) -> i32 {
         eprintln!("{USAGE}");
         return 2;
     }
+    if let Some(explicit_name) = args.first() {
+        if !devcroft::config::is_valid_name(explicit_name) {
+            eprintln!(
+                "devcroft status: '{explicit_name}' is not a valid sandbox name \
+                 ([a-z0-9][a-z0-9-]{{0,31}})"
+            );
+            return 2;
+        }
+        if let Ok(Some(_)) = devcroft::vm::load_vm_instance(explicit_name) {
+            return match devcroft::vm::status_vm_instance(explicit_name) {
+                Ok(st) => {
+                    print_vm_status(&st);
+                    0
+                }
+                Err(e) => {
+                    eprintln!("devcroft status: {e}");
+                    e.exit_code()
+                }
+            };
+        }
+    }
+
     let cwd = match std::env::current_dir() {
         Ok(dir) => dir,
         Err(e) => {
@@ -2950,6 +3457,19 @@ fn cli_status(args: &[String]) -> i32 {
         Ok(m) => m,
         Err(code) => return code,
     };
+
+    if let Ok(Some(_)) = devcroft::vm::load_vm_instance(&manifest.sandbox.name) {
+        return match devcroft::vm::status_vm_instance(&manifest.sandbox.name) {
+            Ok(st) => {
+                print_vm_status(&st);
+                0
+            }
+            Err(e) => {
+                eprintln!("devcroft status: {e}");
+                e.exit_code()
+            }
+        };
+    }
 
     match devcroft::lifecycle::status(&manifest) {
         Ok(s) => {
@@ -3241,6 +3761,19 @@ fn cli_logs(args: &[String]) -> i32 {
             }
         }
     };
+
+    if let Ok(Some(_)) = devcroft::vm::load_vm_instance(&name) {
+        return match devcroft::vm::logs_vm_instance(&name, tail) {
+            Ok(text) => {
+                print!("{text}");
+                0
+            }
+            Err(e) => {
+                eprintln!("devcroft logs: {e}");
+                e.exit_code()
+            }
+        };
+    }
 
     match devcroft::lifecycle::logs(&name, tail) {
         Ok(text) => {
@@ -3822,13 +4355,63 @@ fn fleet_client_key() -> Result<String, String> {
 }
 
 fn cli_ps() -> i32 {
+    let vm_instances = match devcroft::vm::list_vm_instances() {
+        Ok(list) => list,
+        Err(e) => {
+            eprintln!("devcroft ps: {e}");
+            return e.exit_code();
+        }
+    };
+    let vm_by_name: std::collections::BTreeMap<String, devcroft::vm::VmCliInstance> = vm_instances
+        .into_iter()
+        .map(|inst| (inst.meta.sandbox_name.clone(), inst))
+        .collect();
+
     match devcroft::lifecycle::ps() {
         Ok(sandboxes) => {
-            if sandboxes.is_empty() {
-                println!("no sandboxes");
-                return 0;
-            }
+            let mut printed_any = false;
             for s in sandboxes {
+                if let Some(vm) = vm_by_name.get(&s.name)
+                    && s.project_root.is_none()
+                {
+                    let health = if let Ok(st) = devcroft::vm::status_vm_instance(&s.name) {
+                        match (
+                            st.health.helper,
+                            st.health.keeper,
+                            st.uptime_secs,
+                            st.session_count,
+                        ) {
+                            (
+                                devcroft::vm::ComponentHealth::Healthy,
+                                devcroft::vm::ComponentHealth::Healthy,
+                                Some(uptime),
+                                Some(sessions),
+                            ) => format!(
+                                "vm healthy (gen {}, uptime {uptime}s, {sessions} session(s))",
+                                st.instance.state.instance_generation
+                            ),
+                            (devcroft::vm::ComponentHealth::Healthy, _, _, _) => format!(
+                                "vm degraded (gen {})",
+                                st.instance.state.instance_generation
+                            ),
+                            _ => format!(
+                                "vm stopped (gen {})",
+                                st.instance.state.instance_generation
+                            ),
+                        }
+                    } else {
+                        "vm stopped".to_string()
+                    };
+                    println!(
+                        "{}\t[vm]\t{}\t{}",
+                        vm.meta.sandbox_name,
+                        health,
+                        vm.meta.project_root.display()
+                    );
+                    printed_any = true;
+                    continue;
+                }
+
                 let health = match s.keeper {
                     devcroft::lifecycle::KeeperStatus::None => "not running".to_string(),
                     devcroft::lifecycle::KeeperStatus::Stale => "stale".to_string(),
@@ -3851,6 +4434,7 @@ fn cli_ps() -> i32 {
                     s.project_root.as_deref().unwrap_or("-"),
                     attention
                 );
+                printed_any = true;
                 // Services listed individually, indented under their
                 // sandbox, and labelled — the `cli` spec requires services
                 // and sessions be distinguishable, and the single
@@ -3874,6 +4458,9 @@ fn cli_ps() -> i32 {
                     }
                 }
             }
+            if !printed_any {
+                println!("no sandboxes");
+            }
             0
         }
         Err(e) => {
@@ -3883,21 +4470,76 @@ fn cli_ps() -> i32 {
     }
 }
 
-/// `devcroft ssh [--no-up] [name]`: not itself part of any capability
-/// spec beyond being named in the cli spec's command surface (no
-/// Requirement/Scenario describes its behavior anywhere in the specs).
-/// Interpreted here as the obvious convenience its neighbors (`proxy`,
-/// `ssh-config`) exist to support: auto-up, then exec (replace this
-/// process, `CommandExt::exec`) into a real system `ssh` with the exact
-/// options the `ssh-config` block installs, so a user gets full real-
-/// terminal fidelity without needing `ssh-config --write` run first or
-/// needing to remember the `<name>.devcroft` hostname convention.
+fn parse_local_forward_spec(raw: &str) -> Result<devcroft::vm::LocalPortForward, String> {
+    let parts: Vec<&str> = raw.split(':').collect();
+    match parts.as_slice() {
+        [local, guest] => {
+            let local_port = local
+                .parse::<u16>()
+                .map_err(|_| format!("invalid local port in `-L {raw}`"))?;
+            let guest_port = guest
+                .parse::<u16>()
+                .map_err(|_| format!("invalid guest port in `-L {raw}`"))?;
+            Ok(devcroft::vm::LocalPortForward {
+                local_port,
+                guest_port,
+            })
+        }
+        ["127.0.0.1", local, "127.0.0.1", guest] => {
+            let local_port = local
+                .parse::<u16>()
+                .map_err(|_| format!("invalid local port in `-L {raw}`"))?;
+            let guest_port = guest
+                .parse::<u16>()
+                .map_err(|_| format!("invalid guest port in `-L {raw}`"))?;
+            Ok(devcroft::vm::LocalPortForward {
+                local_port,
+                guest_port,
+            })
+        }
+        _ => Err(format!(
+            "`-L {raw}` must be `127.0.0.1:<local>:127.0.0.1:<guest>` or `<local>:<guest>`"
+        )),
+    }
+}
+
+/// `devcroft ssh [--no-up] [name] [-N] [-L <local>:<guest>]`: connects over
+/// the sandbox's own SSH server (`CommandExt::exec` into `ssh`), routing VM
+/// instances through hardened `UserKnownHostsFile` and loopback-only forwards.
 fn cli_ssh(args: &[String]) -> i32 {
     use std::os::unix::process::CommandExt;
 
-    const USAGE: &str = "devcroft ssh: usage: devcroft ssh [--no-up] [name]";
-    let no_up = args.iter().any(|a| a == "--no-up");
-    let name_args: Vec<&String> = args.iter().filter(|a| *a != "--no-up").collect();
+    const USAGE: &str = "devcroft ssh: usage: devcroft ssh [--no-up] [name] [-N] [-L 127.0.0.1:<local>:127.0.0.1:<guest>]";
+    let mut no_up = false;
+    let mut tunnel_only = false;
+    let mut forwards: Vec<devcroft::vm::LocalPortForward> = Vec::new();
+    let mut name_args: Vec<String> = Vec::new();
+
+    let mut it = args.iter();
+    while let Some(a) = it.next() {
+        match a.as_str() {
+            "--no-up" => no_up = true,
+            "-N" => tunnel_only = true,
+            "-L" => {
+                let Some(spec) = it.next() else {
+                    eprintln!("{USAGE}");
+                    return 2;
+                };
+                match parse_local_forward_spec(spec) {
+                    Ok(fwd) => forwards.push(fwd),
+                    Err(msg) => {
+                        eprintln!("devcroft ssh: {msg}");
+                        return 2;
+                    }
+                }
+            }
+            _ if a.starts_with('-') => {
+                eprintln!("{USAGE}");
+                return 2;
+            }
+            _ => name_args.push(a.clone()),
+        }
+    }
     if name_args.len() > 1 {
         eprintln!("{USAGE}");
         return 2;
@@ -3911,7 +4553,7 @@ fn cli_ssh(args: &[String]) -> i32 {
         }
     };
     let sandbox_name = match name_args.first() {
-        Some(name) => (*name).clone(),
+        Some(name) => name.clone(),
         None => match resolve_sandbox_name(&cwd) {
             Ok(name) => name,
             Err(msg) => {
@@ -3920,6 +4562,69 @@ fn cli_ssh(args: &[String]) -> i32 {
             }
         },
     };
+
+    let devcroft_bin = std::env::current_exe().unwrap_or_else(|_| "devcroft".into());
+    match devcroft::vm::load_vm_instance(&sandbox_name) {
+        Ok(Some(vm)) => {
+            if !vm
+                .state
+                .host_process
+                .as_ref()
+                .is_some_and(devcroft::vm::is_owned_helper_alive)
+            {
+                eprintln!(
+                    "devcroft ssh: VM sandbox '{sandbox_name}' is not running; run `devcroft up --vm` first"
+                );
+                return 5;
+            }
+            let host_alias = format!("{sandbox_name}.devcroft");
+            let proxy_cmd = format!("{} proxy --no-up %n", devcroft_bin.display());
+            let mut ssh_args = match if tunnel_only && forwards.len() == 1 {
+                devcroft::vm::guest_served_editor_forward_args(
+                    &host_alias,
+                    &proxy_cmd,
+                    &vm.meta.ssh_identity_file,
+                    &vm.meta.ssh_known_hosts,
+                    forwards[0].local_port,
+                    forwards[0].guest_port,
+                )
+            } else {
+                devcroft::vm::build_vm_ssh_client_args(
+                    &host_alias,
+                    &proxy_cmd,
+                    &vm.meta.ssh_identity_file,
+                    &vm.meta.ssh_known_hosts,
+                    &forwards,
+                )
+            } {
+                Ok(a) => a,
+                Err(e) => {
+                    eprintln!("devcroft ssh: {e}");
+                    return i32::from(e.layer().exit_code());
+                }
+            };
+            if tunnel_only && forwards.len() != 1 {
+                let tail = ssh_args.pop().expect("host alias present");
+                ssh_args.push("-N".to_string());
+                ssh_args.push(tail);
+            }
+            let err = std::process::Command::new("ssh").args(&ssh_args).exec();
+            eprintln!("devcroft ssh: exec ssh: {err}");
+            return 1;
+        }
+        Ok(None) => {}
+        Err(e) => {
+            eprintln!("devcroft ssh: {e}");
+            return e.exit_code();
+        }
+    }
+
+    if tunnel_only || !forwards.is_empty() {
+        eprintln!(
+            "devcroft ssh: `-N` and `-L` guest-served forwards are supported for VM instances; omit them for native SSH"
+        );
+        return 2;
+    }
 
     if let Err(e) = ensure_client_keypair() {
         eprintln!("devcroft ssh: {e}");
@@ -3936,7 +4641,6 @@ fn cli_ssh(args: &[String]) -> i32 {
             return 1;
         }
     };
-    let devcroft_bin = std::env::current_exe().unwrap_or_else(|_| "devcroft".into());
 
     // `--no-up` on the inner `proxy`: this command already brought the
     // sandbox up (or confirmed it didn't need to be), so `proxy` doesn't
@@ -3959,6 +4663,242 @@ fn cli_ssh(args: &[String]) -> i32 {
         .exec(); // replaces this process on success; only returns on failure
     eprintln!("devcroft ssh: exec ssh: {err}");
     1
+}
+
+fn resolve_runtime_project_arg(
+    args: &[String],
+    usage: &str,
+    cmd: &str,
+) -> Result<devcroft::vm::ProjectIdentity, i32> {
+    let mut project_flag: Option<std::path::PathBuf> = None;
+    let mut it = args.iter();
+    while let Some(a) = it.next() {
+        if a == "--project" {
+            let Some(v) = it.next() else {
+                eprintln!("{usage}");
+                return Err(2);
+            };
+            project_flag = Some(std::path::PathBuf::from(v));
+        } else if let Some(v) = a.strip_prefix("--project=") {
+            project_flag = Some(std::path::PathBuf::from(v));
+        } else {
+            eprintln!("{usage}");
+            return Err(2);
+        }
+    }
+
+    let cwd = std::env::current_dir().map_err(|e| {
+        eprintln!("devcroft runtime {cmd}: cannot determine current directory: {e}");
+        1
+    })?;
+    let raw_root = match project_flag {
+        Some(p) => {
+            if p.is_absolute() {
+                p
+            } else {
+                cwd.join(p)
+            }
+        }
+        None => match devcroft::config::discover(&cwd) {
+            Ok(manifest_path) => manifest_path.parent().unwrap_or(&cwd).to_path_buf(),
+            Err(_) => cwd,
+        },
+    };
+    devcroft::vm::ProjectIdentity::from_root(&raw_root).map_err(|e| {
+        eprintln!("devcroft runtime {cmd}: {e}");
+        i32::from(e.layer().exit_code())
+    })
+}
+
+/// `devcroft runtime status | list | grant-native | grant-trusted-editor | export-disk`
+fn cli_runtime(args: &[String]) -> i32 {
+    const USAGE: &str = "devcroft runtime: usage: devcroft runtime <status|list|grant-native|grant-trusted-editor|export-disk> [args...]";
+    let Some((sub, rest)) = args.split_first() else {
+        eprintln!("{USAGE}");
+        return 2;
+    };
+    match sub.as_str() {
+        "status" => {
+            if !rest.is_empty() {
+                eprintln!("devcroft runtime status: takes no arguments");
+                return 2;
+            }
+            let host = devcroft::vm::current_host_platform();
+            let qual = devcroft::vm::qualification_for(host);
+            println!("host: {}", host.as_str());
+            println!("default-runtime: process (VM mode is opt-in via `devcroft up --vm`)");
+            match qual.status {
+                devcroft::vm::QualificationStatus::QualifiedOptIn {
+                    adapter,
+                    guest_target,
+                    min_os,
+                    required_controls,
+                } => {
+                    println!(
+                        "qualification: qualified-opt-in ({} -> {}, {min_os})",
+                        adapter.as_str(),
+                        guest_target.as_str()
+                    );
+                    println!("required-controls: {}", required_controls.join(", "));
+                }
+                devcroft::vm::QualificationStatus::Unqualified {
+                    reason,
+                    regression_requirement,
+                } => {
+                    println!("qualification: unqualified ({reason})");
+                    println!("regression-requirement: {regression_requirement}");
+                }
+            }
+            println!("accepted-assessment: {}", qual.accepted_assessment);
+            println!(
+                "rollback-creation-disabled: {}",
+                vm_rollback_creation_disabled()
+            );
+            match devcroft::vm::RuntimeGrantStore::user_grants_path() {
+                Some(path) => println!("grants-file: {}", path.display()),
+                None => println!("grants-file: unavailable (HOME/XDG_CONFIG_HOME unset)"),
+            }
+            0
+        }
+        "list" => {
+            if !rest.is_empty() {
+                eprintln!("devcroft runtime list: takes no arguments");
+                return 2;
+            }
+            let store = match devcroft::vm::RuntimeGrantStore::load() {
+                Ok(s) => s,
+                Err(e) => {
+                    eprintln!("devcroft runtime list: {e}");
+                    return i32::from(e.layer().exit_code());
+                }
+            };
+            if store.grants.is_empty() {
+                println!("no runtime grants recorded");
+                return 0;
+            }
+            for g in &store.grants {
+                let runtime = match g.runtime {
+                    Some(devcroft::vm::GrantedRuntime::Native) => "native",
+                    None => "-",
+                };
+                println!(
+                    "{}\truntime={runtime}\ttrusted_editor={}\tgranted_at={}",
+                    g.project_root.display(),
+                    if g.trusted_editor { "yes" } else { "no" },
+                    g.granted_at
+                );
+            }
+            0
+        }
+        "grant-native" => {
+            const SUB_USAGE: &str = "devcroft runtime grant-native: usage: devcroft runtime grant-native [--project <path>]";
+            let project = match resolve_runtime_project_arg(rest, SUB_USAGE, "grant-native") {
+                Ok(p) => p,
+                Err(code) => return code,
+            };
+            let Some(path) = devcroft::vm::RuntimeGrantStore::user_grants_path() else {
+                eprintln!("devcroft runtime grant-native: HOME or XDG_CONFIG_HOME must be set");
+                return 1;
+            };
+            let mut store = match devcroft::vm::RuntimeGrantStore::load_from(&path) {
+                Ok(s) => s,
+                Err(e) => {
+                    eprintln!("devcroft runtime grant-native: {e}");
+                    return i32::from(e.layer().exit_code());
+                }
+            };
+            store.grant_native(&project, devcroft::vm::current_grant_timestamp());
+            if let Err(e) = store.save(&path) {
+                eprintln!("devcroft runtime grant-native: {e}");
+                return i32::from(e.layer().exit_code());
+            }
+            println!(
+                "devcroft: granted native runtime authority to {} (saved in {})",
+                project.as_path().display(),
+                path.display()
+            );
+            0
+        }
+        "grant-trusted-editor" => {
+            const SUB_USAGE: &str = "devcroft runtime grant-trusted-editor: usage: devcroft runtime grant-trusted-editor [--project <path>]";
+            let project = match resolve_runtime_project_arg(rest, SUB_USAGE, "grant-trusted-editor")
+            {
+                Ok(p) => p,
+                Err(code) => return code,
+            };
+            let Some(path) = devcroft::vm::RuntimeGrantStore::user_grants_path() else {
+                eprintln!(
+                    "devcroft runtime grant-trusted-editor: HOME or XDG_CONFIG_HOME must be set"
+                );
+                return 1;
+            };
+            let mut store = match devcroft::vm::RuntimeGrantStore::load_from(&path) {
+                Ok(s) => s,
+                Err(e) => {
+                    eprintln!("devcroft runtime grant-trusted-editor: {e}");
+                    return i32::from(e.layer().exit_code());
+                }
+            };
+            store.grant_trusted_editor(&project, devcroft::vm::current_grant_timestamp());
+            if let Err(e) = store.save(&path) {
+                eprintln!("devcroft runtime grant-trusted-editor: {e}");
+                return i32::from(e.layer().exit_code());
+            }
+            println!(
+                "devcroft: granted trusted-editor (Remote-SSH) access to {} without elevating runtime execution to native (saved in {})",
+                project.as_path().display(),
+                path.display()
+            );
+            0
+        }
+        "export-disk" => {
+            const SUB_USAGE: &str = "devcroft runtime export-disk: usage: devcroft runtime export-disk [name] --out <path>";
+            let mut out_path: Option<std::path::PathBuf> = None;
+            let mut name_args: Vec<String> = Vec::new();
+            let mut it = rest.iter();
+            while let Some(a) = it.next() {
+                if a == "--out" {
+                    let Some(v) = it.next() else {
+                        eprintln!("{SUB_USAGE}");
+                        return 2;
+                    };
+                    out_path = Some(std::path::PathBuf::from(v));
+                } else if let Some(v) = a.strip_prefix("--out=") {
+                    out_path = Some(std::path::PathBuf::from(v));
+                } else if a.starts_with('-') {
+                    eprintln!("{SUB_USAGE}");
+                    return 2;
+                } else {
+                    name_args.push(a.clone());
+                }
+            }
+            let Some(out_path) = out_path else {
+                eprintln!("{SUB_USAGE}");
+                return 2;
+            };
+            let name = match resolve_name_arg(&name_args, SUB_USAGE, "runtime export-disk") {
+                Ok(n) => n,
+                Err(code) => return code,
+            };
+            match devcroft::vm::export_vm_disk(&name, &out_path) {
+                Ok(bytes) => {
+                    println!(
+                        "devcroft: exported {bytes} bytes of verified private disk for '{name}' to {}",
+                        out_path.display()
+                    );
+                    0
+                }
+                Err(e) => {
+                    eprintln!("devcroft runtime export-disk: {e}");
+                    e.exit_code()
+                }
+            }
+        }
+        _ => {
+            eprintln!("{USAGE}");
+            2
+        }
+    }
 }
 
 /// `devcroft policy --render [--backend nono] [name]` (policy spec's
