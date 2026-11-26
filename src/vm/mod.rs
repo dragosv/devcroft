@@ -34,11 +34,12 @@ pub use authority::{
 pub use cli_runtime::{
     DEFAULT_VM_MEMORY_MIB, DEFAULT_VM_VCPUS, InstallLocalVmBundleRequest, InstalledVmBundleSummary,
     LiveControlReply, VM_GUEST_EGRESS_PROXY_PORT, VmBrokerSessionEntry, VmCliError, VmCliInstance,
-    VmCliMetadata, VmLiveStatus, VmSyncSummary, VmUpOptions, VmUpOutcome, current_grant_timestamp,
-    down_vm_instance, export_vm_disk, inspect_default_vm_bundle, install_local_vm_bundle,
+    VmCliMetadata, VmLiveStatus, VmSyncSummary, VmUpOptions, VmUpOutcome, VmWhyVerdict,
+    current_grant_timestamp, down_vm_instance, explain_vm_why_env, explain_vm_why_host,
+    explain_vm_why_path, export_vm_disk, inspect_default_vm_bundle, install_local_vm_bundle,
     list_vm_instances, load_vm_instance, logs_vm_instance, map_guest_cwd, probe_live_control,
     render_vm_policy_plan, resolve_vm_manifest_path, rm_vm_instance, send_live_shutdown,
-    status_vm_instance, sync_project_into_vm, up_vm_instance, vm_session_env,
+    status_vm_instance, sync_project_from_vm, sync_project_into_vm, up_vm_instance, vm_session_env,
     write_vm_ssh_config_section,
 };
 pub use contract::{

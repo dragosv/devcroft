@@ -3014,6 +3014,7 @@ struct UpVmFlags {
     manifest_path: Option<std::path::PathBuf>,
     vcpus: u8,
     memory_mib: u32,
+    sync_workspace: bool,
 }
 
 fn take_vm_flags(args: &[String]) -> Result<(UpVmFlags, Vec<String>), String> {
@@ -3022,6 +3023,7 @@ fn take_vm_flags(args: &[String]) -> Result<(UpVmFlags, Vec<String>), String> {
     let mut manifest_path: Option<std::path::PathBuf> = None;
     let mut vcpus = devcroft::vm::DEFAULT_VM_VCPUS;
     let mut memory_mib = devcroft::vm::DEFAULT_VM_MEMORY_MIB;
+    let mut sync_workspace = false;
     let mut it = args.iter();
     while let Some(a) = it.next() {
         if a == "--vm" {
@@ -3029,6 +3031,8 @@ fn take_vm_flags(args: &[String]) -> Result<(UpVmFlags, Vec<String>), String> {
                 return Err("--vm conflicts with --runtime native".to_string());
             }
             vm_mode = Some(true);
+        } else if a == "--sync" {
+            sync_workspace = true;
         } else if a == "--runtime" {
             let Some(v) = it.next() else {
                 return Err("--runtime requires `native` or `vm`".to_string());
@@ -3097,12 +3101,16 @@ fn take_vm_flags(args: &[String]) -> Result<(UpVmFlags, Vec<String>), String> {
             rest.push(a.clone());
         }
     }
+    if sync_workspace && vm_mode != Some(true) {
+        return Err("--sync requires --vm".to_string());
+    }
     Ok((
         UpVmFlags {
             vm_mode,
             manifest_path,
             vcpus,
             memory_mib,
+            sync_workspace,
         },
         rest,
     ))
@@ -3272,6 +3280,21 @@ fn cli_up(args: &[String]) -> i32 {
                         "devcroft: credentials delivered (in clear to sandbox sessions): {}",
                         outcome.instance.meta.disclosed_credentials.join(", ")
                     );
+                }
+                if vm_flags.sync_workspace {
+                    match devcroft::vm::sync_project_into_vm(&manifest.sandbox.name) {
+                        Ok(summary) => println!(
+                            "devcroft: synced {} file(s) ({} bytes, skipped {} excluded/symlink entry(ies)) into VM '{}' (/workspace)",
+                            summary.files_synced,
+                            summary.bytes_synced,
+                            summary.skipped_entries,
+                            manifest.sandbox.name
+                        ),
+                        Err(e) => {
+                            eprintln!("devcroft up: {e}");
+                            return e.exit_code();
+                        }
+                    }
                 }
                 0
             }
@@ -4824,7 +4847,7 @@ fn resolve_runtime_project_arg(
 
 /// `devcroft runtime status | list | grant-native | grant-trusted-editor | export-disk`
 fn cli_runtime(args: &[String]) -> i32 {
-    const USAGE: &str = "devcroft runtime: usage: devcroft runtime <status|list|grant-native|grant-trusted-editor|install-local|sync-in|export-disk> [args...]";
+    const USAGE: &str = "devcroft runtime: usage: devcroft runtime <status|list|grant-native|grant-trusted-editor|install-local|sync-in|sync-out|export-disk> [args...]";
     let Some((sub, rest)) = args.split_first() else {
         eprintln!("{USAGE}");
         return 2;
@@ -5080,6 +5103,48 @@ fn cli_runtime(args: &[String]) -> i32 {
                 }
                 Err(e) => {
                     eprintln!("devcroft runtime sync-in: {e}");
+                    e.exit_code()
+                }
+            }
+        }
+        "sync-out" => {
+            const SUB_USAGE: &str = "devcroft runtime sync-out: usage: devcroft runtime sync-out [name] [--out <dir>] [--yes]";
+            let mut out_dir: Option<std::path::PathBuf> = None;
+            let mut yes = false;
+            let mut name_args: Vec<String> = Vec::new();
+            let mut it = rest.iter();
+            while let Some(a) = it.next() {
+                if a == "--out" {
+                    let Some(v) = it.next() else {
+                        eprintln!("{SUB_USAGE}");
+                        return 2;
+                    };
+                    out_dir = Some(std::path::PathBuf::from(v));
+                } else if let Some(v) = a.strip_prefix("--out=") {
+                    out_dir = Some(std::path::PathBuf::from(v));
+                } else if a == "--yes" || a == "-y" {
+                    yes = true;
+                } else if a.starts_with('-') {
+                    eprintln!("{SUB_USAGE}");
+                    return 2;
+                } else {
+                    name_args.push(a.clone());
+                }
+            }
+            let name = match resolve_name_arg(&name_args, SUB_USAGE, "runtime sync-out") {
+                Ok(n) => n,
+                Err(code) => return code,
+            };
+            match devcroft::vm::sync_project_from_vm(&name, out_dir.as_deref(), yes) {
+                Ok(summary) => {
+                    println!(
+                        "devcroft: synced out {} file(s) ({} bytes, skipped {} sentinel/symlink entry(ies)) from VM '{name}'",
+                        summary.files_synced, summary.bytes_synced, summary.skipped_entries
+                    );
+                    0
+                }
+                Err(e) => {
+                    eprintln!("devcroft runtime sync-out: {e}");
                     e.exit_code()
                 }
             }
@@ -5697,8 +5762,9 @@ fn provider_static_name(name: &str) -> &'static str {
 /// `devcroft why --host <domain> [name]` (policy spec's "Explainable
 /// decisions" requirement).
 fn cli_why(args: &[String]) -> i32 {
-    const USAGE: &str = "devcroft why: usage: devcroft why --path <p> --op <read|write|readwrite> [--provisioning] [name] | devcroft why --host <domain> [--provisioning] [name] | devcroft why --env <NAME> [name]";
+    const USAGE: &str = "devcroft why: usage: devcroft why [--vm] --path <p> --op <read|write|readwrite> [--provisioning] [name] | devcroft why [--vm] --host <domain> [--provisioning] [name] | devcroft why [--vm] --env <NAME> [name]";
     let mut provisioning = false;
+    let mut vm_mode = false;
     let mut path: Option<String> = None;
     let mut op: Option<String> = None;
     let mut host: Option<String> = None;
@@ -5707,6 +5773,7 @@ fn cli_why(args: &[String]) -> i32 {
     let mut it = args.iter();
     while let Some(a) = it.next() {
         match a.as_str() {
+            "--vm" => vm_mode = true,
             "--path" => path = it.next().cloned(),
             "--op" => op = it.next().cloned(),
             "--host" => host = it.next().cloned(),
@@ -5732,6 +5799,64 @@ fn cli_why(args: &[String]) -> i32 {
         Ok(m) => m,
         Err(code) => return code,
     };
+    if vm_mode
+        || devcroft::vm::load_vm_instance(&manifest.sandbox.name)
+            .ok()
+            .flatten()
+            .is_some()
+    {
+        if provisioning && env_name.is_some() {
+            eprintln!(
+                "devcroft why: --env answers for sessions only; the activation script starts from the same environment"
+            );
+            return 2;
+        }
+        let user_config = match devcroft::config::load_user_config() {
+            Ok(c) => c,
+            Err(e) => {
+                eprintln!("devcroft why: {e}");
+                return 2;
+            }
+        };
+        if let Some(host_val) = host {
+            let v = devcroft::vm::explain_vm_why_host(
+                manifest.network.default == devcroft::config::NetworkDefault::Allow,
+                &manifest.network.allow,
+                &manifest.provisioning.network.allow,
+                &user_config.brokers,
+                &host_val,
+                provisioning,
+            );
+            println!("{}", if v.allowed { "ALLOWED" } else { "DENIED" });
+            println!("{}", v.detail);
+            return 0;
+        }
+        if let Some(name_val) = env_name {
+            let v = devcroft::vm::explain_vm_why_env(
+                &manifest.network.allow,
+                &manifest.env.vars,
+                &manifest.env.forward,
+                &user_config.brokers,
+                &user_config.credentials,
+                &name_val,
+            );
+            println!("{}", if v.allowed { "ALLOWED" } else { "DENIED" });
+            println!("{}", v.detail);
+            return 0;
+        }
+        let (Some(path_val), Some(op_val)) = (path, op) else {
+            eprintln!("{USAGE}");
+            return 2;
+        };
+        if !matches!(op_val.as_str(), "read" | "write" | "readwrite") {
+            eprintln!("devcroft why: --op must be read, write, or readwrite");
+            return 2;
+        }
+        let v = devcroft::vm::explain_vm_why_path(&path_val, &op_val);
+        println!("{}", if v.allowed { "ALLOWED" } else { "DENIED" });
+        println!("{}", v.detail);
+        return 0;
+    }
     let (compiled, fidelity) = compile_with_provider_grants(&manifest);
     // An inverted verdict is worse than none: an agent acts on it. So an
     // incomplete policy gives no bare ALLOWED/DENIED, only why it cannot.

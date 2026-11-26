@@ -1079,28 +1079,19 @@ fn real_libkrun_vm_install_local_sync_and_ssh_e2e() {
         "{rstat_out}"
     );
 
-    // 2. Boot opt-in VM WITHOUT `--vm-manifest` (using default installed bundle).
-    let up = h.run_in(&proj, &["up", "--vm"], &[]);
+    // 2. Boot opt-in VM WITHOUT `--vm-manifest` and sync workspace in one command (`--sync`).
+    let up = h.run_in(&proj, &["up", "--vm", "--sync"], &[]);
     assert_eq!(
         up.status.code(),
         Some(0),
-        "up --vm failed without --vm-manifest\nstdout: {}\nstderr: {}",
+        "up --vm --sync failed without --vm-manifest\nstdout: {}\nstderr: {}",
         String::from_utf8_lossy(&up.stdout),
         String::from_utf8_lossy(&up.stderr)
     );
+    let up_out = String::from_utf8_lossy(&up.stdout);
+    assert!(up_out.contains("synced 2 file(s)"), "{up_out}");
 
-    // 3. Sync project workspace safely into `/workspace` (skips symlinks & `.git`).
-    let sync = h.run_in(&proj, &["runtime", "sync-in"], &[]);
-    assert_eq!(
-        sync.status.code(),
-        Some(0),
-        "sync-in failed\nstdout: {}\nstderr: {}",
-        String::from_utf8_lossy(&sync.stdout),
-        String::from_utf8_lossy(&sync.stderr)
-    );
-    let sync_out = String::from_utf8_lossy(&sync.stdout);
-    assert!(sync_out.contains("synced 2 file(s)"), "{sync_out}");
-
+    // 3. Re-sync is idempotent and skipped symlinks / `.git` stay absent in `/workspace`.
     let check_sync = h.run_in(
         &proj,
         &[
@@ -1187,8 +1178,131 @@ fn real_libkrun_vm_install_local_sync_and_ssh_e2e() {
         "expected forwarded HTTP fixture response from guest :8080, got: {response}"
     );
 
+    // 6. Guest edits & safe `sync-out`: write file + hostile symlink in guest, verify
+    //    `sync-out --out` transfers only the regular file and skips sentinels/symlinks,
+    //    `sync-out` without `--out`/`--yes` refuses exit 2, and `--yes` updates host project.
+    let mutate = h.run_in(
+        &proj,
+        &[
+            "exec",
+            "--",
+            "/bin/sh",
+            "-c",
+            "printf 'edited-by-agent\\n' > /workspace/src/from_guest.txt && ln -s /etc/passwd /workspace/evil_link",
+        ],
+        &[],
+    );
+    assert_eq!(mutate.status.code(), Some(0));
+
+    let export_dir = h.root.join("exported-workspace");
+    let sync_out_dir = h.run_in(
+        &proj,
+        &[
+            "runtime",
+            "sync-out",
+            "vmsyncproj",
+            "--out",
+            export_dir.to_str().unwrap(),
+        ],
+        &[],
+    );
+    assert_eq!(
+        sync_out_dir.status.code(),
+        Some(0),
+        "sync-out --out failed\nstdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&sync_out_dir.stdout),
+        String::from_utf8_lossy(&sync_out_dir.stderr)
+    );
+    assert_eq!(
+        fs::read_to_string(export_dir.join("src/from_guest.txt")).unwrap(),
+        "edited-by-agent\n"
+    );
+    assert!(!export_dir.join("evil_link").exists());
+    assert!(!export_dir.join("instance-id").exists());
+    assert!(!export_dir.join("allowed").exists());
+
+    let sync_out_no_yes = h.run_in(&proj, &["runtime", "sync-out", "vmsyncproj"], &[]);
+    assert_eq!(sync_out_no_yes.status.code(), Some(2));
+
+    let sync_out_yes = h.run_in(&proj, &["runtime", "sync-out", "vmsyncproj", "--yes"], &[]);
+    assert_eq!(
+        sync_out_yes.status.code(),
+        Some(0),
+        "stderr: {}",
+        String::from_utf8_lossy(&sync_out_yes.stderr)
+    );
+    assert_eq!(
+        fs::read_to_string(proj.join("src/from_guest.txt")).unwrap(),
+        "edited-by-agent\n"
+    );
+    assert!(!proj.join("evil_link").exists());
+
     let rm = h.run_in(&proj, &["rm", "--yes"], &[]);
     assert_eq!(rm.status.code(), Some(0));
     assert!(!h.home.join(".local/share/devcroft/vmsyncproj").exists());
     h.sandbox_to_cleanup = None;
+}
+
+#[test]
+fn vm_why_explains_egress_broker_env_and_no_host_mounts() {
+    let h = TempHarness::new("vm-why");
+    let proj = h.root.join("vmwhyproj");
+    fs::create_dir_all(&proj).unwrap();
+    fs::write(
+        proj.join("devcroft.toml"),
+        "[sandbox]\nname = \"vmwhyproj\"\n\n[env]\nprovider = \"flox\"\n\n[env.vars]\nPUBLIC_VAR = \"dev\"\n\n[network]\ndefault = \"deny\"\nallow = [\"api.anthropic.com\"]\n",
+    )
+    .unwrap();
+
+    let real_secret = "sk-ant-why-secret-value";
+    let user_cfg_dir = h.xdg_config.join("devcroft");
+    fs::create_dir_all(&user_cfg_dir).unwrap();
+    fs::write(
+        user_cfg_dir.join("config.toml"),
+        "[[credentials.broker]]\nhost = \"api.anthropic.com\"\nheader = \"x-api-key\"\nenv = \"ANTHROPIC_API_KEY\"\nendpoint_env = \"ANTHROPIC_BASE_URL\"\n",
+    )
+    .unwrap();
+
+    let allowed_host = h.run_in(
+        &proj,
+        &["why", "--vm", "--host", "api.anthropic.com"],
+        &[("ANTHROPIC_API_KEY", real_secret)],
+    );
+    assert_eq!(allowed_host.status.code(), Some(0));
+    let allowed_out = String::from_utf8_lossy(&allowed_host.stdout);
+    assert!(allowed_out.contains("ALLOWED"), "{allowed_out}");
+    assert!(allowed_out.contains("broker0"), "{allowed_out}");
+
+    let denied_host = h.run_in(&proj, &["why", "--vm", "--host", "example.com"], &[]);
+    assert_eq!(denied_host.status.code(), Some(0));
+    assert!(String::from_utf8_lossy(&denied_host.stdout).contains("DENIED"));
+
+    let private_host = h.run_in(&proj, &["why", "--vm", "--host", "127.0.0.1"], &[]);
+    assert_eq!(private_host.status.code(), Some(0));
+    assert!(String::from_utf8_lossy(&private_host.stdout).contains("DENIED"));
+
+    let env_broker = h.run_in(
+        &proj,
+        &["why", "--vm", "--env", "ANTHROPIC_API_KEY"],
+        &[("ANTHROPIC_API_KEY", real_secret)],
+    );
+    assert_eq!(env_broker.status.code(), Some(0));
+    let env_out = String::from_utf8_lossy(&env_broker.stdout);
+    assert!(env_out.contains("ALLOWED"), "{env_out}");
+    assert!(env_out.contains("placeholder"), "{env_out}");
+    assert!(!env_out.contains(real_secret), "leaked secret: {env_out}");
+
+    let env_denied = h.run_in(&proj, &["why", "--vm", "--env", "UNDECLARED_SECRET"], &[]);
+    assert_eq!(env_denied.status.code(), Some(0));
+    assert!(String::from_utf8_lossy(&env_denied.stdout).contains("DENIED"));
+
+    let path_denied = h.run_in(
+        &proj,
+        &["why", "--vm", "--path", "/etc/passwd", "--op", "read"],
+        &[],
+    );
+    assert_eq!(path_denied.status.code(), Some(0));
+    let path_out = String::from_utf8_lossy(&path_denied.stdout);
+    assert!(path_out.contains("DENIED"), "{path_out}");
+    assert!(path_out.contains("virtio-fs"), "{path_out}");
 }

@@ -1572,6 +1572,8 @@ pub fn current_grant_timestamp() -> String {
 
 const MAX_SYNC_FILES: usize = 1000;
 const MAX_SYNC_BYTES: u64 = 32 * 1024 * 1024;
+const MAX_SYNC_ARCHIVE_BYTES: usize = 40 * 1024 * 1024;
+const GUEST_SENTINEL_FILES: &[&str] = &["instance-id", "allowed"];
 const SYNC_EXCLUDED_DIRS: &[&str] = &[
     ".git",
     ".devcroft",
@@ -2148,6 +2150,515 @@ pub fn render_vm_policy_plan(
     Ok(out)
 }
 
+fn parse_tar_octal(field: &[u8]) -> Result<u64, VmCliError> {
+    let s = std::str::from_utf8(field).map_err(|_| {
+        VmCliError::layered(
+            ErrorLayer::Keeper,
+            "tar header contains non-UTF-8 octal field",
+        )
+    })?;
+    let trimmed = s.trim_matches(|c: char| c == '\0' || c == ' ');
+    if trimmed.is_empty() {
+        return Ok(0);
+    }
+    u64::from_str_radix(trimmed, 8).map_err(|e| {
+        VmCliError::layered(
+            ErrorLayer::Keeper,
+            format!("invalid tar octal field `{trimmed}`: {e}"),
+        )
+    })
+}
+
+fn parse_tar_cstr(field: &[u8]) -> Result<&str, VmCliError> {
+    let end = field.iter().position(|&b| b == 0).unwrap_or(field.len());
+    std::str::from_utf8(&field[..end])
+        .map_err(|_| VmCliError::layered(ErrorLayer::Keeper, "tar header path is not valid UTF-8"))
+}
+
+fn ensure_no_symlink_components(dest_root: &Path, rel: &Path) -> Result<(), VmCliError> {
+    let mut cur = dest_root.to_path_buf();
+    for comp in rel.components() {
+        cur.push(comp.as_os_str());
+        match fs::symlink_metadata(&cur) {
+            Ok(meta) if meta.file_type().is_symlink() => {
+                return Err(VmCliError::layered(
+                    ErrorLayer::Keeper,
+                    format!(
+                        "refusing to sync through pre-existing host symlink `{}`",
+                        cur.display()
+                    ),
+                ));
+            }
+            Ok(_) => {}
+            Err(e) if e.kind() == io::ErrorKind::NotFound => {}
+            Err(e) => {
+                return Err(VmCliError::StateIo(format!("{}: {e}", cur.display())));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Hardened POSIX `ustar` extractor for untrusted guest archives:
+/// verifies block alignment & octal checksums, strips special bits,
+/// skips symlinks/hardlinks/devices/guest boot sentinels, refuses path traversal
+/// or `.git`/`.devcroft` writes, and never follows host symlinks.
+pub fn extract_safe_ustar_archive(
+    archive: &[u8],
+    dest_root: &Path,
+) -> Result<VmSyncSummary, VmCliError> {
+    if !archive.len().is_multiple_of(512) {
+        return Err(VmCliError::layered(
+            ErrorLayer::Keeper,
+            format!(
+                "guest tar stream length {} is not 512-byte aligned",
+                archive.len()
+            ),
+        ));
+    }
+    fs::create_dir_all(dest_root).map_err(|e| VmCliError::StateIo(e.to_string()))?;
+    let canonical_dest =
+        fs::canonicalize(dest_root).map_err(|e| VmCliError::StateIo(e.to_string()))?;
+
+    let mut summary = VmSyncSummary {
+        files_synced: 0,
+        bytes_synced: 0,
+        skipped_entries: 0,
+    };
+    let mut offset = 0usize;
+
+    while offset + 512 <= archive.len() {
+        let block = &archive[offset..offset + 512];
+        offset += 512;
+        if block.iter().all(|&b| b == 0) {
+            break;
+        }
+
+        let expected_csum = parse_tar_octal(&block[148..156])?;
+        let sum: u32 = block
+            .iter()
+            .enumerate()
+            .map(|(i, &b)| {
+                if (148..156).contains(&i) {
+                    u32::from(b' ')
+                } else {
+                    u32::from(b)
+                }
+            })
+            .sum();
+        if u64::from(sum) != expected_csum {
+            return Err(VmCliError::layered(
+                ErrorLayer::Keeper,
+                format!(
+                    "guest tar header checksum mismatch at offset {}",
+                    offset - 512
+                ),
+            ));
+        }
+
+        let name = parse_tar_cstr(&block[0..100])?;
+        let prefix = if block[257..262] == *b"ustar" {
+            parse_tar_cstr(&block[345..500])?
+        } else {
+            ""
+        };
+        let mode = parse_tar_octal(&block[100..108])?;
+        let size = parse_tar_octal(&block[124..136])?;
+        let typeflag = block[156];
+
+        let size_usize = usize::try_from(size).map_err(|_| {
+            VmCliError::layered(ErrorLayer::Keeper, "guest tar entry size overflows usize")
+        })?;
+        let padded = size_usize
+            .div_ceil(512)
+            .checked_mul(512)
+            .ok_or_else(|| VmCliError::layered(ErrorLayer::Keeper, "guest tar padding overflow"))?;
+        let payload_end = offset
+            .checked_add(padded)
+            .ok_or_else(|| VmCliError::layered(ErrorLayer::Keeper, "guest tar offset overflow"))?;
+        if payload_end > archive.len() {
+            return Err(VmCliError::layered(
+                ErrorLayer::Keeper,
+                "guest tar payload extends beyond end of archive",
+            ));
+        }
+        let payload = &archive[offset..offset + size_usize];
+        offset = payload_end;
+
+        if matches!(typeflag, b'x' | b'g' | b'L' | b'K') {
+            summary.skipped_entries += 1;
+            continue;
+        }
+
+        let raw_path = if prefix.is_empty() {
+            name.to_owned()
+        } else {
+            format!("{prefix}/{name}")
+        };
+        if raw_path.contains('\0') || raw_path.starts_with('/') {
+            return Err(VmCliError::layered(
+                ErrorLayer::Keeper,
+                format!("unsafe guest sync path `{raw_path}`"),
+            ));
+        }
+        let mut trimmed = raw_path.as_str();
+        while let Some(rest) = trimmed.strip_prefix("./") {
+            trimmed = rest;
+        }
+        trimmed = trimmed.trim_end_matches('/');
+        if trimmed.is_empty() || trimmed == "." {
+            continue;
+        }
+
+        let rel_path = Path::new(trimmed);
+        let mut first_comp: Option<&str> = None;
+        let mut comp_count = 0usize;
+        for c in rel_path.components() {
+            match c {
+                Component::Normal(s) => {
+                    let s_str = s.to_str().ok_or_else(|| {
+                        VmCliError::layered(ErrorLayer::Keeper, "non-UTF-8 tar path component")
+                    })?;
+                    if first_comp.is_none() {
+                        first_comp = Some(s_str);
+                    }
+                    comp_count += 1;
+                }
+                Component::CurDir => {}
+                Component::ParentDir | Component::RootDir | Component::Prefix(_) => {
+                    return Err(VmCliError::layered(
+                        ErrorLayer::Keeper,
+                        format!("unsafe traversal in guest sync path `{raw_path}`"),
+                    ));
+                }
+            }
+        }
+        if let Some(first) = first_comp
+            && matches!(first, ".git" | ".devcroft")
+        {
+            return Err(VmCliError::layered(
+                ErrorLayer::Keeper,
+                format!("refusing guest write into protected directory `{raw_path}`"),
+            ));
+        }
+        if comp_count == 1
+            && let Some(first) = first_comp
+            && GUEST_SENTINEL_FILES.contains(&first)
+        {
+            summary.skipped_entries += 1;
+            continue;
+        }
+
+        if !(typeflag == b'0' || typeflag == 0 || typeflag == b'5') {
+            summary.skipped_entries += 1;
+            continue;
+        }
+
+        ensure_no_symlink_components(&canonical_dest, rel_path)?;
+        let target_path = canonical_dest.join(rel_path);
+
+        if typeflag == b'5' {
+            if let Ok(meta) = fs::symlink_metadata(&target_path)
+                && !meta.is_dir()
+            {
+                return Err(VmCliError::layered(
+                    ErrorLayer::Keeper,
+                    format!(
+                        "cannot overwrite non-directory `{}` with directory",
+                        target_path.display()
+                    ),
+                ));
+            }
+            fs::create_dir_all(&target_path).map_err(|e| VmCliError::StateIo(e.to_string()))?;
+            fs::set_permissions(&target_path, fs::Permissions::from_mode(0o755))
+                .map_err(|e| VmCliError::StateIo(e.to_string()))?;
+            continue;
+        }
+
+        if summary.files_synced >= MAX_SYNC_FILES {
+            return Err(VmCliError::layered(
+                ErrorLayer::Keeper,
+                format!("guest sync-out exceeds MAX_SYNC_FILES ({MAX_SYNC_FILES})"),
+            ));
+        }
+        if summary.bytes_synced.saturating_add(size) > MAX_SYNC_BYTES {
+            return Err(VmCliError::layered(
+                ErrorLayer::Keeper,
+                format!(
+                    "guest sync-out exceeds MAX_SYNC_BYTES ({} MiB)",
+                    MAX_SYNC_BYTES / (1024 * 1024)
+                ),
+            ));
+        }
+
+        if let Some(parent) = target_path.parent() {
+            fs::create_dir_all(parent).map_err(|e| VmCliError::StateIo(e.to_string()))?;
+        }
+        let safe_mode = if mode & 0o111 != 0 { 0o755 } else { 0o644 };
+        let mut out_file = OpenOptions::new()
+            .create(true)
+            .truncate(true)
+            .write(true)
+            .mode(safe_mode)
+            .open(&target_path)
+            .map_err(|e| VmCliError::StateIo(format!("{}: {e}", target_path.display())))?;
+        out_file
+            .write_all(payload)
+            .and_then(|_| out_file.sync_all())
+            .map_err(|e| VmCliError::StateIo(format!("{}: {e}", target_path.display())))?;
+        fs::set_permissions(&target_path, fs::Permissions::from_mode(safe_mode))
+            .map_err(|e| VmCliError::StateIo(format!("{}: {e}", target_path.display())))?;
+        summary.files_synced += 1;
+        summary.bytes_synced += size;
+    }
+
+    Ok(summary)
+}
+
+/// Pulls files safely from `/workspace` inside a running VM over the keeper
+/// transport (`tar -cf - -C /workspace .`). Requires either `--out <dir>` or
+/// explicit confirmation (`allow_overwrite_project = true`) before modifying
+/// the host project directory.
+pub fn sync_project_from_vm(
+    sandbox_name: &str,
+    out_dir: Option<&Path>,
+    allow_overwrite_project: bool,
+) -> Result<VmSyncSummary, VmCliError> {
+    let instance = load_vm_instance(sandbox_name)?.ok_or_else(|| {
+        VmCliError::layered(
+            ErrorLayer::Config,
+            format!("VM sandbox '{sandbox_name}' not found"),
+        )
+    })?;
+    if !instance
+        .state
+        .host_process
+        .as_ref()
+        .is_some_and(is_owned_helper_alive)
+    {
+        return Err(VmCliError::layered(
+            ErrorLayer::Keeper,
+            format!("VM sandbox '{sandbox_name}' is not running; run `devcroft up --vm` first"),
+        ));
+    }
+
+    let dest = match out_dir {
+        Some(p) => p,
+        None if allow_overwrite_project => &instance.meta.project_root,
+        None => {
+            return Err(VmCliError::layered(
+                ErrorLayer::Config,
+                "sync-out into project_root overwrites host files; pass `--out <dir>` or `--yes` to confirm",
+            ));
+        }
+    };
+
+    let client = VmKeeperClient::new(instance.keeper_socket(), Duration::from_secs(30));
+    let mut session = client
+        .open_session(SpawnRequest {
+            cmd: "/bin/tar".to_owned(),
+            args: vec![
+                "-cf".to_owned(),
+                "-".to_owned(),
+                "-C".to_owned(),
+                CANONICAL_GUEST_WORKSPACE.to_owned(),
+                ".".to_owned(),
+            ],
+            cwd: CANONICAL_GUEST_WORKSPACE.to_owned(),
+            env: BTreeMap::new(),
+            pty: None,
+        })
+        .map_err(|e| VmCliError::layered(e.layer(), e.to_string()))?;
+    session
+        .close_stdin()
+        .map_err(|e| VmCliError::layered(e.layer(), e.to_string()))?;
+
+    let mut archive = Vec::new();
+    let mut err_buf = Vec::new();
+    let exit = loop {
+        match session
+            .read_frame()
+            .map_err(|e| VmCliError::layered(e.layer(), e.to_string()))?
+        {
+            Frame::Stdout(b) => {
+                if archive.len().saturating_add(b.len()) > MAX_SYNC_ARCHIVE_BYTES {
+                    return Err(VmCliError::layered(
+                        ErrorLayer::Keeper,
+                        format!(
+                            "guest tar archive exceeded MAX_SYNC_ARCHIVE_BYTES ({} MiB)",
+                            MAX_SYNC_ARCHIVE_BYTES / (1024 * 1024)
+                        ),
+                    ));
+                }
+                archive.extend_from_slice(&b);
+            }
+            Frame::Stderr(b) if err_buf.len() < 4096 => {
+                err_buf.extend_from_slice(&b[..b.len().min(4096 - err_buf.len())]);
+            }
+            Frame::Stderr(_) => {}
+            Frame::Exit(st) => break st,
+            _ => {}
+        }
+    };
+    if exit.code != Some(0) {
+        let stderr = String::from_utf8_lossy(&err_buf);
+        return Err(VmCliError::layered(
+            ErrorLayer::Keeper,
+            format!("guest tar creation failed ({exit:?}): {stderr}"),
+        ));
+    }
+    extract_safe_ustar_archive(&archive, dest)
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VmWhyVerdict {
+    pub allowed: bool,
+    pub detail: String,
+}
+
+pub fn explain_vm_why_host(
+    network_default_allow: bool,
+    egress_allow: &[String],
+    provisioning_allow: &[String],
+    brokers: &[BrokerDecl],
+    host: &str,
+    provisioning: bool,
+) -> VmWhyVerdict {
+    if network_default_allow {
+        return VmWhyVerdict {
+            allowed: false,
+            detail: "VM mode refuses `network.default = \"allow\"`; declare explicit hosts under `network.allow`".to_owned(),
+        };
+    }
+    let normalized = host.trim().trim_end_matches('.');
+    if normalized.eq_ignore_ascii_case("localhost")
+        || normalized.to_ascii_lowercase().ends_with(".localhost")
+    {
+        return VmWhyVerdict {
+            allowed: false,
+            detail: "denied: localhost destinations are refused by VM egress policy".to_owned(),
+        };
+    }
+    if let Ok(ip) = normalized.parse::<IpAddr>()
+        && is_forbidden_private_or_local_ip(ip)
+    {
+        return VmWhyVerdict {
+            allowed: false,
+            detail: format!("denied: private or local IP `{ip}` is refused by VM egress policy"),
+        };
+    }
+    let active_allow = if provisioning {
+        provisioning_allow
+    } else {
+        egress_allow
+    };
+    let filter = nono::HostFilter::new_strict(active_allow);
+    if !filter.check_host(host, &[]).is_allowed() {
+        return VmWhyVerdict {
+            allowed: false,
+            detail: if provisioning {
+                "denied: not in [provisioning.network].allow".to_owned()
+            } else {
+                "denied: not in VM [network].allow".to_owned()
+            },
+        };
+    }
+    if !provisioning
+        && let Some((idx, _)) = brokers
+            .iter()
+            .enumerate()
+            .find(|(_, b)| b.host.eq_ignore_ascii_case(normalized))
+    {
+        let prefix = crate::proxy::broker_prefix(idx);
+        let endpoint = crate::proxy::broker_endpoint(VM_GUEST_EGRESS_PROXY_PORT, &prefix);
+        return VmWhyVerdict {
+            allowed: true,
+            detail: format!(
+                "allowed via host egress proxy broker route {endpoint} (raw CONNECT refused; credential injected by host proxy)"
+            ),
+        };
+    }
+    VmWhyVerdict {
+        allowed: true,
+        detail: format!(
+            "allowed via host egress proxy (guest 127.0.0.1:{VM_GUEST_EGRESS_PROXY_PORT} -> vsock:1027 -> nono-proxy)"
+        ),
+    }
+}
+
+pub fn explain_vm_why_env(
+    egress_allow: &[String],
+    env_vars: &BTreeMap<String, String>,
+    env_forward: &[String],
+    brokers: &[BrokerDecl],
+    direct_credentials: &[String],
+    name: &str,
+) -> VmWhyVerdict {
+    for (idx, b) in brokers.iter().enumerate() {
+        if b.env == name {
+            return VmWhyVerdict {
+                allowed: true,
+                detail: format!(
+                    "injected per session as a placeholder by [[credentials.broker]] for {} (real secret stays on host proxy)",
+                    b.host
+                ),
+            };
+        }
+        if b.endpoint_env == name {
+            let prefix = crate::proxy::broker_prefix(idx);
+            let endpoint = crate::proxy::broker_endpoint(VM_GUEST_EGRESS_PROXY_PORT, &prefix);
+            return VmWhyVerdict {
+                allowed: true,
+                detail: format!("set per session to {endpoint} by [[credentials.broker]]"),
+            };
+        }
+    }
+    if !egress_allow.is_empty()
+        && matches!(
+            name,
+            "HTTP_PROXY" | "http_proxy" | "HTTPS_PROXY" | "https_proxy" | "NO_PROXY" | "no_proxy"
+        )
+    {
+        return VmWhyVerdict {
+            allowed: true,
+            detail: format!(
+                "set per session for guest loopback egress proxy relay (127.0.0.1:{VM_GUEST_EGRESS_PROXY_PORT})"
+            ),
+        };
+    }
+    if direct_credentials.iter().any(|c| c == name) {
+        return VmWhyVerdict {
+            allowed: true,
+            detail: "delivered in clear per session from user `[credentials] env`".to_owned(),
+        };
+    }
+    if env_forward.iter().any(|f| f == name) {
+        return VmWhyVerdict {
+            allowed: true,
+            detail: "forwarded per session from host shell via manifest `[env] forward`".to_owned(),
+        };
+    }
+    if env_vars.contains_key(name) {
+        return VmWhyVerdict {
+            allowed: true,
+            detail: "set per session from manifest `[env.vars]` literal".to_owned(),
+        };
+    }
+    VmWhyVerdict {
+        allowed: false,
+        detail: "absent: VM sessions do not inherit ambient host environment variables".to_owned(),
+    }
+}
+
+pub fn explain_vm_why_path(path: &str, op: &str) -> VmWhyVerdict {
+    VmWhyVerdict {
+        allowed: false,
+        detail: format!(
+            "denied ({op}): VM mode mounts no host filesystem paths (`virtio-fs` disabled), so `{path}` is unreachable; only guest /workspace, /home/devcroft, and /tmp are writable (/bin is read-only). Transfer project files with `devcroft runtime sync-in` / `sync-out`"
+        ),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2211,6 +2722,71 @@ mod tests {
         assert!(!text.contains(".git/config"));
         assert!(!text.contains("target/bin"));
         assert!(!text.contains("escape-link"));
+
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn extract_safe_ustar_archive_strips_special_bits_and_rejects_traversal_and_symlinks() {
+        let base = std::env::temp_dir().join(format!("dc-vm-untar-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&base);
+        let src = base.join("src");
+        let dst = base.join("dst");
+        fs::create_dir_all(src.join("nested")).unwrap();
+        fs::write(src.join("nested/run.sh"), b"#!/bin/sh\necho ok\n").unwrap();
+        fs::write(src.join("instance-id"), b"sentinel\n").unwrap();
+        fs::write(src.join("allowed"), b"sentinel\n").unwrap();
+        let (good_archive, _) = encode_ustar_archive(&src).unwrap();
+
+        let extracted = extract_safe_ustar_archive(&good_archive, &dst).unwrap();
+        assert_eq!(extracted.files_synced, 1);
+        assert_eq!(extracted.skipped_entries, 2);
+        assert!(dst.join("nested/run.sh").is_file());
+        assert!(!dst.join("instance-id").exists());
+        assert!(!dst.join("allowed").exists());
+
+        // Host pre-existing symlink refusal.
+        std::os::unix::fs::symlink("/etc", dst.join("host_link")).unwrap();
+        let mut link_target_tar = Vec::new();
+        write_ustar_header(&mut link_target_tar, "host_link/pwn", 0o644, 3, b'0').unwrap();
+        link_target_tar.extend_from_slice(b"abc");
+        link_target_tar.resize(512 + 512 + 1024, 0);
+        let err = extract_safe_ustar_archive(&link_target_tar, &dst).unwrap_err();
+        assert!(err.to_string().contains("host symlink"), "{err}");
+
+        // Rejects `..` traversal and `.git/hooks` even with valid checksums.
+        let mut trav_tar = Vec::new();
+        write_ustar_header(&mut trav_tar, "../escape.txt", 0o644, 3, b'0').unwrap();
+        trav_tar.extend_from_slice(b"bad");
+        trav_tar.resize(512 + 512 + 1024, 0);
+        assert!(extract_safe_ustar_archive(&trav_tar, &dst).is_err());
+
+        let mut git_tar = Vec::new();
+        write_ustar_header(&mut git_tar, ".git/hooks/post-checkout", 0o755, 2, b'0').unwrap();
+        git_tar.extend_from_slice(b"hi");
+        git_tar.resize(512 + 512 + 1024, 0);
+        assert!(extract_safe_ustar_archive(&git_tar, &dst).is_err());
+
+        // Strips setuid/setgid bits (`0o4755` -> `0o755`) and skips guest symlink entries (`typeflag b'2'`).
+        let dst2 = base.join("dst2");
+        let mut mixed_tar = Vec::new();
+        write_ustar_header(&mut mixed_tar, "tool", 0o4755, 4, b'0').unwrap();
+        mixed_tar.extend_from_slice(b"elf!");
+        mixed_tar.resize(512 + 512, 0);
+        write_ustar_header(&mut mixed_tar, "bad_sym", 0o777, 0, b'2').unwrap();
+        mixed_tar.resize(mixed_tar.len() + 1024, 0);
+        let summary2 = extract_safe_ustar_archive(&mixed_tar, &dst2).unwrap();
+        assert_eq!(summary2.files_synced, 1);
+        assert_eq!(summary2.skipped_entries, 1);
+        assert!(!dst2.join("bad_sym").exists());
+        assert_eq!(
+            fs::metadata(dst2.join("tool"))
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o7777,
+            0o755
+        );
 
         let _ = fs::remove_dir_all(&base);
     }
