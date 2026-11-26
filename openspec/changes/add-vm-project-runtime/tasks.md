@@ -18,12 +18,12 @@
 
 ## 3. Enforce authority and phase transitions
 
-- [ ] 3.1 Compile project requests against user-owned grants, the exploration profile and runtime limits; render complete authority with origins and no secret values.
-- [ ] 3.2 Connect phase-scoped host proxy channels without NIC/TSI or generic host-connect, deriving instance identity from the channel; add private-address refusal beyond `HostFilter`, report refused destinations, and test DNS/private-address and channel bypass cases.
-- [ ] 3.3 End setup on the host: switch channel policy, close streams and reboot before runtime; test an intentionally lingering background connection and process.
-- [ ] 3.4 Implement scoped post-boot direct credential delivery, stated per instance and dropped on refresh, and refuse shared publication of credential-bearing session state.
-- [ ] 3.5 Enforce finite disk/log/transport budgets and qualify host-helper resource controls per platform.
-- [ ] 3.6 Implement setup windows with an init-owned administrative session reached over control; test that keeper sessions cannot elevate.
+- [x] 3.1 Compile project requests against user-owned grants, the exploration profile and runtime limits; render complete authority with origins and no secret values. Evidence: `src/vm/authority.rs` (`compile_effective_authority`, `ExplorationProfileV1`, `CompiledVmAuthority::render_plan`).
+- [x] 3.2 Connect phase-scoped host proxy channels without NIC/TSI or generic host-connect, deriving instance identity from the channel; add private-address refusal beyond `HostFilter`, report refused destinations, and test DNS/private-address and channel bypass cases. Evidence: `src/vm/proxy_channel.rs` (`HostPhaseProxy`, `evaluate_egress`, `is_forbidden_private_or_local_ip`, `refused_destinations`).
+- [x] 3.3 End setup on the host: switch channel policy, close streams and reboot before runtime; test an intentionally lingering background connection and process. Evidence: `src/vm/proxy_channel.rs` (`end_setup_phase`, `admit_runtime_after_reboot`).
+- [x] 3.4 Implement scoped post-boot direct credential delivery, stated per instance and dropped on refresh, and refuse shared publication of credential-bearing session state. Evidence: `src/vm/credentials.rs` (`deliver_post_boot_credentials`, `reset_credentials_for_new_instance_or_refresh`, `guard_shared_base_promotion`).
+- [x] 3.5 Enforce finite disk/log/transport budgets and qualify host-helper resource controls per platform. Evidence: `src/vm/authority.rs` (`qualify_host_resource_controls`, `validate_resource_budgets`).
+- [x] 3.6 Implement setup windows with an init-owned administrative session reached over control; test that keeper sessions cannot elevate. Evidence: `src/vm/proxy_channel.rs` (`open_setup_window`, `close_setup_window`, `authorize_admin_operation`).
 
 ## 4. Complete lifecycle and migration
 

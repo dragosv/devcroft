@@ -1,4 +1,5 @@
-//! Phase 1 and Phase 2 host-side VM primitives for `add-vm-project-runtime`.
+//! Phase 1, Phase 2, and Phase 3 host-side VM primitives for
+//! `add-vm-project-runtime`.
 //!
 //! Implemented incrementally following the owner decision on
 //! `evaluate-microvm-runtimes` task 4.5 (`docs/decisions.md`, 2026-11-26;
@@ -7,23 +8,37 @@
 //! behavior and crates.io publishability while the separate helper and artifact
 //! channel is built out.
 
+pub mod authority;
 pub mod contract;
+pub mod credentials;
 pub mod editor;
 pub mod grants;
 pub mod guest_init;
 pub mod launcher;
 pub mod manifest;
 pub mod preparation;
+pub mod proxy_channel;
 pub mod publication;
 pub mod qualification;
 pub(crate) mod sha256;
 pub mod ssh;
 pub mod transport;
 
+pub use authority::{
+    AuthorityError, AuthorityOrigin, CompiledVmAuthority, EffectiveEgressGrant,
+    ExplorationProfileV1, HostResourceEnforcement, HostResourceQualification,
+    ProjectAuthorityRequest, UserAuthorityGrants, compile_effective_authority,
+    qualify_host_resource_controls, validate_resource_budgets,
+};
 pub use contract::{
     ComponentHealth, ContractError, DiskAttachment, ErrorLayer, GuestPhase, GuestTarget,
     HandshakeV1, HostChannels, HostProcessIdentity, LaunchRecordV1, ResourceBudgets, RuntimeKind,
     RuntimeSelectionSource, StopClassification, VmAdapter, VmHealthBreakdown, VmStateRecordV1,
+};
+pub use credentials::{
+    CredentialError, DirectCredential, DirectCredentialDelivery, InstanceCredentialState,
+    deliver_post_boot_credentials, guard_shared_base_promotion,
+    reset_credentials_for_new_instance_or_refresh,
 };
 pub use editor::{
     EditorClientKind, EditorTrustClass, VmSshConfigOutcome, classify_editor,
@@ -50,6 +65,10 @@ pub use preparation::{
     CANONICAL_GUEST_WORKSPACE, CapturedLinuxProfileV1, HashedInputFile, InputSetPolicy,
     PreparationError, PreparationJobSpecV1, RecipeIdentity, collect_recipe_identity,
     requalify_provider_for_linux,
+};
+pub use proxy_channel::{
+    AdminChannelOrigin, HostPhaseProxy, ProxyChannelError, RefusedDestination,
+    SetupRevocationReceipt, SetupWindowStatus, is_forbidden_private_or_local_ip,
 };
 pub use publication::{
     ArtifactCacheStore, CrossProjectEligibility, GuestOutputEnvelopeV1, PublicationError,
