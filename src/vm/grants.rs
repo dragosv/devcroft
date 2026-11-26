@@ -47,7 +47,8 @@ pub enum GrantedRuntime {
 #[serde(deny_unknown_fields)]
 pub struct RuntimeGrant {
     pub project_root: PathBuf,
-    pub runtime: GrantedRuntime,
+    #[serde(default)]
+    pub runtime: Option<GrantedRuntime>,
     #[serde(default)]
     pub trusted_editor: bool,
     pub granted_at: String,
@@ -160,7 +161,7 @@ impl RuntimeGrantStore {
 
     pub fn has_native_grant(&self, project: &ProjectIdentity) -> bool {
         self.grants.iter().any(|g| {
-            g.runtime == GrantedRuntime::Native
+            g.runtime == Some(GrantedRuntime::Native)
                 && ProjectIdentity::from_root(&g.project_root).is_ok_and(|id| id == *project)
         })
     }
@@ -178,14 +179,38 @@ impl RuntimeGrantStore {
             .iter_mut()
             .find(|g| ProjectIdentity::from_root(&g.project_root).is_ok_and(|id| id == *project))
         {
-            existing.runtime = GrantedRuntime::Native;
+            existing.runtime = Some(GrantedRuntime::Native);
             existing.granted_at = granted_at.into();
             return;
         }
         self.grants.push(RuntimeGrant {
             project_root: project.as_path().to_path_buf(),
-            runtime: GrantedRuntime::Native,
+            runtime: Some(GrantedRuntime::Native),
             trusted_editor: false,
+            granted_at: granted_at.into(),
+        });
+    }
+
+    /// Grant trusted-editor access (e.g. VS Code Remote-SSH) without escalating
+    /// runtime execution to native.
+    pub fn grant_trusted_editor(
+        &mut self,
+        project: &ProjectIdentity,
+        granted_at: impl Into<String>,
+    ) {
+        if let Some(existing) = self
+            .grants
+            .iter_mut()
+            .find(|g| ProjectIdentity::from_root(&g.project_root).is_ok_and(|id| id == *project))
+        {
+            existing.trusted_editor = true;
+            existing.granted_at = granted_at.into();
+            return;
+        }
+        self.grants.push(RuntimeGrant {
+            project_root: project.as_path().to_path_buf(),
+            runtime: None,
+            trusted_editor: true,
             granted_at: granted_at.into(),
         });
     }
@@ -619,5 +644,34 @@ mod tests {
         let reloaded = RuntimeGrantStore::load_from(&file).unwrap();
         assert_eq!(reloaded, store);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn granting_trusted_editor_does_not_grant_native_execution() {
+        let project = pid("/work/trusted-editor-only");
+        let mut store = RuntimeGrantStore::default();
+        store.grant_trusted_editor(&project, "2026-11-26T08:50:00Z");
+
+        assert!(store.has_trusted_editor_grant(&project));
+        assert!(!store.has_native_grant(&project));
+
+        let decision = resolve_runtime(&RuntimeRequest {
+            project: &project,
+            provider: "nix",
+            existing_instance: None,
+            explicit_vm_opt_in: false,
+            policy_mode: RuntimePolicyMode::RequireNativeGrant,
+            grants: &store,
+            host: HostPlatform::MacosArm64,
+            stdin_is_terminal: false,
+        })
+        .unwrap();
+        assert_eq!(
+            decision.runtime,
+            RuntimeKind::Vm {
+                target: GuestTarget::LinuxArm64,
+                adapter: VmAdapter::Libkrun,
+            }
+        );
     }
 }

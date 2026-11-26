@@ -20,6 +20,7 @@ use std::collections::BTreeMap;
 use std::fmt;
 use std::io::{self, Read, Write};
 use std::os::unix::net::UnixStream;
+use std::path::Path;
 use std::sync::mpsc;
 use std::thread;
 
@@ -80,6 +81,20 @@ pub fn exec(sandbox_name: &str, req: &ExecRequest) -> Result<i32, ExecError> {
         pty: None,
     };
     let stream = connect_and_spawn(sandbox_name, &spawn_req)?;
+    stream_session(stream, false)
+}
+
+/// Runs `req` directly against an already-verified keeper endpoint socket
+/// (used by VM transport without consulting native sandbox `StatePaths`).
+pub fn exec_on_socket(socket_path: &Path, req: &ExecRequest) -> Result<i32, ExecError> {
+    let spawn_req = SpawnRequest {
+        cmd: req.cmd.clone(),
+        args: req.args.clone(),
+        cwd: req.cwd.clone(),
+        env: BTreeMap::new(),
+        pty: None,
+    };
+    let stream = connect_and_spawn_socket(socket_path, &spawn_req)?;
     stream_session(stream, false)
 }
 
@@ -179,8 +194,16 @@ fn connect_and_spawn(
         Health::Healthy(_) => {}
         Health::Stale(_) | Health::None => return Err(ExecError::NotRunning),
     }
+    connect_and_spawn_socket(&paths.socket, spawn_req)
+}
 
-    let mut stream = UnixStream::connect(&paths.socket).map_err(ExecError::Connect)?;
+/// Connects directly to `socket_path` and sends `spawn_req`, returning the
+/// stream positioned right after `SpawnOk`.
+pub fn connect_and_spawn_socket(
+    socket_path: &Path,
+    spawn_req: &SpawnRequest,
+) -> Result<UnixStream, ExecError> {
+    let mut stream = UnixStream::connect(socket_path).map_err(ExecError::Connect)?;
     protocol::write_frame(&mut stream, &Frame::Spawn(spawn_req.clone()))
         .map_err(ExecError::Protocol)?;
 
