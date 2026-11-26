@@ -96,6 +96,21 @@ against dash, the same on macOS arm64 and Linux aarch64:
 | `$!`; `wait PID`; `kill` with no signal, `kill -0` | no |
 | startup, median, release | Linux 0.86 ms (a closure's bash 0.76, dash 0.17); macOS 5.5 ms (6.0, 1.8) |
 
+## Temporary files and devenv
+
+On macOS, standard sandboxes have a short, private temp directory available
+through `TMPDIR`, `TMP` and `TEMP`. A writable directory supplied by the
+project can override these variables. The redirect library also maps literal
+`/tmp` and `/private/tmp` paths that the sandbox has no separate grant for.
+A process without the library can still use `TMPDIR`. `down` empties the
+private temp directory, and `rm` removes it along with the sandbox's home.
+
+On macOS devenv publishes its per-sandbox directories in `DEVENV_DOTFILE`
+and `DEVENV_RUNTIME`. devenv's default state directory is under the sandbox's
+`HOME` and persists across restarts. Existing data stays in the checkout's
+`.devenv/state`. Scripts that use the checkout's `.devenv/run` should switch
+to `$DEVENV_DOTFILE/run` or `$DEVENV_RUNTIME`.
+
 ## Native mode
 
 One provider runs on the host's shell and userland on purpose: swift, whose

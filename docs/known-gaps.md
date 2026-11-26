@@ -530,11 +530,11 @@ initialised before has your name as its role, so a client that does not say
 name, or initialise the data again. Expected from how postgres picks its
 default role, not measured.
 
-## A sandbox on macOS runs under your own name and uid
+## macOS keeps the host uid
 
-Linux gives a sandbox a user of its own inside, through a user namespace. macOS
-maps no ids, so there `id -un` is the host user's name, `[identity] user` has
-no effect, and `up` says so once.
+A process with devcroft's redirect library sees the sandbox's name, home and
+shell through the passwd API. On macOS the kernel still uses the invoking
+user's uid and gid. Processes without the library use the host's user database.
 
 ## devcroft's runtime is uutils, not GNU, and has no `awk`, `tar`, `grep`, `sed` or `find`
 
@@ -652,32 +652,25 @@ The consequence: Antigravity does not run in a devcroft sandbox on macOS.
 What would change that is a flag in `agy` that fixes its language server's
 ports. None exists in 1.4.1 or 1.5.6.
 
-## A sandbox on macOS had no temporary directory at all — fixed
+## MariaDB's installer cannot look up the host name in a macOS sandbox
 
-Measured with a probe inside a live sandbox: neither `/tmp` nor
-`/private/tmp` was readable or writable. Not a spelling problem — which
-is what it looked like while it was filed under the entry below, since
-`/tmp` is a symlink there — an absent grant. devcroft's baseline
-constants contained no temp directory on either platform, and on macOS
-nothing else supplied one.
+`mariadb-install-db` stops: `Neither host '<name>.local' nor 'localhost' could
+be looked up`, from its `resolveip`. With `--force` it installs, and the
+server and a client run (measured 2026-11-26, MariaDB 11.4.12 from nixpkgs).
+Not yet attributed.
 
-It broke four unrelated things at once, which is why it took four
-sightings to name: devenv's generated `enterShell` preamble
-(`mkdir -p /tmp/devenv-…`), `process-compose`'s default log path (which
-it treats as fatal), a devenv postgres service whose socket directory
-lives under it, and `mysql_install_db` in devbox's mysql plugin.
+## Literal temp paths on macOS depend on the redirect library
 
-Fixed by granting `/tmp` read+write in the baseline. Both spellings work
-from that one grant, because the backend emits a rule for each when they
-differ — the fix below is what makes granting the lexical spelling
-sufficient.
+macOS sandboxes get a private temp directory. Use `TMPDIR` for a path that
+also works in Apple-signed and hardened executables. Calls outside the
+library's coverage are refused when they name the host's temp directory.
+A manifest that needs to share the host's temp directory can add `/tmp`
+to `[filesystem].allow`. The policy still protects the private temp
+directories managed by devcroft.
 
-**What it admits, stated rather than glossed:** `/tmp` is shared with the
-host and with every other sandbox, so this is not isolated scratch space.
-A per-sandbox directory with `TMPDIR` pointed at it would be better and
-does not work today: devenv computes `/tmp/devenv-<hash>` from the
-project path at evaluation time and ignores `TMPDIR`. Narrowing this
-belongs to `own-policy-baseline` and needs the providers to cooperate.
+A devenv script that hardcodes `.devenv/run` should use `$DEVENV_RUNTIME`
+or `$DEVENV_DOTFILE/run` on macOS. The latter points at the private runtime
+for that sandbox. See [base-runtime.md](base-runtime.md#temporary-files-and-devenv).
 
 ## PostgreSQL cannot start in a sandbox on macOS — cause isolated, one rule away
 

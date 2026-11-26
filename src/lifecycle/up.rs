@@ -321,6 +321,9 @@ fn up_locked(
         keeper_exe().is_ok_and(|exe| matches!(crate::fleet::netns::probe(&exe), Ok(true)))
     })?;
 
+    let previous_local_temp = previous_meta
+        .as_ref()
+        .is_some_and(|meta| meta.local_temp.is_some());
     let outcome = if opts.recreate {
         // `terminate_and_wait` reads and identity-verifies each pidfile
         // itself (`is_same_process` — a resurrected unrelated process
@@ -383,8 +386,20 @@ fn up_locked(
     // confined to. This step is identical for both tiers — the two-phase
     // execution model (CLAUDE.md) is backend-generic, not just
     // process-tier.
+    let local_temp = (cfg!(target_os = "macos") && provider.native().is_none())
+        .then(|| crate::runtime::local_temp::path(&paths.root));
+    if local_temp.is_some() && !previous_local_temp {
+        eprintln!(
+            "devcroft: macOS uses private temp by default; add /tmp to [filesystem].allow to share the host's /tmp"
+        );
+    }
+    let home = crate::services::artifact_dir(project_root, &manifest.sandbox.name).join("home");
     let mut resolution = provider
-        .resolve_for_up(project_root, opts.skip_hooks)
+        .resolve_for_up(
+            project_root,
+            opts.skip_hooks,
+            local_temp.as_deref().map(|temp| (temp, home.as_path())),
+        )
         .map_err(UpError::Provider)?;
 
     // `network.services` names services the environment must declare, and
@@ -624,6 +639,9 @@ fn up_locked(
             // Computed by `up_process` once the view is decided.
             base_runtime: None,
             runtime_generation: Some(crate::runtime::GENERATION),
+            local_temp: local_temp
+                .as_ref()
+                .map(|p| p.to_string_lossy().into_owned()),
             host_shell_grants: Vec::new(),
         },
     )?;
@@ -862,6 +880,13 @@ fn up_process(
         .with_keeper_exe_grant(exe.to_string_lossy().into_owned())
         .with_provider_grants(provider.static_name(), provider_grants)
         .with_trust_store(trust_store);
+    let temp = (provider.native().is_none())
+        .then(|| crate::runtime::local_temp::start(&paths.root))
+        .transpose()?;
+    let compiled = match &temp {
+        Some(path) if cfg!(target_os = "macos") => compiled.with_local_temp(path),
+        _ => compiled,
+    };
     let compiled = match tools {
         Some((origin, record)) => compiled.with_tools_grants(origin, &record.grants),
         None => compiled,
@@ -1092,7 +1117,10 @@ fn up_process(
 
     // Who the sandbox's user is, in its view (`fleet::mount::Identity`):
     // only where there is a view, and only for the paths no grant covers.
-    let sandbox_identity = crate::identity::SandboxIdentity::shared(&manifest.identity.user);
+    let mut sandbox_identity = crate::identity::SandboxIdentity::shared(&manifest.identity.user);
+    if redirect_lib.is_some() && temp.is_some() {
+        sandbox_identity.user.clone_from(&manifest.identity.user);
+    }
     let compiled = compiled.with_sandbox_identity(sandbox_identity.clone());
     let identity = (cfg!(target_os = "linux") && mount_supported).then(|| {
         crate::fleet::mount::Identity::new(
@@ -1104,7 +1132,12 @@ fn up_process(
             host_name(),
         )
     });
-    if !cfg!(target_os = "linux") {
+    if redirect_lib.is_some() && temp.is_some() {
+        eprintln!(
+            "devcroft: macOS presents the cooperative user name {:?} to processes with the redirect library; kernel uid {} is the host user's",
+            sandbox_identity.user, sandbox_identity.uid,
+        );
+    } else if !cfg!(target_os = "linux") {
         eprintln!(
             "devcroft: this sandbox runs as you, {} (uid {}): this platform maps no ids, so \
              the name {:?} is not available inside",
@@ -1418,6 +1451,16 @@ fn up_process(
         );
     }
     apply_manifest_env(manifest, &mut env);
+    if let Some(temp) = &temp {
+        apply_temp_env(
+            &mut env,
+            &mut unset,
+            temp,
+            &compiled,
+            &mount_grants,
+            project_root,
+        );
+    }
     // The `PATH` computed above from these same steps, with the shell's and
     // the runtime's directories and without the unreachable host tail
     // (`sandbox_path`). One value, so the record cannot disagree with it.
@@ -1458,14 +1501,30 @@ fn up_process(
         }
     }
     // Last, so neither the environment nor `[env.vars]` can name another.
-    use crate::runtime::redirect::{KEEPER_LIB_VAR, KEEPER_NS_VAR};
-    for key in [KEEPER_LIB_VAR, KEEPER_NS_VAR] {
+    use crate::runtime::redirect::{
+        KEEPER_LIB_VAR, KEEPER_NS_VAR, KEEPER_TEMP_GRANTS, KEEPER_TEMP_VAR, KEEPER_USER_VAR,
+    };
+    for key in [
+        KEEPER_LIB_VAR,
+        KEEPER_NS_VAR,
+        KEEPER_TEMP_VAR,
+        KEEPER_TEMP_GRANTS,
+        KEEPER_USER_VAR,
+    ] {
         env.remove(key);
     }
     if let Some(lib) = &redirect_lib {
         let ns = artifact_dir.join(crate::runtime::namespace::DIR);
         for (key, path) in [(KEEPER_LIB_VAR, lib), (KEEPER_NS_VAR, &ns)] {
             env.insert(key.to_owned(), path.to_string_lossy().into_owned());
+        }
+        if let Some(temp) = &compiled.local_temp {
+            env.insert(KEEPER_TEMP_VAR.to_owned(), temp.clone());
+            env.insert(
+                KEEPER_TEMP_GRANTS.to_owned(),
+                crate::runtime::redirect::temp_grants(&mount_grants),
+            );
+            env.insert(KEEPER_USER_VAR.to_owned(), manifest.identity.user.clone());
         }
     }
     // The user's credentials, from this shell (checked present above). Their
@@ -1598,7 +1657,7 @@ fn up_process(
     // under the provisioning policy (`sandbox-provisioning` P2): its own
     // network allowlist, behind its own proxy, inheriting nothing from the
     // runtime's. The keeper then adopts what it exported.
-    let provisioned = match keeper_hooks
+    let mut provisioned = match keeper_hooks
         .iter()
         .position(|(name, _)| *name == "activation")
     {
@@ -1641,7 +1700,30 @@ fn up_process(
         meta.post_create_pending = post_create_handed;
         state::write_meta(&paths.meta, &meta)?;
     }
-    if let Some(overlay) = &provisioned {
+    if let Some(overlay) = &mut provisioned {
+        if let Some(temp) = &temp {
+            // The activation hook may have created and exported a project
+            // directory. Validate the environment it actually leaves.
+            let mut effective = env.clone();
+            for key in &overlay.unset {
+                effective.remove(key);
+            }
+            effective.extend(overlay.set.clone());
+            apply_temp_env(
+                &mut effective,
+                &mut overlay.unset,
+                temp,
+                &compiled,
+                &mount_grants,
+                project_root,
+            );
+            overlay.set.extend(["TMPDIR", "TMP", "TEMP"].map(|key| {
+                (
+                    key.to_owned(),
+                    effective.remove(key).expect("temp variable"),
+                )
+            }));
+        }
         warn_unreachable_exported_path(
             overlay,
             env.get("PATH").map(String::as_str),
@@ -1742,6 +1824,65 @@ fn up_process(
     // have finished.
 
     Ok(outcome)
+}
+
+fn apply_temp_env(
+    env: &mut std::collections::BTreeMap<String, String>,
+    unset: &mut Vec<String>,
+    fallback: &Path,
+    compiled: &policy::CompiledPolicy,
+    grants: &[policy::ResolvedGrant],
+    root: &Path,
+) {
+    const KEYS: [&str; 3] = ["TMPDIR", "TMP", "TEMP"];
+    let usable = |value: &str| {
+        let path = Path::new(value);
+        if !path.is_absolute() {
+            return None;
+        }
+        let real = path.canonicalize().ok()?;
+        if !real.is_dir()
+            || !grants.iter().any(|g| {
+                g.mode == nono::AccessMode::ReadWrite
+                    && real.starts_with(&g.path)
+                    // Linux's /tmp is mounted fresh. Host entries below
+                    // it only survive if there is a separate grant.
+                    && !(cfg!(target_os = "linux")
+                        && g.path == Path::new("/tmp")
+                        && real != g.path)
+            })
+        {
+            return None;
+        }
+        use std::os::unix::ffi::OsStrExt;
+        let name = std::ffi::CString::new(real.as_os_str().as_bytes()).ok()?;
+        // SAFETY: the CString is terminated and alive for the call.
+        if unsafe { libc::access(name.as_ptr(), libc::W_OK | libc::X_OK) } != 0 {
+            return None;
+        }
+        let verdict = policy::why_resolved(
+            compiled,
+            &real,
+            root,
+            std::env::var_os("HOME").as_deref().map(Path::new),
+            policy::Op::Write,
+        );
+        // A resolved grant can cover the canonical spelling of an
+        // explicitly granted symlink, even when its policy text does not.
+        if !verdict.allowed && verdict.origin.is_some() {
+            return None;
+        }
+        Some(real.to_string_lossy().into_owned())
+    };
+    let current = KEYS.map(|key| env.get(key).and_then(|p| usable(p)));
+    let preferred = current[0]
+        .clone()
+        .or_else(|| current.iter().flatten().next().cloned())
+        .unwrap_or_else(|| fallback.to_string_lossy().into_owned());
+    for (key, value) in KEYS.into_iter().zip(current) {
+        env.insert(key.to_owned(), value.unwrap_or_else(|| preferred.clone()));
+        unset.retain(|k| k != key);
+    }
 }
 
 /// Host-side, trusted-phase preparation for declared services, shared by
@@ -1854,9 +1995,12 @@ fn prepare_services(
 /// helper and `spawn_keeper` add. Named one by one rather than by prefix,
 /// since a project may name its own variables `DEVCROFT_*` (this repository's
 /// tests do) and a fleet task's process is meant to see `DEVCROFT_TASK`.
-const KEEPER_INTERNAL: [&str; 16] = [
+const KEEPER_INTERNAL: [&str; 19] = [
     crate::runtime::redirect::KEEPER_LIB_VAR,
     crate::runtime::redirect::KEEPER_NS_VAR,
+    crate::runtime::redirect::KEEPER_TEMP_VAR,
+    crate::runtime::redirect::KEEPER_TEMP_GRANTS,
+    crate::runtime::redirect::KEEPER_USER_VAR,
     "DEVCROFT_CAPABILITY_PLAN",
     "DEVCROFT_SSH_HOST_KEY",
     "DEVCROFT_SSH_AUTHORIZED_KEY",

@@ -49,7 +49,11 @@ and a file under `TMPDIR` was writable.
 - **Git 2.55.0 and Apple SSH.** Git created a repo at a literal path using
   `chdir`, `stat` and `mkdir`. Apple SSH refused a literal `-F` path with
   the library supplied and read the same config at its physical path.
-  `mysql_install_db` was unavailable on the test host.
+  `mysql_install_db` was unavailable on the test host. **MariaDB 11.4.12**
+  (2026-11-26, in a real nix sandbox, with the implementation): install,
+  server and a client over `/tmp/my.sock` all work in the sandbox's
+  directory. `mariadb-install-db` needs `--force` there, because `resolveip`
+  cannot look the host name up inside a macOS sandbox.
 
 ### Two sandboxes sharing a devenv checkout fail
 
@@ -130,8 +134,7 @@ so it does not put anything at `/tmp`; slower to bring up. Not needed.
 ### D2. The grant moves, last
 `baseline` grants that directory, and the host's `/tmp` no longer, on macOS. The
 second half waits for D3: without it, devenv's preamble and every other literal
-user would be refused. Until then the directory and `TMPDIR` exist beside the
-old grant, which fixes `mktemp` and isolates nothing, and is said so. A manifest
+user would be refused. Implemented together, since D3 held. A manifest
 that names `/tmp` gets the host's, and then literal paths are not redirected.
 
 ### D3. Literal paths, through the library (owner, 2026-11-24)

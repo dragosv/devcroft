@@ -1017,6 +1017,7 @@ fn bind_probe_main(args: &[String]) -> i32 {
         filesystem_read: Vec::new(),
         filesystem_deny: Vec::new(),
         filesystem_write_deny: Vec::new(),
+        local_temp: None,
         filesystem_write_except: Vec::new(),
         network_block: true,
         network_ports: vec![port],
@@ -4155,6 +4156,10 @@ fn compile_with_provider_grants(
                 && devcroft::provider::ProviderKind::from_name(&manifest.env.provider)
                     .is_ok_and(|kind| kind.native().is_none()),
         ),
+        None => compiled,
+    };
+    let compiled = match &meta.local_temp {
+        Some(temp) => compiled.with_local_temp(std::path::Path::new(temp)),
         None => compiled,
     };
     let compiled = if meta.own_procfs {

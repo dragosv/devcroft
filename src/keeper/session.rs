@@ -165,8 +165,8 @@ fn command(req: &SpawnRequest) -> Command {
         .cloned()
         .or_else(|| ACTIVATION_ENV.get()?.set.get("PATH").cloned())
         .or_else(|| std::env::var("PATH").ok());
-    let cwd = std::path::Path::new(&req.cwd);
-    let mut cmd = match crate::runtime::redirect::rewrite(&req.cmd, cwd, path.as_deref()) {
+    let cwd = crate::runtime::redirect::temp_path(std::path::Path::new(&req.cwd));
+    let mut cmd = match crate::runtime::redirect::rewrite(&req.cmd, &cwd, path.as_deref()) {
         Some(rewrite) => {
             use std::os::unix::process::CommandExt;
             let mut cmd = Command::new(rewrite.program);
@@ -175,6 +175,7 @@ fn command(req: &SpawnRequest) -> Command {
         }
         None => Command::new(&req.cmd),
     };
+    cmd.current_dir(cwd);
     apply_activation_env(&mut cmd);
     cmd
 }
@@ -182,7 +183,6 @@ fn command(req: &SpawnRequest) -> Command {
 fn spawn_piped(req: &SpawnRequest) -> io::Result<SpawnedSession> {
     let mut cmd = command(req);
     cmd.args(&req.args)
-        .current_dir(&req.cwd)
         .envs(&req.env)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -236,7 +236,7 @@ fn spawn_piped(req: &SpawnRequest) -> io::Result<SpawnedSession> {
 /// sandbox.
 fn spawn_failure(e: io::Error, req: &SpawnRequest, step: &str) -> io::Error {
     if e.kind() == io::ErrorKind::NotFound {
-        let cwd = std::path::Path::new(&req.cwd);
+        let cwd = crate::runtime::redirect::temp_path(std::path::Path::new(&req.cwd));
         if !cwd.is_dir() {
             return io::Error::new(
                 e.kind(),
@@ -267,7 +267,7 @@ fn spawn_failure(e: io::Error, req: &SpawnRequest, step: &str) -> io::Error {
     spawn_ctx(
         e,
         &format!("{step} {:?} in", req.cmd),
-        std::path::Path::new(&req.cwd),
+        &crate::runtime::redirect::temp_path(std::path::Path::new(&req.cwd)),
     )
 }
 
@@ -284,7 +284,6 @@ fn spawn_pty(req: &SpawnRequest, size: &PtySize) -> io::Result<SpawnedSession> {
 
     let mut cmd = command(req);
     cmd.args(&req.args)
-        .current_dir(&req.cwd)
         .envs(&req.env)
         .stdin(Stdio::null())
         .stdout(Stdio::null())

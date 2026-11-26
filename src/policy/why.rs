@@ -37,6 +37,25 @@ pub struct Explanation {
 /// invariant); among allow-shaped rules, `filesystem.allow` grants both
 /// read and write, `filesystem.read` grants read only.
 pub fn why_path(compiled: &CompiledPolicy, path: &str, op: Op) -> Explanation {
+    if cfg!(target_os = "macos") {
+        let path = std::path::Path::new(path);
+        let canonical = path
+            .strip_prefix("/tmp")
+            .map(|tail| std::path::Path::new("/private/tmp").join(tail));
+        let path = canonical.as_deref().unwrap_or(path);
+        if path.starts_with(crate::runtime::local_temp::parent())
+            && !compiled
+                .local_temp
+                .as_ref()
+                .is_some_and(|own| path.starts_with(own))
+        {
+            return Explanation {
+                allowed: false,
+                origin: Some(Origin::Baseline),
+                detail: "denied by baseline (another sandbox's temp tree)".to_owned(),
+            };
+        }
+    }
     if let Some(rule) = matching(&compiled.filesystem_deny, path) {
         return Explanation {
             allowed: false,

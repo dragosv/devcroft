@@ -34,6 +34,12 @@ pub const DIR: &str = "redirect";
 /// children, which start inside the boundary ([`child_vars`]).
 pub const KEEPER_LIB_VAR: &str = "DEVCROFT_REDIRECT_LIB";
 pub const KEEPER_NS_VAR: &str = "DEVCROFT_REDIRECT_NS";
+pub const KEEPER_TEMP_VAR: &str = "DEVCROFT_REDIRECT_TEMP";
+pub const KEEPER_TEMP_GRANTS: &str = "DEVCROFT_REDIRECT_TEMP_GRANTS";
+pub const KEEPER_USER_VAR: &str = "DEVCROFT_REDIRECT_USER";
+
+const TEMP_VAR: &str = "DEVCROFT_TEMP";
+const TEMP_GRANTS: &str = "DEVCROFT_TEMP_GRANTS";
 
 /// Write the library beside the runtime links; returns its path.
 pub fn materialize(artifact_dir: &std::path::Path) -> std::io::Result<std::path::PathBuf> {
@@ -48,9 +54,116 @@ pub fn child_vars(own: Option<std::ffi::OsString>) -> Vec<(&'static str, std::ff
         std::env::var_os(KEEPER_LIB_VAR),
         std::env::var_os(KEEPER_NS_VAR),
     ) {
-        (Some(lib), Some(ns)) => vars_for(lib, ns, own),
+        (Some(lib), Some(ns)) => {
+            let mut vars = vars_for(lib, ns, own);
+            for (source, target) in [
+                (KEEPER_TEMP_VAR, TEMP_VAR),
+                (KEEPER_TEMP_GRANTS, TEMP_GRANTS),
+                (KEEPER_USER_VAR, "DEVCROFT_ID_USER"),
+                ("HOME", "DEVCROFT_ID_HOME"),
+                ("DEVCROFT_SHELL", "DEVCROFT_ID_SHELL"),
+            ] {
+                if let Some(value) = std::env::var_os(source) {
+                    vars.push((target, value));
+                }
+            }
+            vars
+        }
         _ => Vec::new(),
     }
+}
+
+/// Path components under macOS's physical temp root that already have a
+/// grant. Lengths are byte counts, so path names can contain separators.
+pub fn temp_grants(grants: &[crate::policy::ResolvedGrant]) -> String {
+    use std::fmt::Write;
+    let host = std::path::Path::new("/private/tmp");
+    let mut out = String::new();
+    for g in grants {
+        let path = if host.starts_with(&g.path) {
+            host
+        } else if g.path.starts_with(host) {
+            &g.path
+        } else {
+            continue;
+        };
+        let path = path.to_string_lossy();
+        write!(out, "{}:{path}", path.len()).unwrap();
+    }
+    out
+}
+
+/// The same absolute-path mapping used by sandbox children, for programs
+/// and working directories opened directly by the keeper.
+pub fn temp_path(path: &std::path::Path) -> std::path::PathBuf {
+    let Some(temp) = std::env::var_os(KEEPER_TEMP_VAR) else {
+        return path.to_owned();
+    };
+    map_temp(
+        path,
+        std::path::Path::new(&temp),
+        &std::env::var(KEEPER_TEMP_GRANTS).unwrap_or_default(),
+    )
+}
+
+fn map_temp(path: &std::path::Path, temp: &std::path::Path, grants: &str) -> std::path::PathBuf {
+    use std::path::{Component, Path, PathBuf};
+    if !path.is_absolute() {
+        return path.to_owned();
+    }
+    let mut normalized = PathBuf::new();
+    for component in path.components() {
+        if component == Component::ParentDir {
+            normalized.pop();
+        } else {
+            normalized.push(component);
+        }
+    }
+    let host = Path::new("/private/tmp");
+    let Ok(rest) = normalized
+        .strip_prefix("/tmp")
+        .or_else(|_| normalized.strip_prefix(host))
+    else {
+        return path.to_owned();
+    };
+    let canonical = if rest.as_os_str().is_empty() {
+        host.to_owned()
+    } else {
+        host.join(rest)
+    };
+    let mut remaining = grants;
+    while let Some((len, tail)) = remaining.split_once(':') {
+        let Some((grant, tail)) = len.parse().ok().and_then(|len| tail.split_at_checked(len))
+        else {
+            break;
+        };
+        if canonical.starts_with(grant) {
+            return if grant == "/private/tmp" {
+                path.to_owned()
+            } else {
+                canonical
+            };
+        }
+        remaining = tail;
+    }
+    if rest.as_os_str().is_empty() {
+        temp.to_owned()
+    } else {
+        temp.join(rest)
+    }
+}
+
+pub(crate) fn temp_path_for_policy(
+    path: &std::path::Path,
+    policy: &crate::policy::CompiledPolicy,
+    project_root: &std::path::Path,
+) -> std::path::PathBuf {
+    let Some(temp) = policy.local_temp.as_deref() else {
+        return path.to_owned();
+    };
+    let grants = policy.to_capability_plan().resolved_grants(project_root);
+    let encoded = grants.as_deref().map(temp_grants).unwrap_or_default();
+    map_temp(path, std::path::Path::new(temp), &encoded)
 }
 
 /// What to start in place of a command the redirect would rewrite.
@@ -67,12 +180,22 @@ pub struct Rewrite {
 /// `#!/bin/sh` script it starts itself would reach the host's file and be
 /// refused. `None` leaves the command as it is.
 pub fn rewrite(cmd: &str, cwd: &std::path::Path, path: Option<&str>) -> Option<Rewrite> {
+    let mapped = temp_path(std::path::Path::new(cmd));
+    let program = mapped.to_str()?;
+    let changed = program != cmd;
     rewrite_in(
         std::path::Path::new(&std::env::var_os(KEEPER_NS_VAR)?),
-        cmd,
+        program,
         cwd,
         path,
     )
+    .or_else(|| {
+        changed.then(|| Rewrite {
+            program: mapped,
+            arg0: cmd.to_owned(),
+            args: Vec::new(),
+        })
+    })
 }
 
 fn rewrite_in(
@@ -130,8 +253,13 @@ fn rewrite_in(
         Some((interp, arg)) => (interp, Some(arg.trim())),
         None => (line, None),
     };
+    let program = entry(interp).or_else(|| {
+        let at = std::path::Path::new(interp);
+        let mapped = temp_path(at);
+        (mapped != at).then_some(mapped)
+    })?;
     Some(Rewrite {
-        program: entry(interp)?,
+        program,
         arg0: interp.to_owned(),
         args: arg.map(str::to_owned).into_iter().chain([script]).collect(),
     })
@@ -179,6 +307,37 @@ fn vars_for(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn temp_mapping_preserves_grants_and_normalizes_both_spellings() {
+        use std::path::Path;
+        let temp = Path::new("/private/tmp/dc-501/sandbox");
+        let grants = ["/private/tmp/project", temp.to_str().unwrap()]
+            .map(|p| format!("{}:{p}", p.len()))
+            .concat();
+        for (source, expected) in [
+            ("/tmp", "/private/tmp/dc-501/sandbox"),
+            ("/private/tmp/./x", "/private/tmp/dc-501/sandbox/x"),
+            ("/tmp/../tmp/x", "/private/tmp/dc-501/sandbox/x"),
+            ("/a/../tmp/x", "/private/tmp/dc-501/sandbox/x"),
+            ("/tmp/project/x", "/private/tmp/project/x"),
+            (
+                "/private/tmp/dc-501/sandbox/x",
+                "/private/tmp/dc-501/sandbox/x",
+            ),
+            ("/tmp-other/x", "/tmp-other/x"),
+            ("tmp/x", "tmp/x"),
+        ] {
+            assert_eq!(
+                map_temp(Path::new(source), temp, &grants),
+                Path::new(expected)
+            );
+        }
+        assert_eq!(
+            map_temp(Path::new("/tmp/x"), temp, "12:/private/tmp"),
+            Path::new("/tmp/x")
+        );
+    }
 
     #[test]
     fn the_library_is_embedded_exactly_on_macos() {

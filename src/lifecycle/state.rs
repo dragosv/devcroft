@@ -520,6 +520,8 @@ pub struct Meta {
     /// runtime existed.
     #[serde(default)]
     pub runtime_generation: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub local_temp: Option<String>,
     /// What an older devcroft granted for the host's shell. Never written
     /// now; read so the first `up` after can say it is gone.
     #[serde(default)]
@@ -1062,6 +1064,7 @@ mod tests {
             base_runtime: None,
             host_shell_grants: Vec::new(),
             runtime_generation: None,
+            local_temp: None,
         };
         write_meta(&paths.meta, &meta).unwrap();
         assert_eq!(read_meta(&paths.meta).unwrap(), Some(meta));
@@ -1101,6 +1104,7 @@ mod tests {
             base_runtime: None,
             host_shell_grants: Vec::new(),
             runtime_generation: None,
+            local_temp: None,
         };
         write_meta(&paths.meta, &meta).unwrap();
         assert!(!paths.meta.with_extension("json.tmp").exists());

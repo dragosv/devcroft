@@ -99,8 +99,28 @@ pub fn denials(
         }
         for token in paths {
             let path = sb.resolve(&token);
-            let read = why_resolved(sb.policy, &path, sb.project_root, sb.host_home, Op::Read);
-            let write = why_resolved(sb.policy, &path, sb.project_root, sb.host_home, Op::Write);
+            // A redirected open can return ENOENT for a missing scratch
+            // file. A process without the library gets a refusal on the
+            // host spelling, which still needs its original attribution.
+            let effective = if missing && !refused {
+                crate::runtime::redirect::temp_path_for_policy(&path, sb.policy, sb.project_root)
+            } else {
+                path.clone()
+            };
+            let read = why_resolved(
+                sb.policy,
+                &effective,
+                sb.project_root,
+                sb.host_home,
+                Op::Read,
+            );
+            let write = why_resolved(
+                sb.policy,
+                &effective,
+                sb.project_root,
+                sb.host_home,
+                Op::Write,
+            );
             let shown = path.display();
             if !read.allowed {
                 // Linux hides what is not granted, so it reads as missing.

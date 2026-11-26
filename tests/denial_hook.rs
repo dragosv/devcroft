@@ -167,7 +167,10 @@ fn a_refusal_is_explained_and_an_ordinary_failure_is_not() {
         ctx.contains("/etc/hostname: denied: not granted by any rule"),
         "{ctx}"
     );
-    assert!(ctx.contains("reads as missing"), "{ctx}");
+    // Linux hides it, so it fails as missing; Seatbelt refuses it by name.
+    if cfg!(target_os = "linux") {
+        assert!(ctx.contains("reads as missing"), "{ctx}");
+    }
     assert!(
         ctx.contains(&s.root.display().to_string()),
         "the grants: {ctx}"

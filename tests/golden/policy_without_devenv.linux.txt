@@ -94,6 +94,7 @@ CompiledPolicy {
             origin: Baseline,
         },
     ],
+    local_temp: None,
     filesystem_write_deny: [],
     filesystem_write_except: [],
     network_block: true,

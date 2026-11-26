@@ -15,10 +15,6 @@ CompiledPolicy {
             value: "/dev/null",
             origin: Baseline,
         },
-        AnnotatedValue {
-            value: "/tmp",
-            origin: Baseline,
-        },
     ],
     filesystem_read: [
         AnnotatedValue {
@@ -70,6 +66,7 @@ CompiledPolicy {
             origin: Baseline,
         },
     ],
+    local_temp: None,
     filesystem_write_deny: [],
     filesystem_write_except: [],
     network_block: true,

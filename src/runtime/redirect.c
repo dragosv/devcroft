@@ -20,11 +20,16 @@
 #include <fcntl.h>
 #include <mach-o/dyld.h>
 #include <limits.h>
+#include <pwd.h>
 #include <spawn.h>
+#include <stdarg.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#include <utime.h>
+
+#include "redirect_temp.h"
 
 extern char **environ;
 
@@ -32,31 +37,51 @@ extern char **environ;
  * utilities (the same file as the runtime's `env`): `env -i` clears them
  * before it execs, and the program it starts must keep the redirect. Any
  * other program that clears its environment loses it, as published. */
-static char dc_saved[2][PATH_MAX + 32];
-static int dc_restore;
+static const char *const dc_kept[] = {
+    "DYLD_INSERT_LIBRARIES", "DEVCROFT_NS", "DEVCROFT_TEMP", "DEVCROFT_TEMP_GRANTS",
+    "DEVCROFT_ID_USER", "DEVCROFT_ID_HOME", "DEVCROFT_ID_SHELL",
+};
+#define DC_KEPT (sizeof dc_kept / sizeof dc_kept[0])
+static char *dc_saved[DC_KEPT];
+static const char *dc_ns;
+static struct passwd dc_user;
 
-static int dc_save(char *out, size_t size, const char *name) {
-    const char *v = getenv(name);
-    if (!v || strlen(name) + 1 + strlen(v) + 1 > size) return 0;
-    strcpy(out, name);
-    strcat(out, "=");
-    strcat(out, v);
-    return 1;
+static void dc_init_user(void) {
+    const char *name = getenv("DEVCROFT_ID_USER");
+    const char *home = getenv("DEVCROFT_ID_HOME");
+    const char *shell = getenv("DEVCROFT_ID_SHELL");
+    if (!name || !home || !shell) return;
+    dc_user.pw_name = strdup(name);
+    dc_user.pw_dir = strdup(home);
+    dc_user.pw_shell = strdup(shell);
+    dc_user.pw_uid = getuid();
+    dc_user.pw_gid = getgid();
+    dc_user.pw_passwd = "*";
+    dc_user.pw_class = "";
+    dc_user.pw_gecos = dc_user.pw_name;
+    if (!dc_user.pw_dir || !dc_user.pw_shell) dc_user.pw_name = NULL;
 }
 
 __attribute__((constructor)) static void dc_init(void) {
+    dc_init_temp();
+    dc_init_user();
     char exe[PATH_MAX], own[PATH_MAX];
     uint32_t size = sizeof exe;
     struct stat a, b;
     const char *ns = getenv("DEVCROFT_NS");
+    if (ns) dc_ns = strdup(ns);
     static const char suffix[] = "/../runtime/env";
     if (!ns || strlen(ns) + sizeof suffix > sizeof own) return;
     strcpy(own, ns);
     strcat(own, suffix);
     if (_NSGetExecutablePath(exe, &size) != 0 || stat(exe, &a) != 0 || stat(own, &b) != 0) return;
     if (a.st_dev != b.st_dev || a.st_ino != b.st_ino) return;
-    dc_restore = dc_save(dc_saved[0], sizeof dc_saved[0], "DYLD_INSERT_LIBRARIES") &&
-                 dc_save(dc_saved[1], sizeof dc_saved[1], "DEVCROFT_NS");
+    for (size_t i = 0; i < DC_KEPT; ++i) {
+        const char *name = dc_kept[i];
+        const char *value = getenv(name);
+        if (value && asprintf(&dc_saved[i], "%s=%s", name, value) < 0)
+            dc_saved[i] = NULL;
+    }
 }
 
 static int dc_envc(char *const envp[]) {
@@ -65,16 +90,24 @@ static int dc_envc(char *const envp[]) {
     return n;
 }
 
-/* `envp`, or `out` (room for envc + 3) holding it with the saved variables. */
+static int dc_replaced(const char *entry) {
+    for (size_t i = 0; i < DC_KEPT; ++i) {
+        size_t len = strlen(dc_kept[i]);
+        if (dc_saved[i] && strncmp(entry, dc_kept[i], len) == 0 && entry[len] == '=')
+            return 1;
+    }
+    return 0;
+}
+
+/* `envp`, or `out` (room for envc + DC_KEPT + 1) with the saved variables. */
 static char *const *dc_env(char *const envp[], char **out) {
-    if (!dc_restore) return envp;
+    if (!dc_saved[0]) return envp;
     int n = 0;
     for (int i = 0; envp && envp[i]; i++)
-        if (strncmp(envp[i], "DYLD_INSERT_LIBRARIES=", 22) != 0 &&
-            strncmp(envp[i], "DEVCROFT_NS=", 12) != 0)
+        if (!dc_replaced(envp[i]))
             out[n++] = envp[i];
-    out[n++] = dc_saved[0];
-    out[n++] = dc_saved[1];
+    for (size_t i = 0; i < DC_KEPT; ++i)
+        if (dc_saved[i]) out[n++] = dc_saved[i];
     out[n] = NULL;
     return out;
 }
@@ -99,7 +132,7 @@ static const char *dc_base_name(const char *path) {
  * namespace, not a base-name path, no entry, or an entry that is not
  * executable). */
 static const char *dc_map(const char *path, char *out, size_t size) {
-    const char *ns = dc_restore ? dc_saved[1] + sizeof "DEVCROFT_NS" : getenv("DEVCROFT_NS");
+    const char *ns = dc_saved[1] ? dc_ns : getenv("DEVCROFT_NS");
     const char *name = dc_base_name(path);
     if (!ns || !*ns || !name) return NULL;
     size_t need = strlen(ns) + 1 + strlen(name) + 1;
@@ -171,7 +204,10 @@ static const char *dc_resolve(const char *path, char *const argv[], char *mapped
      * left to the kernel, including its own shebang handling. */
     if (!path || dc_shebang(path, interp, isize, arg, asize) != 0) return path;
     const char *im = dc_map(interp, mapped, msize);
-    if (!im) return path;
+    if (!im) {
+        im = dc_temp_path(interp, mapped);
+        if (im == interp) return path;
+    }
     int argc = dc_argc(argv);
     int i = 0;
     nv[i++] = interp;
@@ -184,13 +220,13 @@ static const char *dc_resolve(const char *path, char *const argv[], char *mapped
 }
 
 #define DC_BUFFERS                                                                          \
-    char mapped[PATH_MAX], interp[DC_SHEBANG_MAX], arg[DC_SHEBANG_MAX];                     \
+    char mapped[PATH_MAX], temp[PATH_MAX], interp[DC_SHEBANG_MAX], arg[DC_SHEBANG_MAX];     \
     int use_nv = 0;                                                                         \
     char *nv[dc_argc(argv) + 4];                                                            \
-    char *ev[dc_envc(envp) + 3];
+    char *ev[dc_envc(envp) + DC_KEPT + 1];
 
 #define DC_RESOLVE(path)                                                                    \
-    dc_resolve((path), argv, mapped, sizeof mapped, interp, sizeof interp, arg, sizeof arg, \
+    dc_resolve(dc_temp_path((path), temp), argv, mapped, sizeof mapped, interp, sizeof interp, arg, sizeof arg, \
                nv, &use_nv)
 
 static int dc_posix_spawn(pid_t *pid, const char *path, const posix_spawn_file_actions_t *fa,
@@ -206,7 +242,10 @@ static int dc_posix_spawn(pid_t *pid, const char *path, const posix_spawn_file_a
 static int dc_posix_spawnp(pid_t *pid, const char *file, const posix_spawn_file_actions_t *fa,
                            const posix_spawnattr_t *attr, char *const argv[],
                            char *const envp[]) {
-    if (!file || !strchr(file, '/')) return posix_spawnp(pid, file, fa, attr, argv, envp);
+    if (!file || !strchr(file, '/')) {
+        char *ev[dc_envc(envp) + DC_KEPT + 1];
+        return posix_spawnp(pid, file, fa, attr, argv, dc_env(envp, ev));
+    }
     DC_BUFFERS
     const char *target = DC_RESOLVE(file);
     return posix_spawn(pid, target, fa, attr, use_nv ? nv : argv, dc_env(envp, ev));
@@ -242,37 +281,76 @@ static int dc_execvp(const char *file, char *const argv[]) {
 static int dc_access(const char *path, int mode) {
     char mapped[PATH_MAX];
     const char *m = dc_map(path, mapped, sizeof mapped);
-    return access(m ? m : path, mode);
+    return access(m ? m : dc_temp_path(path, mapped), mode);
 }
 
 static int dc_faccessat(int fd, const char *path, int mode, int flag) {
     char mapped[PATH_MAX];
     const char *m = dc_map(path, mapped, sizeof mapped);
-    return faccessat(fd, m ? m : path, mode, flag);
+    return faccessat(fd, m ? m : dc_temp_path(path, mapped), mode, flag);
 }
 
 static int dc_stat(const char *path, struct stat *st) {
     char mapped[PATH_MAX];
     const char *m = dc_map(path, mapped, sizeof mapped);
-    return stat(m ? m : path, st);
+    return stat(m ? m : dc_temp_path(path, mapped), st);
 }
 
 /* The entry is a link of devcroft's; what it stands for is a file. */
 static int dc_lstat(const char *path, struct stat *st) {
     char mapped[PATH_MAX];
     const char *m = dc_map(path, mapped, sizeof mapped);
-    return m ? stat(m, st) : lstat(path, st);
+    return m ? stat(m, st) : lstat(dc_temp_path(path, mapped), st);
 }
 
 static int dc_fstatat(int fd, const char *path, struct stat *st, int flag) {
     char mapped[PATH_MAX];
     const char *m = dc_map(path, mapped, sizeof mapped);
-    return m ? stat(m, st) : fstatat(fd, path, st, flag);
+    return m ? stat(m, st) : fstatat(fd, dc_temp_path(path, mapped), st, flag);
+}
+
+static struct passwd *dc_getpwuid(uid_t uid) {
+    return dc_user.pw_name && dc_user.pw_uid == uid ? &dc_user : getpwuid(uid);
+}
+
+static struct passwd *dc_getpwnam(const char *name) {
+    return dc_user.pw_name && strcmp(dc_user.pw_name, name) == 0 ? &dc_user : getpwnam(name);
+}
+
+static int dc_copy_user(struct passwd *user, char *buf, size_t size, struct passwd **result) {
+    *result = NULL;
+    *user = dc_user;
+    char **fields[] = {&user->pw_name, &user->pw_passwd, &user->pw_class,
+                       &user->pw_gecos, &user->pw_dir, &user->pw_shell};
+    for (size_t i = 0; i < sizeof fields / sizeof fields[0]; ++i) {
+        size_t len = strlen(*fields[i]) + 1;
+        if (len > size) return ERANGE;
+        memcpy(buf, *fields[i], len);
+        *fields[i] = buf;
+        buf += len;
+        size -= len;
+    }
+    *result = user;
+    return 0;
+}
+
+static int dc_getpwuid_r(uid_t uid, struct passwd *user, char *buf, size_t size,
+                         struct passwd **result) {
+    if (dc_user.pw_name && dc_user.pw_uid == uid) return dc_copy_user(user, buf, size, result);
+    return getpwuid_r(uid, user, buf, size, result);
+}
+
+static int dc_getpwnam_r(const char *name, struct passwd *user, char *buf, size_t size,
+                         struct passwd **result) {
+    if (dc_user.pw_name && strcmp(dc_user.pw_name, name) == 0)
+        return dc_copy_user(user, buf, size, result);
+    return getpwnam_r(name, user, buf, size, result);
 }
 
 /* dyld applies these to every image but this one, so the calls above reach
  * the real functions. Calls made inside libSystem (system(), popen(), the
  * execl family) are interposed too (measured, design.md D1). */
+#define DC_PAIR(name) {(const void *)dc_##name, (const void *)name}
 __attribute__((used)) static const struct {
     const void *replacement;
     const void *original;
@@ -287,4 +365,17 @@ __attribute__((used)) static const struct {
     {(const void *)dc_stat, (const void *)stat},
     {(const void *)dc_lstat, (const void *)lstat},
     {(const void *)dc_fstatat, (const void *)fstatat},
+    DC_PAIR(open), DC_PAIR(openat), DC_PAIR(creat),
+    DC_PAIR(chmod), DC_PAIR(lchmod), DC_PAIR(fchmodat), DC_PAIR(chown), DC_PAIR(lchown),
+    DC_PAIR(fchownat), DC_PAIR(utime), DC_PAIR(utimes), DC_PAIR(lutimes), DC_PAIR(utimensat),
+    DC_PAIR(getxattr), DC_PAIR(setxattr), DC_PAIR(listxattr), DC_PAIR(removexattr),
+    DC_PAIR(mkdir), DC_PAIR(mkdirat), DC_PAIR(rmdir), DC_PAIR(chdir), DC_PAIR(opendir),
+    DC_PAIR(unlink), DC_PAIR(unlinkat), DC_PAIR(truncate), DC_PAIR(realpath),
+    DC_PAIR(readlink), DC_PAIR(readlinkat), DC_PAIR(fopen), DC_PAIR(freopen),
+    DC_PAIR(rename), DC_PAIR(renameat), DC_PAIR(renameatx_np),
+    DC_PAIR(link), DC_PAIR(linkat), DC_PAIR(symlink), DC_PAIR(symlinkat),
+    DC_PAIR(mkstemp), DC_PAIR(mkstemps), DC_PAIR(mkostemp), DC_PAIR(mkostemps), DC_PAIR(mkdtemp),
+    DC_PAIR(bind), DC_PAIR(connect), DC_PAIR(posix_spawn_file_actions_addopen),
+    DC_PAIR(posix_spawn_file_actions_addchdir_np),
+    DC_PAIR(getpwuid), DC_PAIR(getpwnam), DC_PAIR(getpwuid_r), DC_PAIR(getpwnam_r),
 };

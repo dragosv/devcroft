@@ -45,7 +45,7 @@ categories = ["command-line-utilities", "development-tools"]
 # openspec/changes/ don't resolve from an unpacked crate. The crate ships
 # `README-crate.md` instead: install + quick-start only, same split
 # nono-cli uses between its GitHub README and its crate README.
-include = ["/src/**/*.rs", "/src/runtime/redirect.c", "/build.rs", "!/src/bin/spike.rs", "/README-crate.md", "/LICENSE-APACHE", "/NOTICE", "/THIRD-PARTY-LICENSES.md"]
+include = ["/src/**/*.rs", "/src/runtime/redirect.c", "/src/runtime/redirect_temp.h", "/build.rs", "!/src/bin/spike.rs", "/README-crate.md", "/LICENSE-APACHE", "/NOTICE", "/THIRD-PARTY-LICENSES.md"]
 
 [features]
 # Off by default, and that is the whole point: `tests/` compiles this crate

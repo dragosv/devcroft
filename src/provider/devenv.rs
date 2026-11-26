@@ -36,6 +36,16 @@ impl Provider for DevenvProvider {
     /// Preconditions run in the order that makes a failure name the most
     /// specific fix available, the ordering `nix.rs` established.
     fn resolve(&self, project_root: &Path) -> Result<Resolution, ProviderError> {
+        self.resolve_scoped(project_root, None)
+    }
+}
+
+impl DevenvProvider {
+    pub(super) fn resolve_scoped(
+        &self,
+        project_root: &Path,
+        sandbox_paths: Option<(&Path, &Path)>,
+    ) -> Result<Resolution, ProviderError> {
         ensure_project_present(project_root)?;
         let devenv_bin = resolve_on_path("devenv").ok_or(ProviderError::MissingBinary {
             provider: "devenv",
@@ -53,9 +63,22 @@ impl Provider for DevenvProvider {
         let lock_before = read_lock(project_root);
 
         let baseline = capture::canonical_base_env()?;
-        let activated = capture_activated_env(&devenv_bin, project_root, &baseline)?;
-        let activation_script = capture_enter_shell(&devenv_bin, project_root, &baseline)?;
-        let services = capture_processes(&devenv_bin, project_root, &baseline)?;
+        let command = || {
+            let mut cmd = Command::new(&devenv_bin);
+            cmd.current_dir(project_root).env_clear().envs(&baseline);
+            if let Some((temp, home)) = sandbox_paths {
+                cmd.arg("--option")
+                    .arg("devenv.dotfile:string")
+                    .arg(home.join(".devenv"))
+                    .arg("--option")
+                    .arg("devenv.runtime:string")
+                    .arg(temp.join("run"));
+            }
+            cmd
+        };
+        let activated = capture_activated_env(command(), &baseline)?;
+        let activation_script = capture_enter_shell(command())?;
+        let services = capture_processes(command())?;
         restore_lock_if_capture_resolved(project_root, &lock_before)?;
 
         Ok(Resolution {
@@ -194,20 +217,12 @@ fn restore_lock_if_capture_resolved(
 /// Two steps, because `devenv build shell` returns a *path* to the dump
 /// rather than the dump: build, then read what it names.
 fn capture_activated_env(
-    devenv_bin: &Path,
-    project_root: &Path,
+    mut command: Command,
     base: &BTreeMap<String, String>,
 ) -> Result<BTreeMap<String, String>, ProviderError> {
-    let built = Command::new(devenv_bin)
-        .arg("build")
-        .arg("shell")
-        .current_dir(project_root)
-        .env_clear()
-        .envs(base)
-        .output()
-        .map_err(|e| {
-            ProviderError::ResolutionFailed(format!("running `devenv build shell`: {e}"))
-        })?;
+    let built = command.arg("build").arg("shell").output().map_err(|e| {
+        ProviderError::ResolutionFailed(format!("running `devenv build shell`: {e}"))
+    })?;
 
     if !built.status.success() {
         return Err(ProviderError::ResolutionFailed(format!(
@@ -507,23 +522,16 @@ fn strip_builder_variables(env: &mut BTreeMap<String, String>, base: &BTreeMap<S
 /// runs the whole of it inside the sandbox: the preamble is part of what
 /// makes a devenv shell a devenv shell, and two of the variables the
 /// hook-free capture lacks (`IN_NIX_SHELL`, `MANPATH`) come from it.
-fn capture_enter_shell(
-    devenv_bin: &Path,
-    project_root: &Path,
-    base: &BTreeMap<String, String>,
-) -> Result<Option<String>, ProviderError> {
+fn capture_enter_shell(mut command: Command) -> Result<Option<String>, ProviderError> {
     #[derive(serde::Deserialize)]
     struct Evaluated {
         #[serde(rename = "enterShell")]
         enter_shell: String,
     }
 
-    let output = Command::new(devenv_bin)
+    let output = command
         .arg("eval")
         .arg("enterShell")
-        .current_dir(project_root)
-        .env_clear()
-        .envs(base)
         .output()
         .map_err(|e| {
             ProviderError::ResolutionFailed(format!("running `devenv eval enterShell`: {e}"))
@@ -564,21 +572,10 @@ fn capture_enter_shell(
 /// not mark which is which, and filtering would drop exactly the
 /// services a user enabling an integration expects to be supervised
 /// (design.md decision 4a).
-fn capture_processes(
-    devenv_bin: &Path,
-    project_root: &Path,
-    base: &BTreeMap<String, String>,
-) -> Result<super::ServiceSupport, ProviderError> {
-    let output = Command::new(devenv_bin)
-        .arg("eval")
-        .arg("processes")
-        .current_dir(project_root)
-        .env_clear()
-        .envs(base)
-        .output()
-        .map_err(|e| {
-            ProviderError::ResolutionFailed(format!("running `devenv eval processes`: {e}"))
-        })?;
+fn capture_processes(mut command: Command) -> Result<super::ServiceSupport, ProviderError> {
+    let output = command.arg("eval").arg("processes").output().map_err(|e| {
+        ProviderError::ResolutionFailed(format!("running `devenv eval processes`: {e}"))
+    })?;
 
     if !output.status.success() {
         return Err(ProviderError::ResolutionFailed(format!(

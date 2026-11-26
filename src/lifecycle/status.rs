@@ -439,6 +439,7 @@ mod tests {
                     brokers: Vec::new(),
                     base_runtime: None,
                     runtime_generation: None,
+                    local_temp: None,
                     host_shell_grants: Vec::new(),
                 },
             )

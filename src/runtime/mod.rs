@@ -14,6 +14,7 @@
 
 pub mod applets;
 pub mod layer;
+pub mod local_temp;
 pub mod namespace;
 pub mod owned_dir;
 pub mod provenance;

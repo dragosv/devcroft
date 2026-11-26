@@ -13,6 +13,19 @@ pub fn render(compiled: &CompiledPolicy) -> String {
     render_section(&mut out, "filesystem.allow", &compiled.filesystem_allow);
     render_section(&mut out, "filesystem.read", &compiled.filesystem_read);
     render_section(&mut out, "filesystem.deny", &compiled.filesystem_deny);
+    if cfg!(target_os = "macos") {
+        let parent = crate::runtime::local_temp::parent();
+        write!(
+            out,
+            "filesystem.private_temp: {} (baseline)",
+            parent.display()
+        )
+        .unwrap();
+        if let Some(own) = &compiled.local_temp {
+            write!(out, ", except {own}").unwrap();
+        }
+        writeln!(out).unwrap();
+    }
     // Only once an `up` recorded one; each wins over `filesystem.allow`.
     if !compiled.filesystem_write_deny.is_empty() {
         render_section(

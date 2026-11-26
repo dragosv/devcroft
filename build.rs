@@ -14,6 +14,7 @@ use std::path::PathBuf;
 fn main() {
     let source = "src/runtime/redirect.c";
     println!("cargo:rerun-if-changed={source}");
+    println!("cargo:rerun-if-changed=src/runtime/redirect_temp.h");
     println!("cargo:rerun-if-changed=build.rs");
     let out = PathBuf::from(std::env::var_os("OUT_DIR").expect("OUT_DIR"));
     let dylib = out.join("libdevcroft-redirect.dylib");

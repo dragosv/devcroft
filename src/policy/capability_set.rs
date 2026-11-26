@@ -51,6 +51,9 @@ pub struct CapabilityPlan {
     pub filesystem_allow: Vec<String>,
     pub filesystem_read: Vec<String>,
     pub filesystem_deny: Vec<String>,
+    /// See [`CompiledPolicy::local_temp`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub local_temp: Option<String>,
     /// See [`CompiledPolicy::filesystem_write_deny`].
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub filesystem_write_deny: Vec<String>,
@@ -160,6 +163,7 @@ impl CompiledPolicy {
                 .iter()
                 .map(|a| a.value.clone())
                 .collect(),
+            local_temp: self.local_temp.clone(),
             filesystem_write_deny: self
                 .filesystem_write_deny
                 .iter()
@@ -284,6 +288,7 @@ impl CapabilityPlan {
                 &self.filesystem_write_deny,
                 &self.filesystem_write_except,
             )?;
+            caps = protect_local_temp(caps, self.local_temp.as_deref())?;
         }
         self.apply_network_and_signal(caps)
     }
@@ -532,6 +537,38 @@ fn seatbelt_escape(path: &Path) -> String {
     path.to_string_lossy()
         .replace('\\', "\\\\")
         .replace('"', "\\\"")
+}
+
+#[cfg(target_os = "macos")]
+fn protect_local_temp(
+    mut caps: CapabilitySet,
+    own: Option<&str>,
+) -> Result<CapabilitySet, CapabilitySetError> {
+    let parent = crate::runtime::local_temp::parent();
+    let lexical_parent = Path::new("/tmp").join(parent.file_name().unwrap());
+    let exceptions = own
+        .and_then(|own| Path::new(own).strip_prefix(&parent).ok())
+        .filter(|name| name.components().count() == 1)
+        .map_or_else(String::new, |name| {
+            [&parent, &lexical_parent]
+                .into_iter()
+                .map(|p| {
+                    format!(
+                        " (require-not (subpath \"{}\"))",
+                        seatbelt_escape(&p.join(name))
+                    )
+                })
+                .collect()
+        });
+    for path in [&parent, &lexical_parent] {
+        let path = seatbelt_escape(path);
+        caps = caps.platform_rule(format!(
+            "(deny file-read* file-write* process-exec* (require-all (subpath \"{path}\"){exceptions}))"
+        ))?;
+        // realpath needs metadata on ancestors of the granted directory.
+        caps = caps.platform_rule(format!("(allow file-read-metadata (literal \"{path}\"))"))?;
+    }
+    Ok(caps)
 }
 
 /// Every `filesystem_deny` entry against every `filesystem_allow`/

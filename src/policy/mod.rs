@@ -132,55 +132,6 @@ const KEEPER_SYSTEM_READWRITE: &[&str] = &["/dev/pts", "/dev/ptmx", "/dev/null"]
 #[cfg(target_os = "macos")]
 const KEEPER_SYSTEM_READWRITE: &[&str] = &["/dev/ptmx", "/dev/null"];
 
-/// A temporary directory, read **and** write.
-///
-/// Separate from [`KEEPER_SYSTEM_READWRITE`] on purpose: that set is
-/// scoped to what the keeper itself needs, and this is not — it is for
-/// the project's own code, which is the one category that set
-/// deliberately excludes. Keeping them apart keeps that claim true.
-///
-/// **Measured, and the measurement is why this exists:** a devcroft
-/// sandbox on macOS had *no* temporary directory at all. Neither `/tmp`
-/// nor `/private/tmp` was readable or writable. That is not a spelling
-/// problem — which is what it looked like for a while, since `/tmp` is a
-/// symlink there — it is an absent grant, and it broke four unrelated
-/// things at once:
-///
-/// - devenv's generated `enterShell` preamble (`mkdir -p /tmp/devenv-…`),
-/// - `process-compose`'s default log path, which it treats as fatal,
-/// - a devenv postgres service, whose socket directory lives under it,
-/// - `mysql_install_db` in devbox's mysql plugin.
-///
-/// Software assumes a temp directory exists the way it assumes a
-/// filesystem does. A sandbox without one cannot run ordinary programs,
-/// which is a worse failure than the sharing this grant admits.
-///
-/// **What it admits, stated rather than glossed:** `/tmp` is shared with
-/// the host and with every other sandbox, so this is not isolated
-/// scratch space. A per-sandbox temp directory with `TMPDIR` pointed at
-/// it would be better, and does not work today — devenv computes
-/// `/tmp/devenv-<hash>` from the project path at evaluation time and
-/// ignores `TMPDIR`, so the directory it wants is the shared one
-/// whatever devcroft sets. Narrowing this is `own-policy-baseline`'s to
-/// do, and needs the providers to cooperate.
-///
-/// Granted by its lexical spelling, not its canonical one: the backend
-/// emits a rule for each when they differ, and it can only do that if it
-/// is handed the spelling the manifest used
-/// (`fix-symlinked-grant-spelling`).
-///
-/// **A consequence a manifest author will meet:** `filesystem.read =
-/// ["/tmp"]` no longer makes `/tmp` read-only. Grants compose as a union
-/// — only baseline *denials* win over the manifest, baseline grants
-/// cannot be narrowed by it — so the manifest's read-only entry is
-/// subsumed by this read-write one, in the compiled policy and in the
-/// Linux mount view alike (`fleet::mount::construct_view` takes the
-/// widest mode). Found by CI on Linux, where `tests/tmp_grant_ordering.rs`
-/// had pinned the read-only case; the test now pins this. If narrowing
-/// is ever wanted, it is a policy-model change for `own-policy-baseline`,
-/// not a special case here.
-const SANDBOX_TEMP_DIR: &[&str] = &["/tmp"];
-
 /// The signal isolation `extends: "default"` currently supplies as its
 /// *only* effective contribution (own-policy-baseline design.md Decision
 /// 4) — declared explicitly so it survives independently of `extends`
@@ -343,6 +294,10 @@ pub struct CompiledPolicy {
     pub filesystem_allow: Vec<AnnotatedValue>,
     pub filesystem_read: Vec<AnnotatedValue>,
     pub filesystem_deny: Vec<AnnotatedValue>,
+    /// The sandbox's own macOS temp directory, exempt from the managed
+    /// temp tree's denial. Its read-write grant is recorded separately.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub local_temp: Option<String>,
     /// Directories no process inside may write, even where a grant around
     /// them is read-write: the sandbox's own artifact directory, inside the
     /// project root (`add-sandbox-identity` D4). Absolute paths, only from
@@ -531,19 +486,16 @@ pub fn compile(manifest: &Manifest) -> CompiledPolicy {
             .iter()
             .map(|p| AnnotatedValue::new(*p, Origin::Baseline)),
     );
-    // A temporary directory for the project's own code — see
-    // [`SANDBOX_TEMP_DIR`] for what was measured and what it admits.
-    filesystem_allow.extend(
-        SANDBOX_TEMP_DIR
-            .iter()
-            .map(|p| AnnotatedValue::new(*p, Origin::Baseline)),
-    );
+    if cfg!(target_os = "linux") {
+        filesystem_allow.push(AnnotatedValue::new("/tmp", Origin::Baseline));
+    }
 
     CompiledPolicy {
         sandbox_name: manifest.sandbox.name.clone(),
         filesystem_allow,
         filesystem_read,
         filesystem_deny,
+        local_temp: None,
         network_block: manifest.network.default == NetworkDefault::Deny,
         network_allow_domain,
         network_ports,
@@ -568,6 +520,14 @@ pub fn compile(manifest: &Manifest) -> CompiledPolicy {
 }
 
 impl CompiledPolicy {
+    pub fn with_local_temp(mut self, path: &std::path::Path) -> Self {
+        let path = path.to_string_lossy().into_owned();
+        self.filesystem_allow
+            .push(AnnotatedValue::new(path.clone(), Origin::Baseline));
+        self.local_temp = Some(path);
+        self
+    }
+
     /// Fold in the read-only store grants a provider resolved at the last
     /// `up` (recorded in `lifecycle::state::Meta`), tagged with the given
     /// provider name's origin. Deliberately not part of [`compile`]: that

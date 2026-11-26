@@ -760,6 +760,7 @@ pub trait ProviderEntry {
         &self,
         project_root: &Path,
         _skip_hooks: bool,
+        _sandbox_paths: Option<(&Path, &Path)>,
     ) -> Result<Resolution, ProviderError> {
         self.resolve(project_root)
     }
@@ -795,11 +796,12 @@ impl ProviderEntry for ProviderKind {
         &self,
         project_root: &Path,
         skip_hooks: bool,
+        sandbox_paths: Option<(&Path, &Path)>,
     ) -> Result<Resolution, ProviderError> {
-        if *self == ProviderKind::Mise {
-            mise::resolve(project_root, skip_hooks)
-        } else {
-            Provider::resolve(self, project_root)
+        match self {
+            ProviderKind::Mise => mise::resolve(project_root, skip_hooks),
+            ProviderKind::Devenv => DevenvProvider.resolve_scoped(project_root, sandbox_paths),
+            _ => Provider::resolve(self, project_root),
         }
     }
     fn resolve(&self, project_root: &Path) -> Result<Resolution, ProviderError> {

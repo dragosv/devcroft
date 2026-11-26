@@ -541,6 +541,15 @@ host userland is stated once rather than warned about per name.
 Nothing goes to the backend that cannot be shown via `policy --render`.
 Baseline denials always win, including devcroft's own data dir.
 
+**Scratch is scoped to the sandbox.** Linux mounts its own `/tmp`. On macOS
+Seatbelt grants a short 0700 directory under `/private/tmp/dc-<uid>` and
+protects other sandboxes' directories, including when the manifest opts in
+to the host's `/tmp`. The redirect library maps literal temp paths for its
+processes. `TMPDIR` is the portable entry point even for binaries that lose
+the library. devenv capture uses per-sandbox dotfile and runtime paths so
+two keepers over one checkout never race over `.devenv/run`. Project code
+uses `$DEVENV_RUNTIME` or `$DEVENV_DOTFILE/run`.
+
 **SSH is reachable only on a unix socket, never TCP.** The keeper embeds
 russh listening on a 0600 socket in a 0700 state dir. The filesystem
 permissions are the real access boundary — not the process's location — and

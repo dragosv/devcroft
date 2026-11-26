@@ -117,6 +117,7 @@ fn down_at(paths: &StatePaths) -> Result<(), TerminateError> {
     // `up` against itself. See `acquire_lifecycle_lock`'s doc.
     let lock = state::acquire_lifecycle_lock(&paths.lifecycle_lock)?;
     stop_if_running(paths)?;
+    crate::runtime::local_temp::clean(&paths.root, false)?;
     state::clear_runtime_state(paths)?;
     // `down` on a name with no state at all: nothing will use the lock.
     if !paths.root.exists() {
@@ -128,6 +129,7 @@ fn down_at(paths: &StatePaths) -> Result<(), TerminateError> {
 fn rm_at(paths: &StatePaths) -> Result<(), TerminateError> {
     let lock = state::acquire_lifecycle_lock(&paths.lifecycle_lock)?;
     stop_if_running(paths)?;
+    crate::runtime::local_temp::clean(&paths.root, true)?;
     match std::fs::remove_dir_all(&paths.root) {
         Ok(()) => {}
         Err(e) if e.kind() == io::ErrorKind::NotFound => {}

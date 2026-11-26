@@ -30,6 +30,140 @@ fn check(rc: libc::c_int) -> io::Result<libc::c_int> {
 }
 
 impl OwnedDir {
+    #[cfg(target_os = "macos")]
+    pub(super) fn anchor(path: &Path) -> io::Result<Self> {
+        Ok(Self(std::fs::File::open(path)?.into()))
+    }
+
+    #[cfg(target_os = "macos")]
+    pub(super) fn child(&self, name: &OsStr, create: Option<libc::mode_t>) -> io::Result<Self> {
+        let name = c(name)?;
+        let fd = self.0.as_raw_fd();
+        let flags = libc::O_RDONLY | libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC;
+        // SAFETY: fd is live and name is a single NUL-terminated component.
+        unsafe {
+            if let Some(mode) = create
+                && libc::mkdirat(fd, name.as_ptr(), mode) < 0
+            {
+                let e = io::Error::last_os_error();
+                if e.kind() != io::ErrorKind::AlreadyExists {
+                    return Err(e);
+                }
+            }
+            Ok(Self(OwnedFd::from_raw_fd(check(libc::openat(
+                fd,
+                name.as_ptr(),
+                flags,
+            ))?)))
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    pub(super) fn require_private(self, path: &Path) -> io::Result<Self> {
+        let mut stat = std::mem::MaybeUninit::<libc::stat>::uninit();
+        // SAFETY: fstat initializes stat on success and borrows the fd.
+        unsafe {
+            check(libc::fstat(self.0.as_raw_fd(), stat.as_mut_ptr()))?;
+            let stat = stat.assume_init();
+            if stat.st_uid != libc::geteuid() || stat.st_mode & 0o777 != 0o700 {
+                return Err(io::Error::new(
+                    io::ErrorKind::PermissionDenied,
+                    format!("{} must be owned by you and have mode 0700", path.display()),
+                ));
+            }
+        }
+        Ok(self)
+    }
+
+    /// An eight-character directory name can collide. Its key lives in
+    /// the parent, which no sandbox can modify.
+    #[cfg(target_os = "macos")]
+    pub(super) fn check_key(&self, name: &str, expected: &[u8], create: bool) -> io::Result<()> {
+        use std::io::{Read, Write};
+        let name = c(OsStr::new(name))?;
+        let fd = self.0.as_raw_fd();
+        let flags = libc::O_NOFOLLOW | libc::O_CLOEXEC;
+        // SAFETY: the fd is live, and the name has a terminating NUL.
+        unsafe {
+            if create {
+                match check(libc::openat(
+                    fd,
+                    name.as_ptr(),
+                    flags | libc::O_CREAT | libc::O_EXCL | libc::O_WRONLY,
+                    0o600,
+                )) {
+                    Ok(file) => {
+                        let result = std::fs::File::from_raw_fd(file).write_all(expected);
+                        if result.is_err() {
+                            let _ = self.remove(&name);
+                        }
+                        return result;
+                    }
+                    Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {}
+                    Err(e) => return Err(e),
+                }
+            }
+            let file = std::fs::File::from_raw_fd(check(libc::openat(
+                fd,
+                name.as_ptr(),
+                flags | libc::O_RDONLY | libc::O_NONBLOCK,
+            ))?);
+            let mut actual = Vec::new();
+            if !file.metadata()?.is_file()
+                || file
+                    .take(expected.len() as u64 + 1)
+                    .read_to_end(&mut actual)
+                    .is_err()
+                || actual != expected
+            {
+                return Err(io::Error::new(
+                    io::ErrorKind::AlreadyExists,
+                    format!(
+                        "temp key {} belongs to another sandbox",
+                        name.to_string_lossy()
+                    ),
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    #[cfg(target_os = "macos")]
+    pub(super) fn unlink_key(&self, name: &str) -> io::Result<()> {
+        self.remove(&c(OsStr::new(name))?)
+    }
+
+    #[cfg(target_os = "macos")]
+    pub(super) fn remove_child_dir(&self, name: &OsStr) -> io::Result<()> {
+        let name = c(name)?;
+        // SAFETY: a live descriptor and a NUL-terminated single component.
+        check(unsafe { libc::unlinkat(self.0.as_raw_fd(), name.as_ptr(), libc::AT_REMOVEDIR) })?;
+        Ok(())
+    }
+
+    #[cfg(target_os = "macos")]
+    pub(super) fn empty(&self) -> io::Result<()> {
+        for name in self.names()? {
+            let fd = self.0.as_raw_fd();
+            // First remove non-directories, including any symlink.
+            // SAFETY: fd is live and name came from its directory entries.
+            if unsafe { libc::unlinkat(fd, name.as_ptr(), 0) } == 0 {
+                continue;
+            }
+            let error = io::Error::last_os_error();
+            if error.kind() == io::ErrorKind::NotFound {
+                continue;
+            }
+            if !matches!(error.raw_os_error(), Some(libc::EPERM | libc::EISDIR)) {
+                return Err(error);
+            }
+            self.child(OsStr::from_bytes(name.to_bytes()), None)?
+                .empty()?;
+            check(unsafe { libc::unlinkat(fd, name.as_ptr(), libc::AT_REMOVEDIR) })?;
+        }
+        Ok(())
+    }
+
     /// `<artifact_dir>/<sub>`, created as needed. The last two components of
     /// `artifact_dir` (`.devcroft/<name>`) and `sub` must be real directories.
     pub fn open(artifact_dir: &Path, sub: &str) -> io::Result<Self> {
