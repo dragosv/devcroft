@@ -27,5 +27,5 @@
 
 ## 5. Revise the decision and document
 
-- [ ] 5.1 Revise `docs/decisions.md` and `CLAUDE.md`’s framing rule from “no non-reproducible mode” to “no non-reproducible execution”, keeping `host` and `none` rejected as providers.
+- [ ] 5.1 Revise `docs/decisions.md` and the framing rules in `AGENTS.md` and `docs/invariants.md` from “no non-reproducible mode” to “no non-reproducible execution”, keeping `host` and `none` rejected as providers.
 - [ ] 5.2 Add a file-only column to `docs/agents.md`. Keep the `docs/known-gaps.md` entry on `.git` in trusted managed checkouts current. Describe the workflow in the README and in `docs/roadmap.md`’s 1.0 section.

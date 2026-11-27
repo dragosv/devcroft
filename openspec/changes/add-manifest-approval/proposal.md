@@ -6,16 +6,16 @@ A repository's `devcroft.toml` decides what its own sandbox may reach: extra fil
 
 - **BREAKING** Every checkout's manifest is `untrusted` until the user approves it. An untrusted manifest still selects the provider, services, hooks and identity, and still narrows the policy. It grants nothing beyond the workspace, the provider and the baseline:
   - no extra filesystem grants;
-  - no egress, loopback widening, published ports or provisioning network;
+  - no egress, loopback widening, host-reachable ports or provisioning network;
   - no `[env] forward` and no SSH agent forwarding;
   - the user's own `[credentials]` are not delivered.
 
   `up` names every key it did not apply. devcroft has no users yet, so no migration path is offered (owner decision, 2026-11-27).
-- `devcroft trust` approves the exact manifest bytes for one checkout after showing the grants that become effective. Non-interactively it needs `--yes --sha256 <hex>`. `devcroft trust --revoke` withdraws the approval. `init` approves the bytes it writes.
+- `devcroft trust` approves the exact manifest bytes for one checkout after showing the grants that become effective. Non-interactively it needs `--yes --sha256 <hex>`. `devcroft trust --revoke` withdraws the approval. `init` approves nothing.
 - The approval is bound to the checkout’s canonical root and directory identity, and to the SHA-256 of the bytes devcroft parses, read once. A different hash invalidates the approval permanently. Neither `--recreate` nor auto-up re-approves.
 - Admission covers attachment. Every path that attaches to a generation started `trusted` re-checks the hash and refuses when it no longer matches: `AlreadyUp`, auto-up in `exec`/`shell`/`ssh`/`proxy`, `agent run` and `agent acp`. Every attach also checks that the sandbox belongs to the discovered checkout.
 - Git’s configuration and hooks (`.git/config`, `.git/hooks/`) are read-only in an untrusted checkout, because Git runs them on the host without review. Commits still work.
-- Each provider is qualified for untrusted checkouts separately, and an unqualified one refuses them.
+- An untrusted checkout runs no repository code on the host: nix, flox, devbox, devenv and mise refuse it and name `devcroft trust` or `devcroft up --file-only`, while pixi can qualify.
 - Admission refusals go to `stderr` only, so `ProxyCommand` stays usable. A grant for a path that doesn’t exist is reported as not applied instead of dropped silently.
 - The workload cannot read, modify, delete or replace the authoritative manifest, even with a read-write workspace. A symlinked or multiply linked manifest is refused. `status` reports whether the name is still listed.
 - The workspace grant becomes a base rule with origin `workspace`, separate from the parser’s default `filesystem.allow = ["."]`. `policy --render` shows unapplied manifest keys as not applied.

@@ -7,3 +7,4 @@
 
 - [ ] 2.1 Point `<project>/.devcroft/<name>/runtime/*` symlinks, Linux `RuntimeView` mounts (`src/fleet/mount.rs`) and macOS exec-redirect paths (`src/runtime/redirect.rs`) to `RuntimePlan` inside the immutable object instead of mutable `current_exe()`, granting the object read-only with origin `runtime:gen-<N>`.
 - [ ] 2.2 Add integration tests confirming that replacing the outer `devcroft` binary path on disk while a sandbox is running leaves `sh` and coreutils inside the sandbox executing the pinned object recorded at `up`, that two sandboxes share one runtime object, and that `rm` of the last consumer sweeps it. Update `docs/base-runtime.md`.
+- [ ] 4.1 Depend on `validate-before-recreate`’s `rm` critical section before adding `runtime` to `rm`’s sweep, so a concurrent `up` cannot lose its runtime object.

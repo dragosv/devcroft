@@ -11,3 +11,4 @@
 
 - [ ] 3.1 Add unit and integration tests (`src/provider/mise.rs`, `tests/mise_provider_e2e.rs`) covering bare shorthand -> `aqua:` acceptance, bare `node` -> `core:node` refusal with `conda:` remedy, `postinstall` refusal, private `conda:` host refusal, shared read-only object reuse across sandboxes, and `doctor` reporting no host `/bin/sh`.
 - [ ] 3.2 Update `samples/mise-sample` to use a portable multi-platform `mise.toml` + `mise.lock`, and update `docs/decisions.md` §1 and `openspec/config.yaml` with the newly qualified backends.
+- [ ] 3.3 Qualify `conda:bash` as the mise route to a real shell, on both platforms, with a locked fixture: `/bin/sh` becomes that bash and the runtime’s brush `sh` is no longer used. Update the brush gap in `docs/known-gaps.md`, which names only pixi’s route today.

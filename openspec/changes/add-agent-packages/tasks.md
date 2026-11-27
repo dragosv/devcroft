@@ -41,7 +41,7 @@
 
 - [ ] 2.1 Implement validated embedded and user recipes: names, relative `state_paths`, `argv[0]` inside the object before download and after extraction, CPU architecture, minimum OS version and Linux libc (refused before download), header checks against them before publication, and `agents/` beside the resolved user configuration (`XDG_CONFIG_HOME`). Add a committed seed pinning every registry revision, and a dev-only generator that reproduces it. Implement `single-binary` and `archive` layouts with checksums, sanitized entries, fetch limits (connect, stall and total timeouts, size, redirects staying on HTTPS), extraction limits and atomic publication. Run validation, checksum, digest, pin and archive-escape tests as unit tests that do not skip when no provider is available.
 - [ ] 2.2 Add the embedded recipes to `Cargo.toml`’s anchored `include`, and make every crate the fetcher and extractor call a direct dependency. Build from the unpacked `cargo package` output and confirm `agent list` shows the recipes. Regenerate attribution if `Cargo.lock` changes.
-- [ ] 2.3 Implement host `agent list`, `agent install <recipe> [--version <v>]` and `agent uninstall <recipe> [--version <v>]`, object-specific pins, and the lease-until-referenced rule on `up`, `agent install` and `agent run`. Move `rm`’s `Meta` read and state removal under the lifecycle lock, and its sweep under the store lease. Test:
+- [ ] 2.3 Implement host `agent list`, `agent install <recipe> [--version <v>]` and `agent uninstall <recipe> [--version <v>]`, object-specific pins, and the lease-until-referenced rule on `up`, `agent install` and `agent run`, with downloads under the object lock before the lifecycle lock. Sweep under the store lease, on top of `validate-before-recreate`’s `rm` critical section. Test:
   - mismatches and unsafe entries;
   - a stalled server, an off-HTTPS redirect and an expansion bomb;
   - install concurrent with `rm`, and `rm` concurrent with `up`;
@@ -57,7 +57,8 @@
   - `cd <project_root> && up [--name <n>]` remedy formatting.
 
   Test legacy, stopped and named sandboxes, opt-out across recreation, recreation after an upgrade of devcroft (no change without `--agent-upgrade`), switching recipe and version, and restart after the recorded recipe disappears from the release.
-- [ ] 2.5 Implement the user-only credential command used by `up` when the host key variable is unset or empty (`""`). Prove it runs once inside `up`, never during preflight, `doctor` or `agent acp`. Prove it fails at layer `config` on non-zero exit, timeout or empty output, and that the value stays out of the sandbox, logs and metadata.
+- [ ] 2.4b Implement the `[auth.<mode>]` schema (`platforms`, per-platform `paths` and `json_keys`) for embedded and user recipes, the same-recipe mode transition refusal and `--drop-auth-state`.
+- [ ] 2.5 Implement the user-only credential command used by `up` when the host key variable is unset or empty (`""`). Prove it runs once during `up`’s preflight, before any keeper stops, with `stdin` closed off a TTY and the user’s home as its directory, and never in dry runs, `status`, `doctor` or `agent acp`. Prove it fails at layer `config` on non-zero exit, timeout or empty output, and that the value stays out of the sandbox, logs and metadata.
 - [ ] 2.6 Insert recipe checks and downloads at the boundary from `validate-before-recreate`, and confirm failed preparation leaves the previous sandbox available. Before provider resolution, check brokers, the proxy decision and recipe hosts against the manifest’s network policy plus the recipe’s hosts, and check the agent’s executable against its own grants. Verify that `policy --render`, `why` and compilation use one final policy, with origin labels, baseline denials and an unchanged provider fingerprint and capture.
 
 ## 3. Run a task in the terminal
@@ -79,4 +80,4 @@
   - shared-sandbox custody and retained state after opt-out;
   - the install, upgrade and recovery commands.
 
-  Update the policy-origin documentation.
+  Add the `agent:<recipe>` origin to the table in `docs/invariants.md`.

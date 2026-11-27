@@ -2,7 +2,7 @@
 
 ### Requirement: Agent selection in the user configuration
 The user configuration SHALL accept an `[agent]` table with `name`, naming a
-recipe, an optional `version`, and an optional `auth` (a mode qualified for that recipe and platform). Unknown keys or unsupported `auth` values SHALL fail at layer
+recipe, an optional `version`, an optional `auth` (a mode qualified for that recipe and platform), and an optional `strip_runtime_env` list. Unknown keys or unsupported `auth` values SHALL fail at layer
 `config`. `devcroft up --agent <recipe>` (and `--agent-auth <mode>`), `--no-agent`
 and `--agent-from-config` SHALL choose explicitly (`--agent`, `--no-agent`,
 `--agent-from-config` and `--agent-upgrade` being mutually exclusive,
@@ -102,13 +102,21 @@ as a non-empty argument vector. When the host key variable is unset or empty
 (`""`), `up` SHALL run this command once with a deadline, without a shell, trim
 trailing newline characters, and deliver its value according to the selected
 mode. If the command exits non-zero, exceeds the deadline, or produces an empty
-value, `up` SHALL fail at layer `config` naming the command entry. Preflight,
-`doctor` and `agent acp` SHALL NOT execute it. The value SHALL never be logged
+value, `up` SHALL fail at layer `config` naming the command entry. `up` and
+`up --recreate` SHALL run it during their preflight, before any existing
+keeper is stopped, so a failure leaves a working sandbox running. Dry runs
+(`policy --render`, `why`), `status`, `doctor` and `agent acp` SHALL NOT
+execute it. It SHALL run with `stdin` closed when `up` has no TTY, and with its
+working directory set to the user's home, never the checkout. The value SHALL never be logged
 or recorded.
 
 #### Scenario: Key command with an unset or empty host variable
 - **WHEN** `up` runs from a shell where the key is unset or set to `""`, and the recipe has a configured credential command
 - **THEN** the sandbox comes up and the broker uses the command's value, which appears in no log, policy or `Meta`
+
+#### Scenario: Failing command during recreation
+- **WHEN** a healthy sandbox is recreated and its credential command times out
+- **THEN** `up` fails at layer `config` and the old keeper and its sessions are still running
 
 #### Scenario: Empty or failing credential command refuses startup
 - **WHEN** `[agent.credentials.<recipe>] command` exits non-zero or prints only whitespace or newlines

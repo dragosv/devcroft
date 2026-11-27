@@ -37,7 +37,9 @@ workspace is read-write. This includes aliases that reach the same file:
 - hard links created inside the sandbox;
 - prefixed forms of the path.
 
-On Linux the view SHALL mask the file with an unreadable read-only mount. On
+On Linux the view SHALL mask the file with an unreadable read-only mount, at
+the path where the view mounts the workspace (in fleet, the agent's clone at
+`/workspace`). On
 macOS the profile SHALL deny reading and writing it. A host where this
 protection cannot be enforced SHALL refuse `up` at layer `backend`, never start
 without it. `status` SHALL report whether the name is masked or absent from
@@ -58,15 +60,36 @@ receive the effective configuration, never the file.
 
 ### Requirement: Git configuration and hooks of an untrusted checkout are read-only
 In a sandbox of an untrusted checkout, processes SHALL be unable to write,
-create, remove or replace the repository's `.git/config`,
-`.git/config.worktree` and `.git/hooks/`. Git runs these on the host during
-routine commands, without review: hooks, `core.fsmonitor`, `core.hooksPath`
-and the commands that filter drivers name. Objects, refs and the index stay
-writable, so the agent can still commit. A trusted checkout keeps them
-writable, which `docs/known-gaps.md` records. The protection SHALL use the same
-mechanism as the manifest's: a read-only mount on Linux and a Seatbelt denial
-on macOS. A host where neither can be enforced SHALL refuse `up` for an
+create, remove or replace what Git runs on the host during routine commands,
+without review:
+
+- `.git/config` and `.git/hooks/`;
+- `.git/config.worktree`, when `extensions.worktreeConfig` is enabled;
+- in a linked worktree, the `.git` file that points to the gitdir (the gitdir
+  outside the root stays ungranted);
+- every path inside the workspace that the repository's Git configuration
+  names as a hooks directory (`core.hooksPath`, for example `.husky/`) or as a
+  command (`core.fsmonitor`, filter drivers).
+
+Objects, refs and the index stay writable, so the agent can still commit. A
+trusted checkout keeps these writable, which `docs/known-gaps.md` records. The
+protection SHALL use the manifest's mechanism, at the path where the view
+mounts the workspace, and SHALL cover the aliases the manifest's protection
+covers (case variants on a case-insensitive volume, prefixed forms). It SHALL
+never create a file in the host checkout, with one exception: an empty
+`.git/hooks/` directory, which is part of Git's normal layout. When
+`extensions.worktreeConfig` is enabled and `.git/config.worktree` is absent,
+`up` SHALL fail at layer `config` for an untrusted checkout, naming the file.
+A host where the protection can't be enforced SHALL refuse `up` for an
 untrusted checkout at layer `backend`.
+
+#### Scenario: Hooks directory in the workspace
+- **WHEN** an untrusted checkout's `.git/config` sets `core.hooksPath = .husky` and a process in the sandbox edits `.husky/pre-commit`
+- **THEN** the write fails
+
+#### Scenario: Worktree pointer
+- **WHEN** in an untrusted linked worktree a process rewrites the `.git` file to point to a gitdir it created
+- **THEN** the write fails
 
 #### Scenario: Planted hook in an untrusted checkout
 - **WHEN** a process in an untrusted checkout's sandbox writes `.git/hooks/post-checkout` or sets `core.fsmonitor` in `.git/config`

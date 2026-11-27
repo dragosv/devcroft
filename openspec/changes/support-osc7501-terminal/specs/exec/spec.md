@@ -11,10 +11,8 @@ terminal:
 - devcroft SHALL NOT answer a capability query itself, SHALL NOT emit agent
   identity or state for any process, SHALL NOT grant anything from a payload,
   and SHALL deliver terminal input only to the session of that connection.
-- Log viewing (`devcroft logs` when `stdout` is a TTY) and replay SHALL strip
-  ESC/OSC control sequences so recorded hook or provisioning output is never
-  emitted as live OSC 7501 traffic, and live PTY session streams SHALL NOT be
-  written to `paths.log`.
+- Live PTY session streams SHALL NOT be written to `paths.log`; how the log is
+  displayed is the `cli` capability's.
 
 #### Scenario: Query right after spawn, reply without a newline
 - **WHEN** a process sets its TTY raw, emits a capability query as its first output, and the terminal replies without a newline
@@ -35,10 +33,6 @@ terminal:
 #### Scenario: Concurrent and successive sessions
 - **WHEN** two terminals are attached to one sandbox, or one session ends and another starts
 - **THEN** each process receives only the bytes of its own connection
-
-#### Scenario: Viewing logs on a terminal strips recorded OSC sequences
-- **WHEN** a sandbox hook wrote an OSC 7501 sequence to `paths.log` and the user runs `devcroft logs` in a terminal
-- **THEN** the raw OSC escape sequence is stripped/escaped before reaching the terminal
 
 ### Requirement: Local terminal mode is safe and checked
 The exec client SHALL keep normal signal handling while waiting for the keeper's `SpawnOk`, and after `SpawnOk` SHALL block forwarded signals (`SIGINT`, `SIGTERM`, `SIGHUP`, plus `SIGWINCH` on PTYs) before enabling raw mode and before reading or writing any session byte. It SHALL retry `tcsetattr` on `EINTR`, fail the session if a TTY cannot enter raw mode, and restore the terminal's original settings on every observable exit, including forwarded termination signals.

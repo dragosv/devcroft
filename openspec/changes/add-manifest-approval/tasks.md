@@ -18,7 +18,7 @@
 
 - [ ] 4.1 On Linux, mask `<root>/devcroft.toml` in `construct_view` with an unreadable read-only bind of a devcroft-owned empty file. On macOS, add Seatbelt denials for reading and writing it. Refuse `up` at layer `backend` where neither can be enforced.
 - [ ] 4.2 Measure every alias: case variants on case-insensitive volumes, `/private` prefixes, symlinks inside the workspace, and hard links created inside the sandbox. Record whether the name is masked or absent per platform, and report it in `status`.
-- [ ] 4.3 For an untrusted checkout, protect `.git/config`, `.git/config.worktree` and `.git/hooks/` with the same mechanism. Confirm that a planted hook and a `core.fsmonitor` entry fail, and that `git commit` still works.
+- [ ] 4.3 For an untrusted checkout, protect `.git/config`, `.git/hooks/`, an enabled `.git/config.worktree`, a worktree’s `.git` pointer and workspace hook paths such as `.husky/`, at the view’s workspace path and with case aliases. Never create a file in the host checkout except an empty `.git/hooks/`. Confirm that a planted hook, a `core.fsmonitor` entry and a rewritten pointer fail, and that `git commit` still works.
 - [ ] 4.4 Inventory everything inside the sandbox that reads the manifest (in-sandbox `devcroft` verbs, the denial hook) and give it the effective configuration instead.
 
 ## 4b. Close the other routes
@@ -26,11 +26,12 @@
 - [ ] 4b.1 Withhold `ssh.forward_agent` for untrusted checkouts. Confirm that no per-session option or overlay brings back a withheld variable, an agent socket or another host socket.
 - [ ] 4b.2 Record absent filesystem grants in `NotApplied` with the reason `absent`, name them at `up`, and make `why` agree. Update the existing gap in `docs/known-gaps.md`.
 - [ ] 4b.3 Write every admission refusal to `stderr` only. Confirm that `ssh NAME.devcroft` through `ProxyCommand devcroft proxy %n` shows the refusal and no protocol error.
-- [ ] 4b.4 Qualify each provider for untrusted checkouts: nix, flox, devbox, devenv, mise and pixi. Run the acceptance cases with sentinel values against its resolution, capture and provisioning. Until a provider passes, its untrusted checkouts refuse at layer `config`.
+- [ ] 4b.4 Refuse untrusted checkouts for nix, flox, devbox, devenv and mise, naming `devcroft trust` and `devcroft up --file-only`. Qualify pixi with sentinel values against its resolution, capture and provisioning; until it passes, it refuses too. Make `trust` state that approval lets the provider evaluate the repository’s definitions on the host.
+- [ ] 4b.5 Keep `network.ports` and service ports on Linux with the sandbox’s own namespace; withhold `expose`, shared-loopback ports, `env.pixi.macos_sdk` and loader or trust-store `[env.vars]`. Write the checkout id at `trust`, protect it, and make attach checks leave the record unchanged.
 
 ## 5. Command surface
 
-- [ ] 5.1 Implement `devcroft trust` and `trust --revoke` with the TTY prompt, the non-interactive `--yes --sha256` rule and the change summary against the earlier record. Make `init` approve the bytes it writes. Add both to `USAGE`, help and `tests/cli_help_and_version.rs`.
+- [ ] 5.1 Implement `devcroft trust` and `trust --revoke` with the TTY prompt, the non-interactive `--yes --sha256` rule and the change summary against the earlier record. Make `init` say the checkout is untrusted until `devcroft trust`, approving nothing. Add both to `USAGE`, help and `tests/cli_help_and_version.rs`.
 - [ ] 5.2 Show trust state, recorded and current hash, unapplied keys and manifest visibility in `status`.
 
 ## 6. Migrate and verify
@@ -42,4 +43,4 @@
   - an approved manifest, a one-byte change, then `up`, auto-up and attach to a still-running trusted generation;
   - the same bytes in two worktrees;
   - a backend that cannot enforce protection, refusing.
-- [ ] 6.3 Update `docs/threat-model.md`, `docs/known-gaps.md`, the README’s status, the policy-origin list (`workspace`) in `CLAUDE.md`, and `docs/roadmap.md`’s 1.0 section, which this change and the file-only workflow redefine.
+- [ ] 6.3 Update `docs/threat-model.md`, `docs/known-gaps.md`, the README’s status, the policy-origin table (`workspace`) in `docs/invariants.md`, and `docs/roadmap.md`’s 1.0 section, which this change and the file-only workflow redefine.

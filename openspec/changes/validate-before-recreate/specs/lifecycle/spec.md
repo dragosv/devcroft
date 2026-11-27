@@ -2,7 +2,7 @@
 
 ### Requirement: Validate before stopping a working sandbox
 
-When starting or recreating a sandbox, explicit and automatic startup SHALL load the user configuration and check available credential and broker prerequisites before keeper or proxy termination, provider resolution and new sandbox state, preserving the failure's error layer and exit code (`config` exit code `2` for user-configuration, credential or broker errors). Without `--recreate`, an already healthy sandbox SHALL return already up (or proceed on automatic startup) without re-requiring startup credentials, even if the user configuration file was edited after startup.
+When starting or recreating a sandbox, explicit and automatic startup SHALL load the user configuration and check available credential and broker prerequisites, including running a configured credential command, before keeper or proxy termination, provider resolution and new sandbox state, preserving the failure's error layer and exit code (`config` exit code `2` for user-configuration, credential or broker errors). Without `--recreate`, an already healthy sandbox SHALL return already up (or proceed on automatic startup) without re-requiring startup credentials, even if the user configuration file was edited after startup.
 
 #### Scenario: Missing key on recreate
 - **WHEN** a healthy sandbox is recreated from a shell in which a broker's key is unset
@@ -30,3 +30,14 @@ perform.
 #### Scenario: Provider fails during recreation
 - **WHEN** a healthy sandbox is recreated and provider resolution then fails
 - **THEN** `up` fails at layer `provider`, says the sandbox is down, and names `devcroft up` to start the recorded state again
+
+### Requirement: rm runs in the lifecycle critical section
+`rm` SHALL read the sandbox's `Meta` and remove its state while holding that
+sandbox's lifecycle lock, and SHALL sweep shared artifact objects (store
+providers, agent objects, the pinned runtime) under the store's lease. Today
+it reads `Meta` before taking the lock and sweeps after releasing it.
+
+#### Scenario: rm racing up
+- **WHEN** `rm` and `up` run concurrently on the same sandbox
+- **THEN** either `rm` removes the state `up` recorded, or `up` creates it afresh after `rm`, and no object a surviving `Meta` references is swept
+

@@ -31,6 +31,7 @@ None of them covers what a release must itself prove:
 - Test the distributed artifact. Install from the published package, and upgrade from the previous release with existing sandboxes, `Meta` and configuration. Each existing sandbox either runs or is refused with `up --recreate`, never misread.
 - Clean up after a crash. When a keeper, proxy or agent process dies, nothing with the sandbox’s authority keeps running. `status` reports what happened, and the next `up` recovers.
 - Run two worktrees of one project in parallel, end to end, as a release check.
+- Reconcile the open agent changes that still describe other models (`add-agent-workload`’s host credential file, `add-agent-interaction`’s attention channel), fix `up`’s wrong tunnel hint, record the post-1.0 interface ideas in the roadmap, and bring `openspec/config.yaml` up to date.
 
 ## Capabilities
 

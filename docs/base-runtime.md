@@ -10,8 +10,9 @@ The goal this serves: every shell or utility a sandbox can execute comes from
 a pinned source — the provider's lock, or (once it exists) a devcroft runtime
 the project pins — and never from the host, except named exceptions. This page
 documents what is recorded today. The runtime's utilities exist and are on
-every sandbox's `PATH` by name and reached by absolute path; a runtime shell
-is planned (`openspec/changes/embed-brush-runtime`).
+every sandbox's `PATH` by name and reached by absolute path, and an
+environment with no shell gets the runtime's own `sh` (brush, generation 2;
+`openspec/changes/embed-brush-runtime`).
 
 ## The base names (revision 1)
 

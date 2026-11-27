@@ -21,7 +21,7 @@ The design follows the owner’s two conditions for an untrusted mode: the workl
 **Non-Goals:**
 
 - Verifying code. An approval covers the manifest only, not the flake, lockfiles, scripts or provider version. A change in those can change what runs without changing the hash.
-- Confining host-side provider resolution, which still evaluates repository definitions with the daemon (`sandbox-provisioning` P6). Data-only providers (`mise` with `http:` tools, `pixi` with a Conda lock) execute nothing from the repository there. That is documented, not enforced here.
+- Confining host-side provider resolution. It still evaluates repository definitions with the daemon (`sandbox-provisioning` P6), which is why D12 refuses those providers for untrusted checkouts instead of confining them.
 - Hiding the manifest’s contents. Git history keeps them readable, and the manifest holds no secrets. The effective policy already lives in host state.
 - A stronger boundary. The native backend still shares the kernel; microVM is a separate direction.
 
@@ -29,7 +29,7 @@ The design follows the owner’s two conditions for an untrusted mode: the workl
 
 **D1. One read, one hash.** `config::load` opens the manifest with `O_NOFOLLOW`, requires a regular file with one link, reads it once, and returns the parsed manifest together with the SHA-256 of those bytes. A symlinked or multiply linked manifest fails at layer `config`. Alternative rejected: hashing in one read and parsing in another leaves a window where the approved bytes and the applied bytes differ.
 
-**D2. Checkout identity.** An approval is keyed by the canonical project root and the root directory’s `(st_dev, st_ino)`. Another worktree, a moved checkout or a re-clone at the same path is a new checkout. Alternative rejected: the Git remote or the sandbox name. Either is a hint that anyone can copy, not an authorization.
+**D2. Checkout identity.** An approval is keyed by the canonical project root, the root directory’s `(st_dev, st_ino)` and birth time where the filesystem reports one, and a random checkout id. `trust` writes that id to `<root>/.devcroft/checkout-id`, protected inside sandboxes like the manifest. Another worktree, a moved checkout or a re-clone at the same path is a new checkout. The id matters because ext4 can hand a re-clone the inode of the directory it replaced; a re-clone has no id file. A change of `st_dev` (some network or container filesystems) only makes the checkout untrusted again, which fails safe. Alternative rejected: the Git remote or the sandbox name. Either is a hint that anyone can copy, not an authorization.
 
 **D3. Approval store.** One record per checkout lives under `<data_dir>/trust/`, holding:
 
@@ -42,23 +42,23 @@ The design follows the owner’s two conditions for an untrusted mode: the workl
 
 The data directory is baseline-denied to every sandbox, so no workload can forge or read a record.
 
-**D4. Invalidation is sticky.** When a start or an attach sees a hash other than the approved one, the record becomes `invalidated` and stays so. Returning to the old bytes does not revive it, and only `devcroft trust` approves again. This keeps a one-byte change by any source from being silently undone later. Formatting changes count.
+**D4. Invalidation is sticky.** When `up` sees a hash other than the approved one, the record becomes `invalidated` and stays so. An attach that sees a different hash refuses but changes nothing, so switching branches and back before the next `up` doesn't destroy the approval. Returning to the old bytes does not revive it, and only `devcroft trust` approves again. This keeps a one-byte change by any source from being silently undone later. Formatting changes count.
 
 **D5. One effective manifest.** Admission turns the loaded manifest into an `EffectiveManifest`, and every later phase reads only that type: preflight, the proxy decision, provider resolution, provisioning, environment capture, compilation, rendering and `Meta`. When the checkout is untrusted, admission clears each widening key and records it in a `NotApplied` list (key and summary, never a value):
 
 - `filesystem.allow` beyond the workspace, and `filesystem.read`;
-- `network.default = "allow"`, `network.allow`, `network.loopback = "any"`, `network.ports` and service ports;
+- `network.default = "allow"`, `network.allow` and `network.loopback = "any"`;
+- a service’s `expose`, and `network.ports` and service ports where the loopback is shared with the host (macOS);
 - `provisioning.network.allow`;
 - `env.forward`;
-- `ssh.forward_agent`.
+- `ssh.forward_agent`;
+- any provider key that grants a host path outside the workspace (`env.pixi.macos_sdk`).
 
-Each of these widens what the sandbox can reach or what can reach it:
-- `network.ports` and service ports make a sandboxed listener reachable from the host, where a browser or a local tool talks to it;
-- `ssh.forward_agent` bridges the user's SSH agent socket in.
+Each of these widens what the sandbox can reach or what can reach it. `expose` and a port on a shared loopback make a sandboxed listener reachable from the host, where a browser or a local tool talks to it. `ssh.forward_agent` bridges the user’s SSH agent socket in. Neither is something a repository may grant itself.
 
-Neither is something a repository may grant itself. A filesystem grant whose path is absent at `up` goes on the same list, with the reason `absent`. Today it's dropped silently while `policy --render` still shows it granted (`docs/known-gaps.md`).
+On Linux with the sandbox’s own namespace, `network.ports` and service ports stay applied. There they only let a service bind inside a route-less namespace (Landlock refuses `bind` without them), and nothing reaches them from the host except an SSH tunnel the user opens. Clearing them would stop every service the untrusted manifest still selects. A filesystem grant whose path is absent at `up` goes on the same list, with the reason `absent`. Today it's dropped silently while `policy --render` still shows it granted (`docs/known-gaps.md`).
 
-Narrowing keys stay applied: `filesystem.deny`, `network.default = "deny"` and `require_native_apple_evidence`. `[env.vars]` is literal data and stays applied. When clearing leaves an invalid combination, `up` refuses at layer `config` naming `devcroft trust`.
+Narrowing keys stay applied: `filesystem.deny`, `network.default = "deny"` and `require_native_apple_evidence`. `[env.vars]` is literal data and stays applied, except loader and trust-store variables (`LD_*`, `DYLD_*`, `SSL_CERT_FILE`, `SSL_CERT_DIR`, `NODE_EXTRA_CA_CERTS`), which would let the repository redirect how an agent’s runtime starts or what it trusts. When clearing leaves an invalid combination, `up` refuses at layer `config` naming `devcroft trust`.
 
 The alternative was gating in the keeper. It would not cover the phases that run host-side before restriction (`resolve_for_up`, `__provision`). Making the raw grants unreachable after admission is the structural guard.
 
@@ -70,11 +70,18 @@ The alternative was gating in the keeper. It would not cover the phases that run
 
 **D9. Protecting the file.** This applies in both states.
 
-- **Linux:** the view binds a devcroft-owned empty file with mode `0000`, read-only, over `<root>/devcroft.toml`. An open fails with `EACCES`. Writing, removing or renaming fails, because the path is a read-only mount point. The name stays listed, and `status` says it is masked rather than absent.
+- **Linux:** the view binds a devcroft-owned empty file with mode `0000`, read-only, over `devcroft.toml` at the path where the view mounts the workspace (`<root>`, or `/workspace` for a fleet agent’s clone). A bind needs an existing target, and devcroft never creates one in the host checkout. An open fails with `EACCES`. Writing, removing or renaming fails, because the path is a read-only mount point. The name stays listed, and `status` says it is masked rather than absent.
 - **macOS:** Seatbelt denies `file-read*` and `file-write*` on the manifest’s path.
 - **Both:** measure the alternative names for the same file: case variants on a case-insensitive volume, the `/private` prefix, symlinks inside the workspace and hard links made inside the sandbox. An alias that stays open makes protection unavailable on that host, and a host where protection is unavailable refuses `up` rather than starting without it. Anything inside the sandbox that read the manifest gets the effective configuration instead.
 
-**D11. Git state of an untrusted checkout.** Protect `.git/config`, `.git/config.worktree` and `.git/hooks/` read-only, with the D9 mechanism. Git runs them on the host without review:
+**D11. Git state of an untrusted checkout.** Protect, read-only and with the D9 mechanism:
+
+- `.git/config` and `.git/hooks/`;
+- `.git/config.worktree` when `extensions.worktreeConfig` is on (an absent one is refused rather than created);
+- a linked worktree’s `.git` pointer file;
+- every workspace path the Git configuration names as a hooks directory or a command, such as `.husky/` through `core.hooksPath`.
+
+`.git/hooks/` is created empty if it is missing, since Git’s own layout has it; nothing else is created in the host checkout. Git runs them on the host without review:
 - hooks;
 - `core.fsmonitor` and `core.hooksPath`;
 - the commands that filter drivers, `core.sshCommand` and `core.pager` name.
@@ -83,9 +90,17 @@ So a planted entry is host code execution the next time the user runs `git`. Obj
 
 Alternative rejected: making all of `.git` read-only, as `add-file-only-workflow` does. Where no project command runs, nothing needs to commit; in a managed sandbox, an agent does.
 
-**D12. Providers are qualified for untrusted checkouts one by one.** Each provider’s host-side phases (resolution, capture, provisioning of the activation script) are run against the acceptance cases with sentinel values. A provider that reads an unapplied key, for example a host variable through its own environment capture, refuses untrusted checkouts until it is fixed. A provider not yet qualified refuses them too, so the default fails closed.
+**D12. No repository code runs on the host for an untrusted checkout.** The rule is that the permission contract holds in every phase, including the host-side ones before restriction.
 
-**D10. The approval prompt.** `devcroft trust` prints the checkout, the hash and the grants that would become effective, and, when an earlier record exists, what changed since it. On a TTY it asks `y/N`. Otherwise it needs `--yes --sha256 <hex>` and refuses a hash that does not match the bytes, so a script cannot approve whatever happens to be on disk. `init` records an approval for exactly the bytes it wrote, and says so.
+- nix, flox, devbox and devenv evaluate repository definitions with the daemon and its network. They can’t keep that contract, so they refuse untrusted checkouts and name `devcroft trust` and `devcroft up --file-only`.
+- mise downloads from URLs the repository chooses, so it refuses too.
+- pixi installs a Conda lock from hosts devcroft fixes and runs nothing, so it can qualify.
+
+Each provider that may run is still qualified with sentinel values against resolution, capture and provisioning, and an unqualified one refuses. `devcroft trust` says plainly that approving a manifest also lets its provider evaluate the repository’s definitions on the host.
+
+Alternative rejected: qualifying evaluator providers on “reads no unapplied key”. A flake can fetch and run whatever it names, whatever the manifest says.
+
+**D10. The approval prompt.** `devcroft trust` prints the checkout, the hash and the grants that would become effective, and, when an earlier record exists, what changed since it. On a TTY it asks `y/N`. Otherwise it needs `--yes --sha256 <hex>` and refuses a hash that does not match the bytes, so a script cannot approve whatever happens to be on disk. `init` approves nothing. A cloned repository with a `flake.nix` or `pixi.toml` gets a manifest from `init`, and approving it implicitly would hand that repository the user’s global credentials and writable Git hooks without a prompt.
 
 ## Risks / Trade-offs
 

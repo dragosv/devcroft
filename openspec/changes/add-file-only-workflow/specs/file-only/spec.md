@@ -85,10 +85,14 @@ withheld, and `up` SHALL name each one.
 
 ### Requirement: The workspace is writable, Git state is not
 The project root SHALL be read-write with origin `workspace`. Its `.git` SHALL
-be read-only. A linked worktree's gitdir outside the root SHALL NOT be
-granted. A `devcroft.toml` at the root SHALL be protected as the `policy`
+be read-only, whether it is a directory or a linked worktree's pointer file,
+including its case aliases on a case-insensitive volume. A linked worktree's
+gitdir outside the root SHALL NOT be granted. devcroft SHALL create nothing in
+the host checkout to enforce this. A `devcroft.toml` present at the root SHALL be protected as the `policy`
 requirement "The workload cannot reach the authoritative manifest"
-(`add-manifest-approval`) requires.
+(`add-manifest-approval`) requires. When none is present, one the agent creates
+is an untrusted manifest like any other, and `up` names a manifest that
+appeared since the sandbox started.
 
 #### Scenario: Planted Git hook
 - **WHEN** the agent tries to write `.git/hooks/pre-commit` or `.git/config`
@@ -100,9 +104,13 @@ there showed all of the following:
 
 - a read, search and edit task succeeding with all execution outside the object denied;
 - its shell tool failing closed, reported to the model rather than hanging;
-- no model-reachable way to run project files in its own runtime, whether by an eval or run tool, an interpreter switch such as `BUN_BE_BUN` or `NODE_OPTIONS`, or project-local plugins (which SHALL be disabled by a setting devcroft writes outside the workspace);
+- no model-reachable way to run project files in its own runtime, whether by an eval or run tool, an interpreter switch such as `BUN_BE_BUN` or `NODE_OPTIONS`, or project-local plugins (which SHALL be disabled by a setting devcroft writes to a path that is read-only inside the sandbox, never to the agent's writable `HOME`);
 - no execution or egress added by project-local harness configuration;
 - every search helper it needs shipped inside its object.
+
+#### Scenario: Agent edits its own configuration
+- **WHEN** the agent, following instructions in a project file, edits its configuration under `HOME` to re-enable project plugins
+- **THEN** the setting that disables them is unchanged, because devcroft delivers it from a read-only path, and the plugin does not load
 
 #### Scenario: Project plugin directory
 - **WHEN** the workspace contains a plugin for the harness that writes a marker when loaded

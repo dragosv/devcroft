@@ -21,16 +21,24 @@ artifact, and SHALL be marked as a user recipe wherever the recipe is shown. An
 unknown recipe or version, an unsupported platform, or a host whose libc does
 not match or whose OS is older than the declared minimum SHALL fail at layer
 `config`, exit code 2, before any download, listing what is available. After
-download and before publication, the executable's headers SHALL match what
-the recipe declares (ELF `e_machine` or the selected Mach-O slice, and the
-minimum OS the binary itself records); a mismatch SHALL fail at layer
-`provider` and publish nothing. The published crate SHALL carry the embedded
+download and before publication, every executable and native library in the
+object (the entrypoint and every `.so`, `.node` and `.dylib`) SHALL be checked
+against the recipe's declarations: ELF `e_machine`, and for a `gnu` artifact
+the highest `GLIBC_*` version its `.gnu.version_r` requires, which SHALL NOT
+exceed the declared minimum; for Mach-O, the CPU type and `LC_BUILD_VERSION`'s
+`minos`, which SHALL NOT exceed the declared minimum. A universal Mach-O SHALL
+be refused in this change. A mismatch SHALL fail at layer `provider` and
+publish nothing. The published crate SHALL carry the embedded
 recipes, and every crate the fetcher and extractor call SHALL be a direct
 dependency.
 
 #### Scenario: Unknown recipe
 - **WHEN** the user configuration selects `[agent] name = "nope"`
 - **THEN** `up` fails at layer `config` and lists the recipe names
+
+#### Scenario: Native module needs a newer glibc
+- **WHEN** a recipe declares glibc 2.35 and a `.node` module in the archive requires `GLIBC_2.39`
+- **THEN** the install fails at layer `provider` naming the module and both versions, and nothing is published
 
 #### Scenario: Host older than the recipe's minimum
 - **WHEN** a recipe declares a `gnu` artifact needing glibc 2.39 and the host has glibc 2.35
@@ -111,9 +119,12 @@ remove that pin and sweep unreferenced objects. Automatic sweeps during `up` or
 nor any explicit install pin references it. Every path that publishes an agent
 object (`up`, `agent install` and `agent run`) SHALL take the agent store's
 lease before publishing and hold it until an install pin or a recorded `Meta`
-references the object, whatever the project's provider. `rm` SHALL read the
-sandbox's `Meta` and remove its state under that sandbox's lifecycle lock, and
-SHALL sweep agent objects under the store's lease.
+references the object, whatever the project's provider. Downloading and
+publishing SHALL happen under the object's lock and the store's lease, before
+the sandbox's lifecycle lock is taken, so a slow download never holds `down`
+or `rm` of that sandbox. `rm` SHALL sweep agent objects under the store's
+lease, relying on the lifecycle critical section `validate-before-recreate`
+defines.
 
 #### Scenario: Two sandboxes, one object
 - **WHEN** two sandboxes select the same recipe version
@@ -154,10 +165,14 @@ agent SHALL add nothing to `PATH`, and the agent's command SHALL NOT resolve on
 `PATH` in `devcroft shell`, `exec` or SSH sessions. Variables in the recipe's
 `reserved_env` SHALL be refused in `manifest.env.vars` and `manifest.env.forward`
 at layer `config`, and SHALL be absent from the agent's environment, including
-when the provider or its activation script exports them. Names in
-`requires.runtime_env` SHALL also be removed from the agent's environment, and
-`up` SHALL print one line naming each one removed and saying that commands the
-agent starts do not see it. Before connecting, `agent run` SHALL verify from
+when the provider or its activation script exports them. A recipe's
+`requires.runtime_env` SHALL name only switches of the agent's own runtime
+(for example `NODE_OPTIONS` or `BUN_BE_BUN`), never search paths a project
+uses, such as `PYTHONPATH`. When the project's environment sets one of them,
+`up` SHALL fail at layer `config` naming the variable and the recipe, unless
+the user configuration lists it in `[agent] strip_runtime_env`. In that case
+`up` SHALL remove it from the agent's environment and print one line saying
+that commands the agent starts do not see it either. Before connecting, `agent run` SHALL verify from
 `Meta` that the running keeper supports variable unsetting, refusing an older
 keeper and naming `up [--name <n>] --recreate`. `[launch.env]` SHALL reach the
 agent's processes only, and SHALL NOT set `PATH`, `HOME`, `XDG_*`, `LD_*`,
@@ -180,7 +195,11 @@ the agent's own grants and the baseline, never against the provider's grants.
 
 #### Scenario: Project sets a runtime variable
 - **WHEN** the project's environment sets `NODE_OPTIONS=--require /project/hook.js` and the recipe declares it in `requires.runtime_env`
-- **THEN** the agent's process has no `NODE_OPTIONS` and loads no project code, `devcroft exec -- env` still lists it, and `up` prints one line naming it and the recipe
+- **THEN** `up` fails at layer `config` naming `NODE_OPTIONS`, the recipe and `[agent] strip_runtime_env`
+
+#### Scenario: Runtime variable stripped by choice
+- **WHEN** the same project runs with `[agent] strip_runtime_env = ["NODE_OPTIONS"]`
+- **THEN** the agent's process has no `NODE_OPTIONS` and loads no project code, `devcroft exec -- env` still lists it, and `up` names it as removed
 
 #### Scenario: No agent command on PATH
 - **WHEN** a sandbox with an agent is up and `devcroft exec -- sh -c 'command -v opencode'` runs
@@ -361,3 +380,25 @@ release gate and `docs/agents.md` SHALL read the same record.
 #### Scenario: Declared but not observed
 - **WHEN** the recipe declares native OSC 7501 emission and the probe observed none
 - **THEN** the row records `drift`, and the capability is not advertised
+
+### Requirement: Authentication modes are declared per platform, with their state
+Each recipe's `[auth.<mode>]` table MAY list `platforms`; without it, the mode
+SHALL apply to every platform the recipe ships. `default_auth` SHALL be
+available on every shipped platform, or the recipe fails validation at layer
+`config`. A mode that keeps state in `HOME` SHALL declare, per platform, the
+HOME-relative `paths` and the keys inside shared JSON files (`json_keys`, for
+example `.claude.json#/oauthAccount`) that hold it. Recreating a sandbox from
+one mode to another of the same recipe while any declared state of the old
+mode exists SHALL fail at layer `config` before teardown, naming each path and
+key. With `--drop-auth-state` (and `--yes` when stdout isn't a TTY), `up`
+SHALL remove exactly those entries through the safe-update contract and
+nothing else. User recipes SHALL use the same schema.
+
+#### Scenario: Login state left behind on the same recipe
+- **WHEN** a sandbox recorded under a recipe's `login` mode, with a declared login key present in a shared settings file, is recreated with `--agent-auth api-key`
+- **THEN** `up` fails at layer `config` naming the file and the key, and the running sandbox is unchanged
+
+#### Scenario: Dropping only the declared state
+- **WHEN** the same recreation runs with `--drop-auth-state --yes`
+- **THEN** the declared key is removed, every other setting in that file survives, and the sandbox runs under `api-key`
+

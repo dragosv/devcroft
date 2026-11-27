@@ -131,9 +131,11 @@ the code comments.
 - Keep credentials and private runtime state out of the workload's reach, out
   of diagnostics and out of anything serialized for users. `Meta` holds
   `proxy_token`, so never print or export it as is.
-- The MVP command surface is closed: `init`, `up`, `down`, `rm`, `status`,
-  `logs`, `ps`, `shell`, `exec`, `ssh`, `proxy`, `ssh-config`, `policy`, `why`
-  and `doctor`. `--help` and `--version` describe the surface; they don't add
+- The command surface is closed except through an OpenSpec change. The MVP
+  set is `init`, `up`, `down`, `rm`, `status`, `logs`, `ps`, `shell`, `exec`,
+  `ssh`, `proxy`, `ssh-config`, `policy`, `why` and `doctor`. Active changes
+  add `agent …`, `trust` and `--file-only`, and the surface 1.0 keeps is listed
+  in `docs/stability.md` (`prepare-v1-release`). `--help` and `--version` describe the surface; they don't add
   to it. Add a new command or flag to `USAGE` in `src/bin/devcroft.rs`, the
   only place a user of the published binary can discover it, or
   `tests/cli_help_and_version.rs` fails.

@@ -8,3 +8,4 @@
 - [ ] 2.1 With a healthy sandbox, recreate with a missing broker key. Confirm the original keeper, proxy and an existing session still work. Confirm plain `up` and `devcroft shell` from a shell lacking the startup credential (or after editing `config.toml`) still succeed via `AlreadyUp`.
 - [ ] 2.2 On a stopped or new sandbox, show that failed preflight invokes no provider, creates no new sandbox state, and exits with code `2` (layer `config`) on both explicit `up` and automatic startup (`devcroft shell` / `exec`).
 - [ ] 2.3 Make a recreation fail during provider resolution. Confirm `up` says the sandbox is down, `Meta` still records the previous state, and the named `devcroft up` starts it again.
+- [ ] 2.4 Move `rm`’s `Meta` read and state removal under the lifecycle lock and its sweeps under the store lease (`src/lifecycle/terminate.rs`). Test `rm` concurrent with `up` and with another sandbox’s install.

@@ -6,13 +6,19 @@ that checkout is `approved` for the exact bytes being loaded. An untrusted
 manifest SHALL still select the provider, services, hooks, identity and
 sandbox name, and its narrowing keys (`filesystem.deny`, `network.default =
 "deny"`, `env.require_native_apple_evidence`) and literal `[env.vars]` SHALL
-apply. These widening keys SHALL NOT apply:
+apply, except `[env.vars]` entries naming loader or trust-store variables
+(`LD_*`, `DYLD_*`, `SSL_CERT_FILE`, `SSL_CERT_DIR`, `NODE_EXTRA_CA_CERTS`).
+`network.ports` and service ports SHALL apply where the sandbox has its own
+network namespace, because there they only permit binding inside it. These
+widening keys SHALL NOT apply:
 
 - `filesystem.allow` beyond the workspace, and `filesystem.read`;
-- `network.default = "allow"`, `network.allow`, `network.loopback = "any"`, `network.ports` and service ports;
+- `network.default = "allow"`, `network.allow` and `network.loopback = "any"`;
+- a service's `expose`, and `network.ports` and service ports where the sandbox shares the host's loopback (macOS), since there a listener is reachable from the host;
 - `provisioning.network.allow`;
 - `env.forward`;
-- `ssh.forward_agent`, which would bridge the user's SSH agent socket into the sandbox.
+- `ssh.forward_agent`, which would bridge the user's SSH agent socket into the sandbox;
+- any provider key that grants a host path outside the workspace, such as `env.pixi.macos_sdk`.
 
 `up` SHALL print one line naming each key it did not apply, with a summary
 and never a value. When the remaining combination is invalid, `up` SHALL fail
@@ -21,6 +27,10 @@ at layer `config` naming `devcroft trust`.
 #### Scenario: Widening keys of an untrusted manifest
 - **WHEN** an unapproved manifest declares `filesystem.read = ["~/notes"]`, `network.allow = ["example.com"]` and `[env] forward = ["MARKER"]`, and `up` runs
 - **THEN** the sandbox cannot read `~/notes`, cannot reach `example.com`, has no `MARKER`, and `up` names the three keys
+
+#### Scenario: Services still bind on Linux
+- **WHEN** an unapproved manifest declares a Postgres service on port 5432 and the Linux sandbox has its own network namespace
+- **THEN** the service binds `127.0.0.1:5432` inside the sandbox, and nothing listens on the host
 
 #### Scenario: Narrowing still applies
 - **WHEN** an unapproved manifest declares `filesystem.deny = ["secrets"]`
@@ -31,10 +41,13 @@ at layer `config` naming `devcroft trust`.
 - **THEN** the manifest is untrusted and the hosts are not reachable
 
 ### Requirement: An approval is bound to one checkout and the exact bytes
-An approval SHALL be created only by an explicit host action (`devcroft trust`,
-or `init` for the bytes it writes). It SHALL record the checkout's canonical
-root, the root directory's device and inode, and the SHA-256 of the manifest
-bytes. devcroft SHALL hash and parse the same single read of a regular file
+An approval SHALL be created only by `devcroft trust`; `init` SHALL NOT create
+one. It SHALL record the checkout's canonical root, the root directory's
+device, inode and, where the filesystem reports one, birth time, a random
+checkout id that `trust` writes to `<root>/.devcroft/checkout-id`, and the
+SHA-256 of the manifest bytes. The checkout id file SHALL be protected inside
+every sandbox as the manifest is, and a checkout without it, such as a
+re-clone that reused the directory's inode, SHALL be untrusted. devcroft SHALL hash and parse the same single read of a regular file
 opened without following symlinks, and SHALL fail at layer `config` on a
 symlinked manifest or one with more than one link. A missing or unreadable
 manifest SHALL NOT be covered by any earlier approval. A Git remote, sandbox
@@ -46,17 +59,18 @@ in devcroft's data directory, unreachable from every sandbox.
 - **THEN** B is untrusted
 
 #### Scenario: Re-clone at the same path
-- **WHEN** an approved checkout is deleted and cloned again at the same path
-- **THEN** the new checkout is untrusted
+- **WHEN** an approved checkout is deleted and cloned again at the same path, even where the filesystem reuses the directory's inode
+- **THEN** the new checkout is untrusted, because it has no checkout id
 
 #### Scenario: Hard-linked manifest
 - **WHEN** `devcroft.toml` has a second hard link and `up` runs
 - **THEN** `up` fails at layer `config` naming the manifest and its link count
 
 ### Requirement: A changed manifest invalidates its approval for good
-When a start or an attach loads bytes whose hash differs from the approved
-hash, devcroft SHALL mark the approval `invalidated` and treat the checkout as
-untrusted. A later return to the approved bytes SHALL NOT restore it. Only
+When `up` loads bytes whose hash differs from the approved hash, devcroft SHALL
+mark the approval `invalidated` and treat the checkout as untrusted. An attach
+that sees a different hash SHALL refuse without changing the record, so
+switching branches and back before the next `up` costs nothing. A later return to the approved bytes SHALL NOT restore it. Only
 `devcroft trust` SHALL approve again. `up --recreate` and every automatic start
 SHALL NOT approve.
 
@@ -67,6 +81,10 @@ SHALL NOT approve.
 #### Scenario: Reverting does not restore trust
 - **WHEN** that byte is removed again and `up` runs
 - **THEN** the checkout is still untrusted
+
+#### Scenario: Branch switched and back before up
+- **WHEN** an approved checkout switches to a branch whose manifest differs, `devcroft shell` is refused, and the user switches back before any `up`
+- **THEN** the approval is still `approved`, and `devcroft shell` attaches
 
 #### Scenario: Recreation does not approve
 - **WHEN** a sandbox of an invalidated checkout is brought up with `up --recreate` or by `devcroft shell`
@@ -145,12 +163,22 @@ socket under the user's home directory and every `[env] forward` name.
 - **WHEN** a withheld variable is supplied again through any per-session option or overlay
 - **THEN** the session does not receive it
 
-### Requirement: Each provider is qualified for untrusted checkouts
-A provider SHALL resolve an untrusted checkout only after its host-side phases
-have been shown to read no key that admission did not apply. Those phases are
-resolution, capture and the provisioning of its activation script. A provider
-not yet qualified SHALL fail at layer `config` for an untrusted checkout,
-naming the provider and `devcroft trust`.
+### Requirement: Untrusted checkouts run no repository code on the host
+A provider SHALL resolve an untrusted checkout only when its host-side phases
+(resolution, capture and provisioning) execute no repository-controlled code
+and fetch only from hosts devcroft fixes, read no key admission did not apply,
+and this was shown by its untrusted qualification. nix, flox, devbox and
+devenv evaluate repository definitions on the host, with the daemon's
+network, so they SHALL fail at layer `config` for an untrusted checkout,
+naming the provider, `devcroft trust` and `devcroft up --file-only`. A
+provider whose downloads come from repository-chosen URLs (mise) SHALL do the
+same. A provider not yet qualified SHALL also refuse. `devcroft trust` SHALL
+say that approving a manifest also lets its provider evaluate the
+repository's definitions on the host.
+
+#### Scenario: Evaluator provider on an untrusted checkout
+- **WHEN** an unapproved checkout selects `provider = "nix"`
+- **THEN** `up` fails at layer `config` naming nix, `devcroft trust` and `devcroft up --file-only`, and nothing is evaluated
 
 #### Scenario: Provider not qualified
 - **WHEN** an unapproved checkout selects a provider whose untrusted qualification has not run

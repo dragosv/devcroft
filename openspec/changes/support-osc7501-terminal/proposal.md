@@ -6,7 +6,7 @@ An agent can report its state to the developer’s terminal. The exchange needs 
 
 ## What Changes
 
-Qualify OSC 7501 on the existing shell and SSH paths. Keep sessions independent, restore the terminal when the session ends, and prevent a log viewer from replaying old status reports as live updates. This can ship alongside `validate-before-recreate`.
+Qualify OSC 7501 on the existing shell and SSH paths. Keep sessions independent, restore the terminal when the session ends, and prevent a log viewer from replaying old status reports as live updates. This can ship alongside `validate-before-recreate`, before agent packages, except task 2.3: its live emitter is driven by `fake-llm` from `add-agent-packages`.
 
 ## Capabilities
 
@@ -14,6 +14,7 @@ Qualify OSC 7501 on the existing shell and SSH paths. Keep sessions independent,
 
 - `exec` covers interactive terminal transport and restoration.
 - `ssh` covers the same exchange on an SSH session with a PTY.
+- `cli` covers how `devcroft logs` shows recorded output on a terminal.
 
 ## Impact
 

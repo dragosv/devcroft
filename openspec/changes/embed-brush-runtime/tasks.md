@@ -55,3 +55,14 @@
   - 572 dependencies. Linux aarch64 release stripped 38,077,784 bytes, +4.7 MB on 33,356,376. Two `uucore` (0.8.0 through brush).
 - [ ] 5.3 `cargo build`, `fmt`, `clippy`, `doc --no-deps`, `test`, skip inventory recorded.
 - [ ] 5.4 `openspec validate embed-brush-runtime --type change`.
+
+## 6. Close what the 2026-11-25 review found
+
+These reopen the parts of checked tasks whose evidence is incomplete. Each closes only with the test or the record it names.
+
+- [ ] 6.1 `SIGPIPE` (task 1.4): add the case to `tests/runtime_shell.rs`.
+- [ ] 6.2 `runtime_shell_notice()` (task 4.7, `src/runtime/layer.rs`): name every measured defect, including an `EXIT` trap in a subshell, `kill PID` and `kill -0 PID`, and `export` from an expansion.
+- [ ] 6.3 Startup budget (task 4.6): record the slice A comparison against the host shell it replaced (about 2.8× on Linux, 2026-11-24) as an owner decision, separately from the slice B comparison against a closure bash.
+- [ ] 6.4 The macOS redirect’s `stat` interposition (`src/runtime/redirect.c`): either narrow it to `access`/`faccessat`, or specify the metadata behavior with symlink semantics, honored flags and `lstat`/`AT_SYMLINK_NOFOLLOW` tests. Update the gap in `docs/known-gaps.md` when it closes.
+- [ ] 6.5 Generation identity (task 1.1): record the lockfile hash and the source revision or executable hash D4 asks for, or record the decision to accept registry version plus Cargo checksum instead.
+

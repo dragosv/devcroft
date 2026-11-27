@@ -6,7 +6,7 @@ Recreating a healthy sandbox can stop its keeper before discovering that a requi
 
 ## What Changes
 
-Run the existing credential and broker checks before teardown or provider resolution. An ordinary start of an already healthy sandbox still works from a shell without those credentials. This can ship independently of agent recipes and terminal support.
+Run the existing credential and broker checks before teardown or provider resolution. Fix `rm`’s critical section too: it reads `Meta` before taking the lifecycle lock and sweeps shared objects after releasing it, which every store provider, agent objects and the pinned runtime depend on. An ordinary start of an already healthy sandbox still works from a shell without those credentials. This can ship independently of agent recipes and terminal support.
 
 ## Capabilities
 
