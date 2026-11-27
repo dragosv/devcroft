@@ -9,14 +9,26 @@ Evidence has five levels, and none substitutes for another:
 1. **Deterministic fixtures.** `devcroft-test-agent` is a Rust multicall fixture under `tests/fixtures/`, kept out of `src/bin` and out of the published crate. It covers CLI and PTY behaviour, process trees, sentinels and credentials, and reports what it saw out of band. It has no model and stays dependency-light.
 2. **OS-level probes** on a real backend.
 3. **devcroft’s own model–tool loop.** `model-loop-agent` is a small agent built on goose’s oi-kit crates (`oi-kit-agent`, `oi-kit-provider-types`, `oi-kit-providers`). It runs inside the sandbox and edits a file, runs the project test and reads the result through tools devcroft defines in-process. oi-kit ships no shell or other implicit tool, so the fixture exposes exactly the operations under test. It has two providers:
-   - a scripted one, devcroft’s own implementation of the `Provider` trait, which replays a fixed sequence of tool calls for deterministic CI;
-   - the OpenAI-compatible provider, for the pinned local model.
+   - a scripted one, devcroft’s own implementation of the `Provider` trait, which replays a fixed sequence of tool calls, in-process;
+   - the OpenAI-compatible provider pointed at the fake LLM server of level 4, which exercises the egress proxy and broker path with no vendor harness at all.
 
    It is its own crate, with a `[workspace]` table of its own (as the samples have) and the oi-kit version pinned exactly. oi-kit is alpha, and its dependencies (`reqwest`, `rmcp` and their tails) stay out of devcroft’s `Cargo.lock`, `THIRD-PARTY-LICENSES.md` and published package. The reviews had proposed an embedded `libfx` for this role: a Zig engine behind a WASM boundary, whose only probe could not be reproduced. oi-kit serves no ACP, so it does not replace Testy.
-4. **The qualified harness** driven by a pinned local model (model, server and template digests), reporting the number of runs and the failure types rather than a single success.
-5. **The harness against the named provider** through the broker.
+4. **The real harness against a fake LLM server**, deterministic and run in CI.
 
-A fixture result never qualifies a vendor binary. That holds for `model-loop-agent` too, although goose uses the same engine: it does not qualify the goose recipe.
+   `fake-llm` lives in the same fixtures workspace. It speaks the named provider’s wire protocol: OpenAI chat completions with SSE streaming first, and Anthropic Messages when `add-claude-agent-recipe` needs it. For each scenario it answers with scripted tool calls, matching each request on its content (the last tool result) rather than its position. An unexpected request fails the run loudly. It also serves, or records and fails on, any request the harness makes on its own, such as a model list at startup.
+
+   It sits upstream of the broker, on the host, so the run follows the real route: harness → devcroft’s proxy endpoint → broker → fake server. It records what reached it and asserts:
+   - the synthetic key arrived and the placeholder never did;
+   - no secret appears in a prompt;
+   - the tool schemas and the call order match the scenario;
+   - streaming and cancellation behave.
+
+   Pointing the broker at it takes an upstream override and a test CA. Both exist only under the non-default `test-support` feature, beside the seam `src/proxy/server.rs` already has. A release build has no flag, variable or file that can redirect a broker’s upstream or add a trust anchor for it, because such a switch in a shipped binary would be a way to exfiltrate the key.
+5. **The real harness against the named provider** through the broker. This is the qualifying run.
+
+A fake cannot show that a real model can drive the harness, and it cannot show real authentication or the vendor’s endpoint. Those remain level 5’s job. A run with a real local model is optional, a non-gating nightly job for behaviour only a real model triggers.
+
+A fixture result never qualifies a vendor binary. That holds for `model-loop-agent` too, although goose uses the same engine, and for a passing run against `fake-llm`. Neither qualifies a recipe.
 
 Prefer a statically linked or fully bundled payload. Record each Linux artifact’s libc (`gnu`, `musl` or `static`) and refuse a host whose loader does not match before downloading. A universal Mach-O stays refused until the header reader selects and checks the host’s slice. A checksum proves integrity, not that the executable can start on this host.
 
@@ -72,4 +84,4 @@ Agent selection, recipes and credentials come only from the user configuration. 
 
 ## Terminal acceptance
 
-Measure a real edit and test using the project’s tools, first with the pinned local model and then with the named provider. Use distinct project and agent runtimes in a fixture to make toolchain mix-ups observable. On `agent run`, reuse the [terminal transport cases](../support-osc7501-terminal/design.md) `T01`–`T10` and `T12`. During the live project task, observe `hc ls` if the qualified harness natively emits OSC 7501. Otherwise verify that devcroft fabricates no reply, identity or state (`OSC-05`, defined there), and record `osc7501_native = false` in the recipe’s published capability profile in `docs/agents.md` (`S9`).
+Measure a real edit and test using the project’s tools, first against `fake-llm` behind the broker and then with the named provider. Use distinct project and agent runtimes in a fixture to make toolchain mix-ups observable. On `agent run`, reuse the [terminal transport cases](../support-osc7501-terminal/design.md) `T01`–`T10` and `T12`. During the live project task, observe `hc ls` if the qualified harness natively emits OSC 7501. Otherwise verify that devcroft fabricates no reply, identity or state (`OSC-05`, defined there), and record `osc7501_native = false` in the recipe’s published capability profile in `docs/agents.md` (`S9`).

@@ -32,3 +32,20 @@ SHALL reach only the proxy that injects it.
 #### Scenario: Unrelated host secret
 - **WHEN** the user's shell exports an unrelated secret and `up` starts the egress proxy
 - **THEN** the proxy's environment contains only its listed variables, and the secret is absent from it
+
+### Requirement: A broker's upstream cannot be redirected outside test builds
+Overriding a broker's upstream, or adding a trust anchor for it, SHALL exist
+only under the non-default `test-support` feature, for tests that use a fake
+LLM server. A build without that feature, the published crate and `cargo
+install devcroft` included, SHALL contain no flag, environment variable,
+configuration key or file that sends a broker's credential to any host other
+than the recipe's or user broker's declared host, or that makes the proxy trust
+another certificate for it.
+
+#### Scenario: Release build given the test hook's inputs
+- **WHEN** devcroft built without `test-support` brings up a brokered recipe while every variable and file the test hook reads names a fake upstream and a test CA
+- **THEN** the broker connects only to the recipe's declared host with the normal trust store, and the fake upstream receives nothing
+
+#### Scenario: Test build reaches the fake server
+- **WHEN** devcroft built with `test-support` runs a harness against `fake-llm` through the broker
+- **THEN** the fake server receives the synthetic key and never the placeholder

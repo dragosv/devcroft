@@ -10,11 +10,18 @@
   Confirm that `cargo package --list` does not contain it and that `cargo install` installs only `devcroft`.
 - [ ] 0.2 Build `tests/fixtures/model-loop-agent`, a crate with its own `[workspace]` table, on oi-kit pinned exactly (`=0.1.0-alpha.16` or the version current when work starts, with `rustls-tls`).
   - Before writing it, confirm on docs.rs the `Provider` trait’s signature and that a `StateMachine` runs with no network under a scripted provider.
-  - Implement a scripted `Provider` that replays a fixed sequence of tool calls, and wire the OpenAI-compatible provider for the pinned local model.
+  - Implement a scripted `Provider` that replays a fixed sequence of tool calls, and wire the OpenAI-compatible provider to `fake-llm` (0.3).
   - Define in-process tools for reading and editing a file, running a command and reporting a result, and no others.
   - Build it on `linux-aarch64` and `macos-arm64`. Confirm that devcroft’s `Cargo.lock`, `THIRD-PARTY-LICENSES.md` and `cargo package --list` are unchanged.
-  - Run it inside a sandbox to edit a file and run the project test: in scripted mode in CI, and with the pinned local model as a separate job that reports the number of runs and the failure types.
-- [ ] 0.3 Define the versioned qualification record: rows per artifact digest, devcroft version, platform, launch path and auth mode, and declared versus observed results (`pass`, `fail`, `drift`, `skipped`, `unknown`). Make `agent list`, `doctor`, the CI release gate and `docs/agents.md` read it. Prove that a skipped or unknown mandatory probe leaves a row unqualified.
+  - Run it inside a sandbox to edit a file and run the project test, in scripted mode and against `fake-llm` through the broker, both in CI.
+- [ ] 0.3 Build `tests/fixtures/fake-llm` in the same fixtures workspace.
+  - It speaks OpenAI chat completions with SSE streaming, and it is structured so that Anthropic Messages can be added for `add-claude-agent-recipe`.
+  - Each scenario is a script of answers matched on request content. An unexpected request fails the run.
+  - It records what it received: headers, tool schemas and prompts.
+- [ ] 0.4 Add the broker’s upstream override and test CA under `test-support` only, next to the existing seam in `src/proxy/server.rs`. Prove both directions:
+  - a build without the feature, given every input the hook reads, still connects only to the declared host with the normal trust store;
+  - a build with it delivers the synthetic key, never the placeholder, to `fake-llm`.
+- [ ] 0.5 Define the versioned qualification record: rows per artifact digest, devcroft version, platform, launch path and auth mode, and declared versus observed results (`pass`, `fail`, `drift`, `skipped`, `unknown`). Make `agent list`, `doctor`, the CI release gate and `docs/agents.md` read it. Prove that a skipped or unknown mandatory probe leaves a row unqualified.
 
 ## 1. Qualify one native candidate
 
@@ -23,7 +30,8 @@
   - dependencies, required commands and relative `state_paths`;
   - the Linux `procfs` need;
   - macOS `HTTPS_PROXY` userinfo (`http://nono:<token>@127.0.0.1:<port>`) behavior across startup and model requests;
-  - any update or extra-download behavior.
+  - any update or extra-download behavior;
+  - every request the harness makes at startup and per turn, which `fake-llm` must serve.
 
   On any platform where OpenCode fails, qualify Goose by the same criteria or publish only the passing platform(s). Measure `fx` by the same criteria as a comparator, recording which probes it passes. Write every result into the qualification record.
 - [ ] 1.2 Demonstrate a provider request through devcroft’s broker with an empty project allowlist. Confirm the agent runs from a read-only object, started by absolute path, with `PATH` unchanged. Record qualifying platforms and auth mode before advertising the recipe.
@@ -64,7 +72,7 @@
 - [ ] 3.2 Launch by absolute path with per-launch variables and no `PATH` change, and grant the sandbox `HOME` read-write with origin `agent:<recipe>`. Check that the agent’s command is not found in `devcroft shell`, and that a manifest with no project-root grant still lets the agent write its state. Check old keeper refusal, reserved and runtime variables from the provider and activation, and project `PATH` shadowing. Confirm project Node 16 and a fixture agent’s private Node 24 remain distinct, and that an executable needing a provider-only path is refused before teardown.
 - [ ] 3.3 Protect host-side configuration merges in sandbox HOME using `O_NOFOLLOW` descriptors and `renameat` (`OwnedDir`), and confirm unrelated settings survive restart. Confirm redirected and malformed targets are refused, never replaced. Confirm credential collisions are refused, including a provider-exported key and a broker entry that differs only in placeholder, and that the broker receives the real key only once per start. Start the egress proxy from a cleared environment and confirm an unrelated host secret is absent from it.
 - [ ] 3.4 Run the `support-osc7501-terminal` cases `T01`–`T10` and `T12` through `agent run`. Run the qualified agent inside an `hc ls`-monitored terminal during a project task. If the harness emits OSC 7501 natively, record the `hc ls` state transition. If not, confirm devcroft fabricates no reply, identity or state (`OSC-05`) and record `osc7501_native = false` in `docs/agents.md` (`S9`).
-- [ ] 3.5 From a fresh project, run the maintained agent, edit a file and execute its test with the project’s tools. Do it first with a pinned local model (recording model, server and template digests, the number of runs and the failure types), then with the named provider through the broker. Document in the CLI help, README and agent matrix:
+- [ ] 3.5 From a fresh project, run the maintained agent, edit a file and execute its test with the project’s tools. Do it first against `fake-llm` behind the broker, in CI and deterministically, and then with the named provider through the broker, which is the qualifying run. A run with a real local model is optional and non-gating; if it is kept, record model, server and template digests, the number of runs and the failure types. Document in the CLI help, README and agent matrix:
   - the exact recipe/platform/auth combination;
   - OSC 7501 emission status;
   - shared-sandbox custody and retained state after opt-out;
