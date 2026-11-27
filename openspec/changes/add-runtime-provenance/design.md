@@ -56,6 +56,27 @@ with the same probe. 0 mismatches on all five; no `host:` entry on any.
 | mise 2026.11.9, `mise-sample` (`http:go`) | every name but `sh`, `env` | `/bin/sh` → host dash, `/usr/bin/env` → host |
 | pixi 0.84.2, `pixi-sample` (conda python 3.12) | every name but `sh` | `/bin/sh` → host dash |
 
+The macOS row of that table was true when it was measured.
+`add-macos-exec-redirect` changed it. Measured again 2026-11-27 on macOS 15.8.3
+arm64 (flox 1.14.0 `flox-services-sample`, mise 2026.11.12
+`mise-sample/macos-arm64`, pixi 0.84.2 `pixi-sample`). Each test ran one exec
+in a real sandbox twice: from a session, which has the redirect library, and
+from a host-built C program with `DYLD_INSERT_LIBRARIES` unset, which has none.
+
+| Sandbox | With the library: `/bin/sh`, `/usr/bin/env`, `#!/bin/sh`, `#!/usr/bin/env`, `/bin/ls` | Without the library | `stat`/`opendir` of `/bin` |
+|---|---|---|---|
+| flox (closure tier) | all run, through the record's entries (`/bin/sh` → closure bash, `/usr/bin/env` → `runtime:gen-2`) | all `EPERM` | `EPERM` |
+| mise | all run (`/bin/sh` and `/usr/bin/env` → `runtime:gen-2`) | all run the host's files | `EPERM` |
+| pixi | all run (`/bin/sh` and `/usr/bin/env` → `runtime:gen-2`) | all run the host's files | `EPERM` |
+
+The record describes what a process with the library runs. In the closure
+tier, a process without the library is refused, never sent to the host. In
+mise and pixi it runs the host's file: their provider grants on macOS cover
+the host `/bin` for execution, but not for listing. `docs/known-gaps.md`
+had said the closure tier's refusal held everywhere; it is corrected. The
+provider row test (`tests/base_runtime_provenance.rs`, `=all`) passes on
+macOS for nix, flox, devbox and swift: 0 mismatches, no `host:` entry.
+
 Three facts the macOS measurement could not show:
 
 - **`/usr/bin/env` is absent in every flox sandbox, coreutils or not.**

@@ -128,6 +128,12 @@ fn absolute_paths_resolve_as_names_do_and_the_keeper_stays_clean() {
         want("GNU env -i", sh("env -i /bin/sh -c 'echo host'"), &|g| {
             g.contains("not permitted")
         });
+        // A `#!/bin/sh` script started without the library is the kernel's
+        // to run, and the policy refuses its interpreter
+        // (`add-runtime-provenance` 3.3).
+        want("GNU env -i ./s.sh", sh("env -i ./s.sh; echo rc=$?"), &|g| {
+            g.contains("rc=126") && g.to_lowercase().contains("not permitted")
+        });
         for p in ["/usr/bin/make", "/usr/bin/python3"] {
             want(p, sh(&format!("{p} --version; echo rc=$?")), &|g| {
                 g.contains("rc=126") && g.to_lowercase().contains("not permitted")
