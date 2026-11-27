@@ -6,7 +6,7 @@ A developer may want the project’s tests to use its own tools without being ab
 
 ## What Changes
 
-Run a bounded experiment with a fixture and one qualified real agent. Record where its test command runs, who can read a synthetic credential and which workspace settings influence the agent. The deliverable is evidence and a decision about a future product change.
+Run a bounded experiment, on Linux only, with a fixture and one qualified real agent. Record where its test command runs, who can read a synthetic credential and which workspace settings influence the agent. The deliverable is evidence and a decision about a future product change.
 
 **Depends on** [one qualified agent](../add-agent-packages/proposal.md). It can proceed independently of Claude and the editor delivery.
 

@@ -1,53 +1,49 @@
 ## ADDED Requirements
 
-### Requirement: ACP endpoint discovery, bounded startup and valid remedies
+### Requirement: ACP attaches to a running sandbox and starts nothing
 `devcroft agent acp [<recipe>]` SHALL run on the host and resolve its target sandbox by
 `--sandbox <name>`, or else by comparing both the nearest upward `devcroft.toml`
 root and the innermost recorded `Meta` `project_root` containing canonical
 `cwd` and choosing the deeper (more specific) root. Ambiguous sandboxes sharing
 the same `project_root` SHALL fail at layer `config` naming each candidate and
-`--sandbox`. `agent acp` SHALL refuse `acp = "none"` naming `devcroft agent run
-<recipe>`, SHALL fail immediately on `stderr` at layer `config` without spawning
-`up` when no `Meta` exists and neither `<recipe>` nor `[agent]` selects a
-recipe, SHALL fail immediately on `stderr` naming `[cd <quoted project_root> &&
-]devcroft up [--name <n>] --recreate [--agent <recipe>]` whenever `Meta`
-already exists on disk (running or stopped) with `Unset`, `Disabled` or a
-recipe other than the target one, and SHALL fail immediately on `stderr`
-without downloading or executing any credential command when the agent object
-or a preflight prerequisite is missing. When a brand-new sandbox (no `Meta`) or
-a stopped sandbox already recording the target recipe is down, `agent acp`
-SHALL start `up` as a separate process that owns its own completion (passing
-`--agent <recipe>` when no `Meta` exists and `<recipe>` was given on the
-command line) and wait for it under a bounded deadline. At the deadline, or
-when the client ends, that `up` SHALL be left to finish; `agent acp` SHALL exit
-non-zero on `stderr` naming the log and the exact preparation command. While a
-lifecycle operation is in progress it SHALL wait under the same deadline and
-SHALL NOT start another. If an earlier background `up` failed, the next `agent
-acp` SHALL report that earlier error on `stderr`, clear the failure marker and
-start a fresh `up` under the deadline. A running sandbox whose `recipe_digest`
-is stale SHALL be used with one `stderr` line naming the recreate command. It
-SHALL pass `stdin` and `stdout` through unmodified (`pty: None`) with zero
-devcroft messages or OSC sequences on `stdout`, including while `up` runs.
+`--sandbox`. `agent acp` SHALL NOT start, recreate or download anything, and
+SHALL NOT execute a credential command. It SHALL treat a sandbox as running
+only when its keeper answers for the generation recorded in `Meta`, never on an
+accepted socket connection alone. Every refusal SHALL be immediate, on
+`stderr`, with an exact command formatted as `[cd <quoted project_root> &&
+]devcroft …` and `--name <n>` whenever `sandbox_name != manifest.sandbox.name`.
+The refusals are:
 
-#### Scenario: Editor handshake on a first-time checkout without global agent config
-- **WHEN** `~/.config/devcroft/config.toml` has no `[agent]`, the `<recipe>` object is installed, the project environment activates within the startup deadline, and a GUI-launched ACP client runs `devcroft agent acp <recipe>` in a project where `up` has never run
-- **THEN** `agent acp` brings the sandbox up with `--agent <recipe>` and the user configuration and returns the agent's `initialize` response with no devcroft output on `stdout`
+- `acp = "none"`, naming `devcroft agent run <recipe>`;
+- no `Meta` and neither `<recipe>` nor `[agent]` selecting a recipe, at layer `config`;
+- `Meta` with `Unset`, `Disabled` or a recipe other than the target one, naming `devcroft up [--name <n>] --recreate [--agent <recipe>]`;
+- a sandbox that is down, or has no `Meta` yet, naming `devcroft up [--name <n>] [--agent <recipe>]` (or `devcroft agent run <recipe>`);
+- a sandbox whose lifecycle operation is in progress, saying so and naming `devcroft status [<name>]`.
+
+A running sandbox whose `recipe_digest` is stale SHALL be used, with one
+`stderr` line naming the recreate command. `agent acp` SHALL pass `stdin` and
+`stdout` through unmodified (`pty: None`), with zero devcroft messages or OSC
+sequences on `stdout`.
+
+#### Scenario: Editor attaches to a running sandbox
+- **WHEN** the user ran `devcroft agent run <recipe>` in a terminal, and a GUI-launched ACP client with no key in its environment then runs `devcroft agent acp <recipe>` in that project
+- **THEN** the client receives the agent's `initialize` response, with no devcroft output on `stdout`
+
+#### Scenario: Sandbox down
+- **WHEN** `agent acp` runs on a project whose sandbox is stopped or was never brought up
+- **THEN** it exits non-zero at once naming the `up` command for that project root, and no `up`, download or credential command runs
+
+#### Scenario: Preparation in progress
+- **WHEN** `agent acp` runs while an `up` of that sandbox holds its lifecycle lock
+- **THEN** it exits non-zero at once saying preparation is in progress and naming `devcroft status`, and starts no second `up`
+
+#### Scenario: Listener present before the keeper is ready
+- **WHEN** the sandbox's socket accepts connections but its keeper has not yet answered for the recorded generation
+- **THEN** `agent acp` treats it as preparing, not as running
 
 #### Scenario: Nested subproject does not attach to parent sandbox
-- **WHEN** parent `/repo` is already up with recorded `Meta`, and an editor runs `devcroft agent acp` inside `/repo/sub` which has its own `devcroft.toml` and no recorded `Meta` yet
-- **THEN** `agent acp` targets `/repo/sub`'s manifest rather than attaching to `/repo`'s running sandbox
-
-#### Scenario: Cold provisioning outlives the deadline
-- **WHEN** `agent acp` auto-starts a down sandbox whose provisioning exceeds the deadline
-- **THEN** it exits non-zero on `stderr` naming the log and `devcroft up` for that project root, and the `up` continues to completion
-
-#### Scenario: Editor retries during provisioning
-- **WHEN** the editor runs `agent acp` again while that `up` is in progress
-- **THEN** no second `up` starts, and a retry after it completes returns the `initialize` response
-
-#### Scenario: Background up failed and next retry recovers
-- **WHEN** a background `up` failed, the user fixes the cause, and `agent acp` runs again
-- **THEN** `stderr` reports the earlier failure summary, clears the marker, starts a fresh `up`, and returns the `initialize` response once ready
+- **WHEN** parent `/repo` is up with recorded `Meta`, and an editor runs `devcroft agent acp <recipe>` inside `/repo/sub`, which has its own `devcroft.toml` and no recorded `Meta` yet
+- **THEN** `agent acp` targets `/repo/sub` rather than `/repo`'s sandbox, and fails naming `cd /repo/sub && devcroft up --agent <recipe>`
 
 #### Scenario: Stopped sandbox that never had a selection is not widened by agent acp
 - **WHEN** a stopped sandbox on disk has `Meta` with no recorded agent selection (`Unset`) and `agent acp` (with or without `<recipe>`) runs
@@ -61,10 +57,6 @@ devcroft messages or OSC sequences on `stdout`, including while `up` runs.
 - **WHEN** devcroft is upgraded to a release whose recipe differs and `agent acp` runs on a sandbox still up with the old one
 - **THEN** it returns the `initialize` response and prints one staleness line on `stderr`
 
-#### Scenario: Object not installed
-- **WHEN** `agent acp` runs and the recipe's object is absent
-- **THEN** it fails at once on `stderr`, naming `devcroft agent install <recipe>`
-
 #### Scenario: Editor started outside any project
 - **WHEN** `agent acp` runs with `cwd = /` and no `--sandbox`
 - **THEN** it fails saying no sandbox or `devcroft.toml` contains the directory and names `--sandbox`
@@ -72,12 +64,19 @@ devcroft messages or OSC sequences on `stdout`, including while `up` runs.
 ### Requirement: ACP session lifecycle
 When the ACP client closes `stdin`, devcroft SHALL forward it and give the agent
 a grace period to exit. After that period, or when the client process dies, the
-session's process group SHALL be ended. The sandbox, its services and every
-other session SHALL stay up. devcroft SHALL NOT interpret ACP cancellation.
+session's process group SHALL be ended. A descendant that left that process
+group is outside this guarantee and SHALL be ended by `down`; the published
+qualification SHALL say whether the qualified harness leaves any. The sandbox,
+its services and every other session SHALL stay up. devcroft SHALL NOT
+interpret ACP cancellation.
 
 #### Scenario: Editor closes
 - **WHEN** the editor exits while the agent is running a command
-- **THEN** after the grace period no process of that session remains, and the sandbox and its services are still up
+- **THEN** after the grace period no process remains in that session's process group, and the sandbox and its services are still up
+
+#### Scenario: Descendant that left the group
+- **WHEN** a fixture agent starts a child with `setsid` and the editor exits
+- **THEN** the child is not reported as cleaned up, and `down` ends it
 
 #### Scenario: Two editors
 - **WHEN** two clients run `agent acp` on one sandbox and one disconnects

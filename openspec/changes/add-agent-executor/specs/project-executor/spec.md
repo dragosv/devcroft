@@ -13,5 +13,9 @@ The experiment SHALL use one fixture and one qualified real agent to determine w
 - **THEN** colliding `[env] forward` and overlapping canonical `Read`/`ReadWrite` grants are refused, and the record states whether the project could obtain the value or its credential route
 
 #### Scenario: Qualification is incomplete or platform-gated
-- **WHEN** routing, credential separation, cleanup, `network.default = "deny"` / socket isolation, `Meta.mode1_recipes` quarantine, or (on macOS for `auth = "env"`) `KERN_PROCARGS2` environment isolation has not been demonstrated
+- **WHEN** routing, credential separation, cleanup, `network.default = "deny"` on the final topology, cross-tree inspection and attachment denial in every auth mode, helper environment clearing, crash-atomic startup or control-socket absence has not been demonstrated
 - **THEN** record the failed or unmeasured condition and withhold a product support claim for that combination
+
+#### Scenario: Platform outside the experiment
+- **WHEN** a result is requested for macOS
+- **THEN** the record states that macOS was not measured and claims nothing for it

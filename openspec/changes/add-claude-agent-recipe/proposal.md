@@ -19,4 +19,4 @@ Qualify the standalone Claude Code CLI and the ACP adapter paired with its SDK. 
 
 ## Impact
 
-The change introduces the required Node and npm layouts, the managed Claude denial hook and qualification evidence for each advertised platform.
+The change introduces the required Node and npm layouts, per-platform authentication modes, the managed Claude denial hook in the sandbox HOME (amending `add-agent-workload`’s rule that nothing writes the hook at `up`, which is meant for the project’s files), and qualification evidence for each advertised platform.

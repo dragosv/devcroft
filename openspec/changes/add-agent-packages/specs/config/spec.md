@@ -68,11 +68,11 @@ project's provider or its resolved environment.
 - **WHEN** the user configuration contains `[agent] nmae = "fixture-agent"`
 - **THEN** it fails at layer `config` naming the key
 
-### Requirement: PATH order with tools and agent
+### Requirement: Selecting an agent leaves PATH unchanged
 With both a tooling layer and an agent selected, `PATH` SHALL be the
-project's entries, then the tooling layer, then the agent's launcher
-directory, then the base runtime fallback.
+project's entries, then the tooling layer, then the base runtime fallback.
+The agent SHALL add no entry.
 
 #### Scenario: Both layers
 - **WHEN** `[tools]` and `[agent]` are both configured
-- **THEN** `PATH` inside the sandbox lists the project's entries, the tooling layer and the launcher directory, in that order
+- **THEN** `PATH` inside the sandbox is identical to the one with `[tools]` alone

@@ -2,7 +2,7 @@
 
 ### Requirement: Prepare a replacement agent before teardown
 
-For a start or recreation, devcroft SHALL validate the selection, platform, launcher, effective credentials and host-side requirements and acquire the verified object before replacing a keeper or resolving the provider. An unchanged healthy sandbox uses its recorded selection.
+For a start or recreation, devcroft SHALL validate the selection, platform, launch path, effective credentials and host-side requirements and acquire the verified object before replacing a keeper or resolving the provider. An unchanged healthy sandbox uses its recorded selection.
 
 #### Scenario: Download fails on recreate
 - **WHEN** a healthy sandbox is recreated with a recipe whose artifact cannot be downloaded

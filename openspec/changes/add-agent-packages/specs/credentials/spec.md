@@ -22,3 +22,13 @@ selected recipe SHALL be added to the sandbox's egress with origin
 #### Scenario: Recipe broker on an empty allowlist
 - **WHEN** a project with `network.allow = []` selects a recipe under `api-key`
 - **THEN** the recipe's active hosts are reachable and no other host is
+
+### Requirement: Host-side helpers start from a cleared environment
+The egress proxy and any relay devcroft starts host-side for a sandbox SHALL
+start from a cleared environment plus an explicit list of the variables each
+needs. They SHALL NOT inherit the invoking shell's environment. A broker's key
+SHALL reach only the proxy that injects it.
+
+#### Scenario: Unrelated host secret
+- **WHEN** the user's shell exports an unrelated secret and `up` starts the egress proxy
+- **THEN** the proxy's environment contains only its listed variables, and the secret is absent from it
