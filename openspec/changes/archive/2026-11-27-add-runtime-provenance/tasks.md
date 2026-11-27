@@ -6,7 +6,7 @@ arch and provider version.
 - [x] 0.1 On Linux, for each of nix, flox, devbox, devenv, mise and pixi (sample projects; a flox minimal manifest without coreutils included): execute every base name in both lookup forms inside the sandbox and record what ran. Confirm the table in `design.md` or correct it.
   - Done for nix, flox (with and without coreutils), devbox and devenv (2026-11-22, aarch64). Found flox never got `/usr/bin/env`; fixed (`shell::resolve_env_bin`) by owner's decision, asserted by the provenance test. mise 2026.11.9 and pixi 0.84.2 measured the same day: 0 mismatches, host shell (and mise's host `env`) as the table says.
 - [x] 0.2 Same on macOS arm64. Confirm `EPERM` for `/bin/sh`, `/usr/bin/env` and shebang scripts in closure-tier sandboxes, and the reachable host `/bin` in mise and pixi sandboxes.
-  - 2026-11-27, after `add-macos-exec-redirect` (`design.md` Context): with the library every one runs in flox, mise and pixi. Without it, flox is `EPERM` for all of them, and mise and pixi run the host's files. `/bin` is unlistable in all three.
+  - 2026-11-27, after `add-macos-exec-redirect` (`design.md` Context): with the library every one runs in flox, mise and pixi. Without it, all three are `EPERM` for all of them, and `/bin` is unlistable in all three. A first run reported that mise and pixi ran the host's files; that was the probe, corrected in `design.md`.
 - [x] 0.3 Confirm on Linux that a flox sandbox without coreutils fails a `#!/usr/bin/env` script (the inferred gap), so `known-gaps.md` states a measured fact.
 
 ## 1. The base-name set and the record

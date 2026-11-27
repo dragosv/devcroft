@@ -66,14 +66,26 @@ from a host-built C program with `DYLD_INSERT_LIBRARIES` unset, which has none.
 | Sandbox | With the library: `/bin/sh`, `/usr/bin/env`, `#!/bin/sh`, `#!/usr/bin/env`, `/bin/ls` | Without the library | `stat`/`opendir` of `/bin` |
 |---|---|---|---|
 | flox (closure tier) | all run, through the record's entries (`/bin/sh` → closure bash, `/usr/bin/env` → `runtime:gen-2`) | all `EPERM` | `EPERM` |
-| mise | all run (`/bin/sh` and `/usr/bin/env` → `runtime:gen-2`) | all run the host's files | `EPERM` |
-| pixi | all run (`/bin/sh` and `/usr/bin/env` → `runtime:gen-2`) | all run the host's files | `EPERM` |
+| mise | all run (`/bin/sh` and `/usr/bin/env` → `runtime:gen-2`) | all `EPERM` | `EPERM` |
+| pixi | all run (`/bin/sh` and `/usr/bin/env` → `runtime:gen-2`) | all `EPERM` | `EPERM` |
 
-The record describes what a process with the library runs. In the closure
-tier, a process without the library is refused, never sent to the host. In
-mise and pixi it runs the host's file: their provider grants on macOS cover
-the host `/bin` for execution, but not for listing. `docs/known-gaps.md`
-had said the closure tier's refusal held everywhere; it is corrected. The
+The record describes what a process with the library runs. A process without
+it is refused on every provider, never sent to the host. Neither mise nor pixi
+grants the host's `/bin` on macOS: `policy --render` and `profile.json` have
+no rule for it. The row for them in the table above, "the whole host `/bin`
+is reachable", is no longer true.
+
+*A correction to this measurement.* The first run reported that mise and pixi
+ran the host's files without the library, and `known-gaps.md` was changed to
+say so. That was the probe's mistake. In those two sandboxes `sh` is
+devcroft's runtime shell, which is the devcroft binary. The library puts its
+saved variables back when one of devcroft's own utilities starts a program,
+so an `unset DYLD_INSERT_LIBRARIES` in that shell has no effect, and the
+probe ran with the library after all. In flox, `sh` is bash from the closure
+and the `unset` held. The probe now removes the variable itself, re-execs,
+and checks it is gone; mise and pixi then refuse everything. Both documents
+are corrected. To drop the library inside a runtime-shell sandbox, a program
+that is not devcroft's must clear the environment. The
 provider row test (`tests/base_runtime_provenance.rs`, `=all`) passes on
 macOS for nix, flox, devbox and swift: 0 mismatches, no `host:` entry.
 

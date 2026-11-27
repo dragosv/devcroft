@@ -486,11 +486,8 @@ resolves ([base-runtime.md](base-runtime.md)). Native-mode sandboxes (swift)
 run the host's files and have no redirect.
 
 The redirect is compatibility, not a boundary: where it is lost, the policy
-decides. In nix, flox, devbox and devenv sandboxes the exec fails with
-`EPERM`. mise and pixi are the exception: their provider grants the host's
-`/bin` on macOS, so a process without the library runs the host's
-`/bin/sh`, `/usr/bin/env` and `/bin/ls`, where `policy --render` names the
-runtime's (measured 2026-11-27, mise 2026.11.12, pixi 0.84.2). Measured
+decides, so the exec fails with `EPERM`. That holds for every provider but
+swift's native mode: flox, mise and pixi measured 2026-11-27. Measured
 2026-11-23, macOS 15.8.3 arm64, unless noted:
 
 | What loses it | Example |
