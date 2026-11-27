@@ -1502,7 +1502,8 @@ fn up_process(
     }
     // Last, so neither the environment nor `[env.vars]` can name another.
     use crate::runtime::redirect::{
-        KEEPER_LIB_VAR, KEEPER_NS_VAR, KEEPER_TEMP_GRANTS, KEEPER_TEMP_VAR, KEEPER_USER_VAR,
+        KEEPER_EXEC_LOG_VAR, KEEPER_LIB_VAR, KEEPER_NS_VAR, KEEPER_TEMP_GRANTS, KEEPER_TEMP_VAR,
+        KEEPER_USER_VAR,
     };
     for key in [
         KEEPER_LIB_VAR,
@@ -1510,6 +1511,7 @@ fn up_process(
         KEEPER_TEMP_VAR,
         KEEPER_TEMP_GRANTS,
         KEEPER_USER_VAR,
+        KEEPER_EXEC_LOG_VAR,
     ] {
         env.remove(key);
     }
@@ -1525,6 +1527,29 @@ fn up_process(
                 crate::runtime::redirect::temp_grants(&mount_grants),
             );
             env.insert(KEEPER_USER_VAR.to_owned(), manifest.identity.user.clone());
+        }
+    }
+    if std::env::var_os(crate::runtime::redirect::LOG_EXECS_VAR).is_some() {
+        if redirect_lib.is_some() {
+            let log = artifact_dir
+                .join(crate::services::RUN_DIR)
+                .join(crate::runtime::redirect::EXEC_LOG);
+            eprintln!(
+                "devcroft: {} is set: every exec a sandbox process makes through the redirect \
+                 library is appended to {}",
+                crate::runtime::redirect::LOG_EXECS_VAR,
+                log.display()
+            );
+            env.insert(
+                KEEPER_EXEC_LOG_VAR.to_owned(),
+                log.to_string_lossy().into_owned(),
+            );
+        } else {
+            eprintln!(
+                "devcroft: warning: {} is set, but this sandbox has no redirect library \
+                 (it is macOS-only, and native mode has none), so nothing is logged",
+                crate::runtime::redirect::LOG_EXECS_VAR
+            );
         }
     }
     // The user's credentials, from this shell (checked present above). Their
@@ -1995,8 +2020,9 @@ fn prepare_services(
 /// helper and `spawn_keeper` add. Named one by one rather than by prefix,
 /// since a project may name its own variables `DEVCROFT_*` (this repository's
 /// tests do) and a fleet task's process is meant to see `DEVCROFT_TASK`.
-const KEEPER_INTERNAL: [&str; 19] = [
+const KEEPER_INTERNAL: [&str; 20] = [
     crate::runtime::redirect::KEEPER_LIB_VAR,
+    crate::runtime::redirect::KEEPER_EXEC_LOG_VAR,
     crate::runtime::redirect::KEEPER_NS_VAR,
     crate::runtime::redirect::KEEPER_TEMP_VAR,
     crate::runtime::redirect::KEEPER_TEMP_GRANTS,

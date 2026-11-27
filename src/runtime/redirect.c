@@ -39,12 +39,13 @@ extern char **environ;
  * other program that clears its environment loses it, as published. */
 static const char *const dc_kept[] = {
     "DYLD_INSERT_LIBRARIES", "DEVCROFT_NS", "DEVCROFT_TEMP", "DEVCROFT_TEMP_GRANTS",
-    "DEVCROFT_ID_USER", "DEVCROFT_ID_HOME", "DEVCROFT_ID_SHELL",
+    "DEVCROFT_ID_USER", "DEVCROFT_ID_HOME", "DEVCROFT_ID_SHELL", "DEVCROFT_EXEC_LOG",
 };
 #define DC_KEPT (sizeof dc_kept / sizeof dc_kept[0])
 static char *dc_saved[DC_KEPT];
 static const char *dc_ns;
 static struct passwd dc_user;
+static const char *dc_exec_log;
 
 static void dc_init_user(void) {
     const char *name = getenv("DEVCROFT_ID_USER");
@@ -65,6 +66,8 @@ static void dc_init_user(void) {
 __attribute__((constructor)) static void dc_init(void) {
     dc_init_temp();
     dc_init_user();
+    const char *log = getenv("DEVCROFT_EXEC_LOG");
+    if (log && log[0] == '/') dc_exec_log = strdup(log);
     char exe[PATH_MAX], own[PATH_MAX];
     uint32_t size = sizeof exe;
     struct stat a, b;
@@ -219,6 +222,65 @@ static const char *dc_resolve(const char *path, char *const argv[], char *mapped
     return im;
 }
 
+/*
+ * One line per exec, when `up` was asked for it (`DEVCROFT_LOG_EXECS`): the
+ * path as the caller named it, then each argument, tab-separated, with `\`,
+ * tab and newline escaped. Written before the exec, so a refused or missing
+ * program is recorded too. One write(2) on an O_APPEND file, from a stack
+ * buffer: no allocation, since a child of vfork may call this. A line longer
+ * than the buffer ends in `\t[truncated]`. Failure to log never fails the exec.
+ */
+#define DC_LOG_MAX 16384
+/* Set while libSystem searches `PATH` for a bare name: it tries an execve or
+ * posix_spawn per directory, each of which would log again (measured: one
+ * line per directory tried, including the misses). */
+static __thread int dc_searching;
+static void dc_log_exec(const char *path, char *const argv[]) {
+    if (!dc_exec_log || !path || dc_searching) return;
+    /* A miss in a program's own PATH search (Python's subprocess, libuv and
+     * Bun walk it themselves): a bare argv[0], a path ending in that name,
+     * and nothing there to run. A miss for a path the caller named in full
+     * is still logged. */
+    const char *slash = strrchr(path, '/');
+    struct stat st;
+    if (slash && argv && argv[0] && !strchr(argv[0], '/') && strcmp(slash + 1, argv[0]) == 0 &&
+        stat(path, &st) != 0)
+        return;
+    static const char cut[] = "\t[truncated]\n";
+    char line[DC_LOG_MAX];
+    const size_t room = sizeof line - sizeof cut;
+    size_t n = 0;
+    int truncated = 0;
+    for (int i = -1; !truncated && (i < 0 || (argv && argv[i])); i++) {
+        const char *s = i < 0 ? path : argv[i];
+        if (i >= 0) line[n++] = '\t';
+        for (; *s; s++) {
+            const char *esc = *s == '\\' ? "\\\\" : *s == '\t' ? "\\t" : *s == '\n' ? "\\n" : NULL;
+            size_t len = esc ? 2 : 1;
+            if (n + len + 1 > room) {
+                truncated = 1;
+                break;
+            }
+            if (esc) {
+                line[n++] = esc[0];
+                line[n++] = esc[1];
+            } else {
+                line[n++] = *s;
+            }
+        }
+    }
+    if (truncated) {
+        memcpy(line + n, cut, sizeof cut - 1);
+        n += sizeof cut - 1;
+    } else {
+        line[n++] = '\n';
+    }
+    int fd = open(dc_exec_log, O_WRONLY | O_APPEND | O_CREAT | O_CLOEXEC, 0600);
+    if (fd < 0) return;
+    (void)!write(fd, line, n);
+    close(fd);
+}
+
 #define DC_BUFFERS                                                                          \
     char mapped[PATH_MAX], temp[PATH_MAX], interp[DC_SHEBANG_MAX], arg[DC_SHEBANG_MAX];     \
     int use_nv = 0;                                                                         \
@@ -232,6 +294,7 @@ static const char *dc_resolve(const char *path, char *const argv[], char *mapped
 static int dc_posix_spawn(pid_t *pid, const char *path, const posix_spawn_file_actions_t *fa,
                           const posix_spawnattr_t *attr, char *const argv[],
                           char *const envp[]) {
+    dc_log_exec(path, argv);
     DC_BUFFERS
     const char *target = DC_RESOLVE(path);
     return posix_spawn(pid, target, fa, attr, use_nv ? nv : argv, dc_env(envp, ev));
@@ -242,9 +305,13 @@ static int dc_posix_spawn(pid_t *pid, const char *path, const posix_spawn_file_a
 static int dc_posix_spawnp(pid_t *pid, const char *file, const posix_spawn_file_actions_t *fa,
                            const posix_spawnattr_t *attr, char *const argv[],
                            char *const envp[]) {
+    dc_log_exec(file, argv);
     if (!file || !strchr(file, '/')) {
         char *ev[dc_envc(envp) + DC_KEPT + 1];
-        return posix_spawnp(pid, file, fa, attr, argv, dc_env(envp, ev));
+        dc_searching = 1;
+        int rc = posix_spawnp(pid, file, fa, attr, argv, dc_env(envp, ev));
+        dc_searching = 0;
+        return rc;
     }
     DC_BUFFERS
     const char *target = DC_RESOLVE(file);
@@ -252,12 +319,14 @@ static int dc_posix_spawnp(pid_t *pid, const char *file, const posix_spawn_file_
 }
 
 static int dc_execve(const char *path, char *const argv[], char *const envp[]) {
+    dc_log_exec(path, argv);
     DC_BUFFERS
     const char *target = DC_RESOLVE(path);
     return execve(target, use_nv ? nv : argv, dc_env(envp, ev));
 }
 
 static int dc_execv(const char *path, char *const argv[]) {
+    dc_log_exec(path, argv);
     char *const *envp = environ;
     DC_BUFFERS
     const char *target = DC_RESOLVE(path);
@@ -265,7 +334,13 @@ static int dc_execv(const char *path, char *const argv[]) {
 }
 
 static int dc_execvp(const char *file, char *const argv[]) {
-    if (!file || !strchr(file, '/')) return execvp(file, argv);
+    dc_log_exec(file, argv);
+    if (!file || !strchr(file, '/')) {
+        dc_searching = 1;
+        int rc = execvp(file, argv);
+        dc_searching = 0;
+        return rc;
+    }
     char *const *envp = environ;
     DC_BUFFERS
     const char *target = DC_RESOLVE(file);

@@ -278,3 +278,38 @@ fn an_x86_64_program_is_redirected_too() {
     let o = f.command(&f.root.join("x")).output().unwrap();
     assert_eq!(stdout(&o), "REDIRECTED:echo:x86\n", "{o:?}");
 }
+
+/// `DEVCROFT_EXEC_LOG` (set by `up` under `DEVCROFT_LOG_EXECS`): one line per
+/// exec, escaped, kept across `env -i`, once for a `PATH` search, and only to
+/// an absolute path.
+#[test]
+fn the_exec_log_records_each_exec_once() {
+    let f = Fixture::new("execlog");
+    let log = f.root.join("exec.log");
+    let empty = f.root.join("empty");
+    std::fs::create_dir(&empty).unwrap();
+    let run = |log_value: &Path, args: &[&str]| {
+        f.command(&f.root.join("runtime/env"))
+            .env("DEVCROFT_EXEC_LOG", log_value)
+            .env(
+                "PATH",
+                format!("{}:{}", empty.display(), f.root.join("ns").display()),
+            )
+            .args(args)
+            .output()
+            .unwrap()
+    };
+    run(&log, &["/bin/echo", "tab\tnew\nback\\"]);
+    run(&log, &["-i", "/bin/echo", "kept"]);
+    // `empty` is searched first and misses; the miss is not a line.
+    let o = run(&log, &["echo", "searched"]);
+    assert_eq!(stdout(&o), "REDIRECTED:echo:searched\n", "{o:?}");
+    run(Path::new("relative.log"), &["/bin/echo", "unlogged"]);
+    assert!(!f.root.join("relative.log").exists());
+    assert_eq!(
+        std::fs::read_to_string(&log).unwrap(),
+        "/bin/echo\t/bin/echo\ttab\\tnew\\nback\\\\\n\
+         /bin/echo\t/bin/echo\tkept\n\
+         echo\techo\tsearched\n"
+    );
+}

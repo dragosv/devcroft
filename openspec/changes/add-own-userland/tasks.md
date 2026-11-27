@@ -63,7 +63,8 @@
 ## 5. Inventory growth
 
 - [ ] 5.1 Build the option corpus: commands and flags used by the eleven agent samples' typical tool calls and by the hooks of the qualified providers' samples.
-  - Hooks half done (`design.md` D6): only coreutils-floor names, no `grep`/`sed`/`find`/`xargs`/`diff`. Agent half open: not in the repository, needs one logged run per agent with its credentials (owner).
+  - Hooks half done (`design.md` D6): only coreutils-floor names, no `grep`/`sed`/`find`/`xargs`/`diff`; re-checked 2026-11-27. Agent half open: not in the repository, needs one logged run per agent with its credentials (owner).
+- [x] 5.1a Tooling for the agent half: `DEVCROFT_LOG_EXECS` at `up` makes the macOS redirect library log every exec to `run/exec.log`, once per command; `scripts/exec-corpus.py` turns logs into a table of each command and its options. Test: `the_exec_log_records_each_exec_once` (`tests/redirect_library.rs`). How to use it: `docs/agents.md`.
 - [ ] 5.2 Qualify `findutils`, `uu_grep`, `sed` (and decide on `diffutils`) against it; check each exposes an entry usable through the multicall wrapper; record results in `design.md`.
 - [ ] 5.3 Owner decision per family; admitted families bump the generation.
 - [ ] 5.4 Re-measure each `devenv-<agent>-sample` without its manual userland declarations; drop the ones the runtime covers, keep the rest with a reason.

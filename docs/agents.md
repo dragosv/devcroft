@@ -246,6 +246,36 @@ Not measured: Claude Code itself running the hook, which needs a login. The
 test feeds the hook the event's documented input, built from errors that the
 sandbox itself produced.
 
+## Recording what an agent runs
+
+`add-own-userland` admits `grep`, `sed` or `find` to the base runtime only
+against a corpus of what agents actually run, so the corpus is collected, not
+recalled. On macOS, bring the sample up with `DEVCROFT_LOG_EXECS` set, use the
+agent with a real key on a typical task, then turn the log into a table:
+
+```sh
+cd samples/devenv-claude-sample
+DEVCROFT_LOG_EXECS=1 devcroft up --recreate --yes
+devcroft shell            # run the agent, give it a task, let it use its shell tool
+devcroft down
+python3 ../../scripts/exec-corpus.py .devcroft/*/run/exec.log
+```
+
+The log is `.devcroft/<name>/run/exec.log`. It holds one line per exec any
+process with the redirect library makes, logged before the exec happens.
+Each line is the path as the caller named it, then the arguments; each command
+is logged once, even when its caller searches `PATH` itself. The script prints
+each command name with its option tokens (`-E`, `-name`), never the operands,
+which are the agent's own file names and patterns. Before you share a log,
+read it: arguments are recorded in full, and a token passed as an argument
+would be too.
+
+The log records what ran, not what was wanted. Bash searches `PATH` itself,
+so a command it cannot find never reaches an exec. A program that drops the
+library (an Apple-signed or hardened binary) logs nothing for what it starts.
+Linux has no library, so `up` warns there and logs nothing. A command line
+longer than 16 KiB is cut, and the line ends in `[truncated]`.
+
 ## Not measured
 
 - **A real key.** Every run used a dummy one, so a full conversation, tool

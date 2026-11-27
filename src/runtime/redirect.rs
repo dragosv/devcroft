@@ -37,6 +37,16 @@ pub const KEEPER_NS_VAR: &str = "DEVCROFT_REDIRECT_NS";
 pub const KEEPER_TEMP_VAR: &str = "DEVCROFT_REDIRECT_TEMP";
 pub const KEEPER_TEMP_GRANTS: &str = "DEVCROFT_REDIRECT_TEMP_GRANTS";
 pub const KEEPER_USER_VAR: &str = "DEVCROFT_REDIRECT_USER";
+pub const KEEPER_EXEC_LOG_VAR: &str = "DEVCROFT_REDIRECT_EXEC_LOG";
+
+/// Set on the host when running `up` to have the library log every exec
+/// into the sandbox's `run/` directory ([`EXEC_LOG`]). A measurement aid,
+/// for building option corpora (`add-own-userland` 5.1), not a feature: it
+/// changes no policy, since `run/` is already writable from inside.
+pub const LOG_EXECS_VAR: &str = "DEVCROFT_LOG_EXECS";
+
+/// The exec log's file name under `run/`.
+pub const EXEC_LOG: &str = "exec.log";
 
 const TEMP_VAR: &str = "DEVCROFT_TEMP";
 const TEMP_GRANTS: &str = "DEVCROFT_TEMP_GRANTS";
@@ -62,6 +72,7 @@ pub fn child_vars(own: Option<std::ffi::OsString>) -> Vec<(&'static str, std::ff
                 (KEEPER_USER_VAR, "DEVCROFT_ID_USER"),
                 ("HOME", "DEVCROFT_ID_HOME"),
                 ("DEVCROFT_SHELL", "DEVCROFT_ID_SHELL"),
+                (KEEPER_EXEC_LOG_VAR, "DEVCROFT_EXEC_LOG"),
             ] {
                 if let Some(value) = std::env::var_os(source) {
                     vars.push((target, value));

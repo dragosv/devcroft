@@ -194,6 +194,31 @@ per agent in its sample with commands logged, which needs each agent's own
 credentials, so it is the owner's to collect. Until it exists, 5.2 has
 nothing to qualify against, and the families stay out.
 
+One sample does mention these names: `pixi-go-sample` lists `grep` and `sed`
+as packages. Its `Makefile` only prints where each one is found (`command -v`)
+and never runs them, so the conclusion stands.
+
+*Collecting the second half (2026-11-27).* The macOS redirect library can
+now log every exec, when `up` runs with `DEVCROFT_LOG_EXECS` set. The log is
+`.devcroft/<name>/run/exec.log`, already writable from inside, so the policy
+does not change. `scripts/exec-corpus.py` turns logs into a table of each
+command name with its option tokens. The log does not depend on the agent:
+it sits under every agent's shell tool, so eleven agents need one procedure,
+not eleven log formats (`docs/agents.md`, "Recording what an agent runs").
+Measured on a flox sandbox:
+
+- A bare name searched by libSystem (`execvp`, `posix_spawnp`) used to log one
+  line per `PATH` directory tried. It is logged once now, by name.
+- A program that searches `PATH` itself (Python's `subprocess`, Node's libuv,
+  Bun) used to log each miss. A miss is now recognised and skipped: `argv[0]`
+  is a bare name, the path ends in it, and nothing exists at that path.
+- A program named by its full path is logged even when it is missing.
+- `env -i` keeps the log.
+- Bash's own "command not found" is never an exec, so it is not in the log.
+
+The log is macOS-only. The agents behave the same on both platforms, so a
+corpus collected on macOS answers 5.2 for both.
+
 ## Risks / Trade-offs
 
 - [Binary size roughly triples] → measured on the integrated build before
