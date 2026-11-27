@@ -9,7 +9,7 @@ Execution today follows read grants:
 
 Neither is enough here, so this change adds a mechanism of its own on each platform.
 
-The contract comes from the local notes `new/croft-products-reproducibility-and-microvm-isolation-2026-11-23.md` (§5) and `new2/devcroft-1.0-release-scope-2026-11-25.md`. That earlier “croft” profile is folded into devcroft, not shipped as a second CLI.
+The contract is the owner’s file-only agent profile, once planned as a separate “croft” CLI and now folded into devcroft: the agent reads, searches and edits project files, gets no project shell, toolchain or host tooling, and reaches only its model. The owner accepted it for 1.0 on 2026-11-27.
 
 ## Goals / Non-Goals
 

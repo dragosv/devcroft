@@ -7,4 +7,4 @@
 
 - [ ] 2.1 Handle terminal setup failures, interruptions and restoration in the exec client. Check Ctrl-C while waiting for spawn and restoration on spawn refusal, termination and hangup. Correct any relay defects demonstrated by the fixtures.
 - [ ] 2.2 Verify the shell and SSH PTY paths against the same byte comparisons (`T12`). Check that viewing recorded logs on a terminal cannot produce a live status event.
-- [ ] 2.3 Record a live negotiation and real state transition in `hc ls` with a pinned `fx` (or another native emitter), naming the emitting agent and its version, terminal, protocol revision and platform. Publish the measured coverage.
+- [ ] 2.3 Record a live negotiation and real state transition in `hc ls` with a pinned `fx` (or another native emitter) driven by `fake-llm`, naming the emitting agent and its version, terminal, protocol revision and platform. Publish the measured coverage.

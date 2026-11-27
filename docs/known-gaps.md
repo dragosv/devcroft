@@ -580,6 +580,20 @@ Add a shell to the environment to use that instead (pixi: `pixi add bash`).
 `#!/bin/bash` fails where the environment has no bash; nothing else answers
 for it.
 
+Three things about this measurement are still open (review of 2026-11-25):
+
+- **Only pixi has a qualified route to a real shell** (`pixi add bash`). A mise
+  project has no measured equivalent yet. The owner's acceptance of the `IFS`
+  and `printf` defects therefore has a demonstrated recovery for one of the two
+  providers it affects.
+- **The evidence has holes.** `SIGPIPE` is not covered by
+  `tests/runtime_shell.rs`, although `embed-brush-runtime` task 1.4 is checked.
+- **The startup budget compares against the wrong baseline.** In mise and
+  pixi sandboxes, the runtime's shell replaced the host's, not a closure's.
+  Against the host's bash it starts about 2.8 times slower on Linux (0.86 ms
+  against 0.31 ms, 2026-11-24). The declared budget was checked against a
+  closure bash (0.76 ms).
+
 ## Interactive pty sessions are refused on macOS — fixed
 
 **`devcroft shell` did not work on macOS, and neither did an SSH session that
@@ -1312,3 +1326,45 @@ Its forked daemon exits without logging; not yet attributed to devcroft.
 Zed also needs five separate `$HOME` grants, one of which is the local
 editor's own data directory. VS Code and Cursor are unaffected. Full
 detail: [ssh-validation.md](ssh-validation.md).
+
+## Git's configuration and hooks stay writable inside a sandbox
+
+A sandboxed process can write the project's `.git/hooks/` and `.git/config`.
+Git runs both on the host during routine commands, without review: hooks,
+`core.fsmonitor`, `core.hooksPath` and the commands that filter drivers name.
+So an agent, or an accident, can plant something that runs with your
+permissions the next time you run `git status` or `git commit` outside the
+sandbox. This holds for every checkout today.
+
+`add-manifest-approval` makes these paths read-only for untrusted checkouts,
+and `add-file-only-workflow` makes all of `.git` read-only in a file-only
+sandbox. A trusted checkout keeps them writable, so an agent can manage its
+own Git setup. After unattended work, check `.git/hooks/` and
+`git config --local --list`, or work in a disposable clone.
+
+## The macOS exec redirect also answers `stat`, and loses `lstat` semantics
+
+To let GNU make find utilities at mapped paths, the redirect library
+(`src/runtime/redirect.c`) interposes `access`, `faccessat`, `stat`, `lstat`
+and `fstatat`. For a mapped path, `lstat` calls `stat` and `fstatat` ignores
+its `flag`, so `AT_SYMLINK_NOFOLLOW` is not honored: a program that asks about
+a symlink at a mapped path sees its target, where Linux shows the link. The
+archived `add-macos-exec-redirect` design lists redirecting `stat` as a
+non-goal ("Exec only"). Either narrow the interposition to `access` and
+`faccessat`, or specify the metadata behavior, with symlink semantics, flags
+and tests.
+
+## `up`'s tunnel hint names a command that rejects it
+
+When a sandbox has its own network namespace, `up` suggests
+`devcroft ssh -L LOCAL:127.0.0.1:PORT NAME` (`src/lifecycle/up.rs`). But
+`devcroft ssh` accepts only `[--no-up] [name]`, so the suggested command fails.
+Use OpenSSH directly:
+
+```sh
+ssh -L LOCAL:127.0.0.1:PORT -N NAME.devcroft
+```
+
+Replace *`LOCAL`* with the port to open on your machine, *`PORT`* with the
+sandbox's declared port, and *`NAME`* with the sandbox name.
+

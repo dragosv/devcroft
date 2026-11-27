@@ -30,7 +30,7 @@ A fake cannot show that a real model can drive the harness, and it cannot show r
 
 A fixture result never qualifies a vendor binary. That holds for `model-loop-agent` too, although goose uses the same engine, and for a passing run against `fake-llm`. Neither qualifies a recipe.
 
-Prefer a statically linked or fully bundled payload. Record each Linux artifact’s libc (`gnu`, `musl` or `static`) and refuse a host whose loader does not match before downloading. A universal Mach-O stays refused until the header reader selects and checks the host’s slice. A checksum proves integrity, not that the executable can start on this host.
+Prefer a statically linked or fully bundled payload. Record each artifact’s CPU architecture and minimum OS version (the glibc version for `gnu`, the macOS version for Mach-O), and each Linux artifact’s libc (`gnu`, `musl` or `static`). Refuse a host whose loader does not match, or whose OS is older, before downloading. Before publication, check the executable’s headers against what the recipe declares (ELF `e_machine`, the Mach-O slice, the binary’s own minimum OS). Record native modules the harness loads later (`.node` and dylib files) in the qualification record, since no header check sees them. A universal Mach-O stays refused until the header reader selects and checks the host’s slice. A checksum proves integrity, not that the executable can start on this host.
 
 ## Install and retain a package
 
@@ -74,7 +74,7 @@ Validate credentials, platform, launch path and selection, then materialize the 
 
 ## Authentication and policy
 
-The first maintained recipe uses a brokered API key from a non-empty host environment variable. Reject conflicting variable or host declarations. A user broker entry counts as identical to the recipe’s only when its host, variables, endpoint variable and placeholder all match. Remove the recipe’s credential variables from everything the agent inherits (the provider’s environment and the activation overlay; `[launch.env]` may not name them) and apply the selected mode’s values last.
+The first maintained recipe uses a brokered API key from a non-empty host environment variable, or from a credential command the user configures (`[agent.credentials.<recipe>] command`). That command is an argument vector that only `up` runs, once, when the variable is unset or empty. It lets a user keep the key in a keychain instead of exporting it, and preflight, `doctor` and `agent acp` never run it. Reject conflicting variable or host declarations. A user broker entry counts as identical to the recipe’s only when its host, variables, endpoint variable and placeholder all match. Remove the recipe’s credential variables from everything the agent inherits (the provider’s environment and the activation overlay; `[launch.env]` may not name them) and apply the selected mode’s values last.
 
 Start the egress proxy from a cleared environment with an explicit allowlist. Today it inherits the user’s whole shell except the active brokers’ variables (`src/proxy/mod.rs`). On macOS, no process-visibility separation keeps a sandboxed process away from that environment until a measurement shows otherwise.
 

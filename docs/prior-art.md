@@ -433,3 +433,89 @@ running containers is the part it has none of by design. It would fit
 only a devcroft-written image *builder*, and that would be BuildKit
 reimplemented to avoid one binary (design D9). Its sibling `oci-spec-rs`
 is used for the image-config types.
+
+## Omnigent — <https://github.com/omnigent-ai/omnigent>
+
+Read at `f53e6cb` (2026-11-25), from code and docs, not installed, for the
+agent changes. Three things taken:
+
+- **A capability catalog that checks itself.** Omnigent separates what a
+  harness declares from what its probes observe, and reports a mismatch as
+  `DRIFT`, a probe that couldn't run as `SKIPPED`, and a capability with no
+  probe as `UNKNOWN`. `add-agent-packages`'s qualification record takes the
+  same shape (`pass`, `fail`, `drift`, `skipped`, `unknown`), and a skipped
+  mandatory probe leaves a row unqualified.
+- **Client-declared tools instead of the harness's own exec.** Omnigent's
+  Codex integration sends `dynamicTools` through `thread/start` and disables
+  `unified_exec` and `shell_tool`. That's the most concrete route found for
+  `add-agent-executor` to send a harness's commands to a separate project tree.
+  The experiment tries it next to ACP terminal capabilities and an MCP tool.
+- **A started harness is not an available tool.** A process can start while
+  the tool it was supposed to receive is missing. `add-agent-executor`'s ninth
+  gate refuses such a session instead of letting it fall back to local
+  execution.
+
+Not taken: the meta-harness, the server, the vendor adapters, and TLS
+interception in its credential proxy. Its refresh model (a stable
+placeholder in the sandbox, a renewed credential host-side, one renewal for
+concurrent requests) is noted for a future short-lived-token helper behind
+the broker.
+
+## T3 Code — <https://github.com/pingdotgg/t3code>
+
+Read at `f7d6796` (2026-11-25), not installed. Taken:
+
+- **A local ACP command given as a literal argument vector, with no shell.**
+  This is the shape `devcroft agent acp` needs from a client, and it makes T3
+  Code a candidate first client for `add-agent-editor-acp`.
+- **Installed policy versus loaded policy.** `t3 policy show` reports whether
+  the server runs an old version. `add-manifest-approval`'s `status` shows the
+  manifest on disk, the approved hash and the running generation's hash the
+  same way.
+- **One recorded transcript from the real adapter.** `add-agent-editor-acp`
+  keeps one sanitized ACP transcript of the qualified recipe, next to the
+  generic protocol tests.
+
+Not taken: its registry as an install source (it accepts distributions
+without a checksum and can update them), and its permission modes as a
+substitute for the sandbox's policy.
+
+## fx (Vercel Labs) — <https://github.com/vercel-labs/fx>
+
+Read at v0.0.18 (2026-11-26). Taken: fx emits OSC 7501 status natively
+(`app=fx`). `support-osc7501-terminal` uses it as the first real emitter,
+driven by a fake model so the state transition is deterministic.
+`add-agent-packages` also measures it as a comparator for OpenCode. Not taken:
+`libfx` (its engine compiled to WebAssembly) as a test fixture. That role went
+to oi-kit, which is Rust and has no WebAssembly boundary. Also not taken:
+`FX_AUTH_MODE=host-managed` as a broker, because it sends no
+`Authorization` header.
+
+## goose oi-kit — <https://goose-docs.ai/docs/oi-kit/>
+
+The reusable agent-runtime crates that goose is built from (Apache-2.0,
+`0.1.0-alpha.16` on crates.io, 2026-11-27). Taken as a test dependency only:
+`add-agent-packages`'s `model-loop-agent` fixture uses its state machine and
+providers, in a crate with its own workspace, so the alpha crates never reach
+devcroft's lockfile or package. oi-kit ships no shell or other implicit tool,
+which is why it fits a fixture that must expose exactly the operations under
+test. A fixture result never qualifies the goose recipe.
+
+## direnv and mise trust
+
+Both refuse to act on a project file until the user approves it. direnv asks
+again after `.envrc` changes, and mise has a `mise trust` step for
+configuration files. `add-manifest-approval` takes the shape: a host-side
+approval of the exact manifest bytes, bound to the checkout and invalidated
+by any change. Unlike direnv, devcroft keeps an invalidated approval
+invalidated even if the old bytes return.
+
+## Orca — <https://github.com/stablyai/orca>
+
+Read at `4ee743ff` (2026-11-25), not installed. Noted, not taken: Orca's
+per-workspace environment recipes can return an SSH connection with a
+`proxyCommand`, so `devcroft proxy --no-up %n` already fits them without
+devcroft changes. Orca prefills permission-bypass flags (for example
+`--dangerously-skip-permissions`). `add-agent-editor-acp` therefore requires
+that a client's approval never widens the sandbox's policy.
+

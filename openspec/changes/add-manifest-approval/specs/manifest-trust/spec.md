@@ -11,7 +11,8 @@ apply. These widening keys SHALL NOT apply:
 - `filesystem.allow` beyond the workspace, and `filesystem.read`;
 - `network.default = "allow"`, `network.allow`, `network.loopback = "any"`, `network.ports` and service ports;
 - `provisioning.network.allow`;
-- `env.forward`.
+- `env.forward`;
+- `ssh.forward_agent`, which would bridge the user's SSH agent socket into the sandbox.
 
 `up` SHALL print one line naming each key it did not apply, with a summary
 and never a value. When the remaining combination is invalid, `up` SHALL fail
@@ -82,7 +83,13 @@ SHALL fail at layer `config` (exit code 2) naming `devcroft down` followed by
 `devcroft up`, or `devcroft trust` followed by `devcroft up --recreate`. An
 untrusted generation SHALL be attachable whatever the current bytes. Sessions
 already running SHALL NOT be ended, and `status` SHALL say that a changed hash
-does not revoke them.
+does not revoke them. Every refusal SHALL be written to `stderr` only. `proxy`
+SHALL write nothing to `stdout` when it refuses, so an SSH client running it as
+`ProxyCommand` reports the error instead of a protocol failure.
+
+#### Scenario: Refusal through ProxyCommand
+- **WHEN** `ssh NAME.devcroft` reaches `devcroft proxy` for a trusted generation whose manifest changed
+- **THEN** nothing is written to `stdout`, and the refusal and its remedies appear on `stderr`
 
 #### Scenario: Attaching after the manifest changed
 - **WHEN** a sandbox started trusted is running, its manifest changes, and the user runs `devcroft shell`
@@ -123,6 +130,31 @@ selecting it is an explicit per-sandbox request.
 #### Scenario: Agent recipe on an untrusted checkout
 - **WHEN** an unapproved checkout is brought up with `--agent opencode` under `api-key`
 - **THEN** the recipe's broker works and its hosts are reachable
+
+### Requirement: Nothing reintroduces a withheld value or route
+For an untrusted checkout, no session option, user-configuration entry,
+environment overlay or forwarded socket SHALL deliver a value, a host socket
+or a route that admission withheld. This covers the user's SSH agent, a
+socket under the user's home directory and every `[env] forward` name.
+
+#### Scenario: SSH agent forwarding
+- **WHEN** an unapproved manifest sets `[ssh] forward_agent = true` and the user connects with `ssh -A NAME.devcroft`
+- **THEN** no agent socket exists in the session, and `up` named `ssh.forward_agent` as not applied
+
+#### Scenario: Value through a session overlay
+- **WHEN** a withheld variable is supplied again through any per-session option or overlay
+- **THEN** the session does not receive it
+
+### Requirement: Each provider is qualified for untrusted checkouts
+A provider SHALL resolve an untrusted checkout only after its host-side phases
+have been shown to read no key that admission did not apply. Those phases are
+resolution, capture and the provisioning of its activation script. A provider
+not yet qualified SHALL fail at layer `config` for an untrusted checkout,
+naming the provider and `devcroft trust`.
+
+#### Scenario: Provider not qualified
+- **WHEN** an unapproved checkout selects a provider whose untrusted qualification has not run
+- **THEN** `up` fails at layer `config` naming the provider and `devcroft trust`, and resolves nothing
 
 ### Requirement: Fleet applies the same decision
 Fleet SHALL load, admit and record a project's manifest through the same

@@ -7,7 +7,7 @@
 
 `maybe_auto_up` accepts any healthy keeper by sandbox name before it discovers the manifest, so an attach is not tied to a checkout either. `Meta` and the compiled profile already live in devcroft's data directory, which the baseline denies to every sandbox.
 
-The source note is `new2/untrusted-projects-manifest-and-permissions-2026-11-25.md`, which is local and untracked. The owner accepted the untrusted default as a breaking change on 2026-11-27.
+The design follows the owner’s two conditions for an untrusted mode: the workload can’t reach the authoritative manifest, and the manifest can’t grant permissions without an explicit approval bound to the checkout and the manifest’s hash. The owner accepted the untrusted default as a breaking change on 2026-11-27.
 
 ## Goals / Non-Goals
 
@@ -49,7 +49,14 @@ The data directory is baseline-denied to every sandbox, so no workload can forge
 - `filesystem.allow` beyond the workspace, and `filesystem.read`;
 - `network.default = "allow"`, `network.allow`, `network.loopback = "any"`, `network.ports` and service ports;
 - `provisioning.network.allow`;
-- `env.forward`.
+- `env.forward`;
+- `ssh.forward_agent`.
+
+Each of these widens what the sandbox can reach or what can reach it:
+- `network.ports` and service ports make a sandboxed listener reachable from the host, where a browser or a local tool talks to it;
+- `ssh.forward_agent` bridges the user's SSH agent socket in.
+
+Neither is something a repository may grant itself. A filesystem grant whose path is absent at `up` goes on the same list, with the reason `absent`. Today it's dropped silently while `policy --render` still shows it granted (`docs/known-gaps.md`).
 
 Narrowing keys stay applied: `filesystem.deny`, `network.default = "deny"` and `require_native_apple_evidence`. `[env.vars]` is literal data and stays applied. When clearing leaves an invalid combination, `up` refuses at layer `config` naming `devcroft trust`.
 
@@ -59,13 +66,24 @@ The alternative was gating in the keeper. It would not cover the phases that run
 
 **D7. The user’s credentials follow trust.** `[credentials] env` and `[[credentials.broker]]` from the user configuration are delivered only to trusted checkouts, and `up` names the ones it withheld. A selected agent recipe’s credential is an explicit per-sandbox request (`add-agent-packages`), so it is still delivered.
 
-**D8. Admission at attach.** `Meta` records each generation’s trust state, manifest hash and approval. An attach is allowed when the generation is `untrusted`, or when the current bytes hash to the generation’s recorded hash and the record is `approved` for it. Otherwise the attach fails at layer `config` with exit code 2. The message names `devcroft down` followed by `up` (which starts untrusted), or `devcroft trust` followed by `up --recreate`. Every attach first resolves the checkout and refuses a sandbox whose recorded root differs, naming `--name`. That replaces `maybe_auto_up`’s lookup by name alone. Sessions already running are not ended, and `status` says that a changed hash does not revoke them.
+**D8. Admission at attach.** `Meta` records each generation’s trust state, manifest hash and approval. An attach is allowed when the generation is `untrusted`, or when the current bytes hash to the generation’s recorded hash and the record is `approved` for it. Otherwise the attach fails at layer `config` with exit code 2. The message names `devcroft down` followed by `up` (which starts untrusted), or `devcroft trust` followed by `up --recreate`. Every attach first resolves the checkout and refuses a sandbox whose recorded root differs, naming `--name`. Every refusal goes to `stderr` only. `proxy` writes nothing to `stdout` when it refuses, because its `stdout` belongs to the SSH stream. That replaces `maybe_auto_up`’s lookup by name alone. Sessions already running are not ended, and `status` says that a changed hash does not revoke them.
 
 **D9. Protecting the file.** This applies in both states.
 
 - **Linux:** the view binds a devcroft-owned empty file with mode `0000`, read-only, over `<root>/devcroft.toml`. An open fails with `EACCES`. Writing, removing or renaming fails, because the path is a read-only mount point. The name stays listed, and `status` says it is masked rather than absent.
 - **macOS:** Seatbelt denies `file-read*` and `file-write*` on the manifest’s path.
 - **Both:** measure the alternative names for the same file: case variants on a case-insensitive volume, the `/private` prefix, symlinks inside the workspace and hard links made inside the sandbox. An alias that stays open makes protection unavailable on that host, and a host where protection is unavailable refuses `up` rather than starting without it. Anything inside the sandbox that read the manifest gets the effective configuration instead.
+
+**D11. Git state of an untrusted checkout.** Protect `.git/config`, `.git/config.worktree` and `.git/hooks/` read-only, with the D9 mechanism. Git runs them on the host without review:
+- hooks;
+- `core.fsmonitor` and `core.hooksPath`;
+- the commands that filter drivers, `core.sshCommand` and `core.pager` name.
+
+So a planted entry is host code execution the next time the user runs `git`. Objects, refs and the index stay writable, so an agent can still commit. A trusted checkout keeps these writable, and `docs/known-gaps.md` records that.
+
+Alternative rejected: making all of `.git` read-only, as `add-file-only-workflow` does. Where no project command runs, nothing needs to commit; in a managed sandbox, an agent does.
+
+**D12. Providers are qualified for untrusted checkouts one by one.** Each provider’s host-side phases (resolution, capture, provisioning of the activation script) are run against the acceptance cases with sentinel values. A provider that reads an unapplied key, for example a host variable through its own environment capture, refuses untrusted checkouts until it is fixed. A provider not yet qualified refuses them too, so the default fails closed.
 
 **D10. The approval prompt.** `devcroft trust` prints the checkout, the hash and the grants that would become effective, and, when an earlier record exists, what changed since it. On a TTY it asks `y/N`. Otherwise it needs `--yes --sha256 <hex>` and refuses a hash that does not match the bytes, so a script cannot approve whatever happens to be on disk. `init` records an approval for exactly the bytes it wrote, and says so.
 
@@ -76,3 +94,4 @@ The alternative was gating in the keeper. It would not cover the phases that run
 - [Editing the manifest makes attach refuse until recreation] → Accepted. The refusal names both remedies, and a running generation keeps its sessions.
 - [macOS alias not closable] → The measurement decides. Refusing is the required outcome rather than a silent gap.
 - [Every sample and test changes] → Accepted: no users. Test helpers approve by hash, and each sample’s README gains the `trust` step.
+- [A provider stays unqualified for untrusted checkouts] → That provider’s untrusted checkouts refuse with a named reason; approving the manifest is the remedy.

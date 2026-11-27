@@ -18,8 +18,7 @@ This is part of the 1.0 release in this attach-only form (owner decision, 2026-1
 
 - `agent-packages` covers ACP attachment, transport and cleanup.
 - `cli` adds editor configuration and handshake diagnostics.
-- `config` adds a user-owned credential command that `up` can use instead of an exported key.
 
 ## Impact
 
-Changes affect the host agent CLI, session cleanup and the user configuration. This delivery uses the existing native recipe.
+Changes affect the host agent CLI and session cleanup. The credential command that lets `up` run without an exported key lives in [agent packages](../add-agent-packages/proposal.md). This delivery uses the existing native recipe.

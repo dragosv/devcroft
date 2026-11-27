@@ -8,23 +8,33 @@ artifact it installs with a URL and a checksum, its upstream ACP capability,
 each component's version, its entrypoints, its relative `state_paths` under
 `HOME` (refusing empty, absolute or `..` segments), any `reserved_env` names
 stripped on launch, its network destinations, its supported authentication
-modes (with `default_auth`), its platform-scoped sandbox requirements and, for
-each Linux artifact, its libc (`gnu`, `musl` or `static`). A recipe name SHALL
+modes (with `default_auth`), its platform-scoped sandbox requirements, each
+artifact's CPU architecture and minimum OS version (the glibc version for a
+`gnu` artifact, the macOS version for a Mach-O one) and, for each Linux
+artifact, its libc (`gnu`, `musl` or `static`). A recipe name SHALL
 be one lowercase component (`[a-z0-9][a-z0-9-]*`), and each entrypoint's
 `argv[0]` SHALL be a relative path of normal components that resolves inside
 the object, checked before download and again after extraction. A user recipe
 in `agents/` beside the resolved user configuration file (so honoring
 `XDG_CONFIG_HOME`) SHALL pass the same validation, with a checksum on every
 artifact, and SHALL be marked as a user recipe wherever the recipe is shown. An
-unknown recipe or version, an unsupported platform or a host whose libc does
-not match SHALL fail at layer `config`, exit code 2, before any download,
-listing what is available. The published crate SHALL carry the embedded
+unknown recipe or version, an unsupported platform, or a host whose libc does
+not match or whose OS is older than the declared minimum SHALL fail at layer
+`config`, exit code 2, before any download, listing what is available. After
+download and before publication, the executable's headers SHALL match what
+the recipe declares (ELF `e_machine` or the selected Mach-O slice, and the
+minimum OS the binary itself records); a mismatch SHALL fail at layer
+`provider` and publish nothing. The published crate SHALL carry the embedded
 recipes, and every crate the fetcher and extractor call SHALL be a direct
 dependency.
 
 #### Scenario: Unknown recipe
 - **WHEN** the user configuration selects `[agent] name = "nope"`
 - **THEN** `up` fails at layer `config` and lists the recipe names
+
+#### Scenario: Host older than the recipe's minimum
+- **WHEN** a recipe declares a `gnu` artifact needing glibc 2.39 and the host has glibc 2.35
+- **THEN** `up` fails at layer `config` before any download, naming the recipe, the minimum and the host's version
 
 #### Scenario: Recipe without this platform
 - **WHEN** a recipe has no artifacts for the host's platform
@@ -260,8 +270,8 @@ inherits (the provider's environment and the activation overlay) and the
 selected mode's values applied last, and `up` SHALL print one line naming each
 variable it removed. In `api-key` mode, the key SHALL be
 read from a non-empty host environment variable (an unset or empty variable
-fails at layer `config` unless a configured user credential command from a
-later capability supplies it). Its value SHALL stay out of logs and metadata.
+fails at layer `config` unless the configured credential command supplies
+it). Its value SHALL stay out of logs and metadata.
 
 #### Scenario: Forwarded key under api-key
 - **WHEN** `devcroft.toml` lists the recipe's credential name in `[env] forward` and the mode is `api-key`

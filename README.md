@@ -274,7 +274,8 @@ workflow. [AGENTS.md](AGENTS.md) holds the rules every change must keep.
 
 devcroft is pre-1.0, unaudited software from a single maintainer, with no
 security response commitment. Read [the threat model](docs/threat-model.md)
-before you rely on it. To report a problem, open an issue in
+before you rely on it. A private reporting channel is a 1.0 requirement and
+doesn't exist yet. Until it does, open an issue in
 [the issue tracker](https://github.com/dragosv/devcroft/issues).
 
 ## License

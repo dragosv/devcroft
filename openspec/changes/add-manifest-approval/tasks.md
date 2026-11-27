@@ -18,7 +18,15 @@
 
 - [ ] 4.1 On Linux, mask `<root>/devcroft.toml` in `construct_view` with an unreadable read-only bind of a devcroft-owned empty file. On macOS, add Seatbelt denials for reading and writing it. Refuse `up` at layer `backend` where neither can be enforced.
 - [ ] 4.2 Measure every alias: case variants on case-insensitive volumes, `/private` prefixes, symlinks inside the workspace, and hard links created inside the sandbox. Record whether the name is masked or absent per platform, and report it in `status`.
-- [ ] 4.3 Inventory everything inside the sandbox that reads the manifest (in-sandbox `devcroft` verbs, the denial hook) and give it the effective configuration instead.
+- [ ] 4.3 For an untrusted checkout, protect `.git/config`, `.git/config.worktree` and `.git/hooks/` with the same mechanism. Confirm that a planted hook and a `core.fsmonitor` entry fail, and that `git commit` still works.
+- [ ] 4.4 Inventory everything inside the sandbox that reads the manifest (in-sandbox `devcroft` verbs, the denial hook) and give it the effective configuration instead.
+
+## 4b. Close the other routes
+
+- [ ] 4b.1 Withhold `ssh.forward_agent` for untrusted checkouts. Confirm that no per-session option or overlay brings back a withheld variable, an agent socket or another host socket.
+- [ ] 4b.2 Record absent filesystem grants in `NotApplied` with the reason `absent`, name them at `up`, and make `why` agree. Update the existing gap in `docs/known-gaps.md`.
+- [ ] 4b.3 Write every admission refusal to `stderr` only. Confirm that `ssh NAME.devcroft` through `ProxyCommand devcroft proxy %n` shows the refusal and no protocol error.
+- [ ] 4b.4 Qualify each provider for untrusted checkouts: nix, flox, devbox, devenv, mise and pixi. Run the acceptance cases with sentinel values against its resolution, capture and provisioning. Until a provider passes, its untrusted checkouts refuse at layer `config`.
 
 ## 5. Command surface
 
