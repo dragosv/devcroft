@@ -28,19 +28,18 @@ jobs:
       - run: cargo fmt --all -- --check
 
       # `cargo clippy` alone (no --all-targets) is the exact command
-      # CLAUDE.md documents as "currently clean" — -D warnings turns that
-      # description into an enforced gate instead of a claim that can go
-      # stale silently.
+      # CONTRIBUTING.md documents — -D warnings turns "clean" into an
+      # enforced gate instead of a claim that can go stale silently.
       - run: cargo clippy -- -D warnings
 
-      # docs.rs renders this publicly; CLAUDE.md says keep it at zero
+      # docs.rs renders this publicly; CONTRIBUTING.md says keep it at zero
       # warnings.
       - run: cargo doc --no-deps
         env:
           RUSTDOCFLAGS: -D warnings
 
   # The provider-free leg, on both OSes. Every e2e test self-skips on a
-  # host without its provider (CLAUDE.md: "a green cargo test is not the
+  # host without its provider (AGENTS.md: "a green cargo test is not the
   # same as a run that tested anything"), so this measures the unit tests
   # and the process tier alone — which on macOS is real signal, since
   # Seatbelt is native and needs no daemon. It is also the control for the
