@@ -29,6 +29,10 @@ pub struct TrustedArtifactsV1 {
     pub runtime_image: ArtifactEntry,
     pub preparation_image: ArtifactEntry,
     pub license_inventory: ArtifactEntry,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workload: Option<ArtifactEntry>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub data_seed: Option<ArtifactEntry>,
 }
 
 /// User-trusted distribution manifest governing VM helper and guest artifacts.
@@ -55,6 +59,8 @@ pub struct PackagedLayout {
     pub runtime_image: PathBuf,
     pub preparation_image: PathBuf,
     pub license_inventory: PathBuf,
+    pub workload: Option<PathBuf>,
+    pub data_seed: Option<PathBuf>,
 }
 
 /// Failure validating or resolving a trusted artifact manifest.
@@ -198,6 +204,17 @@ impl TrustedArtifactManifestV1 {
         for (name, entry) in self.named_artifacts() {
             validate_artifact_entry(name, entry)?;
         }
+        if self.artifacts.workload.is_some() != self.artifacts.data_seed.is_some() {
+            return Err(ManifestError::Io(
+                "workload and data_seed must be provided together".into(),
+            ));
+        }
+        if let Some(entry) = &self.artifacts.workload {
+            validate_artifact_entry("workload", entry)?;
+        }
+        if let Some(entry) = &self.artifacts.data_seed {
+            validate_artifact_entry("data_seed", entry)?;
+        }
         Ok(())
     }
 
@@ -287,6 +304,22 @@ impl TrustedArtifactManifestV1 {
                 "license_inventory",
                 &self.artifacts.license_inventory,
             )?,
+            workload: self
+                .artifacts
+                .workload
+                .as_ref()
+                .map(|entry| {
+                    self.resolve_trusted_path(trusted_root, project_root, "workload", entry)
+                })
+                .transpose()?,
+            data_seed: self
+                .artifacts
+                .data_seed
+                .as_ref()
+                .map(|entry| {
+                    self.resolve_trusted_path(trusted_root, project_root, "data_seed", entry)
+                })
+                .transpose()?,
         })
     }
 
@@ -404,6 +437,8 @@ mod tests {
                 runtime_image: entry("images/runtime-base.img", "MIT AND GPL-2.0-only"),
                 preparation_image: entry("images/prep-base.img", "Apache-2.0"),
                 license_inventory: entry("licenses/vm-artifact-licenses.json", "Apache-2.0"),
+                workload: None,
+                data_seed: None,
             },
         }
     }
@@ -478,5 +513,22 @@ mod tests {
             err,
             ManifestError::UntrustedProjectBootstrapPath { .. }
         ));
+    }
+
+    #[test]
+    fn workload_and_data_seed_require_pairing_and_validate() {
+        let mut partial = sample_manifest();
+        partial.artifacts.workload = Some(entry("images/toolchain.img", "MIT"));
+        assert!(partial.validate().is_err());
+
+        partial.artifacts.data_seed = Some(entry("images/data.seed.img", "Apache-2.0"));
+        partial.validate().unwrap();
+        let layout = partial
+            .packaged_layout(
+                Path::new("/Users/op/.local/share/devcroft/vm-artifacts"),
+                Path::new("/Users/op/work/untrusted-repo"),
+            )
+            .unwrap();
+        assert!(layout.workload.is_some() && layout.data_seed.is_some());
     }
 }

@@ -100,6 +100,10 @@ pub struct VmCliMetadata {
     pub direct_env: BTreeMap<String, String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub disclosed_credentials: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workspace_disk: Option<PathBuf>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workload_image: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -913,8 +917,24 @@ pub fn up_vm_instance(
         &packaged.runtime_image,
         &artifact_manifest.artifacts.runtime_image.sha256,
     )?;
+    let (workload_path, workload_sha, data_seed_path) = match (
+        &artifact_manifest.artifacts.workload,
+        &packaged.workload,
+        &artifact_manifest.artifacts.data_seed,
+        &packaged.data_seed,
+    ) {
+        (Some(w_entry), Some(w_path), Some(d_entry), Some(d_path)) => {
+            let (w_canon, w_sha) = verify_artifact_file("workload", w_path, &w_entry.sha256)?;
+            let (d_canon, _) = verify_artifact_file("data_seed", d_path, &d_entry.sha256)?;
+            (Some(w_canon), Some(w_sha), Some(d_canon))
+        }
+        _ => (None, None, None),
+    };
 
-    let boot_sha_input = format!("{kernel_sha}:{initramfs_sha}:{runtime_sha}");
+    let boot_sha_input = match &workload_sha {
+        Some(w_sha) => format!("{kernel_sha}:{initramfs_sha}:{runtime_sha}:{w_sha}"),
+        None => format!("{kernel_sha}:{initramfs_sha}:{runtime_sha}"),
+    };
     let boot_artifact_sha256 = super::sha256::sha256_hex(boot_sha_input.as_bytes());
     let private_disk_id = format!("vm-state-{sandbox_name}");
 
@@ -935,6 +955,9 @@ pub fn up_vm_instance(
             down_vm_instance_inner(existing)?;
         }
         let _ = fs::remove_file(&existing.meta.private_disk);
+        if let Some(ws) = &existing.meta.workspace_disk {
+            let _ = fs::remove_file(ws);
+        }
         let _ = fs::remove_file(existing.state_file());
         let _ = fs::remove_file(cli_meta_path(&existing.meta.controller_dir));
     }
@@ -942,6 +965,7 @@ pub fn up_vm_instance(
     let (
         instance_dir,
         private_disk,
+        workspace_disk,
         next_generation,
         ssh_identity_file,
         ssh_known_hosts,
@@ -972,9 +996,30 @@ pub fn up_vm_instance(
         cleanup_stale_sockets(&existing.meta.instance_dir);
         let canonical_disk = fs::canonicalize(&plan.preserved_private_disk)
             .map_err(|e| VmCliError::StateIo(e.to_string()))?;
+        let preserved_workspace = match (
+            data_seed_path.as_ref(),
+            existing.meta.workspace_disk.as_ref(),
+        ) {
+            (Some(_), Some(ws)) => {
+                if !ws.is_file() {
+                    return Err(VmCliError::layered(
+                        ErrorLayer::Config,
+                        format!("missing persistent VM workspace disk {}", ws.display()),
+                    ));
+                }
+                Some(fs::canonicalize(ws).map_err(|e| VmCliError::StateIo(e.to_string()))?)
+            }
+            (Some(seed), None) => {
+                let ws_path = existing.meta.instance_dir.join("workspace.img");
+                copy_regular_artifact("workspace_disk", seed, &ws_path, 0o600)?;
+                Some(fs::canonicalize(&ws_path).map_err(|e| VmCliError::StateIo(e.to_string()))?)
+            }
+            (None, _) => None,
+        };
         (
             existing.meta.instance_dir,
             canonical_disk,
+            preserved_workspace,
             plan.next_generation,
             existing.meta.ssh_identity_file,
             existing.meta.ssh_known_hosts,
@@ -1002,9 +1047,18 @@ pub fn up_vm_instance(
             .map_err(|e| VmCliError::layered(e.layer(), e.to_string()))?;
         let canonical_disk =
             fs::canonicalize(&disk_path).map_err(|e| VmCliError::StateIo(e.to_string()))?;
+        let seeded_workspace = match data_seed_path.as_ref() {
+            Some(seed) => {
+                let ws_path = endpoints.instance_dir.join("workspace.img");
+                copy_regular_artifact("workspace_disk", seed, &ws_path, 0o600)?;
+                Some(fs::canonicalize(&ws_path).map_err(|e| VmCliError::StateIo(e.to_string()))?)
+            }
+            None => None,
+        };
         (
             endpoints.instance_dir,
             canonical_disk,
+            seeded_workspace,
             1u64,
             ssh_keys.client_private_key,
             ssh_keys.known_hosts,
@@ -1115,8 +1169,14 @@ pub fn up_vm_instance(
             path: runtime_path,
             sha256: runtime_sha,
         },
-        workload: None,
-        data: None,
+        workload: match (&workload_path, &workload_sha) {
+            (Some(path), Some(sha)) => Some(HelperArtifactInput {
+                path: path.clone(),
+                sha256: sha.clone(),
+            }),
+            _ => None,
+        },
+        data: workspace_disk.clone(),
         state: private_disk.clone(),
         instance_dir: endpoints.instance_dir.clone(),
         proxy_socket: launch_proxy_socket,
@@ -1242,6 +1302,8 @@ pub fn up_vm_instance(
         broker_sessions,
         direct_env: resolved_direct_env,
         disclosed_credentials,
+        workspace_disk,
+        workload_image: workload_path,
     };
 
     save_vm_state(&vm_state_path(&endpoints.controller_dir), &state)?;
@@ -1590,6 +1652,8 @@ pub struct InstallLocalVmBundleRequest {
     pub kernel: PathBuf,
     pub initramfs: PathBuf,
     pub runtime_image: PathBuf,
+    pub workload: Option<PathBuf>,
+    pub data_seed: Option<PathBuf>,
     pub version: String,
     pub out_dir: Option<PathBuf>,
 }
@@ -1600,6 +1664,7 @@ pub struct InstalledVmBundleSummary {
     pub bundle_dir: PathBuf,
     pub manifest_version: String,
     pub target: GuestTarget,
+    pub has_workload: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1646,19 +1711,16 @@ fn copy_regular_artifact(
             format!("VM {label} {} is not a regular file", canonical.display()),
         ));
     }
-    let bytes = fs::read(&canonical).map_err(|e| {
-        VmCliError::StateIo(format!("reading VM {label} {}: {e}", canonical.display()))
+    if dest.symlink_metadata().is_ok() {
+        let _ = fs::remove_file(dest);
+    }
+    fs::copy(&canonical, dest).map_err(|e| {
+        VmCliError::StateIo(format!(
+            "copying VM {label} {} -> {}: {e}",
+            canonical.display(),
+            dest.display()
+        ))
     })?;
-    let mut f = OpenOptions::new()
-        .create(true)
-        .truncate(true)
-        .write(true)
-        .mode(mode)
-        .open(dest)
-        .map_err(|e| VmCliError::StateIo(format!("{}: {e}", dest.display())))?;
-    f.write_all(&bytes)
-        .and_then(|_| f.sync_all())
-        .map_err(|e| VmCliError::StateIo(format!("{}: {e}", dest.display())))?;
     fs::set_permissions(dest, fs::Permissions::from_mode(mode))
         .map_err(|e| VmCliError::StateIo(format!("{}: {e}", dest.display())))?;
     Ok(())
@@ -1687,6 +1749,12 @@ pub fn install_local_vm_bundle(
     req: &InstallLocalVmBundleRequest,
 ) -> Result<InstalledVmBundleSummary, VmCliError> {
     validate_bundle_version(&req.version)?;
+    if req.workload.is_some() != req.data_seed.is_some() {
+        return Err(VmCliError::layered(
+            ErrorLayer::Config,
+            "`--workload` and `--data-seed` must be provided together",
+        ));
+    }
     let out_dir = match &req.out_dir {
         Some(p) => p.clone(),
         None => data_dir()?.join("vm-artifacts"),
@@ -1711,6 +1779,19 @@ pub fn install_local_vm_bundle(
     copy_regular_artifact("kernel", &req.kernel, &kernel_dest, 0o644)?;
     copy_regular_artifact("initramfs", &req.initramfs, &initramfs_dest, 0o644)?;
     copy_regular_artifact("runtime_image", &req.runtime_image, &runtime_dest, 0o644)?;
+    let (workload_entry, data_seed_entry) = match (&req.workload, &req.data_seed) {
+        (Some(w_src), Some(d_src)) => {
+            let w_dest = bundle_dir.join("toolchain.img");
+            let d_dest = bundle_dir.join("data.seed.img");
+            copy_regular_artifact("workload", w_src, &w_dest, 0o644)?;
+            copy_regular_artifact("data_seed", d_src, &d_dest, 0o644)?;
+            (
+                Some(artifact_entry_for_file("toolchain.img", &w_dest)?),
+                Some(artifact_entry_for_file("data.seed.img", &d_dest)?),
+            )
+        }
+        _ => (None, None),
+    };
     fs::write(&prep_dest, b"devcroft-local-prep-placeholder\n")
         .map_err(|e| VmCliError::StateIo(format!("{}: {e}", prep_dest.display())))?;
     fs::write(&licenses_dest, b"Apache-2.0 GPL-2.0-only\n")
@@ -1731,6 +1812,8 @@ pub fn install_local_vm_bundle(
             runtime_image: artifact_entry_for_file("runtime.img", &runtime_dest)?,
             preparation_image: artifact_entry_for_file("prep.img", &prep_dest)?,
             license_inventory: artifact_entry_for_file("LICENSES.txt", &licenses_dest)?,
+            workload: workload_entry,
+            data_seed: data_seed_entry,
         },
     };
 
@@ -1765,6 +1848,7 @@ pub fn install_local_vm_bundle(
         bundle_dir,
         manifest_version: verified.manifest_version,
         target: verified.target,
+        has_workload: verified.artifacts.workload.is_some(),
     })
 }
 
@@ -1784,6 +1868,7 @@ pub fn inspect_default_vm_bundle() -> Result<Option<InstalledVmBundleSummary>, V
         bundle_dir: out_dir.join(&parsed.manifest_version),
         manifest_version: parsed.manifest_version,
         target: parsed.target,
+        has_workload: parsed.artifacts.workload.is_some(),
     }))
 }
 
@@ -2091,6 +2176,38 @@ pub fn render_vm_policy_plan(
         || "pending".to_owned(),
         |inst| inst.state.boot_artifact_sha256.clone(),
     );
+    let mut preview_disks = vec![
+        DiskAttachment {
+            id: "runtime".to_owned(),
+            path: "<bundle>/runtime.img".to_owned(),
+            read_only: true,
+            sha256: None,
+        },
+        DiskAttachment {
+            id: format!("vm-state-{sandbox_name}"),
+            path: format!("~/.local/share/devcroft/{sandbox_name}/vm-inst/state.img"),
+            read_only: false,
+            sha256: None,
+        },
+    ];
+    if let Some(inst) = existing.as_ref() {
+        if let Some(w) = &inst.meta.workload_image {
+            preview_disks.push(DiskAttachment {
+                id: "workload".to_owned(),
+                path: w.display().to_string(),
+                read_only: true,
+                sha256: None,
+            });
+        }
+        if let Some(ws) = &inst.meta.workspace_disk {
+            preview_disks.push(DiskAttachment {
+                id: "workspace".to_owned(),
+                path: ws.display().to_string(),
+                read_only: false,
+                sha256: None,
+            });
+        }
+    }
     let launch_preview = LaunchRecordV1 {
         schema: CONTRACT_SCHEMA_V1,
         instance_generation: generation,
@@ -2099,20 +2216,7 @@ pub fn render_vm_policy_plan(
         phase: GuestPhase::Runtime,
         boot_artifact_sha256: boot_sha,
         required_capabilities: vec!["com.apple.security.hypervisor".to_owned()],
-        disks: vec![
-            DiskAttachment {
-                id: "runtime".to_owned(),
-                path: "<bundle>/runtime.img".to_owned(),
-                read_only: true,
-                sha256: None,
-            },
-            DiskAttachment {
-                id: format!("vm-state-{sandbox_name}"),
-                path: format!("~/.local/share/devcroft/{sandbox_name}/vm-inst/state.img"),
-                read_only: false,
-                sha256: None,
-            },
-        ],
+        disks: preview_disks,
         channels: HostChannels {
             control_socket: "control.sock (vsock:1024)".to_owned(),
             keeper_socket: "keeper.sock (vsock:1025)".to_owned(),

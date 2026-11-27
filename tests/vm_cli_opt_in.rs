@@ -218,6 +218,8 @@ fn up_vm_refuses_swift_repo_manifest_and_rollback() {
                 runtime_image: art("runtime.img"),
                 preparation_image: art("prep.img"),
                 license_inventory: art("LICENSES.txt"),
+                workload: None,
+                data_seed: None,
             },
         };
         let manifest_path = proj.join("evil-bundle/manifest.json");
@@ -311,6 +313,8 @@ fn vm_ssh_config_gates_on_trusted_editor_grant_and_preserves_native_default() {
         broker_sessions: Vec::new(),
         direct_env: BTreeMap::new(),
         disclosed_credentials: Vec::new(),
+        workspace_disk: None,
+        workload_image: None,
     };
     fs::write(
         ctrl.join("vm-cli.json"),
@@ -417,6 +421,8 @@ fn real_libkrun_vm_cli_end_to_end_smoke() {
             runtime_image: mk_entry("runtime.img", &runtime_src),
             preparation_image: mk_entry("prep.img", &prep_dummy),
             license_inventory: mk_entry("LICENSES.txt", &lic_dummy),
+            workload: None,
+            data_seed: None,
         },
     };
     let manifest_path = bundle_root.join("manifest.json");
@@ -656,6 +662,8 @@ fn real_libkrun_vm_egress_proxy_and_brokered_credentials_e2e() {
             runtime_image: mk_entry("runtime.img", &runtime_src),
             preparation_image: mk_entry("prep.img", &prep_dummy),
             license_inventory: mk_entry("LICENSES.txt", &lic_dummy),
+            workload: None,
+            data_seed: None,
         },
     };
     let manifest_path = bundle_root.join("manifest.json");
@@ -1305,4 +1313,176 @@ fn vm_why_explains_egress_broker_env_and_no_host_mounts() {
     let path_out = String::from_utf8_lossy(&path_denied.stdout);
     assert!(path_out.contains("DENIED"), "{path_out}");
     assert!(path_out.contains("virtio-fs"), "{path_out}");
+}
+
+#[test]
+fn real_libkrun_vm_workload_toolchain_and_persistent_workspace_e2e() {
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let helper_src = repo_root.join("experiments/microvm/libkrun/target/debug/devcroft-krun-spike");
+    let kernel_src = repo_root.join("experiments/microvm/artifacts/kernel-landlock/Image");
+    let initramfs_src =
+        repo_root.join("experiments/microvm/artifacts/stage-b-workload-egress/initramfs.cpio");
+    let runtime_src =
+        repo_root.join("experiments/microvm/artifacts/stage-b-workload-egress/runtime.img");
+    let workload_src = repo_root.join("experiments/microvm/artifacts/workload/toolchain.img");
+    let data_seed_src = repo_root.join("experiments/microvm/artifacts/workload/data.seed.img");
+    if !helper_src.is_file()
+        || !kernel_src.is_file()
+        || !initramfs_src.is_file()
+        || !runtime_src.is_file()
+        || !workload_src.is_file()
+        || !data_seed_src.is_file()
+    {
+        eprintln!(
+            "skipping real_libkrun_vm_workload_toolchain_and_persistent_workspace_e2e: workload artifacts absent"
+        );
+        return;
+    }
+
+    let mut h = TempHarness::new("workload-e2e");
+    h.sandbox_to_cleanup = Some("vmworkproj".into());
+
+    let proj = h.root.join("vmworkproj");
+    write_project_manifest(&proj, "vmworkproj", "flox");
+    fs::create_dir_all(proj.join("src")).unwrap();
+    fs::write(
+        proj.join("src/hello.c"),
+        b"#include <stdio.h>\nint main(void) { puts(\"hello-from-vm-gcc\"); return 0; }\n",
+    )
+    .unwrap();
+
+    // 1. Install workload-enabled bundle (`toolchain.img` + `data.seed.img`).
+    let inst = h.run_in(
+        &proj,
+        &[
+            "runtime",
+            "install-local",
+            "--helper",
+            helper_src.to_str().unwrap(),
+            "--kernel",
+            kernel_src.to_str().unwrap(),
+            "--initramfs",
+            initramfs_src.to_str().unwrap(),
+            "--runtime",
+            runtime_src.to_str().unwrap(),
+            "--workload",
+            workload_src.to_str().unwrap(),
+            "--data-seed",
+            data_seed_src.to_str().unwrap(),
+            "--version",
+            "workload-e2e-1",
+        ],
+        &[],
+    );
+    assert_eq!(
+        inst.status.code(),
+        Some(0),
+        "install-local +workload failed\nstdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&inst.stdout),
+        String::from_utf8_lossy(&inst.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&inst.stdout).contains("+workload"),
+        "{}",
+        String::from_utf8_lossy(&inst.stdout)
+    );
+
+    // 2. Boot VM + sync workspace in one command (`up --vm --sync`).
+    let up = h.run_in(&proj, &["up", "--vm", "--sync"], &[]);
+    assert_eq!(
+        up.status.code(),
+        Some(0),
+        "up --vm --sync failed\nstdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&up.stdout),
+        String::from_utf8_lossy(&up.stderr)
+    );
+
+    let st = h.run_in(&proj, &["status", "vmworkproj"], &[]);
+    assert_eq!(st.status.code(), Some(0));
+    let st_out = String::from_utf8_lossy(&st.stdout);
+    assert!(st_out.contains("workspace-disk:"), "{st_out}");
+    assert!(st_out.contains("workload-image:"), "{st_out}");
+
+    // 3. Compile and execute C code inside the Landlock-confined guest using mounted `/toolchain` gcc.
+    let build_and_run = h.run_in(
+        &proj,
+        &[
+            "exec",
+            "--",
+            "/bin/sh",
+            "-c",
+            "PATH=/usr/bin:/bin TMPDIR=/tmp /usr/bin/gcc -O2 /workspace/src/hello.c -o /workspace/hello_bin && /workspace/hello_bin",
+        ],
+        &[],
+    );
+    assert_eq!(
+        build_and_run.status.code(),
+        Some(0),
+        "gcc compile/run failed\nstdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&build_and_run.stdout),
+        String::from_utf8_lossy(&build_and_run.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&build_and_run.stdout).contains("hello-from-vm-gcc"),
+        "{}",
+        String::from_utf8_lossy(&build_and_run.stdout)
+    );
+
+    // 4. Cold shutdown & restart WITHOUT `--sync` -> persistent `/workspace` ext4 disk survives!
+    let down = h.run_in(&proj, &["down", "vmworkproj"], &[]);
+    assert_eq!(down.status.code(), Some(0));
+    assert!(String::from_utf8_lossy(&down.stdout).contains("orderly"));
+
+    let up2 = h.run_in(&proj, &["up", "--vm"], &[]);
+    assert_eq!(
+        up2.status.code(),
+        Some(0),
+        "cold restart failed\nstdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&up2.stdout),
+        String::from_utf8_lossy(&up2.stderr)
+    );
+    let st2 = h.run_in(&proj, &["status", "vmworkproj"], &[]);
+    assert_eq!(st2.status.code(), Some(0));
+    assert!(String::from_utf8_lossy(&st2.stdout).contains("generation: 2"));
+
+    let rerun = h.run_in(&proj, &["exec", "--", "/workspace/hello_bin"], &[]);
+    assert_eq!(
+        rerun.status.code(),
+        Some(0),
+        "persisted binary run failed\nstdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&rerun.stdout),
+        String::from_utf8_lossy(&rerun.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&rerun.stdout).contains("hello-from-vm-gcc"),
+        "{}",
+        String::from_utf8_lossy(&rerun.stdout)
+    );
+
+    // 5. Safe `sync-out` exports compiled artifact and source out of persistent `/workspace`.
+    let export_dir = h.root.join("exported-work");
+    let sync_out = h.run_in(
+        &proj,
+        &[
+            "runtime",
+            "sync-out",
+            "vmworkproj",
+            "--out",
+            export_dir.to_str().unwrap(),
+        ],
+        &[],
+    );
+    assert_eq!(
+        sync_out.status.code(),
+        Some(0),
+        "stderr: {}",
+        String::from_utf8_lossy(&sync_out.stderr)
+    );
+    assert!(export_dir.join("src/hello.c").is_file());
+    assert!(export_dir.join("hello_bin").is_file());
+
+    let rm = h.run_in(&proj, &["rm", "--yes"], &[]);
+    assert_eq!(rm.status.code(), Some(0));
+    assert!(!h.home.join(".local/share/devcroft/vmworkproj").exists());
+    h.sandbox_to_cleanup = None;
 }

@@ -2162,8 +2162,13 @@ fn doctor_vm_runtime() {
     }
     match devcroft::vm::inspect_default_vm_bundle() {
         Ok(Some(bundle)) => println!(
-            "  [INFO] vm-artifacts:                    installed ({}, {} -> {})",
+            "  [INFO] vm-artifacts:                    installed ({}{}, {} -> {})",
             bundle.manifest_version,
+            if bundle.has_workload {
+                " +workload"
+            } else {
+                ""
+            },
             bundle.target.as_str(),
             bundle.manifest_path.display()
         ),
@@ -3510,6 +3515,12 @@ fn print_vm_status(st: &devcroft::vm::VmLiveStatus) {
         println!("guest-state-counter: {guest_state}");
     }
     println!("private-disk: {}", st.instance.meta.private_disk.display());
+    if let Some(ws) = &st.instance.meta.workspace_disk {
+        println!("workspace-disk: {}", ws.display());
+    }
+    if let Some(wl) = &st.instance.meta.workload_image {
+        println!("workload-image: {}", wl.display());
+    }
     match st.proxy_alive {
         Some(true) => println!(
             "egress-proxy: healthy (allow: {})",
@@ -4895,8 +4906,13 @@ fn cli_runtime(args: &[String]) -> i32 {
             }
             match devcroft::vm::inspect_default_vm_bundle() {
                 Ok(Some(bundle)) => println!(
-                    "vm-artifacts: installed ({}, {})",
+                    "vm-artifacts: installed ({}{}, {})",
                     bundle.manifest_version,
+                    if bundle.has_workload {
+                        " +workload"
+                    } else {
+                        ""
+                    },
                     bundle.manifest_path.display()
                 ),
                 Ok(None) => println!(
@@ -4998,11 +5014,13 @@ fn cli_runtime(args: &[String]) -> i32 {
             0
         }
         "install-local" => {
-            const SUB_USAGE: &str = "devcroft runtime install-local: usage: devcroft runtime install-local --helper <path> --kernel <path> --initramfs <path> --runtime <path> [--version <ver>] [--out <dir>]";
+            const SUB_USAGE: &str = "devcroft runtime install-local: usage: devcroft runtime install-local --helper <path> --kernel <path> --initramfs <path> --runtime <path> [--workload <path> --data-seed <path>] [--version <ver>] [--out <dir>]";
             let mut helper: Option<std::path::PathBuf> = None;
             let mut kernel: Option<std::path::PathBuf> = None;
             let mut initramfs: Option<std::path::PathBuf> = None;
             let mut runtime_image: Option<std::path::PathBuf> = None;
+            let mut workload: Option<std::path::PathBuf> = None;
+            let mut data_seed: Option<std::path::PathBuf> = None;
             let mut version = "local-1".to_string();
             let mut out_dir: Option<std::path::PathBuf> = None;
             let mut it = rest.iter();
@@ -5036,6 +5054,20 @@ fn cli_runtime(args: &[String]) -> i32 {
                         };
                         runtime_image = Some(std::path::PathBuf::from(v));
                     }
+                    "--workload" => {
+                        let Some(v) = it.next() else {
+                            eprintln!("{SUB_USAGE}");
+                            return 2;
+                        };
+                        workload = Some(std::path::PathBuf::from(v));
+                    }
+                    "--data-seed" => {
+                        let Some(v) = it.next() else {
+                            eprintln!("{SUB_USAGE}");
+                            return 2;
+                        };
+                        data_seed = Some(std::path::PathBuf::from(v));
+                    }
                     "--version" => {
                         let Some(v) = it.next() else {
                             eprintln!("{SUB_USAGE}");
@@ -5067,14 +5099,21 @@ fn cli_runtime(args: &[String]) -> i32 {
                 kernel,
                 initramfs,
                 runtime_image,
+                workload,
+                data_seed,
                 version,
                 out_dir,
             };
             match devcroft::vm::install_local_vm_bundle(&req) {
                 Ok(summary) => {
                     println!(
-                        "devcroft: installed VM bundle '{}' ({}) at {}",
+                        "devcroft: installed VM bundle '{}'{}, ({}) at {}",
                         summary.manifest_version,
+                        if summary.has_workload {
+                            " (+workload)"
+                        } else {
+                            ""
+                        },
                         summary.target.as_str(),
                         summary.manifest_path.display()
                     );
