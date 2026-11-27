@@ -313,6 +313,11 @@ pub(super) fn run() -> Result<(), Box<dyn std::error::Error>> {
             std::env::set_var("no_proxy", "localhost,127.0.0.1,::1");
         }
     }
+    if std::path::Path::new("/usr/etc/ssl/certs/ca-bundle.crt").is_file() {
+        unsafe {
+            std::env::set_var("SSL_CERT_FILE", "/usr/etc/ssl/certs/ca-bundle.crt");
+        }
+    }
     Sandbox::apply_landlock(&caps)?;
     // Denials must have a working baseline: PID 1 created these fixtures.
     let denials = [

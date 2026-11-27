@@ -58,7 +58,7 @@ pub const DEFAULT_VM_VCPUS: u8 = 2;
 pub const DEFAULT_VM_MEMORY_MIB: u32 = 1024;
 pub const PRIVATE_STATE_DISK_BYTES: u64 = 1024 * 1024;
 pub const VM_GUEST_EGRESS_PROXY_PORT: u16 = 18080;
-const READY_POLL_TIMEOUT: Duration = Duration::from_secs(20);
+const READY_POLL_TIMEOUT: Duration = Duration::from_secs(45);
 const CONTROL_IO_TIMEOUT: Duration = Duration::from_secs(2);
 const SHUTDOWN_WAIT_TIMEOUT: Duration = Duration::from_secs(5);
 

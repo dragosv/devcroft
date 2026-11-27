@@ -1486,3 +1486,246 @@ fn real_libkrun_vm_workload_toolchain_and_persistent_workspace_e2e() {
     assert!(!h.home.join(".local/share/devcroft/vmworkproj").exists());
     h.sandbox_to_cleanup = None;
 }
+
+#[test]
+fn real_libkrun_vm_coding_agents_tls_and_broker_e2e() {
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let helper_src = repo_root.join("experiments/microvm/libkrun/target/debug/devcroft-krun-spike");
+    let kernel_src = repo_root.join("experiments/microvm/artifacts/kernel-landlock/Image");
+    let initramfs_src =
+        repo_root.join("experiments/microvm/artifacts/stage-b-nix-egress/initramfs.cpio");
+    let runtime_src =
+        repo_root.join("experiments/microvm/artifacts/stage-b-nix-egress/runtime.img");
+    let workload_src = repo_root.join("experiments/microvm/artifacts/agents/toolchain.img");
+    let data_seed_src = repo_root.join("experiments/microvm/artifacts/agents/data.seed.img");
+    if !helper_src.is_file()
+        || !kernel_src.is_file()
+        || !initramfs_src.is_file()
+        || !runtime_src.is_file()
+        || !workload_src.is_file()
+        || !data_seed_src.is_file()
+    {
+        eprintln!(
+            "skipping real_libkrun_vm_coding_agents_tls_and_broker_e2e: Nix agents artifacts absent"
+        );
+        return;
+    }
+
+    let mut h = TempHarness::new("agents-e2e");
+    h.sandbox_to_cleanup = Some("vmagentproj".into());
+
+    let proj = h.root.join("vmagentproj");
+    fs::create_dir_all(&proj).unwrap();
+    fs::write(
+        proj.join("devcroft.toml"),
+        "[sandbox]\nname = \"vmagentproj\"\n\n[env]\nprovider = \"flox\"\n\n[env.vars]\nCLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC = \"1\"\nCLAUDE_CODE_MAX_RETRIES = \"0\"\n\n[network]\ndefault = \"deny\"\nallow = [\"api.anthropic.com\", \"api.openai.com\"]\n",
+    )
+    .unwrap();
+
+    let real_secret = "sk-ant-real-host-agent-secret-4242";
+    let user_cfg_dir = h.xdg_config.join("devcroft");
+    fs::create_dir_all(&user_cfg_dir).unwrap();
+    fs::write(
+        user_cfg_dir.join("config.toml"),
+        "[[credentials.broker]]\nhost = \"api.anthropic.com\"\nheader = \"x-api-key\"\nenv = \"ANTHROPIC_API_KEY\"\nendpoint_env = \"ANTHROPIC_BASE_URL\"\nplaceholder = \"sk-ant-proxy-{}\"\n",
+    )
+    .unwrap();
+
+    // 1. Install Nix coding-agent bundle (`claude`, `codex`, `curl`, `ca-bundle.crt`).
+    let inst = h.run_in(
+        &proj,
+        &[
+            "runtime",
+            "install-local",
+            "--helper",
+            helper_src.to_str().unwrap(),
+            "--kernel",
+            kernel_src.to_str().unwrap(),
+            "--initramfs",
+            initramfs_src.to_str().unwrap(),
+            "--runtime",
+            runtime_src.to_str().unwrap(),
+            "--workload",
+            workload_src.to_str().unwrap(),
+            "--data-seed",
+            data_seed_src.to_str().unwrap(),
+            "--version",
+            "agents-e2e-1",
+        ],
+        &[],
+    );
+    assert_eq!(
+        inst.status.code(),
+        Some(0),
+        "install-local agents failed\nstdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&inst.stdout),
+        String::from_utf8_lossy(&inst.stderr)
+    );
+
+    // 2. Boot VM with host `nono-proxy` + zero-secret broker for Anthropic.
+    let up = h.run_in(
+        &proj,
+        &["up", "--vm"],
+        &[("ANTHROPIC_API_KEY", real_secret)],
+    );
+    assert_eq!(
+        up.status.code(),
+        Some(0),
+        "up --vm agents failed\nstdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&up.stdout),
+        String::from_utf8_lossy(&up.stderr)
+    );
+
+    // 3. Verify guest env (`SSL_CERT_FILE`, `HTTPS_PROXY`, broker placeholder without real secret).
+    let env_probe = h.run_in(
+        &proj,
+        &[
+            "exec",
+            "--",
+            "/bin/sh",
+            "-c",
+            "printf 'SSL_CERT_FILE=%s\\nHTTPS_PROXY=%s\\nANTHROPIC_BASE_URL=%s\\nANTHROPIC_API_KEY=%s\\n' \"$SSL_CERT_FILE\" \"$HTTPS_PROXY\" \"$ANTHROPIC_BASE_URL\" \"$ANTHROPIC_API_KEY\"",
+        ],
+        &[],
+    );
+    assert_eq!(env_probe.status.code(), Some(0));
+    let env_out = String::from_utf8_lossy(&env_probe.stdout);
+    assert!(
+        env_out.contains("SSL_CERT_FILE=/usr/etc/ssl/certs/ca-bundle.crt"),
+        "{env_out}"
+    );
+    assert!(
+        env_out.contains("HTTPS_PROXY=http://127.0.0.1:18080"),
+        "{env_out}"
+    );
+    assert!(
+        env_out.contains("ANTHROPIC_BASE_URL=http://127.0.0.1:18080/broker0"),
+        "{env_out}"
+    );
+    assert!(
+        env_out.contains("ANTHROPIC_API_KEY=sk-ant-proxy-"),
+        "{env_out}"
+    );
+    assert!(
+        !env_out.contains(real_secret),
+        "real secret leaked into guest env: {env_out}"
+    );
+
+    // 4. Real end-to-end TLS over HTTPS_PROXY via `curl`:
+    //    - allowlisted `https://api.openai.com/v1/models` succeeds TLS handshake -> live HTTP 401
+    //    - denied `https://example.com/` refused 403 by proxy
+    //    - direct bypass `https://1.1.1.1/` refused by Landlock + no guest NIC
+    let tls_allow = h.run_in(
+        &proj,
+        &[
+            "exec",
+            "--",
+            "/bin/sh",
+            "-c",
+            "curl -sS -o /dev/null -w '%{http_code}' --max-time 15 https://api.openai.com/v1/models",
+        ],
+        &[],
+    );
+    assert_eq!(
+        tls_allow.status.code(),
+        Some(0),
+        "curl https://api.openai.com failed\nstdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&tls_allow.stdout),
+        String::from_utf8_lossy(&tls_allow.stderr)
+    );
+    let tls_code = String::from_utf8_lossy(&tls_allow.stdout);
+    assert!(
+        tls_code.trim() == "401" || tls_code.trim() == "200",
+        "expected live OpenAI HTTPS 401/200, got: {tls_code}"
+    );
+
+    let tls_deny = h.run_in(
+        &proj,
+        &[
+            "exec",
+            "--",
+            "/bin/sh",
+            "-c",
+            "curl -sS -i --max-time 10 https://example.com/ 2>&1 || true",
+        ],
+        &[],
+    );
+    let tls_deny_out = String::from_utf8_lossy(&tls_deny.stdout);
+    assert!(
+        tls_deny_out.contains("403"),
+        "expected proxy 403 for https://example.com/, got: {tls_deny_out}"
+    );
+
+    let tls_bypass = h.run_in(
+        &proj,
+        &[
+            "exec",
+            "--",
+            "/bin/sh",
+            "-c",
+            "curl --noproxy '*' --max-time 3 https://1.1.1.1/",
+        ],
+        &[],
+    );
+    assert_ne!(
+        tls_bypass.status.code(),
+        Some(0),
+        "direct HTTPS bypass unexpectedly succeeded"
+    );
+
+    // 5. Real Claude Code (`claude --bare -p`) inside the Landlock-confined VM talking to
+    //    live `https://api.anthropic.com` via `/broker0` with zero host API key in the guest.
+    let claude_run = h.run_in(
+        &proj,
+        &[
+            "exec",
+            "--",
+            "/bin/sh",
+            "-c",
+            "claude --bare -p --output-format stream-json --verbose --no-session-persistence --tools '' --model claude-sonnet-4-5 'Reply only ok.' 2>&1 || true",
+        ],
+        &[],
+    );
+    assert_eq!(claude_run.status.code(), Some(0));
+    let claude_out = String::from_utf8_lossy(&claude_run.stdout);
+    assert!(
+        !claude_out.contains(real_secret),
+        "claude output leaked real host secret: {claude_out}"
+    );
+    let claude_lower = claude_out.to_ascii_lowercase();
+    assert!(
+        claude_lower.contains("\"subtype\":\"init\"")
+            || claude_lower.contains("authentication_error")
+            || claude_lower.contains("invalid x-api-key")
+            || claude_lower.contains("401"),
+        "expected Claude Code init + live Anthropic response via broker0, got:\n{claude_out}"
+    );
+
+    // 6. Real Codex binary starts cleanly inside the Landlock-confined VM.
+    let codex_ver = h.run_in(&proj, &["exec", "--", "/usr/bin/codex", "--version"], &[]);
+    assert_eq!(
+        codex_ver.status.code(),
+        Some(0),
+        "codex --version failed\nstdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&codex_ver.stdout),
+        String::from_utf8_lossy(&codex_ver.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&codex_ver.stdout).contains("codex"),
+        "{}",
+        String::from_utf8_lossy(&codex_ver.stdout)
+    );
+
+    // Logs must never leak the real host secret.
+    let logs = h.run_in(&proj, &["logs"], &[]);
+    assert_eq!(logs.status.code(), Some(0));
+    assert!(
+        !String::from_utf8_lossy(&logs.stdout).contains(real_secret),
+        "logs leaked real host secret!"
+    );
+
+    let rm = h.run_in(&proj, &["rm", "--yes"], &[]);
+    assert_eq!(rm.status.code(), Some(0));
+    assert!(!h.home.join(".local/share/devcroft/vmagentproj").exists());
+    h.sandbox_to_cleanup = None;
+}
