@@ -4,8 +4,10 @@
 `devcroft agent acp [<recipe>]` SHALL run on the host and resolve its target sandbox by
 `--sandbox <name>`, or else by comparing both the nearest upward `devcroft.toml`
 root and the innermost recorded `Meta` `project_root` containing canonical
-`cwd` and choosing the deeper (more specific) root. Ambiguous sandboxes sharing
-the same `project_root` SHALL fail at layer `config` naming each candidate and
+`cwd` and choosing the deeper (more specific) root, through the same resolver as
+`agent run`, so a nested Git repository without its own manifest is refused
+rather than attached to its parent. Ambiguous sandboxes sharing the same
+`project_root` SHALL fail at layer `config` naming each candidate and
 `--sandbox`. `agent acp` SHALL NOT start, recreate or download anything, and
 SHALL NOT execute a credential command. It SHALL treat a sandbox as running
 only when its keeper answers for the generation recorded in `Meta`, never on an
@@ -21,7 +23,7 @@ The refusals are:
 - a sandbox whose lifecycle operation is in progress, saying so and naming `devcroft status [<name>]`.
 
 A running sandbox whose `recipe_digest` is stale SHALL be used, with one
-`stderr` line naming the recreate command. `agent acp` SHALL pass `stdin` and
+`stderr` line naming `up --recreate --agent-upgrade`. `agent acp` SHALL pass `stdin` and
 `stdout` through unmodified (`pty: None`), with zero devcroft messages or OSC
 sequences on `stdout`.
 
@@ -93,3 +95,11 @@ The endpoint SHALL apply the same launch environment restrictions as `agent run`
 #### Scenario: First task from the editor
 - **WHEN** a user launches the qualified editor from the OS GUI, edits a file through the agent and asks it to run the project's test
 - **THEN** the intended checkout contains the edit and the test runs with the project's tools
+
+#### Scenario: Two worktrees
+- **WHEN** two worktrees of one repository each have a running sandbox and the editor opens one ACP session in each
+- **THEN** each agent edits only its own checkout, and closing one session leaves the other sandbox and session running
+
+#### Scenario: Client approval does not widen the policy
+- **WHEN** the ACP client approves a tool call that the sandbox's policy denies, or runs the harness in a mode that skips its own permission prompts
+- **THEN** the operation fails as it would without approval, and the policy is unchanged

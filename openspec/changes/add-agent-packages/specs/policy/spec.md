@@ -3,16 +3,19 @@
 ### Requirement: Agent rules carry their own origin
 Every rule an agent recipe adds SHALL carry origin `agent:<recipe>` and SHALL
 appear in `policy --render`. These are: read-only access to its object, any
-library or loader path the recipe declares for the current platform, its API
-network destinations, and its `[launch.env]` variables, shown as reaching the
-agent only. When `auth = "api-key"` is selected, the brokered host SHALL also
+library or loader path the recipe declares for the current platform,
+read-write access to the sandbox `HOME` (`<project>/.devcroft/<name>/home`, so
+the agent can keep its state when the manifest grants no `.`; today that
+directory is only an exception to the artifact directory's write-deny, not a
+grant), its API network destinations, and its `[launch.env]` variables, shown
+as reaching the agent only. When `auth = "api-key"` is selected, the brokered host SHALL also
 carry `credential:broker`. No agent rule SHALL grant `/usr/bin`, write access
 inside the artifact store, any path under devcroft's data directory, or a
 `PATH` entry.
 
 #### Scenario: Rendered agent rules without a project root grant
 - **WHEN** a sandbox whose `devcroft.toml` does not grant `.` brings up the `opencode` recipe, runs `policy --render`, and starts the agent with `devcroft agent run`
-- **THEN** the object and the qualified provider host appear with origin `agent:opencode`, and the agent starts
+- **THEN** the object, the sandbox `HOME` and the qualified provider host appear with origin `agent:opencode`, the agent starts, and it writes its history under `HOME`
 
 #### Scenario: No agent, no agent rules
 - **WHEN** a sandbox is brought up without an agent

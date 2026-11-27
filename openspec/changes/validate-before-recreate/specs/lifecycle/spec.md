@@ -19,3 +19,14 @@ When starting or recreating a sandbox, explicit and automatic startup SHALL load
 #### Scenario: Already up without the key or after editing user config
 - **WHEN** plain `up` or `devcroft shell` runs on a healthy sandbox from a shell without the startup key, or after `~/.config/devcroft/config.toml` was edited
 - **THEN** plain `up` reports that the sandbox is already up and `devcroft shell` attaches without restarting the keeper
+
+### Requirement: A failure after teardown says what was lost
+When a recreation fails after the old keeper or proxy was stopped, for example
+during provider resolution, `up` SHALL say that the sandbox is now down and
+SHALL keep the previously recorded state in `Meta`. It SHALL name the command
+that starts that recorded state again, and SHALL NOT claim a rollback it did not
+perform.
+
+#### Scenario: Provider fails during recreation
+- **WHEN** a healthy sandbox is recreated and provider resolution then fails
+- **THEN** `up` fails at layer `provider`, says the sandbox is down, and names `devcroft up` to start the recorded state again

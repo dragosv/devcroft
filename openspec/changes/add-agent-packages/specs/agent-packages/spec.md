@@ -51,7 +51,7 @@ dependency.
 - **THEN** that recipe is used and none from `~/.config/devcroft/agents/` is read
 
 #### Scenario: Rollback
-- **WHEN** the user pins the previous version of a recipe and runs `up --recreate`
+- **WHEN** the user sets `[agent] version` to the previous version of the recorded recipe and runs `up --recreate --agent-from-config`
 - **THEN** the sandbox runs that version, from its object if still present
 
 ### Requirement: Agent materialization executes nothing downloaded
@@ -61,8 +61,9 @@ without running downloaded code host-side (`single-binary` and `archive` in
 this change; any unimplemented layout fails at layer `config` before download).
 Extraction SHALL refuse absolute paths, parent-directory traversals, special
 files, and symlinks or hardlinks that resolve outside the staging object. Every
-fetch SHALL be bounded by a connect timeout, a stall timeout and a maximum
-size, and every extraction by a maximum entry count and expanded size.
+fetch SHALL be bounded by a connect timeout, a stall timeout, a total timeout,
+a maximum size and a maximum number of redirects, each of which SHALL stay on
+HTTPS, and every extraction by a maximum entry count and expanded size.
 Exceeding a limit SHALL fail at layer `provider` naming it, publish nothing,
 remove staging and release the lifecycle lock.
 
@@ -81,6 +82,10 @@ remove staging and release the lifecycle lock.
 #### Scenario: Stalled download
 - **WHEN** the artifact server accepts the connection and then stops sending
 - **THEN** `up` fails at layer `provider` naming the stall timeout, no staging remains, and `devcroft down` on that sandbox then proceeds without waiting
+
+#### Scenario: Redirect off HTTPS
+- **WHEN** the artifact URL redirects to an `http:` URL, or past the redirect limit
+- **THEN** the install fails at layer `provider` naming the redirect, and nothing is published
 
 #### Scenario: Expansion bomb
 - **WHEN** an archive with a matching checksum expands beyond the expanded-size limit
@@ -273,7 +278,12 @@ later capability supplies it). Its value SHALL stay out of logs and metadata.
 ### Requirement: Interactive run
 `devcroft agent run [<recipe>]` SHALL resolve its target sandbox by explicit
 `--sandbox <name>` or by the deeper of the nearest manifest and recorded root
-containing canonical `cwd` (refusing ambiguity at one root). When `Meta`
+containing canonical `cwd` (refusing ambiguity at one root). When a Git
+repository root (a `.git` directory or file, checked by name only) lies between
+`cwd` and that root, it SHALL fail at layer `config` naming the outer root and
+`--sandbox`, rather than attaching a nested repository to its parent's sandbox
+implicitly. The same resolver SHALL serve `agent acp`, `status` and every
+remedy. When `Meta`
 already exists with `Unset`, `Disabled` or another recipe, it SHALL fail at
 layer `config` naming `[cd <quoted project_root> && ]devcroft up [--name <n>]
 --recreate [--agent <recipe>]`. When no `Meta` exists yet and neither
@@ -293,6 +303,10 @@ yet and `<recipe>` was passed on the command line), and run the recipe's
 #### Scenario: No recipe selected anywhere
 - **WHEN** `devcroft agent run` is invoked without `<recipe>` on a brand-new project and `[agent]` is unset
 - **THEN** it fails at layer `config` before resolving the provider or creating state
+
+#### Scenario: Nested repository without its own manifest
+- **WHEN** `/repo` has a manifest and a running sandbox, and `devcroft agent run` runs in `/repo/vendor/lib`, a separate Git repository with no `devcroft.toml`
+- **THEN** it fails at layer `config` naming `/repo` and `--sandbox`, and attaches nothing
 
 #### Scenario: OSC 7501 through agent run
 - **WHEN** an agent started by `agent run` emits a capability query and the terminal replies without a newline
@@ -318,3 +332,22 @@ refused at layer `config` unless the project manifest sets
 #### Scenario: Linux procfs requirement does not refuse macOS
 - **WHEN** the same recipe is selected on `macos-arm64`, where `[requires.macos-arm64]` does not require `procfs`
 - **THEN** `up` does not fail on `procfs`
+
+### Requirement: Advertised support comes from a complete qualification record
+Each recipe version SHALL ship with a versioned qualification record. The
+record SHALL have one row per artifact digest, devcroft version, platform,
+launch path (`agent run`, `agent acp`) and auth mode. For every mandatory
+probe, a row SHALL record what the recipe declares and what the probe
+observed, as `pass`, `fail`, `drift` (declared and observed disagree),
+`skipped` or `unknown` (no probe exists). A row SHALL count as qualified only
+when every mandatory probe ran and passed. A skipped or unknown mandatory probe
+SHALL leave the row unqualified, never green. `agent list`, `doctor`, the CI
+release gate and `docs/agents.md` SHALL read the same record.
+
+#### Scenario: A mandatory probe skipped
+- **WHEN** the broker probe for `macos-arm64` was skipped in the qualifying run
+- **THEN** `agent list` shows that platform as unqualified, naming the skipped probe, and `up` refuses the recipe there
+
+#### Scenario: Declared but not observed
+- **WHEN** the recipe declares native OSC 7501 emission and the probe observed none
+- **THEN** the row records `drift`, and the capability is not advertised

@@ -4,9 +4,11 @@
 The user configuration SHALL accept an `[agent]` table with `name`, naming a
 recipe, an optional `version`, and an optional `auth` (a mode qualified for that recipe and platform). Unknown keys or unsupported `auth` values SHALL fail at layer
 `config`. `devcroft up --agent <recipe>` (and `--agent-auth <mode>`), `--no-agent`
-and `--agent-from-config` SHALL choose explicitly (`--agent`, `--no-agent` and
-`--agent-from-config` being mutually exclusive, and `--agent-auth` without a
-resulting agent failing at layer `config`). For a brand-new sandbox (no `Meta`
+and `--agent-from-config` SHALL choose explicitly (`--agent`, `--no-agent`,
+`--agent-from-config` and `--agent-upgrade` being mutually exclusive,
+`--agent-auth` without a resulting agent failing at layer `config`, and
+`--agent-from-config` with no `[agent]` in the user configuration failing at
+layer `config` naming `--no-agent`). For a brand-new sandbox (no `Meta`
 on disk), an explicit flag or `[agent]` SHALL be recorded in `Meta`. For any
 existing sandbox (`Meta` on disk, whether running or stopped), changing the
 effective selection away from `Meta`'s recorded state — including adding an
@@ -17,9 +19,14 @@ with `Unset`, plain `up` and auto-up SHALL keep `Unset` (no agent) while `up
 --recreate` SHALL read and record `[agent]`. Switching to another recipe SHALL
 NOT carry over the previous recipe's `version` or `auth` mode, and SHALL consult
 `[agent]`'s `version` and `auth` when `[agent]` names the new recipe. Plain `up`
-SHALL run the recorded recipe even if this devcroft no longer ships it;
-`--recreate` SHALL re-resolve the recorded selection, keeping a requested
-version for that same recipe. The project's `devcroft.toml` SHALL NOT be read
+and `up --recreate` without a selection flag SHALL run the resolved recipe
+recorded in `Meta` (re-materializing its object when absent), even when this
+devcroft would resolve the selection differently or no longer ships it, so
+recreation never changes the agent's bytes, hosts or auth on its own. Adopting
+what this release resolves for the recorded selection SHALL require `up
+--recreate --agent-upgrade`, which prints the changed artifacts, hosts and
+auth before applying them; `--agent-upgrade` without `--recreate` SHALL fail at
+layer `config` naming `--recreate`. The project's `devcroft.toml` SHALL NOT be read
 for agent selection, an `[agent]` table there SHALL fail at layer `config`
 pointing to the user configuration, and selecting an agent SHALL NOT change the
 project's provider or its resolved environment.
@@ -55,6 +62,18 @@ project's provider or its resolved environment.
 #### Scenario: Recorded recipe no longer shipped
 - **WHEN** a sandbox is down, devcroft is upgraded to a release without its recipe version, and plain `up` runs
 - **THEN** it runs the recorded recipe, re-materialized if its object is gone
+
+#### Scenario: Recreation is not an upgrade
+- **WHEN** devcroft is upgraded to a release whose recipe for the recorded selection has new artifacts and hosts, and `up --recreate` runs without selection flags
+- **THEN** the sandbox runs the recorded recipe with its recorded hosts, and `status` names `up --recreate --agent-upgrade`
+
+#### Scenario: Explicit upgrade
+- **WHEN** that sandbox is brought up with `up --recreate --agent-upgrade`
+- **THEN** `up` prints the changed artifacts, hosts and auth, then runs and records the newly resolved recipe
+
+#### Scenario: Adopting a default that does not exist
+- **WHEN** the user configuration has no `[agent]` and `up --agent-from-config --recreate` runs
+- **THEN** it fails at layer `config` naming `--no-agent`, and the sandbox is unchanged
 
 #### Scenario: Provider untouched
 - **WHEN** a sandbox is brought up with and then without an agent
