@@ -4,14 +4,19 @@ Start with OpenCode for one explicitly named model provider, qualifying `linux-a
 
 The qualification record is the source of truth. It has one row per artifact digest, devcroft version, platform, launch path and auth mode, and it holds what the recipe declares next to what each probe observed (`pass`, `fail`, `drift`, `skipped`, `unknown`). `agent list`, `doctor`, the CI release gate and `docs/agents.md` read that one record instead of keeping separate tables. Any mandatory probe that did not run leaves its row unqualified. The rule exists because every e2e test here skips itself on a host that cannot run it, and a skip looks like a pass.
 
-Evidence has four levels, and none substitutes for another:
+Evidence has five levels, and none substitutes for another:
 
-1. Deterministic fixtures. `devcroft-test-agent` is a Rust multicall fixture under `tests/fixtures/`, kept out of `src/bin` and out of the published crate. It covers CLI and PTY behaviour, process trees, sentinels and credentials, and reports what it saw out of band.
-2. OS-level probes on a real backend.
-3. The qualified harness driven by a pinned local model (model, server and template digests), reporting the number of runs and the failure types rather than a single success.
-4. The harness against the named provider through the broker.
+1. **Deterministic fixtures.** `devcroft-test-agent` is a Rust multicall fixture under `tests/fixtures/`, kept out of `src/bin` and out of the published crate. It covers CLI and PTY behaviour, process trees, sentinels and credentials, and reports what it saw out of band. It has no model and stays dependency-light.
+2. **OS-level probes** on a real backend.
+3. **devcroft’s own model–tool loop.** `model-loop-agent` is a small agent built on goose’s oi-kit crates (`oi-kit-agent`, `oi-kit-provider-types`, `oi-kit-providers`). It runs inside the sandbox and edits a file, runs the project test and reads the result through tools devcroft defines in-process. oi-kit ships no shell or other implicit tool, so the fixture exposes exactly the operations under test. It has two providers:
+   - a scripted one, devcroft’s own implementation of the `Provider` trait, which replays a fixed sequence of tool calls for deterministic CI;
+   - the OpenAI-compatible provider, for the pinned local model.
 
-A fixture result never qualifies a vendor binary.
+   It is its own crate, with a `[workspace]` table of its own (as the samples have) and the oi-kit version pinned exactly. oi-kit is alpha, and its dependencies (`reqwest`, `rmcp` and their tails) stay out of devcroft’s `Cargo.lock`, `THIRD-PARTY-LICENSES.md` and published package. The reviews had proposed an embedded `libfx` for this role: a Zig engine behind a WASM boundary, whose only probe could not be reproduced. oi-kit serves no ACP, so it does not replace Testy.
+4. **The qualified harness** driven by a pinned local model (model, server and template digests), reporting the number of runs and the failure types rather than a single success.
+5. **The harness against the named provider** through the broker.
+
+A fixture result never qualifies a vendor binary. That holds for `model-loop-agent` too, although goose uses the same engine: it does not qualify the goose recipe.
 
 Prefer a statically linked or fully bundled payload. Record each Linux artifact’s libc (`gnu`, `musl` or `static`) and refuse a host whose loader does not match before downloading. A universal Mach-O stays refused until the header reader selects and checks the host’s slice. A checksum proves integrity, not that the executable can start on this host.
 

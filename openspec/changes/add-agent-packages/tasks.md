@@ -8,7 +8,13 @@
   - a credential echo that reports what it received out of band.
 
   Confirm that `cargo package --list` does not contain it and that `cargo install` installs only `devcroft`.
-- [ ] 0.2 Define the versioned qualification record: rows per artifact digest, devcroft version, platform, launch path and auth mode, and declared versus observed results (`pass`, `fail`, `drift`, `skipped`, `unknown`). Make `agent list`, `doctor`, the CI release gate and `docs/agents.md` read it. Prove that a skipped or unknown mandatory probe leaves a row unqualified.
+- [ ] 0.2 Build `tests/fixtures/model-loop-agent`, a crate with its own `[workspace]` table, on oi-kit pinned exactly (`=0.1.0-alpha.16` or the version current when work starts, with `rustls-tls`).
+  - Before writing it, confirm on docs.rs the `Provider` trait’s signature and that a `StateMachine` runs with no network under a scripted provider.
+  - Implement a scripted `Provider` that replays a fixed sequence of tool calls, and wire the OpenAI-compatible provider for the pinned local model.
+  - Define in-process tools for reading and editing a file, running a command and reporting a result, and no others.
+  - Build it on `linux-aarch64` and `macos-arm64`. Confirm that devcroft’s `Cargo.lock`, `THIRD-PARTY-LICENSES.md` and `cargo package --list` are unchanged.
+  - Run it inside a sandbox to edit a file and run the project test: in scripted mode in CI, and with the pinned local model as a separate job that reports the number of runs and the failure types.
+- [ ] 0.3 Define the versioned qualification record: rows per artifact digest, devcroft version, platform, launch path and auth mode, and declared versus observed results (`pass`, `fail`, `drift`, `skipped`, `unknown`). Make `agent list`, `doctor`, the CI release gate and `docs/agents.md` read it. Prove that a skipped or unknown mandatory probe leaves a row unqualified.
 
 ## 1. Qualify one native candidate
 
