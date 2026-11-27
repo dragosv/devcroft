@@ -150,6 +150,10 @@ the code comments.
   `cargo install devcroft` installs a second binary. Check what an install puts
   on `PATH`, not only the file count.
 - After any `Cargo.lock` change, regenerate `THIRD-PARTY-LICENSES.md`.
+- russh is the fork `devcroft-russh` in `vendor/russh`, published before
+  devcroft. Never swap it for a `[patch.crates-io]` override: `cargo package`
+  drops it, and the published binary would silently use unpatched russh. See
+  CONTRIBUTING.md, "Release".
 - The standard runtime never takes an ambient host shell or toolchain. Shell
   and utilities come from devcroft's runtime or the qualified provider, and a
   provider never inherits `/usr/bin` or the host's `PATH`. The native

@@ -230,6 +230,19 @@ offered. [The roadmap](docs/roadmap.md) holds the rule for when `0.1.0` is
 cut. Publishing (`cargo publish`, reserving the npm name) needs the
 maintainer's own accounts.
 
+Publishing is two crates, in order. devcroft depends on `devcroft-russh`, the
+fork of russh in `vendor/russh` that returns SSH receive-window credit only
+after a child consumes its stdin. Publish the fork first, from `vendor/russh`;
+it packages and verifies on its own. Until it's on crates.io, `cargo package`
+for devcroft fails with "no matching package named `devcroft-russh`", which is
+expected. `vendor/russh/NOTICE` says what changed, and
+`vendor/russh/devcroft-changes.patch` reproduces the fork from the upstream
+crate.
+
+Don't replace the fork with a `[patch.crates-io]` override. `cargo package`
+drops `[patch]`, so the published binary would use unpatched russh without any
+error.
+
 ## Write documentation
 
 Each document has one job; don't duplicate content between them:
