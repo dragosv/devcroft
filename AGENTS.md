@@ -151,10 +151,12 @@ the code comments.
   on `PATH`, not only the file count.
 - After any `Cargo.lock` change, regenerate `THIRD-PARTY-LICENSES.md`.
 - The standard runtime never takes an ambient host shell or toolchain. Shell
-  and utilities come from devcroft's runtime or the qualified provider. The
-  Swift/Xcode path is a documented exception
-  ([docs/base-runtime.md](docs/base-runtime.md)), not a precedent: a new
-  provider never inherits `/usr/bin` or the host's `PATH`.
+  and utilities come from devcroft's runtime or the qualified provider, and a
+  provider never inherits `/usr/bin` or the host's `PATH`. The native
+  Swift/Xcode provider breaks this rule, so `exclude-swift-from-standard-build`
+  takes it out of the standard build, behind a non-default research feature.
+  Don't extend it, don't build on it, and don't copy its native mode into
+  another provider.
 - Take techniques from other projects, never tools. The keeper never runs as a
   child of a separate sandboxing binary, and the process tier needs no external
   backend binary. Record what you take in [docs/prior-art.md](docs/prior-art.md).

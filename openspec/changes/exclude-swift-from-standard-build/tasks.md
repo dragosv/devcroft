@@ -7,4 +7,4 @@
 ## 2. Verify and align documentation
 
 - [ ] 2.1 Gate the `swift` row in `tests/common/mod.rs` and existing Swift e2e tests behind `research-swift-provider`, and add a default-build integration test proving `provider = "swift"` exits 2 at layer `config` without invoking marker `xcrun`/`swift` binaries on `PATH` and `init` ignores `Package.swift`.
-- [ ] 2.2 Update `README.md`, `docs/decisions.md` §1, `docs/known-gaps.md`, `samples/swift-spm-sample/README.md`, `AGENTS.md` and `openspec/config.yaml` so standard 1.0 documentation never advertises native `swift` as an available provider.
+- [ ] 2.2 Update `README.md`, `CONTRIBUTING.md` (the `swift` test row), `docs/invariants.md` (the `native:<provider>` origin), `docs/base-runtime.md` (native mode), `docs/decisions.md` §1, `docs/known-gaps.md`, `samples/README.md`, `samples/swift-spm-sample/README.md`, `AGENTS.md` and `openspec/config.yaml` so standard 1.0 documentation never advertises native `swift` as an available provider.
