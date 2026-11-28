@@ -224,7 +224,7 @@ openspec/
 
 | Document | Holds |
 |---|---|
-| [README.md](README.md) | What a user needs to evaluate and install devcroft |
+| [README.md](README.md) | What a developer needs to evaluate, install and use devcroft |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | Setup, tests, OpenSpec workflow, dependencies, packaging, release |
 | [docs/invariants.md](docs/invariants.md) | The reasoning and measurements behind every invariant here |
 | [docs/decisions.md](docs/decisions.md) | Every "why doesn't devcroft support X", with the six provider criteria |
@@ -236,6 +236,12 @@ openspec/
 | [docs/agents.md](docs/agents.md) | Coding agents measured inside a sandbox |
 | [docs/base-runtime.md](docs/base-runtime.md) | Where a sandbox's shell and utilities resolve |
 | [samples/README.md](samples/README.md) | What each sample demonstrates |
+
+`README.md` is written for human developers, not for agents. Keep it short
+and easy to scan: what devcroft is, how to install and use it, and links to
+detail. Don't add agent instructions, rationale, measurements or history
+there; they belong in this file, `docs/invariants.md` or the other docs. Check
+every claim you add to it against the code.
 
 Keep this file to durable rules. Put procedures in `CONTRIBUTING.md`,
 requirements in OpenSpec, reasoning in `docs/invariants.md`, and dated evidence

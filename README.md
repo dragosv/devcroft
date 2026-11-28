@@ -1,113 +1,98 @@
 # devcroft
 
-devcroft gives each project, branch or coding agent on your machine its own
-sandboxed development environment. Each sandbox gets its toolchain from a
-lockfile, a filesystem and network boundary that the kernel enforces, its own
-network namespace on Linux, and an SSH server your editor connects to like any
-remote machine. There's no daemon, image build, container or VM.
+Isolated development environments for each project, branch or coding agent on
+your machine. Each sandbox gets its toolchain from a lockfile, a filesystem and
+network boundary the kernel enforces, and an SSH endpoint for your editor. No
+container, VM or image build.
 
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE-APACHE)
 [![Rust](https://img.shields.io/badge/Rust-edition%202024-orange.svg)](Cargo.toml)
 [![Status](https://img.shields.io/badge/release-0.0.1-yellow.svg)](#status)
 
-**devcroft contains accidents in code you already trust.** It's not a security
-boundary against hostile code, a hostile prompt or a compromised agent: the
-workload shares the host kernel. Run an unfamiliar repository or a stranger's
-pull request in a container or a VM. [The threat model](docs/threat-model.md)
-says where the line is.
+**devcroft contains accidents in code you trust. It is not a security
+boundary:** the sandbox shares your kernel. Run untrusted code in a container
+or a VM. See [the threat model](docs/threat-model.md).
 
-## Why devcroft
+## Why
 
-Git worktrees give each agent its own directory, not its own environment. The
-worktrees still share your installed toolchain and your services' ports: every
-branch's committed `compose.yaml` wants Postgres on 5432, and the second one
-fails. devcroft gives each sandbox:
+Worktrees give each branch its own directory, but they still share your
+toolchain and your ports. devcroft gives each sandbox:
 
-- **Its own toolchain**, resolved from the project's lockfile through flox,
-  nix, devbox or devenv, with one shared store so eight sandboxes of a project
-  cost one build.
-- **A boundary the kernel enforces**: Landlock on Linux, Seatbelt on macOS.
-  Your SSH keys, cloud credentials and the rest of your disk are refused, not
-  hidden by convention.
-- **Its own ports on Linux.** Each sandbox gets its own network namespace, so
-  every branch can bind 5432, while outbound access goes through a
-  domain-filtered proxy.
-- **A real SSH endpoint** for VS Code, Cursor, `ssh`, `scp` and `rsync`, over
-  a Unix socket only you can open.
+- **Its own toolchain**, from the project's flox, nix, devbox or devenv lock.
+  All four share one store, so eight sandboxes of a project cost one build.
+- **No host tools.** The shell, utilities and toolchain come from the lock or
+  from devcroft itself, never from your machine (see the following section).
+- **A kernel-enforced boundary** (Landlock on Linux, Seatbelt on macOS). Your
+  SSH keys, cloud credentials and the rest of your disk are refused.
+- **Its own ports on Linux.** Every branch can bind 5432; outbound traffic goes
+  through a domain-filtered proxy.
+- **An SSH endpoint** for VS Code, Cursor, `ssh`, `scp` and `rsync`.
+
+### Why no host tools
+
+Nothing inside a sandbox runs from your machine's `/usr/bin`, Homebrew or
+`PATH`. That costs a line in the environment for every tool the project
+uses, and it buys three things:
+
+- **Builds that behave the same everywhere.** A build can't pass only because
+  you happen to have a tool installed, or because your `sed` is BSD and CI's is
+  GNU. What runs is what the lock says, for you, a teammate and CI.
+- **Dependencies you can see.** A tool the project needs but doesn't declare
+  fails on the first run, on your machine, instead of months later on someone
+  else's.
+- **Less for an agent to reach.** Your own `git`, `ssh` and `curl` can't run
+  inside the sandbox. Copies from the project's toolchain don't find your
+  credentials either: the sandbox has its own `HOME` (so no `.netrc` or
+  `.gitconfig` of yours), your host's `~/.ssh` and cloud credential
+  directories are denied, and your SSH agent isn't forwarded unless `devcroft.toml` sets
+  `[ssh] forward_agent`. What you pass with `[env] forward` is the exception.
 
 ## Install
 
-Before you install devcroft, you need:
-
-- Rust 1.95 or later.
-- One environment provider: flox, nix, devbox or devenv. mise and pixi are
-  supported for a narrower profile, and on macOS a SwiftPM project can use the
-  installed Xcode. devcroft doesn't manage packages; it sandboxes an
-  environment that one of these produces.
-
-devcroft isn't on crates.io yet. Install it from a clone:
+You need Rust 1.95 or later and an environment provider: flox, nix, devbox or
+devenv (mise and pixi work for a narrower profile). devcroft isn't on
+crates.io yet:
 
 ```sh
 git clone https://github.com/dragosv/devcroft
 cd devcroft
 cargo install --path .
+devcroft doctor   # what this machine has, and how to fix what's missing
 ```
 
-To check what your machine has and what it lacks, run `devcroft doctor`. It
-names a fix for each missing piece.
+## Quick start
 
-## Get started
-
-devcroft needs a project that already has an environment. These steps use
-flox in an empty directory:
-
-1. Create an environment with a few packages:
-
-   ```sh
-   flox init
-   flox install bash coreutils ripgrep
-   ```
-
-2. Write a `devcroft.toml` for the project:
-
-   ```sh
-   devcroft init
-   ```
-
-3. Start the sandbox:
-
-   ```sh
-   devcroft up
-   ```
-
-4. Run a command inside it:
-
-   ```sh
-   devcroft exec -- bash -c 'echo hello from inside; pwd'
-   ```
-
-   The output is the greeting and the project directory.
-
-Commands inside the sandbox use the packages from the lockfile. They can read
-and write the project directory and nothing else. For example, this command
-fails with `Permission denied`:
+In an empty directory, with flox:
 
 ```sh
-devcroft exec -- cat ~/.ssh/known_hosts
+flox init
+flox install ripgrep        # flox 1.4+ asks you to log in to FloxHub first
+devcroft init               # writes devcroft.toml
+devcroft up
+devcroft exec -- rg --version
 ```
 
-## Configure a project
+Commands run with the packages from the lock. Basic utilities (`ls`, `cat`,
+`pwd` and the rest of coreutils) and a shell come from devcroft itself when the
+environment doesn't provide them, never from your host. Anything outside the
+project directory is refused:
 
-`devcroft init` writes a minimal manifest. Everything outside the project
-directory stays denied until you name it:
+```sh
+devcroft exec -- cat ~/.ssh/known_hosts   # fails with a permission error
+```
+
+## Configure
+
+Everything outside the project directory stays denied until `devcroft.toml`
+names it:
 
 ```toml
 [sandbox]
 name = "my-project"
 
 [env]
-provider = "flox"          # or "nix", "devbox", "devenv", "mise", "pixi", "swift"
-forward = ["GH_TOKEN"]     # the sandbox doesn't inherit your shell
+provider = "flox"                 # or nix, devbox, devenv, mise, pixi
+forward = ["GH_TOKEN"]            # the sandbox doesn't inherit your shell
 
 [filesystem]
 read = ["/opt/reference-data"]
@@ -121,84 +106,53 @@ ports = [5432]
 post_create = "./scripts/bootstrap"   # runs inside the sandbox, once
 ```
 
-Each sandbox has its own writable `HOME` inside the project's `.devcroft/`
-directory, so tools that write to the home directory work without reaching
-yours. Hooks run inside the boundary, so a hook that needs the network needs
-an `allow` entry too.
-
-The manifest compiles to a profile in which every rule names its origin. To
-see the whole profile, or ask why one operation is allowed, use these
-commands:
+Each sandbox has its own `HOME` under `.devcroft/`, and hooks run inside the
+boundary, so a hook that needs the network needs an `allow` entry. To see what
+the sandbox is allowed, and why:
 
 ```sh
-devcroft policy --render
-devcroft why --host evil.example.net
+devcroft policy --render                      # every rule, with its origin
+devcroft why --host api.example.com
 devcroft why --path ~/.ssh/id_rsa --op read
 devcroft why --env GH_TOKEN
 ```
 
-## Run branches side by side
+## Everyday use
 
-A committed manifest carries the same sandbox name into every worktree. To give
-each worktree its own sandbox, name it at `up`:
+**Editors.** Run `devcroft ssh-config --write` once. Each sandbox then answers
+at `NAME.devcroft` for Remote-SSH, `ssh`, `scp`, `sftp` and `rsync`. Editor
+support varies; see [the SSH validation matrix](docs/ssh-validation.md).
+
+**Worktrees.** Give each worktree its own sandbox:
 
 ```sh
 devcroft up --name feature-auth      # in worktree A
 devcroft up --name feature-search    # in worktree B
 ```
 
-On Linux, each of these sandboxes can bind the same declared port. A port is
-reachable inside its sandbox and through an SSH tunnel, not on the host's
-loopback. To reach a dev server on port 3000:
+**Ports.** On Linux a sandbox's ports are reachable inside it, not on your
+loopback. Reach a dev server through SSH:
 
 ```sh
 ssh -L 3000:127.0.0.1:3000 -N feature-auth.devcroft
 ```
 
-Where sandboxes share the host's loopback (macOS, or
-`network.default = "allow"`), devcroft can pick a free port per sandbox for a
-service that reads its port from a variable. Services declared in a flox,
-devenv or devbox environment run under the sandbox's supervisor, and
-`devcroft status` reports each one.
+On macOS sandboxes share your loopback, so devcroft can pick a free port per
+sandbox for a service that reads its port from a variable.
 
-## Connect your editor
+**Services.** Services declared in a flox, devenv or devbox environment run
+under the sandbox and show in `devcroft status`. The environment must include
+`process-compose`.
 
-Add the SSH configuration once:
+**Coding agents.** Run an agent's commands through devcroft
+(`devcroft exec feature-auth -- cargo test`), or run the agent inside from a
+tooling layer of your own (`[tools] path = "~/agents"` in
+`~/.config/devcroft/config.toml`). An API key can be brokered so the sandbox
+never holds it. See [the agent matrix](docs/agents.md).
 
-```sh
-devcroft ssh-config --write
-```
+## Providers
 
-Each sandbox then answers at `NAME.devcroft`, where *`NAME`* is the sandbox
-name. Open it with VS Code or Cursor Remote-SSH, or use `ssh`, `scp`, `sftp`
-and `rsync`. Each editor has its own preconditions, and some don't work yet;
-[the SSH validation matrix](docs/ssh-validation.md) has the details.
-
-## Use a coding agent
-
-You can keep the agent on the host and run its consequential commands through
-devcroft:
-
-```sh
-devcroft exec feature-auth -- cargo test
-```
-
-You can also run an agent inside the sandbox from a locked tooling layer of
-your own, which the project never names. Configure it in
-`~/.config/devcroft/config.toml`:
-
-```toml
-[tools]
-path = "~/agents"
-```
-
-An API key can be brokered so that the sandbox never holds it.
-[The agent matrix](docs/agents.md) covers the eleven agents measured inside a
-sandbox, brokering, and what doesn't work yet.
-
-## Environment providers
-
-| Provider | Guarantee | Project input |
+| Provider | Guarantee | Input |
 |---|---|---|
 | flox | closure | `.flox/` manifest and lock |
 | nix | closure | `flake.nix` and `flake.lock` |
@@ -206,80 +160,55 @@ sandbox, brokering, and what doesn't work yet.
 | devenv | closure | `devenv.nix` and lock |
 | mise | artifact | `mise.toml` and `mise.lock`, `http:` tools only |
 | pixi | artifact | `pixi.toml` and `pixi.lock`, Conda packages only |
-| swift | artifact, macOS only | a SwiftPM package and the installed Xcode |
 
-A **closure** is a complete package set from a shared, content-addressed
-store, so nothing inside depends on what's installed on your host. An
-**artifact** environment depends on the host. mise and pixi install
-checksum-pinned objects that link against host libraries, and swift uses the
-Xcode installed on that Mac, with no shared store. No provider's own
-activation hook runs on your host. There's no `host` or `none` provider.
-[The decisions](docs/decisions.md) explain each provider and each rejection.
+A **closure** is a complete package set from the shared store, independent of
+your host. An **artifact** environment is checksum-pinned but links against
+host libraries. No provider's activation hook runs on your host. See
+[the decisions](docs/decisions.md) for each provider and each rejection.
+
+This release still has a native macOS `swift` provider that uses your Xcode
+and host tools. It's being removed from standard builds, so don't start a
+project on it; use nix or flox for Swift.
 
 ## Commands
 
-`devcroft --help` prints the same list:
-
 | Command | What it does |
 |---|---|
-| `init` | Write a `devcroft.toml` for this project |
+| `init` | Write a `devcroft.toml` |
 | `up`, `down`, `rm` | Start, stop, or stop and delete a sandbox |
-| `exec`, `shell` | Run one command, or open a shell, inside a sandbox |
-| `status`, `logs`, `ps` | Inspect one sandbox, its keeper's log, or every sandbox on this host |
-| `policy --render`, `why` | Show the compiled profile, or explain one decision |
-| `doctor` | Check this host for what devcroft needs |
-| `ssh`, `ssh-config`, `proxy` | Connect over SSH, install the SSH configuration, and the `ProxyCommand` handler |
+| `exec`, `shell` | Run a command, or open a shell, inside a sandbox |
+| `status`, `logs`, `ps` | Inspect one sandbox, its log, or all sandboxes |
+| `policy --render`, `why` | Show the policy, or explain one decision |
+| `doctor` | Check this host |
+| `ssh`, `ssh-config` | Connect over SSH, or install the SSH configuration |
 
-## Platform support
+`devcroft --help` lists everything, including the experimental `fleet`
+commands (Linux) and the `agent` commands used inside a sandbox.
+
+## Platforms
 
 | Platform | Mechanism | Minimum | Notes |
 |---|---|---|---|
-| Linux | Landlock, with user, mount, PID and network namespaces | Kernel 5.13 | Ubuntu 24.04 restricts unprivileged user namespaces by default, and `up` refuses until you set `kernel.apparmor_restrict_unprivileged_userns=0` |
-| macOS | Seatbelt | 10.5 | No mount or network namespace, so services share ports and process visibility isn't narrowed; execution, reads, writes and egress are enforced |
+| Linux | Landlock, with user, mount, PID and network namespaces | Kernel 5.13 | On Ubuntu 24.04, set `kernel.apparmor_restrict_unprivileged_userns=0` |
+| macOS | Seatbelt | 10.5 | No per-sandbox ports or process isolation; files, execution and egress are enforced |
 
 ## Status
 
-devcroft `0.0.1` works and is used daily to develop devcroft itself. The
-version is deliberate: nothing here promises compatibility with the next
-release. Coding agents inside a sandbox are measured on Linux only, and
-`devcroft fleet`, which runs many agents with resource budgets, is
-experimental and Linux only.
+`0.0.1`: used daily to develop devcroft, with no compatibility promise between
+releases. Agents inside a sandbox are measured on Linux only, and `fleet` is
+experimental. devcroft doesn't contain hostile code or undo project changes.
+Every known limitation is in [the known gaps](docs/known-gaps.md).
 
-devcroft doesn't contain hostile code or kernel exploits, undo project
-changes, or deliver a subscription login to an agent inside. For a stronger
-boundary, run devcroft inside a VM. `devcroft doctor` shows what your host
-enforces, and [the known gaps](docs/known-gaps.md) describe every published
-limitation, with measurements.
+**Documentation:** [threat model](docs/threat-model.md) ·
+[known gaps](docs/known-gaps.md) · [decisions](docs/decisions.md) ·
+[comparison](docs/comparison.md) · [base runtime](docs/base-runtime.md) ·
+[agents](docs/agents.md) · [SSH and editors](docs/ssh-validation.md) ·
+[roadmap](docs/roadmap.md) · [samples](samples/README.md)
 
-## Documentation
+## Contributing, security, license
 
-| Document | What it covers |
-|---|---|
-| [Threat model](docs/threat-model.md) | Which use case the isolation backs, and which it doesn't |
-| [Known gaps](docs/known-gaps.md) | Every published limitation |
-| [Decisions](docs/decisions.md) | Why devcroft does or doesn't support something |
-| [Comparison](docs/comparison.md) | Dev Containers, `nono-cli`, flox alone and coding-agent products |
-| [Base runtime](docs/base-runtime.md) | Where a sandbox's shell and utilities come from |
-| [Agents](docs/agents.md) | Coding agents measured inside a sandbox |
-| [SSH validation](docs/ssh-validation.md) | SSH clients and editors |
-| [Roadmap](docs/roadmap.md) | What each release has to be true for |
-| [Samples](samples/README.md) | Runnable projects, one or more per provider |
-
-## Contributing
-
-See [CONTRIBUTING.md](CONTRIBUTING.md) for setup, tests and the OpenSpec
-workflow. [AGENTS.md](AGENTS.md) holds the rules every change must keep.
-
-## Security
-
-devcroft is pre-1.0, unaudited software from a single maintainer, with no
-security response commitment. Read [the threat model](docs/threat-model.md)
-before you rely on it. A private reporting channel is a 1.0 requirement and
-doesn't exist yet. Until it does, open an issue in
-[the issue tracker](https://github.com/dragosv/devcroft/issues).
-
-## License
-
-devcroft is licensed under [Apache-2.0](LICENSE-APACHE), like nono and the
-sigstore crates it links. Dependency license texts are in
+See [CONTRIBUTING.md](CONTRIBUTING.md). devcroft is pre-1.0 and unaudited; a
+private security channel is planned for 1.0, and until then report problems
+in [the issue tracker](https://github.com/dragosv/devcroft/issues). Licensed
+under [Apache-2.0](LICENSE-APACHE); dependency licenses are in
 [THIRD-PARTY-LICENSES.md](THIRD-PARTY-LICENSES.md).
